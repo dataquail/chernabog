@@ -10,7 +10,7 @@ import * as FileSystem from 'effect/FileSystem';
 
 import { ConfigError, Home, homePaths } from './config.ts';
 import { Exec, execOk } from './Exec.ts';
-import { installFlowDependencies } from './flow-deps.ts';
+import { checkConfigVersion, installFlowDependencies } from './flow-deps.ts';
 
 export type Snapshot = { readonly tree: string; readonly configDir: string };
 
@@ -49,6 +49,8 @@ export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =
       yield* Effect.gen(function* () {
         yield* fs.makeDirectory(`${staging}/.chernabog`);
         yield* execOk('sh', ['-c', 'git -C "$1" archive "$2" | tar -x -C "$3"', 'sh', path, tree, `${staging}/.chernabog`]);
+        // Before installing, so a binary too old for it says so instead of failing the install.
+        yield* checkConfigVersion(`${staging}/.chernabog`);
         yield* installFlowDependencies(`${staging}/.chernabog`);
       }).pipe(Effect.onError(() => Effect.ignore(fs.remove(staging, { recursive: true, force: true }))));
 

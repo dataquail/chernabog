@@ -198,7 +198,7 @@ Config has three layers. Later layers override earlier ones key by key, except t
 | Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off               |
 | Machine           | `~/.config/chernabog/config.yaml`       | Enrolled repos, agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own |
 
-`init` writes `config.schema.json` and `local.schema.json` next to the YAML, so editors autocomplete them. They're generated, so `init` rewrites them whenever they're out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions. It never overwrites any other file.
+`init` writes `config.schema.json` and `local.schema.json` next to the YAML, so editors autocomplete them. They're generated, so `init` rewrites them whenever they're out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
 
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 
@@ -229,6 +229,16 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 The scaffolded `implement` flow composes the SDK's `Implement` building blocks. Reorder them, leave one out, or put a step of your own between them with `step("name", input)`: either `.chernabog/stages/name.ts` exporting `defineStage({ input, output, run })`, or an executable `name` that reads JSON on stdin and prints JSON. Each step runs in its own process; exit 0 continues, 78 skips the run, anything else fails it. A step that crashes partway runs again, so every step must be safe to repeat.
 
 `.chernabog/` is a package of its own, the same in every repo whatever its language. `package.json` pins `@chernabog/sdk` and `effect` as dev dependencies at the versions the binary bundles, and `tsconfig.json` types the flows against them; install them in `.chernabog/` with any package manager for the editor. At runtime the binary always supplies its own copies of those two, to every module that imports them. Anything else a flow or step imports goes in `dependencies`, with the lockfile committed: the daemon installs them into each snapshot of the base branch, using the binary as `bun install --production --frozen-lockfile --ignore-scripts`, so the machine needs no Node or package manager. `doctor` flags pins that have drifted from the binary; `init` updates them.
+
+### Chernabog versions
+
+One daemon runs every enrolled repo, so a repo can't choose its Chernabog; it says which is the oldest it runs on, as a floor in `.chernabog/package.json`:
+
+```json
+{ "engines": { "chernabog": ">=0.3.0" } }
+```
+
+A binary older than that refuses the repo, before it reads anything else in `.chernabog/`: `status` shows the repo as an error naming the version it needs, and `init` won't move it back. A newer binary runs it. `init` writes the floor at its own version for a new `.chernabog/`, adds it where it's missing, and raises it when it rewrites the schemas or the pins, since the repo can then rely on what this binary added; otherwise it leaves the floor alone, so one person upgrading doesn't force everyone else to. Keys in `config.yaml` that the binary doesn't know fail the repo instead of being ignored: each is a typo or a setting from a newer Chernabog, and either may be a rule the team counts on. `doctor` reports a missing floor and a binary too old for it.
 
 See [`packages/sdk`](packages/sdk/README.md) for the services and helpers.
 

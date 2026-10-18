@@ -1,4 +1,4 @@
-import { fillTemplate, globToRegExp, parseJson, pathsMatching } from '@chernabog/sdk';
+import { fillTemplate, globToRegExp, parseJson, pathsMatching, printJson } from '@chernabog/sdk';
 import { describe, expect, test } from 'bun:test';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
@@ -8,10 +8,11 @@ import * as Result from 'effect/Result';
 import * as Schema from 'effect/Schema';
 import YAML from 'yaml';
 
-import { BUNDLED_PACKAGES } from '../src/flow-deps.ts';
+import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
 import { scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
-import { DEFAULT_LIMITS, type EnrolledRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
-import { effect } from './effect-test.ts';
+import { DEFAULT_LIMITS, type EnrolledRepo, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
+import { VERSION } from '../src/version.ts';
+import { effect, effectAtHome } from './effect-test.ts';
 
 const machine = normalizeMachineConfig(
   Schema.decodeSync(MachineConfigFile)({
@@ -214,14 +215,47 @@ describe('init', () => {
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
       const path = `${repo}/.chernabog/package.json`;
       yield* scaffold(repo);
-      expect(parseJson(yield* fs.readFileString(path))).toEqual(Option.some({ private: true, devDependencies: BUNDLED_PACKAGES }));
+      expect(parseJson(yield* fs.readFileString(path))).toEqual(Option.some({ private: true, engines: { chernabog: `>=${VERSION}` }, devDependencies: BUNDLED_PACKAGES }));
 
       yield* fs.writeFileString(path, '{ "name": "flows", "dependencies": { "effect": "4.0.0", "zod": "^3" }, "devDependencies": { "@chernabog/sdk": "0.0.1", "typescript": "5" } }');
       expect(yield* scaffold(repo)).toEqual(['.chernabog/package.json (pins updated)']);
       expect(parseJson(yield* fs.readFileString(path))).toEqual(
-        Option.some({ name: 'flows', dependencies: { zod: '^3' }, devDependencies: { typescript: '5', ...BUNDLED_PACKAGES } }),
+        Option.some({ name: 'flows', dependencies: { zod: '^3' }, devDependencies: { typescript: '5', ...BUNDLED_PACKAGES }, engines: { chernabog: `>=${VERSION}` } }),
       );
       expect(yield* scaffold(repo)).toEqual([]);
+    }),
+  );
+
+  effect(
+    'raises the chernabog floor only when the repo picks up something of this binary',
+    () => Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
+      const path = `${repo}/.chernabog/package.json`;
+      const floorOf = fs.readFileString(path).pipe(Effect.flatMap(decodeManifest), Effect.flatMap(requiredVersion));
+      const withFloor = (floor: string) => `{ "engines": { "chernabog": "${floor}" }, "devDependencies": ${printJson(BUNDLED_PACKAGES)} }`;
+      yield* scaffold(repo);
+
+      yield* fs.writeFileString(path, withFloor('>=0.0.1'));
+      expect(yield* scaffold(repo)).toEqual([]);
+      expect(yield* floorOf).toEqual(Option.some('0.0.1'));
+
+      yield* fs.writeFileString(`${repo}/.chernabog/config.schema.json`, '{}');
+      expect(yield* scaffold(repo)).toEqual(['.chernabog/config.schema.json (updated)', '.chernabog/package.json (pins updated)']);
+      expect(yield* floorOf).toEqual(Option.some(VERSION));
+    }),
+  );
+
+  effect(
+    'refuses a .chernabog/ that needs a newer chernabog, and writes nothing',
+    () => Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
+      yield* fs.makeDirectory(`${repo}/.chernabog`);
+      yield* fs.writeFileString(`${repo}/.chernabog/package.json`, '{ "engines": { "chernabog": ">=99.0.0" } }');
+      const scaffolded = yield* Effect.result(scaffold(repo));
+      expect(Result.isFailure(scaffolded) && scaffolded.failure.message).toContain('needs chernabog 99.0.0 or newer');
+      expect(yield* fs.readDirectory(`${repo}/.chernabog`)).toEqual(['package.json']);
     }),
   );
 
@@ -230,6 +264,49 @@ describe('init', () => {
     expect(slugFromRemote('https://github.com/dataquail/goodbones')).toEqual(Option.some('dataquail/goodbones'));
     expect(slugFromRemote('/tmp/origin.git')).toEqual(Option.none());
   });
+});
+
+describe('loading a repo', () => {
+  const configDirWith = (files: Readonly<Record<string, string>>) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-load-' });
+
+      for (const [name, text] of Object.entries(files)) yield* fs.writeFileString(`${dir}/${name}`, text);
+
+      return dir;
+    });
+
+  const load = (files: Readonly<Record<string, string>>) =>
+    Effect.flatMap(configDirWith(files), (dir) => Effect.result(loadRepo(machine, { ...enrolled, path: dir }, dir)));
+
+  effectAtHome('a .chernabog/ that needs a newer chernabog is refused, before its config is read', () =>
+    Effect.gen(function* () {
+      const loaded = yield* load({ 'package.json': '{ "engines": { "chernabog": ">=99.0.0" } }', 'config.yaml': 'notAKey: true\n' });
+      expect(Result.isFailure(loaded) && loaded.failure.message).toBe(`.chernabog/ needs chernabog 99.0.0 or newer, and this is ${VERSION}; upgrade chernabog`);
+    }),
+  );
+
+  effectAtHome('engines.chernabog must be a floor', () =>
+    Effect.gen(function* () {
+      const loaded = yield* load({ 'package.json': '{ "engines": { "chernabog": "garbage" } }' });
+      expect(Result.isFailure(loaded) && loaded.failure.message).toContain('it must be a floor such as');
+    }),
+  );
+
+  effectAtHome('a key this binary does not know fails the repo instead of being dropped', () =>
+    Effect.gen(function* () {
+      const loaded = yield* load({ 'package.json': `{ "engines": { "chernabog": ">=${VERSION}" } }`, 'config.yaml': 'limits:\n  ciRounds: 2\n  futureLimit: 1\n' });
+      expect(Result.isFailure(loaded) && loaded.failure.message).toContain('["limits"]["futureLimit"]');
+    }),
+  );
+
+  effectAtHome('a .chernabog/ without a floor loads on any binary', () =>
+    Effect.gen(function* () {
+      const loaded = yield* load({ 'config.yaml': 'baseBranch: develop\n' });
+      expect(Result.isSuccess(loaded) && loaded.success.settings.baseBranch).toBe('develop');
+    }),
+  );
 });
 
 describe('path rules and prompts', () => {
