@@ -1,0 +1,56 @@
+#!/usr/bin/env bun
+// Stands in for the Orca CLI in end-to-end tests, printing the JSON shapes the
+// real one does. A terminal is a detached process group running its command in
+// a shell, as Orca types it into a login shell. Records each call in FAKE_ORCA_LOG.
+// FAKE_ORCA_DOWN: Orca is installed but not running.
+import { spawn } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+const state = process.env.FAKE_ORCA_STATE ?? join(process.env.TMPDIR ?? '/tmp', 'fake-orca');
+mkdirSync(state, { recursive: true });
+if (process.env.FAKE_ORCA_LOG) appendFileSync(process.env.FAKE_ORCA_LOG, `${args.slice(0, 2).join(' ')}\n`);
+
+const flag = (name: string) => args[args.indexOf(name) + 1] ?? '';
+const say = (json: unknown) => console.log(JSON.stringify({ id: 'fake', ...(json as object), _meta: { runtimeId: 'fake' } }, null, 2));
+const pidFile = (handle: string) => join(state, `${handle}.pid`);
+
+const running = (handle: string) => {
+  try {
+    process.kill(Number(readFileSync(pidFile(handle), 'utf8')), 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const command = args.slice(0, 2).join(' ');
+
+if (command.startsWith('status')) {
+  const up = !process.env.FAKE_ORCA_DOWN;
+  say({ ok: true, result: { app: { running: up, pid: 1 }, runtime: { state: up ? 'ready' : 'stopped', reachable: up } } });
+} else if (command === 'terminal create') {
+  const cwd = flag('--worktree').replace(/^path:/, '');
+  const handle = `term_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  const out = openSync(join(state, `${handle}.out`), 'a');
+  const child = spawn('/bin/sh', ['-c', flag('--command')], { cwd, detached: true, stdio: ['ignore', out, out] });
+  writeFileSync(pidFile(handle), String(child.pid));
+  child.unref();
+  say({ ok: true, result: { terminal: { handle, title: flag('--title'), worktreeId: `repo::${cwd}`, surface: 'visible' } } });
+} else if (command === 'terminal show') {
+  const handle = flag('--terminal');
+  if (!existsSync(pidFile(handle))) say({ ok: false, error: { code: 'terminal_handle_stale', message: 'terminal_handle_stale' } });
+  else {
+    const live = running(handle);
+    say({ ok: true, result: { terminal: { handle, connected: live, orphaned: !live } } });
+  }
+} else if (command === 'terminal close') {
+  const handle = flag('--terminal');
+  if (running(handle)) process.kill(-Number(readFileSync(pidFile(handle), 'utf8')), 'SIGKILL');
+  say({ ok: true, result: { closed: handle } });
+} else if (command === 'terminal switch') {
+  say({ ok: true, result: { switched: flag('--terminal') } });
+} else {
+  say({ ok: false, error: { code: 'invalid_argument', message: `fake orca: unknown command ${args.join(' ')}` } });
+}

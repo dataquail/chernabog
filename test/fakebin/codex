@@ -1,0 +1,65 @@
+#!/usr/bin/env bun
+// Stands in for `codex exec --json` in end-to-end tests, with the event shapes
+// the real CLI prints: thread.started, item.started/completed, turn.completed.
+// It commits a change, writes the final message to -o, and logs a session file
+// with rate limits under $CODEX_HOME/sessions, as Codex does.
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+if (args[0] === 'login' && args[1] === 'status') {
+  console.log('Logged in using ChatGPT');
+  process.exit(0);
+}
+if (args[0] === '--version') {
+  console.log('codex-cli 9.9.9');
+  process.exit(0);
+}
+const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const resuming = args[1] === 'resume';
+const thread = resuming ? args[2] : crypto.randomUUID();
+const prompt = await Bun.stdin.text();
+const cwd = process.cwd();
+if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, `${resuming ? 'resume' : 'start'} ${thread} ${JSON.stringify(args.filter((arg) => arg.startsWith('sandbox') || arg.startsWith('--')))}\n`);
+console.log(JSON.stringify({ type: 'thread.started', thread_id: thread }));
+console.log(JSON.stringify({ type: 'turn.started' }));
+
+const hang = process.env.FAKE_AGENT_HANG_ONCE;
+if (hang && existsSync(hang)) {
+  rmSync(hang);
+  await Bun.sleep(60_000);
+}
+
+const reviewing = prompt.includes('# Review pull request');
+if (reviewing) {
+  const round = Number(prompt.match(/This is review (\d+)/)?.[1] ?? 1);
+  const verdict =
+    round === 1
+      ? { verdict: 'request-changes', summary: 'Please add a test for the change.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change here.' }] }
+      : { verdict: 'approve', summary: 'The test is there now. Looks good.', comments: [] };
+  console.log(JSON.stringify({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: JSON.stringify(verdict) } }));
+  console.log(JSON.stringify({ type: 'turn.completed', usage: {} }));
+  const last = flag('-o');
+  if (last) writeFileSync(last, JSON.stringify(verdict));
+  process.exit(0);
+}
+console.log(JSON.stringify({ type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: 'bash -lc "git commit"', status: 'in_progress' } }));
+const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
+writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
+execFileSync('git', ['add', '.'], { cwd });
+execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count} by codex`], { cwd });
+
+const answer = { status: 'done', summary: 'Codex added a change file.', title: 'feat: do the thing with codex', body: 'Adds the thing.' };
+console.log(JSON.stringify({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: JSON.stringify(answer) } }));
+console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0 } }));
+const last = flag('-o');
+if (last) writeFileSync(last, JSON.stringify(answer));
+
+const sessions = join(process.env.CODEX_HOME!, 'sessions', '2026', '10', '17');
+mkdirSync(sessions, { recursive: true });
+const used = Number(process.env.FAKE_CODEX_PRIMARY_USED ?? 5);
+appendFileSync(
+  join(sessions, `rollout-${thread}.jsonl`),
+  `${JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: used, window_minutes: 300, resets_at: Math.floor(Date.now() / 1000) + 3600 }, secondary: { used_percent: 10, window_minutes: 10080, resets_at: Math.floor(Date.now() / 1000) + 86400 } } } })}\n`,
+);

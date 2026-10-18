@@ -1,0 +1,94 @@
+#!/usr/bin/env bun
+// Stands in for `claude` in end-to-end tests. Records each call, keeps a
+// transcript where the real CLI would (so resuming can be detected), and
+// commits a change in the worktree.
+// With -p it answers in stream-json with structured output. Without, it is an
+// interactive session: it writes the answer file the prompt names, runs the
+// Stop hook from --settings as Claude does, and keeps running until killed.
+// FAKE_CLAUDE_HANG_ONCE: if this file exists, remove it and hang, so a test can kill the run.
+// FAKE_CLAUDE_WOKEN_AFTER: after answering, a background task wakes the session and it ends in a text-only result.
+// FAKE_CLAUDE_SKIP_ANSWER_ONCE: if this file exists, remove it and stop once without writing the answer.
+// FAKE_CLAUDE_NEVER_ANSWER: never write the answer.
+// FAKE_CLAUDE_HOLD: while this file exists, wait before doing the work.
+import { execFileSync, spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+if (args[0] === 'auth' && args[1] === 'status') {
+  console.log(JSON.stringify({ loggedIn: true, email: process.env.FAKE_CLAUDE_EMAIL ?? 'dev@example.com' }));
+  process.exit(0);
+}
+if (args[0] === '--version') {
+  console.log('9.9.9 (Fake Claude)');
+  process.exit(0);
+}
+const flag = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const headless = args.includes('-p');
+const sessionId = flag('--session-id') ?? flag('--resume') ?? 'no-session';
+const resuming = args.includes('--resume');
+// Headless reads the prompt on stdin; interactive takes it as the last argument.
+const prompt = headless ? await Bun.stdin.text() : (args.at(-1) ?? '');
+const cwd = process.cwd();
+
+if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, `${resuming ? 'resume' : 'start'} ${sessionId} ${headless ? '-p' : 'interactive'} ${JSON.stringify(prompt.slice(0, 60))}\n`);
+const transcriptDir = join(process.env.CLAUDE_CONFIG_DIR!, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
+const transcript = join(transcriptDir, `${sessionId}.jsonl`);
+mkdirSync(transcriptDir, { recursive: true });
+appendFileSync(transcript, `${JSON.stringify({ type: 'user', message: { content: prompt } })}\n`);
+
+const hang = process.env.FAKE_CLAUDE_HANG_ONCE;
+if (hang && existsSync(hang)) {
+  rmSync(hang);
+  await Bun.sleep(60_000);
+}
+
+const hold = process.env.FAKE_CLAUDE_HOLD;
+while (hold && existsSync(hold)) await Bun.sleep(100);
+
+const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
+writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
+execFileSync('git', ['add', '.'], { cwd });
+execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count}`], { cwd });
+
+const answer = process.env.FAKE_CLAUDE_ANSWER
+  ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
+  : { status: 'done', summary: 'Added a change file and a test.', title: 'feat: do the thing', body: 'Adds the thing.' };
+const working = { type: 'assistant', message: { content: [{ type: 'text', text: 'Working on it.' }, { type: 'tool_use', name: 'Bash', input: { command: 'git commit' } }] } };
+
+if (headless) {
+  console.log(JSON.stringify(working));
+  console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, total_cost_usd: 0.01, result: JSON.stringify(answer), structured_output: answer }));
+  if (process.env.FAKE_CLAUDE_WOKEN_AFTER) {
+    console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'The background check finished; all done.' }] } }));
+    console.log(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, total_cost_usd: 0.01, result: 'The background check finished; all done.' }));
+  }
+  process.exit(0);
+}
+
+appendFileSync(transcript, `${JSON.stringify(working)}\n`);
+const answerFile = /write your final answer to `([^`]+)`/.exec(prompt)?.[1];
+const settings = JSON.parse(readFileSync(flag('--settings')!, 'utf8'));
+const hook: string = settings.hooks.Stop[0].hooks[0].command;
+const skipOnce = process.env.FAKE_CLAUDE_SKIP_ANSWER_ONCE;
+
+const writeAnswer = () => {
+  if (process.env.FAKE_CLAUDE_NEVER_ANSWER || !answerFile) return;
+  writeFileSync(answerFile, JSON.stringify(answer));
+};
+
+if (skipOnce && existsSync(skipOnce)) rmSync(skipOnce);
+else writeAnswer();
+
+// Each stop runs the hook; a block is the next instruction.
+for (let active = false; ; active = true) {
+  const payload = JSON.stringify({ session_id: sessionId, transcript_path: transcript, cwd, hook_event_name: 'Stop', stop_hook_active: active });
+  const ran = spawnSync('/bin/sh', ['-c', hook], { input: payload, encoding: 'utf8' });
+  if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, `stop-hook ${sessionId} ${ran.stdout.includes('"block"') ? 'block' : 'allow'}\n`);
+  if (!ran.stdout.includes('"block"')) break;
+  appendFileSync(transcript, `${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Writing the answer file.' }] } })}\n`);
+  writeAnswer();
+}
+
+// Idle at the prompt, as a real session is, until its terminal closes; never forever.
+await Bun.sleep(5 * 60_000);

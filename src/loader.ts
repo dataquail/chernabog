@@ -1,0 +1,115 @@
+// Loads flows and steps, TypeScript modules in a repo's .chernabog/, into this
+// process. Their imports of `effect`, any `effect/*` subpath and
+// `@chernabog/sdk` resolve to the copies bundled in the binary, so there is
+// always one `effect` version and the binary chooses it, for packages in
+// node_modules that import it too. Other npm dependencies resolve from
+// .chernabog/node_modules, installed from .chernabog/package.json.
+
+import * as Sdk from '@chernabog/sdk';
+import * as Arr from 'effect/Array';
+import * as Effect from 'effect/Effect';
+import * as FileSystem from 'effect/FileSystem';
+import * as Option from 'effect/Option';
+import * as Order from 'effect/Order';
+import * as Predicate from 'effect/Predicate';
+import * as Schema from 'effect/Schema';
+
+import { effectModules, effectRoot } from './effect-modules.ts';
+
+export class LoadError extends Schema.TaggedError<LoadError, { readonly brand: 'LoadError' }>()('LoadError', {
+  path: Schema.String,
+  message: Schema.String,
+}) {}
+
+// Registered once, when this module is first imported, before any flow is.
+Bun.plugin({
+  name: 'chernabog-bundled-modules',
+  setup(build) {
+    build.module('effect', () => ({ exports: { ...effectRoot }, loader: 'object' }));
+
+    for (const [specifier, module] of Object.entries(effectModules)) build.module(specifier, () => ({ exports: { ...module }, loader: 'object' }));
+
+    build.module('@chernabog/sdk', () => ({ exports: { ...Sdk }, loader: 'object' }));
+  },
+});
+
+// What a flow module must export; its effects and functions are checked by shape, as code can only be.
+const FlowDefinition = Schema.declare(
+  (module): module is Sdk.Flow =>
+    Predicate.hasProperty(module, 'trigger') && Predicate.hasProperty(module, 'workflow') && Effect.isEffect(module.trigger) && Predicate.isFunction(module.workflow),
+  { title: 'defineFlow({ trigger, workflow })' },
+);
+
+const StageDefinition = Schema.declare(
+  (module): module is Sdk.Stage<unknown, unknown, unknown> =>
+    Predicate.hasProperty(module, 'input') &&
+    Predicate.hasProperty(module, 'output') &&
+    Predicate.hasProperty(module, 'run') &&
+    Schema.isSchema(module.input) &&
+    Schema.isSchema(module.output) &&
+    Predicate.isFunction(module.run),
+  { title: 'defineStage({ input, output, run })' },
+);
+
+// A repo's flow or step, imported from its path. Its exports are checked before use.
+const importRepoModule = (path: string) => import(path);
+
+const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: string) =>
+  Effect.tryPromise({
+    try: () => importRepoModule(path),
+    catch: (error) => new LoadError({ path, message: Sdk.describeError(error) }),
+  }).pipe(
+    Effect.flatMap((module) => Schema.decodeUnknownEffect(Schema.Struct({ default: definition }))(module)),
+    Effect.map((module) => module.default),
+    Effect.mapError((error) => {
+      if (Schema.is(LoadError)(error)) return error;
+
+      return new LoadError({ path, message: `${what} must be the module's default export` });
+    }),
+  );
+
+const MODULE_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs'];
+
+const flowName = (file: string) => Arr.findFirst(MODULE_EXTENSIONS, (extension) => file.endsWith(extension)).pipe(Option.map((extension) => file.slice(0, -extension.length)));
+
+// Every flow in <configDir>/flows/, by file name.
+export const loadFlows = (configDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = `${configDir}/flows`;
+    const flows = new Map<string, Sdk.Flow>();
+
+    if (!(yield* fs.exists(directory))) return flows;
+
+    for (const file of Arr.sort(yield* fs.readDirectory(directory), Order.String)) {
+      const name = flowName(file);
+
+      if (Option.isSome(name) && !file.endsWith('.d.ts') && !file.includes('.test.')) {
+        flows.set(name.value, yield* importDefault(`${directory}/${file}`, FlowDefinition, 'defineFlow({ trigger, workflow })'));
+      }
+    }
+
+    return flows;
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new LoadError({ path: configDir, message: error.message }))));
+
+export type StageModule = { readonly kind: 'effect' | 'shell'; readonly path: string };
+
+// A step is <name>.ts (an Effect step) or an executable <name> (a shell step).
+export const findStage = (configDir: string, name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    for (const extension of MODULE_EXTENSIONS) {
+      const path = `${configDir}/stages/${name}${extension}`;
+
+      if (yield* fs.exists(path)) return Option.some<StageModule>({ kind: 'effect', path });
+    }
+
+    const path = `${configDir}/stages/${name}`;
+
+    if (yield* fs.exists(path)) return Option.some<StageModule>({ kind: 'shell', path });
+
+    return Option.none<StageModule>();
+  }).pipe(Effect.orElseSucceed(() => Option.none<StageModule>()));
+
+export const loadStage = (path: string) => importDefault(path, StageDefinition, 'defineStage({ input, output, run })');

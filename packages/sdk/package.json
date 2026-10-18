@@ -1,0 +1,14 @@
+{
+  "name": "@chernabog/sdk",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Services and helpers for writing Chernabog flows and steps",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "effect": "4.0.5"
+  }
+}

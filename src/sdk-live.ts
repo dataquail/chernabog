@@ -1,0 +1,417 @@
+// Chernabog's implementations of the SDK services, for one repo.
+
+import {
+  type Comment,
+  Git,
+  GitError,
+  GitHub,
+  GitHubError,
+  type Issue,
+  type PullRequest,
+  Repo,
+  type RepoSettings,
+  type ReviewNote,
+  Usage,
+  Worktree,
+} from '@chernabog/sdk';
+import * as Effect from 'effect/Effect';
+import * as FileSystem from 'effect/FileSystem';
+import * as Layer from 'effect/Layer';
+import * as Option from 'effect/Option';
+import * as Schema from 'effect/Schema';
+
+import { readCiState } from './ci.ts';
+import { checkCodexAccount, codexUsageGate } from './codex-usage.ts';
+import { Home, homePaths } from './config.ts';
+import { Exec, execOk } from './Exec.ts';
+import { decodeBody, GitHubApi, githubGetAllPages, githubGraphql, githubJson, githubRequest, githubSend } from './GitHubApi.ts';
+import { eligibleIssuesFrom, interpretCreateRefResponse, LabelledIssueNode, moveIssueToStatus, orderClaimCandidates } from './issues.ts';
+import { checkAccount, type GateConfig, runUsageGate } from './usage-gate.ts';
+
+const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+const QUEUED_ISSUES_QUERY = `
+  query ($search: String!) {
+    search(query: $search, type: ISSUE, first: 100) {
+      nodes {
+        ... on Issue {
+          number
+          title
+          body
+          url
+          createdAt
+          labels(first: 50) { nodes { name } }
+          projectItems(first: 10) {
+            nodes {
+              project { number }
+              status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+// What GitHub's REST API sends, as far as Chernabog reads it.
+const Named = Schema.Struct({ name: Schema.String });
+const User = Schema.OptionFromNullOr(Schema.Struct({ login: Schema.String }));
+const Text = Schema.OptionFromNullOr(Schema.String);
+
+export const RestIssue = Schema.Struct({ number: Schema.Finite, title: Schema.String, body: Text, html_url: Schema.String, created_at: Schema.String, labels: Schema.Array(Named) });
+
+export const RestPullRequest = Schema.Struct({
+  number: Schema.Finite,
+  title: Schema.String,
+  body: Text,
+  html_url: Schema.String,
+  state: Schema.String,
+  merged_at: Text,
+  head: Schema.Struct({ ref: Schema.String, sha: Schema.String }),
+  base: Schema.Struct({ ref: Schema.String }),
+  labels: Schema.Array(Named),
+  user: User,
+});
+
+const RestComment = Schema.Struct({ id: Schema.Finite, user: User, body: Text, created_at: Schema.String, author_association: Schema.String });
+
+const RestReview = Schema.Struct({ id: Schema.Finite, user: User, body: Text, submitted_at: Text, author_association: Schema.String });
+
+const RestLineComment = Schema.Struct({
+  ...RestComment.fields,
+  path: Schema.String,
+  line: Schema.OptionFromNullOr(Schema.Finite),
+  original_line: Schema.OptionFromNullOr(Schema.Finite),
+});
+
+const RestFile = Schema.Struct({ filename: Schema.String });
+const RestRef = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const RestUser = Schema.Struct({ login: Schema.String });
+
+const login = (user: typeof User.Type) => Option.match(user, { onNone: () => '', onSome: (found) => found.login });
+const text = (value: Option.Option<string>) => Option.getOrElse(value, () => '');
+
+export const toIssue = (raw: typeof RestIssue.Type): Issue => ({
+  number: raw.number,
+  title: raw.title,
+  body: text(raw.body),
+  url: raw.html_url,
+  createdAt: raw.created_at,
+  labels: raw.labels.map((label) => label.name),
+});
+
+const fromNode = (node: LabelledIssueNode): Issue => ({
+  number: node.number,
+  title: node.title,
+  body: text(node.body),
+  url: node.url,
+  createdAt: node.createdAt,
+  labels: node.labels.nodes.map((label) => label.name),
+});
+
+const stateOf = (raw: typeof RestPullRequest.Type): PullRequest['state'] => {
+  if (Option.isSome(raw.merged_at)) return 'merged';
+
+  if (raw.state === 'closed') return 'closed';
+
+  return 'open';
+};
+
+export const toPullRequest = (raw: typeof RestPullRequest.Type): PullRequest => ({
+  number: raw.number,
+  title: raw.title,
+  body: text(raw.body),
+  url: raw.html_url,
+  state: stateOf(raw),
+  headRef: raw.head.ref,
+  headSha: raw.head.sha,
+  baseRef: raw.base.ref,
+  labels: raw.labels.map((label) => label.name),
+  author: login(raw.user),
+});
+
+const toComment = (raw: typeof RestComment.Type): Comment => ({
+  id: raw.id,
+  author: login(raw.user),
+  body: text(raw.body),
+  createdAt: raw.created_at,
+  trusted: TRUSTED_ASSOCIATIONS.has(raw.author_association),
+});
+
+const SearchResult = Schema.Struct({ search: Schema.Struct({ nodes: Schema.Array(Schema.Union([LabelledIssueNode, Schema.Struct({})])) }) });
+
+const isIssueNode = Schema.is(LabelledIssueNode);
+
+const Comments = Schema.Array(RestComment);
+const PullRequests = Schema.Array(RestPullRequest);
+const identity = <A>(page: A) => page;
+
+export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, GitHubApi> =>
+  Layer.effect(
+    GitHub,
+    Effect.gen(function* () {
+      const api = yield* GitHubApi;
+      const provide = <A, E>(effect: Effect.Effect<A, E, GitHubApi>) => Effect.provideService(effect, GitHubApi, api);
+      const repo = settings.slug;
+      const [owner = ''] = repo.split('/');
+      const path = (rest: string) => `/repos/${repo}${rest}`;
+
+      const queuedIssues = provide(
+        githubGraphql(QUEUED_ISSUES_QUERY, { search: `repo:${repo} is:issue is:open label:"${settings.labels.eligible}"` }, SearchResult).pipe(
+          Effect.map((data) => orderClaimCandidates(eligibleIssuesFrom(data.search.nodes.filter(isIssueNode), settings.board)).map(fromNode)),
+        ),
+      );
+
+      const comments = (number: number) => provide(githubGetAllPages(path(`/issues/${number}/comments?per_page=100`), Comments, identity).pipe(Effect.map((raw) => raw.map(toComment))));
+
+      // Removing a label the item does not carry is not an error.
+      const removeLabel = (number: number, label: string) =>
+        provide(
+          githubRequest('DELETE', path(`/issues/${number}/labels/${encodeURIComponent(label)}`)).pipe(
+            Effect.filterOrFail(
+              (response) => response.status < 300 || response.status === 404,
+              (response) => new GitHubError({ message: `removing ${label} from #${number} returned HTTP ${response.status}` }),
+            ),
+            Effect.asVoid,
+          ),
+        );
+
+      const self = provide(githubJson('GET', '/user', RestUser).pipe(Effect.map((user) => user.login)));
+
+      const branchSha = (branch: string) =>
+        provide(
+          Effect.gen(function* () {
+            const response = yield* githubRequest('GET', path(`/git/ref/heads/${branch}`));
+
+            if (response.status === 404) return Option.none<string>();
+
+            if (response.status !== 200) return yield* new GitHubError({ message: `reading ${branch} returned HTTP ${response.status}` });
+
+            const ref = yield* decodeBody(RestRef, `reading ${branch}`)(response.body);
+
+            return Option.some(ref.object.sha);
+          }),
+        );
+
+      const createBranch = (branch: string, sha: string) =>
+        provide(
+          githubRequest('POST', path('/git/refs'), Option.some({ ref: `refs/heads/${branch}`, sha })).pipe(
+            Effect.flatMap((response) =>
+              Effect.fromResult(interpretCreateRefResponse(response.status, response.body)).pipe(Effect.mapError((message) => new GitHubError({ message }))),
+            ),
+          ),
+        );
+
+      const deleteBranch = (branch: string) =>
+        provide(
+          githubRequest('DELETE', path(`/git/refs/heads/${branch}`)).pipe(
+            Effect.filterOrFail(
+              (response) => response.status < 300 || response.status === 404 || response.status === 422,
+              (response) => new GitHubError({ message: `deleting ${branch} returned HTTP ${response.status}` }),
+            ),
+            Effect.asVoid,
+          ),
+        );
+
+      const reviewComments = (pullRequest: number) =>
+        provide(
+          Effect.gen(function* () {
+            const reviews = yield* githubGetAllPages(path(`/pulls/${pullRequest}/reviews?per_page=100`), Schema.Array(RestReview), identity);
+            const lines = yield* githubGetAllPages(path(`/pulls/${pullRequest}/comments?per_page=100`), Schema.Array(RestLineComment), identity);
+
+            const summaries = reviews.flatMap((review): ReadonlyArray<ReviewNote> => {
+              if (text(review.body).length === 0) return [];
+
+              return [{ ...toComment({ ...review, created_at: text(review.submitted_at) }), location: Option.none() }];
+            });
+
+            const onLines = lines.map(
+              (line): ReviewNote => ({
+                ...toComment(line),
+                location: Option.some({ path: line.path, line: Option.getOrElse(Option.orElse(line.line, () => line.original_line), () => 0) }),
+              }),
+            );
+
+            return [...summaries, ...onLines];
+          }),
+        );
+
+      const review = (pullRequest: number, posted: { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<{ readonly path: string; readonly line: number; readonly body: string }> }) =>
+        provide(
+          Effect.gen(function* () {
+            const inline = posted.comments.map((comment) => ({ path: comment.path, line: comment.line, side: 'RIGHT', body: comment.body }));
+            const response = yield* githubRequest('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event: 'COMMENT', body: posted.body, commit_id: posted.commitSha, comments: inline }));
+
+            if (response.status < 300) return;
+
+            // A comment on a line outside the diff fails the whole review; fold them into the body instead.
+            let folded = posted.body;
+
+            if (posted.comments.length > 0) folded = `${posted.body}\n\n${posted.comments.map((comment) => `- \`${comment.path}:${comment.line}\`: ${comment.body}`).join('\n')}`;
+
+            yield* githubSend('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event: 'COMMENT', body: folded, commit_id: posted.commitSha }));
+          }),
+        );
+
+      return GitHub.of({
+        queuedIssues,
+        oldestQueued: queuedIssues.pipe(Effect.map((issues) => Option.map(Option.fromUndefinedOr(issues[0]), (issue) => issue.number))),
+        issue: (number) => provide(githubJson('GET', path(`/issues/${number}`), RestIssue).pipe(Effect.map(toIssue))),
+        comments,
+        trustedComments: (number) => comments(number).pipe(Effect.map((all) => all.filter((comment) => comment.trusted))),
+        comment: (number, body) => provide(githubSend('POST', path(`/issues/${number}/comments`), Option.some({ body })).pipe(Effect.asVoid)),
+        addLabel: (number, label) => provide(githubSend('POST', path(`/issues/${number}/labels`), Option.some({ labels: [label] })).pipe(Effect.asVoid)),
+        removeLabel,
+        moveToStatus: (number, status) =>
+          Option.match(settings.board, { onNone: () => Effect.void, onSome: (board) => provide(moveIssueToStatus(repo, number, board, status)) }),
+        assignSelf: (number) => self.pipe(Effect.flatMap((user) => provide(githubSend('POST', path(`/issues/${number}/assignees`), Option.some({ assignees: [user] })))), Effect.asVoid),
+        login: self,
+        branchSha,
+        createBranch,
+        deleteBranch,
+        pullRequest: (number) => provide(githubJson('GET', path(`/pulls/${number}`), RestPullRequest).pipe(Effect.map(toPullRequest))),
+        pullRequestForBranch: (branch) =>
+          provide(
+            githubJson('GET', path(`/pulls?head=${owner}:${encodeURIComponent(branch)}&state=all&per_page=5`), PullRequests).pipe(
+              Effect.map((pulls) => Option.map(Option.fromUndefinedOr(pulls[0]), toPullRequest)),
+            ),
+          ),
+        pullRequestsLabelled: (label) =>
+          provide(githubGetAllPages(path('/pulls?state=open&per_page=100'), PullRequests, identity).pipe(Effect.map((pulls) => pulls.map(toPullRequest).filter((pull) => pull.labels.includes(label))))),
+        openPullRequest: (pullRequest) =>
+          provide(githubJson('POST', path('/pulls'), RestPullRequest, Option.some({ head: pullRequest.head, base: pullRequest.base, title: pullRequest.title, body: pullRequest.body })).pipe(Effect.map(toPullRequest))),
+        ciState: (pullRequest) => provide(readCiState(repo, pullRequest)),
+        pullRequestFiles: (pullRequest) =>
+          provide(githubGetAllPages(path(`/pulls/${pullRequest}/files?per_page=100`), Schema.Array(RestFile), identity).pipe(Effect.map((files) => files.map((file) => file.filename)))),
+        closedPullRequestsLabelled: (label) =>
+          provide(
+            githubJson('GET', path('/pulls?state=closed&sort=updated&direction=desc&per_page=30'), PullRequests).pipe(
+              Effect.map((pulls) => pulls.map(toPullRequest).filter((pull) => pull.labels.includes(label))),
+            ),
+          ),
+        review,
+        reviewComments,
+        request: (method, requestPath, body) => provide(githubJson(method, requestPath, Schema.Json, body)),
+      });
+    }),
+  );
+
+const gitError = (error: { readonly message: string }) => new GitError({ message: error.message });
+
+export const GitLive: Layer.Layer<Git, never, Exec> = Layer.effect(
+  Git,
+  Effect.gen(function* () {
+    const exec = yield* Exec;
+    const run = (args: ReadonlyArray<string>, cwd: string) => execOk('git', args, { cwd }).pipe(Effect.provideService(Exec, exec), Effect.mapError(gitError));
+    const fetchBase = (cwd: string, base: string) => run(['fetch', '--quiet', 'origin', base], cwd);
+
+    return Git.of({
+      run,
+      headSha: (cwd) => run(['rev-parse', 'HEAD'], cwd).pipe(Effect.map((sha) => sha.trim())),
+      commitsAhead: (cwd, base) =>
+        fetchBase(cwd, base).pipe(
+          Effect.andThen(run(['rev-list', '--count', `origin/${base}..HEAD`], cwd)),
+          Effect.map((count) => Number(count.trim())),
+        ),
+      changedFiles: (cwd, base) =>
+        fetchBase(cwd, base).pipe(
+          Effect.andThen(run(['diff', '--name-only', `origin/${base}...HEAD`], cwd)),
+          Effect.map((output) => output.split('\n').filter((line) => line.length > 0)),
+        ),
+      // Only ever the run's own branch, so a lease is enough to never overwrite someone's push.
+      push: (cwd, branch) => run(['push', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`], cwd).pipe(Effect.asVoid),
+      pull: (cwd, branch) => run(['pull', '--ff-only', '--quiet', 'origin', branch], cwd).pipe(Effect.asVoid),
+    });
+  }),
+);
+
+export const WorktreeLive = (settings: RepoSettings): Layer.Layer<Worktree, never, Exec | FileSystem.FileSystem | Home> =>
+  Layer.effect(
+    Worktree,
+    Effect.gen(function* () {
+      const exec = yield* Exec;
+      const fs = yield* FileSystem.FileSystem;
+      const root = homePaths((yield* Home).root).worktrees(settings.name);
+      const git = (args: ReadonlyArray<string>, cwd = settings.path) => execOk('git', args, { cwd }).pipe(Effect.provideService(Exec, exec), Effect.mapError(gitError));
+      const pathFor = (branch: string) => `${root}/${branch.replace(/[^\w.-]+/g, '-')}`;
+      const exists = (path: string) => fs.exists(path).pipe(Effect.mapError(gitError));
+      const makeRoot = fs.makeDirectory(root, { recursive: true }).pipe(Effect.mapError(gitError));
+
+      const ensure = (branch: string) =>
+        Effect.gen(function* () {
+          const path = pathFor(branch);
+
+          if (yield* exists(`${path}/.git`)) return path;
+
+          yield* makeRoot;
+          yield* git(['worktree', 'prune']);
+          const remote = yield* exec.run('git', ['fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`], { cwd: settings.path }).pipe(Effect.mapError(gitError));
+
+          if (remote.exitCode === 0) {
+            yield* git(['worktree', 'add', '--force', '-B', branch, path, `origin/${branch}`]);
+            yield* git(['branch', '--set-upstream-to', `origin/${branch}`, branch], path);
+          } else {
+            yield* git(['fetch', '--quiet', 'origin', settings.baseBranch]);
+            yield* git(['worktree', 'add', '--force', '-B', branch, path, `origin/${settings.baseBranch}`]);
+          }
+
+          return path;
+        });
+
+      const checkout = (name: string, ref: string) =>
+        Effect.gen(function* () {
+          const path = pathFor(name);
+          const branch = ref.replace(/^origin\//, '');
+          yield* git(['fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`]).pipe(Effect.catch(() => git(['fetch', '--quiet', 'origin'])));
+
+          if (yield* exists(`${path}/.git`)) {
+            yield* git(['checkout', '--quiet', '--detach', ref], path);
+            yield* git(['reset', '--quiet', '--hard', ref], path);
+            yield* git(['clean', '-fdq'], path);
+          } else {
+            yield* makeRoot;
+            yield* git(['worktree', 'prune']);
+            yield* git(['worktree', 'add', '--force', '--detach', path, ref]);
+          }
+
+          return path;
+        });
+
+      const remove = (branch: string) =>
+        Effect.gen(function* () {
+          const path = pathFor(branch);
+
+          if (yield* exists(path)) yield* git(['worktree', 'remove', '--force', path]);
+
+          yield* exec.run('git', ['branch', '-D', branch], { cwd: settings.path }).pipe(Effect.ignore);
+        });
+
+      return Worktree.of({ pathFor, ensure, checkout, remove });
+    }),
+  );
+
+// The usage gate and account check for whichever agent the repo implements with.
+export const UsageLive = (settings: RepoSettings, gate: GateConfig) =>
+  Layer.effect(
+    Usage,
+    Effect.gen(function* () {
+      const services = yield* Effect.context<Effect.Services<ReturnType<typeof runUsageGate>> | Effect.Services<ReturnType<typeof checkCodexAccount>> | Effect.Services<ReturnType<typeof codexUsageGate>>>();
+
+      const provide = <A, E>(effect: Effect.Effect<A, E, Effect.Services<ReturnType<typeof runUsageGate>> | Effect.Services<ReturnType<typeof checkCodexAccount>> | Effect.Services<ReturnType<typeof codexUsageGate>>>) =>
+        Effect.provide(effect, services);
+
+      if (settings.agent === 'claude') {
+        const refresh = { launcher: settings.launcher, cwd: settings.path };
+
+        return Usage.of({ gate: provide(runUsageGate(settings.account, gate, refresh)), checkAccount: provide(checkAccount(settings.account)) });
+      }
+
+      if (settings.agent === 'codex') return Usage.of({ gate: provide(codexUsageGate(settings.account, gate)), checkAccount: provide(checkCodexAccount(settings.account)) });
+
+      return Usage.of({
+        gate: Effect.succeed({ launch: true, reason: `${settings.agent} reports no usage to gate on` }),
+        checkAccount: Effect.succeed(`${settings.agent}: not checked`),
+      });
+    }),
+  );
+
+export const RepoLive = (settings: RepoSettings) => Layer.succeed(Repo, settings);

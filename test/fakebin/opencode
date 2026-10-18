@@ -1,0 +1,21 @@
+#!/usr/bin/env bun
+// Stands in for `opencode run --format json`, with the event shapes the real CLI prints.
+import { appendFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const args = process.argv.slice(2);
+const session = args.includes('--session') ? args[args.indexOf('--session') + 1] : `ses_${Math.random().toString(36).slice(2)}`;
+const prompt = args.at(-1) ?? '';
+const cwd = process.cwd();
+if (process.env.FAKE_OPENCODE_LOG) appendFileSync(process.env.FAKE_OPENCODE_LOG, `${args.includes('--session') ? 'resume' : 'start'} ${session} ${prompt.includes('## Answer format') ? 'with-format' : 'plain'}\n`);
+const event = (type: string, part: object) => console.log(JSON.stringify({ type, timestamp: Date.now(), sessionID: session, part: { sessionID: session, messageID: 'msg_1', ...part } }));
+event('step_start', { type: 'step-start' });
+const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
+writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
+execFileSync('git', ['add', '.'], { cwd });
+execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count} by opencode`], { cwd });
+event('text', { type: 'text', text: 'Done. Here is my answer:\n' });
+event('text', { type: 'text', text: JSON.stringify({ status: 'done', summary: 'opencode added a change file.', title: 'feat: opencode', body: 'Adds it.' }) });
+event('step_finish', { type: 'step-finish', reason: 'stop' });

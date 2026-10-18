@@ -1,0 +1,18 @@
+{
+  "five_hour": {
+    "utilization": 1,
+    "resets_at": "2026-10-15T21:09:59.566738+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+  },
+  "seven_day": {
+    "utilization": 2,
+    "resets_at": "2026-10-18T19:59:59.566764+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+  }
+}

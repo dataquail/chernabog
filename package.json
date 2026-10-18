@@ -1,0 +1,41 @@
+{
+  "name": "chernabog",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "check": "tsc --noEmit",
+    "build": "bun build --compile src/main.ts --outfile dist/chernabog",
+    "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
+    "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",
+    "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",
+    "prepare": "effect-tsgo patch --oxlint",
+    "gen:templates": "bun scripts/gen-templates.ts"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.5",
+    "@effect/sql-sqlite-bun": "4.0.5",
+    "@opentui/core": "0.6.6",
+    "@chernabog/sdk": "workspace:*",
+    "effect": "4.0.5",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.53.0",
+    "@oxlint/plugins": "1.88.0",
+    "@types/bun": "^1.3.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "effect-bun-test": "0.4.0",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "eslint-plugin-sort-destructure-keys": "^3.0.0",
+    "oxlint": "1.88.0",
+    "oxlint-plugin-effect": "0.28.1",
+    "oxlint-tsgolint": "7.0.2004",
+    "read-package-up": "^12.0.0",
+    "typescript": "^5.9.3"
+  }
+}

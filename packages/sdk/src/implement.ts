@@ -1,0 +1,501 @@
+// The building blocks of the default `implement` flow: find a queued issue,
+// claim it, prepare a worktree, let the agent implement it, run the local gate,
+// open the pull request, wait for CI and hand off for review. Each block is an
+// activity, so a flow can reorder them, leave one out, or put its own step
+// from .chernabog/stages/ in between.
+
+import { createHash } from 'node:crypto';
+
+import * as DateTime from 'effect/DateTime';
+import * as Duration from 'effect/Duration';
+import * as Effect from 'effect/Effect';
+import * as Option from 'effect/Option';
+import * as ChildProcess from 'effect/process/ChildProcess';
+import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
+import * as Schema from 'effect/Schema';
+import * as Stream from 'effect/Stream';
+
+import { NeedsHuman, Skip, StepFailed } from './errors.ts';
+import { activity, sleep } from './flow.ts';
+import type { Json } from './json.ts';
+import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from './markers.ts';
+import { pathsMatching } from './paths.ts';
+import { renderPrompt } from './prompt.ts';
+import { Agent, type AgentResult, Git, GitHub, type Issue, Repo, Run, RunLog, Usage, type WorkItem, Worktree } from './services.ts';
+
+export const branchFor = (issue: number) => `auto/issue-${issue}`;
+
+export const IssueItem = Schema.Struct({ issue: Schema.Finite });
+
+export const issueItem = (issue: Issue): WorkItem => ({
+  key: `issue-${issue.number}`,
+  title: issue.title,
+  url: issue.url,
+  data: { issue: issue.number },
+});
+
+// The issue number a work item from `trigger` carries.
+export const issueOf = (item: WorkItem) =>
+  Schema.decodeUnknownEffect(IssueItem)(item.data).pipe(
+    Effect.map((data) => data.issue),
+    Effect.mapError((issue) => new StepFailed({ step: 'work item', message: `${item.key} is not an issue: ${issue.message}` })),
+  );
+
+// A stable session id per run and purpose, so a rerun after a crash resumes
+// the agent's session instead of starting over.
+export const sessionIdFor = (runId: string, purpose: string) => {
+  const hex = createHash('sha256').update(`${runId}/${purpose}`).digest('hex');
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+// Issues labelled eligible, oldest first.
+export const trigger = GitHub.use((github) => github.queuedIssues).pipe(Effect.map((issues) => issues.map(issueItem)));
+
+// The account is the one machine config expects, and it has room for a task.
+export const gate = Effect.gen(function* () {
+  const usage = yield* Usage;
+  yield* usage.checkAccount;
+  const decision = yield* usage.gate;
+
+  if (!decision.launch) return yield* new Skip({ reason: `usage gate: ${decision.reason}` });
+});
+
+// Issues are often public, so the comment says nothing about the machine: no
+// hostname, and no worktree path with the user's home in it.
+export const claimComment = (claim: ClaimMarker) =>
+  [
+    `Claimed by Chernabog at ${claim.claimedAt}, on branch \`${claim.branch}\`.`,
+    '',
+    `- Run: \`${claim.runId}\``,
+    '',
+    claimMarker.write(claim),
+  ].join('\n');
+
+// Whether the claim on an existing branch is this run's. No marker at all means
+// this run crashed between creating the branch and commenting, while the issue
+// still says it is queued.
+const holdsClaim = (issue: number, runId: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const repo = yield* Repo;
+
+    const latest = latestMarker(
+      claimMarker.read,
+      (yield* github.comments(issue)).map((comment) => comment.body),
+    );
+
+    if (Option.isSome(latest)) return { ours: latest.value.runId === runId, commented: true };
+
+    return { ours: (yield* github.issue(issue)).labels.includes(repo.labels.eligible), commented: false };
+  });
+
+// Creates the issue's branch, which only one run can do, then labels, assigns
+// and comments as a person picking it up would. Safe to repeat: a run that
+// already holds the claim keeps it.
+export const claim = (issue: number) =>
+  activity(
+    'claim',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const run = yield* Run;
+      const branch = branchFor(issue);
+      const baseSha = yield* github.branchSha(repo.baseBranch);
+
+      if (Option.isNone(baseSha)) return yield* new StepFailed({ step: 'claim', message: `base branch ${repo.baseBranch} not found` });
+
+      if ((yield* github.createBranch(branch, baseSha.value)) === 'already-exists') {
+        const held = yield* holdsClaim(issue, run.runId);
+
+        if (!held.ours) return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
+
+        if (held.commented) return { branch };
+      }
+
+      yield* github.addLabel(issue, repo.labels.inProgress);
+      yield* github.removeLabel(issue, repo.labels.eligible);
+
+      if (Option.isSome(repo.board)) yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
+
+      yield* github.assignSelf(issue);
+      const claimedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* github.comment(issue, claimComment({ runId: run.runId, claimedAt, branch }));
+
+      return { branch };
+    }),
+    Schema.Struct({ branch: Schema.String }),
+  );
+
+// Runs a repo command, such as the install or a local gate check, and keeps
+// what it printed, stdout and stderr interleaved.
+export const shell = (command: string, cwd: string, env: Readonly<Record<string, string>>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(ChildProcess.make('sh', ['-c', command], { cwd, env: { ...env, CI: '1' }, extendEnv: true, forceKillAfter: '5 seconds' }));
+    const [output, exitCode] = yield* Effect.all([Stream.mkString(Stream.decodeText(handle.all)), handle.exitCode], { concurrency: 'unbounded' });
+
+    return { exitCode: Number(exitCode), output };
+  }).pipe(
+    Effect.scoped,
+    Effect.mapError((error) => new StepFailed({ step: command, message: error.message })),
+  );
+
+const tail = (text: string, lines = 80) => text.trimEnd().split('\n').slice(-lines).join('\n');
+
+// The worktree for the claim branch, with dependencies installed.
+export const prepareWorktree = (branch: string) =>
+  activity(
+    'prepare-worktree',
+    Effect.gen(function* () {
+      const repo = yield* Repo;
+      const path = yield* (yield* Worktree).ensure(branch);
+
+      if (Option.isSome(repo.install)) {
+        const installed = yield* shell(repo.install.value, path, repo.env);
+
+        if (installed.exitCode !== 0) return yield* new StepFailed({ step: 'install', message: tail(installed.output, 30) });
+      }
+
+      return path;
+    }),
+    Schema.String,
+  );
+
+export const ImplementOutcome = Schema.Struct({
+  status: Schema.Literals(['done', 'needs-clarification']),
+  summary: Schema.String,
+  title: Schema.String,
+  body: Schema.String,
+  questions: Schema.optionalKey(Schema.String),
+});
+
+export type ImplementOutcome = typeof ImplementOutcome.Type;
+
+export const implementOutcomeJsonSchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['done', 'needs-clarification'] },
+    summary: { type: 'string', description: 'What changed and how it was tested, for the issue comment' },
+    title: { type: 'string', description: 'The pull request title, following the repo commit convention' },
+    body: { type: 'string', description: 'The pull request body in Markdown, without the Closes line' },
+    questions: { type: 'string', description: 'For needs-clarification: numbered questions, each led by a recommendation' },
+  },
+  required: ['status', 'summary', 'title', 'body'],
+  additionalProperties: false,
+} satisfies Json;
+
+const RESUME_PROMPT = 'You were interrupted. Continue the task from where you left off, then give your final answer in the required format.';
+
+const decodeOutcome = (result: AgentResult) =>
+  Schema.decodeUnknownEffect(ImplementOutcome)(result.output).pipe(Effect.mapError((issue) => new StepFailed({ step: 'agent', message: `agent answer: ${issue.message}` })));
+
+// The agent implements the issue in the worktree and commits, from
+// .chernabog/prompts/implement.md. It answers done, with the pull request's
+// title and body, or needs-clarification, with its questions.
+export const implementWithAgent = (issue: number, worktree: string) =>
+  activity(
+    'implement',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const run = yield* Run;
+      const details = yield* github.issue(issue);
+      const comments = yield* github.trustedComments(issue);
+
+      const prompt = yield* renderPrompt('implement', {
+        repo: repo.slug,
+        issue,
+        title: details.title,
+        body: details.body,
+        comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
+        branch: branchFor(issue),
+        base: repo.baseBranch,
+        localGate: repo.localGate.map((command) => `\`${command}\``),
+        humanOnly: repo.humanOnly,
+        notes: repo.notes,
+      });
+
+      const result = yield* (yield* Agent).run({
+        cwd: worktree,
+        prompt,
+        sessionId: sessionIdFor(run.runId, 'implement'),
+        resumePrompt: Option.some(RESUME_PROMPT),
+        outputSchema: Option.some(implementOutcomeJsonSchema),
+        adapter: Option.none(),
+      });
+
+      return yield* decodeOutcome(result);
+    }),
+    ImplementOutcome,
+  );
+
+// Which session a fix goes to: this run's implement session when none is given.
+export type AuthorSession = { readonly sessionId: Option.Option<string>; readonly adapter: Option.Option<string> };
+
+export const thisRunsSession: AuthorSession = { sessionId: Option.none(), adapter: Option.none() };
+
+// Sends the agent back into its session with a failure to fix.
+export const fixWithAgent = (name: string, worktree: string, prompt: string, session: AuthorSession) =>
+  activity(
+    name,
+    Effect.gen(function* () {
+      const run = yield* Run;
+
+      const result = yield* (yield* Agent).run({
+        cwd: worktree,
+        prompt,
+        sessionId: Option.getOrElse(session.sessionId, () => sessionIdFor(run.runId, 'implement')),
+        resumePrompt: Option.some(prompt),
+        outputSchema: Option.some(implementOutcomeJsonSchema),
+        adapter: session.adapter,
+      });
+
+      return yield* decodeOutcome(result);
+    }),
+    ImplementOutcome,
+  );
+
+const requeueHint = (board: Option.Option<{ readonly readyStatus: string }>) =>
+  Option.match(board, { onNone: () => 'apply', onSome: (found) => `set Status back to ${found.readyStatus} and apply` });
+
+// Posts the agent's questions, releases the claim and stops, as a person would
+// who needs an answer before going on.
+export const askForClarification = (issue: number, outcome: ImplementOutcome) =>
+  activity(
+    'needs-clarification',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const questions = outcome.questions ?? outcome.summary;
+      yield* github.comment(issue, [questions, '', `To requeue: answer the questions above, then ${requeueHint(repo.board)} \`${repo.labels.eligible}\` again.`].join('\n'));
+      yield* github.addLabel(issue, repo.labels.needsClarification);
+      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* github.deleteBranch(branchFor(issue));
+      yield* (yield* Worktree).remove(branchFor(issue));
+
+      return `#${issue} needs clarification`;
+    }),
+    Schema.String,
+  );
+
+const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.String });
+
+const runLocalGate = (worktree: string, round: number) =>
+  activity(
+    `local-gate-${round}`,
+    Effect.gen(function* () {
+      const repo = yield* Repo;
+      const log = yield* RunLog;
+
+      for (const command of repo.localGate) {
+        yield* log.log(`local gate: ${command}`);
+        const result = yield* shell(command, worktree, repo.env);
+
+        if (result.exitCode !== 0) return { ok: false, failure: `\`${command}\` exited ${result.exitCode}:\n\n${tail(result.output)}` };
+      }
+
+      return { ok: true, failure: '' };
+    }),
+    LocalGateResult,
+  );
+
+// Runs the repo's local gate, and sends the agent back to fix what fails, up to
+// limits.localGateRounds times.
+export const localGate = (worktree: string) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+
+    for (let round = 1; ; round++) {
+      const result = yield* runLocalGate(worktree, round);
+
+      if (result.ok) return;
+
+      if (round > repo.limits.localGateRounds) {
+        return yield* new NeedsHuman({ reason: `the local gate still fails after ${repo.limits.localGateRounds} fix attempts:\n\n${result.failure}` });
+      }
+
+      yield* fixWithAgent(`fix-local-gate-${round}`, worktree, `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`, thisRunsSession);
+    }
+  });
+
+// Checks the branch has commits, touches no human-only paths, and pushes it.
+export const push = (name: string, worktree: string, branch: string) =>
+  activity(
+    name,
+    Effect.gen(function* () {
+      const git = yield* Git;
+      const repo = yield* Repo;
+
+      if ((yield* git.commitsAhead(worktree, repo.baseBranch)) === 0) {
+        return yield* new NeedsHuman({ reason: `the agent finished without committing anything on ${branch}` });
+      }
+
+      const touched = pathsMatching(yield* git.changedFiles(worktree, repo.baseBranch), repo.humanOnlyPaths);
+
+      if (touched.length > 0) {
+        return yield* new NeedsHuman({ reason: `the change touches paths a person must handle: ${touched.map((path) => `\`${path}\``).join(', ')}` });
+      }
+
+      yield* git.push(worktree, branch);
+    }),
+  );
+
+export const PullRequestRef = Schema.Struct({ number: Schema.Finite, url: Schema.String });
+
+export type PullRequestRef = typeof PullRequestRef.Type;
+
+// Opens the pull request for the branch, or finds the one already open.
+export const openPullRequest = (issue: number, outcome: ImplementOutcome) =>
+  activity(
+    'open-pull-request',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const branch = branchFor(issue);
+      const existing = Option.filter(yield* github.pullRequestForBranch(branch), (pull) => pull.state === 'open');
+
+      if (Option.isSome(existing)) return { number: existing.value.number, url: existing.value.url };
+
+      const opened = yield* github.openPullRequest({
+        head: branch,
+        base: repo.baseBranch,
+        title: outcome.title,
+        body: `Closes #${issue}\n\n${outcome.body}\n\n---\nOpened by Chernabog for an unattended run. A person reviews and merges.`,
+      });
+
+      return { number: opened.number, url: opened.url };
+    }),
+    PullRequestRef,
+  );
+
+const CI_POLL = Duration.minutes(1);
+
+const CiReading = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('pending'), waitingOn: Schema.Array(Schema.String) }),
+  Schema.Struct({ state: Schema.Literal('green') }),
+  Schema.Struct({ state: Schema.Literal('red'), failedChecks: Schema.Array(Schema.String) }),
+]);
+
+type CiReading = typeof CiReading.Type;
+
+// Polls the pull request's checks durably until they stop pending, or a person is needed.
+const awaitChecks = (pullRequest: number, round: number) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+    const maxPolls = Math.max(1, Math.ceil(Duration.toMillis(repo.limits.ciTimeout) / Duration.toMillis(CI_POLL)));
+    let reading: CiReading = { state: 'pending', waitingOn: [] };
+
+    for (let poll = 1; reading.state === 'pending'; poll++) {
+      if (poll > maxPolls) {
+        return yield* new NeedsHuman({ reason: `CI on #${pullRequest} is still pending after ${Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout))}` });
+      }
+
+      if (poll > 1) yield* sleep(`ci-${round}-wait-${poll}`, CI_POLL);
+      reading = yield* activity(`ci-${round}-${poll}`, GitHub.use((github) => github.ciState(pullRequest)), CiReading);
+    }
+
+    return reading;
+  });
+
+export type CiBranch = AuthorSession & { readonly branch: string };
+
+// Waits durably for the pull request's checks. On red, the agent reads the
+// failure, fixes, commits, and the branch is pushed again, up to
+// limits.ciRounds times.
+export const waitForCi = (pullRequest: number, worktree: string, target: CiBranch) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+
+    for (let round = 1; ; round++) {
+      const reading = yield* awaitChecks(pullRequest, round);
+
+      if (reading.state !== 'red') return;
+
+      const failed = reading.failedChecks.join(', ');
+
+      if (round > repo.limits.ciRounds) return yield* new NeedsHuman({ reason: `CI is still red after ${repo.limits.ciRounds} fix attempts: ${failed}` });
+
+      yield* fixWithAgent(
+        `fix-ci-${round}`,
+        worktree,
+        [
+          `CI failed on pull request #${pullRequest}: ${failed}.`,
+          `Read why with \`gh run list --branch ${target.branch} --limit 5\` and \`gh run view <run id> --log-failed\`.`,
+          'Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again.',
+        ].join('\n'),
+        target,
+      );
+      yield* push(`push-ci-${round}`, worktree, target.branch);
+    }
+  });
+
+// Hands the green pull request to review: the review trigger if the repo has
+// one, the needs-review label, and a closing comment on the issue.
+export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: ImplementOutcome) =>
+  activity(
+    'hand-off',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const run = yield* Run;
+
+      if (Option.isSome(repo.reviewTrigger)) yield* github.comment(pullRequest.number, repo.reviewTrigger.value);
+
+      // The fix flow resumes this session to answer a review.
+      const session = { adapter: repo.agent, sessionId: sessionIdFor(run.runId, 'implement'), issue, branch: branchFor(issue) };
+      yield* github.comment(pullRequest.number, `Implemented by ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`);
+      yield* github.addLabel(pullRequest.number, repo.labels.needsReview);
+      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* github.comment(issue, `Pull request ready for review: ${pullRequest.url}\n\n${outcome.summary}`);
+
+      return `#${issue}: ${pullRequest.url} is ready for review`;
+    }),
+    Schema.String,
+  );
+
+// Labels the work item for a person and says why. No flow picks it up again.
+export const handToHuman = (issue: number, reason: string, pullRequest: Option.Option<number>) =>
+  activity(
+    'needs-human',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      yield* github.addLabel(issue, repo.labels.needsHuman);
+      yield* github.removeLabel(issue, repo.labels.inProgress);
+
+      if (Option.isSome(pullRequest)) yield* github.addLabel(pullRequest.value, repo.labels.needsHuman);
+
+      yield* github.comment(issue, `Chernabog stopped and needs a person: ${reason}\n\nThe branch \`${branchFor(issue)}\` and its worktree are left as they are.`);
+
+      return `#${issue} needs a person: ${reason}`;
+    }),
+    Schema.String,
+  );
+
+// Ends the run as waiting on a person, once the issue says why.
+export const endForPerson = (summary: string) => Effect.fail(new NeedsHuman({ reason: summary }));
+
+// The whole default flow, for a flow file that wants it as it is.
+export const workflow = (item: WorkItem) =>
+  Effect.gen(function* () {
+    const issue = yield* issueOf(item);
+    const { branch } = yield* claim(issue);
+    const worktree = yield* prepareWorktree(branch);
+    const outcome = yield* implementWithAgent(issue, worktree);
+
+    if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome).pipe(Effect.flatMap(endForPerson));
+
+    let pullRequest = Option.none<number>();
+
+    return yield* Effect.gen(function* () {
+      yield* localGate(worktree);
+      yield* push('push', worktree, branch);
+      const opened = yield* openPullRequest(issue, outcome);
+      pullRequest = Option.some(opened.number);
+      yield* waitForCi(opened.number, worktree, { ...thisRunsSession, branch });
+
+      return yield* handOff(issue, opened, outcome);
+    }).pipe(Effect.catchTag('NeedsHuman', (needsHuman) => handToHuman(issue, needsHuman.reason, pullRequest).pipe(Effect.flatMap(endForPerson))));
+  });

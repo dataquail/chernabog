@@ -1,0 +1,237 @@
+# Chernabog
+
+Chernabog spends spare coding-agent capacity on queued work across your repos. Teams commit flows to each repo, the way husky commits git hooks. Flows are durable Effect workflows built from an SDK of services for the job: GitHub, coding agents, git worktrees and usage budgets. People stay at the edges: they queue the work, set budgets and hours, handle escalations and merge.
+
+Chernabog is early: it runs on macOS and Linux (Windows through WSL2), with Claude Code, Codex or opencode as the agent, and GitHub as the forge. There are no releases yet; build it from source.
+
+## Install
+
+```bash
+git clone https://github.com/dataquail/chernabog && cd chernabog
+bun install
+bun run build                        # dist/chernabog
+cp dist/chernabog ~/.local/bin/      # or anywhere on your PATH
+```
+
+It needs `git` and `gh` (logged in, with the `repo` scope) and the agent's own CLI. `tmux` or Orca are optional, as [launchers](#launchers).
+
+## Build
+
+```bash
+bun install
+bun test
+bun run build        # dist/chernabog, one self-contained binary
+bun run lint         # oxlint, type-aware, warnings fail it
+```
+
+The lint baseline is [functional-domain-driven-hexagon](https://github.com/dataquail/functional-domain-driven-hexagon)'s: `@effect/tsgo` and `oxlint-plugin-effect` recommended, plus the anti-slop and effect-oxc plugins vendored under `tools/oxlint/`. Code reads as Effect all the way down: `Option` instead of null and undefined, Schema at every JSON and file boundary, the platform's FileSystem, ChildProcess, HttpClient and Clock instead of Node's and the globals. Two places hand that contract to the host, and `.oxlintrc.json` says why for each: `src/platform/`, the one reader of the process environment, and `test/acceptance/`, which drives the built CLI as a black box on bun:test's promises. Unit tests are Effects too, run by `effect-bun-test`. The linter's TypeScript plugins need Node 22.6 or newer on the PATH.
+
+## Set up a repo
+
+```bash
+cd ~/code/my-app
+chernabog init                      # scaffolds .chernabog/ with the default flows
+git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
+chernabog enroll --account personal # adds the repo to this machine's config
+chernabog trust my-app              # approves the base branch's .chernabog/
+chernabog labels my-app             # creates the auto:* labels
+chernabog install                   # registers the daemon with launchd or systemd, and starts it
+chernabog doctor                    # checks logins, gh scopes, labels, trust and the daemon
+```
+
+Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and hands off with `auto:needs-review`.
+
+## The default flows
+
+`init` scaffolds three flows, built from the SDK's `Implement` and `Review` blocks. GitHub labels are the public record people see and that the flows trigger on.
+
+| Label | Set by | Means |
+| --- | --- | --- |
+| `auto:eligible` | a person | Queued; `implement` claims the oldest |
+| `auto:in-progress` | `implement` | A run owns the issue |
+| `auto:needs-review` | `implement`, `fix` | The pull request is open and green; `review` picks it up |
+| `auto:changes-requested` | `review` | Review comments are posted; waiting for a push |
+| `auto:approved` | `review` | A person merges |
+| `auto:needs-human` | any flow | A loop cap or a rule stopped it; no flow picks it up again |
+| `auto:needs-clarification` | `implement` | Questions are on the issue; answer them and requeue |
+| `auto:stale` | `review` | No push came before `limits.staleAfter` |
+
+- **`implement`** claims a queued issue, lets the agent implement it test first in a worktree, runs the local gate (sending the agent back on failure, up to `limits.localGateRounds`), opens the pull request, waits for CI (fixing red, up to `limits.ciRounds`) and hands off with `auto:needs-review`.
+- **`review`** reviews the pull request in a read-only checkout, in a fresh session of `flows.review.agent` (so Codex can review what Claude wrote), and posts the review. Then, inside the same run, it waits for whichever comes first: the author's push or the staleness timeout, and reviews again, up to `limits.reviewRounds`. Once the pull request merges or closes it removes its worktrees.
+- **`fix`** is the author for pull requests an agent wrote: it resumes the session that implemented the pull request with the review, pushes the fix once CI is green, and hands it back for the next review. A person's pull request gets the same reviews; their push wakes the next one.
+
+## The live view
+
+`chernabog` with no arguments opens a live view of the daemon: each repo and its flows with their next tick and what the last tick found queued, account usage against the usage gate's thresholds, runs in flight with their current step, recent runs, and why recent ticks were skipped.
+
+| Key | Does |
+| --- | --- |
+| `tab`, `↑` `↓` | Switch between the flows and the runs, and select |
+| `enter` | Follow the selected run's log; `↑` `↓` scroll it, `end` follows again, `esc` comes back |
+| `a` | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
+| `t` | Trigger the selected flow now, with its gates |
+| `p` | Pause or resume the repo |
+| `q` | Quit |
+
+The view never runs work itself; it reads the daemon's state over its socket. `chernabog attach <run>` does the same attach from the command line.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `status` | Repos, their schedules and trust, runs in flight, recent runs and why ticks were skipped |
+| `run <flow> --repo <name>` | One run now, skipping gates, through the daemon; follows its log. `--detach` returns at once |
+| `trigger <flow> --repo <name>` | A tick now, with its gates, as if the schedule came due |
+| `logs <run> [-f]` | A run's log |
+| `pause <repo>`, `resume <repo>` | Start no new runs in a repo; runs in flight continue |
+| `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
+| `labels [repo]` | Creates or corrects the repo's labels |
+| `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher and the daemon |
+| `init`, `enroll` | Set up a repo, add it to this machine |
+| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service |
+
+`run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
+
+## Agents
+
+No flow depends on a specific agent. The SDK's `Agent` service calls an adapter, which starts or resumes a session in the worktree and returns the agent's final answer, checked against a JSON Schema.
+
+| Adapter | Start | Resume | Answer |
+| --- | --- | --- | --- |
+| `claude` | Under a [launcher](#launchers): an interactive `claude --session-id <id> --permission-mode auto`. Headless: `claude -p --session-id <id> --permission-mode auto --output-format stream-json` | `--resume <id>` | Under a launcher: a JSON file the agent writes, checked by a Stop hook. Headless: `--json-schema` |
+| `codex` | `codex exec --json --approve-for-me`, sandboxed to the workspace (with network, and the repo's `.git` writable for commits) | `codex exec resume <thread>` | `--output-schema`, `-o` |
+| `opencode` | `opencode run --format json` | `--session <id>` | the last JSON object in its final message |
+| your own | `agents.<name>.start` in machine config, with `{prompt}`, `{promptFile}`, `{sessionId}`, `{cwd}` | `agents.<name>.resume` | the last JSON object it prints |
+
+Each piece of work has a stable session id, so a run that crashes mid-agent resumes the same session. Claude takes the id as given; Codex and opencode pick their own, which Chernabog records the moment they report it.
+
+Each account in machine config belongs to one agent (`agent: codex`; `claude` by default) and the repo's account decides which agent implements; `agent` in `local.yaml` or the repo's config overrides it. A flow can name a different adapter for one step, such as a Codex review of a Claude pull request, which then runs under that agent's account.
+
+- **Usage gate.** Claude's comes from its usage endpoint, Codex's from the rate limits its own sessions log under `$CODEX_HOME/sessions`. opencode reports none, so its runs aren't gated on usage.
+- **Accounts.** A run refuses to start when the account is logged in as anyone but its `expectedEmail`, or Codex is logged in with an API key. API keys are removed from every agent's environment, so runs can't fall back to pay-per-token billing.
+- **Permissions.** Claude runs in auto mode, Codex with automatic approval review inside its workspace sandbox. opencode's `--auto` approves everything not explicitly denied, so it is off unless you add it: `agents: { opencode: { args: [--auto] } }`.
+
+```yaml
+# ~/.config/chernabog/config.yaml
+accounts:
+  personal: { configDir: ~/.claude-personal, expectedEmail: you@example.com }
+  codex: { agent: codex, configDir: ~/.codex }
+agents:
+  aider:
+    start: [aider, --yes-always, --message-file, "{promptFile}"]
+```
+
+## Launchers
+
+A launcher decides where an interactive Claude session runs. Nothing runs `claude -p` unless the launcher is `headless`.
+
+| Launcher | A session is | Attach |
+| --- | --- | --- |
+| `orca` | A terminal tab in Orca, on the worktree (`orca terminal create`) | `orca terminal switch` brings the tab up |
+| `tmux` | A detached tmux session, `chernabog-<session>` | `tmux attach-session` |
+| `headless` | `claude -p`, a child process of the run | `claude --resume` |
+| your own | `launchers.<name>` in machine config | its `attach`, if it has one |
+
+Under a launcher, the prompt asks the agent to write its final answer as JSON to a file and stop. A Stop hook checks that file against the answer's schema: until it is valid, the hook sends the agent back to write it, three times at most, and then the run fails. So whether the session is done is decided the same way under every launcher, and an answer can't be lost to a later turn. When the session is done, Chernabog closes it. If it ends without an answer, Chernabog resumes it twice before failing. A session still running when the daemon restarts is waited on again, never started twice. The run log follows the session's transcript.
+
+The usage gate refreshes an expired login token the same way: a one-line session under the repo's launcher, closed once the token is fresh.
+
+Only Claude has an interactive mode. Codex, opencode and agents of your own run headless under any launcher, and `status` says so.
+
+**Who chooses.** The launcher describes a person's own machine, so their choice beats the team's default (unlike `agent`, where the repo's choice wins): `local.yaml`, then machine config, then the repo's `launcher`, then `headless`. A team limits the choice with `allowedLaunchers`. A launcher outside that list fails the repo, naming the layer that chose it; Chernabog never falls back to another launcher.
+
+```yaml
+# .chernabog/config.yaml (team): Orca by default; tmux and headless also allowed
+launcher: orca
+allowedLaunchers: [orca, tmux, headless]
+```
+
+```yaml
+# ~/.config/chernabog/config.yaml (one developer, every repo)
+launcher: tmux
+```
+
+```yaml
+# .chernabog/local.yaml (that developer, this repo only)
+launcher: orca
+```
+
+**Your own launcher.** Only machine config can define one; a repo can name launchers and limit them, but it can't define commands that run in your terminal setup. Templates fill in `{command}` (the whole command, quoted for a shell), `{cwd}`, `{title}` and `{handle}`. `start` prints the session's handle, or nothing to make `{title}` the handle. `close` is required. `alive` (exit 0 while the session runs) and `attach` are optional; without `alive`, a session counts as running until it is done.
+
+```yaml
+# ~/.config/chernabog/config.yaml
+launcher: wezterm
+launchers:
+  wezterm:
+    start: [wezterm, cli, spawn, --cwd, "{cwd}", --, sh, -c, "{command}"]
+    close: [wezterm, cli, kill-pane, --pane-id, "{handle}"]
+```
+
+Every launcher runs the same short command, `chernabog __launch <spec>`, which starts Claude in the terminal with its account's environment and the prompt from a file. An interactive session stops at "Do you trust this folder?" in a folder Claude doesn't trust yet; worktrees inherit the trust of the checkout they come from, so trust the checkout once (or a folder above it). `doctor` checks this, and that the launcher's tool works.
+
+## The daemon
+
+One daemon per machine schedules every enrolled repo, runs the workflow engine (its journal in `~/.config/chernabog/state.db`), and serves the CLI over a local socket. A lock file next to the database keeps a second engine from starting. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity.
+
+Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal, such as a review waiting for its author's push, holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
+
+The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`.
+
+## Trust
+
+The daemon runs committed flows and steps unattended, so anyone who can change `.chernabog/` can run code on your machine. Four rules contain that:
+
+- Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
+- The packages they import are the ones `.chernabog/package.json` and its lockfile name, installed without install scripts into the base branch's snapshot, so trusting the tree trusts their versions too. Nothing resolves from the checkout's own `node_modules`.
+- `chernabog trust` records the tree hash of the base branch's `.chernabog/`. When it changes after a pull, that repo starts no new runs until you review the change and trust it again, as with `direnv allow`. Trusting restarts the daemon on the new config once nothing is executing.
+- Decisions that belong to a person stay with a person: `humanOnly` goes into every agent prompt, and a change touching `humanOnlyPaths` goes to `auto:needs-human` instead of a pull request.
+
+Agents keep running with the permissions their own CLI config grants; Chernabog runs Claude Code in auto mode and doesn't widen them.
+
+## Configuration
+
+Config has three layers. Later layers override earlier ones key by key, except that a repo can never raise machine limits, and the launcher, where a person's choice wins within the repo's `allowedLaunchers` (see [Launchers](#launchers)).
+
+| Layer             | Lives in                                 | Owns                                                                                              |
+| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers` |
+| Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off               |
+| Machine           | `~/.config/chernabog/config.yaml`       | Enrolled repos, agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own |
+
+`init` writes `config.schema.json` and `local.schema.json` next to the YAML, so editors autocomplete them. They're generated, so `init` rewrites them whenever they're out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions. It never overwrites any other file.
+
+Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
+
+```yaml
+# ~/.config/chernabog/config.yaml
+accounts:
+  work: {}
+  personal:
+    configDir: ~/.claude-personal
+    expectedEmail: you@example.com
+usageGate:
+  targetEndUsage: 0.95
+  taskCostEstimate: 0.04
+  fiveHourCeiling: 0.4
+  humanRatePerHour: 0.005
+concurrency: 1
+repos:
+  - path: ~/code/my-app
+    repo: you/my-app
+    account: personal
+    baseBranch: main
+```
+
+## Flows and steps
+
+A flow is a TypeScript module in `.chernabog/flows/` whose default export is `defineFlow({ trigger, gate, concurrency, workflow })`. The trigger returns the work items in the state the flow acts on; the workflow is the durable work for one item. Each step in it is an activity whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
+
+The scaffolded `implement` flow composes the SDK's `Implement` building blocks. Reorder them, leave one out, or put a step of your own between them with `step("name", input)`: either `.chernabog/stages/name.ts` exporting `defineStage({ input, output, run })`, or an executable `name` that reads JSON on stdin and prints JSON. Each step runs in its own process; exit 0 continues, 78 skips the run, anything else fails it. A step that crashes partway runs again, so every step must be safe to repeat.
+
+`.chernabog/` is a package of its own, the same in every repo whatever its language. `package.json` pins `@chernabog/sdk` and `effect` as dev dependencies at the versions the binary bundles, and `tsconfig.json` types the flows against them; install them in `.chernabog/` with any package manager for the editor. At runtime the binary always supplies its own copies of those two, to every module that imports them. Anything else a flow or step imports goes in `dependencies`, with the lockfile committed: the daemon installs them into each snapshot of the base branch, using the binary as `bun install --production --frozen-lockfile --ignore-scripts`, so the machine needs no Node or package manager. `doctor` flags pins that have drifted from the binary; `init` updates them.
+
+See [`packages/sdk`](packages/sdk/README.md) for the services and helpers.
+
+## License
+
+[MIT](LICENSE). The lint plugins vendored under `tools/oxlint/` keep their own licenses, next to them.
