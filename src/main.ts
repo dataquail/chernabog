@@ -43,8 +43,7 @@ import type { RunRow } from './state.ts';
 import { runStepChild, StepServicesLive } from './steps.ts';
 import { recordTrust, trustDiff, trustedTree } from './trust.ts';
 import { runTui } from './tui/app.ts';
-
-const VERSION = '0.3.0';
+import { VERSION } from './version.ts';
 
 const printLines = (lines: Iterable<string>) => Effect.forEach(lines, (line) => Console.log(line), { discard: true });
 

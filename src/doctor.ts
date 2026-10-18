@@ -14,7 +14,7 @@ import { daemonStatus } from './client.ts';
 import { checkCodexAccount } from './codex-usage.ts';
 import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
-import { decodeManifest, describeDrift, pinDrift } from './flow-deps.ts';
+import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
 import { githubGetAllPages } from './GitHubApi.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
@@ -24,6 +24,7 @@ import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { trustedTree } from './trust.ts';
 import { loggedInEmail } from './usage-gate.ts';
+import { VERSION } from './version.ts';
 
 export type Check = { readonly ok: boolean; readonly label: string; readonly fix: Option.Option<string> };
 
@@ -164,6 +165,30 @@ export const doctor = Effect.gen(function* () {
 
         return;
       }
+
+      const required = yield* Effect.result(requiredVersion(manifest.success));
+
+      if (Result.isFailure(required)) {
+        check(false, `${name}: ${required.failure.message}`, 'fix .chernabog/package.json on the base branch');
+
+        return;
+      }
+
+      const floor = required.success;
+
+      if (Option.isSome(floor) && isTooOld(floor.value)) {
+        check(false, `${name}: ${describeTooOld(floor.value)}`, `install chernabog ${floor.value} or newer`);
+
+        // Its pins aren't drift to fix: this binary can't load the repo at all.
+        return;
+      }
+
+      const label = Option.match(floor, {
+        onNone: () => `${name}: .chernabog/package.json names the oldest chernabog it runs on`,
+        onSome: (oldest) => `${name}: .chernabog/ runs on this chernabog (${VERSION}; needs ${oldest} or newer)`,
+      });
+
+      check(Option.isSome(floor), label, 'chernabog init sets engines.chernabog in .chernabog/package.json; commit it');
 
       const drift = pinDrift(manifest.success);
       const differs = when(drift.length > 0, ` (${drift.map(describeDrift).join(', ')})`);

@@ -17,6 +17,7 @@ import YAML from 'yaml';
 
 import type { AgentsConfig } from './agents.ts';
 import { ConfigError, expandHome, Home, homePaths } from './config.ts';
+import { checkConfigVersion } from './flow-deps.ts';
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
 import { nodeBinFor } from './node-version.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
@@ -196,7 +197,8 @@ export type EffectiveRepo = {
 };
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.
-const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string) =>
+// `strict` refuses keys the schema doesn't name, rather than dropping them.
+const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string, strict = false) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const failed = (message: string) => new ConfigError({ message: `${file}: ${message}` });
@@ -211,7 +213,11 @@ const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string) =>
 
     if (document.errors.length > 0) return yield* failed(document.errors.map((error) => error.message).join('; '));
 
-    return yield* Schema.decodeUnknownEffect(schema)(document.toJS()).pipe(Effect.mapError((issue) => failed(issue.message)));
+    let onExcessProperty: 'error' | 'ignore' = 'ignore';
+
+    if (strict) onExcessProperty = 'error';
+
+    return yield* Schema.decodeUnknownEffect(schema)(document.toJS(), { onExcessProperty }).pipe(Effect.mapError((issue) => failed(issue.message)));
   }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: `${file}: ${error.message}` }))));
 
 export const machineConfigFile = Home.use((home) => Effect.succeed(homePaths(home.root).machineConfig));
@@ -404,10 +410,14 @@ export const repoEnvironment = (checkout: string) =>
   });
 
 // Reads the repo's committed config from `configDir` (the trusted snapshot)
-// and the person's local.yaml from the working checkout.
+// and the person's local.yaml from the working checkout. A .chernabog/ that
+// needs a newer binary is refused first. Past that, a key this binary doesn't
+// know is a typo or a newer key the floor wasn't raised for, and either one
+// may be a rule the repo counts on, so it fails the repo instead of being dropped.
 export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configDir: string) =>
   Effect.gen(function* () {
-    const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`);
+    yield* checkConfigVersion(configDir);
+    const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
     const local = yield* readYaml(LocalConfigFile, `${enrolled.path}/.chernabog/local.yaml`);
 
     return yield* mergeRepoConfig(machine, enrolled, { repo, local }, configDir, yield* repoEnvironment(enrolled.path));

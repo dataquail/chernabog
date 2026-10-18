@@ -9,7 +9,7 @@ import * as Schema from 'effect/Schema';
 
 import { ConfigError } from './config.ts';
 import { execOk } from './Exec.ts';
-import { flowPackageText, withBundledPins } from './flow-deps.ts';
+import { checkConfigVersion, flowPackageText, withBundledPins } from './flow-deps.ts';
 import { type EnrolledRepo, enrollInMachineConfig, LocalConfigFile, MachineConfigFile, RepoConfigFile } from './repo-config.ts';
 import { TEMPLATES } from './templates.ts';
 
@@ -59,13 +59,19 @@ const IGNORED: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [
 
 // Writes the scaffold, never overwriting a file that is already there, except
 // the generated schemas, which are brought up to date, and package.json's pins
-// of the bundled packages, which are moved to this binary's versions.
+// of the bundled packages, which are moved to this binary's versions. When
+// either changes, the repo now relies on this binary, so its engines.chernabog
+// floor rises to it. A binary older than the floor refuses, rather than move
+// the repo back.
 export const scaffold = (repoPath: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const written: Array<string> = [];
     const generated = schemaFiles();
-    const files = { ...scaffoldFiles(), 'local.yaml': LOCAL_TEMPLATE };
+    const { 'package.json': packageText, ...files } = { ...scaffoldFiles(), 'local.yaml': LOCAL_TEMPLATE };
+    const manifestPath = `${repoPath}/.chernabog/package.json`;
+
+    yield* checkConfigVersion(`${repoPath}/.chernabog`);
 
     for (const [relative, content] of Object.entries(files)) {
       const path = `${repoPath}/.chernabog/${relative}`;
@@ -77,11 +83,18 @@ export const scaffold = (repoPath: string) =>
       } else if (relative in generated && (yield* fs.readFileString(path)) !== content) {
         yield* fs.writeFileString(path, content);
         written.push(`.chernabog/${relative} (updated)`);
-      } else if (relative === 'package.json') {
-        for (const pinned of Option.toArray(yield* withBundledPins(yield* fs.readFileString(path)))) {
-          yield* fs.writeFileString(path, pinned);
-          written.push(`.chernabog/${relative} (pins updated)`);
-        }
+      }
+    }
+
+    if (!(yield* fs.exists(manifestPath))) {
+      yield* fs.writeFileString(manifestPath, packageText);
+      written.push('.chernabog/package.json');
+    } else {
+      const schemasUpdated = written.some((entry) => entry.endsWith('(updated)'));
+
+      for (const pinned of Option.toArray(yield* withBundledPins(yield* fs.readFileString(manifestPath), schemasUpdated))) {
+        yield* fs.writeFileString(manifestPath, pinned);
+        written.push('.chernabog/package.json (pins updated)');
       }
     }
 
