@@ -26,7 +26,7 @@
     "builtin": true,
     "es2018": true
   },
-  "ignorePatterns": ["dist/**", "node_modules/**", "tools/oxlint/**", "src/effect-modules.ts"],
+  "ignorePatterns": ["dist/**", "node_modules/**", "website/**", "tools/oxlint/**", "src/effect-modules.ts"],
   "rules": {
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",

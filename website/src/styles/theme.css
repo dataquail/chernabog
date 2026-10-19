@@ -1,0 +1,250 @@
+/*
+  Night — the chernabog docs theme.
+
+  Cool slate neutrals, one accent (a violet), and Atkinson Hyperlegible throughout: a face drawn
+  by the Braille Institute for telling similar letterforms apart, which is most of what a
+  reference full of flags, labels and config keys asks of its type. The chrome is flat and divided
+  by hairlines; colour is spent on links, the current page and the mark, nowhere else.
+
+  Starlight's own styles sit in cascade layers, so these unlayered rules win without `!important`.
+*/
+
+:root {
+  --sl-font: "Atkinson Hyperlegible Next Variable";
+  --sl-font-mono: "Atkinson Hyperlegible Mono Variable";
+
+  /* dark: night ground, pale type */
+  --sl-color-white: #eef0f5;
+  --sl-color-gray-1: #dfe2ea;
+  --sl-color-gray-2: #c7cbd6;
+  --sl-color-gray-3: #8f95a3;
+  --sl-color-gray-4: #555b68;
+  --sl-color-gray-5: #2c303a;
+  --sl-color-gray-6: #1b1e25;
+  --sl-color-black: #111318;
+
+  --sl-color-accent-low: #262046;
+  --sl-color-accent: #a89bff;
+  --sl-color-accent-high: #d4cdff;
+
+  --sl-color-bg-nav: var(--sl-color-black);
+  --sl-color-bg-sidebar: var(--sl-color-black);
+  --sl-color-bg-inline-code: var(--sl-color-gray-6);
+  --sl-color-hairline: var(--sl-color-gray-5);
+  --sl-color-hairline-light: var(--sl-color-gray-5);
+  --sl-color-hairline-shade: var(--sl-color-gray-5);
+
+  --sl-text-body: 1rem;
+  --sl-line-height: 1.65;
+  --sl-line-height-headings: 1.15;
+  --sl-text-h1: 2rem;
+  --sl-text-h2: 1.5rem;
+  --sl-text-h3: 1.1875rem;
+  --sl-text-h4: 1rem;
+
+  --sl-content-width: 48rem;
+  --cb-radius: 0.25rem;
+}
+
+:root[data-theme="light"] {
+  /* light: paper ground, ink type */
+  --sl-color-white: #14161c;
+  --sl-color-gray-1: #23262e;
+  --sl-color-gray-2: #343843;
+  --sl-color-gray-3: #626876;
+  --sl-color-gray-4: #959baa;
+  --sl-color-gray-5: #dadde4;
+  --sl-color-gray-6: #eceef2;
+  --sl-color-gray-7: #f3f4f7;
+  --sl-color-black: #fafbfc;
+
+  --sl-color-accent-low: #e8e4fb;
+  --sl-color-accent: #5a44c9;
+  --sl-color-accent-high: #392a8a;
+
+  --sl-color-bg-nav: var(--sl-color-black);
+  --sl-color-bg-sidebar: var(--sl-color-black);
+  --sl-color-bg-inline-code: var(--sl-color-gray-6);
+  --sl-color-hairline: var(--sl-color-gray-5);
+  --sl-color-hairline-light: var(--sl-color-gray-5);
+  --sl-color-hairline-shade: var(--sl-color-gray-5);
+}
+
+@media (min-width: 50em) {
+  :root {
+    --sl-text-h1: 2.375rem;
+    --sl-text-h2: 1.625rem;
+    --sl-text-h3: 1.25rem;
+    --sl-text-h4: 1.0625rem;
+  }
+}
+
+::selection {
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-white);
+}
+
+/* ---- chrome ---------------------------------------------------------------------------------- */
+
+header.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+.site-title {
+  color: var(--sl-color-white);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+  gap: 0.5rem;
+}
+.site-title img {
+  height: 1.375rem;
+}
+
+#starlight__sidebar {
+  border-inline-end: 1px solid var(--sl-color-hairline);
+}
+
+/* A group reads as a small-caps eyebrow; the pages under it carry the weight. */
+.sidebar-content .top-level > li > details > summary .large {
+  font-size: var(--sl-text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-3);
+}
+.sidebar-content .top-level > li + li {
+  margin-top: 1rem;
+}
+.sidebar-content a {
+  border-radius: 0;
+}
+/* The current page: the hairline beside it turns violet, rather than a filled pill. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  background: none;
+  color: var(--sl-color-text-accent);
+  font-weight: 700;
+}
+.sidebar-content li:has(> a[aria-current="page"]) {
+  border-inline-start-color: var(--sl-color-accent);
+  border-inline-start-width: 2px;
+  padding-inline-start: calc(var(--sl-sidebar-item-padding-inline) - 1px);
+}
+
+/* ---- content ---------------------------------------------------------------------------------- */
+
+.sl-markdown-content :is(h1, h2, h3, h4, h5),
+.content-panel h1,
+.hero h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-white);
+}
+
+.sl-markdown-content h2 {
+  margin-top: 2.25rem;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.sl-markdown-content a:hover:not(:where(.not-content *)) {
+  text-decoration-color: currentColor;
+}
+
+.sl-markdown-content code:not(:where(.not-content *)) {
+  border-radius: var(--cb-radius);
+  padding: 0.1em 0.3em;
+  font-size: 0.875em;
+}
+.sl-markdown-content pre code:not(:where(.not-content *)) {
+  padding: 0;
+}
+
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border-inline-start: 2px solid var(--sl-color-accent);
+  color: var(--sl-color-gray-1);
+}
+
+/* Tables: rules, not boxes. A key or command in the first column never wraps. */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-size: var(--sl-text-sm);
+  border-collapse: collapse;
+}
+.sl-markdown-content :is(th, td):not(:where(.not-content *)) {
+  border: none;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  background: none;
+  vertical-align: top;
+}
+.sl-markdown-content th:not(:where(.not-content *)) {
+  color: var(--sl-color-white);
+  border-bottom: 1px solid var(--sl-color-gray-4);
+}
+@media (min-width: 50em) {
+  .sl-markdown-content td:first-child:not(:where(.not-content *)) {
+    white-space: nowrap;
+  }
+}
+.sl-markdown-content tr:nth-child(2n):not(:where(.not-content *)) {
+  background: none;
+}
+
+.sl-markdown-content hr:not(:where(.not-content *)) {
+  border-color: var(--sl-color-hairline);
+}
+
+/* Asides: a rule down the side, no fill. */
+.starlight-aside {
+  background: none;
+  border-inline-start-width: 2px;
+  border-radius: 0;
+}
+
+/* Cards and the previous/next links: a hairline box, no shadow, no tint. */
+.card,
+.pagination-links a {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: var(--cb-radius);
+  box-shadow: none;
+  background: none;
+}
+.pagination-links a:hover {
+  border-color: var(--sl-color-accent);
+}
+.card .title {
+  font-weight: 700;
+}
+.card .icon {
+  color: var(--sl-color-accent);
+  background: none;
+  border: none;
+}
+
+/* ---- splash ------------------------------------------------------------------------------------ */
+
+.hero h1 {
+  letter-spacing: -0.035em;
+}
+.hero .tagline {
+  color: var(--sl-color-gray-3);
+}
+.hero > img {
+  width: min(40%, 7rem);
+}
+.hero .sl-link-button {
+  border-radius: var(--cb-radius);
+}
+
+/* The social links are chrome, not a call to action. */
+.social-icons a {
+  color: var(--sl-color-gray-3);
+}
+.social-icons a:hover {
+  color: var(--sl-color-white);
+}

@@ -2,6 +2,8 @@
 
 Chernabog spends spare coding-agent capacity on queued work across your repos. Teams commit flows to each repo, the way husky commits git hooks. Flows are durable Effect workflows built from an SDK of services for the job: GitHub, coding agents, git worktrees and usage budgets. People stay at the edges: they queue the work, set budgets and hours, handle escalations and merge.
 
+Documentation: <https://dataquail.github.io/chernabog/>.
+
 Chernabog is early: it runs on macOS and Linux (Windows through WSL2), with Claude Code, Codex or opencode as the agent, and GitHub as the forge.
 
 ## Install
@@ -48,6 +50,8 @@ bun test
 bun run build        # dist/chernabog, one self-contained binary
 bun run lint         # oxlint, type-aware, warnings fail it
 ```
+
+The docs site is a separate Astro package in `website/`: `cd website && bun install && bun --bun run dev`. Its pages live in `website/src/content/docs/`.
 
 The lint baseline is [functional-domain-driven-hexagon](https://github.com/dataquail/functional-domain-driven-hexagon)'s: `@effect/tsgo` and `oxlint-plugin-effect` recommended, plus the anti-slop and effect-oxc plugins vendored under `tools/oxlint/`. Code reads as Effect all the way down: `Option` instead of null and undefined, Schema at every JSON and file boundary, the platform's FileSystem, ChildProcess, HttpClient and Clock instead of Node's and the globals. Two places hand that contract to the host, and `.oxlintrc.json` says why for each: `src/platform/`, the one reader of the process environment, and `test/acceptance/`, which drives the built CLI as a black box on bun:test's promises. Unit tests are Effects too, run by `effect-bun-test`. The linter's TypeScript plugins need Node 22.6 or newer on the PATH.
 
