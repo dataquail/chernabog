@@ -2,15 +2,32 @@
 
 Chernabog spends spare coding-agent capacity on queued work across your repos. Teams commit flows to each repo, the way husky commits git hooks. Flows are durable Effect workflows built from an SDK of services for the job: GitHub, coding agents, git worktrees and usage budgets. People stay at the edges: they queue the work, set budgets and hours, handle escalations and merge.
 
-Chernabog is early: it runs on macOS and Linux (Windows through WSL2), with Claude Code, Codex or opencode as the agent, and GitHub as the forge. There are no releases yet; build it from source.
+Chernabog is early: it runs on macOS and Linux (Windows through WSL2), with Claude Code, Codex or opencode as the agent, and GitHub as the forge.
 
 ## Install
+
+Each release attaches a binary for macOS and Linux, on arm64 and x64, with a `sha256` file. With `gh`:
+
+```bash
+target=darwin-arm64                  # or darwin-x64, linux-x64, linux-arm64
+tag=$(gh api repos/dataquail/chernabog/releases --jq '[.[].tag_name | select(startswith("v"))][0]')
+gh release download "$tag" --repo dataquail/chernabog --pattern "chernabog-$tag-$target.tar.gz" --pattern "chernabog-$tag-sha256.txt"
+grep -- "-$target.tar.gz" "chernabog-$tag-sha256.txt" | shasum -a 256 -c -
+tar -xzf "chernabog-$tag-$target.tar.gz"
+mv chernabog ~/.local/bin/           # or anywhere on your PATH
+```
+
+The binary's tags start with `v`; the SDK's start with `sdk-v`, so GitHub's "latest release" is sometimes the SDK's, and the first line picks the newest `v` tag instead. Download with `gh` or `curl` rather than a browser: the macOS binaries are signed ad hoc, not notarized, and Gatekeeper blocks a browser download.
+
+To upgrade, `chernabog stop`, install the new binary the same way, then `chernabog start`. `mv` replaces the file rather than writing over it, which macOS requires of a signed binary that is running.
+
+Or build it from source:
 
 ```bash
 git clone https://github.com/dataquail/chernabog && cd chernabog
 bun install
 bun run build                        # dist/chernabog
-cp dist/chernabog ~/.local/bin/      # or anywhere on your PATH
+mv dist/chernabog ~/.local/bin/
 ```
 
 It needs `git` and `gh` (logged in, with the `repo` scope) and the agent's own CLI. `tmux` or Orca are optional, as [launchers](#launchers).
