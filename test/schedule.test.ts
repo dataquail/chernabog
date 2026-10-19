@@ -3,6 +3,7 @@ import * as DateTime from 'effect/DateTime';
 import * as Option from 'effect/Option';
 
 import { decideTick, freeSlots, nextTick, spreadMinute, withinHours } from '../src/schedule.ts';
+import { stableExecutable } from '../src/self.ts';
 import { launchAgentPlist, serviceEnv, systemdUnit } from '../src/service.ts';
 
 const local = DateTime.zoneMakeLocal();
@@ -55,6 +56,12 @@ describe('the service', () => {
     expect(plist).toContain('<string>/usr/local/bin/chernabog</string>\n    <string>daemon</string>');
     expect(plist).toContain('<key>KeepAlive</key>\n  <true/>');
     expect(plist).toContain('<string>/opt/homebrew/bin:/usr/bin</string>');
+  });
+
+  test('a Homebrew binary is named by its opt path, which survives an upgrade', () => {
+    expect(stableExecutable('/opt/homebrew/Cellar/chernabog/0.3.0/bin/chernabog')).toBe('/opt/homebrew/opt/chernabog/bin/chernabog');
+    expect(stableExecutable('/home/linuxbrew/.linuxbrew/Cellar/chernabog/0.4.0_1/bin/chernabog')).toBe('/home/linuxbrew/.linuxbrew/opt/chernabog/bin/chernabog');
+    expect(stableExecutable('/Users/dev/.local/bin/chernabog')).toBe('/Users/dev/.local/bin/chernabog');
   });
 
   test('systemd quotes what needs it', () => {

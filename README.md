@@ -6,7 +6,15 @@ Chernabog is early: it runs on macOS and Linux (Windows through WSL2), with Clau
 
 ## Install
 
-Each release attaches a binary for macOS and Linux, on arm64 and x64, with a `sha256` file. With `gh`:
+With Homebrew, on macOS or Linux:
+
+```bash
+brew install dataquail/tap/chernabog
+```
+
+After `brew upgrade chernabog`, run `chernabog stop && chernabog start` to move the daemon onto the new version.
+
+Without Homebrew, each release attaches a binary for macOS and Linux, on arm64 and x64, with a `sha256` file. With `gh`:
 
 ```bash
 target=darwin-arm64                  # or darwin-x64, linux-x64, linux-arm64
