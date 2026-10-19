@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "390af789f5c722d2c089d7976ceec1cc17c06bf6",
+  "bump-minor-pre-major": true,
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "chernabog",
+      "component": "chernabog",
+      "include-component-in-tag": false
+    },
+    "packages/sdk": {
+      "release-type": "node",
+      "package-name": "@chernabog/sdk",
+      "component": "sdk"
+    }
+  }
+}

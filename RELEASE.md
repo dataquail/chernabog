@@ -1,0 +1,59 @@
+# Releasing
+
+Chernabog ships two things, versioned separately:
+
+| What                       | Version in                  | Tag              | Goes to                                  |
+| -------------------------- | --------------------------- | ---------------- | ---------------------------------------- |
+| the `chernabog` binary     | `package.json`              | `v<version>`     | GitHub release assets, per platform      |
+| `@chernabog/sdk`           | `packages/sdk/package.json` | `sdk-v<version>` | npm                                      |
+
+`src/version.ts` reads the root `package.json`, so `--version` and the `engines.chernabog` floor follow it.
+
+They are versioned separately because a repo's `.chernabog/package.json` pins the SDK at the version the binary bundles, and `chernabog doctor` reports any other version as drift. Bumping the SDK with every binary release would make each upgrade look like drift in every enrolled repo. A commit under `packages/sdk/` still releases both, since the binary bundles the SDK.
+
+## The normal path
+
+1. **Merge PRs with conventional titles.** Squash merges make the title the commit, and the **PR title** check enforces the format. `feat:` bumps the minor version, and `fix:` and `perf:` bump the patch. While a version is below 1.0, a breaking change (`feat!:` or a `BREAKING CHANGE:` footer) bumps the minor too. `chore:`, `docs:`, `ci:`, `test:` and `refactor:` release nothing.
+2. **release-please keeps a release PR open** (`chore(main): release …`). It lists the versions and changelog entries that merging would produce, and every push to `main` updates it. The **Release** workflow also refreshes `bun.lock` on that branch when the SDK's version moves.
+3. **Merge the release PR when you want to ship.** The same run then:
+   - tags the release and creates its GitHub release;
+   - builds the binary on macOS (arm64, x64) and Linux (x64, arm64), checks that each one reports the tagged version, and attaches the tarballs and a `sha256` file to the release;
+   - publishes `@chernabog/sdk` to npm with provenance, under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there.
+
+## When a release fails partway
+
+The tag and GitHub release already exist, so run **Release** by hand with the tag (`v0.4.0` or `sdk-v0.1.1`):
+
+```sh
+gh workflow run release.yml -f tag=v0.4.0
+```
+
+It rebuilds and replaces the assets, and publishes the SDK unless that version is already on npm.
+
+## One-time setup
+
+1. Give the `quailops` GitHub App these repository permissions, and approve the change on the org's installation:
+
+   | Permission    | Access         | For                                                     |
+   | ------------- | -------------- | ------------------------------------------------------- |
+   | Contents      | Read and write | the release branch, the `bun.lock` commit, tags, releases |
+   | Pull requests | Read and write | opening and updating the release PR                     |
+   | Issues        | Read and write | the `autorelease: pending` / `tagged` labels on that PR |
+
+   Install it on `dataquail/chernabog`, and add its app ID and private key as the `VERSION_BUMPER_APPID` and `VERSION_BUMPER_SECRET` repository secrets.
+
+   It needs no bypass on the default branch ruleset. It never pushes to `main`: the release PR reaches `main` through a merge like any other.
+2. In the repository settings, allow squash merging only, so every PR title becomes the commit on `main`.
+3. Create the `chernabog` npm org, and add an `NPM_TOKEN` secret that can create packages in it. A granular token limited to selected packages cannot create a new one.
+4. Once this lands, release what is already there: create a release at the commit it landed as for each half, then run **Release** for each:
+
+   ```sh
+   gh release create v0.3.0 --target <sha> --title v0.3.0 --notes "First release."
+   gh release create sdk-v0.1.0 --target <sha> --title "sdk v0.1.0" --notes "First release."
+   gh workflow run release.yml -f tag=v0.3.0
+   gh workflow run release.yml -f tag=sdk-v0.1.0
+   ```
+
+   release-please takes these as the last releases, and only commits after them go into the next release PR.
+
+5. On npmjs.com, add a trusted publisher to `@chernabog/sdk`: repository `dataquail/chernabog`, workflow `release.yml`. Then delete the `NPM_TOKEN` secret. Publishing then uses short-lived OIDC credentials, so there is no long-lived token to leak.
