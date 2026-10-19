@@ -4,10 +4,9 @@
   "bump-minor-pre-major": true,
   "packages": {
     ".": {
-      "release-type": "node",
-      "package-name": "chernabog",
-      "component": "chernabog",
-      "include-component-in-tag": false
+      "release-type": "simple",
+      "include-component-in-tag": false,
+      "extra-files": [{ "type": "json", "path": "package.json", "jsonpath": "$.version" }]
     },
     "packages/sdk": {
       "release-type": "node",
