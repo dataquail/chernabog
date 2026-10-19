@@ -99,6 +99,7 @@ Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourl
 | `enter` | Follow the selected run's log; `↑` `↓` scroll it, `end` follows again, `esc` comes back |
 | `a` | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
 | `t` | Trigger the selected flow now, with its gates |
+| `e` | Turn the selected flow off or on for this machine, in `local.yaml`; it shows as pending until the daemon restarts on it, once idle |
 | `p` | Pause or resume the repo |
 | `q` | Quit |
 

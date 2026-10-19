@@ -4,6 +4,7 @@
 import * as Arr from 'effect/Array';
 import * as DateTime from 'effect/DateTime';
 import * as Option from 'effect/Option';
+import * as Record from 'effect/Record';
 
 import type { ActiveRun, DaemonStatus, RepoStatus } from '../protocol.ts';
 import type { RunStatus } from '../state.ts';
@@ -41,12 +42,20 @@ export type Model = {
   // Lines up from the bottom of the log; 0 follows it as it grows.
   readonly logScroll: number;
   readonly message: Option.Option<string>;
+  // Flows turned on or off from here that the daemon hasn't restarted on yet, by flowKey.
+  readonly pendingFlows: Readonly<Record<string, boolean>>;
   readonly width: number;
   readonly height: number;
   readonly now: DateTime.Utc;
 };
 
 const segment = (text: string, style: Style = 'plain'): Segment => ({ text, style });
+
+export const flowKey = (repo: string, flow: string) => `${repo}/${flow}`;
+
+// Whether a flow runs on this machine: as turned from here, else as the daemon has it.
+export const flowEnabled = (model: Model, repo: string, flow: { readonly name: string; readonly enabled: boolean }) =>
+  Option.getOrElse(Record.get(model.pendingFlows, flowKey(repo, flow.name)), () => flow.enabled);
 
 const onlyIf = <A>(condition: boolean, items: ReadonlyArray<A>): ReadonlyArray<A> => {
   if (condition) return items;
@@ -124,7 +133,7 @@ const select = (line: Line, selected: boolean): Line => {
   return line.map((part) => ({ ...part, style: 'selected' }));
 };
 
-export const KEYS_MAIN = 'tab switch pane · ↑↓ select · enter log · a attach · t trigger · p pause/resume · r refresh · q quit';
+export const KEYS_MAIN = 'tab switch pane · ↑↓ select · enter log · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit';
 export const KEYS_LOG = '↑↓ scroll · end follow · a attach · esc back · q quit';
 
 const repoState = (repo: RepoStatus) => {
@@ -167,7 +176,11 @@ const runDetail = (run: RunEntry) => {
   return Option.getOrElse(run.currentStep, () => 'starting');
 };
 
-const flowTiming = (enabled: boolean, next: Option.Option<string>, now: DateTime.Utc) => {
+const flowTiming = (enabled: boolean, pending: boolean, next: Option.Option<string>, now: DateTime.Utc) => {
+  if (pending && enabled) return segment(pad('on, pending', 14), 'yellow');
+
+  if (pending) return segment(pad('off, pending', 14), 'yellow');
+
   if (enabled) return segment(`next ${pad(ago(next, now), 9)}`);
 
   return segment(pad('off', 14), 'dim');
@@ -211,7 +224,8 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
 
     for (const flow of repo.flows) {
       const selected = model.focus === 'flows' && Option.exists(selectedFlow, (row) => row.repo === repo.name && row.flow === flow.name);
-      const timing = flowTiming(flow.enabled, flow.next, now);
+      const enabled = flowEnabled(model, repo.name, flow);
+      const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
       lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${queueText(flow.queued)}`, 'dim')], selected));
     }
   }

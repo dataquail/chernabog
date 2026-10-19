@@ -191,22 +191,28 @@ export const ensureLocalConfig = (root: string) =>
     return true;
   }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
 
-// Turns the chosen flows on and every other one off in local.yaml, keeping
-// its comments. Each flow gets an explicit choice, so one the team turns off
-// still runs for a person who chose it.
-export const chooseFlows = (root: string, chosen: ReadonlyArray<string>) =>
+// Records each choice as flows.<flow>.enabled in local.yaml, keeping its comments.
+export const writeFlowChoices = (root: string, choices: ReadonlyArray<FlowChoice>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = `${root}/.chernabog/local.yaml`;
-    const names = yield* checkFlowNames(root, chosen);
 
     yield* ensureLocalConfig(root);
     const document = YAML.parseDocument(yield* fs.readFileString(path));
-    const choices = names.map((name): FlowChoice => ({ name, enabled: chosen.includes(name) }));
 
     for (const { enabled, name } of choices) document.setIn(['flows', name, 'enabled'], enabled);
 
     yield* fs.writeFileString(path, document.toString());
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
+
+// Turns the chosen flows on and every other one off. Each flow gets an
+// explicit choice, so one the team turns off still runs for a person who chose it.
+export const chooseFlows = (root: string, chosen: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const names = yield* checkFlowNames(root, chosen);
+    const choices = names.map((name): FlowChoice => ({ name, enabled: chosen.includes(name) }));
+
+    yield* writeFlowChoices(root, choices);
 
     return choices;
-  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
+  });
