@@ -7,6 +7,7 @@ import * as Arr from 'effect/Array';
 import * as Argument from 'effect/cli/Argument';
 import * as Command from 'effect/cli/Command';
 import * as Flag from 'effect/cli/Flag';
+import * as Prompt from 'effect/cli/Prompt';
 import * as Console from 'effect/Console';
 import * as DateTime from 'effect/DateTime';
 import * as Effect from 'effect/Effect';
@@ -30,7 +31,7 @@ import { doctor, formatCheck } from './doctor.ts';
 import { runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
 import { GitHubApi } from './GitHubApi.ts';
-import { enroll, repoRoot, scaffold } from './init.ts';
+import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
 import { desiredLabels, syncLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { HostEnvironment } from './platform/environment.ts';
@@ -345,21 +346,63 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
   }),
 ).pipe(Command.withDescription('Scaffold .chernabog/ in a repo with the default flows'));
 
+// The flows to run on this machine: --flows when given, else asked in a
+// terminal, else none chosen, which leaves local.yaml's choices as they are.
+const chosenFlows = (root: string, flag: Option.Option<string>) =>
+  Effect.gen(function* () {
+    if (Option.isSome(flag)) {
+      const names = flag.value.split(',').map((name) => name.trim()).filter((name) => name.length > 0);
+      yield* checkFlowNames(root, names);
+
+      return Option.some(names);
+    }
+
+    const stdio = yield* Stdio.Stdio;
+    const choices = yield* flowChoices(root);
+
+    if (choices.length === 0 || !(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return Option.none<Array<string>>();
+
+    const picked = yield* Prompt.MultiSelect({
+      message: 'Which flows should run on this machine?',
+      choices: choices.map((choice) => ({ title: choice.name, value: choice.name, selected: choice.enabled })),
+    });
+
+    return Option.some(picked);
+  });
+
 const enrollCommand = Command.make(
   'enroll',
   {
     path: Argument.String('path').pipe(Argument.optional),
     account: Flag.String('account').pipe(Flag.withDescription('The account from machine config whose budget this repo spends'), Flag.optional),
     name: Flag.String('name').pipe(Flag.withDescription('A short name, when two enrolled repos share one'), Flag.optional),
+    flows: Flag.String('flows').pipe(
+      Flag.withDescription('The flows to run on this machine, comma-separated; the rest are turned off in local.yaml. Asked in a terminal when left out'),
+      Flag.optional,
+    ),
   },
-  ({ account, name, path }) =>
+  ({ account, flows, name, path }) =>
     Effect.gen(function* () {
-      const { action, repo } = yield* enroll(yield* rootOf(path), { account, name });
+      const root = yield* rootOf(path);
+      const chosen = yield* chosenFlows(root, flows);
+      const { action, repo } = yield* enroll(root, { account, name });
 
       yield* Console.log(`${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? 'main'}) in ${yield* machineConfigFile}`);
+
+      if (yield* ensureLocalConfig(root)) yield* Console.log('wrote .chernabog/local.yaml');
+
+      for (const names of Option.toArray(chosen)) {
+        const choices = yield* chooseFlows(root, names);
+
+        const listed = (enabled: boolean) =>
+          Option.getOrElse(Option.liftPredicate(choices.filter((choice) => choice.enabled === enabled).map((choice) => choice.name).join(', '), (text) => text.length > 0), () => 'none');
+
+        yield* Console.log(`flows on this machine: ${listed(true)}; turned off: ${listed(false)} (in .chernabog/local.yaml)`);
+      }
+
       yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
     }),
-).pipe(Command.withDescription("Add a repo to this machine's config"));
+).pipe(Command.withDescription("Add a repo to this machine's config, and choose which of its flows run here"));
 
 const attach = Command.make('attach', { run: Argument.String('run') }, ({ run: runId }) =>
   Effect.gen(function* () {

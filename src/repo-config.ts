@@ -200,7 +200,7 @@ export type EffectiveRepo = {
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.
 // `strict` refuses keys the schema doesn't name, rather than dropping them.
-const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string, strict = false) =>
+export const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string, strict = false) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const failed = (message: string) => new ConfigError({ message: `${file}: ${message}` });

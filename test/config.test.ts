@@ -9,7 +9,7 @@ import * as Schema from 'effect/Schema';
 import YAML from 'yaml';
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
-import { scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
+import { chooseFlows, ensureLocalConfig, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
 import { DEFAULT_LIMITS, type EnrolledRepo, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
@@ -200,6 +200,37 @@ describe('init', () => {
       expect(yield* scaffold(repo)).toEqual([]);
       expect(yield* fs.readFileString(`${repo}/.chernabog/config.yaml`)).toBe('baseBranch: develop\n');
       expect(yield* fs.readFileString(`${repo}/.gitignore`)).toBe('node_modules/\n.chernabog/local.yaml\n');
+    }),
+  );
+
+  effect(
+    "records which flows run for the person in local.yaml, over the team's choice",
+    () => Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
+      const localPath = `${repo}/.chernabog/local.yaml`;
+      yield* scaffold(repo);
+      yield* fs.remove(localPath);
+      yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'flows:\n  fix:\n    enabled: false\n');
+      expect(yield* flowChoices(repo)).toEqual([
+        { name: 'fix', enabled: false },
+        { name: 'implement', enabled: true },
+        { name: 'review', enabled: true },
+      ]);
+
+      expect((yield* Effect.flip(chooseFlows(repo, ['implement', 'nope']))).message).toContain('no flow named nope');
+      expect(yield* fs.exists(localPath)).toBe(false);
+
+      expect(yield* chooseFlows(repo, ['fix', 'implement'])).toEqual([
+        { name: 'fix', enabled: true },
+        { name: 'implement', enabled: true },
+        { name: 'review', enabled: false },
+      ]);
+      const written = yield* fs.readFileString(localPath);
+      expect(written).toContain('# Your own settings for this repo');
+      expect((yield* Schema.decodeUnknownEffect(LocalConfigFile)(YAML.parse(written))).flows).toEqual({ fix: { enabled: true }, implement: { enabled: true }, review: { enabled: false } });
+      expect((yield* flowChoices(repo)).map((choice) => choice.enabled)).toEqual([true, true, false]);
+      expect(yield* ensureLocalConfig(repo)).toBe(false);
     }),
   );
 

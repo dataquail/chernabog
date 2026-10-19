@@ -6,11 +6,13 @@ import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
+import YAML from 'yaml';
 
 import { ConfigError } from './config.ts';
 import { execOk } from './Exec.ts';
 import { checkConfigVersion, flowPackageText, withBundledPins } from './flow-deps.ts';
-import { type EnrolledRepo, enrollInMachineConfig, LocalConfigFile, MachineConfigFile, RepoConfigFile } from './repo-config.ts';
+import { flowNames } from './loader.ts';
+import { type EnrolledRepo, enrollInMachineConfig, LocalConfigFile, MachineConfigFile, readYaml, RepoConfigFile } from './repo-config.ts';
 import { TEMPLATES } from './templates.ts';
 
 const LOCAL_TEMPLATE = `# yaml-language-server: $schema=./local.schema.json
@@ -23,6 +25,7 @@ enabled: true
 # activeHours: "09:00-18:00"
 # agent: claude
 # launcher: orca
+# Which flows run here: chernabog enroll asks, and records them under flows.
 # flows:
 #   review:
 #     enabled: false
@@ -150,3 +153,60 @@ export const enroll = (path: string, enrolment: Enrolment) =>
     return { repo, action };
   });
 
+
+export type FlowChoice = { readonly name: string; readonly enabled: boolean };
+
+// The checkout's flows, and whether each runs for this person now: their
+// local.yaml's choice, else the team's config.yaml, else on.
+export const flowChoices = (root: string) =>
+  Effect.gen(function* () {
+    const names = yield* flowNames(`${root}/.chernabog`);
+    const repo = yield* readYaml(RepoConfigFile, `${root}/.chernabog/config.yaml`);
+    const local = yield* readYaml(LocalConfigFile, `${root}/.chernabog/local.yaml`);
+
+    return names.map((name): FlowChoice => ({ name, enabled: local.flows?.[name]?.enabled ?? repo.flows?.[name]?.enabled ?? true }));
+  });
+
+// Fails on a name that isn't one of the checkout's flows; else, all their names.
+export const checkFlowNames = (root: string, chosen: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const names = yield* flowNames(`${root}/.chernabog`);
+    const unknown = chosen.filter((name) => !names.includes(name));
+
+    if (unknown.length > 0) return yield* new ConfigError({ message: `no flow named ${unknown.join(', ')} in .chernabog/flows/ (it has: ${names.join(', ')})` });
+
+    return names;
+  });
+
+// Writes the template local.yaml when the person has none yet.
+export const ensureLocalConfig = (root: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = `${root}/.chernabog/local.yaml`;
+
+    if (!(yield* fs.exists(`${root}/.chernabog`)) || (yield* fs.exists(path))) return false;
+
+    yield* fs.writeFileString(path, LOCAL_TEMPLATE);
+
+    return true;
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
+
+// Turns the chosen flows on and every other one off in local.yaml, keeping
+// its comments. Each flow gets an explicit choice, so one the team turns off
+// still runs for a person who chose it.
+export const chooseFlows = (root: string, chosen: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = `${root}/.chernabog/local.yaml`;
+    const names = yield* checkFlowNames(root, chosen);
+
+    yield* ensureLocalConfig(root);
+    const document = YAML.parseDocument(yield* fs.readFileString(path));
+    const choices = names.map((name): FlowChoice => ({ name, enabled: chosen.includes(name) }));
+
+    for (const { enabled, name } of choices) document.setIn(['flows', name, 'enabled'], enabled);
+
+    yield* fs.writeFileString(path, document.toString());
+
+    return choices;
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));

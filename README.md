@@ -61,7 +61,7 @@ The lint baseline is [functional-domain-driven-hexagon](https://github.com/dataq
 cd ~/code/my-app
 chernabog init                      # scaffolds .chernabog/ with the default flows
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
-chernabog enroll --account personal # adds the repo to this machine's config
+chernabog enroll --account personal # adds the repo to this machine's config, and asks which flows run here
 chernabog trust my-app              # approves the base branch's .chernabog/
 chernabog labels my-app             # creates the auto:* labels
 chernabog install                   # registers the daemon with launchd or systemd, and starts it
@@ -116,7 +116,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
 | `labels [repo]` | Creates or corrects the repo's labels |
 | `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher and the daemon |
-| `init`, `enroll` | Set up a repo, add it to this machine |
+| `init`, `enroll` | Set up a repo; add it to this machine and choose which of its flows run here (`--flows a,b` without asking) |
 | `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service |
 
 `run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
