@@ -32,7 +32,17 @@ It rebuilds and replaces the assets, and publishes the SDK unless that version i
 
 ## One-time setup
 
-1. Install the version-bumper GitHub App on `dataquail/chernabog`, and add its `VERSION_BUMPER_APPID` and `VERSION_BUMPER_SECRET` as repository secrets.
+1. Give the `quailops` GitHub App these repository permissions, and approve the change on the org's installation:
+
+   | Permission    | Access         | For                                                     |
+   | ------------- | -------------- | ------------------------------------------------------- |
+   | Contents      | Read and write | the release branch, the `bun.lock` commit, tags, releases |
+   | Pull requests | Read and write | opening and updating the release PR                     |
+   | Issues        | Read and write | the `autorelease: pending` / `tagged` labels on that PR |
+
+   Install it on `dataquail/chernabog`, and add its app ID and private key as the `VERSION_BUMPER_APPID` and `VERSION_BUMPER_SECRET` repository secrets.
+
+   It needs no bypass on the default branch ruleset. It never pushes to `main`: the release PR reaches `main` through a merge like any other.
 2. In the repository settings, allow squash merging only, so every PR title becomes the commit on `main`.
 3. Create the `chernabog` npm org, and add an `NPM_TOKEN` secret that can create packages in it. A granular token limited to selected packages cannot create a new one.
 4. Once this lands, release what is already there: create a release at the commit it landed as for each half, then run **Release** for each:
