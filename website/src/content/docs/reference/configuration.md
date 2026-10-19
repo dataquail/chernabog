@@ -55,7 +55,7 @@ limits: { reviewRounds: 2, staleAfter: 1 day }
 | Key            | Meaning                                                       |
 | -------------- | ------------------------------------------------------------- |
 | `enabled`      | `false` stops every flow in this repo, for you                |
-| `schedule`     | cron for every flow, over the repo's                          |
+| `schedule`     | cron for every flow, over every schedule the repo sets        |
 | `activeHours`  | start runs only within these hours                            |
 | `agent`        | adapter that implements, over the repo's                      |
 | `launcher`     | your launcher for this repo; wins over every other layer      |

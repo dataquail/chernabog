@@ -191,7 +191,9 @@ export type MachineConfig = {
 export type EffectiveRepo = {
   readonly settings: RepoSettings;
   readonly enabled: boolean;
-  readonly schedule: Option.Option<string>;
+  // The repo-wide default from each layer. The person's beats every schedule
+  // the team sets, a flow's own included; the team's is the last fallback.
+  readonly schedule: { readonly local: Option.Option<string>; readonly repo: Option.Option<string> };
   readonly activeHours: Option.Option<string>;
   readonly flows: Readonly<Record<string, FlowSettings>>;
 };
@@ -360,7 +362,15 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
 
     const account = found.value;
     const { local, repo } = files;
-    const flows = mergeFlows([repo.flows ?? {}, local.flows ?? {}], machine.concurrency);
+
+    // A person who sets their own default schedule chooses when every flow
+    // runs for them, so the team's per-flow schedules give way to it.
+    const repoFlows = Option.match(Option.fromUndefinedOr(local.schedule), {
+      onNone: () => repo.flows ?? {},
+      onSome: () => Record.map(repo.flows ?? {}, ({ schedule: _schedule, ...settings }) => settings),
+    });
+
+    const flows = mergeFlows([repoFlows, local.flows ?? {}], machine.concurrency);
     const agent = local.agent ?? repo.agent ?? account.agent;
     const agentAccounts = accountsByAgent(machine, account);
     const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), files);
@@ -391,7 +401,7 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
     return {
       settings,
       enabled: local.enabled ?? true,
-      schedule: Option.orElse(Option.fromUndefinedOr(local.schedule), () => Option.fromUndefinedOr(repo.schedule)),
+      schedule: { local: Option.fromUndefinedOr(local.schedule), repo: Option.fromUndefinedOr(repo.schedule) },
       activeHours: Option.fromUndefinedOr(local.activeHours),
       flows,
     } satisfies EffectiveRepo;
