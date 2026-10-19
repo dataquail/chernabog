@@ -252,3 +252,16 @@ jobs:
           esac
 
           npm publish --provenance --tag "$dist_tag"
+
+  # The docs describe what was just released, so they deploy only once the SDK
+  # is on npm, built from the tag that published it.
+  docs:
+    needs: [plan, sdk]
+    if: needs.sdk.result == 'success'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+    with:
+      ref: ${{ needs.plan.outputs.sdk-tag }}

@@ -1,0 +1,50 @@
+---
+title: Chernabog
+description: Spend spare coding-agent capacity on queued work across your repos.
+template: splash
+hero:
+  title: chernabog
+  image:
+    light: ../../assets/mark-light.svg
+    dark: ../../assets/mark-dark.svg
+    alt: ""
+  tagline: Spend spare coding-agent capacity on queued work across your repos. People queue the work, set budgets and hours, and merge; durable flows do the rest.
+  actions:
+    - text: Get started
+      link: /chernabog/start/introduction/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/dataquail/chernabog
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="Flows live in the repo" icon="document">
+    Teams commit `.chernabog/` the way they commit git hooks. [Set up a repo
+    →](/chernabog/start/set-up-a-repo/)
+  </Card>
+  <Card title="Durable by construction" icon="approve-check">
+    Every step is an Effect activity journalled in SQLite; a crash resumes after the last one.
+    [Writing flows →](/chernabog/flows/flows/)
+  </Card>
+  <Card title="Spends only spare budget" icon="setting">
+    The usage gate holds work back unless the week has headroom after your own use. [The usage
+    gate →](/chernabog/agents/usage-gate/)
+  </Card>
+  <Card title="Any agent" icon="random">
+    Claude Code, Codex, opencode or your own CLI; review with a different one than wrote the code.
+    [Adapters →](/chernabog/agents/adapters/)
+  </Card>
+  <Card title="Labels are the interface" icon="list-format">
+    Label an issue `auto:eligible`; follow it to `auto:approved`. [The default flows
+    →](/chernabog/work/flows/)
+  </Card>
+  <Card title="Trust is explicit" icon="warning">
+    Flows run from the base branch, and a change to them waits for you to trust it.
+    [Trust →](/chernabog/operate/trust/)
+  </Card>
+</CardGrid>

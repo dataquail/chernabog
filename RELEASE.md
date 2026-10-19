@@ -21,7 +21,8 @@ They are versioned separately because a repo's `.chernabog/package.json` pins th
    - tags the release and creates its GitHub release;
    - builds the binary on macOS (arm64, x64) and Linux (x64, arm64), checks that each one reports the tagged version, and attaches the tarballs and a `sha256` file to the release;
    - points `Formula/chernabog.rb` in `dataquail/homebrew-tap` at those tarballs, written by `scripts/homebrew-formula.ts`. A dispatched re-run of an older tag leaves the formula alone;
-   - publishes `@chernabog/sdk` to npm with provenance, under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there.
+   - publishes `@chernabog/sdk` to npm with provenance, under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there;
+   - once that publish succeeds, builds the docs site in `website/` from the SDK's tag and deploys it to GitHub Pages (the **Docs** workflow). A release with no SDK version leaves the site as it was.
 
 ## When a release fails partway
 
@@ -31,7 +32,11 @@ The tag and GitHub release already exist, so run **Release** by hand with the ta
 gh workflow run release.yml -f tag=v0.4.0
 ```
 
-It rebuilds and replaces the assets, and publishes the SDK unless that version is already on npm.
+It rebuilds and replaces the assets, and publishes the SDK unless that version is already on npm. A dispatch with an SDK tag deploys the docs again too. To redeploy the docs alone, from `main`:
+
+```sh
+gh workflow run docs.yml
+```
 
 ## One-time setup
 
@@ -60,3 +65,10 @@ It rebuilds and replaces the assets, and publishes the SDK unless that version i
    release-please takes these as the last releases, and only commits after them go into the next release PR.
 
 5. On npmjs.com, add a trusted publisher to `@chernabog/sdk`: repository `dataquail/chernabog`, workflow `release.yml`. Then delete the `NPM_TOKEN` secret. Publishing then uses short-lived OIDC credentials, so there is no long-lived token to leak.
+6. In the repository settings, under **Pages**, set the source to **GitHub Actions**, or:
+
+   ```sh
+   gh api -X POST repos/dataquail/chernabog/pages -f build_type=workflow
+   ```
+
+   The site is served at <https://dataquail.github.io/chernabog/>. Its `github-pages` environment deploys from `main` only, which is where Release runs.
