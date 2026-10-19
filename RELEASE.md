@@ -4,7 +4,7 @@ Chernabog ships two things, versioned separately:
 
 | What                       | Version in                  | Tag              | Goes to                                  |
 | -------------------------- | --------------------------- | ---------------- | ---------------------------------------- |
-| the `chernabog` binary     | `package.json`              | `v<version>`     | GitHub release assets, per platform      |
+| the `chernabog` binary     | `package.json`              | `v<version>`     | GitHub release assets, per platform, and the `dataquail/homebrew-tap` formula |
 | `@chernabog/sdk`           | `packages/sdk/package.json` | `sdk-v<version>` | npm                                      |
 
 `src/version.ts` reads the root `package.json`, so `--version` and the `engines.chernabog` floor follow it.
@@ -18,6 +18,7 @@ They are versioned separately because a repo's `.chernabog/package.json` pins th
 3. **Merge the release PR when you want to ship.** The same run then:
    - tags the release and creates its GitHub release;
    - builds the binary on macOS (arm64, x64) and Linux (x64, arm64), checks that each one reports the tagged version, and attaches the tarballs and a `sha256` file to the release;
+   - points `Formula/chernabog.rb` in `dataquail/homebrew-tap` at those tarballs, written by `scripts/homebrew-formula.ts`. A dispatched re-run of an older tag leaves the formula alone;
    - publishes `@chernabog/sdk` to npm with provenance, under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there.
 
 ## When a release fails partway
@@ -36,11 +37,11 @@ It rebuilds and replaces the assets, and publishes the SDK unless that version i
 
    | Permission    | Access         | For                                                     |
    | ------------- | -------------- | ------------------------------------------------------- |
-   | Contents      | Read and write | the release branch, the `bun.lock` commit, tags, releases |
+   | Contents      | Read and write | the release branch, the `bun.lock` commit, tags, releases, the tap's formula |
    | Pull requests | Read and write | opening and updating the release PR                     |
    | Issues        | Read and write | the `autorelease: pending` / `tagged` labels on that PR |
 
-   Install it on `dataquail/chernabog`, and add its app ID and private key as the `VERSION_BUMPER_APPID` and `VERSION_BUMPER_SECRET` repository secrets.
+   Install it on `dataquail/chernabog` and `dataquail/homebrew-tap`, and add its app ID and private key as the `VERSION_BUMPER_APPID` and `VERSION_BUMPER_SECRET` repository secrets.
 
    It needs no bypass on the default branch ruleset. It never pushes to `main`: the release PR reaches `main` through a merge like any other.
 2. In the repository settings, allow squash merging only, so every PR title becomes the commit on `main`.

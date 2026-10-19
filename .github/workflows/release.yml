@@ -151,6 +151,61 @@ jobs:
       # --clobber, so a dispatched re-run replaces what a failed run left.
       - run: gh release upload "$TAG" assets/* --clobber --repo "$GITHUB_REPOSITORY"
 
+  # Points dataquail/homebrew-tap's formula at the binaries just attached, so
+  # `brew upgrade chernabog` picks the release up.
+  homebrew:
+    needs: [plan, attach]
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.plan.outputs.binary-tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # A dispatched re-run of an older tag must not move the formula back.
+      - name: Check this is the newest release
+        id: newest
+        run: |
+          newest=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '[.[].tag_name | select(startswith("v"))][0]')
+          if [ "$newest" != "$TAG" ]; then
+            echo "$TAG is not the newest release ($newest); leaving the formula alone"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        if: steps.newest.outputs.skip != 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.VERSION_BUMPER_APPID }}
+          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
+          owner: dataquail
+          repositories: homebrew-tap
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.newest.outputs.skip != 'true'
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.newest.outputs.skip != 'true'
+        with:
+          repository: dataquail/homebrew-tap
+          path: tap
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: steps.newest.outputs.skip != 'true'
+        with:
+          bun-version: 1.4.3
+      - name: Commit the formula
+        if: steps.newest.outputs.skip != 'true'
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "chernabog-$TAG-sha256.txt"
+          mkdir -p tap/Formula
+          bun scripts/homebrew-formula.ts "$TAG" "chernabog-$TAG-sha256.txt" > tap/Formula/chernabog.rb
+          cd tap
+          git diff --quiet && git ls-files --error-unmatch Formula/chernabog.rb >/dev/null 2>&1 && exit 0
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Formula/chernabog.rb
+          git commit -m "chernabog ${TAG#v}"
+          git push
+
   sdk:
     needs: plan
     if: needs.plan.outputs.sdk-tag != ''
