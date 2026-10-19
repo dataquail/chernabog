@@ -23,6 +23,8 @@ Hours are `HH:MM-HH:MM` in local time, and may wrap midnight. Every skipped tick
 
 A run waiting on a signal — a review waiting for its author's push — holds no slot.
 
+The daemon reads `local.yaml` when it starts, and checks it every ten seconds. When it changes, the daemon restarts on it once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending.
+
 ## The engine
 
 The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.

@@ -1,7 +1,7 @@
 // The daemon end to end: trust, scheduled ticks, gates, the socket the CLI uses.
 
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -102,4 +102,13 @@ describe('the daemon', () => {
     const viaDaemon = await sandbox.runCli(['run', 'implement', '--repo', 'demo']);
     expect(viaDaemon.output).toContain('nothing to start');
   }, 30_000);
+
+  test('restarts on an edit to local.yaml, and a flow turned off there starts nothing', async () => {
+    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), 'flows:\n  implement:\n    enabled: false\n');
+    expect(await daemonExit).toBe(75);
+    expect(sandbox.daemonLog()).toContain('demo: local.yaml changed; restarting on it when idle');
+    await startDaemon();
+    expect((await sandbox.runCli(['status'])).output).toContain('  implement: off');
+    await waitFor(() => sandbox.daemonLog().includes('demo/implement: skipped: flow turned off'), 'a tick of the flow turned off');
+  }, 45_000);
 });
