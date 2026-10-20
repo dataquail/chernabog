@@ -55,7 +55,12 @@ const FlowSettings = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   schedule: Schema.optionalKey(Schema.String),
   concurrency: Schema.optionalKey(Schema.Int),
-  agent: Schema.optionalKey(Schema.String),
+  agent: Schema.optionalKey(Schema.String.annotate({ description: "The adapter this flow's agent steps run with, over the repo's agent." })),
+  agents: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String).annotate({
+      description: "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's.",
+    }),
+  ),
   assignee: whoFor('assignees'),
   reviewRequested: whoFor('requested reviewers'),
 });
@@ -368,7 +373,16 @@ export const findEnrolled = (machine: MachineConfig, name: string) =>
 const mergeFlows = (layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>>, machineConcurrency: number) => {
   const merged: Record<string, FlowSettings> = {};
 
-  for (const layer of layers) for (const [name, settings] of Object.entries(layer)) merged[name] = { ...merged[name], ...settings };
+  // Roles merge one by one, so a person can swap one role's adapter and keep the team's others.
+  for (const layer of layers) {
+    for (const [name, settings] of Object.entries(layer)) {
+      const earlier = Option.fromUndefinedOr(merged[name]?.agents);
+      const later = Option.fromUndefinedOr(settings.agents);
+      merged[name] = { ...merged[name], ...settings };
+
+      if (Option.isSome(earlier) && Option.isSome(later)) merged[name] = { ...merged[name], agents: { ...earlier.value, ...later.value } };
+    }
+  }
 
   // A repo can lower concurrency, never raise it past the machine's.
   return Record.map(merged, (settings) =>
@@ -477,6 +491,7 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
       agentAccounts,
       launcher,
       flowAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agent), (adapter) => [flow, adapter] as const)))),
+      flowRoleAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agents), (roles) => [flow, roles] as const)))),
       labels: { ...DEFAULT_LABELS, ...repo.labels },
       install: Option.flatten(Option.fromUndefinedOr(repo.install)),
       localGate: repo.localGate ?? [],

@@ -54,7 +54,7 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 ## Building blocks
 
-`Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts; `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
+`Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts, with the adapter of an optional `{ role }` from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role); `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
 | `Implement.`         | `Review.`                    |
 | -------------------- | ---------------------------- |

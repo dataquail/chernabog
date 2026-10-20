@@ -100,6 +100,8 @@ export const RepoSettings = Schema.Struct({
   launcher: ResolvedLauncher,
   // The adapter a flow asked for in config (flows.<name>.agent), such as a Codex reviewer.
   flowAgents: Schema.Record(Schema.String, Schema.String),
+  // The adapters a flow gave its roles in config (flows.<name>.agents), such as { reviewer: codex }.
+  flowRoleAgents: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
   labels: Labels,
   install: Schema.Option(Schema.String),
   localGate: Strings,
