@@ -42,8 +42,9 @@ if (command.startsWith('status')) {
   const handle = flag('--terminal');
   if (!existsSync(pidFile(handle))) say({ ok: false, error: { code: 'terminal_handle_stale', message: 'terminal_handle_stale' } });
   else {
-    const live = running(handle);
-    say({ ok: true, result: { terminal: { handle, connected: live, orphaned: !live } } });
+    // Real Orca marks a terminal orphaned soon after Claude Code starts in it,
+    // running or not; only `connected` follows the command.
+    say({ ok: true, result: { terminal: { handle, connected: running(handle), orphaned: true } } });
   }
 } else if (command === 'terminal close') {
   const handle = flag('--terminal');

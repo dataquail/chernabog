@@ -17,7 +17,7 @@ const Created = Schema.fromJsonString(
 
 const Shown = Schema.fromJsonString(
   Schema.Union([
-    Schema.Struct({ ok: Schema.Literal(true), result: Schema.Struct({ terminal: Schema.Struct({ connected: Schema.Boolean, orphaned: Schema.Boolean }) }) }),
+    Schema.Struct({ ok: Schema.Literal(true), result: Schema.Struct({ terminal: Schema.Struct({ connected: Schema.Boolean }) }) }),
     Schema.Struct({ ok: Schema.Literal(false), error: Failure }),
   ]),
 );
@@ -44,13 +44,14 @@ export const orcaLauncher: Launcher = {
 
       return created.result.terminal.handle;
     }),
-  // An exited terminal can still be shown, disconnected and orphaned.
+  // `connected` alone says whether the command still runs: Orca also marks a
+  // terminal orphaned a few seconds after Claude Code starts in it, while it runs.
   alive: (handle) =>
     Effect.gen(function* () {
       const result = yield* orca(['terminal', 'show', '--terminal', handle, '--json']);
       const shown = yield* decode(Shown, 'terminal show', result.stdout);
 
-      if (shown.ok) return shown.result.terminal.connected && !shown.result.terminal.orphaned;
+      if (shown.ok) return shown.result.terminal.connected;
 
       if (shown.error.code === STALE) return false;
 
