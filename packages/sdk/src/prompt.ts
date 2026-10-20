@@ -35,3 +35,16 @@ export const renderPrompt = (name: string, values: Readonly<Record<string, Promp
 
     return fillTemplate(template, values);
   });
+
+// Like renderPrompt, from the default the SDK carries when the repo has no
+// .chernabog/prompts/<name>.md of its own.
+export const renderPromptOr = (name: string, fallback: string, values: Readonly<Record<string, PromptValue>>) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+    const fs = yield* FileSystem.FileSystem;
+    const path = `${repo.configDir}/prompts/${name}.md`;
+
+    if (!(yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)))) return fillTemplate(fallback, values);
+
+    return yield* renderPrompt(name, values);
+  });

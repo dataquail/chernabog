@@ -3,7 +3,7 @@
 
 import { fileURLToPath } from 'node:url';
 
-import { Agent, awaitSignal, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, type Issue, NeedsHuman, ownerMarker, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
+import { Agent, type AgentRequest, awaitSignal, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, Issue, type Json, NeedsHuman, ownerMarker, printJson, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
 import type { BunServices } from '@effect/platform-bun';
 import { describe, expect } from 'bun:test';
 import * as Context from 'effect/Context';
@@ -50,6 +50,19 @@ const settings: RepoSettings = {
 
 const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {} };
 
+// What the agent answers, by the shape the step asked for.
+const answerFor = (request: AgentRequest, verdict: 'approve' | 'request-changes'): Json => {
+  const schema = Option.match(request.outputSchema, { onNone: () => '', onSome: printJson });
+
+  if (schema.includes('remediated')) return { verdict, summary: 'Both fixed.', comments: [], findings: [{ finding: 'Mention the change', remediated: true }] };
+
+  if (schema.includes('decline')) return { status: 'address', reasons: 'The review is right.' };
+
+  if (schema.includes('needs-clarification')) return { status: 'done', summary: 'Mentioned the change.', title: 'feat: a change', body: 'The change.' };
+
+  return { verdict, summary: 'Reviewed.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change.' }] };
+};
+
 // One pull request and one issue, and what the steps did to them.
 const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<RepoSettings> = {}) => {
   const labels = new Map<number, Array<string>>([
@@ -60,6 +73,7 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
   const comments: Array<Comment> = [];
   const reviews: Array<string> = [];
   const adapters: Array<Option.Option<string>> = [];
+  const requests: Array<AgentRequest> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
 
   const pull = (): PullRequest => ({
@@ -126,22 +140,23 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
         }),
     }),
     Layer.mock(Git)({}),
-    Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`) }),
+    Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`), checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`) }),
     Layer.mock(Usage)({}),
     Layer.mock(Agent)({
       adapters: [],
       run: (request) =>
         Effect.sync(() => {
           adapters.push(request.adapter);
+          requests.push(request);
 
-          return { sessionId: request.sessionId, output: { verdict, summary: 'Reviewed.', comments: [] }, costUsd: Option.none() };
+          return { sessionId: request.sessionId, output: answerFor(request, verdict), costUsd: Option.none() };
         }),
     }),
     Layer.mock(StepRunner)({}),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
-  return { services, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
+  return { services, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
 };
 
 type Fake = ReturnType<typeof makeFake>;
@@ -179,6 +194,27 @@ const flow = defineFlow({
       if (work.key === 'owning-fails') return yield* PullRequest.owning(PULL)(Effect.fail(new NeedsHuman({ reason: 'stuck' })));
 
       if (work.key === 'owning-waits') return yield* PullRequest.owning(PULL)(awaitSignal(['pushed'], { id: 'wait', timeout: '1 hour' }));
+
+      if (work.key === 'recheck') {
+        const review = yield* Review.round(PULL, 1, { role: 'reviewer' });
+        const recheck = yield* Review.recheck(PULL, review);
+
+        return `${recheck.round}: ${recheck.findings.map((finding) => `${finding.finding} ${finding.remediated}`).join(', ')}`;
+      }
+
+      if (work.key === 'consider-and-address') {
+        const review = yield* Review.round(PULL, 1);
+        const decision = yield* Implement.considerFindings(PULL, review, Implement.thisRunsSession);
+        const addressed = yield* Implement.addressFindings(PULL, review, Implement.thisRunsSession);
+
+        return `${decision.status}: ${addressed.summary}`;
+      }
+
+      if (work.key === 'comments') {
+        yield* PullRequest.comment(PULL, 'On the pull request.');
+        yield* Issue.comment(ISSUE, 'On the issue.');
+        yield* PullRequest.comment(PULL, 'On the pull request.');
+      }
 
       if (work.key === 'hand-off-unlabelled') return yield* Implement.handOff(ISSUE, opened, outcome, { needsReview: false });
     }),
@@ -375,6 +411,54 @@ describe('owning a pull request', () => {
       expect(yield* triggered(ended, Review.trigger)).toEqual([]);
       ended.knowRun(false);
       expect((yield* triggered(ended, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
+    }),
+  );
+});
+
+describe('considering findings', () => {
+  const roles = { flowRoleAgents: { demo: { reviewer: 'codex' } } };
+
+  effect(
+    "Review.recheck resumes the reviewer's session with the change since its review, and posts the next review",
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve', roles);
+      const finished = yield* runToEnd(fake, 'recheck');
+      expect(finished.status).toBe('done');
+      expect(summaryOf(finished)).toBe('2: Mention the change true');
+
+      const [review, recheck] = fake.requests;
+      expect(recheck.sessionId).toBe(review.sessionId);
+      expect(recheck.adapter).toEqual(Option.some('codex'));
+      expect(Option.getOrElse(recheck.resumePrompt, () => '')).toContain(`git diff ${HEAD}..HEAD`);
+      const markers = fake.comments.flatMap((comment) => Option.toArray(reviewMarker.read(comment.body)));
+      expect(markers.map((marker) => marker.round)).toEqual([1, 2]);
+    }),
+  );
+
+  effect(
+    "Implement.considerFindings and addressFindings resume the implement session with the review",
+    () => Effect.gen(function* () {
+      const fake = makeFake('request-changes');
+      const finished = yield* runToEnd(fake, 'consider-and-address');
+      expect(summaryOf(finished)).toBe('address: Mentioned the change.');
+
+      const [, consider, address] = fake.requests;
+      expect(consider.sessionId).toBe(address.sessionId);
+      expect(consider.cwd).toBe('/tmp/demo-worktrees/auto/issue-3');
+      expect(consider.prompt).toContain('README.md:1: Mention the change.');
+      expect(address.prompt).toContain('Address review 1');
+      // Considering changes nothing on GitHub.
+      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
+    }),
+  );
+
+  effect(
+    'PullRequest.comment and Issue.comment post once each, and do nothing else',
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve');
+      expect((yield* runToEnd(fake, 'comments')).status).toBe('done');
+      expect(fake.comments.map((comment) => comment.body)).toEqual(['On the pull request.', 'On the issue.']);
+      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
     }),
   );
 });

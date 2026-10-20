@@ -9,12 +9,13 @@ import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
 
+import { RECHECK } from './default-prompts.ts';
 import { NeedsHuman, StepFailed } from './errors.ts';
 import { activity, awaitSignal } from './flow.ts';
 import { fixWithAgent, push, sessionIdFor, waitForCi } from './implement.ts';
 import type { Json } from './json.ts';
 import { latestMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
-import { renderPrompt } from './prompt.ts';
+import { renderPrompt, renderPromptOr } from './prompt.ts';
 import * as PullRequestSteps from './pull-request.ts';
 import { adapterFor, type RoleOptions } from './roles.ts';
 import { Agent, Git, GitHub, type PullRequest, Repo, type ReviewNote, Run, type WorkItem, Worktree } from './services.ts';
@@ -123,9 +124,52 @@ export const verdictJsonSchema = {
   additionalProperties: false,
 } satisfies Json;
 
-export const ReviewResult = Schema.Struct({ verdict: Schema.Literals(['approve', 'request-changes']), sha: Schema.String });
+const ReviewComments = Schema.Array(Schema.Struct({ path: Schema.String, line: Schema.Finite, body: Schema.String }));
+
+// A posted review: its verdict and the head it saw, and, from Review.round and
+// Review.recheck, what it said and the session to resume it in. Those are
+// optional only so that results saved before they existed still read back.
+export const ReviewResult = Schema.Struct({
+  verdict: Schema.Literals(['approve', 'request-changes']),
+  sha: Schema.String,
+  round: Schema.optionalKey(Schema.Finite),
+  summary: Schema.optionalKey(Schema.String),
+  comments: Schema.optionalKey(ReviewComments),
+  sessionId: Schema.optionalKey(Schema.String),
+  adapter: Schema.optionalKey(Schema.String),
+});
 
 export type ReviewResult = typeof ReviewResult.Type;
+
+// What a re-check found of each earlier finding.
+export const Finding = Schema.Struct({ finding: Schema.String, remediated: Schema.Boolean });
+
+export type Finding = typeof Finding.Type;
+
+export const RecheckResult = Schema.Struct({ ...ReviewResult.fields, findings: Schema.Array(Finding) });
+
+export type RecheckResult = typeof RecheckResult.Type;
+
+const RecheckVerdict = Schema.Struct({ ...Verdict.fields, findings: Schema.Array(Finding) });
+
+export const recheckJsonSchema = {
+  ...verdictJsonSchema,
+  properties: {
+    ...verdictJsonSchema.properties,
+    findings: {
+      type: 'array',
+      description: 'Each finding of the earlier review, and whether the new code remediates it',
+      items: {
+        type: 'object',
+        properties: { finding: { type: 'string' }, remediated: { type: 'boolean' } },
+        required: ['finding', 'remediated'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: [...verdictJsonSchema.required, 'findings'],
+} satisfies Json;
+
 
 const withoutMarkers = (body: string) => body.replace(/<!--.*?-->/gs, '').trim();
 
@@ -142,6 +186,15 @@ const headingFor = (verdict: Verdict['verdict'], reviewer: string) => {
 };
 
 // Reviews the head in a detached worktree and posts the review with its marker.
+// Posts a review of the head with its marker, as a review and as a plain comment, which the trigger reads back.
+const postReview = (pull: PullRequest, round: number, verdict: Verdict, heading: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const marker = reviewMarker.write({ sha: pull.headSha, round, verdict: verdict.verdict });
+    yield* github.review(pull.number, { body: `**${heading}** (review ${round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments });
+    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
+  });
+
 const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
@@ -164,11 +217,12 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
     });
 
     const adapter = yield* adapterFor(role);
+    const sessionId = sessionIdFor(run.runId, `review-${round}`);
 
     const result = yield* (yield* Agent).run({
       cwd: worktree,
       prompt,
-      sessionId: sessionIdFor(run.runId, `review-${round}`),
+      sessionId,
       resumePrompt: Option.none(),
       outputSchema: Option.some(verdictJsonSchema),
       adapter,
@@ -178,13 +232,10 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
       Effect.mapError((issue) => new StepFailed({ step: `review-${round}`, message: `reviewer answer: ${issue.message}` })),
     );
 
-    const heading = headingFor(verdict.verdict, Option.getOrElse(adapter, () => repo.agent));
-    const marker = reviewMarker.write({ sha: pull.headSha, round, verdict: verdict.verdict });
-    yield* github.review(pullRequest, { body: `**${heading}** (review ${round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments });
-    // The marker also goes in a plain comment, which the trigger reads back.
-    yield* github.comment(pullRequest, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
+    const reviewer = Option.getOrElse(adapter, () => repo.agent);
+    yield* postReview(pull, round, verdict, headingFor(verdict.verdict, reviewer));
 
-    return { verdict: verdict.verdict, sha: pull.headSha };
+    return { verdict: verdict.verdict, sha: pull.headSha, round, summary: verdict.summary, comments: verdict.comments, sessionId, adapter: reviewer };
   });
 
 const moveVerdictLabels = (pullRequest: number, verdict: ReviewResult['verdict']) =>
@@ -205,6 +256,45 @@ const reviewOnly = (pullRequest: number, round: number, options: RoleOptions = {
   activity(`review-${round}`, reviewAndPost(pullRequest, round, Option.fromUndefinedOr(options.role)), ReviewResult);
 
 export { reviewOnly as round };
+
+// Resumes the reviewer's session from `review` with the change since the head
+// it saw, and posts what it finds as the next review: the same verdict, and
+// whether each finding of `review` is remediated. Its prompt is
+// .chernabog/prompts/recheck.md, or the SDK's own.
+export const recheck = (pullRequest: number, review: ReviewResult) => {
+  const round = (review.round ?? 1) + 1;
+
+  return activity(
+    `review-${round}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+
+      const sessionId = Option.fromUndefinedOr(review.sessionId);
+
+      if (Option.isNone(sessionId)) {
+        return yield* new StepFailed({ step: `review-${round}`, message: 'the review carries no session to resume; re-check a review from Review.round or Review.recheck' });
+      }
+
+      const pull = yield* github.pullRequest(pullRequest);
+      const worktree = yield* (yield* Worktree).checkout(`review-pr-${pullRequest}`, `origin/${pull.headRef}`);
+      const prompt = yield* renderPromptOr('recheck', RECHECK, { pullRequest, round: round - 1, reviewedSha: review.sha, headSha: pull.headSha });
+      const adapter = Option.fromUndefinedOr(review.adapter);
+
+      const result = yield* (yield* Agent).run({ cwd: worktree, prompt, sessionId: sessionId.value, resumePrompt: Option.some(prompt), outputSchema: Option.some(recheckJsonSchema), adapter });
+
+      const verdict = yield* Schema.decodeUnknownEffect(RecheckVerdict)(result.output).pipe(
+        Effect.mapError((issue) => new StepFailed({ step: `review-${round}`, message: `reviewer answer: ${issue.message}` })),
+      );
+
+      const reviewer = Option.getOrElse(adapter, () => repo.agent);
+      yield* postReview(pull, round, verdict, headingFor(verdict.verdict, reviewer));
+
+      return { verdict: verdict.verdict, sha: pull.headSha, round, summary: verdict.summary, comments: verdict.comments, sessionId: sessionId.value, adapter: reviewer, findings: verdict.findings };
+    }),
+    RecheckResult,
+  );
+};
 
 // Moves the pull request from needs-review to approved or changes-requested, as
 // the review said. A verdict that is no longer the latest review on the pull
