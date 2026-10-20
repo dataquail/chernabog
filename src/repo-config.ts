@@ -218,6 +218,14 @@ export type EffectiveRepo = {
 
 export const FLOW_TURNED_OFF = 'flow turned off';
 
+// Why this machine doesn't run a flow with these runners, if it doesn't.
+export const notARunner = (runners: ReadonlyArray<string>, login: Option.Option<string>) => {
+  const isRunner = Option.exists(login, (self) => runners.some((runner) => runner.toLowerCase() === self.toLowerCase()));
+  const who = Option.match(login, { onNone: () => "this machine's GitHub login is unknown", onSome: (self) => `this machine is ${self}` });
+
+  return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !isRunner);
+};
+
 export const runnersOf = (repo: EffectiveRepo, flow: string) => Option.orElse(Record.get(repo.runners.flows, flow), () => repo.runners.repo);
 
 export const hasRunners = (repo: EffectiveRepo) => Option.isSome(repo.runners.repo) || Object.keys(repo.runners.flows).length > 0;
@@ -233,12 +241,7 @@ export const flowOff = (repo: EffectiveRepo, flow: string, login: Option.Option<
 
   if (Option.exists(Record.get(repo.flows, flow), (settings) => settings.enabled === false)) return Option.some(FLOW_TURNED_OFF);
 
-  return Option.flatMap(runnersOf(repo, flow), (runners) => {
-    const isRunner = Option.exists(login, (self) => runners.some((runner) => runner.toLowerCase() === self.toLowerCase()));
-    const who = Option.match(login, { onNone: () => "this machine's GitHub login is unknown", onSome: (self) => `this machine is ${self}` });
-
-    return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !isRunner);
-  });
+  return Option.flatMap(runnersOf(repo, flow), (runners) => notARunner(runners, login));
 };
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.

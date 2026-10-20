@@ -2,6 +2,7 @@
 // built from today's logic; `chernabog enroll` adds the repo to this
 // machine's config.
 
+import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
@@ -12,7 +13,7 @@ import { ConfigError } from './config.ts';
 import { execOk } from './Exec.ts';
 import { checkConfigVersion, flowPackageText, withBundledPins } from './flow-deps.ts';
 import { flowNames } from './loader.ts';
-import { type EnrolledRepo, enrollInMachineConfig, LocalConfigFile, MachineConfigFile, readYaml, RepoConfigFile } from './repo-config.ts';
+import { type EnrolledRepo, enrollInMachineConfig, FLOW_TURNED_OFF, LocalConfigFile, MachineConfigFile, notARunner, readYaml, RepoConfigFile } from './repo-config.ts';
 import { TEMPLATES } from './templates.ts';
 
 const LOCAL_TEMPLATE = `# yaml-language-server: $schema=./local.schema.json
@@ -156,15 +157,32 @@ export const enroll = (path: string, enrolment: Enrolment) =>
 
 export type FlowChoice = { readonly name: string; readonly enabled: boolean };
 
+// A flow as it stands for this person: whether it runs, whether the team's
+// config.yaml has it run here, and why not when it doesn't.
+export type FlowStanding = FlowChoice & { readonly teamDefault: boolean; readonly teamOff: Option.Option<string> };
+
 // The checkout's flows, and whether each runs for this person now: their
-// local.yaml's choice, else the team's config.yaml, else on.
-export const flowChoices = (root: string) =>
+// local.yaml's choice, else the team's: flows.<flow>.enabled, then the
+// runners. `login` is this machine's GitHub login, looked up only when the
+// team names runners.
+export const flowChoices = <R>(root: string, login: Effect.Effect<Option.Option<string>, never, R>) =>
   Effect.gen(function* () {
     const names = yield* flowNames(`${root}/.chernabog`);
     const repo = yield* readYaml(RepoConfigFile, `${root}/.chernabog/config.yaml`);
     const local = yield* readYaml(LocalConfigFile, `${root}/.chernabog/local.yaml`);
+    const runnersOf = (name: string) => Option.orElse(Option.fromUndefinedOr(repo.flows?.[name]?.runners), () => Option.fromUndefinedOr(repo.runners));
+    let self = Option.none<string>();
 
-    return names.map((name): FlowChoice => ({ name, enabled: local.flows?.[name]?.enabled ?? repo.flows?.[name]?.enabled ?? true }));
+    if (names.some((name) => Option.isSome(runnersOf(name)))) self = yield* login;
+
+    return names.map((name): FlowStanding => {
+      const teamOff = Option.orElse(
+        Option.liftPredicate(FLOW_TURNED_OFF, () => repo.flows?.[name]?.enabled === false),
+        () => Option.flatMap(runnersOf(name), (runners) => notARunner(runners, self)),
+      );
+
+      return { name, enabled: local.flows?.[name]?.enabled ?? Option.isNone(teamOff), teamDefault: Option.isNone(teamOff), teamOff };
+    });
   });
 
 // Fails on a name that isn't one of the checkout's flows; else, all their names.
@@ -191,28 +209,52 @@ export const ensureLocalConfig = (root: string) =>
     return true;
   }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
 
-// Records each choice as flows.<flow>.enabled in local.yaml, keeping its comments.
-export const writeFlowChoices = (root: string, choices: ReadonlyArray<FlowChoice>) =>
+// Drops a map from local.yaml once nothing is left in it.
+const pruneEmpty = (document: YAML.Document, path: ReadonlyArray<string>) => {
+  const node = document.getIn(path);
+
+  if (YAML.isMap(node) && node.items.length === 0) document.deleteIn(path);
+};
+
+// Records each choice in local.yaml as flows.<flow>.enabled, keeping its
+// comments, but only where it differs from the team's: a choice the team
+// already makes is left to the team, so a later change to its runners or
+// flows.<flow>.enabled still reaches this person.
+export const writeFlowChoices = <R>(root: string, choices: ReadonlyArray<FlowChoice>, login: Effect.Effect<Option.Option<string>, never, R>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = `${root}/.chernabog/local.yaml`;
+    const standing = yield* flowChoices(root, login);
 
     yield* ensureLocalConfig(root);
     const document = YAML.parseDocument(yield* fs.readFileString(path));
 
-    for (const { enabled, name } of choices) document.setIn(['flows', name, 'enabled'], enabled);
+    for (const { enabled, name } of choices) {
+      const teamDefault = Option.getOrElse(Option.map(Arr.findFirst(standing, (flow) => flow.name === name), (flow) => flow.teamDefault), () => true);
+
+      if (enabled !== teamDefault) {
+        document.setIn(['flows', name, 'enabled'], enabled);
+        continue;
+      }
+
+      if (!document.hasIn(['flows', name, 'enabled'])) continue;
+
+      document.deleteIn(['flows', name, 'enabled']);
+      pruneEmpty(document, ['flows', name]);
+      pruneEmpty(document, ['flows']);
+    }
 
     yield* fs.writeFileString(path, document.toString());
   }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
 
-// Turns the chosen flows on and every other one off. Each flow gets an
-// explicit choice, so one the team turns off still runs for a person who chose it.
-export const chooseFlows = (root: string, chosen: ReadonlyArray<string>) =>
+// Turns the chosen flows on and every other one off, over the team's choice
+// where they differ: a flow the team turns off still runs for a person who chose it.
+export const chooseFlows = <R>(root: string, chosen: ReadonlyArray<string>, login: Effect.Effect<Option.Option<string>, never, R>) =>
   Effect.gen(function* () {
     const names = yield* checkFlowNames(root, chosen);
     const choices = names.map((name): FlowChoice => ({ name, enabled: chosen.includes(name) }));
 
-    yield* writeFlowChoices(root, choices);
+    yield* writeFlowChoices(root, choices, login);
 
     return choices;
   });

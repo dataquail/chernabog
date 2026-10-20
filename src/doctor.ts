@@ -3,6 +3,7 @@
 
 import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';
+import * as Cache from 'effect/Cache';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
@@ -15,11 +16,12 @@ import { checkCodexAccount } from './codex-usage.ts';
 import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
 import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
-import { githubGetAllPages } from './GitHubApi.ts';
+import { githubGetAllPages, viewerLogin } from './GitHubApi.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
+import { flowNames } from './loader.ts';
 import { HostEnvironment } from './platform/environment.ts';
-import { type EnrolledRepo, loadMachineConfig, loadRepo, type MachineAccount, type MachineConfig, repoNameOf } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, FLOW_TURNED_OFF, flowOff, hasRunners, loadMachineConfig, loadRepo, type MachineAccount, type MachineConfig, repoNameOf } from './repo-config.ts';
 import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { trustedTree } from './trust.ts';
@@ -116,6 +118,29 @@ export const doctor = Effect.gen(function* () {
 
   const launchersInUse = new Map<string, ResolvedLauncher>();
 
+  // Who this machine is on GitHub, asked once, by the first repo that names runners.
+  const logins = yield* Cache.make({ capacity: 1, lookup: () => Effect.result(viewerLogin) });
+  const login = Cache.get(logins, 'login');
+
+  // The flows a repo's runners keep off this machine. Not a failure: they run on the runners' machines.
+  const checkRunners = (effective: EffectiveRepo, name: string, configDir: string) =>
+    Effect.gen(function* () {
+      if (!hasRunners(effective)) return;
+
+      const self = yield* login;
+
+      if (Result.isFailure(self)) {
+        check(false, `${name}: names runners, but who this machine is on GitHub is unknown (${self.failure.message})`, 'gh auth status');
+
+        return;
+      }
+
+      const names = yield* flowNames(configDir).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const off = names.filter((flow) => Option.exists(flowOff(effective, flow, Option.some(self.success)), (reason) => reason !== FLOW_TURNED_OFF));
+      const elsewhere = Option.match(Option.liftPredicate(off, Arr.isReadonlyArrayNonEmpty), { onNone: () => 'runs every flow it names', onSome: (flows) => `isn't a runner of ${flows.join(', ')}; they run elsewhere unless turned on in local.yaml` });
+      check(true, `${name}: this machine (${self.success} on GitHub) ${elsewhere}`, '');
+    });
+
   // Where the repo's interactive sessions run, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
     Effect.gen(function* () {
@@ -129,6 +154,7 @@ export const doctor = Effect.gen(function* () {
 
       const { settings } = loaded.success;
       check(true, `${name}: launcher ${describeLauncher(settings)}`, '');
+      yield* checkRunners(loaded.success, name, settings.configDir);
 
       if (settings.agent !== 'claude') return;
 
