@@ -2,7 +2,7 @@
 // of ours (for agents that pick their own), and every session a run opened,
 // for `chernabog attach` and the TUI.
 
-import { type Account, decodeJsonLines } from '@chernabog/sdk';
+import { type Account, decodeJsonLines, UsageGateMode } from '@chernabog/sdk';
 import * as DateTime from 'effect/DateTime';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
@@ -35,7 +35,14 @@ export const rememberSession = (adapter: string, sessionId: string, session: str
     yield* fs.writeFileString(linkFile(root, adapter, sessionId), yield* Schema.encodeEffect(SessionLink)({ session, at }));
   }).pipe(Effect.orDie);
 
-const AccountRecord = Schema.Struct({ name: Schema.String, configDir: Schema.OptionFromNullOr(Schema.String), expectedEmail: Schema.OptionFromNullOr(Schema.String) });
+// Records written before oauthTokenEnv and usageGate existed leave them out.
+const AccountRecord = Schema.Struct({
+  name: Schema.String,
+  configDir: Schema.OptionFromNullOr(Schema.String),
+  expectedEmail: Schema.OptionFromNullOr(Schema.String),
+  oauthTokenEnv: Schema.OptionFromOptionalKey(Schema.String),
+  usageGate: UsageGateMode.pipe(Schema.withDecodingDefaultKey(Effect.succeed('usage' as const))),
+});
 
 export const SessionRecord = Schema.Struct({ adapter: Schema.String, sessionId: Schema.String, cwd: Schema.String, account: AccountRecord, at: Schema.String });
 

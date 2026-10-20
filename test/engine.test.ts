@@ -20,7 +20,7 @@ const settings: RepoSettings = {
   slug: 'dataquail/demo',
   path: '/tmp/demo',
   baseBranch: 'main',
-  account: { name: 'work', configDir: Option.none(), expectedEmail: Option.none() },
+  account: { name: 'work', configDir: Option.none(), expectedEmail: Option.none(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const },
   agent: 'claude',
   agentAccounts: {},
   launcher: HEADLESS,

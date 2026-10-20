@@ -25,7 +25,7 @@ import { type EffectiveRepo, type EnrolledRepo, FLOW_TURNED_OFF, flowOff, hasRun
 import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { trustedTree } from './trust.ts';
-import { loggedInEmail } from './usage-gate.ts';
+import { checkAccount, loggedInEmail } from './usage-gate.ts';
 import { VERSION } from './version.ts';
 
 export type Check = { readonly ok: boolean; readonly label: string; readonly fix: Option.Option<string> };
@@ -104,6 +104,14 @@ export const doctor = Effect.gen(function* () {
     }
 
     if (account.agent !== 'claude') continue;
+
+    if (Option.isSome(account.oauthTokenEnv)) {
+      const token = yield* Effect.result(checkAccount(account));
+      const who = Option.match(Result.getSuccess(token), { onNone: () => '', onSome: (said) => ` (${said})` });
+      check(Result.isSuccess(token), `the ${account.name} account has its token${who}; Claude checks it when a session starts`, `${account.oauthTokenEnv.value}=$(claude setup-token)`);
+      check(account.usageGate === 'none', `the ${account.name} account runs without a usage gate, which its token cannot read`, `add usageGate: none to the ${account.name} account`);
+      continue;
+    }
 
     const email = yield* loggedInEmail(account).pipe(Effect.orElseSucceed(() => Option.none<string>()));
     const expected = account.expectedEmail;

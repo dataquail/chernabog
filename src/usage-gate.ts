@@ -16,7 +16,7 @@ import * as Schedule from 'effect/Schedule';
 import * as Schema from 'effect/Schema';
 
 import { API_KEYS } from './agents/adapter.ts';
-import { claudeHomeOf, Home, homePaths } from './config.ts';
+import { CLAUDE_OAUTH_TOKEN, claudeHomeOf, claudeTokenOf, claudeTokenVariables, Home, homePaths } from './config.ts';
 import { execOk } from './Exec.ts';
 import { type Launcher, launcherFor } from './launchers.ts';
 import { LaunchSpecJson } from './launchers/shim.ts';
@@ -49,12 +49,19 @@ export const keychainServiceFor = (configDir: Option.Option<string>) =>
     onSome: (dir) => `Claude Code-credentials-${createHash('sha256').update(dir).digest('hex').slice(0, 8)}`,
   });
 
-// The environment `claude` runs with for an account: its config directory, or none for the default one.
-export const accountEnv = (account: Account, base: Environment) =>
-  Option.match(account.configDir, {
-    onNone: () => withVariables(base, {}, ['CLAUDE_CONFIG_DIR']),
-    onSome: (dir) => withVariables(base, { CLAUDE_CONFIG_DIR: dir }, []),
+// The environment `claude` runs with for an account: its config directory, or
+// none for the default one, and a token only when the account has its own, so
+// a token left in the shell never logs in another account.
+export const accountEnv = (account: Account, base: Environment) => {
+  const withoutToken = withVariables(base, {}, [CLAUDE_OAUTH_TOKEN]);
+
+  const env = Option.match(account.configDir, {
+    onNone: () => withVariables(withoutToken, {}, ['CLAUDE_CONFIG_DIR']),
+    onSome: (dir) => withVariables(withoutToken, { CLAUDE_CONFIG_DIR: dir }, []),
   });
+
+  return { ...env, ...claudeTokenVariables(account, base) };
+};
 
 // One window of the usage endpoint's answer, as it arrives: utilization in
 // percent. No reset time means no window is running: nothing used since the
@@ -108,17 +115,30 @@ export const isExpired = (oauth: StoredOAuth, now: DateTime.Utc) => Option.exist
 
 const usageError = (error: { readonly message: string }) => new UsageError({ message: error.message });
 
+const tokenUnset = (name: string, variable: string) => new UsageError({ message: `the ${name} account takes its token from ${variable}, which is not set; claude setup-token makes one` });
+
 const decodeStored = (stored: string, where: string) =>
   Schema.decodeEffect(StoredCredentials)(stored.trim()).pipe(
     Effect.map((item) => item.claudeAiOauth),
     Effect.mapError(() => new UsageError({ message: `No claudeAiOauth.accessToken in ${where}` })),
   );
 
-// On macOS the login is in the keychain; elsewhere Claude Code keeps it in
-// .credentials.json in the config directory.
+// An account with its own token reads only its variable: a token from
+// `claude setup-token`, which carries no expiry and never refreshes. Otherwise
+// the login is in the keychain on macOS, and elsewhere in .credentials.json in
+// the config directory.
 export const readStoredOAuth = (account: Account) =>
   Effect.gen(function* () {
-    if ((yield* HostEnvironment).platform === 'darwin') {
+    const host = yield* HostEnvironment;
+
+    if (Option.isSome(account.oauthTokenEnv)) {
+      const variable = account.oauthTokenEnv.value;
+      const token = yield* Effect.fromOption(claudeTokenOf(account, host.variables)).pipe(Effect.mapError(() => tokenUnset(account.name, variable)));
+
+      return { accessToken: token } satisfies StoredOAuth;
+    }
+
+    if (host.platform === 'darwin') {
       const service = keychainServiceFor(account.configDir);
 
       return yield* decodeStored(yield* execOk('security', ['find-generic-password', '-s', service, '-w']), `keychain item "${service}"`);
@@ -232,8 +252,16 @@ export const logUsage = (account: Account, response: UsageResponse, decision: La
 
 export const readUsageLogLine = (line: string) => Schema.decodeOption(UsageLogEntry)(line);
 
+// What an account with usageGate none launches on.
+export const ungated = (account: Account): LaunchDecision => ({ launch: true, reason: `the ${account.name} account runs without a usage gate (usageGate: none)` });
+
 export const runUsageGate = (account: Account, gate: GateConfig, refresh: TokenRefresh) =>
   Effect.gen(function* () {
+    // A setup-token token lacks the user:profile scope the usage endpoint needs.
+    if (Option.isSome(account.oauthTokenEnv)) {
+      return yield* new UsageError({ message: `the ${account.name} account logs in with a token, which cannot read usage; add usageGate: none to it to run without the gate` });
+    }
+
     const response = yield* fetchUsage(yield* freshAccessToken(account, refresh));
     const now = yield* DateTime.now;
     const decision = decideLaunch(yield* parseUsageReading(response, now), gate, now);
@@ -242,21 +270,56 @@ export const runUsageGate = (account: Account, gate: GateConfig, refresh: TokenR
     return decision;
   }).pipe(Effect.mapError(usageError));
 
-const AuthStatus = Schema.fromJsonString(Schema.Struct({ email: Schema.optionalKey(Schema.NullOr(Schema.String)) }));
+const AuthStatus = Schema.fromJsonString(
+  Schema.Struct({
+    loggedIn: Schema.optionalKey(Schema.Boolean),
+    authMethod: Schema.optionalKey(Schema.String),
+    email: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+);
 
-export const loggedInEmail = (account: Account) =>
+const authStatus = (account: Account) =>
   Effect.gen(function* () {
     const host = yield* HostEnvironment;
     const status = yield* execOk('claude', ['auth', 'status'], { env: accountEnv(account, host.variables) });
-    const decoded = yield* Schema.decodeEffect(AuthStatus)(status.trim()).pipe(Effect.mapError((issue) => new UsageError({ message: `claude auth status: ${issue.message}` })));
 
-    return Option.fromNullishOr(decoded.email);
+    return yield* Schema.decodeEffect(AuthStatus)(status.trim()).pipe(Effect.mapError((issue) => new UsageError({ message: `claude auth status: ${issue.message}` })));
+  });
+
+export const loggedInEmail = (account: Account) => authStatus(account).pipe(Effect.map((status) => Option.fromNullishOr(status.email)));
+
+// A token login has no email to show. `claude auth status` reports any token
+// as logged in without checking it, and the endpoints that could check it need
+// a scope a setup-token token lacks, so this only confirms the token is there
+// and Claude takes it: a bad one fails when its session starts. An
+// expectedEmail it cannot show fails closed.
+const checkTokenAccount = (account: Account, variable: string) =>
+  Effect.gen(function* () {
+    const host = yield* HostEnvironment;
+
+    if (Option.isNone(claudeTokenOf(account, host.variables))) return yield* tokenUnset(account.name, variable);
+
+    const status = yield* authStatus(account);
+
+    if (status.loggedIn !== true) return yield* new UsageError({ message: `Claude does not accept the ${account.name} account's token from ${variable}` });
+
+    const email = Option.fromNullishOr(status.email);
+
+    if (Option.isSome(account.expectedEmail) && !Option.contains(email, account.expectedEmail.value)) {
+      const shown = Option.getOrElse(email, () => 'no email');
+
+      return yield* new UsageError({ message: `the ${account.name} account's token shows ${shown}, not ${account.expectedEmail.value}` });
+    }
+
+    return Option.getOrElse(email, () => `a token from ${variable}`);
   });
 
 // Fails closed when the account is logged out or logged in as someone unexpected,
 // so a personal repo never spends the work quota or the other way round.
 export const checkAccount = (account: Account) =>
   Effect.gen(function* () {
+    if (Option.isSome(account.oauthTokenEnv)) return yield* checkTokenAccount(account, account.oauthTokenEnv.value);
+
     const email = yield* loggedInEmail(account);
 
     if (Option.isNone(email)) return yield* new UsageError({ message: `the ${account.name} account is not logged in` });

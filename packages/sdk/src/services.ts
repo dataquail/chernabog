@@ -38,7 +38,20 @@ export const Board = Schema.Struct({ projectNumber: Schema.Finite, readyStatus: 
 export type Board = typeof Board.Type;
 
 // configDir none is the agent's default home (~/.claude, ~/.codex).
-export const Account = Schema.Struct({ name: Schema.String, configDir: Schema.Option(Schema.String), expectedEmail: Schema.Option(Schema.String) });
+// oauthTokenEnv names the environment variable holding a Claude login token
+// (from `claude setup-token`), for a host with no login of its own, such as CI.
+// usageGate none launches without reading usage, which such a token cannot.
+export const UsageGateMode = Schema.Literals(['usage', 'none']);
+
+export type UsageGateMode = typeof UsageGateMode.Type;
+
+export const Account = Schema.Struct({
+  name: Schema.String,
+  configDir: Schema.Option(Schema.String),
+  expectedEmail: Schema.Option(Schema.String),
+  oauthTokenEnv: Schema.Option(Schema.String),
+  usageGate: UsageGateMode,
+});
 
 export type Account = typeof Account.Type;
 

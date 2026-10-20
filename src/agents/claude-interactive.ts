@@ -159,7 +159,10 @@ const start = (request: AgentRequest, context: AdapterContext, launcher: Launche
       promptFile: files.prompt,
     });
 
-    yield* fs.writeFileString(files.spec, spec);
+    // The spec carries the session's environment, a token among it, so only its owner may read it;
+    // chmod covers a spec an earlier run wrote before it was created this way.
+    yield* fs.writeFileString(files.spec, spec, { mode: 0o600 });
+    yield* fs.chmod(files.spec, 0o600);
     yield* context.log(`claude: ${resumingOrStarting(resuming)} session ${request.sessionId} in ${launcher.name}`);
     const handle = yield* launcher.start({ title: `chernabog-${request.sessionId.slice(0, 8)}`, cwd: request.cwd, command: [...selfCommand(), '__launch', files.spec] });
     const at = DateTime.formatIso(yield* DateTime.now);
