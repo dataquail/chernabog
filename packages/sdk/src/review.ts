@@ -7,7 +7,6 @@
 
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
-import * as Record from 'effect/Record';
 import * as Schema from 'effect/Schema';
 
 import { NeedsHuman, StepFailed } from './errors.ts';
@@ -16,6 +15,7 @@ import { fixWithAgent, push, sessionIdFor, waitForCi } from './implement.ts';
 import type { Json } from './json.ts';
 import { latestMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
 import { renderPrompt } from './prompt.ts';
+import { adapterFor, type RoleOptions } from './roles.ts';
 import { Agent, Git, GitHub, type PullRequest, Repo, type ReviewNote, Run, type WorkItem, Worktree } from './services.ts';
 
 export { type ReviewMarker, reviewMarker, type SessionMarker, sessionMarker } from './markers.ts';
@@ -134,7 +134,7 @@ const headingFor = (verdict: Verdict['verdict'], reviewer: string) => {
 };
 
 // Reviews the head in a detached worktree and posts the review with its marker.
-const reviewAndPost = (pullRequest: number, round: number) =>
+const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const repo = yield* Repo;
@@ -155,7 +155,7 @@ const reviewAndPost = (pullRequest: number, round: number) =>
       notes: repo.notes,
     });
 
-    const adapter = Record.get(repo.flowAgents, run.flow);
+    const adapter = yield* adapterFor(role);
 
     const result = yield* (yield* Agent).run({
       cwd: worktree,
@@ -189,10 +189,12 @@ const moveVerdictLabels = (pullRequest: number, verdict: ReviewResult['verdict']
     else yield* github.addLabel(pullRequest, repo.labels.changesRequested);
   });
 
-// One review of the pull request's current head, in a detached worktree, by the
-// flow's agent (flows.<flow>.agent) in a fresh session that is given the earlier
-// reviews. Posts it and leaves the labels alone; `labelVerdict` moves them.
-const reviewOnly = (pullRequest: number, round: number) => activity(`review-${round}`, reviewAndPost(pullRequest, round), ReviewResult);
+// One review of the pull request's current head, in a detached worktree, in a
+// fresh session that is given the earlier reviews. The reviewer is the role's
+// adapter (flows.<flow>.agents), else the flow's agent (flows.<flow>.agent).
+// Posts it and leaves the labels alone; `labelVerdict` moves them.
+const reviewOnly = (pullRequest: number, round: number, options: RoleOptions = {}) =>
+  activity(`review-${round}`, reviewAndPost(pullRequest, round, Option.fromUndefinedOr(options.role)), ReviewResult);
 
 export { reviewOnly as round };
 
@@ -217,7 +219,7 @@ export const labelVerdict = (pullRequest: number, round: number, review: ReviewR
 export const reviewRound = (pullRequest: number, round: number) =>
   activity(
     `review-${round}`,
-    reviewAndPost(pullRequest, round).pipe(Effect.tap((review) => moveVerdictLabels(pullRequest, review.verdict))),
+    reviewAndPost(pullRequest, round, Option.none()).pipe(Effect.tap((review) => moveVerdictLabels(pullRequest, review.verdict))),
     ReviewResult,
   );
 

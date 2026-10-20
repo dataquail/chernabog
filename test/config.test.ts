@@ -54,6 +54,16 @@ describe('config layers', () => {
   });
 
   effect(
+    "a flow's agents by role merge role by role, and reach the SDK as flowRoleAgents",
+    () => Effect.gen(function* () {
+      const merged = yield* merge({ flows: { ship: { agent: 'claude', agents: { reviewer: 'codex', author: 'claude' } } } }, { flows: { ship: { agents: { reviewer: 'opencode' } } } });
+      expect(Option.map(flowSettings(merged, 'ship'), (ship) => ship.agents)).toEqual(Option.some({ reviewer: 'opencode', author: 'claude' }));
+      expect(merged.settings.flowRoleAgents).toEqual({ ship: { reviewer: 'opencode', author: 'claude' } });
+      expect(merged.settings.flowAgents).toEqual({ ship: 'claude' });
+    }),
+  );
+
+  effect(
     "the person's local.yaml overrides the repo's config key by key",
     () => Effect.gen(function* () {
       const merged = yield* merge(

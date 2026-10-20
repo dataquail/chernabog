@@ -31,7 +31,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins whose machines run the flows; see [Runners](#runners)      |
-| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `runners`, `assignee`, `reviewRequested` for one flow; see [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `3`                     | reviews of one pull request before `auto:needs-human`                    |
@@ -52,6 +52,19 @@ runners: [alice]
 flows:
   review: { runners: [alice, bob] }
 ```
+
+### Agents by role
+
+`flows.<flow>.agent` sets the adapter for a whole flow. `flows.<flow>.agents` names adapters by role, for a flow whose steps play different parts, such as one that implements with Claude and reviews with Codex:
+
+```yaml
+# .chernabog/config.yaml
+flows:
+  ship:
+    agents: { reviewer: codex }
+```
+
+A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs with that role's adapter. A step with no role, or a role the flow doesn't name, falls back to the flow's `agent` and then the repo's. `local.yaml` can override one role and keep the team's others. Each adapter runs under that agent's account in machine config.
 
 ### Routing by assignee and reviewer
 
@@ -98,7 +111,7 @@ limits: { reviewRounds: 2, staleAfter: 1 day }
 | `activeHours`  | start runs only within these hours                            |
 | `agent`        | adapter that implements, over the repo's                      |
 | `launcher`     | your launcher for this repo; wins over every other layer      |
-| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent`, `assignee`, `reviewRequested` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
+| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
 
 ```yaml
 # .chernabog/local.yaml

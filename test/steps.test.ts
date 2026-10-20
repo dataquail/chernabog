@@ -50,7 +50,7 @@ const settings: RepoSettings = {
 const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {} };
 
 // One pull request and one issue, and what the steps did to them.
-const makeFake = (verdict: 'approve' | 'request-changes') => {
+const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<RepoSettings> = {}) => {
   const labels = new Map<number, Array<string>>([
     [PULL, [DEFAULT_LABELS.needsReview]],
     [ISSUE, [DEFAULT_LABELS.inProgress]],
@@ -58,6 +58,7 @@ const makeFake = (verdict: 'approve' | 'request-changes') => {
 
   const comments: Array<Comment> = [];
   const reviews: Array<string> = [];
+  const adapters: Array<Option.Option<string>> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
 
   const pull = (): PullRequest => ({
@@ -80,7 +81,7 @@ const makeFake = (verdict: 'approve' | 'request-changes') => {
   };
 
   const services = Layer.mergeAll(
-    Layer.succeed(Repo, settings),
+    Layer.succeed(Repo, Repo.of({ ...settings, ...overrides })),
     Layer.mock(GitHub)({
       pullRequest: () => Effect.succeed(pull()),
       comments: () => Effect.succeed([...comments]),
@@ -105,11 +106,19 @@ const makeFake = (verdict: 'approve' | 'request-changes') => {
     Layer.mock(Git)({}),
     Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`) }),
     Layer.mock(Usage)({}),
-    Layer.mock(Agent)({ adapters: [], run: (request) => Effect.succeed({ sessionId: request.sessionId, output: { verdict, summary: 'Reviewed.', comments: [] }, costUsd: Option.none() }) }),
+    Layer.mock(Agent)({
+      adapters: [],
+      run: (request) =>
+        Effect.sync(() => {
+          adapters.push(request.adapter);
+
+          return { sessionId: request.sessionId, output: { verdict, summary: 'Reviewed.', comments: [] }, costUsd: Option.none() };
+        }),
+    }),
     Layer.mock(StepRunner)({}),
   );
 
-  return { services, labelsOf, comments, reviews, comment };
+  return { services, labelsOf, comments, reviews, adapters, comment };
 };
 
 type Fake = ReturnType<typeof makeFake>;
@@ -124,6 +133,8 @@ const flow = defineFlow({
   workflow: (work) =>
     Effect.gen(function* () {
       if (work.key === 'round') return (yield* Review.round(PULL, 1)).verdict;
+
+      if (work.key === 'round-as-reviewer') return (yield* Review.round(PULL, 1, { role: 'reviewer' })).verdict;
 
       if (work.key === 'round-then-label') {
         const review = yield* Review.round(PULL, 1);
@@ -207,6 +218,41 @@ describe('the review steps', () => {
       expect((yield* runToEnd(fake, 'review-round')).status).toBe('done');
       expect(fake.reviews).toHaveLength(1);
       expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
+    }),
+  );
+});
+
+describe('agents per role', () => {
+  const roles = { flowAgents: { demo: 'opencode' }, flowRoleAgents: { demo: { reviewer: 'codex' } } };
+
+  effect(
+    "a step given a role runs with that role's adapter",
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve', roles);
+      expect((yield* runToEnd(fake, 'round-as-reviewer')).status).toBe('done');
+      expect(fake.adapters).toEqual([Option.some('codex')]);
+      expect(fake.reviews[0]).toContain('Approved by codex');
+    }),
+  );
+
+  effect(
+    "a step without a role, or with one the flow does not name, falls back to the flow's agent",
+    () => Effect.gen(function* () {
+      const plain = makeFake('approve', roles);
+      expect((yield* runToEnd(plain, 'round')).status).toBe('done');
+      const unnamed = makeFake('approve', { ...roles, flowRoleAgents: { demo: { author: 'codex' } } });
+      expect((yield* runToEnd(unnamed, 'round-as-reviewer')).status).toBe('done');
+      expect([...plain.adapters, ...unnamed.adapters]).toEqual([Option.some('opencode'), Option.some('opencode')]);
+    }),
+  );
+
+  effect(
+    "and with no flow agent either, the repo's",
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve');
+      expect((yield* runToEnd(fake, 'round-as-reviewer')).status).toBe('done');
+      expect(fake.adapters).toEqual([Option.none()]);
+      expect(fake.reviews[0]).toContain('Approved by claude');
     }),
   );
 });
