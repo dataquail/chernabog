@@ -483,20 +483,27 @@ export const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
     const issue = yield* issueOf(item);
     const { branch } = yield* claim(issue);
-    const worktree = yield* prepareWorktree(branch);
-    const outcome = yield* implementWithAgent(issue, worktree);
-
-    if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome).pipe(Effect.flatMap(endForPerson));
-
     let pullRequest = Option.none<number>();
+    const toPerson = (reason: string) => handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(endForPerson));
 
     return yield* Effect.gen(function* () {
-      yield* localGate(worktree);
-      yield* push('push', worktree, branch);
-      const opened = yield* openPullRequest(issue, outcome);
-      pullRequest = Option.some(opened.number);
-      yield* waitForCi(opened.number, worktree, { ...thisRunsSession, branch });
+      const worktree = yield* prepareWorktree(branch);
+      const outcome = yield* implementWithAgent(issue, worktree);
 
-      return yield* handOff(issue, opened, outcome);
-    }).pipe(Effect.catchTag('NeedsHuman', (needsHuman) => handToHuman(issue, needsHuman.reason, pullRequest).pipe(Effect.flatMap(endForPerson))));
+      if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome).pipe(Effect.flatMap(endForPerson));
+
+      return yield* Effect.gen(function* () {
+        yield* localGate(worktree);
+        yield* push('push', worktree, branch);
+        const opened = yield* openPullRequest(issue, outcome);
+        pullRequest = Option.some(opened.number);
+        yield* waitForCi(opened.number, worktree, { ...thisRunsSession, branch });
+
+        return yield* handOff(issue, opened, outcome);
+      }).pipe(Effect.catchTag('NeedsHuman', (needsHuman) => toPerson(needsHuman.reason)));
+    }).pipe(
+      // Any other failure once the issue is claimed hands it to a person, rather
+      // than leaving it claimed with nobody working on it.
+      Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)),
+    );
   });

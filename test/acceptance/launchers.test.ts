@@ -88,12 +88,14 @@ describe('the answer file', () => {
     expect(sandbox.hookCalls().map((call) => call.split(' ')[2])).toEqual(['block', 'allow']);
   }, 60_000);
 
-  test('no valid answer after three reminders fails the run', async () => {
+  test('no valid answer after three reminders hands the issue to a person', async () => {
     const sandbox = sandboxFor({}, { launcher: 'tmux' });
-    sandbox.github.addIssue('Never answer', ['auto:eligible']);
+    const issue = sandbox.github.addIssue('Never answer', ['auto:eligible']);
     const { code, output } = await sandbox.runCli(['run', 'implement', '--repo', 'demo'], { FAKE_CLAUDE_NEVER_ANSWER: '1' });
-    expect(output).toContain('no valid answer after 3 reminders');
-    expect(code).toBe(1);
+    expect(output).toContain('needs-human: #1 needs a person: implement: claude: no valid answer after 3 reminders');
+    expect(code).toBe(0);
+    expect(sandbox.github.issue(issue).labels).toContain('auto:needs-human');
+    expect(sandbox.github.issue(issue).labels).not.toContain('auto:in-progress');
     expect(sandbox.hookCalls().map((call) => call.split(' ')[2])).toEqual(['block', 'block', 'block', 'allow']);
     expect(sandbox.github.pulls.size).toBe(0);
   }, 60_000);
