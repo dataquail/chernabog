@@ -178,6 +178,12 @@ const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTim
 const sameTree = Option.makeEquivalence(Equivalence.String);
 const sameText = Option.makeEquivalence(Equivalence.String);
 
+// What the daemon schedules from an enrolled repo: added, removed, moved or
+// on another base branch, the daemon must restart to schedule it anew.
+const sameEnrolled = Equivalence.Array(
+  Equivalence.mapInput(Equivalence.Tuple([Equivalence.String, Equivalence.String, Equivalence.String]), (enrolled: EnrolledRepo) => [enrolled.repo, enrolled.path, baseBranchOf(enrolled)] as const),
+);
+
 const changedAction = (trusted: boolean) => {
   if (trusted) return 'trusted, restarting on it when idle';
 
@@ -420,8 +426,22 @@ export const runDaemon = Effect.gen(function* () {
         }
       });
 
+      // Notices a repo enrolled, dropped or changed in machine config since
+      // the daemon started, and restarts the daemon on it once nothing is executing.
+      let enrolledChanged = false;
+
+      const checkEnrolled = Effect.gen(function* () {
+        const current = yield* Effect.option(loadMachineConfig);
+
+        if (enrolledChanged || Option.isNone(current) || sameEnrolled(current.value.repos, machine.repos)) return;
+
+        enrolledChanged = true;
+        yield* log('enrolled repos changed; restarting on them when idle');
+        yield* Ref.set(reloadPending, true);
+      });
+
       yield* Effect.forkScoped(Effect.forever(Effect.sleep('5 minutes').pipe(Effect.andThen(checkConfig))));
-      yield* Effect.forkScoped(Effect.forever(Effect.sleep('10 seconds').pipe(Effect.andThen(checkLocalConfig))));
+      yield* Effect.forkScoped(Effect.forever(Effect.sleep('10 seconds').pipe(Effect.andThen(checkLocalConfig), Effect.andThen(checkEnrolled))));
 
       yield* Effect.forkScoped(
         Effect.forever(
@@ -525,7 +545,7 @@ export const runDaemon = Effect.gen(function* () {
             }),
           ),
         ),
-        HttpRouter.add('POST', '/reload', answer(checkConfig.pipe(Effect.andThen(checkLocalConfig), Effect.andThen(Ref.get(reloadPending)), Effect.flatMap((pending) => HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }))))),
+        HttpRouter.add('POST', '/reload', answer(checkConfig.pipe(Effect.andThen(checkLocalConfig), Effect.andThen(checkEnrolled), Effect.andThen(Ref.get(reloadPending)), Effect.flatMap((pending) => HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }))))),
         HttpRouter.add('POST', '/run', answer(runOrTick(false))),
         HttpRouter.add('POST', '/tick', answer(runOrTick(true))),
       );

@@ -27,6 +27,8 @@ A run waiting on a signal — a review waiting for its author's push — holds n
 
 The daemon reads `local.yaml` when it starts, and checks it every ten seconds. When it changes, the daemon restarts on it once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending.
 
+It watches machine config's enrolled repos the same way: a repo `chernabog enroll` adds, or one dropped, moved or put on another base branch, restarts the daemon once idle. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
+
 ## The engine
 
 The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.
