@@ -68,6 +68,8 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 | `considerFindings`, `addressFindings` |             |                          |
 | `handOff`, `handToHuman`, `endForPerson` |          |                          |
 
+A step that loops, `localGate` and `waitForCi`, names its activities by round. A flow that calls one twice in a run gives the second call an id, `localGate(worktree, { id: "review-1" })`, so its activities are `local-gate-1#review-1` and so on. [Composing a flow](/chernabog/flows/composing/) puts these blocks together into one flow that implements, reviews, fixes and merges.
+
 ### Considering findings
 
 A flow that answers its own reviews resumes sessions instead of starting new ones:
