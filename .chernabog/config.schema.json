@@ -178,7 +178,15 @@
             "maximum": 9007199254740991
           },
           "agent": {
-            "type": "string"
+            "type": "string",
+            "description": "The adapter this flow's agent steps run with, over the repo's agent."
+          },
+          "agents": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's."
           },
           "assignee": {
             "anyOf": [
