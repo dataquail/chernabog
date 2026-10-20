@@ -115,7 +115,9 @@ export const verdictJsonSchema = {
   additionalProperties: false,
 } satisfies Json;
 
-const ReviewResult = Schema.Struct({ verdict: Schema.Literals(['approve', 'request-changes']), sha: Schema.String });
+export const ReviewResult = Schema.Struct({ verdict: Schema.Literals(['approve', 'request-changes']), sha: Schema.String });
+
+export type ReviewResult = typeof ReviewResult.Type;
 
 const withoutMarkers = (body: string) => body.replace(/<!--.*?-->/gs, '').trim();
 
@@ -131,59 +133,91 @@ const headingFor = (verdict: Verdict['verdict'], reviewer: string) => {
   return `Changes requested by ${reviewer}`;
 };
 
+// Reviews the head in a detached worktree and posts the review with its marker.
+const reviewAndPost = (pullRequest: number, round: number) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const repo = yield* Repo;
+    const run = yield* Run;
+    const pull = yield* github.pullRequest(pullRequest);
+    const worktree = yield* (yield* Worktree).checkout(`review-pr-${pullRequest}`, `origin/${pull.headRef}`);
+    const earlier = (yield* github.reviewComments(pullRequest)).filter((note) => note.trusted);
+
+    const prompt = yield* renderPrompt('review', {
+      repo: repo.slug,
+      pullRequest,
+      title: pull.title,
+      body: pull.body,
+      base: pull.baseRef,
+      round,
+      earlier: earlier.map(describeNote),
+      humanOnly: repo.humanOnly,
+      notes: repo.notes,
+    });
+
+    const adapter = Record.get(repo.flowAgents, run.flow);
+
+    const result = yield* (yield* Agent).run({
+      cwd: worktree,
+      prompt,
+      sessionId: sessionIdFor(run.runId, `review-${round}`),
+      resumePrompt: Option.none(),
+      outputSchema: Option.some(verdictJsonSchema),
+      adapter,
+    });
+
+    const verdict = yield* Schema.decodeUnknownEffect(Verdict)(result.output).pipe(
+      Effect.mapError((issue) => new StepFailed({ step: `review-${round}`, message: `reviewer answer: ${issue.message}` })),
+    );
+
+    const heading = headingFor(verdict.verdict, Option.getOrElse(adapter, () => repo.agent));
+    const marker = reviewMarker.write({ sha: pull.headSha, round, verdict: verdict.verdict });
+    yield* github.review(pullRequest, { body: `**${heading}** (review ${round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments });
+    // The marker also goes in a plain comment, which the trigger reads back.
+    yield* github.comment(pullRequest, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
+
+    return { verdict: verdict.verdict, sha: pull.headSha };
+  });
+
+const moveVerdictLabels = (pullRequest: number, verdict: ReviewResult['verdict']) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const repo = yield* Repo;
+    yield* github.removeLabel(pullRequest, repo.labels.needsReview);
+
+    if (verdict === 'approve') yield* github.addLabel(pullRequest, repo.labels.approved);
+    else yield* github.addLabel(pullRequest, repo.labels.changesRequested);
+  });
+
 // One review of the pull request's current head, in a detached worktree, by the
-// flow's agent (flows.review.agent) in a fresh session that is given the earlier
-// reviews. Posts it and moves the labels.
+// flow's agent (flows.<flow>.agent) in a fresh session that is given the earlier
+// reviews. Posts it and leaves the labels alone; `labelVerdict` moves them.
+const reviewOnly = (pullRequest: number, round: number) => activity(`review-${round}`, reviewAndPost(pullRequest, round), ReviewResult);
+
+export { reviewOnly as round };
+
+// Moves the pull request from needs-review to approved or changes-requested, as
+// the review said. A verdict that is no longer the latest review on the pull
+// request, as when a run from before this step existed replays it, leaves the
+// labels to whatever came after.
+export const labelVerdict = (pullRequest: number, round: number, review: ReviewResult) =>
+  activity(
+    `label-review-${round}`,
+    Effect.gen(function* () {
+      const latest = latestMarker(
+        reviewMarker.read,
+        (yield* (yield* GitHub).comments(pullRequest)).map((comment) => comment.body),
+      );
+
+      if (Option.exists(latest, (marker) => marker.round === round && marker.sha === review.sha)) yield* moveVerdictLabels(pullRequest, review.verdict);
+    }),
+  );
+
+// `round` and `labelVerdict` in one step: reviews, posts, and moves the labels.
 export const reviewRound = (pullRequest: number, round: number) =>
   activity(
     `review-${round}`,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      const repo = yield* Repo;
-      const run = yield* Run;
-      const pull = yield* github.pullRequest(pullRequest);
-      const worktree = yield* (yield* Worktree).checkout(`review-pr-${pullRequest}`, `origin/${pull.headRef}`);
-      const earlier = (yield* github.reviewComments(pullRequest)).filter((note) => note.trusted);
-
-      const prompt = yield* renderPrompt('review', {
-        repo: repo.slug,
-        pullRequest,
-        title: pull.title,
-        body: pull.body,
-        base: pull.baseRef,
-        round,
-        earlier: earlier.map(describeNote),
-        humanOnly: repo.humanOnly,
-        notes: repo.notes,
-      });
-
-      const adapter = Record.get(repo.flowAgents, run.flow);
-
-      const result = yield* (yield* Agent).run({
-        cwd: worktree,
-        prompt,
-        sessionId: sessionIdFor(run.runId, `review-${round}`),
-        resumePrompt: Option.none(),
-        outputSchema: Option.some(verdictJsonSchema),
-        adapter,
-      });
-
-      const verdict = yield* Schema.decodeUnknownEffect(Verdict)(result.output).pipe(
-        Effect.mapError((issue) => new StepFailed({ step: `review-${round}`, message: `reviewer answer: ${issue.message}` })),
-      );
-
-      const heading = headingFor(verdict.verdict, Option.getOrElse(adapter, () => repo.agent));
-      const marker = reviewMarker.write({ sha: pull.headSha, round, verdict: verdict.verdict });
-      yield* github.review(pullRequest, { body: `**${heading}** (review ${round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments });
-      // The marker also goes in a plain comment, which the trigger reads back.
-      yield* github.comment(pullRequest, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
-      yield* github.removeLabel(pullRequest, repo.labels.needsReview);
-
-      if (verdict.verdict === 'approve') yield* github.addLabel(pullRequest, repo.labels.approved);
-      else yield* github.addLabel(pullRequest, repo.labels.changesRequested);
-
-      return { verdict: verdict.verdict, sha: pull.headSha };
-    }),
+    reviewAndPost(pullRequest, round).pipe(Effect.tap((review) => moveVerdictLabels(pullRequest, review.verdict))),
     ReviewResult,
   );
 
@@ -236,9 +270,10 @@ export const workflow = (item: WorkItem) =>
     const { headRef, pullRequest } = yield* pullRequestOf(item);
 
     for (let round = 1; ; round++) {
-      const { verdict } = yield* reviewRound(pullRequest, round);
+      const review = yield* reviewOnly(pullRequest, round);
+      yield* labelVerdict(pullRequest, round, review);
 
-      if (verdict === 'approve') return yield* afterApproval(pullRequest, headRef);
+      if (review.verdict === 'approve') return yield* afterApproval(pullRequest, headRef);
 
       if (round >= repo.limits.reviewRounds) {
         yield* relabel('needs-human', pullRequest, {

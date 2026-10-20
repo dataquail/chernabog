@@ -432,9 +432,14 @@ export const waitForCi = (pullRequest: number, worktree: string, target: CiBranc
     }
   });
 
+// Whether hand-off labels the pull request needs-review, which starts the review
+// flow on it. A flow that reviews the pull request itself says false.
+export type HandOffOptions = { readonly needsReview: boolean };
+
 // Hands the green pull request to review: the review trigger if the repo has
-// one, the needs-review label, and a closing comment on the issue.
-export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: ImplementOutcome) =>
+// one, the needs-review label unless the options leave it off, and a closing
+// comment on the issue.
+export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: ImplementOutcome, options: HandOffOptions = { needsReview: true }) =>
   activity(
     'hand-off',
     Effect.gen(function* () {
@@ -447,7 +452,9 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: Imp
       // The fix flow resumes this session to answer a review.
       const session = { adapter: repo.agent, sessionId: sessionIdFor(run.runId, 'implement'), issue, branch: branchFor(issue) };
       yield* github.comment(pullRequest.number, `Implemented by ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`);
-      yield* github.addLabel(pullRequest.number, repo.labels.needsReview);
+
+      if (options.needsReview) yield* github.addLabel(pullRequest.number, repo.labels.needsReview);
+
       yield* github.removeLabel(issue, repo.labels.inProgress);
       yield* github.comment(issue, `Pull request ready for review: ${pullRequest.url}\n\n${outcome.summary}`);
 
