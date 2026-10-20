@@ -92,6 +92,9 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   git(checkout, 'push', '-q', 'origin', 'main');
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, 'config.yaml'), machineConfigText(root, checkout, machine));
+  // The work account's login off macOS, where nothing asks fakebin/security for it.
+  mkdirSync(join(root, 'claude'), { recursive: true });
+  writeFileSync(join(root, 'claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fake-token', expiresAt: 4102444800000 } }));
   const github = startFakeGitHub({ slug: SLUG, bare });
   const claudeLog = join(root, 'claude.log');
 
