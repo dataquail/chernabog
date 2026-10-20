@@ -252,8 +252,16 @@ export const logUsage = (account: Account, response: UsageResponse, decision: La
 
 export const readUsageLogLine = (line: string) => Schema.decodeOption(UsageLogEntry)(line);
 
+// What an account with usageGate none launches on.
+export const ungated = (account: Account): LaunchDecision => ({ launch: true, reason: `the ${account.name} account runs without a usage gate (usageGate: none)` });
+
 export const runUsageGate = (account: Account, gate: GateConfig, refresh: TokenRefresh) =>
   Effect.gen(function* () {
+    // A setup-token token lacks the user:profile scope the usage endpoint needs.
+    if (Option.isSome(account.oauthTokenEnv)) {
+      return yield* new UsageError({ message: `the ${account.name} account logs in with a token, which cannot read usage; add usageGate: none to it to run without the gate` });
+    }
+
     const response = yield* fetchUsage(yield* freshAccessToken(account, refresh));
     const now = yield* DateTime.now;
     const decision = decideLaunch(yield* parseUsageReading(response, now), gate, now);
@@ -280,8 +288,11 @@ const authStatus = (account: Account) =>
 
 export const loggedInEmail = (account: Account) => authStatus(account).pipe(Effect.map((status) => Option.fromNullishOr(status.email)));
 
-// A token login has no email to show, so Claude's own word that it is logged
-// in stands for it. An expectedEmail it cannot show fails closed.
+// A token login has no email to show. `claude auth status` reports any token
+// as logged in without checking it, and the endpoints that could check it need
+// a scope a setup-token token lacks, so this only confirms the token is there
+// and Claude takes it: a bad one fails when its session starts. An
+// expectedEmail it cannot show fails closed.
 const checkTokenAccount = (account: Account, variable: string) =>
   Effect.gen(function* () {
     const host = yield* HostEnvironment;

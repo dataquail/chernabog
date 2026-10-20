@@ -10,8 +10,8 @@ import { expandHome } from './config.ts';
 import { pickNodeVersion } from './node-version.ts';
 import { accountEnv, keychainServiceFor } from './usage-gate.ts';
 
-const work = { name: 'work', configDir: Option.none(), expectedEmail: Option.none(), oauthTokenEnv: Option.none<string>() };
-const personal = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.some('dev@example.com'), oauthTokenEnv: Option.none<string>() };
+const work = { name: 'work', configDir: Option.none(), expectedEmail: Option.none(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
+const personal = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.some('dev@example.com'), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
 
 test("each account's usage is read from its own keychain item", () => {
   expect(keychainServiceFor(Option.none())).toBe('Claude Code-credentials');
@@ -23,7 +23,7 @@ test('the work account clears CLAUDE_CONFIG_DIR; the personal one sets it', () =
   expect(Record.get(accountEnv(personal, {}), 'CLAUDE_CONFIG_DIR')).toEqual(Option.some('/Users/dev/.claude-personal'));
 });
 
-const ci = { name: 'ci', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.some('CI_CLAUDE_TOKEN') };
+const ci = { name: 'ci', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.some('CI_CLAUDE_TOKEN'), usageGate: 'usage' as const };
 
 test("a token left in the shell never logs in an account without one", () => {
   expect(Record.get(accountEnv(work, { CLAUDE_CODE_OAUTH_TOKEN: 'shell-token' }), 'CLAUDE_CODE_OAUTH_TOKEN')).toEqual(Option.none());

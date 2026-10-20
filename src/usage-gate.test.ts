@@ -1,8 +1,9 @@
-import { HEADLESS, printJson } from '@chernabog/sdk';
+import { DEFAULT_LABELS, HEADLESS, printJson, type RepoSettings, Usage as UsageService } from '@chernabog/sdk';
 import { expect, test } from 'bun:test';
 import * as DateTime from 'effect/DateTime';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
+import * as FetchHttpClient from 'effect/http/FetchHttpClient';
 import * as Layer from 'effect/Layer';
 import * as Option from 'effect/Option';
 
@@ -11,7 +12,9 @@ import { fixture } from '../test/fixtures.ts';
 import { Home } from './config.ts';
 import { execTestLayer } from './Exec.ts';
 import { HostEnvironment } from './platform/environment.ts';
-import { checkAccount, decideLaunch, type GateConfig, isExpired, keychainServiceFor, parseUsageReading, readStoredOAuth, refreshByRunningClaude, UsageResponse } from './usage-gate.ts';
+import { DEFAULT_LIMITS } from './repo-config.ts';
+import { UsageLive } from './sdk-live.ts';
+import { checkAccount, decideLaunch, type GateConfig, isExpired, keychainServiceFor, parseUsageReading, readStoredOAuth, refreshByRunningClaude, runUsageGate, UsageResponse } from './usage-gate.ts';
 
 const config: GateConfig = {
   targetEndUsage: 0.95,
@@ -144,7 +147,7 @@ const effectRefreshing = effectAtHomeWith(
 
 effectRefreshing('under a launcher, an expired token refreshes in a short interactive session, never claude -p', () =>
   Effect.gen(function* () {
-    const account = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
+    const account = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
     yield* refreshByRunningClaude(account, { launcher: { ...HEADLESS, name: 'tmux', from: 'machine config' }, cwd: '/code/demo' });
     expect(execCalls).toContain('tmux new-session -d');
     expect(execCalls).toContain('tmux kill-session -t');
@@ -173,7 +176,7 @@ effectOnLinux('on Linux, the default account reads ~/.claude/.credentials.json',
   Effect.gen(function* () {
     const home = yield* Home;
     yield* writeCredentials(`${home.user}/.claude`, printJson({ claudeAiOauth: { accessToken: 'linux-token', expiresAt: 4102444800000 } }));
-    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
     expect((yield* readStoredOAuth(account)).accessToken).toBe('linux-token');
   }),
 );
@@ -183,14 +186,14 @@ effectOnLinux('on Linux, an account with its own config directory reads the cred
     const home = yield* Home;
     const configDir = `${home.user}/.claude-personal`;
     yield* writeCredentials(configDir, printJson({ claudeAiOauth: { accessToken: 'personal-token' } }));
-    const account = { name: 'personal', configDir: Option.some(configDir), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
+    const account = { name: 'personal', configDir: Option.some(configDir), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
     expect((yield* readStoredOAuth(account)).accessToken).toBe('personal-token');
   }),
 );
 
 effectOnLinux('on Linux, a missing credentials file says to log in', () =>
   Effect.gen(function* () {
-    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
     const failed = yield* Effect.flip(readStoredOAuth(account));
     expect(failed.message).toMatch(/\.credentials\.json; run claude auth login/);
   }),
@@ -200,7 +203,7 @@ effectOnLinux('on Linux, a credentials file without an OAuth login fails loudly'
   Effect.gen(function* () {
     const home = yield* Home;
     yield* writeCredentials(`${home.user}/.claude`, printJson({}));
-    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const };
     const failed = yield* Effect.flip(readStoredOAuth(account));
     expect(failed.message).toMatch(/No claudeAiOauth.accessToken in .*\.credentials\.json/);
   }),
@@ -209,8 +212,10 @@ effectOnLinux('on Linux, a credentials file without an OAuth login fails loudly'
 // A runner with a token and no login of its own: nothing answers `security`, and `claude auth status` answers with authStatus.
 let authStatus = printJson({ loggedIn: true, authMethod: 'oauth_token' });
 
+// An HTTP client is there for the gate's types; a test that reaches the usage endpoint fails.
 const effectWithToken = effectAtHomeWith(
   Layer.mergeAll(
+    FetchHttpClient.layer,
     HostEnvironment.fixed({ PATH: '/usr/bin', CI_CLAUDE_TOKEN: 'ci-token' }, 'linux'),
     execTestLayer((command, args) => {
       if (command === 'claude' && args[0] === 'auth') return Option.some({ exitCode: 0, stdout: authStatus, stderr: '' });
@@ -221,7 +226,7 @@ const effectWithToken = effectAtHomeWith(
   'linux',
 );
 
-const tokenAccount = (variable: string, expectedEmail = Option.none<string>()) => ({ name: 'ci', configDir: Option.none<string>(), expectedEmail, oauthTokenEnv: Option.some(variable) });
+const tokenAccount = (variable: string, expectedEmail = Option.none<string>()) => ({ name: 'ci', configDir: Option.none<string>(), expectedEmail, oauthTokenEnv: Option.some(variable), usageGate: 'usage' as const });
 
 effectWithToken('an account with oauthTokenEnv reads its token from that variable, with no expiry to refresh', () =>
   Effect.gen(function* () {
@@ -258,5 +263,51 @@ effectWithToken('an expectedEmail the token cannot show fails closed', () =>
     authStatus = printJson({ loggedIn: true, authMethod: 'oauth_token' });
     const failed = yield* Effect.flip(checkAccount(tokenAccount('CI_CLAUDE_TOKEN', Option.some('dev@example.com'))));
     expect(failed.message).toMatch(/shows no email, not dev@example.com/);
+  }),
+);
+
+effectWithToken("a token account without usageGate none fails its gate with what to add, since the token cannot read usage", () =>
+  Effect.gen(function* () {
+    const gate = runUsageGate(tokenAccount('CI_CLAUDE_TOKEN'), config, { launcher: { ...HEADLESS, name: 'headless', from: 'machine config' }, cwd: '/code/demo' });
+    const failed = yield* Effect.flip(gate);
+    expect(failed.message).toMatch(/logs in with a token, which cannot read usage; add usageGate: none/);
+  }),
+);
+
+const repoSettings = (account: RepoSettings['account']): RepoSettings => ({
+  name: 'demo',
+  slug: 'dataquail/demo',
+  path: '/code/demo',
+  baseBranch: 'main',
+  account,
+  agent: 'claude',
+  agentAccounts: {},
+  launcher: { ...HEADLESS, name: 'headless', from: 'machine config' },
+  flowAgents: {},
+  labels: DEFAULT_LABELS,
+  install: Option.none(),
+  localGate: [],
+  humanOnly: [],
+  humanOnlyPaths: [],
+  notes: [],
+  board: Option.none(),
+  reviewTrigger: Option.none(),
+  limits: DEFAULT_LIMITS,
+  env: {},
+  configDir: '/code/demo/.chernabog',
+});
+
+// The repo's Usage service, as a run sees it. Nothing fakes the usage endpoint, so a reading would fail.
+const usageOf = (account: RepoSettings['account']) =>
+  UsageService.use((usage) => Effect.all({ decision: usage.gate, who: usage.checkAccount })).pipe(Effect.provide(UsageLive(repoSettings(account), config)));
+
+effectWithToken('usageGate none launches without reading usage, and the account is still checked', () =>
+  Effect.gen(function* () {
+    authStatus = printJson({ loggedIn: true, authMethod: 'oauth_token' });
+    const { decision, who } = yield* usageOf({ ...tokenAccount('CI_CLAUDE_TOKEN'), usageGate: 'none' });
+    expect(decision).toEqual({ launch: true, reason: 'the ci account runs without a usage gate (usageGate: none)' });
+    expect(who).toBe('a token from CI_CLAUDE_TOKEN');
+    const unset = yield* Effect.flip(usageOf({ ...tokenAccount('MISSING_TOKEN'), usageGate: 'none' }));
+    expect(unset.message).toMatch(/MISSING_TOKEN, which is not set/);
   }),
 );

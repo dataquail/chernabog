@@ -44,4 +44,11 @@ usageGate:
 
 `usageGate` is all four keys or none. It applies to every account on the machine.
 
+An account can opt out with `usageGate: none`, such as one that logs in with a token from `claude setup-token`, which cannot read usage. Its runs launch with the account still checked, and only the subscription's own limits stop a session:
+
+```yaml
+accounts:
+  ci: { oauthTokenEnv: CLAUDE_CODE_OAUTH_TOKEN, usageGate: none }
+```
+
 **Example.** 60 % used, 50 h to reset: `0.95 − 0.60 − 0.005 × 50 = 0.10`, which covers a `0.04` task.

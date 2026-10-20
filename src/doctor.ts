@@ -108,7 +108,8 @@ export const doctor = Effect.gen(function* () {
     if (Option.isSome(account.oauthTokenEnv)) {
       const token = yield* Effect.result(checkAccount(account));
       const who = Option.match(Result.getSuccess(token), { onNone: () => '', onSome: (said) => ` (${said})` });
-      check(Result.isSuccess(token), `the ${account.name} account is logged in with its token${who}`, `${account.oauthTokenEnv.value}=$(claude setup-token)`);
+      check(Result.isSuccess(token), `the ${account.name} account has its token${who}; Claude checks it when a session starts`, `${account.oauthTokenEnv.value}=$(claude setup-token)`);
+      check(account.usageGate === 'none', `the ${account.name} account runs without a usage gate, which its token cannot read`, `add usageGate: none to the ${account.name} account`);
       continue;
     }
 

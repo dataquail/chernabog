@@ -17,7 +17,7 @@ import { effect, effectAtHome } from './effect-test.ts';
 
 const machine = normalizeMachineConfig(
   Schema.decodeSync(MachineConfigFile)({
-    accounts: { work: {}, personal: { configDir: '~/.claude-personal', expectedEmail: 'dev@example.com', agent: 'codex' }, ci: { oauthTokenEnv: 'CLAUDE_CODE_OAUTH_TOKEN' } },
+    accounts: { work: {}, personal: { configDir: '~/.claude-personal', expectedEmail: 'dev@example.com', agent: 'codex' }, ci: { oauthTokenEnv: 'CLAUDE_CODE_OAUTH_TOKEN', usageGate: 'none' } },
     concurrency: 2,
     humanOnly: ['a machine-wide limit'],
     repos: [{ path: '~/code/demo', repo: 'dataquail/demo', account: 'personal' }],
@@ -45,6 +45,12 @@ describe('config layers', () => {
   test("an account's oauthTokenEnv names the variable its token comes from, never the token", () => {
     expect(machine.accounts.find((account) => account.name === 'ci')?.oauthTokenEnv).toEqual(Option.some('CLAUDE_CODE_OAUTH_TOKEN'));
     expect(machine.accounts.find((account) => account.name === 'work')?.oauthTokenEnv).toEqual(Option.none());
+  });
+
+  test('an account reads usage unless it opts out with usageGate: none', () => {
+    expect(machine.accounts.find((account) => account.name === 'ci')?.usageGate).toBe('none');
+    expect(machine.accounts.find((account) => account.name === 'work')?.usageGate).toBe('usage');
+    expect(() => Schema.decodeUnknownSync(MachineConfigFile)({ accounts: { ci: { usageGate: 'off' } } })).toThrow();
   });
 
   effect(

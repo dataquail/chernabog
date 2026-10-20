@@ -26,7 +26,7 @@ import { Home, homePaths } from './config.ts';
 import { Exec, execOk } from './Exec.ts';
 import { decodeBody, GitHubApi, githubGetAllPages, githubGraphql, githubJson, githubRequest, githubSend } from './GitHubApi.ts';
 import { eligibleIssuesFrom, interpretCreateRefResponse, LabelledIssueNode, moveIssueToStatus, orderClaimCandidates } from './issues.ts';
-import { checkAccount, type GateConfig, runUsageGate } from './usage-gate.ts';
+import { checkAccount, type GateConfig, runUsageGate, ungated } from './usage-gate.ts';
 
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
@@ -416,13 +416,20 @@ export const UsageLive = (settings: RepoSettings, gate: GateConfig) =>
       const provide = <A, E>(effect: Effect.Effect<A, E, Effect.Services<ReturnType<typeof runUsageGate>> | Effect.Services<ReturnType<typeof checkCodexAccount>> | Effect.Services<ReturnType<typeof codexUsageGate>>>) =>
         Effect.provide(effect, services);
 
+      // usageGate none skips the reading; the account still has to be the right one.
+      const gated = (reading: Usage['Service']['gate']): Usage['Service']['gate'] => {
+        if (settings.account.usageGate === 'none') return Effect.succeed(ungated(settings.account));
+
+        return reading;
+      };
+
       if (settings.agent === 'claude') {
         const refresh = { launcher: settings.launcher, cwd: settings.path };
 
-        return Usage.of({ gate: provide(runUsageGate(settings.account, gate, refresh)), checkAccount: provide(checkAccount(settings.account)) });
+        return Usage.of({ gate: gated(provide(runUsageGate(settings.account, gate, refresh))), checkAccount: provide(checkAccount(settings.account)) });
       }
 
-      if (settings.agent === 'codex') return Usage.of({ gate: provide(codexUsageGate(settings.account, gate)), checkAccount: provide(checkCodexAccount(settings.account)) });
+      if (settings.agent === 'codex') return Usage.of({ gate: gated(provide(codexUsageGate(settings.account, gate))), checkAccount: provide(checkCodexAccount(settings.account)) });
 
       return Usage.of({
         gate: Effect.succeed({ launch: true, reason: `${settings.agent} reports no usage to gate on` }),
