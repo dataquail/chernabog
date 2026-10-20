@@ -37,11 +37,27 @@ export const parseDuration = (text: string) =>
 
 const DurationText = Schema.String.pipe(Schema.check(Schema.makeFilter((text: string) => Option.isSome(parseDuration(text)) || `"${text}" is not a duration, such as "6 hours"`)));
 
+// A YAML null turns the setting off.
+const Nullable = <S extends Schema.Constraint>(schema: S) => Schema.optionalKey(Schema.OptionFromNullOr(schema));
+
+// Who a work item must be for, as in GitHub's assignee: and review-requested:
+// qualifiers: @me (this machine's GitHub login), a login, or none.
+const Who = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
+
+const whoFor = (qualifier: string) =>
+  Nullable(
+    Who.annotate({
+      description: `Start only work items whose ${qualifier} include one of these: @me for this machine's GitHub login, a login, or none for nobody. null clears the team's.`,
+    }),
+  );
+
 const FlowSettings = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   schedule: Schema.optionalKey(Schema.String),
   concurrency: Schema.optionalKey(Schema.Int),
   agent: Schema.optionalKey(Schema.String),
+  assignee: whoFor('assignees'),
+  reviewRequested: whoFor('requested reviewers'),
 });
 
 export type FlowSettings = typeof FlowSettings.Type;
@@ -83,9 +99,6 @@ const MachineOnly = Schema.optionalKey(Schema.Never.annotate({ description: MACH
 const TeamOnly = Schema.optionalKey(Schema.Never.annotate({ description: TEAM_ONLY, message: TEAM_ONLY }));
 
 const LocalFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: TeamOnly });
-
-// A YAML null turns the setting off.
-const Nullable = <S extends Schema.Constraint>(schema: S) => Schema.optionalKey(Schema.OptionFromNullOr(schema));
 
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
@@ -229,6 +242,32 @@ export const notARunner = (runners: ReadonlyArray<string>, login: Option.Option<
 export const runnersOf = (repo: EffectiveRepo, flow: string) => Option.orElse(Record.get(repo.runners.flows, flow), () => repo.runners.repo);
 
 export const hasRunners = (repo: EffectiveRepo) => Option.isSome(repo.runners.repo) || Object.keys(repo.runners.flows).length > 0;
+
+export type Routing = { readonly assignee: Option.Option<ReadonlyArray<string>>; readonly reviewRequested: Option.Option<ReadonlyArray<string>> };
+
+const listOf = (who: Option.Option<string | ReadonlyArray<string>>) => Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
+
+// Whose work items a flow starts on this machine; anyone's without a filter.
+export const routingOf = (repo: EffectiveRepo, flow: string): Routing => {
+  const settings = Record.get(repo.flows, flow);
+
+  return {
+    assignee: Option.flatMap(settings, (found) => listOf(Option.flatten(Option.fromUndefinedOr(found.assignee)))),
+    reviewRequested: Option.flatMap(settings, (found) => listOf(Option.flatten(Option.fromUndefinedOr(found.reviewRequested)))),
+  };
+};
+
+const namesMe = (filter: Option.Option<ReadonlyArray<string>>) => Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === '@me'));
+
+// Whether the daemon must know this machine's GitHub login for the repo: for
+// its runners, or for a flow that starts only work for @me.
+export const needsLogin = (repo: EffectiveRepo) =>
+  hasRunners(repo) ||
+  Object.keys(repo.flows).some((flow) => {
+    const routing = routingOf(repo, flow);
+
+    return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
+  });
 
 // Why a flow doesn't run on this machine, if it doesn't: the person's own
 // choice in local.yaml, else the team's flows.<flow>.enabled, else whether

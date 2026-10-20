@@ -1,13 +1,13 @@
 // When each flow's trigger runs, and whether a run may start now.
 
-import type { Flow } from '@chernabog/sdk';
+import type { Flow, WorkItem } from '@chernabog/sdk';
 import * as Cron from 'effect/Cron';
 import * as DateTime from 'effect/DateTime';
 import * as Option from 'effect/Option';
 import * as Record from 'effect/Record';
 import * as Result from 'effect/Result';
 
-import type { EffectiveRepo } from './repo-config.ts';
+import type { EffectiveRepo, Routing } from './repo-config.ts';
 
 // Repos fire at evenly spread minutes, so their ticks don't all land at once.
 export const spreadMinute = (index: number, count: number) => Math.floor((index * 60) / Math.max(count, 1));
@@ -90,3 +90,43 @@ export const decideTick = (conditions: TickConditions): TickDecision => {
 };
 
 export const freeSlots = (capacity: Capacity) => Math.max(0, Math.min(capacity.flowConcurrency - capacity.activeForFlow, capacity.machineConcurrency - capacity.activeOnMachine));
+
+// Whether people match a filter, as GitHub's assignee: and review-requested:
+// do: none for nobody, @me for this machine's GitHub login, or a login. @me
+// matches no one when the login is unknown. Case-insensitive, as on GitHub.
+const matches = (filter: ReadonlyArray<string>, people: ReadonlyArray<string>, login: Option.Option<string>) =>
+  filter.some((who) => {
+    const wanted = who.toLowerCase();
+
+    if (wanted === 'none') return people.length === 0;
+
+    let resolved = Option.some(wanted);
+
+    if (wanted === '@me') resolved = Option.map(login, (self) => self.toLowerCase());
+
+    return Option.exists(resolved, (one) => people.some((person) => person.toLowerCase() === one));
+  });
+
+// A filter the flow doesn't set passes everyone.
+const passes = (filter: Option.Option<ReadonlyArray<string>>, people: ReadonlyArray<string>, login: Option.Option<string>) =>
+  Option.match(filter, { onNone: () => true, onSome: (who) => matches(who, people, login) });
+
+// Whether this machine may start an item: it passes every filter the flow sets.
+const startsHere = (item: WorkItem, routing: Routing, login: Option.Option<string>) =>
+  passes(routing.assignee, item.assignees ?? [], login) && passes(routing.reviewRequested, item.reviewers ?? [], login);
+
+// Splits a trigger's items into those this machine may start and those for others.
+export const routeItems = (items: ReadonlyArray<WorkItem>, routing: Routing, login: Option.Option<string>) => ({
+  mine: items.filter((item) => startsHere(item, routing, login)),
+  elsewhere: items.filter((item) => !startsHere(item, routing, login)),
+});
+
+const people = (who: ReadonlyArray<string>) => Option.getOrElse(Option.liftPredicate(who.join(', '), (text) => text.length > 0), () => 'none');
+
+// An item left for others, with whom it is for by the filters the flow sets.
+export const describeElsewhere = (routing: Routing) => (item: WorkItem) => {
+  const assignee = Option.map(routing.assignee, () => `assignee: ${people(item.assignees ?? [])}`);
+  const reviewers = Option.map(routing.reviewRequested, () => `review requested: ${people(item.reviewers ?? [])}`);
+
+  return `${item.key} (${[...Option.toArray(assignee), ...Option.toArray(reviewers)].join('; ')})`;
+};

@@ -29,10 +29,10 @@ import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
 import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
-import { type EffectiveRepo, type EnrolledRepo, flowOff, hasRunners, loadMachineConfig, loadRepo, type MachineConfig, repoNameOf } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, repoNameOf, type Routing, routingOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
 import { buildRepoContext, type RepoContext, withRepo } from './runner.ts';
-import { decideTick, freeSlots, nextTick, scheduleFor } from './schedule.ts';
+import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { State } from './state.ts';
 import { trustedTree } from './trust.ts';
@@ -67,6 +67,8 @@ type FlowSchedule = {
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
+  // What the last tick left for other machines, by flows.<flow>.assignee and reviewRequested.
+  elsewhere: ReadonlyArray<string>;
 };
 
 export type RepoState = {
@@ -129,7 +131,7 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
       flows: [...flows].map(([flowName, flow]): FlowSchedule => {
         const expression = scheduleFor(repo, flowName, flow, index, machine.repos.length);
 
-        return { handle: flowHandle(repo, flowName, flow), expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [] };
+        return { handle: flowHandle(repo, flowName, flow), expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] };
       }),
       latestTree: Option.some(tree),
       localConfig,
@@ -139,6 +141,30 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
 export type TickOptions = { readonly gates: boolean; readonly item: Option.Option<string> };
 
 const describeQueued = (item: WorkItem) => Option.match(Option.fromUndefinedOr(item.title), { onNone: () => item.key, onSome: (title) => `${item.key} ${title}` });
+
+// The items a run may start for: not only waking one, and without a run already.
+const unstarted = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
+  Effect.gen(function* () {
+    const state = yield* State;
+    const waiting: Array<WorkItem> = [];
+
+    for (const item of items) {
+      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, handle.name, item.key))) waiting.push(item);
+    }
+
+    return waiting;
+  });
+
+type Routed = ReturnType<typeof routeItems>;
+
+// What a tick may start: the items this machine may start, or the one a
+// person named, whoever it is assigned to.
+const candidatesOf = (waiting: ReadonlyArray<WorkItem>, routed: Routed, named: Option.Option<string>) =>
+  Option.match(named, { onNone: () => routed.mine, onSome: (key) => waiting.filter((item) => item.key === key) });
+
+// Why a tick starts nothing although its trigger found work: all of it is for others.
+const onlyElsewhere = (routed: Routed, routing: Routing, named: Option.Option<string>) =>
+  Option.liftPredicate(`only work for others: ${routed.elsewhere.map(describeElsewhere(routing)).join(', ')}`, () => Option.isNone(named) && routed.mine.length === 0 && routed.elsewhere.length > 0);
 
 // The gate's Skip is its own reason; anything else is the gate failing.
 const gateReason = (failure: FlowFailure) => {
@@ -179,10 +205,11 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
-  // Who this machine is on GitHub, for repos that name their flows' runners.
+  // Who this machine is on GitHub, for repos that name their flows' runners
+  // or start only work assigned to it.
   let login = Option.none<string>();
 
-  if (repos.some((repo) => Option.exists(repo.repo, hasRunners))) {
+  if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
     const found = yield* Effect.result(viewerLogin);
     login = Result.getSuccess(found);
     yield* log(Result.match(found, { onSuccess: (self) => `this machine is ${self} on GitHub`, onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}` }));
@@ -243,16 +270,18 @@ export const runDaemon = Effect.gen(function* () {
 
           const items = triggered.success;
           yield* deliverSignals(handle, items);
-          const waiting: Array<WorkItem> = [];
-
-          for (const item of items) {
-            if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(repo.name, handle.name, item.key))) waiting.push(item);
-          }
-
+          const waiting = yield* unstarted(handle, items);
+          // Work for others is left to their machines, unless a person names the item.
+          const routing = routingOf(settings, handle.name);
+          const routed = routeItems(waiting, routing, login);
           schedule.lastTick = Option.some(yield* DateTime.now);
-          schedule.queued = waiting.map(describeQueued);
+          schedule.queued = routed.mine.map(describeQueued);
+          schedule.elsewhere = routed.elsewhere.map(describeElsewhere(routing));
 
-          const candidates = Option.match(options.item, { onNone: () => waiting, onSome: (key) => waiting.filter((item) => item.key === key) });
+          const candidates = candidatesOf(waiting, routed, options.item);
+          const elsewhereOnly = onlyElsewhere(routed, routing, options.item);
+
+          if (Option.isSome(elsewhereOnly)) return yield* record(elsewhereOnly.value, Option.none());
 
           if (candidates.length === 0) return { started: [], skipped: Option.none() } satisfies TickResult;
 
@@ -423,6 +452,7 @@ export const runDaemon = Effect.gen(function* () {
             next: formatOption(flow.next),
             lastTick: formatOption(flow.lastTick),
             queued: flow.queued,
+            assignedElsewhere: flow.elsewhere,
             enabled: Option.isNone(offReason(flow.handle.name)),
             ...Option.match(offReason(flow.handle.name), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
           })),

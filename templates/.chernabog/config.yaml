@@ -29,12 +29,18 @@ notes: []
 # flow is off unless that person turns it on in their local.yaml.
 # runners: [alice]
 
-# Per flow: schedule, concurrency, enabled, agent and runners. A reviewer on another
-# agent than the one that wrote the code avoids a model approving its own work;
-# it runs under that agent's account in machine config.
+# Per flow: schedule, concurrency, enabled, agent, runners, assignee and
+# reviewRequested. A reviewer on another agent than the one that wrote the code
+# avoids a model approving its own work; it runs under that agent's account in
+# machine config. assignee and reviewRequested work like GitHub's assignee: and
+# review-requested: qualifiers: "@me" (this machine's GitHub login), a login,
+# none, or a list. A machine starts only the work they match.
 # flows:
+#   implement:
+#     assignee: ["@me", none]
 #   review:
 #     agent: codex
+#     reviewRequested: "@me"
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose

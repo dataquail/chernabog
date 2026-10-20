@@ -44,6 +44,8 @@ const reviewItem = (pull: PullRequest): WorkItem => ({
   title: pull.title,
   url: pull.url,
   data: { pullRequest: pull.number, headRef: pull.headRef, agentWritten: isAgentBranch(pull.headRef) },
+  assignees: pull.assignees,
+  reviewers: pull.requestedReviewers,
 });
 
 // The head the latest review saw.

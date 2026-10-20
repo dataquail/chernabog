@@ -100,7 +100,9 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   const flowLine = (flow: DaemonStatus['repos'][number]['flows'][number]) => {
     if (!flow.enabled) return `  ${flow.name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
 
-    return `  ${flow.name}: ${flow.schedule}, next ${relative(flow.next, now)}`;
+    const elsewhere = flow.assignedElsewhere ?? [];
+
+    return `  ${flow.name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(', ')}`)}`;
   };
 
   return [

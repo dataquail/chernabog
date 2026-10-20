@@ -23,6 +23,7 @@ export const LabelledIssueNode = Schema.Struct({
   url: Schema.String,
   createdAt: Schema.String,
   labels: Schema.Struct({ nodes: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+  assignees: Schema.Struct({ nodes: Schema.Array(Schema.Struct({ login: Schema.String })) }),
   projectItems: Schema.Struct({ nodes: Schema.Array(ProjectItem) }),
 });
 

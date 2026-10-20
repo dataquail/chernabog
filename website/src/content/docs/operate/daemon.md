@@ -17,6 +17,7 @@ Each flow's trigger runs on a cron schedule. When it runs is the person's call, 
 | pause              | `chernabog pause <repo>`     | `paused`                            |
 | quiet hours        | machine `quietHours`         | `quiet hours (22:00-07:00)`         |
 | active hours       | `local.yaml` `activeHours`   | `outside active hours (…)`          |
+| assignee, reviewer | `flows.<flow>.assignee`, `reviewRequested` | `only work for others: …` |
 | concurrency        | machine, repo and flow `concurrency` | no free slot                |
 | the flow's gate    | `defineFlow({ gate })`       | e.g. `usage gate: …`                |
 

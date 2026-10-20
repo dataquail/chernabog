@@ -41,6 +41,7 @@ const QUEUED_ISSUES_QUERY = `
           url
           createdAt
           labels(first: 50) { nodes { name } }
+          assignees(first: 20) { nodes { login } }
           projectItems(first: 10) {
             nodes {
               project { number }
@@ -56,8 +57,17 @@ const QUEUED_ISSUES_QUERY = `
 const Named = Schema.Struct({ name: Schema.String });
 const User = Schema.OptionFromNullOr(Schema.Struct({ login: Schema.String }));
 const Text = Schema.OptionFromNullOr(Schema.String);
+const Logins = Schema.optionalKey(Schema.Array(Schema.Struct({ login: Schema.String })));
 
-export const RestIssue = Schema.Struct({ number: Schema.Finite, title: Schema.String, body: Text, html_url: Schema.String, created_at: Schema.String, labels: Schema.Array(Named) });
+export const RestIssue = Schema.Struct({
+  number: Schema.Finite,
+  title: Schema.String,
+  body: Text,
+  html_url: Schema.String,
+  created_at: Schema.String,
+  labels: Schema.Array(Named),
+  assignees: Logins,
+});
 
 export const RestPullRequest = Schema.Struct({
   number: Schema.Finite,
@@ -70,6 +80,8 @@ export const RestPullRequest = Schema.Struct({
   base: Schema.Struct({ ref: Schema.String }),
   labels: Schema.Array(Named),
   user: User,
+  assignees: Logins,
+  requested_reviewers: Logins,
 });
 
 const RestComment = Schema.Struct({ id: Schema.Finite, user: User, body: Text, created_at: Schema.String, author_association: Schema.String });
@@ -89,6 +101,7 @@ const RestUser = Schema.Struct({ login: Schema.String });
 
 const login = (user: typeof User.Type) => Option.match(user, { onNone: () => '', onSome: (found) => found.login });
 const text = (value: Option.Option<string>) => Option.getOrElse(value, () => '');
+const logins = (users: ReadonlyArray<{ readonly login: string }>) => users.map((user) => user.login);
 
 export const toIssue = (raw: typeof RestIssue.Type): Issue => ({
   number: raw.number,
@@ -97,6 +110,7 @@ export const toIssue = (raw: typeof RestIssue.Type): Issue => ({
   url: raw.html_url,
   createdAt: raw.created_at,
   labels: raw.labels.map((label) => label.name),
+  assignees: logins(raw.assignees ?? []),
 });
 
 const fromNode = (node: LabelledIssueNode): Issue => ({
@@ -106,6 +120,7 @@ const fromNode = (node: LabelledIssueNode): Issue => ({
   url: node.url,
   createdAt: node.createdAt,
   labels: node.labels.nodes.map((label) => label.name),
+  assignees: logins(node.assignees.nodes),
 });
 
 const stateOf = (raw: typeof RestPullRequest.Type): PullRequest['state'] => {
@@ -127,6 +142,8 @@ export const toPullRequest = (raw: typeof RestPullRequest.Type): PullRequest => 
   baseRef: raw.base.ref,
   labels: raw.labels.map((label) => label.name),
   author: login(raw.user),
+  assignees: logins(raw.assignees ?? []),
+  requestedReviewers: logins(raw.requested_reviewers ?? []),
 });
 
 const toComment = (raw: typeof RestComment.Type): Comment => ({

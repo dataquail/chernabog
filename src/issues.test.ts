@@ -15,6 +15,7 @@ const labelled = (number: number, items: LabelledIssueNode['projectItems']['node
   url: `https://github.com/dataquail/demo/issues/${number}`,
   createdAt: `2026-10-0${number}T00:00:00Z`,
   labels: { nodes: [{ name: 'auto:eligible' }] },
+  assignees: { nodes: [] },
   projectItems: { nodes: items },
 });
 

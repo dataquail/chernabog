@@ -31,7 +31,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins whose machines run the flows; see [Runners](#runners)      |
-| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `runners` for one flow     |
+| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `runners`, `assignee`, `reviewRequested` for one flow; see [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `3`                     | reviews of one pull request before `auto:needs-human`                    |
@@ -53,6 +53,31 @@ flows:
   review: { runners: [alice, bob] }
 ```
 
+### Routing by assignee and reviewer
+
+`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` make a machine start only the work items for certain people. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
+
+- `@me`: this machine's GitHub login, the one its `gh` token belongs to
+- a login, such as `alice`
+- `none`: nobody
+
+An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively. When the machine's login can't be looked up, `@me` matches no one.
+
+`implement` items carry the issue's assignees. `review` items carry the pull request's assignees and its requested reviewers. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
+
+Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item, so a review keeps waking on pushes even after GitHub drops this machine from the requested reviewers. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
+
+`runners` and `enabled` decide first whether the flow runs on a machine at all. An issue assigned to someone the flow is off for waits until they turn it on in their `local.yaml`. The claim branch still keeps two machines from implementing the same issue.
+
+```yaml
+# .chernabog/config.yaml
+flows:
+  implement: { assignee: ["@me", none] }   # my issues, and unassigned ones
+  review: { reviewRequested: "@me" }       # pull requests requesting my review
+```
+
+Both can go in `local.yaml` too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value.
+
 ```yaml
 # .chernabog/config.yaml
 baseBranch: main
@@ -73,7 +98,7 @@ limits: { reviewRounds: 2, staleAfter: 1 day }
 | `activeHours`  | start runs only within these hours                            |
 | `agent`        | adapter that implements, over the repo's                      |
 | `launcher`     | your launcher for this repo; wins over every other layer      |
-| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
+| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent`, `assignee`, `reviewRequested` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
 
 ```yaml
 # .chernabog/local.yaml

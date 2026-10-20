@@ -13,7 +13,7 @@ export type FakeIssue = { number: number; title: string; body: string; labels: A
 
 export type FakeComment = { id: number; body: string; user: { login: string }; author_association: string; created_at: string };
 
-export type FakePull = { number: number; title: string; body: string; head: string; base: string; state: 'open' | 'closed'; merged: boolean; labels: Array<string> };
+export type FakePull = { number: number; title: string; body: string; head: string; base: string; state: 'open' | 'closed'; merged: boolean; labels: Array<string>; reviewers: Array<string> };
 
 const ReviewComment = Schema.Struct({ path: Schema.String, line: Schema.Finite, side: Schema.optionalKey(Schema.String), body: Schema.String });
 
@@ -33,6 +33,7 @@ const PullJson = Schema.Struct({
   base: Schema.Struct({ ref: Schema.String }),
   labels: Schema.Array(Schema.Struct({ name: Schema.String })),
   user: Schema.Struct({ login: Schema.String }),
+  requested_reviewers: Schema.Array(Schema.Struct({ login: Schema.String })),
 });
 
 const CheckRunsJson = Schema.Struct({
@@ -124,6 +125,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     html_url: html('issues', issue.number),
     created_at: issue.createdAt,
     labels: issue.labels.map((name) => ({ name })),
+    assignees: issue.assignees.map((login) => ({ login })),
   });
 
   const pullJson = (pull: FakePull): typeof PullJson.Type => ({
@@ -137,6 +139,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),
     user: { login: 'chernabog-bot' },
+    requested_reviewers: pull.reviewers.map((login) => ({ login })),
   });
 
   const labelsOf = (number: number) =>
@@ -148,7 +151,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     const nodes = [...issues.values()].flatMap((issue) => {
       if (Option.isSome(label) && !issue.labels.includes(label.value)) return [];
 
-      return [{ ...issueJson(issue), url: html('issues', issue.number), createdAt: issue.createdAt, labels: { nodes: issue.labels.map((name) => ({ name })) }, projectItems: { nodes: [] } }];
+      return [{ ...issueJson(issue), url: html('issues', issue.number), createdAt: issue.createdAt, labels: { nodes: issue.labels.map((name) => ({ name })) }, assignees: { nodes: issue.assignees.map((login) => ({ login })) }, projectItems: { nodes: [] } }];
     });
 
     return json({ data: { search: { nodes } } });
@@ -210,7 +213,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const createPull = withBody(NewPullBody, (body) => {
     if (Option.isNone(refSha(body.head))) return json({ message: `no branch ${body.head}` }, 422);
 
-    const pull: FakePull = { number: takeNumber(), title: body.title, body: body.body, head: body.head, base: body.base, state: 'open', merged: false, labels: [] };
+    const pull: FakePull = { number: takeNumber(), title: body.title, body: body.body, head: body.head, base: body.base, state: 'open', merged: false, labels: [], reviewers: [] };
     pulls.set(pull.number, pull);
 
     return encoded(PullJson, pullJson(pull), 201);
@@ -342,9 +345,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     setUsage: (fiveHour: number, sevenDay: number) => {
       usage = usageOf(fiveHour, sevenDay);
     },
-    addIssue: (title: string, labels: ReadonlyArray<string>, body = 'Do the thing.') => {
+    addIssue: (title: string, labels: ReadonlyArray<string>, body = 'Do the thing.', assignees: ReadonlyArray<string> = []) => {
       const number = takeNumber();
-      issues.set(number, { number, title, body, labels: [...labels], createdAt: new Date(Date.now() - 1000 * (100 - number)).toISOString(), assignees: [] });
+      issues.set(number, { number, title, body, labels: [...labels], createdAt: new Date(Date.now() - 1000 * (100 - number)).toISOString(), assignees: [...assignees] });
 
       return number;
     },

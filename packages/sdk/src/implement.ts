@@ -32,6 +32,7 @@ export const issueItem = (issue: Issue): WorkItem => ({
   title: issue.title,
   url: issue.url,
   data: { issue: issue.number },
+  assignees: issue.assignees,
 });
 
 // The issue number a work item from `trigger` carries.
@@ -50,7 +51,7 @@ export const sessionIdFor = (runId: string, purpose: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 
-// Issues labelled eligible, oldest first.
+// Issues labelled eligible, oldest first, each with its assignees.
 export const trigger = GitHub.use((github) => github.queuedIssues).pipe(Effect.map((issues) => issues.map(issueItem)));
 
 // The account is the one machine config expects, and it has room for a task.
