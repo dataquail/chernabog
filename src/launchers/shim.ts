@@ -18,6 +18,9 @@ export const LaunchSpecFile = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   // Read and passed as the last argument.
   promptFile: Schema.optionalKey(Schema.String),
+  // Holds this process's pid while the agent runs, so a session can be told
+  // apart from a launcher that only says it ended.
+  pidFile: Schema.optionalKey(Schema.String),
 });
 
 export type LaunchSpecFile = typeof LaunchSpecFile.Type;
@@ -31,6 +34,9 @@ export const runLaunch = (specFile: string) =>
     const prompt = yield* Effect.forEach(Option.toArray(Option.fromUndefinedOr(spec.promptFile)), (file) => fs.readFileString(file));
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const pidFile = Option.fromUndefinedOr(spec.pidFile);
+
+    yield* Effect.forEach(Option.toArray(pidFile), (file) => fs.writeFileString(file, String(process.pid)));
 
     // Not detached: the agent keeps this terminal as its controlling one, so it
     // gets resizes, and closing the terminal hangs it up.
@@ -48,6 +54,7 @@ export const runLaunch = (specFile: string) =>
     const exitCode = yield* spawner.spawn(agent).pipe(
       Effect.flatMap((handle) => handle.exitCode),
       Effect.scoped,
+      Effect.ensuring(Effect.forEach(Option.toArray(pidFile), (file) => fs.remove(file, { force: true }).pipe(Effect.ignore))),
     );
 
     return Number(exitCode);

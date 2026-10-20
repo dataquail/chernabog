@@ -3,6 +3,7 @@
 // real one does. A terminal is a detached process group running its command in
 // a shell, as Orca types it into a login shell. Records each call in FAKE_ORCA_LOG.
 // FAKE_ORCA_DOWN: Orca is installed but not running.
+// FAKE_ORCA_SAYS_ENDED: every terminal shows disconnected, even while its command runs.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -44,7 +45,7 @@ if (command.startsWith('status')) {
   else {
     // Real Orca marks a terminal orphaned soon after Claude Code starts in it,
     // running or not; only `connected` follows the command.
-    say({ ok: true, result: { terminal: { handle, connected: running(handle), orphaned: true } } });
+    say({ ok: true, result: { terminal: { handle, connected: running(handle) && !process.env.FAKE_ORCA_SAYS_ENDED, orphaned: true } } });
   }
 } else if (command === 'terminal close') {
   const handle = flag('--terminal');

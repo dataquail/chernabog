@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 
 import { AgentError, type AgentRequest, type AgentResult, type Json, parseJson, printJson } from '@chernabog/sdk';
 import * as DateTime from 'effect/DateTime';
+import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
@@ -15,6 +16,7 @@ import * as Result from 'effect/Result';
 import * as Schema from 'effect/Schema';
 
 import { claudeHomeOf, Home } from '../config.ts';
+import { Exec } from '../Exec.ts';
 import { type Launcher, launcherFor } from '../launchers.ts';
 import { shellCommand } from '../launchers/launcher.ts';
 import { LaunchSpecJson } from '../launchers/shim.ts';
@@ -30,6 +32,10 @@ export const MAX_RESUMES = 2;
 
 // Consecutive failures to ask the launcher about a session before it counts as gone.
 const MAX_UNANSWERED = 30;
+
+// How long a launch has to bring up `chernabog __launch`, which records its
+// pid, before a launcher saying the session ended is believed without it.
+const STARTUP = Duration.seconds(30);
 
 export const interactiveClaudeArgs = (request: AgentRequest, resuming: boolean, settingsFile: string) => {
   let session = ['--session-id', request.sessionId];
@@ -58,6 +64,23 @@ const callOf = (request: AgentRequest) =>
 
 type Running = { readonly launcher: Launcher; readonly handle: string };
 
+const Pid = Schema.fromJsonString(Schema.Int);
+
+// Whether the `chernabog __launch` process of this session still runs, whatever
+// its launcher says: a launcher can be wrong, and a second agent on one session
+// and worktree is worse than waiting. A pid since reused by another process
+// doesn't count, because only this session's launch runs with its spec.
+const agentProcessRuns = (files: SessionFiles) =>
+  Effect.gen(function* () {
+    const pid = Option.flatMap(yield* readText(files.pid), (text) => Schema.decodeOption(Pid)(text.trim()));
+
+    if (Option.isNone(pid)) return false;
+
+    const ps = yield* (yield* Exec).run('ps', ['-o', 'command=', '-p', String(pid.value)]);
+
+    return ps.exitCode === 0 && ps.stdout.includes(files.spec);
+  }).pipe(Effect.orElseSucceed(() => false));
+
 // The recorded session, if its launcher says it still runs.
 const liveSession = (files: SessionFiles) =>
   Effect.gen(function* () {
@@ -69,7 +92,7 @@ const liveSession = (files: SessionFiles) =>
 
     if (Option.isNone(launcher)) return Option.none<Running>();
 
-    const alive = yield* launcher.value.alive(record.value.handle).pipe(Effect.orElseSucceed(() => false));
+    const alive = (yield* launcher.value.alive(record.value.handle).pipe(Effect.orElseSucceed(() => false))) || (yield* agentProcessRuns(files));
 
     return Option.liftPredicate({ launcher: launcher.value, handle: record.value.handle }, () => alive);
   });
@@ -121,6 +144,15 @@ const waitForEnd = (files: SessionFiles, running: Running, tail: Tail, log: Adap
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     let unanswered = 0;
+    let disagreed = false;
+    const since = yield* DateTime.now;
+
+    // A launch whose process hasn't recorded its pid yet, within STARTUP.
+    const comingUp = Effect.gen(function* () {
+      if (yield* fs.exists(files.pid)) return false;
+
+      return Duration.isLessThan(DateTime.distance(since, yield* DateTime.now), STARTUP);
+    });
 
     for (;;) {
       yield* tail.read;
@@ -135,9 +167,13 @@ const waitForEnd = (files: SessionFiles, running: Running, tail: Tail, log: Adap
 
         if (unanswered === 1) yield* log(`claude: ${running.launcher.name} isn't answering: ${alive.failure.message}`);
 
-        if (unanswered >= MAX_UNANSWERED) return;
-      } else if (alive.success) unanswered = 0;
-      else return yield* tail.read;
+        if (unanswered >= MAX_UNANSWERED && !(yield* agentProcessRuns(files))) return;
+      } else if (alive.success || (yield* comingUp)) unanswered = 0;
+      else if (yield* agentProcessRuns(files)) {
+        if (!disagreed) yield* log(`claude: ${running.launcher.name} says the session ended, but its process still runs; waiting on it`);
+
+        disagreed = true;
+      } else return yield* tail.read;
 
       yield* Effect.sleep(POLL);
     }
@@ -157,6 +193,7 @@ const start = (request: AgentRequest, context: AdapterContext, launcher: Launche
       cwd: request.cwd,
       env: claudeEnvironment(context),
       promptFile: files.prompt,
+      pidFile: files.pid,
     });
 
     // The spec carries the session's environment, a token among it, so only its owner may read it;
