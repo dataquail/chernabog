@@ -202,6 +202,8 @@ Every launcher runs the same short command, `chernabog __launch <spec>`, which s
 
 One daemon per machine schedules every enrolled repo, runs the workflow engine (its journal in `~/.config/chernabog/state.db`), and serves the CLI over a local socket. A lock file next to the database keeps a second engine from starting. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity.
 
+The daemon checks each repo's `local.yaml` every ten seconds and, when it changes, restarts on it once nothing is executing, as it does after `trust`.
+
 Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal, such as a review waiting for its author's push, holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
 
 The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`.

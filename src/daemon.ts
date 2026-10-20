@@ -77,16 +77,22 @@ export type RepoState = {
   readonly repo: Option.Option<EffectiveRepo>;
   readonly flows: ReadonlyArray<FlowSchedule>;
   latestTree: Option.Option<string>;
+  // The person's local.yaml as the daemon last saw it; none while absent.
+  localConfig: Option.Option<string>;
 };
 
 const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? 'main';
+
+const readLocalConfig = (enrolled: EnrolledRepo) => FileSystem.FileSystem.use((fs) => fs.readFileString(`${enrolled.path}/.chernabog/local.yaml`)).pipe(Effect.option);
 
 // Snapshots a repo's .chernabog/ from its base branch and loads its flows,
 // unless the snapshot is not the tree that was trusted.
 export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, index: number, now: DateTime.Utc) =>
   Effect.gen(function* () {
     const name = repoNameOf(enrolled);
-    const unloaded = { enrolled, name, repo: Option.none(), flows: [] };
+    // Read before loading, so a change made while the repo loads is noticed after.
+    const localConfig = yield* readLocalConfig(enrolled);
+    const unloaded = { enrolled, name, repo: Option.none(), flows: [], localConfig };
 
     const failed = (message: string, tree: Option.Option<string>): RepoState => ({ ...unloaded, status: 'error', message: Option.some(message), tree, latestTree: tree });
 
@@ -125,6 +131,7 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
         return { handle: flowHandle(repo, flowName, flow), expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [] };
       }),
       latestTree: Option.some(tree),
+      localConfig,
     } satisfies RepoState;
   });
 
@@ -142,6 +149,7 @@ const gateReason = (failure: FlowFailure) => {
 const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTime.formatIso);
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
+const sameText = Option.makeEquivalence(Equivalence.String);
 
 const changedAction = (trusted: boolean) => {
   if (trusted) return 'trusted, restarting on it when idle';
@@ -359,7 +367,22 @@ export const runDaemon = Effect.gen(function* () {
         }
       });
 
+      // Notices an edit to a person's local.yaml, such as a flow turned off
+      // in the live view, and restarts the daemon on it once nothing is executing.
+      const checkLocalConfig = Effect.gen(function* () {
+        for (const repo of repos) {
+          const current = yield* readLocalConfig(repo.enrolled);
+
+          if (sameText(current, repo.localConfig)) continue;
+
+          repo.localConfig = current;
+          yield* log(`${repo.name}: local.yaml changed; restarting on it when idle`);
+          yield* Ref.set(reloadPending, true);
+        }
+      });
+
       yield* Effect.forkScoped(Effect.forever(Effect.sleep('5 minutes').pipe(Effect.andThen(checkConfig))));
+      yield* Effect.forkScoped(Effect.forever(Effect.sleep('10 seconds').pipe(Effect.andThen(checkLocalConfig))));
 
       yield* Effect.forkScoped(
         Effect.forever(
@@ -461,7 +484,7 @@ export const runDaemon = Effect.gen(function* () {
             }),
           ),
         ),
-        HttpRouter.add('POST', '/reload', answer(checkConfig.pipe(Effect.andThen(Ref.get(reloadPending)), Effect.flatMap((pending) => HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }))))),
+        HttpRouter.add('POST', '/reload', answer(checkConfig.pipe(Effect.andThen(checkLocalConfig), Effect.andThen(Ref.get(reloadPending)), Effect.flatMap((pending) => HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }))))),
         HttpRouter.add('POST', '/run', answer(runOrTick(false))),
         HttpRouter.add('POST', '/tick', answer(runOrTick(true))),
       );
