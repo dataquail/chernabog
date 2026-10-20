@@ -1,7 +1,7 @@
 // The daemon end to end: trust, scheduled ticks, gates, the socket the CLI uses.
 
-import type { ChildProcess } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { type ChildProcess, execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -120,5 +120,26 @@ describe('the daemon', () => {
     await waitFor(() => sandbox.daemonLog().includes(`demo/implement: skipped: only work for others: issue-${issue} (assignee: alice)`), 'a tick that leaves the issue to alice');
     expect((await sandbox.runCli(['status'])).output).toContain(`assigned elsewhere: issue-${issue} (assignee: alice)`);
     expect(sandbox.github.issue(issue).labels).toContain('auto:eligible');
+  }, 45_000);
+
+  test('picks up a repo enrolled while it runs, untrusted until trust, without a manual restart', async () => {
+    // A second repo whose origin path reads as github.com/dataquail/other, so enroll takes it for a GitHub repo.
+    const origin = join(sandbox.root, 'github.com', 'dataquail', 'other.git');
+    const other = join(sandbox.root, 'other');
+    mkdirSync(join(sandbox.root, 'github.com', 'dataquail'), { recursive: true });
+    execFileSync('git', ['clone', '-q', '--bare', sandbox.bare, origin]);
+    execFileSync('git', ['clone', '-q', origin, other]);
+
+    const enrolled = await sandbox.runCli(['enroll', other, '--flows', 'implement']);
+    expect(enrolled.output).toContain('added dataquail/other');
+    expect(await daemonExit).toBe(75);
+    expect(sandbox.daemonLog()).toContain('enrolled repos changed; restarting on them when idle');
+    await startDaemon();
+    expect((await sandbox.runCli(['status'])).output).toContain('other (dataquail/other): untrusted — not trusted yet; run chernabog trust other');
+
+    await sandbox.runCli(['trust', 'other']);
+    expect(await daemonExit).toBe(75);
+    await startDaemon();
+    expect((await sandbox.runCli(['status'])).output).toContain('other (dataquail/other): ready');
   }, 45_000);
 });
