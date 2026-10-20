@@ -1,9 +1,9 @@
-// The SDK's review and hand-off steps against an in-memory GitHub: which of
-// them move labels, and which leave that to a separate step.
+// The SDK's steps and triggers against an in-memory GitHub: which of them move
+// labels, which leave that to a separate step, and who owns a pull request.
 
 import { fileURLToPath } from 'node:url';
 
-import { Agent, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, type PullRequest, Repo, type RepoSettings, Review, reviewMarker, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
+import { Agent, awaitSignal, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, type Issue, NeedsHuman, ownerMarker, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
 import type { BunServices } from '@effect/platform-bun';
 import { describe, expect } from 'bun:test';
 import * as Context from 'effect/Context';
@@ -16,12 +16,13 @@ import * as Schedule from 'effect/Schedule';
 import { Home, homePaths } from '../src/config.ts';
 import { flowHandle, flowLayer, pollRun, startRun, StateAt } from '../src/engine.ts';
 import { DEFAULT_LIMITS, type EffectiveRepo } from '../src/repo-config.ts';
-import type { RunRow } from '../src/state.ts';
+import { type RunRow, State } from '../src/state.ts';
 import { effect } from './effect-test.ts';
 
 const PULL = 7;
 const ISSUE = 3;
 const HEAD = 'abc1234def';
+const SHIP = 'auto:ship';
 
 const settings: RepoSettings = {
   name: 'demo',
@@ -76,6 +77,19 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
     requestedReviewers: [],
   });
 
+  const issue = (): Issue => ({ number: ISSUE, title: 'A queued issue', body: '', url: `https://github.com/dataquail/demo/issues/${ISSUE}`, createdAt: '2026-10-20T00:00:00Z', labels: labelsOf(ISSUE), assignees: [] });
+
+  // What this machine knows of the run that owns the pull request: nothing, unless a test says.
+  let knownRun = Option.none<boolean>();
+
+  const knowRun = (active: boolean) => {
+    knownRun = Option.some(active);
+  };
+
+  const setLabels = (number: number, names: Array<string>) => {
+    labels.set(number, names);
+  };
+
   const comment = (body: string) => {
     comments.push({ id: comments.length + 1, author: 'chernabog-bot', body, createdAt: '2026-10-20T00:00:00Z', trusted: true });
   };
@@ -83,6 +97,14 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
   const services = Layer.mergeAll(
     Layer.succeed(Repo, Repo.of({ ...settings, ...overrides })),
     Layer.mock(GitHub)({
+      queuedIssuesLabelled: (label) => Effect.succeed([issue()].filter((queued) => queued.labels.includes(label))),
+      issue: () => Effect.succeed(issue()),
+      branchSha: () => Effect.succeedSome('base1234'),
+      createBranch: () => Effect.succeed('created' as const),
+      assignSelf: () => Effect.void,
+      moveToStatus: () => Effect.void,
+      pullRequestsLabelled: (label) => Effect.succeed([pull()].filter((open) => open.labels.includes(label))),
+      closedPullRequestsLabelled: () => Effect.succeed([]),
       pullRequest: () => Effect.succeed(pull()),
       comments: () => Effect.succeed([...comments]),
       reviewComments: () => Effect.succeed([]),
@@ -116,9 +138,10 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
         }),
     }),
     Layer.mock(StepRunner)({}),
+    Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
-  return { services, labelsOf, comments, reviews, adapters, comment };
+  return { services, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
 };
 
 type Fake = ReturnType<typeof makeFake>;
@@ -149,6 +172,14 @@ const flow = defineFlow({
 
       if (work.key === 'hand-off') return yield* Implement.handOff(ISSUE, opened, outcome);
 
+      if (work.key === 'claim-ship') return (yield* Implement.claim(ISSUE, { label: SHIP })).branch;
+
+      if (work.key === 'owning') return yield* PullRequest.owning(PULL)(Review.round(PULL, 1)).pipe(Effect.map((review) => review.verdict));
+
+      if (work.key === 'owning-fails') return yield* PullRequest.owning(PULL)(Effect.fail(new NeedsHuman({ reason: 'stuck' })));
+
+      if (work.key === 'owning-waits') return yield* PullRequest.owning(PULL)(awaitSignal(['pushed'], { id: 'wait', timeout: '1 hour' }));
+
       if (work.key === 'hand-off-unlabelled') return yield* Implement.handOff(ISSUE, opened, outcome, { needsReview: false });
     }),
 });
@@ -159,7 +190,8 @@ const item = (key: string): WorkItem => ({ key, data: {} });
 
 const isRunning = (run: RunRow) => run.status === 'running';
 
-const runToEnd = (fake: Fake, key: string) =>
+// Starts the run, and polls until `until` says it has got far enough.
+const runUntil = (fake: Fake, key: string, until: (run: RunRow) => Effect.Effect<boolean, never, State>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-steps-' });
@@ -168,12 +200,23 @@ const runToEnd = (fake: Fake, key: string) =>
 
     const run = startRun(handle, item(key)).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
-      Effect.flatMap((started) => pollRun(handle, started).pipe(Effect.repeat({ schedule: Schedule.spaced('25 millis'), while: isRunning, times: 200 }))),
+      Effect.flatMap((started) =>
+        pollRun(handle, started).pipe(
+          Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
+          Effect.repeat({ schedule: Schedule.spaced('25 millis'), until: (step) => step.done, times: 200 }),
+        ),
+      ),
+      Effect.map((step) => step.polled),
       Effect.orDie,
     );
 
     return yield* Effect.provideContext(run, Context.merge(platform, engine));
   });
+
+// Runs a trigger against the fake, as a tick would.
+const triggered = <E, R>(fake: Fake, trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) => Effect.provide(trigger, fake.services);
+
+const runToEnd = (fake: Fake, key: string) => runUntil(fake, key, (run) => Effect.succeed(!isRunning(run)));
 
 const summaryOf = (run: RunRow) => Option.getOrElse(run.summary, () => '');
 
@@ -253,6 +296,85 @@ describe('agents per role', () => {
       expect((yield* runToEnd(fake, 'round-as-reviewer')).status).toBe('done');
       expect(fake.adapters).toEqual([Option.none()]);
       expect(fake.reviews[0]).toContain('Approved by claude');
+    }),
+  );
+});
+
+describe('a flow keyed by its own label', () => {
+  effect(
+    'Implement.triggerFor finds issues with that label, and claim takes the label off',
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve');
+      fake.setLabels(ISSUE, [SHIP]);
+      const found = yield* triggered(fake, Implement.triggerFor(SHIP));
+      expect(found.map((work) => work.key)).toEqual([`issue-${ISSUE}`]);
+      expect(yield* triggered(fake, Implement.trigger)).toEqual([]);
+
+      expect((yield* runToEnd(fake, 'claim-ship')).status).toBe('done');
+      expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
+    }),
+  );
+});
+
+const ownership = (fake: Fake) => fake.comments.flatMap((comment) => Option.toArray(ownerMarker.read(comment.body))).map((marker) => marker.released);
+
+describe('owning a pull request', () => {
+  effect(
+    'PullRequest.owning marks the pull request as the run\'s, and lets it go when the run ends',
+    () => Effect.gen(function* () {
+      const done = makeFake('approve');
+      expect((yield* runToEnd(done, 'owning')).status).toBe('done');
+      expect(ownership(done)).toEqual([false, true]);
+
+      const failed = makeFake('approve');
+      expect((yield* runToEnd(failed, 'owning-fails')).status).toBe('needs-human');
+      expect(ownership(failed)).toEqual([false, true]);
+    }),
+  );
+
+  effect(
+    'a run waiting on a signal keeps the pull request',
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve');
+      yield* runUntil(fake, 'owning-waits', (run) => State.use((state) => state.waitsFor(run.id, 'pushed')).pipe(Effect.map((waits) => waits.length > 0)));
+      expect(ownership(fake)).toEqual([false]);
+    }),
+  );
+
+  const owned = (fake: Fake, released: boolean) => {
+    fake.comment(ownerMarker.write({ flow: 'ship', runId: 'demo.ship.issue-3.1', released }));
+  };
+
+  effect(
+    'the review and fix triggers leave alone a pull request another run owns',
+    () => Effect.gen(function* () {
+      const review = makeFake('approve');
+      owned(review, false);
+      expect(yield* triggered(review, Review.trigger)).toEqual([]);
+
+      const fix = makeFake('approve');
+      fix.setLabels(PULL, [DEFAULT_LABELS.changesRequested]);
+      fix.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: 'request-changes' }));
+      expect((yield* triggered(fix, Review.fixTrigger)).length).toBe(1);
+      owned(fix, false);
+      expect(yield* triggered(fix, Review.fixTrigger)).toEqual([]);
+    }),
+  );
+
+  effect(
+    'and pick it up again once the run lets go, or this machine knows the run ended',
+    () => Effect.gen(function* () {
+      const released = makeFake('approve');
+      owned(released, false);
+      owned(released, true);
+      expect((yield* triggered(released, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
+
+      // A run this machine doesn't know, such as one on another machine, still owns it.
+      const ended = makeFake('approve');
+      owned(ended, false);
+      expect(yield* triggered(ended, Review.trigger)).toEqual([]);
+      ended.knowRun(false);
+      expect((yield* triggered(ended, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
     }),
   );
 });

@@ -190,6 +190,8 @@ export class GitHub extends Context.Service<
   {
     // Open issues labelled eligible (and ready on the board, when the repo has one), oldest first.
     readonly queuedIssues: Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    // Open issues with this label (and ready on the board, when the repo has one), oldest first.
+    queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
     issue(number: number): Effect.Effect<Issue, GitHubError>;
     // Comments by the repo's owners, members and collaborators only; anyone can comment on a public repo.
@@ -284,6 +286,16 @@ export class Agent extends Context.Service<
     readonly adapters: ReadonlyArray<string>;
   }
 >()('@chernabog/sdk/Agent') {}
+
+// What this machine knows of a run, by id: whether it is still going, or none
+// for a run it never had, such as one on another machine. Provided by Chernabog
+// to triggers; a trigger reads it with Effect.serviceOption.
+export class Runs extends Context.Service<
+  Runs,
+  {
+    isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
+  }
+>()('@chernabog/sdk/Runs') {}
 
 // Writes to the run's log file, which `chernabog logs <run>` prints.
 export class RunLog extends Context.Service<

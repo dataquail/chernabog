@@ -15,6 +15,7 @@ description: The services @chernabog/sdk provides to flows and Effect steps.
 | `Worktree` | one worktree per branch                                                     |
 | `Usage`    | the account check and the [usage gate](/chernabog/agents/usage-gate/)        |
 | `RunLog`   | the run's log                                                               |
+| `Runs`     | whether a run this machine knows is still going; given to triggers, read with `Effect.serviceOption` |
 
 ```bash
 cd .chernabog && bun install   # or npm, pnpm: dev dependencies, for the editor
@@ -45,5 +46,9 @@ Most steps only post. The ones above that move labels say so, and a step that ha
 - **Worktrees** of a pull request are removed by the review run that waits on it, when it closes. A flow that ends with no such run waiting removes them with `Review.cleanUp`, or leaves them for a person.
 
 `chernabog status` lists each flow's work from its trigger, so a label left behind shows up there as work waiting to start.
+
+**Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That posts an owner marker on the pull request, and a release marker when the work ends, whether it succeeded or failed. A run waiting on a signal keeps the pull request. While a pull request is owned, `Review.trigger` and `Review.fixTrigger` neither start on it nor wake on its pushes. A run this machine knows has ended no longer owns anything, even without a release. One on another machine owns the pull request until its release marker appears.
+
+**Labels of a flow's own.** A flow keyed by its own label, such as `auto:ship`, declares it in `defineFlow({ labels: [{ name: "auto:ship" }] })`, uses `Implement.triggerFor("auto:ship")`, and claims with `Implement.claim(issue, { label: "auto:ship" })`, which removes that label in place of `auto:eligible`. `chernabog labels` creates declared labels beside the repo's own.
 
 **Steps and replays.** `Review.round(pr, n)` saves its result as `review-<n>`, and `Review.labelVerdict(pr, n, review)` as `label-review-<n>`. `labelVerdict` moves the labels only while that review is the latest on the pull request, so replaying an old round never undoes a later one.

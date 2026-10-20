@@ -1,4 +1,4 @@
-import { DEFAULT_LABELS } from '@chernabog/sdk';
+import { DEFAULT_LABELS, defineFlow } from '@chernabog/sdk';
 import { expect, test } from 'bun:test';
 import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
@@ -7,7 +7,7 @@ import * as Schema from 'effect/Schema';
 
 import { effect } from '../test/effect-test.ts';
 import { fixture } from '../test/fixtures.ts';
-import { desiredLabels, Label, planLabelSync } from './labels.ts';
+import { desiredLabels, Label, planLabelSync, withFlowLabels } from './labels.ts';
 
 const DESIRED = desiredLabels(DEFAULT_LABELS);
 
@@ -36,4 +36,11 @@ effect(
 
 test("a repo's own label names are the ones synced", () => {
   expect(desiredLabels({ ...DEFAULT_LABELS, eligible: 'agent:queued' })[0]?.name).toBe('agent:queued');
+});
+
+test('labels a flow declares are synced too, after the repo\'s own', () => {
+  const ship = defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void, labels: [{ name: 'auto:ship', description: 'Implement, review and merge' }, { name: 'auto:approved', color: '000000' }] });
+  const all = withFlowLabels(DESIRED, [ship]);
+  expect(all.slice(DESIRED.length)).toEqual([{ name: 'auto:ship', color: 'c5def5', description: 'Implement, review and merge' }]);
+  expect(all.find((label) => label.name === 'auto:approved')?.color).toBe('0e8a16');
 });

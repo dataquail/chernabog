@@ -1,7 +1,7 @@
 // Opens an enrolled repo (its config layers and flows) and runs one flow in
 // the foreground: `chernabog run <flow> --repo <name>`.
 
-import { type Flow, RunLog, type WorkItem } from '@chernabog/sdk';
+import { type Flow, RunLog, Runs, type WorkItem } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';
 import * as Clock from 'effect/Clock';
 import * as Console from 'effect/Console';
@@ -67,8 +67,19 @@ export const buildRepoContext = (repo: EffectiveRepo, machine: MachineConfig) =>
 
 export type RepoContext = Effect.Success<ReturnType<typeof buildRepoContext>>;
 
-// Runs a flow's trigger (or gate) with the repo's services.
-export const withRepo = <A, E, R>(context: Context.Context<R>, effect: Effect.Effect<A, E, R>) => Effect.provideContext(effect, context);
+// What this machine's state knows of a run, for triggers that leave alone a pull request a run owns.
+const runsFrom = (state: State['Service']) => Runs.of({ isActive: (runId) => state.run(runId).pipe(Effect.map(Option.map((run) => run.status === 'running'))) });
+
+// Runs a flow's trigger (or gate) with the repo's services, and Runs where the machine's state is open.
+export const withRepo = <A, E, R>(context: Context.Context<R>, effect: Effect.Effect<A, E, R>) =>
+  Effect.serviceOption(State).pipe(
+    Effect.flatMap((state) =>
+      Option.match(state, {
+        onNone: () => Effect.provideContext(effect, context),
+        onSome: (open) => Effect.provideContext(effect, Context.add(context, Runs, runsFrom(open))),
+      }),
+    ),
+  );
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {

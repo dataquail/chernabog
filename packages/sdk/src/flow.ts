@@ -54,6 +54,9 @@ export type FlowError = Skip | NeedsHuman | StepFailed;
 // What a flow's trigger, gate and workflow may fail with: anything, which the engine reports by its message.
 export type FlowFailure = { readonly _tag: string } | Error;
 
+// A label a flow triggers on or sets beyond the repo's own, such as auto:ship. `chernabog labels` creates it.
+export type FlowLabel = { readonly name: string; readonly color?: string; readonly description?: string };
+
 export type Flow = {
   // The work items in the state this flow acts on, such as issues labelled auto:eligible.
   readonly trigger: Effect.Effect<ReadonlyArray<WorkItem>, FlowFailure, TriggerServices>;
@@ -63,6 +66,8 @@ export type Flow = {
   readonly concurrency?: number;
   // A cron schedule for the trigger, overriding the repo's default.
   readonly schedule?: string;
+  // Labels of the flow's own, for `chernabog labels` to create.
+  readonly labels?: ReadonlyArray<FlowLabel>;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowFailure, WorkflowServices>;
 };
