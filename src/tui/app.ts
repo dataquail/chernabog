@@ -20,6 +20,7 @@ import { daemonReload, daemonStatus, daemonTick } from '../client.ts';
 import { Home } from '../config.ts';
 import { setPaused } from '../daemon.ts';
 import { runLogFile } from '../engine.ts';
+import { viewerLogin } from '../GitHubApi.ts';
 import { writeFlowChoices } from '../init.ts';
 import { DEFAULT_GATE, findEnrolled, loadMachineConfig } from '../repo-config.ts';
 import { readUsageLogLine } from '../usage-gate.ts';
@@ -110,7 +111,7 @@ const tickMessage = (repo: string, flow: string, started: ReadonlyArray<string>,
 const setFlowEnabled = (repo: string, flow: string, enabled: boolean) =>
   Effect.gen(function* () {
     const enrolled = yield* findEnrolled(yield* loadMachineConfig, repo);
-    yield* writeFlowChoices(enrolled.path, [{ name: flow, enabled }]);
+    yield* writeFlowChoices(enrolled.path, [{ name: flow, enabled }], Effect.option(viewerLogin));
     yield* daemonReload.pipe(Effect.ignore);
   });
 

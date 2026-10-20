@@ -42,7 +42,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 
 ### Runners
 
-`runners` names the GitHub logins whose machines run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Unset, every enrolled machine runs them. On any other machine the flow is off, and `status` says why: `off, not a runner (runners: alice; this machine is bob)`. A machine's login is the one its `gh` token belongs to, looked up when the daemon starts.
+`runners` names the GitHub logins whose machines run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Unset, every enrolled machine runs them. On any other machine the flow is off, and `status` says why: `off, not a runner (runners: alice; this machine is bob)`. A machine's login is the one its `gh` token belongs to, looked up when the daemon starts; `doctor` shows it, and which flows it isn't a runner of.
 
 It's coordination, not access control: whoever enrolls the repo can still run a flow, by setting `flows.<flow>.enabled: true` in their `local.yaml`, for instance to cover for a runner who is away. A flow the team turns off with `flows.<flow>.enabled: false` stays off for runners too. Claims are race-safe without it: two machines never implement the same issue.
 

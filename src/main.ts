@@ -4,6 +4,7 @@
 import { describeError } from '@chernabog/sdk';
 import { BunRuntime, BunServices } from '@effect/platform-bun';
 import * as Arr from 'effect/Array';
+import * as Cache from 'effect/Cache';
 import * as Argument from 'effect/cli/Argument';
 import * as Command from 'effect/cli/Command';
 import * as Flag from 'effect/cli/Flag';
@@ -30,7 +31,7 @@ import { RELOAD_EXIT_CODE, runDaemon, setPaused } from './daemon.ts';
 import { doctor, formatCheck } from './doctor.ts';
 import { runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
-import { GitHubApi } from './GitHubApi.ts';
+import { GitHubApi, viewerLogin } from './GitHubApi.ts';
 import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
 import { desiredLabels, syncLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
@@ -348,7 +349,7 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
 
 // The flows to run on this machine: --flows when given, else asked in a
 // terminal, else none chosen, which leaves local.yaml's choices as they are.
-const chosenFlows = (root: string, flag: Option.Option<string>) =>
+const chosenFlows = <R>(root: string, flag: Option.Option<string>, login: Effect.Effect<Option.Option<string>, never, R>) =>
   Effect.gen(function* () {
     if (Option.isSome(flag)) {
       const names = flag.value.split(',').map((name) => name.trim()).filter((name) => name.length > 0);
@@ -358,13 +359,13 @@ const chosenFlows = (root: string, flag: Option.Option<string>) =>
     }
 
     const stdio = yield* Stdio.Stdio;
-    const choices = yield* flowChoices(root);
+    const choices = yield* flowChoices(root, login);
 
     if (choices.length === 0 || !(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return Option.none<Array<string>>();
 
     const picked = yield* Prompt.MultiSelect({
       message: 'Which flows should run on this machine?',
-      choices: choices.map((choice) => ({ title: choice.name, value: choice.name, selected: choice.enabled })),
+      choices: choices.map((choice) => ({ title: choice.name, value: choice.name, selected: choice.enabled, description: Option.getOrUndefined(choice.teamOff) })),
     });
 
     return Option.some(picked);
@@ -384,7 +385,10 @@ const enrollCommand = Command.make(
   ({ account, flows, name, path }) =>
     Effect.gen(function* () {
       const root = yield* rootOf(path);
-      const chosen = yield* chosenFlows(root, flows);
+      // Looked up once, and only if the repo names runners.
+      const logins = yield* Cache.make({ capacity: 1, lookup: () => Effect.option(viewerLogin) });
+      const login = Cache.get(logins, 'login');
+      const chosen = yield* chosenFlows(root, flows, login);
       const { action, repo } = yield* enroll(root, { account, name });
 
       yield* Console.log(`${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? 'main'}) in ${yield* machineConfigFile}`);
@@ -392,7 +396,7 @@ const enrollCommand = Command.make(
       if (yield* ensureLocalConfig(root)) yield* Console.log('wrote .chernabog/local.yaml');
 
       for (const names of Option.toArray(chosen)) {
-        const choices = yield* chooseFlows(root, names);
+        const choices = yield* chooseFlows(root, names, login);
 
         const listed = (enabled: boolean) =>
           Option.getOrElse(Option.liftPredicate(choices.filter((choice) => choice.enabled === enabled).map((choice) => choice.name).join(', '), (text) => text.length > 0), () => 'none');

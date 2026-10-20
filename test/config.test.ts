@@ -227,33 +227,49 @@ describe('init', () => {
   );
 
   effect(
-    "records which flows run for the person in local.yaml, over the team's choice",
+    "records in local.yaml only the flow choices that differ from the team's",
     () => Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
       const localPath = `${repo}/.chernabog/local.yaml`;
+      const bob = Effect.succeedSome('bob');
+      const localFlows = Effect.flatMap(fs.readFileString(localPath), (text) => Schema.decodeUnknownEffect(LocalConfigFile)(YAML.parse(text))).pipe(Effect.map((local) => local.flows));
       yield* scaffold(repo);
       yield* fs.remove(localPath);
-      yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'flows:\n  fix:\n    enabled: false\n');
-      expect(yield* flowChoices(repo)).toEqual([
-        { name: 'fix', enabled: false },
+      yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'runners: [alice]\nflows:\n  fix:\n    enabled: false\n  review:\n    runners: [alice, bob]\n');
+      expect(yield* flowChoices(repo, bob)).toEqual([
+        { name: 'fix', enabled: false, teamDefault: false, teamOff: Option.some('flow turned off') },
+        { name: 'implement', enabled: false, teamDefault: false, teamOff: Option.some('not a runner (runners: alice; this machine is bob)') },
+        { name: 'review', enabled: true, teamDefault: true, teamOff: Option.none() },
+      ]);
+
+      expect((yield* Effect.flip(chooseFlows(repo, ['implement', 'nope'], bob))).message).toContain('no flow named nope');
+      expect(yield* fs.exists(localPath)).toBe(false);
+
+      expect(yield* chooseFlows(repo, ['fix', 'implement', 'review'], bob)).toEqual([
+        { name: 'fix', enabled: true },
         { name: 'implement', enabled: true },
         { name: 'review', enabled: true },
       ]);
+      expect(yield* fs.readFileString(localPath)).toContain('# Your own settings for this repo');
+      expect(yield* localFlows).toEqual({ fix: { enabled: true }, implement: { enabled: true } });
+      expect((yield* flowChoices(repo, bob)).map((choice) => choice.enabled)).toEqual([true, true, true]);
 
-      expect((yield* Effect.flip(chooseFlows(repo, ['implement', 'nope']))).message).toContain('no flow named nope');
-      expect(yield* fs.exists(localPath)).toBe(false);
-
-      expect(yield* chooseFlows(repo, ['fix', 'implement'])).toEqual([
-        { name: 'fix', enabled: true },
-        { name: 'implement', enabled: true },
-        { name: 'review', enabled: false },
-      ]);
-      const written = yield* fs.readFileString(localPath);
-      expect(written).toContain('# Your own settings for this repo');
-      expect((yield* Schema.decodeUnknownEffect(LocalConfigFile)(YAML.parse(written))).flows).toEqual({ fix: { enabled: true }, implement: { enabled: true }, review: { enabled: false } });
-      expect((yield* flowChoices(repo)).map((choice) => choice.enabled)).toEqual([true, true, false]);
+      // Back to the team's choices: local.yaml keeps none of them.
+      yield* chooseFlows(repo, ['review'], bob);
+      expect(yield* localFlows).toBeUndefined();
       expect(yield* ensureLocalConfig(repo)).toBe(false);
+    }),
+  );
+
+  effect(
+    'asks GitHub who this machine is only when the team names runners',
+    () => Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
+      yield* scaffold(repo);
+      const choices = yield* flowChoices(repo, Effect.die('looked up the login'));
+      expect(choices.every((choice) => choice.enabled && choice.teamDefault)).toBe(true);
     }),
   );
 
