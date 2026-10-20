@@ -1,8 +1,10 @@
 // Triages the repo's open security alerts once a day: Dependabot (including
-// malware), code scanning and secret scanning. An agent reads each new alert
-// against the code and decides whether it needs work. Every decision becomes an
-// issue labelled `security` that names its alerts in a hidden marker, so no
-// alert is triaged twice:
+// malware) and secret scanning. Code scanning is left out on purpose: it finds
+// flaws nobody knows about yet, which belong in a private advisory rather than
+// a public issue (see #25). An agent reads each new alert against the code and
+// decides whether it needs work. Every decision becomes an issue labelled
+// `security` that names its alerts in a hidden marker, so no alert is triaged
+// twice:
 //
 // - fix: credible and fixable by an agent, queued with auto:eligible;
 // - person: credible, but a person must act (revoke a secret, audit after
@@ -44,11 +46,10 @@ type Alert = { readonly key: string; readonly url: string; readonly details: Jso
 // A secret alert's value is dropped before anything else sees it: the agent must never repeat it.
 const SOURCES = [
   { kind: 'dependabot', path: 'dependabot/alerts', omit: [] },
-  { kind: 'code-scanning', path: 'code-scanning/alerts', omit: [] },
   { kind: 'secret-scanning', path: 'secret-scanning/alerts', omit: ['secret'] },
 ] as const;
 
-// Every open alert, by key such as `code-scanning/5`, from the first hundred of
+// Every open alert, by key such as `dependabot/12`, from the first hundred of
 // each kind. A source that is off for the repo, or that the token cannot read,
 // is logged and left out.
 const openAlerts = Effect.gen(function* () {
@@ -123,7 +124,7 @@ const triageJsonSchema = {
       items: {
         type: 'object',
         properties: {
-          alerts: { type: 'array', items: { type: 'string' }, description: 'The keys of the alerts this issue covers, such as code-scanning/5' },
+          alerts: { type: 'array', items: { type: 'string' }, description: 'The keys of the alerts this issue covers, such as dependabot/12' },
           decision: { type: 'string', enum: ['fix', 'person', 'dismiss'] },
           title: { type: 'string', description: 'The issue title' },
           body: { type: 'string', description: 'The issue body in Markdown' },
