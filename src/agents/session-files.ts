@@ -26,6 +26,8 @@ export const sessionFilesIn = (dir: string) => ({
   call: `${dir}/call`,
   // The launcher and handle the session runs under.
   launch: `${dir}/launch.json`,
+  // Written by `chernabog __launch`: its pid, while the agent runs.
+  pid: `${dir}/agent.pid`,
 });
 
 export type SessionFiles = ReturnType<typeof sessionFilesIn>;

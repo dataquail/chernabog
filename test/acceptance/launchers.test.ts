@@ -88,12 +88,14 @@ describe('the answer file', () => {
     expect(sandbox.hookCalls().map((call) => call.split(' ')[2])).toEqual(['block', 'allow']);
   }, 60_000);
 
-  test('no valid answer after three reminders fails the run', async () => {
+  test('no valid answer after three reminders hands the issue to a person', async () => {
     const sandbox = sandboxFor({}, { launcher: 'tmux' });
-    sandbox.github.addIssue('Never answer', ['auto:eligible']);
+    const issue = sandbox.github.addIssue('Never answer', ['auto:eligible']);
     const { code, output } = await sandbox.runCli(['run', 'implement', '--repo', 'demo'], { FAKE_CLAUDE_NEVER_ANSWER: '1' });
-    expect(output).toContain('no valid answer after 3 reminders');
-    expect(code).toBe(1);
+    expect(output).toContain('needs-human: #1 needs a person: implement: claude: no valid answer after 3 reminders');
+    expect(code).toBe(0);
+    expect(sandbox.github.issue(issue).labels).toContain('auto:needs-human');
+    expect(sandbox.github.issue(issue).labels).not.toContain('auto:in-progress');
     expect(sandbox.hookCalls().map((call) => call.split(' ')[2])).toEqual(['block', 'block', 'block', 'allow']);
     expect(sandbox.github.pulls.size).toBe(0);
   }, 60_000);
@@ -137,6 +139,23 @@ describe('an interactive session outliving its run', () => {
     expect(code).toBe(0);
     expect(sandbox.claudeCalls()).toHaveLength(1);
     expect(sandbox.tmuxCalls().filter((call) => call.startsWith('new-session'))).toHaveLength(1);
+  }, 90_000);
+
+  test('a session the launcher wrongly says ended is waited on, not resumed into a second agent', async () => {
+    const sandbox = sandboxFor({}, { launcher: 'orca' });
+    sandbox.github.addIssue('Outlive what Orca says', ['auto:eligible']);
+    const hold = join(sandbox.root, 'hold');
+    writeFileSync(hold, '');
+    const run = sandbox.runCli(['run', 'implement', '--repo', 'demo'], { FAKE_CLAUDE_HOLD: hold, FAKE_ORCA_SAYS_ENDED: '1' });
+    await waitFor(() => sandbox.claudeCalls().length === 1 && launchRecorded(sandbox), 'the session to start');
+    await Bun.sleep(3000);
+    rmSync(hold);
+    const { code, output } = await run;
+    expect(output).toContain('orca says the session ended, but its process still runs; waiting on it');
+    expect(output).toContain('done: #1:');
+    expect(code).toBe(0);
+    expect(sandbox.claudeCalls()).toHaveLength(1);
+    expect(sandbox.orcaCalls().filter((call) => call === 'terminal create')).toHaveLength(1);
   }, 90_000);
 
   test('a session that dies before answering is resumed', async () => {
