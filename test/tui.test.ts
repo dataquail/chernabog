@@ -136,6 +136,15 @@ describe('keys', () => {
     expect(update(down, { name: 'p' }).action).toEqual({ kind: 'pause', repo: 'goodbones', paused: true });
   });
 
+  test('e turns the selected flow off or on, from what was last turned here until the daemon restarts on it', () => {
+    const onFlows = update(model(), { name: 'tab' }).model;
+    expect(update(onFlows, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', enabled: false });
+    const pending = { ...onFlows, pendingFlows: { 'goodbones/implement': false } };
+    expect(update(pending, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', enabled: true });
+    expect(plain(view(pending))).toMatch(/implement\s+off, pending/);
+    expect(update(model(), { name: 'e' }).action).toEqual({ kind: 'none' });
+  });
+
   test('selection stays within the list', () => {
     let current = model();
 

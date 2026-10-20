@@ -16,14 +16,15 @@ import * as Result from 'effect/Result';
 import * as Schedule from 'effect/Schedule';
 
 import { attachCommand, runSessions } from '../agents.ts';
-import { daemonStatus, daemonTick } from '../client.ts';
+import { daemonReload, daemonStatus, daemonTick } from '../client.ts';
 import { Home } from '../config.ts';
 import { setPaused } from '../daemon.ts';
 import { runLogFile } from '../engine.ts';
-import { DEFAULT_GATE, loadMachineConfig } from '../repo-config.ts';
+import { writeFlowChoices } from '../init.ts';
+import { DEFAULT_GATE, findEnrolled, loadMachineConfig } from '../repo-config.ts';
 import { readUsageLogLine } from '../usage-gate.ts';
 import { type Action, type Key, update } from './update.ts';
-import { type Line, type Model, type Style, type UsageRow, view } from './view.ts';
+import { flowKey, type Line, type Model, type Style, type UsageRow, view } from './view.ts';
 
 const plainChunk = (text: string): TextChunk => ({ __isChunk: true, text });
 
@@ -91,6 +92,7 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   logLines: [],
   logScroll: 0,
   message: Option.none(),
+  pendingFlows: {},
   width,
   height,
   now,
@@ -102,6 +104,20 @@ const tickMessage = (repo: string, flow: string, started: ReadonlyArray<string>,
   if (started.length > 0) return `started ${started.join(', ')}`;
 
   return `${repo}/${flow}: ${Option.getOrElse(skipped, () => 'nothing to start')}`;
+};
+
+// Records the choice in the person's local.yaml; the daemon restarts on it once idle.
+const setFlowEnabled = (repo: string, flow: string, enabled: boolean) =>
+  Effect.gen(function* () {
+    const enrolled = yield* findEnrolled(yield* loadMachineConfig, repo);
+    yield* writeFlowChoices(enrolled.path, [{ name: flow, enabled }]);
+    yield* daemonReload.pipe(Effect.ignore);
+  });
+
+const toggleMessage = (repo: string, flow: string, enabled: boolean) => {
+  if (enabled) return `turned ${repo}/${flow} on in local.yaml; the daemon picks it up when idle`;
+
+  return `turned ${repo}/${flow} off in local.yaml; the daemon picks it up when idle`;
 };
 
 const pauseMessage = (repo: string, paused: boolean) => {
@@ -146,7 +162,13 @@ export const runTui = Effect.gen(function* () {
     const usage = yield* readUsage;
 
     model = Result.match(status, {
-      onSuccess: (found): Model => ({ ...model, status: Option.some(found), error: Option.none(), usage }),
+      // A daemon that has restarted has picked up every flow turned on or off from here.
+      onSuccess: (found): Model => {
+        const sameDaemon = Option.exists(model.status, (previous) => previous.startedAt === found.startedAt && previous.pid === found.pid);
+        const pendingFlows = Option.getOrElse(Option.liftPredicate(model.pendingFlows, () => sameDaemon), () => ({}));
+
+        return { ...model, status: Option.some(found), error: Option.none(), usage, pendingFlows };
+      },
       onFailure: (failure): Model => ({ ...model, status: Option.none(), error: Option.some(`${failure.message}. Retrying…`), usage }),
     });
 
@@ -211,6 +233,19 @@ export const runTui = Effect.gen(function* () {
           return yield* say(
             Result.match(result, {
               onSuccess: (tick) => tickMessage(action.repo, action.flow, tick.started, tick.skipped),
+              onFailure: (failure) => failure.message,
+            }),
+          );
+        }
+
+        case 'toggle-flow': {
+          const toggled = yield* Effect.result(setFlowEnabled(action.repo, action.flow, action.enabled));
+
+          if (Result.isSuccess(toggled)) model = { ...model, pendingFlows: { ...model.pendingFlows, [flowKey(action.repo, action.flow)]: action.enabled } };
+
+          return yield* say(
+            Result.match(toggled, {
+              onSuccess: () => toggleMessage(action.repo, action.flow, action.enabled),
               onFailure: (failure) => failure.message,
             }),
           );

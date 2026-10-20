@@ -16,6 +16,7 @@ description: chernabog with no arguments — a live view of the daemon, its flow
 | `enter`        | Follow the selected run's log; `↑` `↓` scroll, `end` follows again, `esc` returns |
 | `a`            | Attach to the run's agent session, to watch or step in                       |
 | `t`            | Trigger the selected flow now, with its gates                                |
+| `e`            | Turn the selected flow off or on for this machine, in `local.yaml`; pending until the daemon restarts on it, once idle |
 | `p`            | Pause or resume the repo                                                     |
 | `q`            | Quit                                                                         |
 

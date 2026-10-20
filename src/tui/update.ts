@@ -3,7 +3,7 @@
 import * as Arr from 'effect/Array';
 import * as Option from 'effect/Option';
 
-import { type FlowRow, flowRows, type Model, type RunEntry, runRows } from './view.ts';
+import { flowEnabled, type FlowRow, flowRows, type Model, type RunEntry, runRows } from './view.ts';
 
 export type Key = { readonly name: string; readonly ctrl?: boolean };
 
@@ -14,7 +14,8 @@ export type Action =
   | { readonly kind: 'open-log'; readonly run: string }
   | { readonly kind: 'attach'; readonly run: string }
   | { readonly kind: 'trigger'; readonly repo: string; readonly flow: string }
-  | { readonly kind: 'pause'; readonly repo: string; readonly paused: boolean };
+  | { readonly kind: 'pause'; readonly repo: string; readonly paused: boolean }
+  | { readonly kind: 'toggle-flow'; readonly repo: string; readonly flow: string; readonly enabled: boolean };
 
 export type Updated = { readonly model: Model; readonly action: Action };
 
@@ -115,6 +116,19 @@ export const update = (model: Model, key: Key): Updated => {
           onSome: (flow) => ({ model: cleared, action: { kind: 'trigger', repo: flow.repo, flow: flow.flow } }),
         },
       );
+    case 'e': {
+      const flow = Arr.get(flows, model.flowIndex).pipe(Option.filter(() => model.focus === 'flows'));
+
+      const status = Option.flatMap(flow, (row) =>
+        Option.flatMap(model.status, (found) => Arr.findFirst(found.repos, (repo) => repo.name === row.repo)).pipe(Option.flatMap((repo) => Arr.findFirst(repo.flows, (candidate) => candidate.name === row.flow))),
+      );
+
+      return Option.match(Option.all([flow, status]), {
+        onNone: () => ({ model: { ...cleared, message: Option.some('select a flow to turn on or off (tab to the flows)') }, action: none }),
+        onSome: ([row, found]) => ({ model: cleared, action: { kind: 'toggle-flow', repo: row.repo, flow: row.flow, enabled: !flowEnabled(model, row.repo, found) } }),
+      });
+    }
+
     case 'p': {
       const name = selectedRepoName(model, flows, Arr.get(runs, model.runIndex));
       const repo = Option.flatMap(model.status, (status) => Arr.findFirst(status.repos, (candidate) => Option.contains(name, candidate.name)));
