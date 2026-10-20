@@ -1,7 +1,7 @@
 // Opens an enrolled repo (its config layers and flows) and runs one flow in
 // the foreground: `chernabog run <flow> --repo <name>`.
 
-import { type Flow, RunLog } from '@chernabog/sdk';
+import { type Flow, RunLog, type WorkItem } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';
 import * as Clock from 'effect/Clock';
 import * as Console from 'effect/Console';
@@ -14,9 +14,11 @@ import type * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 
 import { ConfigError, Home, homePaths } from './config.ts';
 import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, repoServices, runLogFile, startRun, StateLive } from './engine.ts';
+import { viewerLogin } from './GitHubApi.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
-import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, routingOf } from './repo-config.ts';
+import { routeItems } from './schedule.ts';
 import { snapshotConfig } from './snapshot.ts';
 import { type RunRow, State } from './state.ts';
 
@@ -126,17 +128,31 @@ const resume = (handle: FlowHandle, unfinished: RunRow, context: RepoContext) =>
     return Option.some(yield* followRun(handle, unfinished, context));
   });
 
+// The first item this machine may start, unless the flow leaves work for others to them.
+const firstOf = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
+  Effect.gen(function* () {
+    let login = Option.none<string>();
+
+    if (needsLogin(handle.repo)) login = yield* Effect.option(viewerLogin);
+
+    const routed = routeItems(items, routingOf(handle.repo, handle.name), login);
+
+    if (routed.elsewhere.length > 0 && routed.mine.length === 0) yield* Console.log(`left for other machines: ${routed.elsewhere.map((item) => item.key).join(', ')}; name one with --item to run it here`);
+
+    return Arr.head(routed.mine);
+  });
+
 const startFirst = (handle: FlowHandle, options: RunOptions, context: RepoContext) =>
   Effect.gen(function* () {
     const items = (yield* withRepo(context, handle.flow.trigger)).filter((candidate) => candidate.wakeOnly !== true);
 
-    const found = Option.match(options.item, {
-      onNone: () => Option.fromUndefinedOr(items[0]),
-      onSome: (key) => Option.fromUndefinedOr(items.find((candidate) => candidate.key === key)),
+    const found = yield* Option.match(options.item, {
+      onNone: () => firstOf(handle, items),
+      onSome: (key) => Effect.succeed(Option.fromUndefinedOr(items.find((candidate) => candidate.key === key))),
     });
 
     if (Option.isNone(found)) {
-      yield* Console.log(Option.match(options.item, { onNone: () => 'nothing to do: the trigger found no work', onSome: (key) => `the trigger found no item ${key}` }));
+      yield* Console.log(Option.match(options.item, { onNone: () => 'nothing to do: the trigger found no work for this machine', onSome: (key) => `the trigger found no item ${key}` }));
 
       return Option.none<RunRow>();
     }

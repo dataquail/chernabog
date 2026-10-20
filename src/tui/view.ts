@@ -155,12 +155,18 @@ const stateStyle = (state: string): Style => {
 
 const QUEUE_SHOWN = 3;
 
-const queueText = (queued: ReadonlyArray<string>) => {
+const queuedText = (queued: ReadonlyArray<string>) => {
   if (queued.length === 0) return 'queue empty';
 
   const more = onlyIf(queued.length > QUEUE_SHOWN, ['…']);
 
   return `${queued.length} queued: ${[...queued.slice(0, QUEUE_SHOWN), ...more].join(', ')}`;
+};
+
+const queueText = (queued: ReadonlyArray<string>, elsewhere: ReadonlyArray<string>) => {
+  if (elsewhere.length === 0) return queuedText(queued);
+
+  return `${queuedText(queued)} · ${elsewhere.length} assigned elsewhere`;
 };
 
 const plural = (count: number) => {
@@ -228,7 +234,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       const enabled = flowEnabled(model, repo.name, flow);
       const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
       const why = Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => !enabled && reason !== FLOW_TURNED_OFF);
-      lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued))}`, 'dim')], selected));
+      lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`, 'dim')], selected));
     }
   }
 

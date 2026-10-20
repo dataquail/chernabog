@@ -103,3 +103,42 @@ describe('a pull request nobody answers', () => {
     expect(sandbox.github.pull(number).labels).not.toContain('auto:changes-requested');
   }, 60_000);
 });
+
+describe('reviews claimed by requested reviewer', () => {
+  let sandbox: Sandbox;
+  let daemon: ChildProcess;
+
+  beforeAll(() => {
+    sandbox = openSandbox({ flows: { review: { schedule: '*/2 * * * * *', agent: 'codex', reviewRequested: '@me' }, fix: { enabled: false } } });
+  });
+
+  afterAll(async () => {
+    daemon.kill('SIGTERM');
+    await closed(daemon);
+    await sandbox.github.stop();
+  });
+
+  test("leave a pull request to its requested reviewers' machines, and review one this machine is asked to", async () => {
+    await sandbox.runCli(['trust', 'demo']);
+    sandbox.git(sandbox.checkout, 'checkout', '-qb', 'feature');
+    sandbox.git(sandbox.checkout, 'commit', '-q', '--allow-empty', '-m', 'feat: by a person');
+    sandbox.git(sandbox.checkout, 'push', '-q', 'origin', 'feature');
+
+    const response = await fetch(`${sandbox.github.url}/repos/dataquail/demo/pulls`, {
+      method: 'POST',
+      body: JSON.stringify({ head: 'feature', base: 'main', title: 'feat: by a person', body: '' }),
+    });
+
+    const { number } = Schema.decodeUnknownSync(CreatedPull)(await response.json());
+    sandbox.github.pull(number).labels.push('auto:needs-review');
+    sandbox.github.pull(number).reviewers.push('alice');
+    daemon = sandbox.cli(['daemon']);
+
+    await waitFor(() => sandbox.daemonLog().includes(`demo/review: skipped: only work for others: pr-${number} (review requested: alice)`), 'a tick that leaves the pull request to alice');
+    expect((await sandbox.runCli(['status'])).output).toContain(`assigned elsewhere: pr-${number} (review requested: alice)`);
+    expect(sandbox.github.pull(number).labels).toContain('auto:needs-review');
+
+    sandbox.github.pull(number).reviewers.push('Chernabog-Bot');
+    await waitFor(() => !sandbox.github.pull(number).labels.includes('auto:needs-review'), 'the review once this machine is asked', 45_000);
+  }, 60_000);
+});

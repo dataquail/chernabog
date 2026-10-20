@@ -10,7 +10,7 @@ import YAML from 'yaml';
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
 import { chooseFlows, ensureLocalConfig, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
-import { DEFAULT_LIMITS, type EnrolledRepo, flowOff, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
+import { DEFAULT_LIMITS, type EnrolledRepo, flowOff, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, needsLogin, normalizeMachineConfig, RepoConfigFile, routingOf } from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
 import { effect, effectAtHome } from './effect-test.ts';
@@ -92,6 +92,23 @@ describe('config layers', () => {
       expect(yield* offFor({}, 'fix', Option.some('alice'))).toEqual(Option.some('flow turned off'));
       expect(yield* merge({}, {}).pipe(Effect.map((merged) => flowOff(merged, 'implement', Option.none())))).toEqual(Option.none());
       expect(flowSettings(yield* merge(team, {}), 'review')).toEqual(Option.some({}));
+    }),
+  );
+
+  effect(
+    'a flow filters work by assignee or requested reviewer only when the team or the person says so',
+    () => Effect.gen(function* () {
+      const team = { flows: { implement: { assignee: ['@me', 'none'] }, review: { reviewRequested: 'alice' } } };
+      const merged = yield* merge(team, {});
+
+      expect(routingOf(merged, 'implement')).toEqual({ assignee: Option.some(['@me', 'none']), reviewRequested: Option.none() });
+      expect(routingOf(merged, 'review')).toEqual({ assignee: Option.none(), reviewRequested: Option.some(['alice']) });
+      expect(routingOf(merged, 'fix')).toEqual({ assignee: Option.none(), reviewRequested: Option.none() });
+      expect(needsLogin(merged)).toBe(true);
+      expect(needsLogin(yield* merge({ flows: { review: { reviewRequested: 'alice' } } }, {}))).toBe(false);
+      expect(needsLogin(yield* merge({}, {}))).toBe(false);
+      expect(routingOf(yield* merge(team, yield* Schema.encodeEffect(LocalConfigFile)({ flows: { implement: { assignee: Option.none() } } })), 'implement').assignee).toEqual(Option.none());
+      expect(routingOf(yield* merge({}, { flows: { review: { reviewRequested: '@me' } } }), 'review').reviewRequested).toEqual(Option.some(['@me']));
     }),
   );
 

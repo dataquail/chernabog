@@ -117,6 +117,10 @@ export const WorkItem = Schema.Struct({
   signals: Schema.optionalKey(Schema.Array(Schema.String)),
   // Only wakes a run already waiting on it; never starts one.
   wakeOnly: Schema.optionalKey(Schema.Boolean),
+  // GitHub logins assigned to the item, and asked to review it, which
+  // flows.<flow>.assignee and reviewRequested match to choose the machines it starts on.
+  assignees: Schema.optionalKey(Schema.Array(Schema.String)),
+  reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export type WorkItem = typeof WorkItem.Type;
@@ -134,6 +138,7 @@ export type Issue = {
   readonly url: string;
   readonly createdAt: string;
   readonly labels: ReadonlyArray<string>;
+  readonly assignees: ReadonlyArray<string>;
 };
 
 export type Comment = { readonly id: number; readonly author: string; readonly body: string; readonly createdAt: string; readonly trusted: boolean };
@@ -152,6 +157,9 @@ export type PullRequest = {
   readonly baseRef: string;
   readonly labels: ReadonlyArray<string>;
   readonly author: string;
+  readonly assignees: ReadonlyArray<string>;
+  // Users asked to review it who haven't yet; GitHub drops one once they review.
+  readonly requestedReviewers: ReadonlyArray<string>;
 };
 
 export type ReviewComment = { readonly path: string; readonly line: number; readonly body: string };

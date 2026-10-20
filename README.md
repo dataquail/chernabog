@@ -226,7 +226,7 @@ Config has three layers. Later layers override earlier ones key by key, except t
 
 | Layer             | Lives in                                 | Owns                                                                                              |
 | ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners` |
+| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `assignee`, `reviewRequested` |
 | Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off or on (over `runners`) |
 | Machine           | `~/.config/chernabog/config.yaml`       | Enrolled repos, agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own |
 
@@ -235,6 +235,8 @@ Config has three layers. Later layers override earlier ones key by key, except t
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 
 `runners: [alice]` in the repo's config (or `flows.<flow>.runners`) makes the flows run only on machines whose `gh` login is listed; anyone else's runs them only after turning them on in `local.yaml`. It coordinates who spends their budget; it doesn't restrict anyone.
+
+`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review: { reviewRequested: "@me" }` reviews only pull requests that request your review. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

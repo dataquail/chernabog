@@ -17,6 +17,8 @@ export const FlowStatus = Schema.Struct({
   offReason: Schema.optionalKey(Schema.String),
   // What the last tick found waiting for a run.
   queued: Schema.Array(Schema.String),
+  // What it left for other machines, by flows.<flow>.assignee and reviewRequested.
+  assignedElsewhere: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const RepoStatus = Schema.Struct({

@@ -120,6 +120,11 @@ describe('the main view', () => {
     expect(plain(view(model({ status: Option.some(notRunner) })))).toMatch(/implement\s+off\s+not a runner \(runners: alice; this machine is bob\)/);
   });
 
+  test('counts the work it left for other machines', () => {
+    const elsewhere = { ...status, repos: status.repos.map((repo) => ({ ...repo, flows: repo.flows.map((flow) => ({ ...flow, assignedElsewhere: ['issue-4 (alice)', 'issue-5 (bob)'] })) })) };
+    expect(plain(view(model({ status: Option.some(elsewhere) })))).toMatch(/implement\s+next in 17m\s+1 queued: issue-9 Add a flag · 2 assigned elsewhere/);
+  });
+
   test('without the daemon, it says so', () => {
     expect(plain(view(model({ status: Option.none(), error: Option.some('the daemon is not running. Retrying…') })))).toContain('the daemon is not running');
   });

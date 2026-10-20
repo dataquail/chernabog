@@ -111,4 +111,14 @@ describe('the daemon', () => {
     expect((await sandbox.runCli(['status'])).output).toContain('  implement: off');
     await waitFor(() => sandbox.daemonLog().includes('demo/implement: skipped: flow turned off'), 'a tick of the flow turned off');
   }, 45_000);
+
+  test('with assignee: [@me, none], leaves an issue assigned to someone else to their machine', async () => {
+    const issue = sandbox.github.addIssue('Assigned to alice', ['auto:eligible'], 'Do the thing.', ['alice']);
+    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), 'flows:\n  implement:\n    assignee: ["@me", none]\n');
+    expect(await daemonExit).toBe(75);
+    await startDaemon();
+    await waitFor(() => sandbox.daemonLog().includes(`demo/implement: skipped: only work for others: issue-${issue} (assignee: alice)`), 'a tick that leaves the issue to alice');
+    expect((await sandbox.runCli(['status'])).output).toContain(`assigned elsewhere: issue-${issue} (assignee: alice)`);
+    expect(sandbox.github.issue(issue).labels).toContain('auto:eligible');
+  }, 45_000);
 });
