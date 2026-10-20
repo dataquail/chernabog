@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "baseBranch": {
+      "type": "string"
+    },
+    "install": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "localGate": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "humanOnly": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "humanOnlyPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "board": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "projectNumber": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "readyStatus": {
+              "type": "string"
+            },
+            "inProgressStatus": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectNumber",
+            "readyStatus",
+            "inProgressStatus"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reviewTrigger": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "labels": {
+      "type": "object",
+      "properties": {
+        "eligible": {
+          "type": "string"
+        },
+        "inProgress": {
+          "type": "string"
+        },
+        "needsReview": {
+          "type": "string"
+        },
+        "changesRequested": {
+          "type": "string"
+        },
+        "approved": {
+          "type": "string"
+        },
+        "needsHuman": {
+          "type": "string"
+        },
+        "needsClarification": {
+          "type": "string"
+        },
+        "stale": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "schedule": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "launcher": {
+      "type": "string"
+    },
+    "allowedLaunchers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "launchers": {
+      "not": {},
+      "description": "launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)"
+    },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "localGateRounds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "ciRounds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "reviewRounds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "staleAfter": {
+          "type": "string"
+        },
+        "ciTimeout": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "runners": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "GitHub logins whose machines run this by default; anyone's when unset. A person can still turn a flow on in their local.yaml."
+    },
+    "flows": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "concurrency": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "agent": {
+            "type": "string"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Start only work items whose assignees include one of these: @me for this machine's GitHub login, a login, or none for nobody. null clears the team's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reviewRequested": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "description": "Start only work items whose requested reviewers include one of these: @me for this machine's GitHub login, a login, or none for nobody. null clears the team's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runners": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "GitHub logins whose machines run this by default; anyone's when unset. A person can still turn a flow on in their local.yaml."
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {}
+}
