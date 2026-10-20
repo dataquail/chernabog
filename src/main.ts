@@ -406,6 +406,8 @@ const enrollCommand = Command.make(
         yield* Console.log(`flows on this machine: ${listed(true)}; turned off: ${listed(false)} (in .chernabog/local.yaml)`);
       }
 
+      // A running daemon restarts to schedule the repo; none running is fine.
+      yield* daemonReload.pipe(Effect.ignore);
       yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
     }),
 ).pipe(Command.withDescription("Add a repo to this machine's config, and choose which of its flows run here"));
