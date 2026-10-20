@@ -33,8 +33,9 @@ import { runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
 import { GitHubApi, viewerLogin } from './GitHubApi.ts';
 import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
-import { desiredLabels, syncLabels } from './labels.ts';
+import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
+import { loadFlows } from './loader.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
@@ -325,10 +326,11 @@ const labels = Command.make(
       for (const enrolled of targets) {
         const { configDir } = yield* repoConfigDir(enrolled, fromCheckout);
         const { settings } = yield* loadRepo(machine, enrolled, configDir);
-        yield* Console.log(yield* syncLabels(enrolled.repo, desiredLabels(settings.labels)));
+        const flows = yield* loadFlows(configDir);
+        yield* Console.log(yield* syncLabels(enrolled.repo, withFlowLabels(desiredLabels(settings.labels), flows.values())));
       }
     }),
-).pipe(Command.withDescription("Create or correct each repo's labels"));
+).pipe(Command.withDescription("Create or correct each repo's labels, and those its flows declare"));
 
 // The repo a path is in; the working directory's when none is given.
 const rootOf = (path: Option.Option<string>) => repoRoot(Option.getOrElse(path, () => '.'));

@@ -51,8 +51,17 @@ export const sessionIdFor = (runId: string, purpose: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 
+// Issues with a queue label, oldest first, each with its assignees. A flow
+// keyed by its own label, such as auto:ship, pairs it with `claim(issue, { label })`.
+export const triggerFor = (label: string) => GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(Effect.map((issues) => issues.map(issueItem)));
+
 // Issues labelled eligible, oldest first, each with its assignees.
-export const trigger = GitHub.use((github) => github.queuedIssues).pipe(Effect.map((issues) => issues.map(issueItem)));
+export const trigger = Repo.use((repo) => triggerFor(repo.labels.eligible));
+
+// Which label queued the issue: eligible unless the flow is keyed by its own.
+export type QueueOptions = { readonly label?: string };
+
+const queueLabel = (options: QueueOptions) => Repo.use((repo) => Effect.succeed(options.label ?? repo.labels.eligible));
 
 // The account is the one machine config expects, and it has room for a task.
 export const gate = Effect.gen(function* () {
@@ -77,10 +86,9 @@ export const claimComment = (claim: ClaimMarker) =>
 // Whether the claim on an existing branch is this run's. No marker at all means
 // this run crashed between creating the branch and commenting, while the issue
 // still says it is queued.
-const holdsClaim = (issue: number, runId: string) =>
+const holdsClaim = (issue: number, runId: string, label: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
 
     const latest = latestMarker(
       claimMarker.read,
@@ -89,26 +97,27 @@ const holdsClaim = (issue: number, runId: string) =>
 
     if (Option.isSome(latest)) return { ours: latest.value.runId === runId, commented: true };
 
-    return { ours: (yield* github.issue(issue)).labels.includes(repo.labels.eligible), commented: false };
+    return { ours: (yield* github.issue(issue)).labels.includes(label), commented: false };
   });
 
 // Creates the issue's branch, which only one run can do, then labels, assigns
 // and comments as a person picking it up would. Safe to repeat: a run that
-// already holds the claim keeps it.
-export const claim = (issue: number) =>
+// already holds the claim keeps it. Removes the label that queued the issue.
+export const claim = (issue: number, options: QueueOptions = {}) =>
   activity(
     'claim',
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
       const run = yield* Run;
+      const label = yield* queueLabel(options);
       const branch = branchFor(issue);
       const baseSha = yield* github.branchSha(repo.baseBranch);
 
       if (Option.isNone(baseSha)) return yield* new StepFailed({ step: 'claim', message: `base branch ${repo.baseBranch} not found` });
 
       if ((yield* github.createBranch(branch, baseSha.value)) === 'already-exists') {
-        const held = yield* holdsClaim(issue, run.runId);
+        const held = yield* holdsClaim(issue, run.runId, label);
 
         if (!held.ours) return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
 
@@ -116,7 +125,7 @@ export const claim = (issue: number) =>
       }
 
       yield* github.addLabel(issue, repo.labels.inProgress);
-      yield* github.removeLabel(issue, repo.labels.eligible);
+      yield* github.removeLabel(issue, label);
 
       if (Option.isSome(repo.board)) yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
 
@@ -262,15 +271,16 @@ const requeueHint = (board: Option.Option<{ readonly readyStatus: string }>) =>
   Option.match(board, { onNone: () => 'apply', onSome: (found) => `set Status back to ${found.readyStatus} and apply` });
 
 // Posts the agent's questions, releases the claim and stops, as a person would
-// who needs an answer before going on.
-export const askForClarification = (issue: number, outcome: ImplementOutcome) =>
+// who needs an answer before going on. The requeue hint names the label that queued it.
+export const askForClarification = (issue: number, outcome: ImplementOutcome, options: QueueOptions = {}) =>
   activity(
     'needs-clarification',
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const label = yield* queueLabel(options);
       const questions = outcome.questions ?? outcome.summary;
-      yield* github.comment(issue, [questions, '', `To requeue: answer the questions above, then ${requeueHint(repo.board)} \`${repo.labels.eligible}\` again.`].join('\n'));
+      yield* github.comment(issue, [questions, '', `To requeue: answer the questions above, then ${requeueHint(repo.board)} \`${label}\` again.`].join('\n'));
       yield* github.addLabel(issue, repo.labels.needsClarification);
       yield* github.removeLabel(issue, repo.labels.inProgress);
       yield* github.deleteBranch(branchFor(issue));

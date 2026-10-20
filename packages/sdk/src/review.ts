@@ -15,6 +15,7 @@ import { fixWithAgent, push, sessionIdFor, waitForCi } from './implement.ts';
 import type { Json } from './json.ts';
 import { latestMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
 import { renderPrompt } from './prompt.ts';
+import * as PullRequestSteps from './pull-request.ts';
 import { adapterFor, type RoleOptions } from './roles.ts';
 import { Agent, Git, GitHub, type PullRequest, Repo, type ReviewNote, Run, type WorkItem, Worktree } from './services.ts';
 
@@ -48,36 +49,43 @@ const reviewItem = (pull: PullRequest): WorkItem => ({
   reviewers: pull.requestedReviewers,
 });
 
-// The head the latest review saw.
-const reviewedSha = (pull: PullRequest) =>
-  GitHub.use((github) => github.comments(pull.number)).pipe(
-    Effect.map((comments) =>
-      latestMarker(
-        reviewMarker.read,
-        comments.map((comment) => comment.body),
-      ).pipe(Option.map((marker) => marker.sha)),
-    ),
-  );
+const commentBodies = (pull: PullRequest) => GitHub.use((github) => github.comments(pull.number)).pipe(Effect.map((comments) => comments.map((comment) => comment.body)));
 
-const changedSinceReview = (pull: PullRequest) => reviewedSha(pull).pipe(Effect.map(Option.exists((sha) => sha !== pull.headSha)));
+// The head the latest review saw.
+const reviewedSha = (bodies: ReadonlyArray<string>) => latestMarker(reviewMarker.read, bodies).pipe(Option.map((marker) => marker.sha));
+
+const changedSinceReview = (pull: PullRequest, bodies: ReadonlyArray<string>) => Option.exists(reviewedSha(bodies), (sha) => sha !== pull.headSha);
+
+// Whether a run of another flow owns the pull request, as a composite flow does
+// while it reviews and fixes it itself; the standalone flows leave it alone.
+const ownedByARun = (bodies: ReadonlyArray<string>) => PullRequestSteps.ownerOf(bodies).pipe(Effect.map(Option.isSome));
 
 // Pull requests to review, and the signals that wake reviews already waiting:
 // "pushed" when a pull request changed since its last review (for one an agent
 // wrote, once the fix flow handed it back), "closed" when it merged or closed.
+// A pull request another flow's run owns gets neither a review nor a push.
 export const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* github.pullRequestsLabelled(repo.labels.needsReview)) {
+    const bodies = yield* commentBodies(pull);
+
+    if (yield* ownedByARun(bodies)) continue;
+
     const item = reviewItem(pull);
 
-    if (yield* changedSinceReview(pull)) items.push({ ...item, signals: ['pushed'] });
+    if (changedSinceReview(pull, bodies)) items.push({ ...item, signals: ['pushed'] });
     else items.push(item);
   }
 
   for (const pull of yield* github.pullRequestsLabelled(repo.labels.changesRequested)) {
-    if (!isAgentBranch(pull.headRef) && (yield* changedSinceReview(pull))) items.push({ ...reviewItem(pull), signals: ['pushed'], wakeOnly: true });
+    if (isAgentBranch(pull.headRef)) continue;
+
+    const bodies = yield* commentBodies(pull);
+
+    if (changedSinceReview(pull, bodies) && !(yield* ownedByARun(bodies))) items.push({ ...reviewItem(pull), signals: ['pushed'], wakeOnly: true });
   }
 
   for (const label of [repo.labels.changesRequested, repo.labels.approved, repo.labels.needsReview]) {
@@ -306,19 +314,17 @@ export const workflow = (item: WorkItem) =>
   });
 
 // The fix flow's work items: agent-written pull requests with changes requested
-// and no push since, one per review that asked.
+// and no push since, one per review that asked, unless another flow's run owns one.
 export const fixTrigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* github.pullRequestsLabelled(repo.labels.changesRequested)) {
-    const reviewed = latestMarker(
-      reviewMarker.read,
-      (yield* github.comments(pull.number)).map((comment) => comment.body),
-    );
+    const bodies = yield* commentBodies(pull);
+    const reviewed = latestMarker(reviewMarker.read, bodies);
 
-    if (isAgentBranch(pull.headRef) && Option.isSome(reviewed) && reviewed.value.sha === pull.headSha) {
+    if (isAgentBranch(pull.headRef) && Option.isSome(reviewed) && reviewed.value.sha === pull.headSha && !(yield* ownedByARun(bodies))) {
       items.push({
         key: `pr-${pull.number}-review-${reviewed.value.round}`,
         title: pull.title,

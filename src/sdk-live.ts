@@ -172,11 +172,14 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
       const [owner = ''] = repo.split('/');
       const path = (rest: string) => `/repos/${repo}${rest}`;
 
-      const queuedIssues = provide(
-        githubGraphql(QUEUED_ISSUES_QUERY, { search: `repo:${repo} is:issue is:open label:"${settings.labels.eligible}"` }, SearchResult).pipe(
-          Effect.map((data) => orderClaimCandidates(eligibleIssuesFrom(data.search.nodes.filter(isIssueNode), settings.board)).map(fromNode)),
-        ),
-      );
+      const queuedIssuesLabelled = (label: string) =>
+        provide(
+          githubGraphql(QUEUED_ISSUES_QUERY, { search: `repo:${repo} is:issue is:open label:"${label}"` }, SearchResult).pipe(
+            Effect.map((data) => orderClaimCandidates(eligibleIssuesFrom(data.search.nodes.filter(isIssueNode), settings.board)).map(fromNode)),
+          ),
+        );
+
+      const queuedIssues = queuedIssuesLabelled(settings.labels.eligible);
 
       const comments = (number: number) => provide(githubGetAllPages(path(`/issues/${number}/comments?per_page=100`), Comments, identity).pipe(Effect.map((raw) => raw.map(toComment))));
 
@@ -271,6 +274,7 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
 
       return GitHub.of({
         queuedIssues,
+        queuedIssuesLabelled,
         oldestQueued: queuedIssues.pipe(Effect.map((issues) => Option.map(Option.fromUndefinedOr(issues[0]), (issue) => issue.number))),
         issue: (number) => provide(githubJson('GET', path(`/issues/${number}`), RestIssue).pipe(Effect.map(toIssue))),
         comments,

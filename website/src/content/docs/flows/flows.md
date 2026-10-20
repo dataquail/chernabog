@@ -11,6 +11,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `gate`        | optional; checked before each run starts — fail with `Skip` to hold it back |
 | `concurrency` | runs of this flow at once                                              |
 | `schedule`    | optional cron; `flows.<flow>.schedule` and `local.yaml`'s `schedule` override it |
+| `labels`      | optional; labels of the flow's own, such as `{ name: "auto:ship" }`, which `chernabog labels` creates |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 Each step in a workflow is an **activity** whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
@@ -54,11 +55,11 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 ## Building blocks
 
-`Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts, with the adapter of an optional `{ role }` from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role); `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
+`Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts, with the adapter of an optional `{ role }` from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role); `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, { label })`; `Implement.trigger` is `triggerFor` with `auto:eligible`. `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review` and `fix` flows leave it alone. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
 | `Implement.`         | `Review.`                    |
 | -------------------- | ---------------------------- |
-| `trigger`, `gate`    | `trigger`, `workflow`        |
+| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` |
 | `issueOf`, `claim`   | `round`, `labelVerdict`      |
 | `prepareWorktree`    | `reviewRound`, `cleanUp`     |
 | `implementWithAgent`, `askForClarification` | `fixTrigger`, `fixWorkflow` |

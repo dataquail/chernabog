@@ -30,9 +30,16 @@ export const ClaimMarker = Schema.Struct({ runId: Schema.String, claimedAt: Sche
 
 export type ClaimMarker = typeof ClaimMarker.Type;
 
+// A run that owns a pull request, or let it go: the standalone review and fix
+// flows leave a pull request alone while a run of another flow owns it.
+export const OwnerMarker = Schema.Struct({ flow: Schema.String, runId: Schema.String, released: Schema.Boolean });
+
+export type OwnerMarker = typeof OwnerMarker.Type;
+
 export const claimMarker = marker('claim', ClaimMarker);
 export const sessionMarker = marker('session', SessionMarker);
 export const reviewMarker = marker('review', ReviewMarker);
+export const ownerMarker = marker('owner', OwnerMarker);
 
 // The newest marker among comment bodies, oldest first.
 export const latestMarker = <A>(read: (body: string) => Option.Option<A>, bodies: ReadonlyArray<string>): Option.Option<A> =>

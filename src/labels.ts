@@ -1,7 +1,7 @@
 // Creates a repo's labels, and corrects their colour or description where they
 // drifted. Labels it does not own are left alone.
 
-import type { Labels } from '@chernabog/sdk';
+import type { Flow, Labels } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
@@ -30,6 +30,24 @@ const LOOK = {
 } satisfies Readonly<Record<keyof Labels, { readonly color: string; readonly description: string }>>;
 
 export const desiredLabels = (labels: Labels): ReadonlyArray<DesiredLabel> => Struct.keys(LOOK).map((key) => ({ name: labels[key], ...LOOK[key] }));
+
+const FLOW_LABEL_COLOR = 'c5def5';
+
+// The labels the repo's flows declare, after the repo's own: a name already
+// there keeps the look it has.
+export const withFlowLabels = (desired: ReadonlyArray<DesiredLabel>, flows: Iterable<Flow>): ReadonlyArray<DesiredLabel> => {
+  const all = [...desired];
+
+  for (const flow of flows) {
+    for (const label of flow.labels ?? []) {
+      if (!all.some((known) => known.name.toLowerCase() === label.name.toLowerCase())) {
+        all.push({ name: label.name, color: label.color ?? FLOW_LABEL_COLOR, description: label.description ?? 'Declared by a Chernabog flow' });
+      }
+    }
+  }
+
+  return all;
+};
 
 const drifted = (current: Label, label: DesiredLabel) => current.color.toLowerCase() !== label.color || Option.getOrElse(current.description, () => '') !== label.description;
 
