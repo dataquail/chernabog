@@ -369,9 +369,16 @@ export const askForClarification = (issue: number, outcome: ImplementOutcome, op
 
 const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.String });
 
-const runLocalGate = (worktree: string, round: number) =>
+// Tells apart two calls of a looping step in one run, such as the local gate
+// before the pull request opens and again after a review's fix: their
+// activities are named like `local-gate-1#fix-1`, as `step` does with its id.
+export type RepeatOptions = { readonly id?: string };
+
+const named = (options: RepeatOptions, name: string) => Option.match(Option.fromUndefinedOr(options.id), { onNone: () => name, onSome: (id) => `${name}#${id}` });
+
+const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =>
   activity(
-    `local-gate-${round}`,
+    named(options, `local-gate-${round}`),
     Effect.gen(function* () {
       const repo = yield* Repo;
       const log = yield* RunLog;
@@ -390,12 +397,12 @@ const runLocalGate = (worktree: string, round: number) =>
 
 // Runs the repo's local gate, and sends the agent back to fix what fails, up to
 // limits.localGateRounds times.
-export const localGate = (worktree: string) =>
+export const localGate = (worktree: string, options: RepeatOptions = {}) =>
   Effect.gen(function* () {
     const repo = yield* Repo;
 
     for (let round = 1; ; round++) {
-      const result = yield* runLocalGate(worktree, round);
+      const result = yield* runLocalGate(worktree, round, options);
 
       if (result.ok) return;
 
@@ -403,7 +410,7 @@ export const localGate = (worktree: string) =>
         return yield* new NeedsHuman({ reason: `the local gate still fails after ${repo.limits.localGateRounds} fix attempts:\n\n${result.failure}` });
       }
 
-      yield* fixWithAgent(`fix-local-gate-${round}`, worktree, `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`, thisRunsSession);
+      yield* fixWithAgent(named(options, `fix-local-gate-${round}`), worktree, `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`, thisRunsSession);
     }
   });
 
@@ -468,7 +475,7 @@ const CiReading = Schema.Union([
 type CiReading = typeof CiReading.Type;
 
 // Polls the pull request's checks durably until they stop pending, or a person is needed.
-const awaitChecks = (pullRequest: number, round: number) =>
+const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions) =>
   Effect.gen(function* () {
     const repo = yield* Repo;
     const maxPolls = Math.max(1, Math.ceil(Duration.toMillis(repo.limits.ciTimeout) / Duration.toMillis(CI_POLL)));
@@ -479,8 +486,8 @@ const awaitChecks = (pullRequest: number, round: number) =>
         return yield* new NeedsHuman({ reason: `CI on #${pullRequest} is still pending after ${Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout))}` });
       }
 
-      if (poll > 1) yield* sleep(`ci-${round}-wait-${poll}`, CI_POLL);
-      reading = yield* activity(`ci-${round}-${poll}`, GitHub.use((github) => github.ciState(pullRequest)), CiReading);
+      if (poll > 1) yield* sleep(named(options, `ci-${round}-wait-${poll}`), CI_POLL);
+      reading = yield* activity(named(options, `ci-${round}-${poll}`), GitHub.use((github) => github.ciState(pullRequest)), CiReading);
     }
 
     return reading;
@@ -491,12 +498,12 @@ export type CiBranch = AuthorSession & { readonly branch: string };
 // Waits durably for the pull request's checks. On red, the agent reads the
 // failure, fixes, commits, and the branch is pushed again, up to
 // limits.ciRounds times.
-export const waitForCi = (pullRequest: number, worktree: string, target: CiBranch) =>
+export const waitForCi = (pullRequest: number, worktree: string, target: CiBranch, options: RepeatOptions = {}) =>
   Effect.gen(function* () {
     const repo = yield* Repo;
 
     for (let round = 1; ; round++) {
-      const reading = yield* awaitChecks(pullRequest, round);
+      const reading = yield* awaitChecks(pullRequest, round, options);
 
       if (reading.state !== 'red') return;
 
@@ -505,7 +512,7 @@ export const waitForCi = (pullRequest: number, worktree: string, target: CiBranc
       if (round > repo.limits.ciRounds) return yield* new NeedsHuman({ reason: `CI is still red after ${repo.limits.ciRounds} fix attempts: ${failed}` });
 
       yield* fixWithAgent(
-        `fix-ci-${round}`,
+        named(options, `fix-ci-${round}`),
         worktree,
         [
           `CI failed on pull request #${pullRequest}: ${failed}.`,
@@ -514,7 +521,7 @@ export const waitForCi = (pullRequest: number, worktree: string, target: CiBranc
         ].join('\n'),
         target,
       );
-      yield* push(`push-ci-${round}`, worktree, target.branch);
+      yield* push(named(options, `push-ci-${round}`), worktree, target.branch);
     }
   });
 

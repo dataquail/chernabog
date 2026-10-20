@@ -1,178 +1,18 @@
 // The SDK's steps and triggers against an in-memory GitHub: which of them move
 // labels, which leave that to a separate step, and who owns a pull request.
 
-import { fileURLToPath } from 'node:url';
-
-import { Agent, type AgentRequest, awaitSignal, type CiState, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, Issue, type Json, type MergeOutcome, type MergeRequest, NeedsHuman, ownerMarker, printJson, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
-import type { BunServices } from '@effect/platform-bun';
+import { awaitSignal, DEFAULT_LABELS, defineFlow, Implement, Issue, NeedsHuman, ownerMarker, PullRequest, Review, reviewMarker } from '@chernabog/sdk';
 import { describe, expect } from 'bun:test';
-import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
-import * as FileSystem from 'effect/FileSystem';
-import * as Layer from 'effect/Layer';
 import * as Option from 'effect/Option';
-import * as Schedule from 'effect/Schedule';
 
-import { Home, homePaths } from '../src/config.ts';
-import { flowHandle, flowLayer, pollRun, startRun, StateAt } from '../src/engine.ts';
-import { DEFAULT_LIMITS, type EffectiveRepo } from '../src/repo-config.ts';
+import { flowHandle } from '../src/engine.ts';
 import { type RunRow, State } from '../src/state.ts';
 import { effect } from './effect-test.ts';
+import { type Fake, HEAD, ISSUE, item, makeFake, PULL, repo, runToEnd as runFlowToEnd, runUntil as runFlowUntil, summaryOf, triggered } from './sdk-fakes.ts';
 
-const PULL = 7;
-const ISSUE = 3;
-const HEAD = 'abc1234def';
 const SHIP = 'auto:ship';
 
-const settings: RepoSettings = {
-  name: 'demo',
-  slug: 'dataquail/demo',
-  path: '/tmp/demo',
-  baseBranch: 'main',
-  account: { name: 'work', configDir: Option.none(), expectedEmail: Option.none(), oauthTokenEnv: Option.none<string>(), usageGate: 'usage' as const },
-  agent: 'claude',
-  agentAccounts: {},
-  launcher: HEADLESS,
-  flowAgents: {},
-  labels: DEFAULT_LABELS,
-  install: Option.none(),
-  localGate: [],
-  humanOnly: [],
-  humanOnlyPaths: ['.github/**'],
-  notes: [],
-  board: Option.none(),
-  reviewTrigger: Option.none(),
-  limits: DEFAULT_LIMITS,
-  env: {},
-  // The scaffolded prompts, which the review step renders.
-  configDir: fileURLToPath(new URL('../templates/.chernabog', import.meta.url)),
-};
-
-const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {} };
-
-// What the agent answers, by the shape the step asked for.
-const answerFor = (request: AgentRequest, verdict: 'approve' | 'request-changes'): Json => {
-  const schema = Option.match(request.outputSchema, { onNone: () => '', onSome: printJson });
-
-  if (schema.includes('remediated')) return { verdict, summary: 'Both fixed.', comments: [], findings: [{ finding: 'Mention the change', remediated: true }] };
-
-  if (schema.includes('decline')) return { status: 'address', reasons: 'The review is right.' };
-
-  if (schema.includes('needs-clarification')) return { status: 'done', summary: 'Mentioned the change.', title: 'feat: a change', body: 'The change.' };
-
-  return { verdict, summary: 'Reviewed.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change.' }] };
-};
-
-// CI on the head, the files the pull request changes, whether GitHub refuses the merge, and the merges asked for.
-type MergeFake = { ci: CiState; files: Array<string>; refusal: Option.Option<string>; requests: Array<MergeRequest> };
-
-// One pull request and one issue, and what the steps did to them.
-const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<RepoSettings> = {}) => {
-  const labels = new Map<number, Array<string>>([
-    [PULL, [DEFAULT_LABELS.needsReview]],
-    [ISSUE, [DEFAULT_LABELS.inProgress]],
-  ]);
-
-  const comments: Array<Comment> = [];
-  const reviews: Array<string> = [];
-  const adapters: Array<Option.Option<string>> = [];
-  const requests: Array<AgentRequest> = [];
-  const labelsOf = (number: number) => labels.get(number) ?? [];
-
-  const pull = (): PullRequest => ({
-    number: PULL,
-    title: 'feat: a change',
-    body: '',
-    url: `https://github.com/dataquail/demo/pull/${PULL}`,
-    state: 'open',
-    headRef: 'auto/issue-3',
-    headSha: HEAD,
-    baseRef: 'main',
-    labels: labelsOf(PULL),
-    author: 'chernabog-bot',
-    assignees: [],
-    requestedReviewers: [],
-  });
-
-  const issue = (): Issue => ({ number: ISSUE, title: 'A queued issue', body: '', url: `https://github.com/dataquail/demo/issues/${ISSUE}`, createdAt: '2026-10-20T00:00:00Z', labels: labelsOf(ISSUE), assignees: [] });
-
-  const merge: MergeFake = { ci: { state: 'green' }, files: ['src/a.ts'], refusal: Option.none(), requests: [] };
-
-  // What this machine knows of the run that owns the pull request: nothing, unless a test says.
-  let knownRun = Option.none<boolean>();
-
-  const knowRun = (active: boolean) => {
-    knownRun = Option.some(active);
-  };
-
-  const setLabels = (number: number, names: Array<string>) => {
-    labels.set(number, names);
-  };
-
-  const comment = (body: string) => {
-    comments.push({ id: comments.length + 1, author: 'chernabog-bot', body, createdAt: '2026-10-20T00:00:00Z', trusted: true });
-  };
-
-  const services = Layer.mergeAll(
-    Layer.succeed(Repo, Repo.of({ ...settings, ...overrides })),
-    Layer.mock(GitHub)({
-      queuedIssuesLabelled: (label) => Effect.succeed([issue()].filter((queued) => queued.labels.includes(label))),
-      issue: () => Effect.succeed(issue()),
-      branchSha: () => Effect.succeedSome('base1234'),
-      createBranch: () => Effect.succeed('created' as const),
-      assignSelf: () => Effect.void,
-      moveToStatus: () => Effect.void,
-      pullRequestsLabelled: (label) => Effect.succeed([pull()].filter((open) => open.labels.includes(label))),
-      closedPullRequestsLabelled: () => Effect.succeed([]),
-      pullRequest: () => Effect.succeed(pull()),
-      ciState: () => Effect.sync(() => merge.ci),
-      pullRequestFiles: () => Effect.sync(() => merge.files),
-      merge: (_, request) =>
-        Effect.sync((): MergeOutcome => {
-          merge.requests.push(request);
-
-          return Option.match(merge.refusal, { onNone: () => ({ status: 'merged', sha: 'merged9876' }), onSome: (reason) => ({ status: 'refused', reason }) });
-        }),
-      comments: () => Effect.succeed([...comments]),
-      reviewComments: () => Effect.succeed([]),
-      comment: (_, body) =>
-        Effect.sync(() => {
-          comment(body);
-        }),
-      review: (_, review) =>
-        Effect.sync(() => {
-          reviews.push(review.body);
-        }),
-      addLabel: (number, label) =>
-        Effect.sync(() => {
-          labels.set(number, [...labelsOf(number).filter((name) => name !== label), label]);
-        }),
-      removeLabel: (number, label) =>
-        Effect.sync(() => {
-          labels.set(number, labelsOf(number).filter((name) => name !== label));
-        }),
-    }),
-    Layer.mock(Git)({}),
-    Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`), checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`) }),
-    Layer.mock(Usage)({}),
-    Layer.mock(Agent)({
-      adapters: [],
-      run: (request) =>
-        Effect.sync(() => {
-          adapters.push(request.adapter);
-          requests.push(request);
-
-          return { sessionId: request.sessionId, output: answerFor(request, verdict), costUsd: Option.none() };
-        }),
-    }),
-    Layer.mock(StepRunner)({}),
-    Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
-  );
-
-  return { services, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
-};
-
-type Fake = ReturnType<typeof makeFake>;
 
 const outcome = { status: 'done' as const, summary: 'Did it.', title: 'feat: a change', body: 'The change.' };
 
@@ -237,39 +77,10 @@ const flow = defineFlow({
 
 const handle = flowHandle(repo, 'demo', flow);
 
-const item = (key: string): WorkItem => ({ key, data: {} });
+const runUntil = (fake: Fake, key: string, until: (run: RunRow) => Effect.Effect<boolean, never, State>) => runFlowUntil(handle, fake, item(key), until);
 
-const isRunning = (run: RunRow) => run.status === 'running';
+const runToEnd = (fake: Fake, key: string) => runFlowToEnd(handle, fake, item(key));
 
-// Starts the run, and polls until `until` says it has got far enough.
-const runUntil = (fake: Fake, key: string, until: (run: RunRow) => Effect.Effect<boolean, never, State>) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-steps-' });
-    const engine = yield* Layer.build(flowLayer(handle, fake.services).pipe(Layer.provideMerge(StateAt(homePaths(home).state)), Layer.provideMerge(Home.at(home, home))));
-    const platform = yield* Effect.context<BunServices.BunServices>();
-
-    const run = startRun(handle, item(key)).pipe(
-      Effect.flatMap((started) => Effect.fromOption(started.run)),
-      Effect.flatMap((started) =>
-        pollRun(handle, started).pipe(
-          Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
-          Effect.repeat({ schedule: Schedule.spaced('25 millis'), until: (step) => step.done, times: 200 }),
-        ),
-      ),
-      Effect.map((step) => step.polled),
-      Effect.orDie,
-    );
-
-    return yield* Effect.provideContext(run, Context.merge(platform, engine));
-  });
-
-// Runs a trigger against the fake, as a tick would.
-const triggered = <E, R>(fake: Fake, trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) => Effect.provide(trigger, fake.services);
-
-const runToEnd = (fake: Fake, key: string) => runUntil(fake, key, (run) => Effect.succeed(!isRunning(run)));
-
-const summaryOf = (run: RunRow) => Option.getOrElse(run.summary, () => '');
 
 describe('the review steps', () => {
   effect(
