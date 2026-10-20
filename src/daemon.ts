@@ -24,11 +24,12 @@ import * as Schema from 'effect/Schema';
 
 import { Home, homePaths } from './config.ts';
 import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
+import { viewerLogin } from './GitHubApi.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
 import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
-import { type EffectiveRepo, type EnrolledRepo, loadMachineConfig, loadRepo, type MachineConfig, repoNameOf } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, flowOff, hasRunners, loadMachineConfig, loadRepo, type MachineConfig, repoNameOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
 import { buildRepoContext, type RepoContext, withRepo } from './runner.ts';
 import { decideTick, freeSlots, nextTick, scheduleFor } from './schedule.ts';
@@ -178,6 +179,15 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
+  // Who this machine is on GitHub, for repos that name their flows' runners.
+  let login = Option.none<string>();
+
+  if (repos.some((repo) => Option.exists(repo.repo, hasRunners))) {
+    const found = yield* Effect.result(viewerLogin);
+    login = Result.getSuccess(found);
+    yield* log(Result.match(found, { onSuccess: (self) => `this machine is ${self} on GitHub`, onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}` }));
+  }
+
   const busy = yield* Ref.make(0);
   const hooks = { onStep: () => Ref.update(busy, (count) => count + 1), onStepDone: () => Ref.update(busy, (count) => count - 1) };
 
@@ -217,7 +227,7 @@ export const runDaemon = Effect.gen(function* () {
           if (options.gates) {
             const decision = decideTick({
               enabled: settings.enabled,
-              flowEnabled: Option.getOrElse(Option.flatMap(flowSettings, (found) => Option.fromUndefinedOr(found.enabled)), () => true),
+              flowOff: flowOff(settings, handle.name, login),
               paused: (yield* readPaused).includes(repo.name),
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
@@ -396,7 +406,7 @@ export const runDaemon = Effect.gen(function* () {
 
       const repoStatus = (paused: ReadonlyArray<string>) => (repo: RepoState) => {
         const stale = repo.status === 'ready' && !sameTree(repo.latestTree, repo.tree);
-        const flowEnabled = (name: string) => Option.flatMap(repo.repo, (settings) => Record.get(settings.flows, name)).pipe(Option.flatMap((found) => Option.fromUndefinedOr(found.enabled)), Option.getOrElse(() => true));
+        const offReason = (name: string) => Option.flatMap(repo.repo, (settings) => flowOff(settings, name, login));
 
         const status: RepoStatus = {
           name: repo.name,
@@ -413,7 +423,8 @@ export const runDaemon = Effect.gen(function* () {
             next: formatOption(flow.next),
             lastTick: formatOption(flow.lastTick),
             queued: flow.queued,
-            enabled: flowEnabled(flow.handle.name),
+            enabled: Option.isNone(offReason(flow.handle.name)),
+            ...Option.match(offReason(flow.handle.name), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
           })),
         };
 

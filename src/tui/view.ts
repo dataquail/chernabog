@@ -7,6 +7,7 @@ import * as Option from 'effect/Option';
 import * as Record from 'effect/Record';
 
 import type { ActiveRun, DaemonStatus, RepoStatus } from '../protocol.ts';
+import { FLOW_TURNED_OFF } from '../repo-config.ts';
 import type { RunStatus } from '../state.ts';
 
 export type Style = 'plain' | 'bold' | 'dim' | 'green' | 'red' | 'yellow' | 'cyan' | 'magenta' | 'selected';
@@ -226,7 +227,8 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       const selected = model.focus === 'flows' && Option.exists(selectedFlow, (row) => row.repo === repo.name && row.flow === flow.name);
       const enabled = flowEnabled(model, repo.name, flow);
       const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
-      lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${queueText(flow.queued)}`, 'dim')], selected));
+      const why = Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => !enabled && reason !== FLOW_TURNED_OFF);
+      lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued))}`, 'dim')], selected));
     }
   }
 

@@ -36,7 +36,7 @@ import { desiredLabels, syncLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
-import { findEnrolled, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
+import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
 import { configTree } from './snapshot.ts';
@@ -97,7 +97,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   const upSince = Option.match(DateTime.make(status.startedAt), { onNone: () => status.startedAt, onSome: (at) => DateTime.formatLocal(at, { dateStyle: 'short', timeStyle: 'medium' }) });
 
   const flowLine = (flow: DaemonStatus['repos'][number]['flows'][number]) => {
-    if (!flow.enabled) return `  ${flow.name}: off`;
+    if (!flow.enabled) return `  ${flow.name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
 
     return `  ${flow.name}: ${flow.schedule}, next ${relative(flow.next, now)}`;
   };

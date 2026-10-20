@@ -25,7 +25,11 @@ notes: []
 # Default schedule for every flow, as cron. Unset spreads repos across the hour.
 # schedule: "17 * * * *"
 
-# Per flow: schedule, concurrency, enabled, and agent. A reviewer on another
+# Whose machines run the flows, by GitHub login. Unset: anyone's. Elsewhere a
+# flow is off unless that person turns it on in their local.yaml.
+# runners: [alice]
+
+# Per flow: schedule, concurrency, enabled, agent and runners. A reviewer on another
 # agent than the one that wrote the code avoids a model approving its own work;
 # it runs under that agent's account in machine config.
 # flows:

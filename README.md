@@ -226,13 +226,15 @@ Config has three layers. Later layers override earlier ones key by key, except t
 
 | Layer             | Lives in                                 | Owns                                                                                              |
 | ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers` |
-| Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off               |
+| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners` |
+| Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off or on (over `runners`) |
 | Machine           | `~/.config/chernabog/config.yaml`       | Enrolled repos, agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own |
 
 `init` writes `config.schema.json` and `local.schema.json` next to the YAML, so editors autocomplete them. They're generated, so `init` rewrites them whenever they're out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
 
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
+
+`runners: [alice]` in the repo's config (or `flows.<flow>.runners`) makes the flows run only on machines whose `gh` login is listed; anyone else's runs them only after turning them on in `local.yaml`. It coordinates who spends their budget; it doesn't restrict anyone.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

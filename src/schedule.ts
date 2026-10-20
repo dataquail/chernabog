@@ -60,7 +60,8 @@ export type TickDecision = { readonly go: true } | { readonly go: false; readonl
 
 export type TickConditions = {
   readonly enabled: boolean;
-  readonly flowEnabled: boolean;
+  // Why the flow doesn't run on this machine, if it doesn't.
+  readonly flowOff: Option.Option<string>;
   readonly paused: boolean;
   readonly quietHours: Option.Option<string>;
   readonly activeHours: Option.Option<string>;
@@ -73,7 +74,7 @@ const stop = (reason: string): TickDecision => ({ go: false, reason });
 export const decideTick = (conditions: TickConditions): TickDecision => {
   if (!conditions.enabled) return stop('disabled in local.yaml');
 
-  if (!conditions.flowEnabled) return stop('flow turned off');
+  if (Option.isSome(conditions.flowOff)) return stop(conditions.flowOff.value);
 
   if (conditions.paused) return stop('paused');
 

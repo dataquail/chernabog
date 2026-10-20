@@ -160,3 +160,6 @@ export const githubTestLayer = (handler: (method: string, path: string, body: Op
         }),
     }),
   );
+
+// The GitHub login of the token this machine uses.
+export const viewerLogin = githubJson('GET', '/user', Schema.Struct({ login: Schema.String })).pipe(Effect.map((user) => user.login));

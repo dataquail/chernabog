@@ -13,6 +13,7 @@ Each flow's trigger runs on a cron schedule. When it runs is the person's call, 
 | ------------------ | ---------------------------- | ----------------------------------- |
 | repo enabled       | `local.yaml` `enabled`       | `disabled in local.yaml`            |
 | flow enabled       | `flows.<flow>.enabled`       | `flow turned off`                   |
+| runners            | `runners`, `flows.<flow>.runners` | `not a runner (runners: …)`    |
 | pause              | `chernabog pause <repo>`     | `paused`                            |
 | quiet hours        | machine `quietHours`         | `quiet hours (22:00-07:00)`         |
 | active hours       | `local.yaml` `activeHours`   | `outside active hours (…)`          |

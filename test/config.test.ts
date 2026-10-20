@@ -10,7 +10,7 @@ import YAML from 'yaml';
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
 import { chooseFlows, ensureLocalConfig, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
-import { DEFAULT_LIMITS, type EnrolledRepo, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
+import { DEFAULT_LIMITS, type EnrolledRepo, flowOff, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
 import { effect, effectAtHome } from './effect-test.ts';
@@ -76,6 +76,29 @@ describe('config layers', () => {
       expect(yield* merge({}, {}).pipe(Effect.map((merged) => scheduleFor(merged, 'implement', unscheduled, 1, 3)))).toBe('20 * * * *');
     }),
   );
+
+  effect(
+    "a flow runs only on its runners' machines, unless the person turns it on",
+    () => Effect.gen(function* () {
+      const team = { runners: ['Alice'], flows: { review: { runners: ['alice', 'bob'] }, fix: { enabled: false } } };
+      const offFor = (local: typeof LocalConfigFile.Encoded, flow: string, login: Option.Option<string>) => merge(team, local).pipe(Effect.map((merged) => flowOff(merged, flow, login)));
+
+      expect(yield* offFor({}, 'implement', Option.some('alice'))).toEqual(Option.none());
+      expect(yield* offFor({}, 'implement', Option.some('bob'))).toEqual(Option.some('not a runner (runners: Alice; this machine is bob)'));
+      expect(yield* offFor({}, 'review', Option.some('bob'))).toEqual(Option.none());
+      expect(yield* offFor({}, 'implement', Option.none())).toEqual(Option.some("not a runner (runners: Alice; this machine's GitHub login is unknown)"));
+      expect(yield* offFor({ flows: { implement: { enabled: true } } }, 'implement', Option.some('bob'))).toEqual(Option.none());
+      expect(yield* offFor({ flows: { review: { enabled: false } } }, 'review', Option.some('alice'))).toEqual(Option.some('flow turned off'));
+      expect(yield* offFor({}, 'fix', Option.some('alice'))).toEqual(Option.some('flow turned off'));
+      expect(yield* merge({}, {}).pipe(Effect.map((merged) => flowOff(merged, 'implement', Option.none())))).toEqual(Option.none());
+      expect(flowSettings(yield* merge(team, {}), 'review')).toEqual(Option.some({}));
+    }),
+  );
+
+  test('runners belong to the team, not to local.yaml', () => {
+    const decoded = Schema.decodeUnknownResult(LocalConfigFile)({ flows: { review: { runners: ['me'] } } });
+    expect(Option.map(Result.getFailure(decoded), (issue) => issue.message)).toEqual(Option.some(expect.stringContaining("runners is the team's choice")));
+  });
 
   effect(
     "the agent comes from local.yaml, then the repo, then the account's own agent",
