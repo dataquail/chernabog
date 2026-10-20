@@ -15,12 +15,14 @@ import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 import * as Schema from 'effect/Schema';
 import * as Stream from 'effect/Stream';
 
+import { ADDRESS, CONSIDER } from './default-prompts.ts';
 import { NeedsHuman, Skip, StepFailed } from './errors.ts';
 import { activity, sleep } from './flow.ts';
 import type { Json } from './json.ts';
 import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from './markers.ts';
 import { pathsMatching } from './paths.ts';
-import { renderPrompt } from './prompt.ts';
+import { renderPrompt, renderPromptOr } from './prompt.ts';
+import type { ReviewResult } from './review.ts';
 import { Agent, type AgentResult, Git, GitHub, type Issue, Repo, Run, RunLog, Usage, type WorkItem, Worktree } from './services.ts';
 
 export const branchFor = (issue: number) => `auto/issue-${issue}`;
@@ -266,6 +268,80 @@ export const fixWithAgent = (name: string, worktree: string, prompt: string, ses
     }),
     ImplementOutcome,
   );
+
+// The review's findings for a prompt: its summary, then each line comment.
+const describeReview = (review: ReviewResult) =>
+  [review.summary ?? `The review's verdict was ${review.verdict}.`, ...(review.comments ?? []).map((comment) => `- ${comment.path}:${comment.line}: ${comment.body}`)].join('\n\n');
+
+export const Consideration = Schema.Struct({ status: Schema.Literals(['address', 'decline']), reasons: Schema.String });
+
+export type Consideration = typeof Consideration.Type;
+
+export const considerationJsonSchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['address', 'decline'] },
+    reasons: { type: 'string', description: 'Why, point by point, in Markdown' },
+  },
+  required: ['status', 'reasons'],
+  additionalProperties: false,
+} satisfies Json;
+
+const authorWorktree = (pullRequest: number) =>
+  Effect.gen(function* () {
+    const pull = yield* (yield* GitHub).pullRequest(pullRequest);
+
+    return yield* (yield* Worktree).ensure(pull.headRef);
+  });
+
+// Resumes the author's session with a review, and asks whether to address it
+// or decline it, with reasons. Changes nothing. Its prompt is
+// .chernabog/prompts/consider.md, or the SDK's own.
+export const considerFindings = (pullRequest: number, review: ReviewResult, session: AuthorSession) => {
+  const round = review.round ?? 1;
+
+  return activity(
+    `consider-review-${round}`,
+    Effect.gen(function* () {
+      const run = yield* Run;
+      const worktree = yield* authorWorktree(pullRequest);
+      const prompt = yield* renderPromptOr('consider', CONSIDER, { pullRequest, round, review: describeReview(review) });
+
+      const result = yield* (yield* Agent).run({
+        cwd: worktree,
+        prompt,
+        sessionId: Option.getOrElse(session.sessionId, () => sessionIdFor(run.runId, 'implement')),
+        resumePrompt: Option.some(prompt),
+        outputSchema: Option.some(considerationJsonSchema),
+        adapter: session.adapter,
+      });
+
+      return yield* Schema.decodeUnknownEffect(Consideration)(result.output).pipe(Effect.mapError((issue) => new StepFailed({ step: `consider-review-${round}`, message: `agent answer: ${issue.message}` })));
+    }),
+    Consideration,
+  );
+};
+
+// Resumes the author's session to make the changes a review asks for, and
+// commit them, as fixWithAgent does for a failing check. Its prompt is
+// .chernabog/prompts/address.md, or the SDK's own.
+export const addressFindings = (pullRequest: number, review: ReviewResult, session: AuthorSession) =>
+  Effect.gen(function* () {
+    const round = review.round ?? 1;
+
+    const prepared = yield* activity(
+      `prepare-address-${round}`,
+      Effect.gen(function* () {
+        const worktree = yield* authorWorktree(pullRequest);
+        const prompt = yield* renderPromptOr('address', ADDRESS, { pullRequest, round, review: describeReview(review) });
+
+        return { worktree, prompt };
+      }),
+      Schema.Struct({ worktree: Schema.String, prompt: Schema.String }),
+    );
+
+    return yield* fixWithAgent(`address-review-${round}`, prepared.worktree, prepared.prompt, session);
+  });
 
 const requeueHint = (board: Option.Option<{ readonly readyStatus: string }>) =>
   Option.match(board, { onNone: () => 'apply', onSome: (found) => `set Status back to ${found.readyStatus} and apply` });

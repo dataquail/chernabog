@@ -57,15 +57,27 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 `Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts, with the adapter of an optional `{ role }` from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role); `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, { label })`; `Implement.trigger` is `triggerFor` with `auto:eligible`. `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review` and `fix` flows leave it alone. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
-| `Implement.`         | `Review.`                    |
-| -------------------- | ---------------------------- |
-| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` |
-| `issueOf`, `claim`   | `round`, `labelVerdict`      |
-| `prepareWorktree`    | `reviewRound`, `cleanUp`     |
-| `implementWithAgent`, `askForClarification` | `fixTrigger`, `fixWorkflow` |
-| `localGate`, `push`  |                              |
-| `openPullRequest`, `waitForCi` |                    |
-| `handOff`, `handToHuman`, `endForPerson` |          |
+| `Implement.`         | `Review.`                    | `PullRequest.`, `Issue.` |
+| -------------------- | ---------------------------- | ------------------------ |
+| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` | `PullRequest.comment`, `Issue.comment` |
+| `issueOf`, `claim`   | `round`, `labelVerdict`      | `PullRequest.own`, `release`, `owning` |
+| `prepareWorktree`    | `recheck`                    |                          |
+| `implementWithAgent`, `askForClarification` | `reviewRound`, `cleanUp` |  |
+| `localGate`, `push`  | `fixTrigger`, `fixWorkflow`  |                          |
+| `openPullRequest`, `waitForCi` |                    |                          |
+| `considerFindings`, `addressFindings` |             |                          |
+| `handOff`, `handToHuman`, `endForPerson` |          |                          |
+
+### Considering findings
+
+A flow that answers its own reviews resumes sessions instead of starting new ones:
+
+- `Review.recheck(pr, review)` resumes the reviewer's session from `review` with the change since the head it saw, and posts the next review. It returns the same verdict as `Review.round`, plus `findings`: each earlier finding, with whether it was `remediated`. It counts as the next round, so `review-2` after `review-1`, and `Review.labelVerdict` takes it like any other review.
+- `Implement.considerFindings(pr, review, session)` resumes the author's session with the review and returns `{ status: "address" | "decline", reasons }`. It changes nothing.
+- `Implement.addressFindings(pr, review, session)` resumes the same session to make the changes and commit, and returns the answer `fixWithAgent` does. The flow then runs `localGate`, `push` and `waitForCi` as usual.
+- `PullRequest.comment(pr, body)` and `Issue.comment(issue, body)` post a comment and do nothing else. A run posts each distinct comment on an item once.
+
+Each of these has its own prompt, `recheck`, `consider` and `address`. The SDK carries a default for each, and a repo overrides one with `.chernabog/prompts/<name>.md`.
 
 ## Dependencies
 

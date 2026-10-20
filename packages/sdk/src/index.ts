@@ -1,3 +1,4 @@
+import * as IssueSteps from './issue.ts';
 import * as PullRequestSteps from './pull-request.ts';
 import type * as Services from './services.ts';
 
@@ -13,7 +14,11 @@ export * from './roles.ts';
 export * from './services.ts';
 export * from './stage.ts';
 
-// PullRequest is both the type of a pull request and the steps on one.
+// PullRequest and Issue are each both a type and the steps on one.
 export const PullRequest = PullRequestSteps;
 
 export type PullRequest = Services.PullRequest;
+
+export const Issue = IssueSteps;
+
+export type Issue = Services.Issue;

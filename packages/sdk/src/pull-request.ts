@@ -7,6 +7,7 @@ import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Option from 'effect/Option';
 
+import { commentStep } from './comment.ts';
 import { activity } from './flow.ts';
 import { latestMarker, type OwnerMarker, ownerMarker } from './markers.ts';
 import { GitHub, Run, Runs } from './services.ts';
@@ -22,6 +23,9 @@ const writeOwner = (name: string, pullRequest: number, released: boolean) =>
       else yield* (yield* GitHub).comment(pullRequest, `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`);
     }),
   );
+
+// Comments on the pull request, and does nothing else.
+export const comment = (pullRequest: number, body: string) => commentStep('pr', pullRequest, body);
 
 // Marks the pull request as this run's.
 export const own = (pullRequest: number) => writeOwner(`own-pr-${pullRequest}`, pullRequest, false);
