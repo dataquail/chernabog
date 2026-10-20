@@ -1,4 +1,4 @@
-import { fillTemplate, globToRegExp, parseJson, pathsMatching, printJson } from '@chernabog/sdk';
+import { defineFlow, fillTemplate, globToRegExp, parseJson, pathsMatching, printJson } from '@chernabog/sdk';
 import { describe, expect, test } from 'bun:test';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
@@ -11,6 +11,7 @@ import YAML from 'yaml';
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
 import { scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
 import { DEFAULT_LIMITS, type EnrolledRepo, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, normalizeMachineConfig, RepoConfigFile } from '../src/repo-config.ts';
+import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
 import { effect, effectAtHome } from './effect-test.ts';
 
@@ -49,12 +50,30 @@ describe('config layers', () => {
         { schedule: '15 * * * *', flows: { review: { enabled: false } } },
       );
 
-      expect(merged.schedule).toEqual(Option.some('15 * * * *'));
-      expect(flowSettings(merged, 'review')).toEqual(Option.some({ schedule: '30 * * * *', enabled: false, concurrency: 2 }));
+      expect(merged.schedule).toEqual({ local: Option.some('15 * * * *'), repo: Option.some('0 * * * *') });
+      expect(flowSettings(merged, 'review')).toEqual(Option.some({ enabled: false, concurrency: 2 }));
       expect(merged.settings.localGate).toEqual(['pnpm test']);
       expect(merged.settings.humanOnly).toEqual(['a machine-wide limit']);
       expect(merged.settings.limits).toEqual(DEFAULT_LIMITS);
       expect(merged.settings.labels.eligible).toBe('auto:eligible');
+    }),
+  );
+
+  effect(
+    "the person's schedules beat the team's, a flow's own included",
+    () => Effect.gen(function* () {
+      const scheduled = defineFlow({ trigger: Effect.succeed([]), schedule: '45 * * * *', workflow: () => Effect.void });
+      const unscheduled = defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void });
+      const team = { schedule: '0 * * * *', flows: { review: { schedule: '30 * * * *' } } };
+      const scheduleOf = (local: typeof LocalConfigFile.Encoded, name: string, flow = unscheduled) => merge(team, local).pipe(Effect.map((merged) => scheduleFor(merged, name, flow, 0, 1)));
+
+      expect(yield* scheduleOf({}, 'review')).toBe('30 * * * *');
+      expect(yield* scheduleOf({}, 'implement', scheduled)).toBe('45 * * * *');
+      expect(yield* scheduleOf({}, 'implement')).toBe('0 * * * *');
+      expect(yield* scheduleOf({ schedule: '15 * * * *' }, 'review')).toBe('15 * * * *');
+      expect(yield* scheduleOf({ schedule: '15 * * * *' }, 'implement', scheduled)).toBe('15 * * * *');
+      expect(yield* scheduleOf({ schedule: '15 * * * *', flows: { review: { schedule: '5 * * * *' } } }, 'review')).toBe('5 * * * *');
+      expect(yield* merge({}, {}).pipe(Effect.map((merged) => scheduleFor(merged, 'implement', unscheduled, 1, 3)))).toBe('20 * * * *');
     }),
   );
 

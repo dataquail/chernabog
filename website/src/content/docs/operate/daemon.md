@@ -7,7 +7,7 @@ One daemon per machine schedules every enrolled repo, runs the workflow engine, 
 
 ## Ticks
 
-Each flow's trigger runs on a cron schedule: `flows.<flow>.schedule`, else the flow module's own `schedule`, else the repo's (`local.yaml` over `config.yaml`), else hourly at a minute that spreads repos across the hour. Before a tick starts a run, the daemon checks, in order:
+Each flow's trigger runs on a cron schedule. When it runs is the person's call, so `local.yaml` comes first: its `flows.<flow>.schedule`, then its `schedule`. Then the team's: `config.yaml`'s `flows.<flow>.schedule`, the flow module's own `schedule`, and `config.yaml`'s `schedule`. Without any of them it runs hourly, at a minute that spreads repos across the hour. Before a tick starts a run, the daemon checks, in order:
 
 | Check              | Set by                       | Skip reason                         |
 | ------------------ | ---------------------------- | ----------------------------------- |

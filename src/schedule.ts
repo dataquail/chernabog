@@ -12,11 +12,14 @@ import type { EffectiveRepo } from './repo-config.ts';
 // Repos fire at evenly spread minutes, so their ticks don't all land at once.
 export const spreadMinute = (index: number, count: number) => Math.floor((index * 60) / Math.max(count, 1));
 
+// The flow's own setting in local.yaml, then the person's default, then the
+// team's: the flow's setting in config.yaml, the flow module's, the repo's.
 export const scheduleFor = (repo: EffectiveRepo, flowName: string, flow: Flow, index: number, count: number) =>
   Record.get(repo.flows, flowName).pipe(
     Option.flatMap((settings) => Option.fromUndefinedOr(settings.schedule)),
+    Option.orElse(() => repo.schedule.local),
     Option.orElse(() => Option.fromUndefinedOr(flow.schedule)),
-    Option.orElse(() => repo.schedule),
+    Option.orElse(() => repo.schedule.repo),
     Option.getOrElse(() => `${spreadMinute(index, count)} * * * *`),
   );
 
