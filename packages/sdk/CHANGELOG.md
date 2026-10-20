@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/dataquail/chernabog/compare/sdk-v0.3.0...sdk-v0.3.1) (2026-10-20)
+
+
+### Bug Fixes
+
+* keep Orca sessions alive while they run, and hand failed runs to a person ([#28](https://github.com/dataquail/chernabog/issues/28)) ([bb1902d](https://github.com/dataquail/chernabog/commit/bb1902de03f467e4362e00639c47a801212eb010))
+
 ## [0.3.0](https://github.com/dataquail/chernabog/compare/sdk-v0.2.0...sdk-v0.3.0) (2026-10-20)
 
 
