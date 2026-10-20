@@ -7,7 +7,7 @@ description: Scaffold .chernabog/, enroll the repo on your machine, and start th
 cd ~/code/my-app
 chernabog init                      # scaffold .chernabog/ with the default flows
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
-chernabog enroll --account personal # add the repo to this machine's config
+chernabog enroll --account personal # add the repo to this machine's config, and pick its flows
 chernabog trust my-app              # approve the base branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
 chernabog install                   # register the daemon with launchd or systemd, and start it
@@ -17,12 +17,14 @@ chernabog doctor                    # check logins, gh scopes, labels, trust and
 | Step     | Writes                                                                                 |
 | -------- | -------------------------------------------------------------------------------------- |
 | `init`   | `.chernabog/` (config, flows, prompts, stages, schemas, `package.json`, your `local.yaml`), and a `.gitignore` entry for `local.yaml` |
-| `enroll` | a `repos` entry in `~/.config/chernabog/config.yaml`                                   |
+| `enroll` | a `repos` entry in `~/.config/chernabog/config.yaml`, and the flows you chose in `local.yaml` |
 | `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
 | `labels` | the eight [labels](/chernabog/work/flows/#labels) on GitHub                            |
 | `install`| a launchd agent or systemd user unit running `chernabog daemon`                        |
 
 Re-running `init` rewrites only the generated schemas and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `enroll --name` gives a short name when two enrolled repos share one.
+
+In a terminal, `enroll` asks which of the repo's flows run on your machine, starting from what runs now, and records each choice as `flows.<flow>.enabled` in `local.yaml`. Your choice beats the team's, so a flow `config.yaml` turns off still runs for you if you pick it. `--flows implement,review` chooses without asking; piped and without `--flows`, `enroll` leaves the choices as they are. It writes `local.yaml` from the template when you have none, so teammates who only enroll get one too. Run `enroll` again to choose again; it only updates the repo's entry. It lists the flows by file name and runs none of their code, since `.chernabog/` isn't trusted yet.
 
 ## Queue work
 

@@ -72,25 +72,34 @@ const MODULE_EXTENSIONS = ['.ts', '.js', '.mts', '.mjs'];
 
 const flowName = (file: string) => Arr.findFirst(MODULE_EXTENSIONS, (extension) => file.endsWith(extension)).pipe(Option.map((extension) => file.slice(0, -extension.length)));
 
-// Every flow in <configDir>/flows/, by file name.
-export const loadFlows = (configDir: string) =>
+// Each flow module in <configDir>/flows/, as [name, file], in name order.
+const flowFiles = (configDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const directory = `${configDir}/flows`;
+
+    if (!(yield* fs.exists(directory))) return [];
+
+    return Arr.sort(yield* fs.readDirectory(directory), Order.String).flatMap((file) => {
+      if (file.endsWith('.d.ts') || file.includes('.test.')) return [];
+
+      return Option.toArray(Option.map(flowName(file), (name) => [name, `${directory}/${file}`] as const));
+    });
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new LoadError({ path: configDir, message: error.message }))));
+
+// The names of the flows in <configDir>/flows/, without importing them, so
+// listing an untrusted .chernabog/ runs none of its code.
+export const flowNames = (configDir: string) => Effect.map(flowFiles(configDir), (files) => files.map(([name]) => name));
+
+// Every flow in <configDir>/flows/, by file name.
+export const loadFlows = (configDir: string) =>
+  Effect.gen(function* () {
     const flows = new Map<string, Sdk.Flow>();
 
-    if (!(yield* fs.exists(directory))) return flows;
-
-    for (const file of Arr.sort(yield* fs.readDirectory(directory), Order.String)) {
-      const name = flowName(file);
-
-      if (Option.isSome(name) && !file.endsWith('.d.ts') && !file.includes('.test.')) {
-        flows.set(name.value, yield* importDefault(`${directory}/${file}`, FlowDefinition, 'defineFlow({ trigger, workflow })'));
-      }
-    }
+    for (const [name, path] of yield* flowFiles(configDir)) flows.set(name, yield* importDefault(path, FlowDefinition, 'defineFlow({ trigger, workflow })'));
 
     return flows;
-  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new LoadError({ path: configDir, message: error.message }))));
+  });
 
 export type StageModule = { readonly kind: 'effect' | 'shell'; readonly path: string };
 

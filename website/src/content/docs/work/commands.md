@@ -18,7 +18,7 @@ description: Every chernabog command and flag.
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher and the daemon      |
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins                         |
-| `enroll [path]`                   | Add a repo to this machine's config                                              |
+| `enroll [path]`                   | Add a repo to this machine's config, and choose which of its flows run here      |
 | `install`, `uninstall`            | Register the daemon with launchd or systemd and start it; or remove it          |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again            |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
@@ -33,6 +33,7 @@ description: Every chernabog command and flag.
 | `--from-checkout`        | `labels` | Read labels from the working copy, before `.chernabog/` is merged       |
 | `--account <name>`       | `enroll` | The machine-config account whose budget this repo spends                |
 | `--name <name>`          | `enroll` | A short name, when two enrolled repos share one                         |
+| `--flows <a,b>`          | `enroll` | The flows to run here; the rest are turned off. Asked in a terminal when left out |
 | `-f`, `--follow`         | `logs`   | Keep printing as the log grows                                          |
 
 ## Files
