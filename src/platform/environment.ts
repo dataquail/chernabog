@@ -22,7 +22,7 @@ export class HostEnvironment extends Context.Service<
     return HostEnvironment.of({ variables, platform: process.platform, userId: Option.fromUndefinedOr(process.getuid?.()) });
   });
 
-  public static readonly fixed = (variables: Environment) => Layer.succeed(HostEnvironment, HostEnvironment.of({ variables, platform: process.platform, userId: Option.none() }));
+  public static readonly fixed = (variables: Environment, platform: string = process.platform) => Layer.succeed(HostEnvironment, HostEnvironment.of({ variables, platform, userId: Option.none() }));
 }
 
 // The environment with some variables set and others removed.

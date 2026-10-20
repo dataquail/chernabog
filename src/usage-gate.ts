@@ -16,7 +16,7 @@ import * as Schedule from 'effect/Schedule';
 import * as Schema from 'effect/Schema';
 
 import { API_KEYS } from './agents/adapter.ts';
-import { Home, homePaths } from './config.ts';
+import { claudeHomeOf, Home, homePaths } from './config.ts';
 import { execOk } from './Exec.ts';
 import { type Launcher, launcherFor } from './launchers.ts';
 import { LaunchSpecJson } from './launchers/shim.ts';
@@ -56,21 +56,28 @@ export const accountEnv = (account: Account, base: Environment) =>
     onSome: (dir) => withVariables(base, { CLAUDE_CONFIG_DIR: dir }, []),
   });
 
-// One window of the usage endpoint's answer, as it arrives: utilization in percent.
-const UsageWindowWire = Schema.Struct({ utilization: Schema.Finite, resets_at: Schema.String });
+// One window of the usage endpoint's answer, as it arrives: utilization in
+// percent. No reset time means no window is running: nothing used since the
+// last one ended.
+const UsageWindowWire = Schema.Struct({ utilization: Schema.Finite, resets_at: Schema.NullOr(Schema.String) });
 
 export const UsageResponse = Schema.Struct({ five_hour: UsageWindowWire, seven_day: UsageWindowWire });
 
 export type UsageResponse = typeof UsageResponse.Type;
 
-const toWindow = (wire: typeof UsageWindowWire.Type, name: string) =>
-  Option.match(DateTime.make(wire.resets_at), {
-    onNone: () => Effect.fail(new UsageError({ message: `Usage reading has no usable ${name} window: ${wire.resets_at}` })),
-    onSome: (resetsAt) => Effect.succeed({ used: wire.utilization / 100, resetsAt: DateTime.toUtc(resetsAt) }),
+// A window that is not running yet starts with the next use, so it resets a whole window from now.
+const toWindow = (wire: typeof UsageWindowWire.Type, name: string, length: Partial<DateTime.DateTime.PartsForMath>, now: DateTime.Utc) =>
+  Option.match(Option.fromNullishOr(wire.resets_at), {
+    onNone: () => Effect.succeed({ used: wire.utilization / 100, resetsAt: DateTime.add(now, length) }),
+    onSome: (resetsAt) =>
+      Option.match(DateTime.make(resetsAt), {
+        onNone: () => Effect.fail(new UsageError({ message: `Usage reading has no usable ${name} window: ${resetsAt}` })),
+        onSome: (parsed) => Effect.succeed({ used: wire.utilization / 100, resetsAt: DateTime.toUtc(parsed) }),
+      }),
   });
 
-export const parseUsageReading = (response: UsageResponse) =>
-  Effect.all({ fiveHour: toWindow(response.five_hour, 'five_hour'), sevenDay: toWindow(response.seven_day, 'seven_day') });
+export const parseUsageReading = (response: UsageResponse, now: DateTime.Utc) =>
+  Effect.all({ fiveHour: toWindow(response.five_hour, 'five_hour', { hours: 5 }, now), sevenDay: toWindow(response.seven_day, 'seven_day', { days: 7 }, now) });
 
 export const decideLaunch = (reading: UsageReading, config: GateConfig, now: DateTime.Utc): LaunchDecision => {
   if (reading.fiveHour.used >= config.fiveHourCeiling) {
@@ -94,21 +101,33 @@ const StoredOAuth = Schema.Struct({ accessToken: Schema.String, expiresAt: Schem
 
 export type StoredOAuth = typeof StoredOAuth.Type;
 
-const KeychainItem = Schema.fromJsonString(Schema.Struct({ claudeAiOauth: StoredOAuth }));
+// What Claude Code stores for a login, in the keychain item or the credentials file.
+const StoredCredentials = Schema.fromJsonString(Schema.Struct({ claudeAiOauth: StoredOAuth }));
 
 export const isExpired = (oauth: StoredOAuth, now: DateTime.Utc) => Option.exists(Option.fromUndefinedOr(oauth.expiresAt), (expiresAt) => expiresAt < DateTime.toEpochMillis(now));
 
 const usageError = (error: { readonly message: string }) => new UsageError({ message: error.message });
 
-const readStoredOAuth = (configDir: Option.Option<string>) =>
-  Effect.gen(function* () {
-    const service = keychainServiceFor(configDir);
-    const stored = yield* execOk('security', ['find-generic-password', '-s', service, '-w']);
+const decodeStored = (stored: string, where: string) =>
+  Schema.decodeEffect(StoredCredentials)(stored.trim()).pipe(
+    Effect.map((item) => item.claudeAiOauth),
+    Effect.mapError(() => new UsageError({ message: `No claudeAiOauth.accessToken in ${where}` })),
+  );
 
-    return yield* Schema.decodeEffect(KeychainItem)(stored.trim()).pipe(
-      Effect.map((item) => item.claudeAiOauth),
-      Effect.mapError(() => new UsageError({ message: `No claudeAiOauth.accessToken in keychain item "${service}"` })),
-    );
+// On macOS the login is in the keychain; elsewhere Claude Code keeps it in
+// .credentials.json in the config directory.
+export const readStoredOAuth = (account: Account) =>
+  Effect.gen(function* () {
+    if ((yield* HostEnvironment).platform === 'darwin') {
+      const service = keychainServiceFor(account.configDir);
+
+      return yield* decodeStored(yield* execOk('security', ['find-generic-password', '-s', service, '-w']), `keychain item "${service}"`);
+    }
+
+    const file = `${claudeHomeOf(account, (yield* Home).user)}/.credentials.json`;
+    const stored = yield* (yield* FileSystem.FileSystem).readFileString(file).pipe(Effect.mapError(() => new UsageError({ message: `No Claude login in ${file}; run claude auth login` })));
+
+    return yield* decodeStored(stored, file);
   });
 
 // How the token gets refreshed: under the repo's launcher, in its checkout,
@@ -119,7 +138,7 @@ const REFRESH_PROMPT = 'Reply with OK.';
 
 const tokenRefreshed = (account: Account) =>
   Effect.gen(function* () {
-    const oauth = yield* readStoredOAuth(account.configDir);
+    const oauth = yield* readStoredOAuth(account);
 
     return !isExpired(oauth, yield* DateTime.now);
   }).pipe(Effect.orElseSucceed(() => false));
@@ -164,12 +183,12 @@ export const refreshByRunningClaude = (account: Account, refresh: TokenRefresh) 
 
 const freshAccessToken = (account: Account, refresh: TokenRefresh) =>
   Effect.gen(function* () {
-    const oauth = yield* readStoredOAuth(account.configDir);
+    const oauth = yield* readStoredOAuth(account);
 
     if (!isExpired(oauth, yield* DateTime.now)) return oauth.accessToken;
 
     yield* refreshByRunningClaude(account, refresh);
-    const refreshed = yield* readStoredOAuth(account.configDir);
+    const refreshed = yield* readStoredOAuth(account);
 
     if (isExpired(refreshed, yield* DateTime.now)) {
       return yield* new UsageError({ message: `The ${account.name} account's OAuth token is expired and did not refresh; open a session with it once` });
@@ -216,7 +235,8 @@ export const readUsageLogLine = (line: string) => Schema.decodeOption(UsageLogEn
 export const runUsageGate = (account: Account, gate: GateConfig, refresh: TokenRefresh) =>
   Effect.gen(function* () {
     const response = yield* fetchUsage(yield* freshAccessToken(account, refresh));
-    const decision = decideLaunch(yield* parseUsageReading(response), gate, yield* DateTime.now);
+    const now = yield* DateTime.now;
+    const decision = decideLaunch(yield* parseUsageReading(response, now), gate, now);
     yield* logUsage(account, response, decision);
 
     return decision;
