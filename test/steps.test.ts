@@ -3,7 +3,7 @@
 
 import { fileURLToPath } from 'node:url';
 
-import { Agent, type AgentRequest, awaitSignal, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, Issue, type Json, NeedsHuman, ownerMarker, printJson, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
+import { Agent, type AgentRequest, awaitSignal, type CiState, type Comment, DEFAULT_LABELS, defineFlow, Git, GitHub, HEADLESS, Implement, Issue, type Json, type MergeOutcome, type MergeRequest, NeedsHuman, ownerMarker, printJson, PullRequest, Repo, type RepoSettings, Review, reviewMarker, Runs, StepRunner, Usage, type WorkItem, Worktree } from '@chernabog/sdk';
 import type { BunServices } from '@effect/platform-bun';
 import { describe, expect } from 'bun:test';
 import * as Context from 'effect/Context';
@@ -38,7 +38,7 @@ const settings: RepoSettings = {
   install: Option.none(),
   localGate: [],
   humanOnly: [],
-  humanOnlyPaths: [],
+  humanOnlyPaths: ['.github/**'],
   notes: [],
   board: Option.none(),
   reviewTrigger: Option.none(),
@@ -62,6 +62,9 @@ const answerFor = (request: AgentRequest, verdict: 'approve' | 'request-changes'
 
   return { verdict, summary: 'Reviewed.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change.' }] };
 };
+
+// CI on the head, the files the pull request changes, whether GitHub refuses the merge, and the merges asked for.
+type MergeFake = { ci: CiState; files: Array<string>; refusal: Option.Option<string>; requests: Array<MergeRequest> };
 
 // One pull request and one issue, and what the steps did to them.
 const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<RepoSettings> = {}) => {
@@ -93,6 +96,8 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
 
   const issue = (): Issue => ({ number: ISSUE, title: 'A queued issue', body: '', url: `https://github.com/dataquail/demo/issues/${ISSUE}`, createdAt: '2026-10-20T00:00:00Z', labels: labelsOf(ISSUE), assignees: [] });
 
+  const merge: MergeFake = { ci: { state: 'green' }, files: ['src/a.ts'], refusal: Option.none(), requests: [] };
+
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
   let knownRun = Option.none<boolean>();
 
@@ -120,6 +125,14 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
       pullRequestsLabelled: (label) => Effect.succeed([pull()].filter((open) => open.labels.includes(label))),
       closedPullRequestsLabelled: () => Effect.succeed([]),
       pullRequest: () => Effect.succeed(pull()),
+      ciState: () => Effect.sync(() => merge.ci),
+      pullRequestFiles: () => Effect.sync(() => merge.files),
+      merge: (_, request) =>
+        Effect.sync((): MergeOutcome => {
+          merge.requests.push(request);
+
+          return Option.match(merge.refusal, { onNone: () => ({ status: 'merged', sha: 'merged9876' }), onSome: (reason) => ({ status: 'refused', reason }) });
+        }),
       comments: () => Effect.succeed([...comments]),
       reviewComments: () => Effect.succeed([]),
       comment: (_, body) =>
@@ -156,7 +169,7 @@ const makeFake = (verdict: 'approve' | 'request-changes', overrides: Partial<Rep
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
-  return { services, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
+  return { services, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
 };
 
 type Fake = ReturnType<typeof makeFake>;
@@ -215,6 +228,8 @@ const flow = defineFlow({
         yield* Issue.comment(ISSUE, 'On the issue.');
         yield* PullRequest.comment(PULL, 'On the pull request.');
       }
+
+      if (work.key === 'merge') return yield* PullRequest.merge(PULL, { method: 'squash' });
 
       if (work.key === 'hand-off-unlabelled') return yield* Implement.handOff(ISSUE, opened, outcome, { needsReview: false });
     }),
@@ -461,6 +476,50 @@ describe('considering findings', () => {
       expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
     }),
   );
+});
+
+describe('PullRequest.merge', () => {
+  const approved = (fake: Fake, sha = HEAD) => {
+    fake.comment(reviewMarker.write({ sha, round: 1, verdict: 'approve' }));
+  };
+
+  effect(
+    'merges exactly the reviewed head once checks are green and the review approved it',
+    () => Effect.gen(function* () {
+      const fake = makeFake('approve');
+      approved(fake);
+      const finished = yield* runToEnd(fake, 'merge');
+      expect(finished.status).toBe('done');
+      expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+      expect(fake.merge.requests).toEqual([{ method: 'squash', sha: HEAD }]);
+    }),
+  );
+
+  // Each case sets up one reason to refuse, and the run hands the pull request to a person without merging.
+  const refusals: ReadonlyArray<readonly [string, (fake: Fake) => void, string]> = [
+    ['checks failed', (fake) => { approved(fake); fake.merge.ci = { state: 'red', failedChecks: ['test'] }; }, 'checks failed: test'],
+    ['checks pending', (fake) => { approved(fake); fake.merge.ci = { state: 'pending', waitingOn: ['test'] }; }, 'checks are still pending'],
+    ['no review', () => {}, 'it has no review'],
+    ['the head moved', (fake) => { approved(fake, 'old5678abc'); }, 'the head moved to `abc1234` since review 1 saw `old5678`'],
+    ['changes requested', (fake) => { fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: 'request-changes' })); }, 'review 1 requested changes'],
+    ['a human-only path', (fake) => { approved(fake); fake.merge.files = ['src/a.ts', '.github/workflows/ci.yml']; }, 'it touches paths a person must handle: `.github/workflows/ci.yml`'],
+    ['GitHub refuses', (fake) => { approved(fake); fake.merge.refusal = Option.some('GitHub refused the merge: Required approving review'); }, 'GitHub refused the merge: Required approving review'],
+  ];
+
+  for (const [name, arrange, reason] of refusals) {
+    effect(
+      `refuses, with the reason, on ${name}`,
+      () => Effect.gen(function* () {
+        const fake = makeFake('approve');
+        arrange(fake);
+        const finished = yield* runToEnd(fake, 'merge');
+        expect(finished.status).toBe('needs-human');
+        expect(summaryOf(finished)).toContain(`#${PULL} not merged: ${reason}`);
+
+        if (name !== 'GitHub refuses') expect(fake.merge.requests).toEqual([]);
+      }),
+    );
+  }
 });
 
 describe('Implement.handOff', () => {
