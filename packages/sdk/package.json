@@ -1,6 +1,6 @@
 {
   "name": "@chernabog/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "description": "Services and helpers for writing Chernabog flows and steps",
   "repository": {
