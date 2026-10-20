@@ -7,6 +7,8 @@ import {
   GitHub,
   GitHubError,
   type Issue,
+  type Json,
+  type MergeOutcome,
   type PullRequest,
   Repo,
   type RepoSettings,
@@ -159,6 +161,18 @@ const SearchResult = Schema.Struct({ search: Schema.Struct({ nodes: Schema.Array
 const isIssueNode = Schema.is(LabelledIssueNode);
 
 const Comments = Schema.Array(RestComment);
+
+const Merged = Schema.Struct({ sha: Schema.String });
+
+const ErrorMessage = Schema.Struct({ message: Schema.String });
+
+// GitHub's reason for refusing a merge, from its message where it gave one.
+const refusalOf = (status: number, body: Option.Option<Json>) =>
+  Option.match(Option.flatMap(body, Schema.decodeUnknownOption(ErrorMessage)), {
+    onNone: () => `GitHub refused the merge (HTTP ${status})`,
+    onSome: (error) => `GitHub refused the merge: ${error.message}`,
+  });
+
 const PullRequests = Schema.Array(RestPullRequest);
 const identity = <A>(page: A) => page;
 
@@ -311,6 +325,19 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           ),
         review,
         reviewComments,
+        merge: (pullRequest, merge) =>
+          provide(
+            Effect.gen(function* () {
+              const response = yield* githubRequest('PUT', path(`/pulls/${pullRequest}/merge`), Option.some({ merge_method: merge.method, sha: merge.sha }));
+
+              if (response.status < 300) return { status: 'merged', sha: (yield* decodeBody(Merged, 'merging')(response.body)).sha } satisfies MergeOutcome;
+
+              // 405: not mergeable under the repo's rules; 409: the head moved; 422: the request itself.
+              if ([405, 409, 422].includes(response.status)) return { status: 'refused', reason: refusalOf(response.status, response.body) } satisfies MergeOutcome;
+
+              return yield* new GitHubError({ message: `merging #${pullRequest} returned HTTP ${response.status}` });
+            }),
+          ),
         request: (method, requestPath, body) => provide(githubJson(method, requestPath, Schema.Json, body)),
       });
     }),

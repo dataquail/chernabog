@@ -59,7 +59,7 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 | `Implement.`         | `Review.`                    | `PullRequest.`, `Issue.` |
 | -------------------- | ---------------------------- | ------------------------ |
-| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` | `PullRequest.comment`, `Issue.comment` |
+| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` | `PullRequest.comment`, `Issue.comment`, `PullRequest.merge` |
 | `issueOf`, `claim`   | `round`, `labelVerdict`      | `PullRequest.own`, `release`, `owning` |
 | `prepareWorktree`    | `recheck`                    |                          |
 | `implementWithAgent`, `askForClarification` | `reviewRound`, `cleanUp` |  |
@@ -78,6 +78,17 @@ A flow that answers its own reviews resumes sessions instead of starting new one
 - `PullRequest.comment(pr, body)` and `Issue.comment(issue, body)` post a comment and do nothing else. A run posts each distinct comment on an item once.
 
 Each of these has its own prompt, `recheck`, `consider` and `address`. The SDK carries a default for each, and a repo overrides one with `.chernabog/prompts/<name>.md`.
+
+### Merging
+
+`PullRequest.merge(pr, { method })`, with `method` one of `merge`, `squash` or `rebase`, merges the pull request when that is safe, and decides that itself when it runs:
+
+- its required checks are green on the current head;
+- the latest review approved that very head, so nothing has been pushed since;
+- it touches no `humanOnlyPaths`;
+- GitHub's rules for the repo allow it. The merge is of exactly the reviewed head, so GitHub refuses it if the head moves in between.
+
+Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it.
 
 ## Dependencies
 

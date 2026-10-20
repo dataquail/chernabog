@@ -6,11 +6,14 @@ import * as Cause from 'effect/Cause';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Option from 'effect/Option';
+import * as Schema from 'effect/Schema';
 
 import { commentStep } from './comment.ts';
+import { NeedsHuman } from './errors.ts';
 import { activity } from './flow.ts';
-import { latestMarker, type OwnerMarker, ownerMarker } from './markers.ts';
-import { GitHub, Run, Runs } from './services.ts';
+import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from './markers.ts';
+import { pathsMatching } from './paths.ts';
+import { GitHub, type MergeMethod, Repo, Run, Runs } from './services.ts';
 
 const writeOwner = (name: string, pullRequest: number, released: boolean) =>
   activity(
@@ -63,3 +66,55 @@ export const ownerOf = (bodies: ReadonlyArray<string>) =>
 
     return latest;
   });
+
+export type MergeOptions = { readonly method: MergeMethod };
+
+const refuse = (pullRequest: number, reason: string) => new NeedsHuman({ reason: `#${pullRequest} not merged: ${reason}` });
+
+// Merges the pull request, only when that is safe: it is open, its required
+// checks are green on the current head, the latest review approved that very
+// head, it touches no humanOnlyPaths, and GitHub's rules for the repo allow it.
+// Otherwise it fails with NeedsHuman, saying why. Nothing merges unless a flow
+// calls this.
+export const merge = (pullRequest: number, options: MergeOptions) =>
+  activity(
+    `merge-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const pull = yield* github.pullRequest(pullRequest);
+
+      // A rerun after a crash finds its own merge done.
+      if (pull.state === 'merged') return `#${pullRequest} merged`;
+
+      if (pull.state !== 'open') return yield* refuse(pullRequest, 'it is closed');
+
+      const ci = yield* github.ciState(pullRequest);
+
+      if (ci.state === 'red') return yield* refuse(pullRequest, `checks failed: ${ci.failedChecks.join(', ')}`);
+
+      if (ci.state === 'pending') return yield* refuse(pullRequest, 'checks are still pending');
+
+      const reviewed = latestMarker(
+        reviewMarker.read,
+        (yield* github.comments(pullRequest)).map((posted) => posted.body),
+      );
+
+      if (Option.isNone(reviewed)) return yield* refuse(pullRequest, 'it has no review');
+
+      if (reviewed.value.sha !== pull.headSha) return yield* refuse(pullRequest, `the head moved to \`${pull.headSha.slice(0, 7)}\` since review ${reviewed.value.round} saw \`${reviewed.value.sha.slice(0, 7)}\``);
+
+      if (reviewed.value.verdict !== 'approve') return yield* refuse(pullRequest, `review ${reviewed.value.round} requested changes`);
+
+      const touched = pathsMatching(yield* github.pullRequestFiles(pullRequest), repo.humanOnlyPaths);
+
+      if (touched.length > 0) return yield* refuse(pullRequest, `it touches paths a person must handle: ${touched.map((path) => `\`${path}\``).join(', ')}`);
+
+      const merged = yield* github.merge(pullRequest, { method: options.method, sha: pull.headSha });
+
+      if (merged.status === 'refused') return yield* refuse(pullRequest, merged.reason);
+
+      return `#${pullRequest} merged (${options.method}) as \`${merged.sha.slice(0, 7)}\``;
+    }),
+    Schema.String,
+  );

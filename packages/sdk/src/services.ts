@@ -183,6 +183,14 @@ export type NewPullRequest = { readonly head: string; readonly base: string; rea
 
 export type NewReview = { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<ReviewComment> };
 
+export type MergeMethod = 'merge' | 'squash' | 'rebase';
+
+// The merge of exactly `sha`: GitHub refuses one whose head has moved since.
+export type MergeRequest = { readonly method: MergeMethod; readonly sha: string };
+
+// Merged, or refused by GitHub (branch protection, a conflict, a moved head), with its reason.
+export type MergeOutcome = { readonly status: 'merged'; readonly sha: string } | { readonly status: 'refused'; readonly reason: string };
+
 export type CiState = { state: 'pending'; waitingOn: Array<string> } | { state: 'green' } | { state: 'red'; failedChecks: Array<string> };
 
 export class GitHub extends Context.Service<
@@ -221,6 +229,7 @@ export class GitHub extends Context.Service<
     review(pullRequest: number, review: NewReview): Effect.Effect<void, GitHubError>;
     // Review summaries and line comments on a pull request.
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;
+    merge(pullRequest: number, merge: MergeRequest): Effect.Effect<MergeOutcome, GitHubError>;
     // Any other call, for what the service does not cover.
     request(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body: Option.Option<Json>): Effect.Effect<Json, GitHubError>;
   }

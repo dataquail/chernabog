@@ -9,7 +9,7 @@ description: The services @chernabog/sdk provides to flows and Effect steps.
 | ---------- | --------------------------------------------------------------------------- |
 | `Repo`     | the repo's merged settings: slug, base branch, labels, limits, gates, notes |
 | `Run`      | the run: flow, run id and work item                                         |
-| `GitHub`   | queued issues, claims, labels, comments, branches, pull requests, CI state  |
+| `GitHub`   | queued issues, claims, labels, comments, branches, pull requests, CI state, merges |
 | `Agent`    | starting and resuming agent sessions through an [adapter](/chernabog/agents/adapters/) |
 | `Git`      | commits ahead, changed files, pushes                                        |
 | `Worktree` | one worktree per branch                                                     |
