@@ -29,7 +29,7 @@
     },
     "packages/sdk": {
       "name": "@chernabog/sdk",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "peerDependencies": {
         "effect": "4.0.5",
       },
