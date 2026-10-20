@@ -23,9 +23,18 @@ humanOnly:
     shape that enrolled repos already rely on
 
 # Paths a change must not touch; one that does goes to a person instead of a pull request.
+# Rules can't be negated, so this lists what stays with a person: agents may
+# change ci.yml, .chernabog/flows/ and .chernabog/stages/, but not release or docs publishing, the
+# PR-title check, or how chernabog itself is configured and prompted. A new file
+# under .github/workflows/ isn't covered, so review those by hand.
 humanOnlyPaths:
-  - .github/**
-  - .chernabog/**
+  - .github/dependabot.yml
+  - .github/workflows/docs.yml
+  - .github/workflows/pr-title.yml
+  - .github/workflows/release.yml
+  - .chernabog/config.yaml
+  - .chernabog/*.json
+  - .chernabog/prompts/**
   - release-please-config.json
   - .release-please-manifest.json
 
