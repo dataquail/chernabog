@@ -56,6 +56,13 @@ notes:
 #   review:
 #     agent: codex
 #     reviewRequested: "@me"
+#
+# ship reviews in a fresh session of the reviewer role, separate from the
+# author's. Claude for now; moving to Codex is this one line, once Codex has an
+# account in machine config.
+flows:
+  ship:
+    agents: { reviewer: claude }
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose
