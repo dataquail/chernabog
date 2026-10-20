@@ -21,6 +21,7 @@ Each account in machine config belongs to one agent (`agent: codex`; `claude` by
 ## Guarantees
 
 - **Accounts.** A run refuses to start when the account is logged in as anyone but its `expectedEmail`, or Codex is logged in with an API key.
+- **Tokens.** A Claude account with `oauthTokenEnv` logs in with the token in that variable, from `claude setup-token`. No other account sees it, and a `CLAUDE_CODE_OAUTH_TOKEN` left in your shell logs in none of them. A token shows no email, so its check is Claude saying it is logged in, and an `expectedEmail` on it fails closed.
 - **No pay-per-token fallback.** API keys are removed from every agent's environment.
 - **Permissions.** Claude runs in auto mode; Codex with automatic approval inside its workspace sandbox. Chernabog never widens what the agent's own config grants.
 - **opencode.** Its `--auto` approves everything not explicitly denied, so it is off unless you add it: `agents: { opencode: { args: [--auto] } }`.

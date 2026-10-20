@@ -141,6 +141,7 @@ export type LocalConfigFile = typeof LocalConfigFile.Type;
 const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
   expectedEmail: Nullable(Schema.String),
+  oauthTokenEnv: Nullable(Schema.String),
   agent: Schema.optionalKey(Schema.String),
 });
 
@@ -316,6 +317,7 @@ const fromAccountFile = (home: string) => (entry: readonly [string, typeof Accou
     name,
     configDir: Option.map(Option.flatten(Option.fromUndefinedOr(account.configDir)), (dir) => expandHome(dir, home)),
     expectedEmail: Option.flatten(Option.fromUndefinedOr(account.expectedEmail)),
+    oauthTokenEnv: Option.flatten(Option.fromUndefinedOr(account.oauthTokenEnv)),
     agent: account.agent ?? 'claude',
   };
 };
@@ -375,7 +377,7 @@ const mergeFlows = (layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>
   );
 };
 
-const ownAccount = (account: MachineAccount): Account => ({ name: account.name, configDir: account.configDir, expectedEmail: account.expectedEmail });
+const ownAccount = (account: MachineAccount): Account => ({ name: account.name, configDir: account.configDir, expectedEmail: account.expectedEmail, oauthTokenEnv: account.oauthTokenEnv });
 
 // The repo's own account for its agent; for any other agent, that agent's first account.
 const accountsByAgent = (machine: MachineConfig, own: MachineAccount) => {

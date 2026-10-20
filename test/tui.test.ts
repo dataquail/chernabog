@@ -198,7 +198,7 @@ const tmuxSessions = new Set<string>();
 
 const effectWithTmux = effectAtHomeWith(execTestLayer((command, args) => Option.some({ exitCode: Number(!(command === 'tmux' && tmuxSessions.has(args.at(-1) ?? ''))), stdout: '', stderr: '' })));
 
-const account = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.none<string>() };
+const account = { name: 'personal', configDir: Option.some('/Users/dev/.claude-personal'), expectedEmail: Option.none<string>(), oauthTokenEnv: Option.none<string>() };
 
 effectWithTmux("attach opens each agent's own interactive UI on the run's session, in its worktree", () =>
   Effect.gen(function* () {

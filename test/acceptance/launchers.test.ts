@@ -1,7 +1,7 @@
 // Claude as an interactive session under each launcher, end to end: the answer
 // file and the Stop hook decide when it is done, and nothing runs `claude -p`.
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -70,6 +70,9 @@ describe.each(['tmux', 'orca', 'mine', 'headless'])('implement with the %s launc
     // The session is closed once it has answered.
     const closes = [...sandbox.tmuxCalls().filter((call) => call.startsWith('kill-session')), ...sandbox.orcaCalls().filter((call) => call === 'terminal close')];
     expect(closes).toHaveLength(1);
+    // The spec holds the session's environment, so only its owner reads it.
+    const specs = [...new Bun.Glob('*/spec.json').scanSync(join(sandbox.home, 'sessions/interactive'))];
+    expect(specs.map((spec) => statSync(join(sandbox.home, 'sessions/interactive', spec)).mode & 0o777)).toEqual([0o600]);
   }, 60_000);
 });
 

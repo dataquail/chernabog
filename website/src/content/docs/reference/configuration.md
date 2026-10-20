@@ -113,7 +113,7 @@ flows:
 
 | Key                     | Default      | Meaning                                                           |
 | ----------------------- | ------------ | ----------------------------------------------------------------- |
-| `accounts.<name>`       | —            | `configDir`, `expectedEmail`, `agent` (default `claude`)          |
+| `accounts.<name>`       | —            | `configDir`, `expectedEmail`, `oauthTokenEnv`, `agent` (default `claude`) |
 | `usageGate`             | see [the gate](/chernabog/agents/usage-gate/) | all four thresholds, or none            |
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
 | `quietHours`            | none         | start no runs within these hours                                  |
@@ -128,6 +128,8 @@ flows:
 accounts:
   work: {}
   personal: { configDir: ~/.claude-personal, expectedEmail: you@example.com }
+  # A host with no Claude login of its own, such as CI: the token from `claude setup-token`, in this variable.
+  ci: { oauthTokenEnv: CLAUDE_CODE_OAUTH_TOKEN }
 concurrency: 1
 quietHours: "23:00-07:00"
 repos:

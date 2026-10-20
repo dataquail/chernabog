@@ -25,7 +25,7 @@ import { type EffectiveRepo, type EnrolledRepo, FLOW_TURNED_OFF, flowOff, hasRun
 import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { trustedTree } from './trust.ts';
-import { loggedInEmail } from './usage-gate.ts';
+import { checkAccount, loggedInEmail } from './usage-gate.ts';
 import { VERSION } from './version.ts';
 
 export type Check = { readonly ok: boolean; readonly label: string; readonly fix: Option.Option<string> };
@@ -104,6 +104,13 @@ export const doctor = Effect.gen(function* () {
     }
 
     if (account.agent !== 'claude') continue;
+
+    if (Option.isSome(account.oauthTokenEnv)) {
+      const token = yield* Effect.result(checkAccount(account));
+      const who = Option.match(Result.getSuccess(token), { onNone: () => '', onSome: (said) => ` (${said})` });
+      check(Result.isSuccess(token), `the ${account.name} account is logged in with its token${who}`, `${account.oauthTokenEnv.value}=$(claude setup-token)`);
+      continue;
+    }
 
     const email = yield* loggedInEmail(account).pipe(Effect.orElseSucceed(() => Option.none<string>()));
     const expected = account.expectedEmail;

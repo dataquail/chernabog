@@ -7,6 +7,7 @@ import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
 
+import { claudeTokenVariables } from '../config.ts';
 import { type AdapterContext, agentEnvironment } from './adapter.ts';
 import { clip } from './process.ts';
 
@@ -73,12 +74,17 @@ export const describeTranscriptLine = (line: string) => Option.flatMap(Schema.de
 // itself for that session's child and keep no transcript of its own.
 const sessionMarkers = (context: AdapterContext) => Object.keys({ ...context.host, ...context.env }).filter((name) => name === 'CLAUDECODE' || name.startsWith('CLAUDE_CODE_'));
 
-// The account's config directory set, or unset for the default one; API keys and a calling session's markers removed.
-export const claudeEnvironment = (context: AdapterContext) =>
-  Option.match(context.account.configDir, {
+// The account's config directory set, or unset for the default one; API keys
+// and a calling session's markers removed. The markers include
+// CLAUDE_CODE_OAUTH_TOKEN, which comes back only for an account with its own
+// token, taken from the host, never from the repo's committed env.
+export const claudeEnvironment = (context: AdapterContext) => ({
+  ...Option.match(context.account.configDir, {
     onNone: () => agentEnvironment(context, {}, ['CLAUDE_CONFIG_DIR', ...sessionMarkers(context)]),
     onSome: (dir) => agentEnvironment(context, { CLAUDE_CONFIG_DIR: dir }, sessionMarkers(context)),
-  });
+  }),
+  ...claudeTokenVariables(context.account, context.host),
+});
 
 // Claude names a project's directory after the real path it runs in, symlinks resolved.
 export const transcriptFile = (request: AgentRequest, configDir: string) =>

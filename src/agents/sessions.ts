@@ -35,7 +35,13 @@ export const rememberSession = (adapter: string, sessionId: string, session: str
     yield* fs.writeFileString(linkFile(root, adapter, sessionId), yield* Schema.encodeEffect(SessionLink)({ session, at }));
   }).pipe(Effect.orDie);
 
-const AccountRecord = Schema.Struct({ name: Schema.String, configDir: Schema.OptionFromNullOr(Schema.String), expectedEmail: Schema.OptionFromNullOr(Schema.String) });
+// Records written before oauthTokenEnv existed leave it out.
+const AccountRecord = Schema.Struct({
+  name: Schema.String,
+  configDir: Schema.OptionFromNullOr(Schema.String),
+  expectedEmail: Schema.OptionFromNullOr(Schema.String),
+  oauthTokenEnv: Schema.OptionFromOptionalKey(Schema.String),
+});
 
 export const SessionRecord = Schema.Struct({ adapter: Schema.String, sessionId: Schema.String, cwd: Schema.String, account: AccountRecord, at: Schema.String });
 
