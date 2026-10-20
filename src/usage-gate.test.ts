@@ -2,12 +2,14 @@ import { HEADLESS, printJson } from '@chernabog/sdk';
 import { expect, test } from 'bun:test';
 import * as DateTime from 'effect/DateTime';
 import * as Effect from 'effect/Effect';
+import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 
 import { effect, effectAtHomeWith } from '../test/effect-test.ts';
 import { fixture } from '../test/fixtures.ts';
+import { Home } from './config.ts';
 import { execTestLayer } from './Exec.ts';
-import { decideLaunch, type GateConfig, isExpired, keychainServiceFor, parseUsageReading, refreshByRunningClaude, UsageResponse } from './usage-gate.ts';
+import { decideLaunch, type GateConfig, isExpired, keychainServiceFor, parseUsageReading, readStoredOAuth, refreshByRunningClaude, UsageResponse } from './usage-gate.ts';
 
 const config: GateConfig = {
   targetEndUsage: 0.95,
@@ -16,7 +18,9 @@ const config: GateConfig = {
   humanRatePerHour: 0.005,
 };
 
-const recorded = fixture('usage.json', UsageResponse).pipe(Effect.flatMap(parseUsageReading));
+const now = DateTime.makeUnsafe('2026-10-15T20:00:00Z');
+
+const recorded = fixture('usage.json', UsageResponse).pipe(Effect.flatMap((response) => parseUsageReading(response, now)));
 
 type Usage = { readonly fiveHour?: number; readonly sevenDay?: number; readonly sevenDayResetsAt?: string };
 
@@ -24,9 +28,8 @@ const reading = (usage: Usage) =>
   parseUsageReading({
     five_hour: { utilization: usage.fiveHour ?? 10, resets_at: '2026-10-15T21:00:00Z' },
     seven_day: { utilization: usage.sevenDay ?? 20, resets_at: usage.sevenDayResetsAt ?? '2026-10-18T20:00:00Z' },
-  });
+  }, now);
 
-const now = DateTime.makeUnsafe('2026-10-15T20:00:00Z');
 
 const launches = (usage: Usage) => reading(usage).pipe(Effect.map((parsed) => decideLaunch(parsed, config, now)));
 
@@ -90,6 +93,25 @@ effect(
   }),
 );
 
+effect(
+  'a five-hour window not running yet, as when nothing was used in it, launches',
+  () => Effect.gen(function* () {
+    const idle = yield* fixture('usage-five-hour-idle.json', UsageResponse).pipe(Effect.flatMap((response) => parseUsageReading(response, now)));
+    expect(idle.fiveHour.used).toBe(0);
+    expect(decideLaunch(idle, config, now).launch).toBe(true);
+  }),
+);
+
+effect(
+  'a weekly window not running yet resets a week from now, so the human allowance covers the whole week',
+  () => Effect.gen(function* () {
+    const unused = yield* fixture('usage-unused.json', UsageResponse).pipe(Effect.flatMap((response) => parseUsageReading(response, now)));
+    expect(DateTime.formatIso(unused.sevenDay.resetsAt)).toBe('2026-10-22T20:00:00.000Z');
+    // 0.95 − 0 − 0.005 × 168h = 0.11
+    expect(decideLaunch(unused, config, now).reason).toMatch(/headroom 0\.110/);
+  }),
+);
+
 test('a token past its expiry is expired; one without an expiry is trusted', () => {
   const nowMs = DateTime.toEpochMillis(now);
   expect(isExpired({ accessToken: 'x', expiresAt: nowMs - 1 }, now)).toBe(true);
@@ -115,6 +137,7 @@ const effectRefreshing = effectAtHomeWith(
 
     return Option.some({ exitCode: 0, stdout: '', stderr: '' });
   }),
+  'darwin',
 );
 
 effectRefreshing('under a launcher, an expired token refreshes in a short interactive session, never claude -p', () =>
@@ -124,5 +147,59 @@ effectRefreshing('under a launcher, an expired token refreshes in a short intera
     expect(execCalls).toContain('tmux new-session -d');
     expect(execCalls).toContain('tmux kill-session -t');
     expect(execCalls.filter((call) => call.startsWith('claude'))).toEqual([]);
+  }),
+);
+
+// On Linux nothing runs `security`; the login is a file in the config directory.
+const effectOnLinux = effectAtHomeWith(
+  execTestLayer((command) => {
+    if (command === 'security') return Option.some({ exitCode: 44, stdout: '', stderr: 'security: command not found' });
+
+    return Option.none();
+  }),
+  'linux',
+);
+
+const writeCredentials = (dir: string, contents: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(`${dir}/.credentials.json`, contents);
+  });
+
+effectOnLinux('on Linux, the default account reads ~/.claude/.credentials.json', () =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    yield* writeCredentials(`${home.user}/.claude`, printJson({ claudeAiOauth: { accessToken: 'linux-token', expiresAt: 4102444800000 } }));
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>() };
+    expect((yield* readStoredOAuth(account)).accessToken).toBe('linux-token');
+  }),
+);
+
+effectOnLinux('on Linux, an account with its own config directory reads the credentials file there', () =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    const configDir = `${home.user}/.claude-personal`;
+    yield* writeCredentials(configDir, printJson({ claudeAiOauth: { accessToken: 'personal-token' } }));
+    const account = { name: 'personal', configDir: Option.some(configDir), expectedEmail: Option.none<string>() };
+    expect((yield* readStoredOAuth(account)).accessToken).toBe('personal-token');
+  }),
+);
+
+effectOnLinux('on Linux, a missing credentials file says to log in', () =>
+  Effect.gen(function* () {
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>() };
+    const failed = yield* Effect.flip(readStoredOAuth(account));
+    expect(failed.message).toMatch(/\.credentials\.json; run claude auth login/);
+  }),
+);
+
+effectOnLinux('on Linux, a credentials file without an OAuth login fails loudly', () =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    yield* writeCredentials(`${home.user}/.claude`, printJson({}));
+    const account = { name: 'work', configDir: Option.none<string>(), expectedEmail: Option.none<string>() };
+    const failed = yield* Effect.flip(readStoredOAuth(account));
+    expect(failed.message).toMatch(/No claudeAiOauth.accessToken in .*\.credentials\.json/);
   }),
 );

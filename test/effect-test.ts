@@ -17,8 +17,8 @@ const TemporaryHome = Layer.effect(
   FileSystem.FileSystem.use((fs) => fs.makeTempDirectoryScoped({ prefix: 'chernabog-home-' })).pipe(Effect.map((root) => Home.of({ root, user: root }))),
 );
 
-// Also a home of its own, a host environment with only PATH set, and any other services a test fakes.
-export const effectAtHomeWith = <A>(fakes: Layer.Layer<A>) =>
-  it.scopedLive.layer(Layer.mergeAll(TemporaryHome, HostEnvironment.fixed({ PATH: '/usr/bin' }), fakes).pipe(Layer.provideMerge(BunServices.layer)));
+// Also a home of its own, a host environment with only PATH set (on this OS, or the one given), and any other services a test fakes.
+export const effectAtHomeWith = <A>(fakes: Layer.Layer<A>, platform: string = process.platform) =>
+  it.scopedLive.layer(Layer.mergeAll(TemporaryHome, HostEnvironment.fixed({ PATH: '/usr/bin' }, platform), fakes).pipe(Layer.provideMerge(BunServices.layer)));
 
 export const effectAtHome = effectAtHomeWith(Layer.empty);
