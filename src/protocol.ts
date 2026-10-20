@@ -13,6 +13,8 @@ export const FlowStatus = Schema.Struct({
   next: Maybe,
   lastTick: Maybe,
   enabled: Schema.Boolean,
+  // Why it doesn't run on this machine, when it doesn't.
+  offReason: Schema.optionalKey(Schema.String),
   // What the last tick found waiting for a run.
   queued: Schema.Array(Schema.String),
 });

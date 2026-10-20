@@ -38,7 +38,7 @@ const settings: RepoSettings = {
   configDir: '/tmp/demo/.chernabog',
 };
 
-const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {} };
+const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {} };
 
 const item = (key: string, signals: ReadonlyArray<string> = []): WorkItem => ({ key, data: { key }, signals });
 

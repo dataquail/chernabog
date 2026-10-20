@@ -115,6 +115,11 @@ describe('the main view', () => {
     expect(plain(lines).split('\n').every((line) => line.length <= 50)).toBe(true);
   });
 
+  test("says why a flow is off when it isn't simply turned off", () => {
+    const notRunner = { ...status, repos: status.repos.map((repo) => ({ ...repo, flows: repo.flows.map((flow) => ({ ...flow, enabled: false, offReason: 'not a runner (runners: alice; this machine is bob)' })) })) };
+    expect(plain(view(model({ status: Option.some(notRunner) })))).toMatch(/implement\s+off\s+not a runner \(runners: alice; this machine is bob\)/);
+  });
+
   test('without the daemon, it says so', () => {
     expect(plain(view(model({ status: Option.none(), error: Option.some('the daemon is not running. Retrying…') })))).toContain('the daemon is not running');
   });

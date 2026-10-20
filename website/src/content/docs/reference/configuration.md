@@ -30,7 +30,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
-| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent` for one flow                |
+| `runners`          | anyone                     | GitHub logins whose machines run the flows; see [Runners](#runners)      |
+| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `runners` for one flow     |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `3`                     | reviews of one pull request before `auto:needs-human`                    |
@@ -38,6 +39,19 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 
 `launchers` is refused here: only machine config defines launcher commands.
+
+### Runners
+
+`runners` names the GitHub logins whose machines run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Unset, every enrolled machine runs them. On any other machine the flow is off, and `status` says why: `off, not a runner (runners: alice; this machine is bob)`. A machine's login is the one its `gh` token belongs to, looked up when the daemon starts.
+
+It's coordination, not access control: whoever enrolls the repo can still run a flow, by setting `flows.<flow>.enabled: true` in their `local.yaml`, for instance to cover for a runner who is away. A flow the team turns off with `flows.<flow>.enabled: false` stays off for runners too. Claims are race-safe without it: two machines never implement the same issue.
+
+```yaml
+# .chernabog/config.yaml
+runners: [alice]
+flows:
+  review: { runners: [alice, bob] }
+```
 
 ```yaml
 # .chernabog/config.yaml
@@ -59,7 +73,7 @@ limits: { reviewRounds: 2, staleAfter: 1 day }
 | `activeHours`  | start runs only within these hours                            |
 | `agent`        | adapter that implements, over the repo's                      |
 | `launcher`     | your launcher for this repo; wins over every other layer      |
-| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent` for one flow    |
+| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
 
 ```yaml
 # .chernabog/local.yaml

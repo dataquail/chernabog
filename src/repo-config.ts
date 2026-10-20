@@ -46,6 +46,13 @@ const FlowSettings = Schema.Struct({
 
 export type FlowSettings = typeof FlowSettings.Type;
 
+// GitHub logins whose machines run a flow by default; anyone's, when left out.
+const Runners = Schema.Array(Schema.String).annotate({
+  description: "GitHub logins whose machines run this by default; anyone's when unset. A person can still turn a flow on in their local.yaml.",
+});
+
+const RepoFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: Schema.optionalKey(Runners) });
+
 const LimitsFile = Schema.Struct({
   localGateRounds: Schema.optionalKey(Schema.Int),
   ciRounds: Schema.optionalKey(Schema.Int),
@@ -69,9 +76,13 @@ const LabelsFile = Schema.Struct({
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.
 const MACHINE_ONLY = 'launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)';
+const TEAM_ONLY = 'runners is the team\'s choice, in .chernabog/config.yaml; to run a flow here anyway, set flows.<flow>.enabled: true';
 
 // No value is allowed, so editors flag the key too.
 const MachineOnly = Schema.optionalKey(Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }));
+const TeamOnly = Schema.optionalKey(Schema.Never.annotate({ description: TEAM_ONLY, message: TEAM_ONLY }));
+
+const LocalFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: TeamOnly });
 
 // A YAML null turns the setting off.
 const Nullable = <S extends Schema.Constraint>(schema: S) => Schema.optionalKey(Schema.OptionFromNullOr(schema));
@@ -94,7 +105,8 @@ export const RepoConfigFile = Schema.Struct({
   allowedLaunchers: Schema.optionalKey(Strings),
   launchers: MachineOnly,
   limits: Schema.optionalKey(LimitsFile),
-  flows: Schema.optionalKey(Schema.Record(Schema.String, FlowSettings)),
+  runners: Schema.optionalKey(Runners),
+  flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
 });
 
 export type RepoConfigFile = typeof RepoConfigFile.Type;
@@ -107,7 +119,8 @@ export const LocalConfigFile = Schema.Struct({
   agent: Schema.optionalKey(Schema.String),
   launcher: Schema.optionalKey(Schema.String),
   launchers: MachineOnly,
-  flows: Schema.optionalKey(Schema.Record(Schema.String, FlowSettings)),
+  runners: TeamOnly,
+  flows: Schema.optionalKey(Schema.Record(Schema.String, LocalFlowSettings)),
 });
 
 export type LocalConfigFile = typeof LocalConfigFile.Type;
@@ -196,6 +209,36 @@ export type EffectiveRepo = {
   readonly schedule: { readonly local: Option.Option<string>; readonly repo: Option.Option<string> };
   readonly activeHours: Option.Option<string>;
   readonly flows: Readonly<Record<string, FlowSettings>>;
+  // Whose machines run each flow by default, by GitHub login: the flow's own
+  // list, else the repo's; anyone's without either.
+  readonly runners: { readonly repo: Option.Option<ReadonlyArray<string>>; readonly flows: Readonly<Record<string, ReadonlyArray<string>>> };
+  // The flows the person turned on or off in local.yaml, which beat the runners.
+  readonly localEnabled: Readonly<Record<string, boolean>>;
+};
+
+export const FLOW_TURNED_OFF = 'flow turned off';
+
+export const runnersOf = (repo: EffectiveRepo, flow: string) => Option.orElse(Record.get(repo.runners.flows, flow), () => repo.runners.repo);
+
+export const hasRunners = (repo: EffectiveRepo) => Option.isSome(repo.runners.repo) || Object.keys(repo.runners.flows).length > 0;
+
+// Why a flow doesn't run on this machine, if it doesn't: the person's own
+// choice in local.yaml, else the team's flows.<flow>.enabled, else whether
+// this machine's GitHub login is one of the flow's runners. Logins are
+// case-insensitive, as on GitHub.
+export const flowOff = (repo: EffectiveRepo, flow: string, login: Option.Option<string>): Option.Option<string> => {
+  const own = Record.get(repo.localEnabled, flow);
+
+  if (Option.isSome(own)) return Option.liftPredicate(FLOW_TURNED_OFF, () => !own.value);
+
+  if (Option.exists(Record.get(repo.flows, flow), (settings) => settings.enabled === false)) return Option.some(FLOW_TURNED_OFF);
+
+  return Option.flatMap(runnersOf(repo, flow), (runners) => {
+    const isRunner = Option.exists(login, (self) => runners.some((runner) => runner.toLowerCase() === self.toLowerCase()));
+    const who = Option.match(login, { onNone: () => "this machine's GitHub login is unknown", onSome: (self) => `this machine is ${self}` });
+
+    return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !isRunner);
+  });
 };
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.
@@ -365,12 +408,15 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
 
     // A person who sets their own default schedule chooses when every flow
     // runs for them, so the team's per-flow schedules give way to it.
+    const teamFlows = Record.map(repo.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
+
     const repoFlows = Option.match(Option.fromUndefinedOr(local.schedule), {
-      onNone: () => repo.flows ?? {},
-      onSome: () => Record.map(repo.flows ?? {}, ({ schedule: _schedule, ...settings }) => settings),
+      onNone: () => teamFlows,
+      onSome: () => Record.map(teamFlows, ({ schedule: _schedule, ...settings }) => settings),
     });
 
-    const flows = mergeFlows([repoFlows, local.flows ?? {}], machine.concurrency);
+    const localFlows = Record.map(local.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
+    const flows = mergeFlows([repoFlows, localFlows], machine.concurrency);
     const agent = local.agent ?? repo.agent ?? account.agent;
     const agentAccounts = accountsByAgent(machine, account);
     const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), files);
@@ -404,6 +450,11 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
       schedule: { local: Option.fromUndefinedOr(local.schedule), repo: Option.fromUndefinedOr(repo.schedule) },
       activeHours: Option.fromUndefinedOr(local.activeHours),
       flows,
+      runners: {
+        repo: Option.fromUndefinedOr(repo.runners),
+        flows: Object.fromEntries(Object.entries(repo.flows ?? {}).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.runners), (runners) => [flow, runners] as const)))),
+      },
+      localEnabled: Object.fromEntries(Object.entries(localFlows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.enabled), (enabled) => [flow, enabled] as const)))),
     } satisfies EffectiveRepo;
   });
 
