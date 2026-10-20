@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "engines": {
+    "chernabog": ">=0.6.0"
+  },
+  "devDependencies": {
+    "@chernabog/sdk": "0.3.0",
+    "effect": "4.0.5"
+  }
+}

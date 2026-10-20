@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=./config.schema.json
+#
+# What work Chernabog does in this repo, and how. Committed, so the whole team
+# shares it. Each person's .chernabog/local.yaml (gitignored) decides when it
+# runs for them and with which agent.
+
+baseBranch: main
+
+# Run in a fresh worktree before the agent starts. null for none.
+install: bun install --frozen-lockfile
+
+# Commands the change must pass before its pull request opens.
+localGate:
+  - bun run check
+  - bun run lint
+  - bun test
+
+# Decisions the agent must stop for and leave to a person.
+humanOnly:
+  - anything that changes how releases are cut or published (`RELEASE.md`,
+    release-please config, the Homebrew formula script)
+  - a breaking change to `@chernabog/sdk`'s exports, or to a config file's
+    shape that enrolled repos already rely on
+
+# Paths a change must not touch; one that does goes to a person instead of a pull request.
+humanOnlyPaths:
+  - .github/**
+  - .chernabog/**
+  - release-please-config.json
+  - .release-please-manifest.json
+
+# Repo facts the agent should know.
+notes:
+  - Squash merges make the pull request title the commit on main, and
+    release-please reads it to pick the next version, so pick its conventional
+    type for what the change does to chernabog's users (see `RELEASE.md`).
+  - The binary bundles `@chernabog/sdk`; a change under `packages/sdk/` releases
+    both.
+
+# Default schedule for every flow, as cron. Unset spreads repos across the hour.
+# schedule: "17 * * * *"
+
+# Whose machines run the flows, by GitHub login. Unset: anyone's. Elsewhere a
+# flow is off unless that person turns it on in their local.yaml.
+# runners: [alice]
+
+# Per flow: schedule, concurrency, enabled, agent, runners, assignee and
+# reviewRequested. A reviewer on another agent than the one that wrote the code
+# avoids a model approving its own work; it runs under that agent's account in
+# machine config. assignee and reviewRequested work like GitHub's assignee: and
+# review-requested: qualifiers: "@me" (this machine's GitHub login), a login,
+# none, or a list. A machine starts only the work they match.
+# flows:
+#   implement:
+#     assignee: ["@me", none]
+#   review:
+#     agent: codex
+#     reviewRequested: "@me"
+
+# Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
+# launcher a person defines in their machine config. Each person can choose
+# their own in machine config or local.yaml; launcher here is only the default,
+# and allowedLaunchers limits what they may choose. Unset: any launcher, with
+# headless as the default.
+# launcher: orca
+# allowedLaunchers: [orca, tmux, headless]
+
+limits:
+  localGateRounds: 2
+  ciRounds: 3
+  reviewRounds: 3
+  staleAfter: 6 hours
+  ciTimeout: 2 hours

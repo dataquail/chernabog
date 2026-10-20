@@ -5,3 +5,4 @@ dist/
 *.db-wal
 *.bun-build
 .astro/
+.chernabog/local.yaml
