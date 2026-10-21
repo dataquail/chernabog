@@ -25,7 +25,7 @@ import * as Workflow from 'effect/workflow/Workflow';
 import { adaptersFor, AgentLive, type AgentsConfig } from './agents.ts';
 import { Home, homePaths } from './config.ts';
 import { GitHubApi } from './GitHubApi.ts';
-import type { Persona } from './persona.ts';
+import { IMPLICIT, type Persona } from './persona.ts';
 import type { EffectiveRepo } from './repo-config.ts';
 import { noHooks, runLogWriting, type StepHooks } from './runlog.ts';
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from './sdk-live.ts';
@@ -145,13 +145,19 @@ export const flowLayer = <R>(handle: FlowHandle, servicesFor: ServicesFor<R>, ho
     Effect.gen(function* () {
       const state = yield* State;
       const row = yield* state.run(payload.runId);
+      const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () => Option.flatMap(row, (found) => found.persona));
 
-      const persona = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
-        Option.getOrElse(
-          Option.flatMap(row, (found) => Option.some(found.persona)),
-          () => defaultPersona(handle.repo),
-        ),
-      );
+      // A run from before personas acts as the implicit persona while the repo
+      // still has one, else as its first persona. Its row may not say so yet:
+      // the engine can resume it before the daemon adopts it.
+      const persona = Option.match(named, {
+        onSome: (login): Persona => Option.some(login),
+        onNone: () => {
+          if (Option.isSome(servicesFor(IMPLICIT))) return IMPLICIT;
+
+          return defaultPersona(handle.repo);
+        },
+      });
 
       const services = servicesFor(persona);
 

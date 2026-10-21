@@ -103,12 +103,12 @@ const asAliceOrBob = Effect.gen(function* () {
 });
 
 // A fresh home and engine for each test, with the platform the test runs on.
-const withEngine = <A, E, R>(program: Effect.Effect<A, E, R>, personas = Effect.map(Layer.build(repoServices), forEveryPersona)) =>
+const withEngine = <A, E, R>(program: Effect.Effect<A, E, R>, personas = Effect.map(Layer.build(repoServices), forEveryPersona), flowsOf = handle) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-engine-' });
     const homeLayer = Home.at(home, home);
-    const engine = yield* Layer.build(flowLayer(handle, yield* personas).pipe(Layer.provideMerge(StateAt(homePaths(home).state)), Layer.provideMerge(homeLayer)));
+    const engine = yield* Layer.build(flowLayer(flowsOf, yield* personas).pipe(Layer.provideMerge(StateAt(homePaths(home).state)), Layer.provideMerge(homeLayer)));
     const platform = yield* Effect.context<BunServices.BunServices>();
 
     return { home, value: yield* Effect.provideContext(program, Context.merge(platform, engine)) };
@@ -240,6 +240,26 @@ describe('personas', () => {
 
       const { value: finished } = yield* withEngine(adopted, asAliceOrBob);
       expect(summaryOf(finished)).toBe('as bob');
+    }),
+  );
+
+  effect(
+    "a run from before personas, resumed before it's adopted, acts as the repo's first persona",
+    () => Effect.gen(function* () {
+      const asPersonas = flowHandle({ ...repo, personas: [alice, bob] }, 'demo', flow);
+
+      const unadopted = Effect.gen(function* () {
+        const state = yield* State;
+        yield* state.insertRun({ id: 'old', repo: 'demo', persona: Option.none(), flow: 'demo', itemKey: 'whoami', itemTitle: Option.none(), itemUrl: Option.none() });
+        yield* state.setExecution('old', yield* asPersonas.workflow.execute({ runId: 'old', item: item('whoami') }, { discard: true }));
+
+        return yield* pollRun(asPersonas, Option.getOrThrow(yield* state.run('old'))).pipe(
+          Effect.repeat({ schedule: Schedule.spaced('25 millis'), while: isRunning, times: POLLS }),
+        );
+      });
+
+      const { value: finished } = yield* withEngine(unadopted, asAliceOrBob, asPersonas);
+      expect(summaryOf(finished)).toBe('as alice');
     }),
   );
 
