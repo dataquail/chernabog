@@ -273,7 +273,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       select(
         [
           segment(`  ${pad(run.status, 12)}`, STATUS_STYLE[run.status]),
-          segment(`${pad(`${run.repo}/${run.flow}`, 22)} ${pad(title, 28)}`),
+          segment(`${pad(`${run.repo}/${run.flow}${Option.match(run.persona, { onNone: () => '', onSome: (login) => `@${login}` })}`, 22)} ${pad(title, 28)}`),
           segment(` ${pad(when, 8)} `, 'dim'),
           segment(firstLine(runDetail(run)), detailStyle(run.status)),
         ],

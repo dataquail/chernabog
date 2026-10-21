@@ -222,8 +222,9 @@ describe('personas', () => {
       const { value } = yield* withEngine(Effect.all({ alice: startRun(handle, alice, item('wait')), bob: startRun(handle, bob, item('wait')), again: startRun(handle, bob, item('wait')) }), asAliceOrBob);
       expect(value.alice.started && value.bob.started).toBe(true);
       expect(value.again.started).toBe(false);
-      expect(Option.map(value.alice.run, (run) => run.id.startsWith('demo.demo@alice.wait.'))).toEqual(Option.some(true));
+      expect(Option.flatMap(value.alice.run, (run) => run.persona)).toEqual(alice);
       expect(Option.flatMap(value.bob.run, (run) => run.persona)).toEqual(bob);
+      expect(Option.map(value.alice.run, (run) => run.id)).not.toEqual(Option.map(value.bob.run, (run) => run.id));
     }),
   );
 

@@ -35,7 +35,7 @@ import { runLogWriting } from './runlog.ts';
 import { adoptRuns, buildPersonaContexts, type PersonaContext, type RepoContext, servicesFrom, withRepo } from './runner.ts';
 import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
-import { everyRun, State } from './state.ts';
+import { everyRun, runLabel, State } from './state.ts';
 import { trustedTree } from './trust.ts';
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -368,7 +368,7 @@ export const runDaemon = Effect.gen(function* () {
 
             if (outcome.started && Option.isSome(outcome.run)) {
               started.push(outcome.run.value.id);
-              yield* log(`started ${outcome.run.value.id}`);
+              yield* log(`started ${outcome.run.value.id} (${runLabel(outcome.run.value)})`);
             }
           }
 
@@ -397,7 +397,7 @@ export const runDaemon = Effect.gen(function* () {
 
               const polled = yield* pollRun(handle.value, activeRun);
 
-              if (polled.status !== 'running') yield* log(`finished ${polled.id}: ${polled.status}: ${Option.getOrElse(polled.summary, () => '')}`);
+              if (polled.status !== 'running') yield* log(`finished ${polled.id} (${runLabel(polled)}): ${polled.status}: ${Option.getOrElse(polled.summary, () => '')}`);
             }
 
             yield* Effect.sleep('3 seconds');

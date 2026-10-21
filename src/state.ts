@@ -9,7 +9,7 @@ import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
 import * as SqlClient from 'effect/sql/SqlClient';
 
-import type { Persona } from './persona.ts';
+import { asSuffix, type Persona } from './persona.ts';
 
 export const RunStatus = Schema.Literals(['running', 'done', 'skipped', 'needs-human', 'failed']);
 
@@ -36,6 +36,20 @@ export const RunRow = Schema.Struct({
 });
 
 export type RunRow = typeof RunRow.Type;
+
+const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
+
+// Enough of a run's id to name it, as `logs` and `attach` take it. A run from
+// before ids were random keeps its whole, readable id.
+export const shortRunId = (id: string) => {
+  if (UUID.test(id)) return id.slice(0, 8);
+
+  return id;
+};
+
+// What a run is, for people, since its id doesn't say: demo/review pr-12 as bob.
+export const runLabel = (run: { readonly repo: string; readonly flow: string; readonly itemKey: string; readonly persona: Option.Option<string> }) =>
+  `${run.repo}/${run.flow} ${run.itemKey}${asSuffix(run.persona)}`;
 
 export const WaitRow = Schema.Struct({ runId: Schema.String, signal: Schema.String, deferred: Schema.String, token: Schema.String });
 

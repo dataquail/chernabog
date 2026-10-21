@@ -11,7 +11,7 @@ import * as Cause from 'effect/Cause';
 import * as ClusterWorkflowEngine from 'effect/cluster/ClusterWorkflowEngine';
 import * as SingleRunner from 'effect/cluster/SingleRunner';
 import type * as Context from 'effect/Context';
-import * as DateTime from 'effect/DateTime';
+import * as Crypto from 'effect/Crypto';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as FileSystem from 'effect/FileSystem';
@@ -189,15 +189,29 @@ export const flowLayer = <R>(handle: FlowHandle, servicesFor: ServicesFor<R>, ho
       }).pipe(Effect.catchTag('RunFailed', Effect.fail), Effect.orDie),
     );
 
-// 2026-10-17T16:50:44.229Z → 20261017-165044
-const timestamp = (now: DateTime.Utc) => DateTime.formatIso(now).replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+// A run's id says nothing about it: its row records what it runs, and as whom.
+// Random rather than time-ordered, so a few characters of it name a run.
+const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
 
-// A persona's runs say whose they are, so two personas' runs of one item never share an id.
-export const makeRunId = (repo: string, flow: string, persona: Persona, itemKey: string, now: DateTime.Utc) => {
-  const who = Option.match(persona, { onNone: () => '', onSome: (login) => `@${login}` });
+// The ids a prefix names, among the runs with a log, as `logs` and `attach` take them.
+export const resolveRunId = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = homePaths((yield* Home).root).runs;
+    const ids = (yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((name) => name.endsWith('.log')).map((name) => name.slice(0, -'.log'.length));
 
-  return `${repo}.${flow}${who}.${itemKey.replace(/[^\w-]+/g, '-')}.${timestamp(now)}`;
-};
+    if (ids.includes(prefix)) return prefix;
+
+    const matching = ids.filter((id) => id.startsWith(prefix));
+
+    if (matching.length === 1) return matching[0];
+
+    if (matching.length === 0) return yield* new RunFailed({ message: `no run ${prefix}` });
+
+    const shown = [...matching.slice(0, 5), ...Option.toArray(Option.liftPredicate('…', () => matching.length > 5))];
+
+    return yield* new RunFailed({ message: `${prefix} names ${matching.length} runs (${shown.join(', ')}); give more of the id` });
+  });
 
 export type Started = { readonly run: Option.Option<RunRow>; readonly started: boolean };
 
@@ -213,7 +227,7 @@ export const startRun = (handle: FlowHandle, persona: Persona, item: WorkItem) =
 
     if (item.wakeOnly === true) return { run: Option.none(), started: false } satisfies Started;
 
-    const runId = makeRunId(repo, handle.name, persona, item.key, yield* DateTime.now);
+    const runId = yield* newRunId;
     yield* state.insertRun({ id: runId, repo, persona, flow: handle.name, itemKey: item.key, itemTitle: Option.fromUndefinedOr(item.title), itemUrl: Option.fromUndefinedOr(item.url) });
     const payload = Option.match(persona, { onNone: () => ({ runId, item }), onSome: (login) => ({ runId, item, persona: login }) });
     const executionId = yield* handle.workflow.execute(payload, { discard: true });

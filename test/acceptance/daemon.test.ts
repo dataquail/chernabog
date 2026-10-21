@@ -75,9 +75,9 @@ describe('the daemon', () => {
 
   test('runs the flow when its schedule comes due, through the gate, to a hand-off', async () => {
     await waitFor(() => [...sandbox.github.pulls.values()].some((pull) => pull.labels.includes('auto:needs-review')), 'a scheduled run to hand off', 45_000);
-    await waitFor(() => /finished demo\.implement\.issue-1\.\S+: done/.test(sandbox.daemonLog()), 'the daemon to record the run as done');
+    await waitFor(() => /finished [\da-f-]{36} \(demo\/implement issue-1\): done/.test(sandbox.daemonLog()), 'the daemon to record the run as done');
     const { output } = await sandbox.runCli(['status']);
-    expect(output).toMatch(/done\s+demo\.implement\.issue-1/);
+    expect(output).toMatch(/done\s+[\da-f]{8}\s+demo\/implement issue-1/);
   }, 60_000);
 
   test('the usage gate holds a run back and says why', async () => {

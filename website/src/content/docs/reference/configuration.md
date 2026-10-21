@@ -155,7 +155,7 @@ repos:
 
 Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`'s active account. `github:` lists GitHub logins it acts as instead, each logged in to `gh` side by side (`gh auth login`, then `gh auth switch` back to your usual account). A persona's token always comes from `gh auth token --user <login>`; Chernabog never stores it.
 
-A repo's `personas` names which of them run its flows. With one login under `github:`, that one is the default; with several, the repo must choose. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. Run ids say whose they are (`demo.review@bob.pr-12.…`), and `status` shows `review as bob`.
+A repo's `personas` names which of them run its flows. With one login under `github:`, that one is the default; with several, the repo must choose. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 
 A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
 

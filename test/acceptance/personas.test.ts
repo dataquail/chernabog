@@ -53,7 +53,7 @@ describe('personas', () => {
 
     expect(sandbox.github.reviewsOf(number).map((review) => review.author)).toEqual(['bob']);
     expect(sandbox.daemonLog()).toContain('acting on GitHub as alice, bob');
-    expect(sandbox.daemonLog()).toMatch(new RegExp(`started demo\\.review@bob\\.pr-${number}\\.`));
+    expect(sandbox.daemonLog()).toMatch(new RegExp(`started [\\da-f-]{36} \\(demo/review pr-${number} as bob\\)`));
     await waitFor(() => sandbox.daemonLog().includes(`demo/review@alice: skipped: only work for others: pr-${number} (review requested: bob)`), "alice's tick to leave it to bob");
 
     // Nothing the run did on GitHub was as anyone else.
@@ -66,7 +66,14 @@ describe('personas', () => {
     expect(sandbox.ghCalls().some((call) => call.includes('--user bob'))).toBe(true);
     expect(sandbox.ghCalls().some((call) => call.includes('with GH_TOKEN set'))).toBe(false);
 
+    // Its id is random; the start of it, as status shows it, names the run.
+    const runId = new RegExp(`started ([\\da-f-]{36}) \\(demo/review pr-${number} as bob\\)`).exec(sandbox.daemonLog())?.[1] ?? '';
+    const logs = await sandbox.runCli(['logs', runId.slice(0, 8)]);
+    expect(logs.code).toBe(0);
+    expect(logs.output).toContain('step: ');
+
     const status = (await sandbox.runCli(['status'])).output;
+    expect(status).toContain(`${runId.slice(0, 8)}  demo/review pr-${number} as bob`);
     expect(status).toContain('review as alice:');
     expect(status).toContain('review as bob:');
     expect(sandbox.github.pull(number).author).toBe(BOT);

@@ -21,7 +21,7 @@ import { type Persona, samePersona } from './persona.ts';
 import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, routingOf } from './repo-config.ts';
 import { routeItems } from './schedule.ts';
 import { snapshotConfig } from './snapshot.ts';
-import { type RunRow, State } from './state.ts';
+import { runLabel, type RunRow, State } from './state.ts';
 
 export type OpenRepo = { readonly repo: EffectiveRepo; readonly flows: ReadonlyMap<string, Flow>; readonly tree: Option.Option<string> };
 
@@ -194,7 +194,7 @@ const describeItem = (item: { readonly key: string; readonly title?: string }) =
 
 const resume = (handle: FlowHandle, persona: Persona, unfinished: RunRow, context: RepoContext) =>
   Effect.gen(function* () {
-    yield* Console.log(`resuming ${unfinished.id} (${unfinished.itemKey}), log: ${yield* runLogFile(unfinished.id)}`);
+    yield* Console.log(`resuming ${unfinished.id} (${runLabel(unfinished)}), log: ${yield* runLogFile(unfinished.id)}`);
 
     if (Option.isSome(unfinished.executionId)) yield* handle.workflow.resume(unfinished.executionId.value);
 
@@ -231,7 +231,7 @@ const startFirst = (handle: FlowHandle, persona: Persona, options: RunOptions, c
 
     if (Option.isNone(run)) return Option.none<RunRow>();
 
-    yield* Console.log(`started ${run.value.id} for ${describeItem(found.value)}, log: ${yield* runLogFile(run.value.id)}`);
+    yield* Console.log(`started ${run.value.id} (${runLabel(run.value)}) for ${describeItem(found.value)}, log: ${yield* runLogFile(run.value.id)}`);
 
     return Option.some(yield* followRun(handle, persona, run.value, context));
   });
