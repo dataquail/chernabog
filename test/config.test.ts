@@ -24,7 +24,9 @@ import {
   personasOf,
   RepoConfigFile,
   routingOf,
+  setAccountInMachineConfig,
   setFlowInMachineConfig,
+  setFlowSchedule,
 } from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
@@ -538,6 +540,63 @@ describe('turning a flow on or off in machine config', () => {
       const entry = yield* read;
       expect(entry.flows).toEqual({ implement: {} });
       expect(entry.personas).toEqual({ alice: {}, bob: { flows: { implement: {}, review: {} } } });
+    }),
+  );
+});
+
+describe('overriding schedules and accounts in machine config', () => {
+  const text = Effect.flatMap(machineConfigFile, (file) => FileSystem.FileSystem.use((fs) => fs.readFileString(file)));
+  const write = (written: string) => Effect.flatMap(machineConfigFile, (file) => FileSystem.FileSystem.use((fs) => fs.writeFileString(file, written)));
+
+  const entry = Effect.gen(function* () {
+    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(yield* text));
+
+    return (decoded.repos ?? [])[0];
+  });
+
+  const BASE = 'accounts:\n  work: {}\n  personal: {}\n  codex: { agent: codex }\nrepos:\n  - repo: dataquail/demo\n    path: /demo\n    # the flows I run\n    flows:\n      implement: {}\n';
+
+  effectAtHome("overrides a flow's schedule, and clearing it brings back the team's", () =>
+    Effect.gen(function* () {
+      yield* write(BASE);
+      yield* setFlowSchedule('demo', Option.none(), 'implement', Option.some('*/20 * * * *'));
+      yield* setFlowSchedule('demo', Option.none(), 'review', Option.some('5 * * * *'));
+      expect((yield* entry).flows).toEqual({ implement: { schedule: '*/20 * * * *' }, review: { enabled: false, schedule: '5 * * * *' } });
+      expect(yield* text).toContain('# the flows I run');
+
+      yield* setFlowSchedule('demo', Option.none(), 'implement', Option.none());
+      expect((yield* entry).flows?.implement).toEqual({});
+    }),
+  );
+
+  effectAtHome('an invalid schedule is refused with the reason, and nothing is written', () =>
+    Effect.gen(function* () {
+      yield* write(BASE);
+      const refused = yield* Effect.flip(setFlowSchedule('demo', Option.none(), 'implement', Option.some('every hour')));
+      expect(refused.message).toContain('"every hour" isn\'t a schedule');
+      expect(yield* text).toBe(BASE);
+    }),
+  );
+
+  effectAtHome("picks a persona's account and a role's, refuses ones that clash, and clears them", () =>
+    Effect.gen(function* () {
+      yield* write(BASE);
+      yield* setAccountInMachineConfig('demo', Option.none(), Option.none(), Option.some('personal'));
+      yield* setAccountInMachineConfig('demo', Option.none(), Option.some('reviewer'), Option.some('codex'));
+      expect(yield* entry).toMatchObject({ account: 'personal', roles: { reviewer: 'codex' } });
+
+      const clash = yield* Effect.flip(setAccountInMachineConfig('demo', Option.none(), Option.some('author'), Option.some('work')));
+      expect(clash.message).toContain("a claude account like the persona's own (personal)");
+      expect((yield* entry).roles).toEqual({ reviewer: 'codex' });
+
+      const unknown = yield* Effect.flip(setAccountInMachineConfig('demo', Option.none(), Option.none(), Option.some('nope')));
+      expect(unknown.message).toContain('account "nope" is not one of work, personal, codex');
+
+      yield* setAccountInMachineConfig('demo', Option.none(), Option.some('reviewer'), Option.none());
+      yield* setAccountInMachineConfig('demo', Option.none(), Option.none(), Option.none());
+      const cleared = yield* entry;
+      expect(cleared.account).toBeUndefined();
+      expect(cleared.roles).toBeUndefined();
     }),
   );
 });

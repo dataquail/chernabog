@@ -26,6 +26,9 @@ export const scheduleFor = (repo: PersonaRepo, flowName: string, flow: Flow, ind
 
 export const parseSchedule = (expression: string) => Result.getSuccess(Cron.parse(expression));
 
+// Why a cron expression isn't one, if it isn't.
+export const cronProblem = (expression: string) => Result.match(Cron.parse(expression), { onSuccess: () => Option.none<string>(), onFailure: (error) => Option.some(`"${expression}" isn't a schedule: ${error.message}`) });
+
 export const nextTick = (expression: string, after: DateTime.Utc) =>
   Option.map(parseSchedule(expression), (cron) => DateTime.fromDateUnsafe(Cron.next(cron, after)));
 

@@ -81,6 +81,8 @@ export const asPersona = (repoSettings: RepoSettings, persona: Persona): Persona
   activeHours: Option.none(),
   flows: {},
   chosen: [],
+  own: {},
+  teamFlows: {},
 });
 
 // A repo run as these personas: the implicit one, unless named.

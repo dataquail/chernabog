@@ -6,7 +6,9 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import * as Option from 'effect/Option';
+import * as Schema from 'effect/Schema';
 
+import { DaemonStatus } from '../../src/protocol.ts';
 import { openSandbox, type Sandbox, waitFor } from './sandbox.ts';
 
 describe('the daemon', () => {
@@ -125,6 +127,18 @@ describe('the daemon', () => {
     expect((await sandbox.runCli(['status'])).output).toContain(`assigned elsewhere: issue-${issue} (assignee: alice)`);
     expect(sandbox.github.issue(issue).labels).toContain('auto:eligible');
   }, 45_000);
+
+  test("reports each flow's team schedule and each persona's accounts, for the live view's settings", async () => {
+    const response = await fetch('http://daemon/status', { unix: socket() });
+    const status = DaemonStatus.pipe(Schema.decodeUnknownSync)(await response.json());
+    const demo = status.repos.find((repo) => repo.name === 'demo');
+    expect(demo?.flows.find((flow) => flow.name === 'implement')?.teamSchedule).toBe('*/2 * * * * *');
+    expect(demo?.personas).toEqual([{ account: 'work', ownAccount: Option.some('work'), roles: [] }]);
+    expect(status.accounts).toEqual([
+      { name: 'work', agent: 'claude' },
+      { name: 'codex', agent: 'codex' },
+    ]);
+  }, 30_000);
 
   test('picks up a repo enrolled while it runs, untrusted until trust, without a manual restart', async () => {
     // A second repo whose origin path reads as github.com/dataquail/other, so enroll takes it for a GitHub repo.

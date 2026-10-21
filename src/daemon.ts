@@ -29,7 +29,7 @@ import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
 import { type Persona, samePersona } from './persona.ts';
-import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
+import { DaemonStatus, type PersonaStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, type PersonaRepo, repoNameOf, type Routing, routingOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
 import { adoptRuns, buildPersonaContexts, type PersonaContext, type RepoContext, servicesFrom, withRepo } from './runner.ts';
@@ -69,6 +69,8 @@ type FlowSchedule = {
   readonly persona: Persona;
   readonly own: PersonaRepo;
   readonly expression: string;
+  // The schedule without the persona's own: the team's, or the flow's.
+  readonly teamExpression: string;
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
@@ -140,8 +142,9 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
 
         return repo.personas.map((own) => {
           const expression = scheduleFor(own, flowName, flow, index, machine.repos.length);
+          const teamExpression = scheduleFor({ ...own, flows: own.teamFlows, schedule: { own: Option.none(), repo: own.schedule.repo } }, flowName, flow, index, machine.repos.length);
 
-          return { handle, persona: own.persona, own, expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] };
+          return { handle, persona: own.persona, own, expression, teamExpression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] };
         });
       }),
       latestTree: Option.some(tree),
@@ -196,6 +199,16 @@ const sameLogins = Equivalence.Array(Equivalence.String);
 
 // How a schedule names itself in the log: repo/flow, and @login for a persona.
 const scheduleName = (repo: string, schedule: FlowSchedule) => `${repo}/${schedule.handle.name}${Option.match(schedule.persona, { onNone: () => '', onSome: (login) => `@${login}` })}`;
+
+// The roles a persona can give an account: the team's flows' roles, and its own picks.
+const rolesOf = (own: PersonaRepo) => Arr.dedupe([...Object.values(own.teamFlows).flatMap((flow) => Object.keys(flow.agents ?? {})), ...Object.keys(own.own.roles ?? {})]);
+
+const personaStatus = (own: PersonaRepo): PersonaStatus => ({
+  ...Option.match(own.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }),
+  account: own.settings.account.name,
+  ownAccount: Option.fromUndefinedOr(own.own.account),
+  roles: rolesOf(own).map((role) => ({ role, account: Option.fromUndefinedOr(own.own.roles?.[role]) })),
+});
 
 const checkoutChange = (missing: boolean) => {
   if (missing) return 'missing';
@@ -517,6 +530,8 @@ export const runDaemon = Effect.gen(function* () {
             name: flow.handle.name,
             ...Option.match(flow.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }),
             schedule: flow.expression,
+            teamSchedule: flow.teamExpression,
+            ...Option.match(Option.fromUndefinedOr(flow.own.own.flows?.[flow.handle.name]?.schedule), { onNone: () => ({}), onSome: (ownSchedule) => ({ ownSchedule }) }),
             next: formatOption(flow.next),
             lastTick: formatOption(flow.lastTick),
             queued: flow.queued,
@@ -524,6 +539,7 @@ export const runDaemon = Effect.gen(function* () {
             enabled: Option.isNone(offReason(flow)),
             ...Option.match(offReason(flow), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
           })),
+          ...Option.match(repo.repo, { onNone: () => ({}), onSome: (loaded) => ({ personas: loaded.personas.map(personaStatus) }) }),
         };
 
         if (!stale) return status;
@@ -540,6 +556,7 @@ export const runDaemon = Effect.gen(function* () {
           busy: yield* Ref.get(busy),
           reloadPending: yield* Ref.get(reloadPending),
           repos: repos.map(repoStatus(yield* readPaused)),
+          accounts: machine.accounts.map((account) => ({ name: account.name, agent: account.agent })),
           active: active.map((activeRun) => ({ ...activeRun, parked: parkedIds.includes(activeRun.id) })),
           recent: yield* state.recentRuns(20),
           skips: yield* state.recentSkips(20),

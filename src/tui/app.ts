@@ -21,7 +21,7 @@ import { Home } from '../config.ts';
 import { setPaused } from '../daemon.ts';
 import { runLogFile } from '../engine.ts';
 import { asSuffix, type Persona } from '../persona.ts';
-import { DEFAULT_GATE, loadMachineConfig, setFlowInMachineConfig } from '../repo-config.ts';
+import { DEFAULT_GATE, loadMachineConfig, setAccountInMachineConfig, setFlowInMachineConfig, setFlowSchedule } from '../repo-config.ts';
 import { readUsageLogLine } from '../usage-gate.ts';
 import { type Action, type Key, update } from './update.ts';
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from './view.ts';
@@ -88,6 +88,7 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   flowIndex: 0,
   runIndex: 0,
   view: 'main',
+  settings: Option.none(),
   logRun: Option.none(),
   logLines: [],
   logScroll: 0,
@@ -121,6 +122,22 @@ const toggleMessage = (repo: string, flow: string, persona: Persona, enabled: bo
   return `turned ${name} off in machine config; the daemon picks it up when idle`;
 };
 
+// Overrides written to machine config; the daemon restarts on them once idle.
+const scheduleMessage = (repo: string, flow: string, persona: Persona, schedule: Option.Option<string>) =>
+  Option.match(schedule, {
+    onNone: () => `cleared ${repo}/${flow}${asSuffix(persona)}'s schedule, back to the team's; the daemon picks it up when idle`,
+    onSome: (cron) => `scheduled ${repo}/${flow}${asSuffix(persona)} at ${cron}; the daemon picks it up when idle`,
+  });
+
+const accountMessage = (repo: string, persona: Persona, role: Option.Option<string>, account: Option.Option<string>) => {
+  const whose = `${repo}${asSuffix(persona)}${Option.match(role, { onNone: () => '', onSome: (named) => ` role ${named}` })}`;
+
+  return Option.match(account, {
+    onNone: () => `cleared ${whose}'s account, back to the default; the daemon picks it up when idle`,
+    onSome: (name) => `${whose} spends ${name}; the daemon picks it up when idle`,
+  });
+};
+
 const pauseMessage = (repo: string, paused: boolean) => {
   if (paused) return `paused ${repo}: no new runs start`;
 
@@ -142,7 +159,7 @@ export const runTui = Effect.gen(function* () {
   const events = yield* Queue.unbounded<Event>();
 
   renderer.keyInput.on('keypress', (key: KeyEvent) => {
-    Queue.offerUnsafe(events, { kind: 'key', key: { name: key.name, ctrl: key.ctrl } });
+    Queue.offerUnsafe(events, { kind: 'key', key: { name: key.name, ctrl: key.ctrl, sequence: key.sequence } });
   });
   renderer.on('resize', () => {
     Queue.offerUnsafe(events, { kind: 'resize' });
@@ -250,6 +267,18 @@ export const runTui = Effect.gen(function* () {
               onFailure: (failure) => failure.message,
             }),
           );
+        }
+
+        case 'set-schedule': {
+          const written = yield* Effect.result(Effect.andThen(setFlowSchedule(action.repo, action.persona, action.flow, action.schedule), daemonReload.pipe(Effect.ignore)));
+
+          return yield* say(Result.match(written, { onSuccess: () => scheduleMessage(action.repo, action.flow, action.persona, action.schedule), onFailure: (failure) => failure.message }));
+        }
+
+        case 'set-account': {
+          const written = yield* Effect.result(Effect.andThen(setAccountInMachineConfig(action.repo, action.persona, action.role, action.account), daemonReload.pipe(Effect.ignore)));
+
+          return yield* say(Result.match(written, { onSuccess: () => accountMessage(action.repo, action.persona, action.role, action.account), onFailure: (failure) => failure.message }));
         }
 
         case 'pause': {
