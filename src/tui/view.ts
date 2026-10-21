@@ -6,6 +6,7 @@ import * as DateTime from 'effect/DateTime';
 import * as Option from 'effect/Option';
 import * as Record from 'effect/Record';
 
+import { samePersona } from '../persona.ts';
 import type { ActiveRun, DaemonStatus, RepoStatus } from '../protocol.ts';
 import { FLOW_TURNED_OFF } from '../repo-config.ts';
 import type { RunStatus } from '../state.ts';
@@ -25,7 +26,8 @@ export type UsageRow = {
   readonly at: string;
 };
 
-export type FlowRow = { readonly repo: string; readonly flow: string };
+// A flow as one persona runs it; none for the implicit persona.
+export type FlowRow = { readonly repo: string; readonly flow: string; readonly persona: Option.Option<string> };
 
 export type RunEntry = typeof ActiveRun.Type;
 
@@ -54,7 +56,9 @@ const segment = (text: string, style: Style = 'plain'): Segment => ({ text, styl
 
 export const flowKey = (repo: string, flow: string) => `${repo}/${flow}`;
 
-// Whether a flow runs on this machine: as turned from here, else as the daemon has it.
+// Whether a flow runs on this machine: as turned from here, else as the daemon
+// has it. Turning a flow on or off is the same for each of its personas, as
+// local.yaml has it.
 export const flowEnabled = (model: Model, repo: string, flow: { readonly name: string; readonly enabled: boolean }) =>
   Option.getOrElse(Record.get(model.pendingFlows, flowKey(repo, flow.name)), () => flow.enabled);
 
@@ -73,7 +77,7 @@ const styleIf = (condition: boolean, style: Style): Style => {
 export const flowRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<FlowRow> =>
   Option.match(status, {
     onNone: () => [],
-    onSome: (found) => found.repos.flatMap((repo) => repo.flows.map((flow) => ({ repo: repo.name, flow: flow.name }))),
+    onSome: (found) => found.repos.flatMap((repo) => repo.flows.map((flow): FlowRow => ({ repo: repo.name, flow: flow.name, persona: Option.fromUndefinedOr(flow.persona) }))),
   });
 
 const MAX_RUNS = 15;
@@ -219,6 +223,9 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
 
   lines.push(heading('Repos and flows'));
   const selectedFlow = Arr.get(flowRows(Option.some(status)), model.flowIndex);
+  const labelOf = (flow: { readonly name: string; readonly persona?: string }) => `${flow.name}${Option.match(Option.fromUndefinedOr(flow.persona), { onNone: () => '', onSome: (login) => ` @${login}` })}`;
+  // Wide enough for a persona's name too, within reason.
+  const flowColumn = Math.min(24, Math.max(12, ...status.repos.flatMap((repo) => repo.flows.map((flow) => labelOf(flow).length + 1))));
 
   for (const repo of status.repos) {
     const state = repoState(repo);
@@ -230,11 +237,12 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     ]);
 
     for (const flow of repo.flows) {
-      const selected = model.focus === 'flows' && Option.exists(selectedFlow, (row) => row.repo === repo.name && row.flow === flow.name);
+      const persona = Option.fromUndefinedOr(flow.persona);
+      const selected = model.focus === 'flows' && Option.exists(selectedFlow, (row) => row.repo === repo.name && row.flow === flow.name && samePersona(row.persona, persona));
       const enabled = flowEnabled(model, repo.name, flow);
       const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
       const why = Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => !enabled && reason !== FLOW_TURNED_OFF);
-      lines.push(select([segment(`    ${pad(flow.name, 12)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`, 'dim')], selected));
+      lines.push(select([segment(`    ${pad(labelOf(flow), flowColumn)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`, 'dim')], selected));
     }
   }
 

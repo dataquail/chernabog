@@ -9,6 +9,8 @@ const Maybe = Schema.OptionFromNullOr(Schema.String);
 
 export const FlowStatus = Schema.Struct({
   name: Schema.String,
+  // The GitHub persona it runs as; absent for the implicit one.
+  persona: Schema.optionalKey(Schema.String),
   schedule: Schema.String,
   next: Maybe,
   lastTick: Maybe,
@@ -51,7 +53,8 @@ export const DaemonStatus = Schema.Struct({
 
 export type DaemonStatus = typeof DaemonStatus.Type;
 
-export const RunRequest = Schema.Struct({ repo: Schema.String, flow: Schema.String, item: Schema.OptionFromNullOr(Schema.String) });
+// `persona` picks one, for a flow that runs as several.
+export const RunRequest = Schema.Struct({ repo: Schema.String, flow: Schema.String, item: Schema.OptionFromNullOr(Schema.String), persona: Schema.optionalKey(Schema.String) });
 
 export type RunRequest = typeof RunRequest.Type;
 

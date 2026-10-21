@@ -165,7 +165,30 @@ const followRun = (handle: FlowHandle, persona: Persona, run: RunRow, context: R
     return current;
   });
 
-export type RunOptions = { readonly repo: string; readonly flow: string; readonly item: Option.Option<string>; readonly fromCheckout: boolean };
+// `persona` picks one for a repo that runs as several; with one, it's that one.
+export type RunOptions = { readonly repo: string; readonly flow: string; readonly item: Option.Option<string>; readonly fromCheckout: boolean; readonly persona: Option.Option<string> };
+
+// The persona a person asked for, which must be one of the repo's, or its only one.
+export const choosePersona = (repo: EffectiveRepo, wanted: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const logins = repo.personas.flatMap((persona) => Option.toArray(persona));
+
+    if (Option.isSome(wanted)) {
+      const found = Arr.findFirst(repo.personas, (persona) => Option.contains(persona, wanted.value));
+
+      if (Option.isNone(found)) {
+        const runs = Option.match(Arr.head(logins), { onNone: () => 'acts as whoever this machine is on GitHub', onSome: () => `runs as ${logins.join(', ')}` });
+
+        return yield* new ConfigError({ message: `${repo.settings.name} doesn't run as ${wanted.value}; it ${runs}` });
+      }
+
+      return found.value;
+    }
+
+    if (repo.personas.length > 1) return yield* new ConfigError({ message: `${repo.settings.name} runs as ${logins.join(', ')}; name one with --as` });
+
+    return defaultPersona(repo);
+  });
 
 const describeItem = (item: { readonly key: string; readonly title?: string }) => Option.match(Option.fromUndefinedOr(item.title), { onNone: () => item.key, onSome: (title) => `${item.key} (${title})` });
 
@@ -231,7 +254,7 @@ export const runInForeground = (options: RunOptions) =>
 
     const handle = flowHandle(repo, options.flow, flow.value);
     yield* acquireLock(homePaths((yield* Home).root).engineLock, `run ${options.flow} --repo ${repo.settings.name}`);
-    const persona = defaultPersona(repo);
+    const persona = yield* choosePersona(repo, options.persona);
     const contexts = yield* buildPersonaContexts(repo, machine);
     const context = yield* Effect.fromOption(servicesFrom(contexts)(persona)).pipe(Effect.orDie);
 

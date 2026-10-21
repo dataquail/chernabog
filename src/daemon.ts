@@ -23,12 +23,12 @@ import * as Result from 'effect/Result';
 import * as Schema from 'effect/Schema';
 
 import { Home, homePaths } from './config.ts';
-import { defaultPersona, deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
+import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
-import { IMPLICIT } from './persona.ts';
+import { type Persona, samePersona } from './persona.ts';
 import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, repoNameOf, type Routing, routingOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
@@ -62,8 +62,11 @@ export const setPaused = (name: string, paused: boolean) =>
     yield* fs.writeFileString(yield* pausedFile, `${yield* Schema.encodeEffect(PausedFile)(names)}\n`);
   });
 
+// One persona's schedule of one flow. The flow's handle, and so its workflow,
+// is shared by its personas.
 type FlowSchedule = {
   readonly handle: FlowHandle;
+  readonly persona: Persona;
   readonly expression: string;
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
@@ -129,10 +132,11 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
       message: Option.none(),
       tree: Option.some(tree),
       repo: Option.some(repo),
-      flows: [...flows].map(([flowName, flow]): FlowSchedule => {
+      flows: [...flows].flatMap(([flowName, flow]): ReadonlyArray<FlowSchedule> => {
         const expression = scheduleFor(repo, flowName, flow, index, machine.repos.length);
+        const handle = flowHandle(repo, flowName, flow);
 
-        return { handle: flowHandle(repo, flowName, flow), expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] };
+        return repo.personas.map((persona) => ({ handle, persona, expression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] }));
       }),
       latestTree: Option.some(tree),
       localConfig,
@@ -143,14 +147,14 @@ export type TickOptions = { readonly gates: boolean; readonly item: Option.Optio
 
 const describeQueued = (item: WorkItem) => Option.match(Option.fromUndefinedOr(item.title), { onNone: () => item.key, onSome: (title) => `${item.key} ${title}` });
 
-// The items a run may start for: not only waking one, and without a run already.
-const unstarted = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
+// The items a persona's run may start for: not only waking one, and without its run already.
+const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
     const state = yield* State;
     const waiting: Array<WorkItem> = [];
 
     for (const item of items) {
-      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, IMPLICIT, handle.name, item.key))) waiting.push(item);
+      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, persona, handle.name, item.key))) waiting.push(item);
     }
 
     return waiting;
@@ -179,11 +183,22 @@ const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTim
 const sameTree = Option.makeEquivalence(Equivalence.String);
 const sameText = Option.makeEquivalence(Equivalence.String);
 
-// What the daemon schedules from an enrolled repo: added, removed, moved or
-// on another base branch, the daemon must restart to schedule it anew.
+// What the daemon schedules from an enrolled repo: added, removed, moved, on
+// another base branch or run by other personas, the daemon must restart to
+// schedule it anew.
 const sameEnrolled = Equivalence.Array(
-  Equivalence.mapInput(Equivalence.Tuple([Equivalence.String, Equivalence.String, Equivalence.String]), (enrolled: EnrolledRepo) => [enrolled.repo, enrolled.path, baseBranchOf(enrolled)] as const),
+  Equivalence.mapInput(Equivalence.Tuple([Equivalence.String, Equivalence.String, Equivalence.String, Equivalence.String]), (enrolled: EnrolledRepo) => [
+    enrolled.repo,
+    enrolled.path,
+    baseBranchOf(enrolled),
+    (enrolled.personas ?? []).join(','),
+  ] as const),
 );
+
+const sameLogins = Equivalence.Array(Equivalence.String);
+
+// How a schedule names itself in the log: repo/flow, and @login for a persona.
+const scheduleName = (repo: string, schedule: FlowSchedule) => `${repo}/${schedule.handle.name}${Option.match(schedule.persona, { onNone: () => '', onSome: (login) => `@${login}` })}`;
 
 const changedAction = (trusted: boolean) => {
   if (trusted) return 'trusted, restarting on it when idle';
@@ -212,15 +227,32 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
-  // Who this machine is on GitHub, for repos that name their flows' runners
-  // or start only work assigned to it.
+  // Who the implicit persona is on GitHub, for repos that name their flows'
+  // runners or start only work assigned to it. A persona's login is its own.
   let login = Option.none<string>();
 
-  if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
+  if (repos.some((repo) => Option.exists(repo.repo, (loaded) => needsLogin(loaded) && loaded.personas.some(Option.isNone)))) {
     const found = yield* Effect.result(viewerLogin);
     login = Result.getSuccess(found);
     yield* log(Result.match(found, { onSuccess: (self) => `this machine is ${self} on GitHub`, onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}` }));
   }
+
+  if (machine.github.length > 0) yield* log(`acting on GitHub as ${machine.github.join(', ')}`);
+
+  // Several personas on one flow each see all its work unless @me tells them apart.
+  for (const repo of repos) {
+    if (Option.isNone(repo.repo) || repo.repo.value.personas.length < 2) continue;
+
+    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
+      const routing = routingOf(repo.repo.value, flow);
+
+      if (Option.isNone(routing.assignee) && Option.isNone(routing.reviewRequested)) {
+        yield* log(`${repo.name}/${flow}: runs as ${repo.repo.value.personas.flatMap((persona) => Option.toArray(persona)).join(', ')} with no assignee or reviewRequested, so each takes any of its work`);
+      }
+    }
+  }
+
+  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
 
   const busy = yield* Ref.make(0);
   const hooks = { onStep: () => Ref.update(busy, (count) => count + 1), onStepDone: () => Ref.update(busy, (count) => count - 1) };
@@ -232,7 +264,7 @@ export const runDaemon = Effect.gen(function* () {
     if (Option.isSome(repo.repo)) contexts.set(repo.name, yield* buildPersonaContexts(repo.repo.value, machine));
   }
 
-  const handles = repos.flatMap((repo) => repo.flows.map((flow) => flow.handle));
+  const handles = Arr.dedupe(repos.flatMap((repo) => repo.flows.map((flow) => flow.handle)));
 
   const flowLayers = handles.flatMap((handle) =>
     Option.toArray(Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) => flowLayer(handle, servicesFrom(personas), hooks))),
@@ -255,17 +287,18 @@ export const runDaemon = Effect.gen(function* () {
 
       const tick = (repo: RepoState, settings: EffectiveRepo, context: RepoContext, schedule: FlowSchedule, options: TickOptions) =>
         Effect.gen(function* () {
-          const { handle } = schedule;
+          const { handle, persona } = schedule;
           const { flow } = handle;
           const flowSettings = Record.get(settings.flows, handle.name);
+          const self = loginFor(persona);
 
           const record = (reason: string, itemKey: Option.Option<string>) =>
-            state.recordSkip({ repo: repo.name, persona: IMPLICIT, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
+            state.recordSkip({ repo: repo.name, persona, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
 
           if (options.gates) {
             const decision = decideTick({
               enabled: settings.enabled,
-              flowOff: flowOff(settings, handle.name, login),
+              flowOff: flowOff(settings, handle.name, self),
               paused: (yield* readPaused).includes(repo.name),
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
@@ -280,11 +313,11 @@ export const runDaemon = Effect.gen(function* () {
           if (Result.isFailure(triggered)) return yield* record(`trigger failed: ${describeError(triggered.failure)}`, Option.none());
 
           const items = triggered.success;
-          yield* deliverSignals(handle, defaultPersona(settings), items);
-          const waiting = yield* unstarted(handle, items);
-          // Work for others is left to their machines, unless a person names the item.
+          yield* deliverSignals(handle, persona, items);
+          const waiting = yield* unstarted(handle, persona, items);
+          // Work for others is left to them, unless a person names the item.
           const routing = routingOf(settings, handle.name);
-          const routed = routeItems(waiting, routing, login);
+          const routed = routeItems(waiting, routing, self);
           schedule.lastTick = Option.some(yield* DateTime.now);
           schedule.queued = routed.mine.map(describeQueued);
           schedule.elsewhere = routed.elsewhere.map(describeElsewhere(routing));
@@ -303,7 +336,7 @@ export const runDaemon = Effect.gen(function* () {
             const working = active.filter((activeRun) => !parkedIds.includes(activeRun.id));
 
             slots = freeSlots({
-              activeForFlow: working.filter((activeRun) => activeRun.repo === repo.name && activeRun.flow === handle.name).length,
+              activeForFlow: working.filter((activeRun) => activeRun.repo === repo.name && samePersona(activeRun.persona, persona) && activeRun.flow === handle.name).length,
               flowConcurrency: Option.getOrElse(Option.flatMap(flowSettings, (found) => Option.fromUndefinedOr(found.concurrency)), () => flow.concurrency ?? 1),
               activeOnMachine: working.length,
               machineConcurrency: machine.concurrency,
@@ -328,7 +361,7 @@ export const runDaemon = Effect.gen(function* () {
               }
             }
 
-            const outcome = yield* startRun(handle, defaultPersona(settings), item);
+            const outcome = yield* startRun(handle, persona, item);
 
             if (outcome.started && Option.isSome(outcome.run)) {
               started.push(outcome.run.value.id);
@@ -339,19 +372,15 @@ export const runDaemon = Effect.gen(function* () {
           return { started, skipped: Option.none() } satisfies TickResult;
         }).pipe(
           Effect.catchCause((cause) =>
-            log(`${repo.name}/${schedule.handle.name}: tick failed: ${String(cause)}`).pipe(Effect.as({ started: [], skipped: Option.some('tick failed') } satisfies TickResult)),
+            log(`${scheduleName(repo.name, schedule)}: tick failed: ${String(cause)}`).pipe(Effect.as({ started: [], skipped: Option.some('tick failed') } satisfies TickResult)),
           ),
         );
 
-      // A repo whose flows may run: loaded, and its base branch still on the trusted tree.
+      // A repo whose flows may run: loaded, and its base branch still on the
+      // trusted tree. Its services, as each persona.
       const runnable = (repo: RepoState) =>
         Option.filter(repo.repo, () => repo.status === 'ready' && sameTree(repo.latestTree, repo.tree)).pipe(
-          Option.flatMap((settings) =>
-            Option.map(
-              Option.flatMap(Option.fromUndefinedOr(contexts.get(repo.name)), (personas) => servicesFrom(personas)(defaultPersona(settings))),
-              (context) => ({ settings, context }),
-            ),
-          ),
+          Option.flatMap((settings) => Option.map(Option.fromUndefinedOr(contexts.get(repo.name)), (personas) => ({ settings, contextFor: servicesFrom(personas) }))),
         );
 
       // Polls running workflows and records the ones that finished.
@@ -388,9 +417,13 @@ export const runDaemon = Effect.gen(function* () {
                 if (!Option.exists(schedule.next, (next) => DateTime.isLessThanOrEqualTo(next, now))) continue;
 
                 schedule.next = nextTick(schedule.expression, now);
-                const result = yield* tick(repo, ready.value.settings, ready.value.context, schedule, { gates: true, item: Option.none() });
+                const context = ready.value.contextFor(schedule.persona);
 
-                if (Option.isSome(result.skipped)) yield* log(`${repo.name}/${schedule.handle.name}: skipped: ${result.skipped.value}`);
+                if (Option.isNone(context)) continue;
+
+                const result = yield* tick(repo, ready.value.settings, context.value, schedule, { gates: true, item: Option.none() });
+
+                if (Option.isSome(result.skipped)) yield* log(`${scheduleName(repo.name, schedule)}: skipped: ${result.skipped.value}`);
               }
             }
 
@@ -443,7 +476,7 @@ export const runDaemon = Effect.gen(function* () {
       const checkEnrolled = Effect.gen(function* () {
         const current = yield* Effect.option(loadMachineConfig);
 
-        if (enrolledChanged || Option.isNone(current) || sameEnrolled(current.value.repos, machine.repos)) return;
+        if (enrolledChanged || Option.isNone(current) || (sameEnrolled(current.value.repos, machine.repos) && sameLogins(current.value.github, machine.github))) return;
 
         enrolledChanged = true;
         yield* log('enrolled repos changed; restarting on them when idle');
@@ -465,7 +498,7 @@ export const runDaemon = Effect.gen(function* () {
 
       const repoStatus = (paused: ReadonlyArray<string>) => (repo: RepoState) => {
         const stale = repo.status === 'ready' && !sameTree(repo.latestTree, repo.tree);
-        const offReason = (name: string) => Option.flatMap(repo.repo, (settings) => flowOff(settings, name, login));
+        const offReason = (schedule: FlowSchedule) => Option.flatMap(repo.repo, (settings) => flowOff(settings, schedule.handle.name, loginFor(schedule.persona)));
 
         const status: RepoStatus = {
           name: repo.name,
@@ -478,13 +511,14 @@ export const runDaemon = Effect.gen(function* () {
           launcher: Option.map(repo.repo, (loaded) => describeLauncher(loaded.settings)),
           flows: repo.flows.map((flow) => ({
             name: flow.handle.name,
+            ...Option.match(flow.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }),
             schedule: flow.expression,
             next: formatOption(flow.next),
             lastTick: formatOption(flow.lastTick),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
-            enabled: Option.isNone(offReason(flow.handle.name)),
-            ...Option.match(offReason(flow.handle.name), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
+            enabled: Option.isNone(offReason(flow)),
+            ...Option.match(offReason(flow), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
           })),
         };
 
@@ -508,7 +542,8 @@ export const runDaemon = Effect.gen(function* () {
         } satisfies DaemonStatus;
       });
 
-      const findSchedule = (repoName: string, flowName: string) => {
+      // The schedule a person names: the flow's only persona, or the one asked for.
+      const findSchedule = (repoName: string, flowName: string, persona: Option.Option<string>) => {
         const repo = Arr.findFirst(repos, (candidate) => candidate.name === repoName || candidate.enrolled.repo === repoName);
 
         if (Option.isNone(repo)) return Result.fail(`no enrolled repo named ${repoName}`);
@@ -517,13 +552,33 @@ export const runDaemon = Effect.gen(function* () {
 
         if (Option.isNone(ready)) return Result.fail(`${repo.value.name} is ${repo.value.status}: ${Option.getOrElse(repo.value.message, () => 'not ready')}`);
 
-        const schedule = Arr.findFirst(repo.value.flows, (flow) => flow.handle.name === flowName);
+        const named = repo.value.flows.filter((flow) => flow.handle.name === flowName);
 
-        if (Option.isNone(schedule)) {
-          return Result.fail(`${repo.value.name} has no flow named ${flowName} (flows: ${repo.value.flows.map((flow) => flow.handle.name).join(', ')})`);
+        if (named.length === 0) {
+          return Result.fail(`${repo.value.name} has no flow named ${flowName} (flows: ${Arr.dedupe(repo.value.flows.map((flow) => flow.handle.name)).join(', ')})`);
         }
 
-        return Result.succeed({ repo: repo.value, ...ready.value, schedule: schedule.value });
+        const personas = named.flatMap((flow) => Option.toArray(flow.persona));
+
+        const schedule = Option.match(persona, {
+          onNone: () => Option.liftPredicate(named[0], () => named.length === 1),
+          onSome: (wanted) => Arr.findFirst(named, (flow) => Option.contains(flow.persona, wanted)),
+        });
+
+        if (Option.isNone(schedule)) {
+          return Result.fail(
+            Option.match(persona, {
+              onNone: () => `${repo.value.name} runs ${flowName} as ${personas.join(', ')}; name one with --as`,
+              onSome: (wanted) => `${repo.value.name} doesn't run ${flowName} as ${wanted} (it runs it as ${personas.join(', ')})`,
+            }),
+          );
+        }
+
+        const context = ready.value.contextFor(schedule.value.persona);
+
+        if (Option.isNone(context)) return Result.fail(`${repo.value.name} has no services for ${scheduleName(repo.value.name, schedule.value)}`);
+
+        return Result.succeed({ repo: repo.value, settings: ready.value.settings, context: context.value, schedule: schedule.value });
       };
 
       const refuse = (code: number, error: string) => HttpServerResponse.schemaJson(Refusal)({ error }, { status: code });
@@ -533,7 +588,7 @@ export const runDaemon = Effect.gen(function* () {
       const runOrTick = (gates: boolean) =>
         Effect.gen(function* () {
           const body = yield* HttpServerRequest.schemaBodyJson(RunRequest);
-          const found = findSchedule(body.repo, body.flow);
+          const found = findSchedule(body.repo, body.flow, Option.fromUndefinedOr(body.persona));
 
           if (Result.isFailure(found)) return yield* refuse(404, found.failure);
 

@@ -12,6 +12,7 @@ import { LaunchRecord, sessionFiles } from '../src/agents/session-files.ts';
 import { rememberSession } from '../src/agents/sessions.ts';
 import { Home } from '../src/config.ts';
 import { execTestLayer } from '../src/Exec.ts';
+import { describeStatus } from '../src/main.ts';
 import type { DaemonStatus } from '../src/protocol.ts';
 import type { RunRow, RunStatus } from '../src/state.ts';
 import { initialModel, readUsage } from '../src/tui/app.ts';
@@ -129,6 +130,19 @@ describe('the main view', () => {
   test('without the daemon, it says so', () => {
     expect(plain(view(model({ status: Option.none(), error: Option.some('the daemon is not running. Retrying…') })))).toContain('the daemon is not running');
   });
+
+  test('a flow that runs as several personas has a row for each, and the CLI names them', () => {
+    const review = Option.getOrThrow(Option.fromUndefinedOr(status.repos[0]?.flows[1]));
+    const personas = { ...status, repos: status.repos.map((repo) => ({ ...repo, flows: [{ ...review, persona: 'alice' }, { ...review, persona: 'bob' }] })) };
+    const rows = plain(view(model({ status: Option.some(personas) })));
+    expect(rows).toMatch(/review @alice\s+next in 17m/);
+    expect(rows).toMatch(/review @bob\s+next in 17m/);
+
+    const said = describeStatus(personas, now);
+    expect(said).toContain('  review as alice: 17 * * * *, next in 17m');
+    expect(said).toContain('  review as bob: 17 * * * *, next in 17m');
+    expect(describeStatus(status, now)).toContain('  review: 17 * * * *, next in 17m');
+  });
 });
 
 describe('keys', () => {
@@ -143,7 +157,7 @@ describe('keys', () => {
     expect(update(model(), { name: 'a' }).action).toEqual({ kind: 'attach', run: 'goodbones.implement.issue-7.1' });
     const onFlows = update(model(), { name: 'tab' }).model;
     const down = update(onFlows, { name: 'down' }).model;
-    expect(update(down, { name: 't' }).action).toEqual({ kind: 'trigger', repo: 'goodbones', flow: 'review' });
+    expect(update(down, { name: 't' }).action).toEqual({ kind: 'trigger', repo: 'goodbones', flow: 'review', persona: Option.none() });
     expect(update(down, { name: 'p' }).action).toEqual({ kind: 'pause', repo: 'goodbones', paused: true });
   });
 

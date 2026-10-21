@@ -37,7 +37,7 @@ import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, re
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
-import { IMPLICIT } from './persona.ts';
+import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
@@ -101,11 +101,13 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   const upSince = Option.match(DateTime.make(status.startedAt), { onNone: () => status.startedAt, onSome: (at) => DateTime.formatLocal(at, { dateStyle: 'short', timeStyle: 'medium' }) });
 
   const flowLine = (flow: DaemonStatus['repos'][number]['flows'][number]) => {
-    if (!flow.enabled) return `  ${flow.name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
+    const name = `${flow.name}${asSuffix(Option.fromUndefinedOr(flow.persona))}`;
+
+    if (!flow.enabled) return `  ${name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
 
     const elsewhere = flow.assignedElsewhere ?? [];
 
-    return `  ${flow.name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(', ')}`)}`;
+    return `  ${name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(', ')}`)}`;
   };
 
   return [
@@ -118,7 +120,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
     ...Option.toArray(Option.map(Arr.head(finished), () => '\nrecent:')),
     ...finished.slice(0, 8).map((run) => `  ${run.status.padEnd(11)} ${run.id}  ${Option.getOrElse(run.summary, () => '')}`),
     ...Option.toArray(Option.map(Arr.head(status.skips), () => '\nrecent skips:')),
-    ...status.skips.slice(0, 5).map((skip) => `  ${skip.repo}/${skip.flow}${suffix(skip.itemKey, ' ')}: ${skip.reason} (${relative(Option.some(skip.at), now)})`),
+    ...status.skips.slice(0, 5).map((skip) => `  ${skip.repo}/${skip.flow}${suffix(Option.map(skip.persona, (login) => `@${login}`), '')}${suffix(skip.itemKey, ' ')}: ${skip.reason} (${relative(Option.some(skip.at), now)})`),
   ];
 };
 
@@ -197,6 +199,10 @@ const followStarted = (result: TickResult, detach: boolean) =>
     yield* reportFinished(yield* followRun(runId.value));
   });
 
+const asFlag = Flag.String('as').pipe(Flag.withDescription('The GitHub persona to act as, for a flow that runs as several'), Flag.optional);
+
+const personaField = (persona: Option.Option<string>) => Option.match(persona, { onNone: () => ({}), onSome: (login) => ({ persona: login }) });
+
 const run = Command.make(
   'run',
   {
@@ -208,11 +214,12 @@ const run = Command.make(
       Flag.withDefault(false),
     ),
     detach: Flag.Boolean('detach').pipe(Flag.withDescription('Start the run and return without following its log'), Flag.withDefault(false)),
+    as: asFlag,
   },
-  ({ detach, flow, fromCheckout, item, repo }) =>
+  ({ as, detach, flow, fromCheckout, item, repo }) =>
     Effect.gen(function* () {
       if (!fromCheckout) {
-        const viaDaemon = yield* Effect.result(daemonRun({ repo, flow, item }));
+        const viaDaemon = yield* Effect.result(daemonRun({ repo, flow, item, ...personaField(as) }));
 
         if (Result.isSuccess(viaDaemon)) return yield* followStarted(viaDaemon.success, detach);
 
@@ -220,13 +227,13 @@ const run = Command.make(
         if (Predicate.isTagged(viaDaemon.failure, 'DaemonRefused')) return yield* fail(viaDaemon.failure.message);
       }
 
-      yield* reportFinished(yield* runInForeground({ repo, flow, item, fromCheckout }));
+      yield* reportFinished(yield* runInForeground({ repo, flow, item, fromCheckout, persona: as }));
     }),
 ).pipe(Command.withDescription('One run of a flow now, skipping gates; through the daemon when it is running'));
 
-const trigger = Command.make('trigger', { flow: Argument.String('flow'), repo: repoFlag }, ({ flow, repo }) =>
+const trigger = Command.make('trigger', { flow: Argument.String('flow'), repo: repoFlag, as: asFlag }, ({ as, flow, repo }) =>
   Effect.gen(function* () {
-    const result = yield* daemonTick({ repo, flow, item: Option.none() });
+    const result = yield* daemonTick({ repo, flow, item: Option.none(), ...personaField(as) });
 
     const said = Option.match(Option.liftPredicate(result.started, Arr.isReadonlyArrayNonEmpty), {
       onNone: () => Option.getOrElse(result.skipped, () => 'nothing to start'),

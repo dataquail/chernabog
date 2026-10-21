@@ -13,7 +13,7 @@ export type Action =
   | { readonly kind: 'refresh' }
   | { readonly kind: 'open-log'; readonly run: string }
   | { readonly kind: 'attach'; readonly run: string }
-  | { readonly kind: 'trigger'; readonly repo: string; readonly flow: string }
+  | { readonly kind: 'trigger'; readonly repo: string; readonly flow: string; readonly persona: Option.Option<string> }
   | { readonly kind: 'pause'; readonly repo: string; readonly paused: boolean }
   | { readonly kind: 'toggle-flow'; readonly repo: string; readonly flow: string; readonly enabled: boolean };
 
@@ -113,7 +113,7 @@ export const update = (model: Model, key: Key): Updated => {
         Arr.get(flows, model.flowIndex).pipe(Option.filter(() => model.focus === 'flows')),
         {
           onNone: () => ({ model: { ...cleared, message: Option.some('select a flow to trigger (tab to the flows)') }, action: none }),
-          onSome: (flow) => ({ model: cleared, action: { kind: 'trigger', repo: flow.repo, flow: flow.flow } }),
+          onSome: (flow) => ({ model: cleared, action: { kind: 'trigger', repo: flow.repo, flow: flow.flow, persona: flow.persona } }),
         },
       );
     case 'e': {
