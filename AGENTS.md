@@ -1,0 +1,101 @@
+# Chernabog
+
+A daemon that runs agent sessions (Claude, Codex, …) on a repo's issues and pull
+requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect v4.
+
+## Before you finish
+
+`bun run check`, `bun run lint` and `bun test` must all pass. Run the full suite
+with no edits in flight; one that overlaps an edit fails spuriously.
+
+## Hard rules
+
+- **Chernabog never runs Claude with `-p` / `--print`.** Every agent session it
+  starts is interactive, through a launcher (orca, tmux, or the person's own).
+  This is a billing constraint, not a style choice.
+- **Never kill processes by name** (`pkill claude` and the like). Target the PID
+  or launcher handle you captured.
+- **Multi-PR work is a `gh stack`.** Read `gh stack --help` (or your agent's
+  gh-stack skill, if it has one) before any stack command, and always use the
+  non-interactive forms (`gh stack view --json`, `gh stack submit --auto`).
+
+## Personas (#49, PR #56)
+
+One daemon acts as several GitHub logins. Everything that touches GitHub must
+act as the right one.
+
+- `Persona = Option<string>` (`src/persona.ts`). `none` is the *implicit*
+  persona: whoever `GH_TOKEN`, `GITHUB_TOKEN` or gh's active account is. Machine
+  config without `github:` behaves exactly as before personas.
+- **Tokens only via `GitHubTokens`** (`src/github-auth.ts`), which runs
+  `gh auth token --user <login>` with the ambient `GH_TOKEN` stripped. Never read
+  `GH_TOKEN` directly. Child processes get the persona's environment from
+  `childEnvironment(persona)` / `execOptionsFor(persona, { cwd })`; git pushes
+  authenticate through the credential helper in `gitCredentialEnv` (https origins
+  only).
+- **API:** `GitHubApi.layerFor(persona)`; `GitHubApi.layer` is the implicit one.
+- **One workflow per (repo, flow), shared by every persona.** The persona rides
+  in the workflow payload (`FlowPayload.persona`); a resumed run without one uses
+  its run row's persona (`flowLayer` in `src/engine.ts`). Per-persona services
+  are built by `repoServices(…, persona)` / `buildRepoContext(…, persona)`.
+- **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
+  A flow several personas run should filter with `assignee` or
+  `reviewRequested: "@me"`.
+- **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
+  does and as whom; show runs with `runLabel` and `shortRunId`, and resolve user
+  input with `resolveRunId` (unique prefix).
+- **Known gaps:** the commit author isn't set per persona (the pull request
+  author is right, since the persona's token opens it), and ssh origins push
+  with the person's own key, not the persona's token.
+
+## Effect and lint
+
+`bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the
+anti-slop plugins in `tools/oxlint/`) plus the Effect language service's
+diagnostics, reported as `effect(<rule>)`. The ones you'll hit most:
+`effect(noTernary)` (use `Option.match` or `Match`), `effect(noNullish)` (no
+`null`/`undefined` in types; use `Option`), sorted imports (`bun run lint:fix`)
+and a cognitive complexity cap (extract a function). Fix the cause rather than
+disabling the rule.
+
+- `Effect.provide` closes the resources of the layer it provides. Build a
+  layer per test, don't share one across `Effect.provide` calls.
+- Services are `Context.Service`; to get one as an effect, use
+  `Service.use(Effect.succeed)`. There's no `.asEffect()`.
+- Comments are plain sentences that say what a thing is for, and why when
+  that's not obvious. Match the density of the file you're in.
+
+## Tests
+
+- Unit tests sit beside the source (`src/*.test.ts`) or in `test/`. Engine
+  tests use the fakes in `test/sdk-fakes.ts`; `effectAtHome` (`test/effect-test.ts`) gives a test a
+  scratch chernabog home.
+- **Acceptance tests** (`test/acceptance/`) run the real CLI and daemon in a
+  sandbox (`openSandbox(repoConfig, { github, personas })`) against
+  `fake-github.ts`, which takes the login from the bearer token and records who
+  made each request (`requestsBy`). `test/fakebin/` puts fake `gh`, `claude` and
+  `codex` on the PATH: `gh auth token --user <login>` answers `token-<login>`,
+  and the agents log the token they saw. Extend these rather than mocking
+  modules (module mocking is a lint error).
+
+## The redesign in flight
+
+Issues build on each other; implement them in order, each as a `gh stack`
+layer on the one below, and read the issue *and* the PR beneath yours first.
+
+1. #50 per-persona settings in machine config, `local.yaml` retired
+2. #51 install and enrollment wizards
+3. #52 TUI overrides
+4. #53 reviewer pool, `review`, `re-review` (starts after #50 settles config)
+5. #54 `address-review`
+6. #55 hybrid path, `chernabog start`
+
+Decisions that cut across them:
+
+- Chernabog merges only pull requests labelled `auto:ship`; everything else is
+  merged by a person.
+- `auto:needs-human` is the one hand-off to a person; review flows skip
+  pull requests that carry it.
+- Breaking config changes are fine (only this repo and goodbones use
+  chernabog), but each one gets a migration that rewrites machine config and
+  says what it changed.
