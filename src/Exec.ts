@@ -99,12 +99,12 @@ export const execOk = (command: string, args: ReadonlyArray<string>, options?: E
   });
 
 // A fake for tests: each call is answered by the first handler that returns a result.
-export const execTestLayer = (handler: (command: string, args: ReadonlyArray<string>) => Option.Option<ExecResult>) =>
+export const execTestLayer = (handler: (command: string, args: ReadonlyArray<string>, options: ExecOptions) => Option.Option<ExecResult>) =>
   Layer.succeed(
     Exec,
     Exec.of({
-      run: (command, args) =>
-        Effect.fromOption(handler(command, args)).pipe(
+      run: (command, args, options = {}) =>
+        Effect.fromOption(handler(command, args, options)).pipe(
           Effect.mapError(() => new ExecError({ command: describeCommand(command, args), message: 'no fake answers this command' })),
         ),
     }),
