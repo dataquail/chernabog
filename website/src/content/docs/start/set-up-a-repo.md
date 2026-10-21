@@ -46,7 +46,7 @@ The entry is keyed by the repo's `owner/name`, not its folder, so settings follo
 
 ## Queue work
 
-Label an issue `auto:eligible`. On the repo's schedule — hourly by default, repos spread across the hour — the daemon runs `implement`'s trigger. When the machine has a free slot and the account's [usage gate](/chernabog/agents/usage-gate/) passes, it claims the oldest queued issue and carries it to a green pull request labelled `auto:needs-review`.
+Label an issue `auto:eligible`. On the repo's schedule — hourly by default, repos spread across the hour — the daemon runs `implement`'s trigger. When the machine has a free slot and the account's [usage gate](/chernabog/agents/usage-gate/) passes, it claims the oldest queued issue and carries it to a green pull request, and asks one reviewer from the team's `reviewers:` pool to review it (without a pool, it labels the pull request `auto:needs-review` for a person).
 
 To see it happen now rather than at the next tick:
 

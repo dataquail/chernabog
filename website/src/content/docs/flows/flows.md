@@ -11,7 +11,8 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `gate`        | optional; checked before each run starts — fail with `Skip` to hold it back |
 | `concurrency` | runs of this flow at once                                              |
 | `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it |
-| `labels`      | optional; labels of the flow's own, such as `{ name: "auto:ship" }`, which `chernabog labels` creates |
+| `labels`      | optional; labels of the flow's own, such as `{ name: "auto:docs" }`, which `chernabog labels` creates |
+| `ownWork`     | optional; `true` when the trigger finds only the work of the persona it runs as, as `review`'s does by its review requests, so the daemon doesn't warn that several personas each take any of it |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 Each step in a workflow is an **activity** whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
@@ -42,7 +43,7 @@ The workflow body runs again on every replay. Side effects belong inside activit
 
 | Helper                                  | Does                                                                     |
 | --------------------------------------- | ------------------------------------------------------------------------ |
-| `activity(name, effect, { success })`   | One durable step; runs once, and a replay returns the saved result       |
+| `activity(name, effect, schema)`        | One durable step; runs once, and a replay returns the saved result       |
 | `step(name, input, { output })`         | Runs [`.chernabog/stages/<name>`](/chernabog/flows/steps/) in its own process, as an activity |
 | `sleep(name, duration)`                 | A durable pause that survives restarts                                    |
 | `awaitSignal(signals, { id, timeout })` | Waits for one of the signals or the timeout, and says which              |
@@ -55,26 +56,35 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 ## Building blocks
 
-`Implement` and `Review` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap. `Review.round` reviews and posts, with the adapter of an optional `{ role }` from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role); `Review.labelVerdict` moves the labels after it, and `Review.reviewRound` does both in one step. `Implement.handOff(issue, pr, outcome, { needsReview: false })` hands off without starting the `review` flow. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, { label })`; `Implement.trigger` is `triggerFor` with `auto:eligible`. `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review` and `fix` flows leave it alone. See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
+`Implement`, `Review` and `PullRequest` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap.
+
+- `Implement.trigger` queues issues labelled `auto:eligible`, then `auto:ship`; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
+- `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
+- `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
+- `Review.trigger` and `Review.workflow` make `review`; `Review.reReviewTrigger` and `Review.reReviewWorkflow` make `re-review`; `Review.fixTrigger` and `Review.fixWorkflow` make `fix`.
+- `PullRequest.mergeOrLeave(pr)` is the one merge on the automated path: it merges a pull request that `PullRequest.ships` (it carries `auto:ship`), and leaves any other for a person. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
+- `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `fix` flows leave it alone.
+
+See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
 | `Implement.`         | `Review.`                    | `PullRequest.`, `Issue.` |
 | -------------------- | ---------------------------- | ------------------------ |
-| `trigger`, `triggerFor`, `gate` | `trigger`, `workflow` | `PullRequest.comment`, `Issue.comment`, `PullRequest.merge` |
-| `issueOf`, `claim`   | `round`, `labelVerdict`      | `PullRequest.own`, `release`, `owning` |
-| `prepareWorktree`    | `recheck`                    |                          |
-| `implementWithAgent`, `askForClarification` | `reviewRound`, `cleanUp` |  |
-| `localGate`, `push`  | `fixTrigger`, `fixWorkflow`  |                          |
+| `trigger`, `triggerFor`, `queuedBy`, `gate` | `trigger`, `workflow` | `PullRequest.requestReview`, `ships` |
+| `issueOf`, `claim`   | `reReviewTrigger`, `reReviewWorkflow` | `PullRequest.merge`, `mergeOrLeave`, `handToPerson` |
+| `prepareWorktree`    | `round`, `recheck`           | `PullRequest.comment`, `Issue.comment` |
+| `implementWithAgent`, `askForClarification` | `fixTrigger`, `fixWorkflow` | `PullRequest.own`, `release`, `owning` |
+| `localGate`, `push`  |                              |                          |
 | `openPullRequest`, `waitForCi` |                    |                          |
 | `considerFindings`, `addressFindings` |             |                          |
 | `handOff`, `handToHuman`, `endForPerson` |          |                          |
 
-A step that loops, `localGate` and `waitForCi`, names its activities by round. A flow that calls one twice in a run gives the second call an id, `localGate(worktree, { id: "review-1" })`, so its activities are `local-gate-1#review-1` and so on. [Composing a flow](/chernabog/flows/composing/) puts these blocks together into one flow that implements, reviews, fixes and merges.
+A step that loops, `localGate` and `waitForCi`, names its activities by round. A flow that calls one twice in a run gives the second call an id, `localGate(worktree, { id: "review-1" })`, so its activities are `local-gate-1#review-1` and so on. [Composing a flow](/chernabog/flows/composing/) walks through the default `implement` flow and a review flow of your own.
 
 ### Considering findings
 
 A flow that answers its own reviews resumes sessions instead of starting new ones:
 
-- `Review.recheck(pr, review)` resumes the reviewer's session from `review` with the change since the head it saw, and posts the next review. It returns the same verdict as `Review.round`, plus `findings`: each earlier finding, with whether it was `remediated`. It counts as the next round, so `review-2` after `review-1`, and `Review.labelVerdict` takes it like any other review.
+- `Review.recheck(pr, review)` resumes the reviewer's session from `review` with the change since the head it saw, and posts the next review. It returns the same verdict as `Review.round`, plus `findings`: each earlier finding, with whether it was `remediated`. It counts as the next round, so `review-2` after `review-1`. The default `re-review` flow is built on it.
 - `Implement.considerFindings(pr, review, session)` resumes the author's session with the review and returns `{ status: "address" | "decline", reasons }`. It changes nothing.
 - `Implement.addressFindings(pr, review, session)` resumes the same session to make the changes and commit, and returns the answer `fixWithAgent` does. The flow then runs `localGate`, `push` and `waitForCi` as usual.
 - `PullRequest.comment(pr, body)` and `Issue.comment(issue, body)` post a comment and do nothing else. A run posts each distinct comment on an item once.
@@ -90,7 +100,7 @@ Each of these has its own prompt, `recheck`, `consider` and `address`. The SDK c
 - it touches no `humanOnlyPaths`;
 - GitHub's rules for the repo allow it. The merge is of exactly the reviewed head, so GitHub refuses it if the head moves in between.
 
-Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it.
+Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it. The default flows call it only through `PullRequest.mergeOrLeave`, and so only for a pull request labelled `auto:ship`.
 
 ## Dependencies
 

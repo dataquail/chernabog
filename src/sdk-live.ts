@@ -9,10 +9,12 @@ import {
   type Issue,
   type Json,
   type MergeOutcome,
+  type NewReview,
   type PullRequest,
   Repo,
   type RepoSettings,
   type ReviewNote,
+  type SubmittedReview,
   Usage,
   Worktree,
 } from '@chernabog/sdk';
@@ -92,7 +94,15 @@ export const RestPullRequest = Schema.Struct({
 
 const RestComment = Schema.Struct({ id: Schema.Finite, user: User, body: Text, created_at: Schema.String, author_association: Schema.String });
 
-const RestReview = Schema.Struct({ id: Schema.Finite, user: User, body: Text, submitted_at: Text, author_association: Schema.String });
+const RestReview = Schema.Struct({
+  id: Schema.Finite,
+  user: User,
+  body: Text,
+  submitted_at: Text,
+  author_association: Schema.String,
+  state: Schema.optionalKey(Schema.String),
+  commit_id: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)),
+});
 
 const RestLineComment = Schema.Struct({
   ...RestComment.fields,
@@ -273,11 +283,12 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           }),
         );
 
-      const review = (pullRequest: number, posted: { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<{ readonly path: string; readonly line: number; readonly body: string }> }) =>
+      const review = (pullRequest: number, posted: NewReview) =>
         provide(
           Effect.gen(function* () {
+            const event = posted.event ?? 'COMMENT';
             const inline = posted.comments.map((comment) => ({ path: comment.path, line: comment.line, side: 'RIGHT', body: comment.body }));
-            const response = yield* githubRequest('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event: 'COMMENT', body: posted.body, commit_id: posted.commitSha, comments: inline }));
+            const response = yield* githubRequest('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event, body: posted.body, commit_id: posted.commitSha, comments: inline }));
 
             if (response.status < 300) return;
 
@@ -286,8 +297,22 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
 
             if (posted.comments.length > 0) folded = `${posted.body}\n\n${posted.comments.map((comment) => `- \`${comment.path}:${comment.line}\`: ${comment.body}`).join('\n')}`;
 
+            const again = yield* githubRequest('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event, body: folded, commit_id: posted.commitSha }));
+
+            if (again.status < 300) return;
+
+            // GitHub won't let an account approve or request changes on its own pull request.
             yield* githubSend('POST', path(`/pulls/${pullRequest}/reviews`), Option.some({ event: 'COMMENT', body: folded, commit_id: posted.commitSha }));
           }),
+        );
+
+      const openPullRequests = provide(githubGetAllPages(path('/pulls?state=open&per_page=100'), PullRequests, identity).pipe(Effect.map((pulls) => pulls.map(toPullRequest))));
+
+      const reviews = (pullRequest: number) =>
+        provide(
+          githubGetAllPages(path(`/pulls/${pullRequest}/reviews?per_page=100`), Schema.Array(RestReview), identity).pipe(
+            Effect.map((raw) => raw.map((found): SubmittedReview => ({ author: login(found.user), state: found.state ?? 'COMMENTED', commitSha: Option.getOrElse(Option.flatten(Option.fromUndefinedOr(found.commit_id)), () => '') }))),
+          ),
         );
 
       return GitHub.of({
@@ -314,8 +339,10 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
               Effect.map((pulls) => Option.map(Option.fromUndefinedOr(pulls[0]), toPullRequest)),
             ),
           ),
-        pullRequestsLabelled: (label) =>
-          provide(githubGetAllPages(path('/pulls?state=open&per_page=100'), PullRequests, identity).pipe(Effect.map((pulls) => pulls.map(toPullRequest).filter((pull) => pull.labels.includes(label))))),
+        pullRequestsLabelled: (label) => openPullRequests.pipe(Effect.map((pulls) => pulls.filter((pull) => pull.labels.includes(label)))),
+        openPullRequests,
+        requestReviewers: (pullRequest, reviewers) => provide(githubSend('POST', path(`/pulls/${pullRequest}/requested_reviewers`), Option.some({ reviewers: [...reviewers] })).pipe(Effect.asVoid)),
+        reviews,
         openPullRequest: (pullRequest) =>
           provide(githubJson('POST', path('/pulls'), RestPullRequest, Option.some({ head: pullRequest.head, base: pullRequest.base, title: pullRequest.title, body: pullRequest.body })).pipe(Effect.map(toPullRequest))),
         ciState: (pullRequest) => provide(readCiState(repo, pullRequest)),

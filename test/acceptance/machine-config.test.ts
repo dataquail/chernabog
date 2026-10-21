@@ -36,12 +36,12 @@ describe('machine config', () => {
 
     const { output } = await sandbox.runCli(['--version']);
     expect(output).toContain("dataquail/demo: personas is now a map of login to that persona's own settings: alice, bob");
-    expect(output).toContain('dataquail/demo: listed the flows that ran here: fix, implement');
+    expect(output).toContain('dataquail/demo: listed the flows that ran here: fix, implement, re-review');
     expect(output).toContain(`dataquail/demo: moved its schedule and flow choices from ${join(sandbox.checkout, '.chernabog', 'local.yaml')} onto its entry in machine config`);
 
     const entry = entryOf(sandbox);
     expect(entry.personas).toEqual({ alice: {}, bob: {} });
-    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {} });
+    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {}, 're-review': {} });
     expect(entry.schedule).toBe('5 * * * *');
 
     // Once is enough: the next command finds nothing to change.
@@ -70,7 +70,7 @@ describe('machine config', () => {
     expect(enrolled.output).toContain(`updated dataquail/demo (${root}`);
     const entry = entryOf(sandbox);
     expect(entry.path).toBe(root);
-    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {} });
+    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {}, 're-review': {} });
   }, 45_000);
 
   test('unenroll removes a repo and its settings', async () => {
@@ -102,8 +102,8 @@ describe('setting up and enrolling with flags', () => {
     expect(setUp.output).toContain('GitHub personas: alice, bob');
 
     const enrolled = await sandbox.runCli(['enroll', '--persona', 'bob', '--defaults'], { FAKE_GH_USERS: 'alice,bob' });
-    expect(enrolled.output).toContain('demo as bob: flows implement, review');
-    expect(entryOf(sandbox).personas).toEqual({ bob: { flows: { implement: {}, review: {} }, account: 'work' } });
+    expect(enrolled.output).toContain('demo as bob: flows implement, re-review, review');
+    expect(entryOf(sandbox).personas).toEqual({ bob: { flows: { implement: {}, 're-review': {}, review: {} }, account: 'work' } });
   }, 30_000);
 });
 

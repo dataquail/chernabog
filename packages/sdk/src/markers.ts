@@ -11,7 +11,17 @@ export const SessionMarker = Schema.Struct({ adapter: Schema.String, sessionId: 
 
 export type SessionMarker = typeof SessionMarker.Type;
 
-export const ReviewMarker = Schema.Struct({ sha: Schema.String, round: Schema.Finite, verdict: Schema.Literals(['approve', 'request-changes']) });
+// What a review saw and said, and who gave it in which session, so a
+// re-review resumes it. reviewer, sessionId and adapter are optional only so
+// that markers posted before they existed still read back.
+export const ReviewMarker = Schema.Struct({
+  sha: Schema.String,
+  round: Schema.Finite,
+  verdict: Schema.Literals(['approve', 'request-changes']),
+  reviewer: Schema.optionalKey(Schema.String),
+  sessionId: Schema.optionalKey(Schema.String),
+  adapter: Schema.optionalKey(Schema.String),
+});
 
 export type ReviewMarker = typeof ReviewMarker.Type;
 

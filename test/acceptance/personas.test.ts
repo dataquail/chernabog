@@ -19,7 +19,7 @@ describe('personas', () => {
 
   beforeAll(() => {
     sandbox = openSandbox(
-      { flows: { review: { schedule: '*/2 * * * * *', agent: 'codex', reviewRequested: '@me' }, implement: { enabled: false }, fix: { enabled: false } } },
+      { reviewers: ['alice', 'bob'], flows: { review: { schedule: '*/2 * * * * *', agent: 'codex' }, implement: { enabled: false }, fix: { enabled: false }, 're-review': { enabled: false } } },
       { github: ['alice', 'bob'], personas: ['alice', 'bob'] },
     );
   });
@@ -44,7 +44,6 @@ describe('personas', () => {
     });
 
     const { number } = Schema.decodeUnknownSync(CreatedPull)(await response.json());
-    sandbox.github.pull(number).labels.push('auto:needs-review');
     sandbox.github.pull(number).reviewers.push('bob');
     daemon = sandbox.cli(['daemon']);
     await waitFor(() => existsSync(join(sandbox.home, 'daemon.sock')), 'the daemon');
@@ -54,7 +53,6 @@ describe('personas', () => {
     expect(sandbox.github.reviewsOf(number).map((review) => review.author)).toEqual(['bob']);
     expect(sandbox.daemonLog()).toContain('acting on GitHub as alice, bob');
     expect(sandbox.daemonLog()).toMatch(new RegExp(`started [\\da-f-]{36} \\(demo/review pr-${number} as bob\\)`));
-    await waitFor(() => sandbox.daemonLog().includes(`demo/review@alice: skipped: only work for others: pr-${number} (review requested: bob)`), "alice's tick to leave it to bob");
 
     // Nothing the run did on GitHub was as anyone else.
     const onThePull = sandbox.github.requestsBy.filter((request) => request.includes(`/pulls/${number}/reviews`) && request.includes(' POST '));
@@ -83,6 +81,10 @@ describe('personas', () => {
     const said = (await sandbox.runCli(['doctor'])).output;
     expect(said).toContain('✓ gh is logged in as alice (GitHub says: alice)');
     expect(said).toContain('✓ gh is logged in as bob (GitHub says: bob)');
+    // Each reviewer persona on the machine can merge, since it merges what it approves on the automated path.
+    expect(said).toContain('✓ demo: reviewer alice can merge in dataquail/demo (write)');
+    sandbox.github.readOnly.add('bob');
+    expect((await sandbox.runCli(['doctor'])).output).toContain('✗ demo: reviewer bob can merge in dataquail/demo (read)');
     // The sandbox's origin is a local path, not https.
     expect(said).toMatch(/✗ demo: origin is https \(.*origin\.git\), so each persona pushes as itself/);
   });

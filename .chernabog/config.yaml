@@ -45,6 +45,13 @@ notes:
 # still pick them.
 # runners: [alice]
 
+# The reviewer pool, by GitHub login. A pull request with green CI asks one
+# of them at random to review it, never its author; review runs as that
+# persona, and re-review when it's asked again. On the automated path (an
+# auto:ship pull request) the approving reviewer merges, so each needs write
+# access to the repo. Unset: the pull request is labelled for a person to review.
+reviewers: [zacharyweidenbach, data-quail]
+
 # Per flow: schedule, concurrency, enabled (the default chernabog enroll
 # offers), agent, runners, assignee and reviewRequested. A reviewer on another agent than the one that wrote the code
 # avoids a model approving its own work; it runs under that agent's account in
@@ -58,11 +65,13 @@ notes:
 #     agent: codex
 #     reviewRequested: "@me"
 #
-# ship reviews in a fresh session of the reviewer role, separate from the
-# author's. Claude for now; moving to Codex is this one line, once Codex has an
+# review and re-review run the reviewer role, in a session separate from the
+# author's. Claude for now; moving to Codex is one line each, once Codex has an
 # account in machine config.
 flows:
-  ship:
+  review:
+    agents: { reviewer: claude }
+  re-review:
     agents: { reviewer: claude }
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
@@ -76,6 +85,7 @@ flows:
 limits:
   localGateRounds: 2
   ciRounds: 3
-  reviewRounds: 3
+  # Re-reviews of one pull request before a person takes over.
+  reviewRounds: 1
   staleAfter: 6 hours
   ciTimeout: 2 hours

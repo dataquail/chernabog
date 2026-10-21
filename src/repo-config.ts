@@ -98,6 +98,7 @@ const LabelsFile = Schema.Struct({
   needsHuman: Schema.optionalKey(Schema.String),
   needsClarification: Schema.optionalKey(Schema.String),
   stale: Schema.optionalKey(Schema.String),
+  ship: Schema.optionalKey(Schema.String),
 });
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.
@@ -131,6 +132,11 @@ export const RepoConfigFile = Schema.Struct({
   launchers: MachineOnly,
   limits: Schema.optionalKey(LimitsFile),
   runners: Schema.optionalKey(Runners),
+  reviewers: Schema.optionalKey(
+    Strings.annotate({
+      description: 'The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path (auto:ship).',
+    }),
+  ),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
 });
 
@@ -239,7 +245,7 @@ export type MachineConfigFile = typeof MachineConfigFile.Type;
 
 export const DEFAULT_GATE: GateConfig = { targetEndUsage: 0.95, taskCostEstimate: 0.04, fiveHourCeiling: 0.4, humanRatePerHour: 0.005 };
 
-export const DEFAULT_LIMITS: Limits = { localGateRounds: 2, ciRounds: 3, reviewRounds: 3, staleAfter: Duration.hours(6), ciTimeout: Duration.hours(2) };
+export const DEFAULT_LIMITS: Limits = { localGateRounds: 2, ciRounds: 3, reviewRounds: 1, staleAfter: Duration.hours(6), ciTimeout: Duration.hours(2) };
 
 // Each account belongs to one agent: claude unless it says otherwise.
 export type MachineAccount = Account & { readonly agent: string };
@@ -627,6 +633,7 @@ const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: Repo
       notes: repo.notes ?? [],
       board: Option.flatten(Option.fromUndefinedOr(repo.board)),
       reviewTrigger: Option.flatten(Option.fromUndefinedOr(repo.reviewTrigger)),
+      ...Option.match(Option.fromUndefinedOr(repo.reviewers), { onNone: () => ({}), onSome: (reviewers) => ({ reviewers }) }),
       limits: limitsFrom(repo.limits),
       env,
       configDir,

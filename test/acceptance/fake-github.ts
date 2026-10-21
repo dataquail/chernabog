@@ -17,7 +17,12 @@ export type FakePull = { number: number; title: string; body: string; head: stri
 
 const ReviewComment = Schema.Struct({ path: Schema.String, line: Schema.Finite, side: Schema.optionalKey(Schema.String), body: Schema.String });
 
-export type FakeReview = { id: number; body: string; commit_id: string; comments: ReadonlyArray<typeof ReviewComment.Type>; author: string };
+export type FakeReview = { id: number; body: string; commit_id: string; comments: ReadonlyArray<typeof ReviewComment.Type>; author: string; state: string };
+
+// A review's state once submitted with its event, as GitHub reports it.
+const STATES = { APPROVE: 'APPROVED', REQUEST_CHANGES: 'CHANGES_REQUESTED', COMMENT: 'COMMENTED' } satisfies Readonly<Record<string, string>>;
+
+const stateOf = (event: string) => Option.getOrElse(Option.map(Arr.findFirst(Object.entries(STATES), ([name]) => name === event), ([, state]) => state), () => 'COMMENTED');
 
 // Who a request comes from: token-<login> is that login, as fakebin/gh hands
 // out for a persona; any other token, such as the sandbox's GH_TOKEN, is the bot.
@@ -62,7 +67,9 @@ const CommentBody = Schema.Struct({ body: Schema.String });
 const LabelsBody = Schema.Struct({ labels: Schema.Array(Schema.String) });
 const AssigneesBody = Schema.Struct({ assignees: Schema.Array(Schema.String) });
 const NewPullBody = Schema.Struct({ title: Schema.String, body: Schema.String, head: Schema.String, base: Schema.String });
-const ReviewBody = Schema.Struct({ body: Schema.String, commit_id: Schema.String, comments: Schema.optionalKey(Schema.Array(ReviewComment)) });
+const ReviewBody = Schema.Struct({ body: Schema.String, commit_id: Schema.String, event: Schema.optionalKey(Schema.String), comments: Schema.optionalKey(Schema.Array(ReviewComment)) });
+const ReviewersBody = Schema.Struct({ reviewers: Schema.Array(Schema.String) });
+const MergeBody = Schema.Struct({ merge_method: Schema.String, sha: Schema.String });
 
 type Args = { readonly params: ReadonlyArray<string>; readonly body: Option.Option<Json>; readonly url: URL; readonly login: string };
 
@@ -93,6 +100,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const comments = new Map<number, Array<FakeComment>>();
   const pulls = new Map<number, FakePull>();
   const reviews = new Map<number, Array<FakeReview>>();
+  const merges: Array<{ readonly number: number; readonly method: string; readonly by: string }> = [];
+  // Logins that can only read the repo; anyone else can write.
+  const readOnly = new Set<string>();
   const requests: Array<string> = [];
   // Each request, as "<login> <method> <path>".
   const requestsBy: Array<string> = [];
@@ -237,13 +247,50 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return encoded(Schema.Array(PullJson), found.map(pullJson));
   };
 
+  // As on GitHub: nobody approves or requests changes on their own pull
+  // request, and a review drops its author from the requested reviewers.
   const addReview = withBody(ReviewBody, (body, args) => {
     const number = numberParam(args);
-    const review: FakeReview = { id: takeCommentId(), body: body.body, commit_id: body.commit_id, comments: body.comments ?? [], author: args.login };
+    const pull = Option.fromUndefinedOr(pulls.get(number));
+    const event = body.event ?? 'COMMENT';
+
+    if (event !== 'COMMENT' && Option.exists(pull, (found) => found.author === args.login)) return json({ message: 'Can not approve your own pull request' }, 422);
+
+    const review: FakeReview = { id: takeCommentId(), body: body.body, commit_id: body.commit_id, comments: body.comments ?? [], author: args.login, state: stateOf(event) };
     reviews.set(number, [...(reviews.get(number) ?? []), review]);
+
+    for (const found of Option.toArray(pull)) found.reviewers = found.reviewers.filter((login) => login !== args.login);
 
     return json(review);
   });
+
+  const requestReviewers = withBody(ReviewersBody, (body, args) =>
+    Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
+      onNone: notFound,
+      onSome: (pull) => {
+        pull.reviewers = [...pull.reviewers.filter((login) => !body.reviewers.includes(login)), ...body.reviewers];
+
+        return encoded(PullJson, pullJson(pull), 201);
+      },
+    }),
+  );
+
+  // Merges exactly the head asked for, as a squash onto the base.
+  const mergePull = withBody(MergeBody, (body, args) =>
+    Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
+      onNone: notFound,
+      onSome: (pull) => {
+        if (Option.getOrElse(refSha(pull.head), () => '') !== body.sha) return json({ message: 'Head branch was modified' }, 409);
+
+        git('update-ref', `refs/heads/${pull.base}`, body.sha);
+        pull.state = 'closed';
+        pull.merged = true;
+        merges.push({ number: pull.number, method: body.merge_method, by: args.login });
+
+        return json({ sha: body.sha, merged: true });
+      },
+    }),
+  );
 
   const listReviews = (args: Args) =>
     json((reviews.get(numberParam(args)) ?? []).map(({ author, ...review }) => ({ ...review, user: { login: author }, author_association: 'OWNER', submitted_at: now() })));
@@ -276,6 +323,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return encoded(CheckRunsJson, { check_runs: [{ ...run, status: 'completed', conclusion }] });
   };
 
+  const permissionOf = (login: string) => Option.getOrElse(Option.liftPredicate('read', () => readOnly.has(login)), () => 'write');
+
   const repo = `/repos/${options.slug}`;
 
   const routes: ReadonlyArray<Route> = [
@@ -295,6 +344,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: 'GET', pattern: new RegExp(`^${repo}/pulls$`), handle: listPulls },
     { method: 'POST', pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: addReview },
     { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: listReviews },
+    { method: 'POST', pattern: new RegExp(`^${repo}/pulls/(\\d+)/requested_reviewers$`), handle: requestReviewers },
+    { method: 'PUT', pattern: new RegExp(`^${repo}/pulls/(\\d+)/merge$`), handle: mergePull },
+    { method: 'GET', pattern: new RegExp(`^${repo}/collaborators/([^/]+)/permission$`), handle: (args) => json({ permission: permissionOf(args.params[0] ?? ''), role_name: permissionOf(args.params[0] ?? '') }) },
     { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/comments$`), handle: listReviewComments },
     { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/files$`), handle: pullFiles },
     {
@@ -343,6 +395,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     firstPull: () => Arr.head([...pulls.values()]),
     commentsOn: (number: number) => comments.get(number) ?? [],
     reviewsOf: (number: number) => reviews.get(number) ?? [],
+    merges,
+    readOnly,
     closePull: (number: number, merged = true) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
       pull.state = 'closed';

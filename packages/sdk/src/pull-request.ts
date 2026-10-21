@@ -1,11 +1,13 @@
-// Steps on a pull request that any flow can use, whichever flow opened it. A
-// flow that reviews and fixes a pull request itself owns it while it works, so
-// the standalone review and fix flows leave it alone.
+// Steps on a pull request that any flow can use, whichever flow opened it:
+// asking the team's reviewer pool for a review, merging on the automated path,
+// and handing it to a person. A flow that works on a pull request itself can
+// own it while it does, so the standalone flows leave it alone.
 
 import * as Cause from 'effect/Cause';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as Option from 'effect/Option';
+import * as Random from 'effect/Random';
 import * as Schema from 'effect/Schema';
 
 import { commentStep } from './comment.ts';
@@ -13,7 +15,7 @@ import { NeedsHuman } from './errors.ts';
 import { activity } from './flow.ts';
 import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from './markers.ts';
 import { pathsMatching } from './paths.ts';
-import { GitHub, type MergeMethod, Repo, Run, Runs } from './services.ts';
+import { GitHub, type Labels, type MergeMethod, type PullRequest, Repo, Run, Runs } from './services.ts';
 
 const writeOwner = (name: string, pullRequest: number, released: boolean) =>
   activity(
@@ -118,3 +120,71 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     }),
     Schema.String,
   );
+
+const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+
+// Asks one reviewer from the team's pool (reviewers: in config) to review the
+// pull request, never its author. The choice is made once, at random, in an
+// activity, so a replay asks the same person. Without a pool, or with no one
+// in it but the author, it labels the pull request needs-review for a person.
+export const requestReview = (pullRequest: number) =>
+  activity(
+    `request-review-${pullRequest}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const pull = yield* github.pullRequest(pullRequest);
+      const pool = (repo.reviewers ?? []).filter((login) => !sameLogin(login, pull.author));
+
+      if (pool.length === 0) {
+        yield* github.addLabel(pullRequest, repo.labels.needsReview);
+
+        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${repo.labels.needsReview} for a person`;
+      }
+
+      const reviewer = pool[yield* Random.nextIntBetween(0, pool.length, { halfOpen: true })];
+      yield* github.requestReviewers(pullRequest, [reviewer]);
+
+      return `#${pullRequest}: review requested of ${reviewer}`;
+    }),
+    Schema.String,
+  );
+
+// Whether chernabog may merge the pull request: only on the automated path,
+// one labelled ship (auto:ship). Anything else, a missing or misspelt label
+// included, is left for a person to merge. The one place that decides it.
+export const ships = (pull: PullRequest, labels: Labels) => pull.labels.includes(labels.ship);
+
+// Labels the pull request needs-human and says why; no flow picks it up again
+// until a person removes the label.
+export const handToPerson = (pullRequest: number, reason: string) =>
+  activity(
+    `needs-human-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      yield* github.addLabel(pullRequest, repo.labels.needsHuman);
+      yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
+    }),
+  ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
+
+// After an approval: on the automated path, merges the pull request when that
+// is safe, and otherwise hands it to a person; any other pull request is left
+// for a person to merge.
+export const mergeOrLeave = (pullRequest: number) =>
+  Effect.gen(function* () {
+    const shipping = yield* activity(
+      `ships-pr-${pullRequest}`,
+      Effect.gen(function* () {
+        const repo = yield* Repo;
+
+        return ships(yield* (yield* GitHub).pullRequest(pullRequest), repo.labels);
+      }),
+      Schema.Boolean,
+    );
+
+    if (!shipping) return `#${pullRequest} approved; a person merges`;
+
+    return yield* merge(pullRequest, { method: 'squash' }).pipe(Effect.catchTag('NeedsHuman', (refused) => handToPerson(pullRequest, refused.reason)));
+  });
+

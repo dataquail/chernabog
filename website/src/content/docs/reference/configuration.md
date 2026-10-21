@@ -30,11 +30,12 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
+| `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers)          |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule`, `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
-| `limits.reviewRounds` | `3`                     | reviews of one pull request before `auto:needs-human`                    |
-| `limits.staleAfter`| `6 hours`                  | wait for a push after changes are requested, before `auto:stale`          |
+| `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
+| `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the default flows no longer read it         |
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 
 `launchers` is refused here: only machine config defines launcher commands.
@@ -52,6 +53,17 @@ flows:
   review: { runners: [alice, bob] }
 ```
 
+### Reviewers
+
+`reviewers` names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the default flows](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
+
+On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
+
+```yaml
+# .chernabog/config.yaml
+reviewers: [alice, data-quail]
+```
+
 ### Agents by role
 
 `flows.<flow>.agent` sets the adapter for a whole flow. `flows.<flow>.agents` names adapters by role, for a flow whose steps play different parts, such as one that implements with Claude and reviews with Codex:
@@ -59,7 +71,9 @@ flows:
 ```yaml
 # .chernabog/config.yaml
 flows:
-  ship:
+  review:
+    agents: { reviewer: codex }
+  re-review:
     agents: { reviewer: codex }
 ```
 
@@ -75,9 +89,9 @@ A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs wit
 
 An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively. When the machine's login can't be looked up, `@me` matches no one.
 
-`implement` items carry the issue's assignees. `review` items carry the pull request's assignees and its requested reviewers. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
+`implement` items carry the issue's assignees. `review` and `re-review` items carry the pull request's assignees and its requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, so they need no `reviewRequested`. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
 
-Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item, so a review keeps waking on pushes even after GitHub drops this machine from the requested reviewers. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
+Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
 
 Whether the flow runs for a persona at all is decided first, by its [flows](#which-flows-run) in machine config. An issue assigned to someone the flow is off for waits until they turn it on. The claim branch still keeps two machines from implementing the same issue.
 
@@ -98,7 +112,7 @@ localGate: [pnpm lint, pnpm test]
 humanOnlyPaths: [.github/**]
 flows:
   review: { agent: codex }
-limits: { reviewRounds: 2, staleAfter: 1 day }
+limits: { reviewRounds: 2 }
 ```
 
 ## Machine
@@ -191,7 +205,7 @@ Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `G
 
 A repo's `personas` maps each login that runs its flows to that persona's own choices. With one login under `github:`, that one is the default; with several, the repo must name them. Without `github:` there are no persona entries, and the repo entry's own settings run the one implicit account, so a `GH_TOKEN`-only host such as CI still works. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 
-A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
+A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither, unless the flow says `ownWork: true` in `defineFlow`, as `review` and `re-review` do: their triggers take only the pull requests that request their own persona's review. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
 
 ```yaml
 # ~/.config/chernabog/config.yaml
@@ -214,7 +228,8 @@ repos:
       your-reviewer:
         roles: { reviewer: codex-personal }   # only where a role needs another account
         flows:
-          review: { reviewRequested: "@me" }
+          review: {}
+          re-review: {}
 ```
 
 `chernabog run` and `trigger` take `--as <login>` for a flow that runs as several personas.

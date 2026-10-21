@@ -71,26 +71,32 @@ chernabog doctor                    # checks logins, gh scopes, labels, trust an
 
 `init` then enrolls the repo, asking: which personas work in it (when there are several), which flows each one runs (a checklist prefilled with the team's defaults, with "Accept the defaults" first, so enter takes them), and which account each persona spends where machine config has a choice. A flow whose agent has no account is listed but can't be picked, and says to add one with `chernabog setup`. `chernabog enroll` runs the same questions on its own, to enroll a repo that already has `.chernabog/` or to choose again. `--persona`, `--flows a,b`, `--defaults` and `--account` answer without asking; piped and without them, a repo keeps the flows it lists, and a new one gets the team's defaults.
 
-Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and hands off with `auto:needs-review`.
+Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and asks one reviewer from the team's pool to review it. Label it `auto:ship` instead for the automated path, where the approving reviewer merges.
 
 ## The default flows
 
-`init` scaffolds three flows, built from the SDK's `Implement` and `Review` blocks. GitHub labels are the public record people see and that the flows trigger on.
+`init` scaffolds four flows, built from the SDK's `Implement`, `Review` and `PullRequest` blocks. They hand pull requests to each other through GitHub's own review requests and reviews; labels are the public record people see, and a few flows trigger on them.
 
 | Label | Set by | Means |
 | --- | --- | --- |
 | `auto:eligible` | a person | Queued; `implement` claims the oldest |
+| `auto:ship` | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
 | `auto:in-progress` | `implement` | A run owns the issue |
-| `auto:needs-review` | `implement`, `fix` | The pull request is open and green; `review` picks it up |
-| `auto:changes-requested` | `review` | Review comments are posted; waiting for a push |
-| `auto:approved` | `review` | A person merges |
+| `auto:needs-review` | `implement`, `fix` | Open and green, with no reviewer in the pool; a person reviews |
+| `auto:changes-requested` | `review` | Changes requested; `fix` answers an agent's pull request |
 | `auto:needs-human` | any flow | A loop cap or a rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `implement` | Questions are on the issue; answer them and requeue |
-| `auto:stale` | `review` | No push came before `limits.staleAfter` |
 
-- **`implement`** claims a queued issue, lets the agent implement it test first in a worktree, runs the local gate (sending the agent back on failure, up to `limits.localGateRounds`), opens the pull request, waits for CI (fixing red, up to `limits.ciRounds`) and hands off with `auto:needs-review`.
-- **`review`** reviews the pull request in a read-only checkout, in a fresh session of `flows.review.agent` (so Codex can review what Claude wrote), and posts the review. Then, inside the same run, it waits for whichever comes first: the author's push or the staleness timeout, and reviews again, up to `limits.reviewRounds`. Once the pull request merges or closes it removes its worktrees.
-- **`fix`** is the author for pull requests an agent wrote: it resumes the session that implemented the pull request with the review, pushes the fix once CI is green, and hands it back for the next review. A person's pull request gets the same reviews; their push wakes the next one.
+`auto:approved` and `auto:stale` are still created, for flows of your own; the default flows no longer set them.
+
+`reviewers: [alice, data-quail]` in the team's `config.yaml` is the reviewer pool. Every login in it needs write access to the repo, since the reviewer merges on the automated path.
+
+- **`implement`** claims the oldest issue labelled `auto:eligible` or `auto:ship`, lets the agent implement it test first in a worktree, runs the local gate (sending the agent back on failure, up to `limits.localGateRounds`), opens the pull request (labelled `auto:ship` for an `auto:ship` issue), waits for CI (fixing red, up to `limits.ciRounds`) and asks one reviewer from the pool, at random and never the author, to review it. Without a pool it labels the pull request `auto:needs-review` for a person.
+- **`review`** runs as the persona whose review is requested, on a pull request it hasn't reviewed yet. It reviews in a read-only checkout, in a fresh session of the reviewer role (so Codex can review what Claude wrote), and posts a real GitHub review. An approval merges an `auto:ship` pull request with `PullRequest.merge`, which merges only when that's safe and otherwise labels it `auto:needs-human`; any other pull request is left for a person to merge. A request for changes labels it `auto:changes-requested`.
+- **`re-review`** runs as a persona asked again on a pull request it already reviewed. It resumes its own review session, posts which findings are remediated, and approves (merging an `auto:ship` pull request the same way) or hands the pull request to a person. `limits.reviewRounds` (default 1) caps the re-reviews, and it leaves pull requests labelled `auto:needs-human` alone.
+- **`fix`** is the author for pull requests an agent wrote: on one labelled `auto:changes-requested`, it resumes the session that implemented the pull request with the review, pushes the fix once CI is green, and asks the reviewer who requested the changes to review again, which starts `re-review`.
+
+Chernabog merges only pull requests labelled `auto:ship`; anything else, a missing or misspelt label included, is merged by a person.
 
 ## The live view
 
@@ -121,7 +127,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `pause <repo>`, `resume <repo>` | Start no new runs in a repo; runs in flight continue |
 | `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
 | `labels [repo]` | Creates or corrects the repo's labels |
-| `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher and the daemon |
+| `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon |
 | `setup` | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again |
 | `init`, `enroll` | `init` scaffolds `.chernabog/` and enrolls the repo; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
 | `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
@@ -209,7 +215,7 @@ One daemon per machine schedules every enrolled repo, runs the workflow engine (
 
 The daemon checks machine config's enrolled repos every ten seconds and, when they change, restarts on them once nothing is executing, as it does after `trust`. So a repo `enroll` adds, one dropped or moved, or a flow turned on or off for a persona, is picked up without a restart by hand. A repo whose checkout is gone shows as `missing` (`checkout missing at <path>`) and starts no runs; its settings stay, and the daemon picks it up again when the checkout is back, or when `chernabog init` at the checkout's new place points the entry there.
 
-Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal, such as a review waiting for its author's push, holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
+Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
 
 The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`.
 
@@ -230,7 +236,7 @@ Config has two layers: the team's, committed in the repo, and each person's, in 
 
 | Layer             | Lives in                                 | Owns                                                                                              |
 | ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `assignee`, `reviewRequested` |
+| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `reviewers`, `assignee`, `reviewRequested` |
 | Machine           | `~/.config/chernabog/config.yaml`       | Agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own, GitHub personas, and the enrolled repos: for each, keyed by its `owner/name`, the flows that run and their settings, account, agent, roles, schedule, active hours, launcher and whether it's enabled, per persona |
 
 `init` writes `config.schema.json` next to the YAML, so editors autocomplete it. It's generated, so `init` rewrites it whenever it's out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
@@ -239,7 +245,7 @@ Flows, steps and prompts are read from the base branch, never from the branch or
 
 A flow runs on a machine only if the repo's entry in machine config lists it under `flows`. `init` and `enroll` write that list, offering the team's defaults: the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose `runners` (`runners: [alice]`, or `flows.<flow>.runners`) include one of the repo's personas, or this machine's `gh` login. So `runners` coordinates who spends their budget without restricting anyone: whoever lists a flow runs it. A flow listed with `enabled: false` is off but keeps its settings.
 
-`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review: { reviewRequested: "@me" }` reviews only pull requests that request your review. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
+`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review` and `re-review` need no filter: their triggers take only pull requests that request the review of the persona they run as. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

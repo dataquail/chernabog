@@ -260,7 +260,7 @@ export const runDaemon = Effect.gen(function* () {
   // Several personas on one flow each see all its work unless @me tells them apart.
   for (const repo of repos) {
     for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const running = repo.flows.filter((schedule) => schedule.handle.name === flow && Option.isNone(flowOff(schedule.own, flow)));
+      const running = repo.flows.filter((schedule) => schedule.handle.name === flow && schedule.handle.flow.ownWork !== true && Option.isNone(flowOff(schedule.own, flow)));
       const unrouted = running.some((schedule) => Option.isNone(routingOf(schedule.own, flow).assignee) && Option.isNone(routingOf(schedule.own, flow).reviewRequested));
 
       if (running.length > 1 && unrouted) {

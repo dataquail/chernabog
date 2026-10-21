@@ -60,7 +60,7 @@ const writtenAccounts = Effect.gen(function* () {
   return yield* Schema.decodeUnknownEffect(Schema.Struct({ accounts: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)) }))(YAML.parse(text));
 }).pipe(Effect.map((written) => written.accounts));
 
-// A checkout with the scaffolded flows (fix, implement, review) and this team config.
+// A checkout with the scaffolded flows (fix, implement, re-review, review) and this team config.
 const checkout = (teamConfig: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -87,9 +87,9 @@ describe('enrolling a repo', () => {
       const { lines } = yield* enrollAnswering(answers.layer, root, options());
 
       expect(answers.asked.map((question) => question.message)).toEqual(['Flows for alice']);
-      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (implement, review)');
-      expect((yield* entry).flows).toEqual({ implement: {}, review: {} });
-      expect(lines).toEqual(['demo as alice: flows implement, review']);
+      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (implement, re-review, review)');
+      expect((yield* entry).flows).toEqual({ implement: {}, 're-review': {}, review: {} });
+      expect(lines).toEqual(['demo as alice: flows implement, re-review, review']);
     }),
   );
 
@@ -101,7 +101,7 @@ describe('enrolling a repo', () => {
       yield* enrollAnswering(answers.layer, root, options());
 
       expect(answers.asked.map((question) => question.message)).toEqual(['Which GitHub personas work in this repo?', 'Flows for alice', 'Flows for bob', 'Which flows should run as bob?']);
-      expect((yield* entry).personas).toEqual({ alice: { flows: { implement: {}, review: {} } }, bob: { flows: { fix: {} } } });
+      expect((yield* entry).personas).toEqual({ alice: { flows: { implement: {}, 're-review': {}, review: {} } }, bob: { flows: { fix: {} } } });
     }),
   );
 
@@ -112,8 +112,8 @@ describe('enrolling a repo', () => {
       yield* enrollAnswering(answers.layer, root, options());
 
       // Without github:, the implicit persona is carol, who isn't one of review's runners.
-      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (implement)');
-      expect((yield* entry).flows).toEqual({ implement: {} });
+      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (implement, re-review)');
+      expect((yield* entry).flows).toEqual({ implement: {}, 're-review': {} });
       expect((yield* entry).personas).toBeUndefined();
     }),
   );
@@ -126,7 +126,7 @@ describe('enrolling a repo', () => {
 
       const review = answers.asked[1].choices.find((choice) => choice.value === 'review');
       expect(review).toEqual({ title: 'review', value: 'review', selected: false, disabled: true, description: 'needs codex; add an account for each with chernabog setup' });
-      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (fix, implement)');
+      expect(answers.asked[0].choices[0].title).toBe('Accept the defaults (fix, implement, re-review)');
       expect((yield* entry).flows).toEqual({ implement: {} });
 
       const flagged = yield* Effect.flip(enrollAnswering(Asker.none, root, options({ flows: Option.some(['review']) })));
@@ -145,7 +145,7 @@ describe('enrolling a repo', () => {
       const enrolled = yield* entry;
       expect(enrolled.account).toBe('personal');
       expect(enrolled.accounts).toEqual(['codex-work']);
-      expect(lines).toEqual(['demo as this machine: flows implement, review; account personal, codex-work']);
+      expect(lines).toEqual(['demo as this machine: flows implement, re-review, review; account personal, codex-work']);
     }),
   );
 
@@ -158,7 +158,7 @@ describe('enrolling a repo', () => {
 
       yield* enrollAnswering(Asker.none, root, options({ personas: Option.some(['alice', 'bob']), defaults: true }));
       // Choices made before stay unless a flag changes them.
-      expect((yield* entry).personas).toEqual({ alice: { flows: { implement: {}, review: {} }, account: 'work' }, bob: { flows: { implement: {}, review: {} }, account: 'personal' } });
+      expect((yield* entry).personas).toEqual({ alice: { flows: { implement: {}, 're-review': {}, review: {} }, account: 'work' }, bob: { flows: { implement: {}, 're-review': {}, review: {} }, account: 'personal' } });
 
       const unchosen = yield* Effect.flip(enrollAnswering(Asker.none, yield* checkout(TEAM), options({ name: Option.some('other') })));
       expect(unchosen.message).toContain('choose this repo\'s with --persona');
@@ -172,7 +172,7 @@ describe('enrolling a repo', () => {
       yield* enrollAnswering(Asker.none, root, options());
       expect((yield* entry).flows).toEqual({ implement: { schedule: '5 * * * *' } });
       yield* enrollAnswering(Asker.none, root, options({ defaults: true }));
-      expect((yield* entry).flows).toEqual({ implement: { schedule: '5 * * * *' }, review: {} });
+      expect((yield* entry).flows).toEqual({ implement: { schedule: '5 * * * *' }, 're-review': {}, review: {} });
     }),
   );
 });

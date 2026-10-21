@@ -1,6 +1,8 @@
-// Implements queued issues: claim the oldest one labelled auto:eligible, let
-// the agent implement it in a worktree, run the local gate, open the pull
-// request, wait for CI and hand off for review.
+// Implements queued issues: claim the oldest one labelled auto:eligible or
+// auto:ship, let the agent implement it in a worktree, run the local gate,
+// open the pull request, wait for CI and hand off for review, which asks one
+// reviewer from the team's pool. An auto:ship issue's pull request carries the
+// label too, so its approving reviewer merges it.
 //
 // Each block is a durable activity from @chernabog/sdk. Reorder them, leave
 // one out, or put a step of your own from .chernabog/stages/ in between with
@@ -18,7 +20,8 @@ export default defineFlow({
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
-      const { branch } = yield* Implement.claim(issue);
+      const queued = yield* Implement.queuedBy(item);
+      const { branch } = yield* Implement.claim(issue, queued);
       let pullRequest = Option.none<number>();
       const toPerson = (reason: string) => Implement.handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(Implement.endForPerson));
 
@@ -26,12 +29,12 @@ export default defineFlow({
         const worktree = yield* Implement.prepareWorktree(branch);
         const outcome = yield* Implement.implementWithAgent(issue, worktree);
 
-        if (outcome.status === 'needs-clarification') return yield* Implement.askForClarification(issue, outcome).pipe(Effect.flatMap(Implement.endForPerson));
+        if (outcome.status === 'needs-clarification') return yield* Implement.askForClarification(issue, outcome, queued).pipe(Effect.flatMap(Implement.endForPerson));
 
         return yield* Effect.gen(function* () {
           yield* Implement.localGate(worktree);
           yield* Implement.push('push', worktree, branch);
-          const opened = yield* Implement.openPullRequest(issue, outcome);
+          const opened = yield* Implement.openPullRequest(issue, outcome, queued);
           pullRequest = Option.some(opened.number);
           yield* Implement.waitForCi(opened.number, worktree, { ...Implement.thisRunsSession, branch });
 

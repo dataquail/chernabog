@@ -15,7 +15,7 @@ import { checkCodexAccount } from './codex-usage.ts';
 import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
 import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
-import { githubGetAllPages, viewerLoginAs } from './GitHubApi.ts';
+import { canMerge, githubGetAllPages, viewerLoginAs } from './GitHubApi.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
 import { flowNames } from './loader.ts';
@@ -163,6 +163,18 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // Each of the team's reviewers that this machine acts as can merge: the
+  // reviewer merges an approved auto:ship pull request.
+  const checkReviewers = (repo: EnrolledRepo, name: string, reviewers: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      for (const login of machine.github.filter((own) => reviewers.some((reviewer) => reviewer.toLowerCase() === own.toLowerCase()))) {
+        const access = yield* Effect.result(canMerge(repo.repo, login));
+
+        const said = Result.match(access, { onSuccess: (found) => found.permission, onFailure: (error) => error.message });
+        check(Result.isSuccess(access) && access.success.ok, `${name}: reviewer ${login} can merge in ${repo.repo} (${said})`, `give ${login} write access to ${repo.repo}, or take it out of reviewers: in .chernabog/config.yaml`);
+      }
+    });
+
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
     Effect.gen(function* () {
@@ -175,6 +187,7 @@ export const doctor = Effect.gen(function* () {
       }
 
       yield* checkFlows(loaded.success, name, loaded.success.settings.configDir);
+      yield* checkReviewers(repo, name, loaded.success.settings.reviewers ?? []);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {

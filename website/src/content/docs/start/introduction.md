@@ -12,7 +12,7 @@ Teams commit flows to each repo in `.chernabog/`, the way husky commits git hook
 | labels an issue `auto:eligible`  | claims the oldest, implements it test first in a worktree     |
 | sets budgets and hours           | runs only within them, and only with weekly headroom to spare |
 | answers escalations              | stops at `auto:needs-human` or `auto:needs-clarification`     |
-| merges                           | reviews, fixes review comments, waits for CI                  |
+| merges, or labels `auto:ship`    | reviews, fixes review comments, waits for CI; merges `auto:ship` work once approved |
 
 ## Requirements
 

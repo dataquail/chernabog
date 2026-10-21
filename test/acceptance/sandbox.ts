@@ -26,6 +26,8 @@ export type MachineOptions = {
   // GitHub personas, and which of them run the repo.
   readonly github?: ReadonlyArray<string>;
   readonly personas?: ReadonlyArray<string>;
+  // A persona's own flows, over the repo entry's.
+  readonly personaFlows?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
   // The repo's flows on its entry; unset, the first command lists the team's defaults there.
   readonly flows?: Readonly<Record<string, Json>>;
   readonly accounts?: Readonly<Record<string, Json>>;
@@ -58,7 +60,7 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
         account: machine.account ?? 'work',
         baseBranch: 'main',
         ...Option.match(Option.fromUndefinedOr(machine.flows), { onNone: () => ({}), onSome: (flows) => ({ flows }) }),
-        ...Option.match(Option.fromUndefinedOr(machine.personas), { onNone: () => ({}), onSome: (personas) => ({ personas: Object.fromEntries(personas.map((login) => [login, {}])) }) }),
+        ...Option.match(Option.fromUndefinedOr(machine.personas), { onNone: () => ({}), onSome: (personas) => ({ personas: Object.fromEntries(personas.map((login) => [login, Option.match(Option.fromUndefinedOr(machine.personaFlows?.[login]), { onNone: () => ({}), onSome: (flows) => ({ flows }) })])) }) }),
       },
     ],
   });

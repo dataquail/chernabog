@@ -27,17 +27,6 @@ const flow = defineFlow({
 
       if (work.key === 'round-as-reviewer') return (yield* Review.round(PULL, 1, { role: 'reviewer' })).verdict;
 
-      if (work.key === 'round-then-label') {
-        const review = yield* Review.round(PULL, 1);
-        yield* Review.labelVerdict(PULL, 1, review);
-
-        return review.verdict;
-      }
-
-      if (work.key === 'stale-label') return yield* Review.labelVerdict(PULL, 1, { verdict: 'request-changes', sha: HEAD });
-
-      if (work.key === 'review-round') return (yield* Review.reviewRound(PULL, 1)).verdict;
-
       if (work.key === 'hand-off') return yield* Implement.handOff(ISSUE, opened, outcome);
 
       if (work.key === 'claim-ship') return (yield* Implement.claim(ISSUE, { label: SHIP })).branch;
@@ -81,48 +70,20 @@ const runUntil = (fake: Fake, key: string, until: (run: RunRow) => Effect.Effect
 
 const runToEnd = (fake: Fake, key: string) => runFlowToEnd(handle, fake, item(key));
 
-
 describe('the review steps', () => {
   effect(
-    'Review.round posts the review and its marker, and leaves the labels alone',
+    'Review.round posts a real review and its marker, naming the reviewer and its session, and leaves the labels alone',
     () => Effect.gen(function* () {
       const fake = makeFake('request-changes');
+      fake.people.me = 'data-quail';
       const finished = yield* runToEnd(fake, 'round');
       expect(finished.status).toBe('done');
       expect(summaryOf(finished)).toBe('request-changes');
       expect(fake.reviews).toHaveLength(1);
-      expect(fake.comments.map((comment) => comment.body).some((body) => Option.isSome(reviewMarker.read(body)))).toBe(true);
+      expect(fake.submitted).toEqual([{ author: 'data-quail', state: 'CHANGES_REQUESTED', commitSha: HEAD }]);
+      const markers = fake.comments.flatMap((comment) => Option.toArray(reviewMarker.read(comment.body)));
+      expect(markers).toEqual([{ sha: HEAD, round: 1, verdict: 'request-changes', reviewer: 'data-quail', sessionId: fake.requests[0]?.sessionId, adapter: 'claude' }]);
       expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
-    }),
-  );
-
-  effect(
-    'Review.labelVerdict then moves them as the review said',
-    () => Effect.gen(function* () {
-      const fake = makeFake('approve');
-      expect((yield* runToEnd(fake, 'round-then-label')).status).toBe('done');
-      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.approved]);
-    }),
-  );
-
-  effect(
-    'Review.labelVerdict leaves the labels alone once a later review is the latest',
-    () => Effect.gen(function* () {
-      const fake = makeFake('request-changes');
-      fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: 'request-changes' }));
-      fake.comment(reviewMarker.write({ sha: 'fedcba9876', round: 2, verdict: 'approve' }));
-      expect((yield* runToEnd(fake, 'stale-label')).status).toBe('done');
-      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
-    }),
-  );
-
-  effect(
-    'Review.reviewRound still reviews and moves the labels in one step',
-    () => Effect.gen(function* () {
-      const fake = makeFake('request-changes');
-      expect((yield* runToEnd(fake, 'review-round')).status).toBe('done');
-      expect(fake.reviews).toHaveLength(1);
-      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
     }),
   );
 });
@@ -167,10 +128,13 @@ describe('a flow keyed by its own label', () => {
     'Implement.triggerFor finds issues with that label, and claim takes the label off',
     () => Effect.gen(function* () {
       const fake = makeFake('approve');
-      fake.setLabels(ISSUE, [SHIP]);
-      const found = yield* triggered(fake, Implement.triggerFor(SHIP));
-      expect(found.map((work) => work.key)).toEqual([`issue-${ISSUE}`]);
+      fake.setLabels(ISSUE, ['auto:queued']);
+      const found = yield* triggered(fake, Implement.triggerFor('auto:queued'));
+      expect(found.map((work) => work.data)).toEqual([{ issue: ISSUE, label: 'auto:queued' }]);
       expect(yield* triggered(fake, Implement.trigger)).toEqual([]);
+      // auto:ship queues an issue too, the automated path, and says so for claim and openPullRequest.
+      fake.setLabels(ISSUE, [SHIP]);
+      expect((yield* triggered(fake, Implement.trigger)).map((work) => work.data)).toEqual([{ issue: ISSUE, label: SHIP }]);
 
       expect((yield* runToEnd(fake, 'claim-ship')).status).toBe('done');
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
@@ -179,6 +143,13 @@ describe('a flow keyed by its own label', () => {
 });
 
 const ownership = (fake: Fake) => fake.comments.flatMap((comment) => Option.toArray(ownerMarker.read(comment.body))).map((marker) => marker.released);
+
+// Asks the fake's persona to review the pull request.
+const requested = (fake: Fake) => {
+  fake.people.requested = [fake.people.me];
+
+  return fake;
+};
 
 describe('owning a pull request', () => {
   effect(
@@ -210,7 +181,7 @@ describe('owning a pull request', () => {
   effect(
     'the review and fix triggers leave alone a pull request another run owns',
     () => Effect.gen(function* () {
-      const review = makeFake('approve');
+      const review = requested(makeFake('approve'));
       owned(review, false);
       expect(yield* triggered(review, Review.trigger)).toEqual([]);
 
@@ -226,13 +197,13 @@ describe('owning a pull request', () => {
   effect(
     'and pick it up again once the run lets go, or this machine knows the run ended',
     () => Effect.gen(function* () {
-      const released = makeFake('approve');
+      const released = requested(makeFake('approve'));
       owned(released, false);
       owned(released, true);
       expect((yield* triggered(released, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
 
       // A run this machine doesn't know, such as one on another machine, still owns it.
-      const ended = makeFake('approve');
+      const ended = requested(makeFake('approve'));
       owned(ended, false);
       expect(yield* triggered(ended, Review.trigger)).toEqual([]);
       ended.knowRun(false);
@@ -335,23 +306,39 @@ describe('PullRequest.merge', () => {
 
 describe('Implement.handOff', () => {
   effect(
-    'labels the pull request needs-review by default',
+    'asks one reviewer from the pool, never the author, and the same one when it runs again',
     () => Effect.gen(function* () {
-      const fake = makeFake('approve');
+      const fake = makeFake('approve', { reviewers: ['chernabog-bot', 'data-quail', 'zach'] });
       fake.labelsOf(PULL).splice(0);
       expect((yield* runToEnd(fake, 'hand-off')).status).toBe('done');
-      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
+      expect(fake.people.requested).toHaveLength(1);
+      expect(['data-quail', 'zach']).toContain(fake.people.requested[0]);
+      expect(fake.labelsOf(PULL)).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toEqual([]);
     }),
   );
 
   effect(
-    'leaves needs-review off when the flow reviews the pull request itself',
+    'labels the pull request needs-review for a person without a pool, or with only its author in it',
+    () => Effect.gen(function* () {
+      for (const overrides of [{}, { reviewers: ['chernabog-bot'] }]) {
+        const fake = makeFake('approve', overrides);
+        fake.labelsOf(PULL).splice(0);
+        expect((yield* runToEnd(fake, 'hand-off')).status).toBe('done');
+        expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
+        expect(fake.people.requested).toEqual([]);
+      }
+    }),
+  );
+
+  effect(
+    'asks for no review when the flow reviews the pull request itself',
     () => Effect.gen(function* () {
       const fake = makeFake('approve');
       fake.labelsOf(PULL).splice(0);
       expect((yield* runToEnd(fake, 'hand-off-unlabelled')).status).toBe('done');
       expect(fake.labelsOf(PULL)).toEqual([]);
+      expect(fake.people.requested).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toEqual([]);
       expect(fake.comments.map((comment) => comment.body).some((body) => body.includes('chernabog-session'))).toBe(true);
     }),
