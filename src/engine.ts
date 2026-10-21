@@ -17,6 +17,7 @@ import * as Exit from 'effect/Exit';
 import * as FileSystem from 'effect/FileSystem';
 import * as Layer from 'effect/Layer';
 import * as Option from 'effect/Option';
+import * as Order from 'effect/Order';
 import * as Predicate from 'effect/Predicate';
 import * as Schema from 'effect/Schema';
 import * as DurableDeferred from 'effect/workflow/DurableDeferred';
@@ -202,7 +203,8 @@ export const resolveRunId = (prefix: string) =>
 
     if (ids.includes(prefix)) return prefix;
 
-    const matching = ids.filter((id) => id.startsWith(prefix));
+    // Sorted, so an ambiguous prefix lists the same runs in the same order everywhere.
+    const matching = Arr.sort(ids.filter((id) => id.startsWith(prefix)), Order.String);
 
     if (matching.length === 1) return matching[0];
 
