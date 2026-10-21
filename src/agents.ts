@@ -19,7 +19,9 @@ import { opencodeAdapter } from './agents/opencode.ts';
 import { knownLaunch, sessionFiles } from './agents/session-files.ts';
 import { knownSession, recordRunSession, type SessionRecord } from './agents/sessions.ts';
 import { codexHomeOf, Home } from './config.ts';
+import { GitHubTokens } from './github-auth.ts';
 import { launcherFor } from './launchers.ts';
+import type { Persona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
 
 export type AgentsConfig = Readonly<
@@ -47,13 +49,16 @@ const logOf = Effect.serviceOption(RunLog).pipe(
   ),
 );
 
-// The run's own log comes from the run that calls, so one Agent serves every run of a repo.
-export const AgentLive = (settings: RepoSettings, adapters: ReadonlyArray<Adapter>) =>
+// The run's own log comes from the run that calls, so one Agent serves every
+// run of a repo as one persona. The agent acts as that persona too: its gh and
+// git get the persona's token.
+export const AgentLive = (settings: RepoSettings, adapters: ReadonlyArray<Adapter>, persona: Persona) =>
   Layer.effect(
     Agent,
     Effect.gen(function* () {
       const services = yield* Effect.context<AdapterServices>();
       const host = yield* HostEnvironment;
+      const tokens = yield* GitHubTokens;
 
       return Agent.of({
         adapters: adapters.map((adapter) => adapter.name),
@@ -72,7 +77,9 @@ export const AgentLive = (settings: RepoSettings, adapters: ReadonlyArray<Adapte
 
             if (Option.isSome(run)) yield* recordRunSession(run.value.runId, name, request.sessionId, request.cwd, account);
 
-            return yield* found.value.run(request, { account, host: host.variables, env: settings.env, launcher: settings.launcher, log: yield* logOf });
+            const env = { ...settings.env, ...(yield* tokens.env(persona).pipe(Effect.mapError((error) => new AgentError({ message: error.message })))) };
+
+            return yield* found.value.run(request, { account, host: host.variables, env, launcher: settings.launcher, log: yield* logOf });
           }).pipe(Effect.provide(services)),
       });
     }),

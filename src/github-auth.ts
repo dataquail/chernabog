@@ -98,3 +98,21 @@ export class GitHubTokens extends Context.Service<
       }),
     );
 }
+
+// The whole environment a child process runs with to act as the persona; none
+// for the implicit persona, whose children inherit this process's, as before.
+export const childEnvironment = (persona: Persona) =>
+  Effect.gen(function* () {
+    const tokens = yield* GitHubTokens;
+    const host = yield* HostEnvironment;
+    const env = yield* tokens.env(persona);
+
+    return Option.map(
+      Option.liftPredicate(env, (found) => Object.keys(found).length > 0),
+      (found): Environment => ({ ...host.variables, ...found }),
+    );
+  });
+
+// The options that run a command as the persona.
+export const execOptionsFor = (persona: Persona, options: { readonly cwd: string }) =>
+  Effect.map(childEnvironment(persona), (env) => Option.match(env, { onNone: () => options, onSome: (found) => ({ ...options, env: found }) }));

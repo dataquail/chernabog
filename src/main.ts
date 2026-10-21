@@ -31,11 +31,13 @@ import { RELOAD_EXIT_CODE, runDaemon, setPaused } from './daemon.ts';
 import { doctor, formatCheck } from './doctor.ts';
 import { runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
+import { GitHubTokens } from './github-auth.ts';
 import { GitHubApi, viewerLogin } from './GitHubApi.ts';
 import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
+import { IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
@@ -483,7 +485,12 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-const AppLive = GitHubApi.layer.pipe(Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)), Layer.provideMerge(PlatformLive));
+// One GitHubTokens for the process, so each persona's token is looked up once.
+const AppLive = GitHubApi.layerFor(IMPLICIT).pipe(
+  Layer.provideMerge(GitHubTokens.layer),
+  Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
+  Layer.provideMerge(PlatformLive),
+);
 
 if (import.meta.main) {
   Command.run(chernabog, { version: VERSION }).pipe(

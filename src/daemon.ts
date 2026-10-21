@@ -23,7 +23,7 @@ import * as Result from 'effect/Result';
 import * as Schema from 'effect/Schema';
 
 import { Home, homePaths } from './config.ts';
-import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
+import { defaultPersona, deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
@@ -32,7 +32,7 @@ import { IMPLICIT } from './persona.ts';
 import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, repoNameOf, type Routing, routingOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
-import { buildRepoContext, type RepoContext, withRepo } from './runner.ts';
+import { adoptRuns, buildPersonaContexts, type PersonaContext, type RepoContext, servicesFrom, withRepo } from './runner.ts';
 import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { everyRun, State } from './state.ts';
@@ -225,16 +225,17 @@ export const runDaemon = Effect.gen(function* () {
   const busy = yield* Ref.make(0);
   const hooks = { onStep: () => Ref.update(busy, (count) => count + 1), onStepDone: () => Ref.update(busy, (count) => count - 1) };
 
-  const contexts = new Map<string, RepoContext>();
+  // Each repo's services, once per persona.
+  const contexts = new Map<string, ReadonlyArray<PersonaContext>>();
 
   for (const repo of repos) {
-    if (Option.isSome(repo.repo)) contexts.set(repo.name, yield* buildRepoContext(repo.repo.value, machine));
+    if (Option.isSome(repo.repo)) contexts.set(repo.name, yield* buildPersonaContexts(repo.repo.value, machine));
   }
 
   const handles = repos.flatMap((repo) => repo.flows.map((flow) => flow.handle));
 
   const flowLayers = handles.flatMap((handle) =>
-    Option.toArray(Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (context) => flowLayer(handle, Layer.succeedContext(context), hooks))),
+    Option.toArray(Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) => flowLayer(handle, servicesFrom(personas), hooks))),
   );
 
   const engine = yield* Layer.build(Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)));
@@ -242,6 +243,9 @@ export const runDaemon = Effect.gen(function* () {
   return yield* Effect.provideContext(
     Effect.gen(function* () {
       const state = yield* State;
+
+      for (const repo of repos) if (Option.isSome(repo.repo)) yield* adoptRuns(repo.repo.value);
+
       const reloadPending = yield* Ref.make(false);
       const reloaded = yield* Deferred.make<true>();
 
@@ -276,7 +280,7 @@ export const runDaemon = Effect.gen(function* () {
           if (Result.isFailure(triggered)) return yield* record(`trigger failed: ${describeError(triggered.failure)}`, Option.none());
 
           const items = triggered.success;
-          yield* deliverSignals(handle, items);
+          yield* deliverSignals(handle, defaultPersona(settings), items);
           const waiting = yield* unstarted(handle, items);
           // Work for others is left to their machines, unless a person names the item.
           const routing = routingOf(settings, handle.name);
@@ -324,7 +328,7 @@ export const runDaemon = Effect.gen(function* () {
               }
             }
 
-            const outcome = yield* startRun(handle, item);
+            const outcome = yield* startRun(handle, defaultPersona(settings), item);
 
             if (outcome.started && Option.isSome(outcome.run)) {
               started.push(outcome.run.value.id);
@@ -342,7 +346,12 @@ export const runDaemon = Effect.gen(function* () {
       // A repo whose flows may run: loaded, and its base branch still on the trusted tree.
       const runnable = (repo: RepoState) =>
         Option.filter(repo.repo, () => repo.status === 'ready' && sameTree(repo.latestTree, repo.tree)).pipe(
-          Option.flatMap((settings) => Option.map(Option.fromUndefinedOr(contexts.get(repo.name)), (context) => ({ settings, context }))),
+          Option.flatMap((settings) =>
+            Option.map(
+              Option.flatMap(Option.fromUndefinedOr(contexts.get(repo.name)), (personas) => servicesFrom(personas)(defaultPersona(settings))),
+              (context) => ({ settings, context }),
+            ),
+          ),
         );
 
       // Polls running workflows and records the ones that finished.

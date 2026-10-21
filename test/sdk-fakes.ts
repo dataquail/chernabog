@@ -36,7 +36,8 @@ import * as Option from 'effect/Option';
 import * as Schedule from 'effect/Schedule';
 
 import { Home, homePaths } from '../src/config.ts';
-import { type FlowHandle, flowLayer, pollRun, startRun, StateAt } from '../src/engine.ts';
+import { type FlowHandle, flowLayer, forEveryPersona, pollRun, startRun, StateAt } from '../src/engine.ts';
+import { IMPLICIT } from '../src/persona.ts';
 import { DEFAULT_LIMITS, type EffectiveRepo } from '../src/repo-config.ts';
 import type { RunRow, State } from '../src/state.ts';
 
@@ -237,10 +238,10 @@ export const runUntil = (handle: FlowHandle, fake: Fake, work: WorkItem, until: 
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-steps-' });
-    const engine = yield* Layer.build(flowLayer(handle, fake.services).pipe(Layer.provideMerge(StateAt(homePaths(home).state)), Layer.provideMerge(Home.at(home, home))));
+    const engine = yield* Layer.build(flowLayer(handle, forEveryPersona(yield* Layer.build(fake.services))).pipe(Layer.provideMerge(StateAt(homePaths(home).state)), Layer.provideMerge(Home.at(home, home))));
     const platform = yield* Effect.context<BunServices.BunServices>();
 
-    const run = startRun(handle, work).pipe(
+    const run = startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
       Effect.flatMap((started) =>
         pollRun(handle, started).pipe(

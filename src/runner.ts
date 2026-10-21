@@ -13,10 +13,11 @@ import * as Option from 'effect/Option';
 import type * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 
 import { ConfigError, Home, homePaths } from './config.ts';
-import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, repoServices, runLogFile, startRun, StateLive } from './engine.ts';
+import { defaultPersona, deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, repoServices, runLogFile, type ServicesFor, startRun, StateLive } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
+import { type Persona, samePersona } from './persona.ts';
 import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, routingOf } from './repo-config.ts';
 import { routeItems } from './schedule.ts';
 import { snapshotConfig } from './snapshot.ts';
@@ -55,17 +56,55 @@ export const openRepo = (machine: MachineConfig, enrolled: EnrolledRepo, fromChe
 // What a trigger, gate or step logs outside any run goes to stderr.
 const consoleRunLog = RunLog.of({ log: (line) => Console.error(line), step: () => Effect.void, stepDone: () => Effect.void });
 
-// One repo's services, built once at its composition point and shared by
-// every trigger, gate and run of its flows.
-export const buildRepoContext = (repo: EffectiveRepo, machine: MachineConfig) =>
+// One repo's services as one persona, built once at its composition point and
+// shared by every trigger, gate and run of its flows as that persona.
+export const buildRepoContext = (repo: EffectiveRepo, machine: MachineConfig, persona: Persona) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
-    const services = yield* Layer.build(Layer.mergeAll(repoServices(repo.settings, machine.usageGate, machine.agents), Layer.succeed(RunLog, consoleRunLog)));
+    const services = yield* Layer.build(Layer.mergeAll(repoServices(repo.settings, machine.usageGate, machine.agents, persona), Layer.succeed(RunLog, consoleRunLog)));
 
     return Context.merge(platform, services);
   });
 
 export type RepoContext = Effect.Success<ReturnType<typeof buildRepoContext>>;
+
+// The services in a repo context.
+export type RepoServices = RepoContext extends Context.Context<infer R> ? R : never;
+
+export type PersonaContext = { readonly persona: Persona; readonly context: RepoContext };
+
+// The repo's services for each of its personas.
+export const buildPersonaContexts = (repo: EffectiveRepo, machine: MachineConfig) =>
+  Effect.forEach(repo.personas, (persona) => Effect.map(buildRepoContext(repo, machine, persona), (context): PersonaContext => ({ persona, context })));
+
+// Picks a run's services by its persona.
+export const servicesFrom =
+  (contexts: ReadonlyArray<PersonaContext>): ServicesFor<RepoServices> =>
+  (persona) =>
+    Option.map(
+      Arr.findFirst(contexts, (candidate) => samePersona(candidate.persona, persona)),
+      (found) => found.context,
+    );
+
+// Once a repo has named personas, its runs from before them become its first
+// persona's, so they keep resuming and holding that persona's slots.
+export const adoptRuns = (repo: EffectiveRepo) =>
+  Option.match(defaultPersona(repo), {
+    onNone: () => Effect.void,
+    onSome: (login) => State.use((state) => state.adoptRuns(repo.settings.name, login)),
+  });
+
+// Who @me and runners mean for a persona: its own login, or, for the implicit
+// persona, whoever this machine is on GitHub, asked only when it matters.
+export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
+  Option.match(persona, {
+    onSome: (login) => Effect.succeedSome(login),
+    onNone: () => {
+      if (!needsLogin(repo)) return Effect.succeed(Option.none<string>());
+
+      return Effect.option(viewerLogin);
+    },
+  });
 
 // What this machine's state knows of a run, for triggers that leave alone a pull request a run owns.
 const runsFrom = (state: State['Service']) => Runs.of({ isActive: (runId) => state.run(runId).pipe(Effect.map(Option.map((run) => run.status === 'running'))) });
@@ -102,7 +141,7 @@ export const tailer = (path: string) => {
 
 const SIGNAL_EVERY_MS = 60_000;
 
-const followRun = (handle: FlowHandle, run: RunRow, context: RepoContext) =>
+const followRun = (handle: FlowHandle, persona: Persona, run: RunRow, context: RepoContext) =>
   Effect.gen(function* () {
     const tail = tailer(yield* runLogFile(run.id));
     let current = run;
@@ -117,7 +156,7 @@ const followRun = (handle: FlowHandle, run: RunRow, context: RepoContext) =>
       if (now - lastSignalCheck > SIGNAL_EVERY_MS) {
         lastSignalCheck = now;
         const items = yield* withRepo(context, handle.flow.trigger).pipe(Effect.orElseSucceed(() => []));
-        yield* deliverSignals(handle, items);
+        yield* deliverSignals(handle, persona, items);
       }
     }
 
@@ -130,22 +169,19 @@ export type RunOptions = { readonly repo: string; readonly flow: string; readonl
 
 const describeItem = (item: { readonly key: string; readonly title?: string }) => Option.match(Option.fromUndefinedOr(item.title), { onNone: () => item.key, onSome: (title) => `${item.key} (${title})` });
 
-const resume = (handle: FlowHandle, unfinished: RunRow, context: RepoContext) =>
+const resume = (handle: FlowHandle, persona: Persona, unfinished: RunRow, context: RepoContext) =>
   Effect.gen(function* () {
     yield* Console.log(`resuming ${unfinished.id} (${unfinished.itemKey}), log: ${yield* runLogFile(unfinished.id)}`);
 
     if (Option.isSome(unfinished.executionId)) yield* handle.workflow.resume(unfinished.executionId.value);
 
-    return Option.some(yield* followRun(handle, unfinished, context));
+    return Option.some(yield* followRun(handle, persona, unfinished, context));
   });
 
 // The first item this machine may start, unless the flow leaves work for others to them.
-const firstOf = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
+const firstOf = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    let login = Option.none<string>();
-
-    if (needsLogin(handle.repo)) login = yield* Effect.option(viewerLogin);
-
+    const login = yield* loginOf(handle.repo, persona);
     const routed = routeItems(items, routingOf(handle.repo, handle.name), login);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) yield* Console.log(`left for other machines: ${routed.elsewhere.map((item) => item.key).join(', ')}; name one with --item to run it here`);
@@ -153,12 +189,12 @@ const firstOf = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
     return Arr.head(routed.mine);
   });
 
-const startFirst = (handle: FlowHandle, options: RunOptions, context: RepoContext) =>
+const startFirst = (handle: FlowHandle, persona: Persona, options: RunOptions, context: RepoContext) =>
   Effect.gen(function* () {
     const items = (yield* withRepo(context, handle.flow.trigger)).filter((candidate) => candidate.wakeOnly !== true);
 
     const found = yield* Option.match(options.item, {
-      onNone: () => firstOf(handle, items),
+      onNone: () => firstOf(handle, persona, items),
       onSome: (key) => Effect.succeed(Option.fromUndefinedOr(items.find((candidate) => candidate.key === key))),
     });
 
@@ -168,13 +204,13 @@ const startFirst = (handle: FlowHandle, options: RunOptions, context: RepoContex
       return Option.none<RunRow>();
     }
 
-    const { run } = yield* startRun(handle, found.value);
+    const { run } = yield* startRun(handle, persona, found.value);
 
     if (Option.isNone(run)) return Option.none<RunRow>();
 
     yield* Console.log(`started ${run.value.id} for ${describeItem(found.value)}, log: ${yield* runLogFile(run.value.id)}`);
 
-    return Option.some(yield* followRun(handle, run.value, context));
+    return Option.some(yield* followRun(handle, persona, run.value, context));
   });
 
 // One run now, skipping gates: resumes the flow's unfinished run in this repo
@@ -195,18 +231,21 @@ export const runInForeground = (options: RunOptions) =>
 
     const handle = flowHandle(repo, options.flow, flow.value);
     yield* acquireLock(homePaths((yield* Home).root).engineLock, `run ${options.flow} --repo ${repo.settings.name}`);
-    const context = yield* buildRepoContext(repo, machine);
+    const persona = defaultPersona(repo);
+    const contexts = yield* buildPersonaContexts(repo, machine);
+    const context = yield* Effect.fromOption(servicesFrom(contexts)(persona)).pipe(Effect.orDie);
 
     const program = Effect.gen(function* () {
+      yield* adoptRuns(repo);
       const state = yield* State;
-      const unfinished = Arr.head(yield* state.activeRuns({ repo: Option.some(repo.settings.name), persona: Option.none(), flow: Option.some(options.flow) }));
+      const unfinished = Arr.head(yield* state.activeRuns({ repo: Option.some(repo.settings.name), persona: Option.some(persona), flow: Option.some(options.flow) }));
 
-      if (Option.isSome(unfinished)) return yield* resume(handle, unfinished.value, context);
+      if (Option.isSome(unfinished)) return yield* resume(handle, persona, unfinished.value, context);
 
-      return yield* startFirst(handle, options, context);
+      return yield* startFirst(handle, persona, options, context);
     });
 
-    const engine = yield* Layer.build(flowLayer(handle, Layer.succeedContext(context)).pipe(Layer.provideMerge(StateLive)));
+    const engine = yield* Layer.build(flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provideMerge(StateLive)));
 
     return yield* Effect.provideContext(program, engine);
   }).pipe(Effect.scoped);
