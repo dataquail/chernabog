@@ -70,7 +70,7 @@ A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs wit
 
 `flows.<flow>.assignee` and `flows.<flow>.reviewRequested` make a machine start only the work items for certain people. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
 
-- `@me`: this machine's GitHub login, the one its `gh` token belongs to
+- `@me`: this machine's GitHub login, the one its `gh` token belongs to, or the [persona](#github-personas) the flow runs as
 - a login, such as `alice`
 - `none`: nobody
 
@@ -126,6 +126,7 @@ flows:
 
 | Key                     | Default      | Meaning                                                           |
 | ----------------------- | ------------ | ----------------------------------------------------------------- |
+| `github.<login>`        | —            | a GitHub persona this machine acts as; see [GitHub personas](#github-personas) |
 | `accounts.<name>`       | —            | `configDir`, `expectedEmail`, `oauthTokenEnv`, `usageGate` (`none` to run ungated), `agent` (default `claude`) |
 | `usageGate`             | see [the gate](/chernabog/agents/usage-gate/) | all four thresholds, or none            |
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
@@ -134,7 +135,7 @@ flows:
 | `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent) |
 | `launcher`              | —            | your launcher for every repo                                      |
 | `launchers.<name>`      | —            | `start`, `close`, `alive`, `attach`: [your own](/chernabog/agents/launchers/#your-own-launcher) |
-| `repos[]`               | —            | `path`, `repo` (`owner/name`), `name`, `account`, `baseBranch`; written by `enroll` |
+| `repos[]`               | —            | `path`, `repo` (`owner/name`), `name`, `account`, `baseBranch`, `personas`; written by `enroll` |
 
 ```yaml
 # ~/.config/chernabog/config.yaml
@@ -149,3 +150,22 @@ quietHours: "23:00-07:00"
 repos:
   - { path: ~/code/my-app, repo: you/my-app, account: personal, baseBranch: main }
 ```
+
+### GitHub personas
+
+Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`'s active account. `github:` lists GitHub logins it acts as instead, each logged in to `gh` side by side (`gh auth login`, then `gh auth switch` back to your usual account). A persona's token always comes from `gh auth token --user <login>`; Chernabog never stores it.
+
+A repo's `personas` names which of them run its flows. With one login under `github:`, that one is the default; with several, the repo must choose. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. Run ids say whose they are (`demo.review@bob.pr-12.…`), and `status` shows `review as bob`.
+
+A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
+
+```yaml
+# ~/.config/chernabog/config.yaml
+github:
+  you: {}
+  your-reviewer: {}
+repos:
+  - { path: ~/code/my-app, repo: you/my-app, baseBranch: main, personas: [you, your-reviewer] }
+```
+
+`chernabog run` and `trigger` take `--as <login>` for a flow that runs as several personas.

@@ -22,6 +22,8 @@ const thread = resuming ? args[2] : crypto.randomUUID();
 const prompt = await Bun.stdin.text();
 const cwd = process.cwd();
 if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, `${resuming ? 'resume' : 'start'} ${thread} ${JSON.stringify(args.filter((arg) => arg.startsWith('sandbox') || arg.startsWith('--')))}\n`);
+// The GitHub token the session would act with.
+if (process.env.FAKE_AGENT_TOKEN_LOG) appendFileSync(process.env.FAKE_AGENT_TOKEN_LOG, `codex ${process.env.GH_TOKEN ?? 'none'}\n`);
 console.log(JSON.stringify({ type: 'thread.started', thread_id: thread }));
 console.log(JSON.stringify({ type: 'turn.started' }));
 

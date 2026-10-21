@@ -32,6 +32,8 @@ const prompt = headless ? await Bun.stdin.text() : (args.at(-1) ?? '');
 const cwd = process.cwd();
 
 if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, `${resuming ? 'resume' : 'start'} ${sessionId} ${headless ? '-p' : 'interactive'} ${JSON.stringify(prompt.slice(0, 60))}\n`);
+// The GitHub token the session would act with.
+if (process.env.FAKE_AGENT_TOKEN_LOG) appendFileSync(process.env.FAKE_AGENT_TOKEN_LOG, `claude ${process.env.GH_TOKEN ?? 'none'}\n`);
 const transcriptDir = join(process.env.CLAUDE_CONFIG_DIR!, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
 const transcript = join(transcriptDir, `${sessionId}.jsonl`);
 mkdirSync(transcriptDir, { recursive: true });

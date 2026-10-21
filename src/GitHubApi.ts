@@ -154,3 +154,6 @@ export const githubTestLayer = (handler: (method: string, path: string, body: Op
 
 // The GitHub login of the token this machine uses.
 export const viewerLogin = githubJson('GET', '/user', Schema.Struct({ login: Schema.String })).pipe(Effect.map((user) => user.login));
+
+// The GitHub login a persona's token belongs to.
+export const viewerLoginAs = (persona: Persona) => Layer.build(GitHubApi.layerFor(persona)).pipe(Effect.flatMap((api) => Effect.provideContext(viewerLogin, api)), Effect.scoped);

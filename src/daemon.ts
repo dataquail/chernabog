@@ -223,7 +223,7 @@ export const runDaemon = Effect.gen(function* () {
 
   for (const repo of repos) {
     const message = Option.match(repo.message, { onNone: () => '', onSome: (said) => `: ${said}` });
-    const flows = Option.match(Option.liftPredicate(repo.flows, Arr.isReadonlyArrayNonEmpty), { onNone: () => '', onSome: (found) => ` (flows: ${found.map((flow) => flow.handle.name).join(', ')})` });
+    const flows = Option.match(Option.liftPredicate(repo.flows, Arr.isReadonlyArrayNonEmpty), { onNone: () => '', onSome: (found) => ` (flows: ${Arr.dedupe(found.map((flow) => flow.handle.name)).join(', ')})` });
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
@@ -239,20 +239,23 @@ export const runDaemon = Effect.gen(function* () {
 
   if (machine.github.length > 0) yield* log(`acting on GitHub as ${machine.github.join(', ')}`);
 
+  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
+
   // Several personas on one flow each see all its work unless @me tells them apart.
   for (const repo of repos) {
     if (Option.isNone(repo.repo) || repo.repo.value.personas.length < 2) continue;
 
-    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const routing = routingOf(repo.repo.value, flow);
+    const settings = repo.repo.value;
 
-      if (Option.isNone(routing.assignee) && Option.isNone(routing.reviewRequested)) {
-        yield* log(`${repo.name}/${flow}: runs as ${repo.repo.value.personas.flatMap((persona) => Option.toArray(persona)).join(', ')} with no assignee or reviewRequested, so each takes any of its work`);
+    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
+      const routing = routingOf(settings, flow);
+      const runs = settings.personas.some((persona) => Option.isNone(flowOff(settings, flow, loginFor(persona))));
+
+      if (runs && Option.isNone(routing.assignee) && Option.isNone(routing.reviewRequested)) {
+        yield* log(`${repo.name}/${flow}: runs as ${settings.personas.flatMap((persona) => Option.toArray(persona)).join(', ')} with no assignee or reviewRequested, so each takes any of its work`);
       }
     }
   }
-
-  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
 
   const busy = yield* Ref.make(0);
   const hooks = { onStep: () => Ref.update(busy, (count) => count + 1), onStepDone: () => Ref.update(busy, (count) => count - 1) };
