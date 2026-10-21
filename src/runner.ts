@@ -199,7 +199,7 @@ export const runInForeground = (options: RunOptions) =>
 
     const program = Effect.gen(function* () {
       const state = yield* State;
-      const unfinished = Arr.head(yield* state.activeRuns({ repo: Option.some(repo.settings.name), flow: Option.some(options.flow) }));
+      const unfinished = Arr.head(yield* state.activeRuns({ repo: Option.some(repo.settings.name), persona: Option.none(), flow: Option.some(options.flow) }));
 
       if (Option.isSome(unfinished)) return yield* resume(handle, unfinished.value, context);
 

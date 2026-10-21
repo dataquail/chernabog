@@ -34,6 +34,7 @@ const run = (id: string, status: RunStatus): RunRow => {
   return {
     id,
     repo: 'goodbones',
+    persona: Option.none(),
     flow: Option.getOrElse(Option.as(Option.liftPredicate(id, (known) => known.includes('review')), 'review'), () => 'implement'),
     itemKey: 'issue-7',
     itemTitle: Option.some('Fix the parser'),
@@ -84,7 +85,7 @@ const status: DaemonStatus = {
     { ...run('goodbones.review.pr-8.1', 'running'), parked: true },
   ],
   recent: [run('goodbones.implement.issue-7.1', 'running'), run('goodbones.implement.issue-5.1', 'needs-human')],
-  skips: [{ repo: 'goodbones', flow: 'implement', itemKey: Option.none(), reason: 'usage gate: five-hour usage 0.5 is at or over the 0.4 ceiling', at: minutes(-43) }],
+  skips: [{ repo: 'goodbones', persona: Option.none(), flow: 'implement', itemKey: Option.none(), reason: 'usage gate: five-hour usage 0.5 is at or over the 0.4 ceiling', at: minutes(-43) }],
 };
 
 const model = (overrides: Partial<Model> = {}): Model => ({ ...initialModel(140, 40, now), status: Option.some(status), now, ...overrides });

@@ -28,13 +28,14 @@ import { viewerLogin } from './GitHubApi.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
+import { IMPLICIT } from './persona.ts';
 import { DaemonStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, repoNameOf, type Routing, routingOf } from './repo-config.ts';
 import { runLogWriting } from './runlog.ts';
 import { buildRepoContext, type RepoContext, withRepo } from './runner.ts';
 import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
-import { State } from './state.ts';
+import { everyRun, State } from './state.ts';
 import { trustedTree } from './trust.ts';
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -149,7 +150,7 @@ const unstarted = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
     const waiting: Array<WorkItem> = [];
 
     for (const item of items) {
-      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, handle.name, item.key))) waiting.push(item);
+      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, IMPLICIT, handle.name, item.key))) waiting.push(item);
     }
 
     return waiting;
@@ -246,7 +247,7 @@ export const runDaemon = Effect.gen(function* () {
 
       const handleFor = (repoName: string, flowName: string) => Arr.findFirst(handles, (handle) => handle.repo.settings.name === repoName && handle.name === flowName);
 
-      const parked = Effect.all({ active: state.activeRuns({ repo: Option.none(), flow: Option.none() }), parkedIds: state.parkedRunIds });
+      const parked = Effect.all({ active: state.activeRuns(everyRun), parkedIds: state.parkedRunIds });
 
       const tick = (repo: RepoState, settings: EffectiveRepo, context: RepoContext, schedule: FlowSchedule, options: TickOptions) =>
         Effect.gen(function* () {
@@ -255,7 +256,7 @@ export const runDaemon = Effect.gen(function* () {
           const flowSettings = Record.get(settings.flows, handle.name);
 
           const record = (reason: string, itemKey: Option.Option<string>) =>
-            state.recordSkip({ repo: repo.name, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
+            state.recordSkip({ repo: repo.name, persona: IMPLICIT, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
 
           if (options.gates) {
             const decision = decideTick({
@@ -348,7 +349,7 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            for (const activeRun of yield* state.activeRuns({ repo: Option.none(), flow: Option.none() })) {
+            for (const activeRun of yield* state.activeRuns(everyRun)) {
               const handle = handleFor(activeRun.repo, activeRun.flow);
 
               if (Option.isNone(handle)) continue;

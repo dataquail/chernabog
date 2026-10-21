@@ -23,6 +23,7 @@ import * as Workflow from 'effect/workflow/Workflow';
 import { adaptersFor, AgentLive, type AgentsConfig } from './agents.ts';
 import { Home, homePaths } from './config.ts';
 import { GitHubApi } from './GitHubApi.ts';
+import { IMPLICIT } from './persona.ts';
 import type { EffectiveRepo } from './repo-config.ts';
 import { noHooks, runLogWriting, type StepHooks } from './runlog.ts';
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from './sdk-live.ts';
@@ -155,14 +156,14 @@ export const startRun = (handle: FlowHandle, item: WorkItem) =>
   Effect.gen(function* () {
     const state = yield* State;
     const repo = handle.repo.settings.name;
-    const active = yield* state.activeRunFor(repo, handle.name, item.key);
+    const active = yield* state.activeRunFor(repo, IMPLICIT, handle.name, item.key);
 
     if (Option.isSome(active)) return { run: active, started: false } satisfies Started;
 
     if (item.wakeOnly === true) return { run: Option.none(), started: false } satisfies Started;
 
     const runId = makeRunId(repo, handle.name, item.key, yield* DateTime.now);
-    yield* state.insertRun({ id: runId, repo, flow: handle.name, itemKey: item.key, itemTitle: Option.fromUndefinedOr(item.title), itemUrl: Option.fromUndefinedOr(item.url) });
+    yield* state.insertRun({ id: runId, repo, persona: IMPLICIT, flow: handle.name, itemKey: item.key, itemTitle: Option.fromUndefinedOr(item.title), itemUrl: Option.fromUndefinedOr(item.url) });
     const executionId = yield* handle.workflow.execute({ runId, item }, { discard: true });
     yield* state.setExecution(runId, executionId);
 
@@ -204,7 +205,7 @@ export const deliverSignals = (handle: FlowHandle, items: ReadonlyArray<WorkItem
     let delivered = 0;
 
     for (const item of items) {
-      const run = yield* state.activeRunFor(handle.repo.settings.name, handle.name, item.key);
+      const run = yield* state.activeRunFor(handle.repo.settings.name, IMPLICIT, handle.name, item.key);
 
       if (Option.isNone(run)) continue;
 
