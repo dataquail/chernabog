@@ -32,15 +32,16 @@ import { doctor, formatCheck } from './doctor.ts';
 import { resolveRunId, runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
 import { GitHubTokens } from './github-auth.ts';
-import { GitHubApi, viewerLogin } from './GitHubApi.ts';
-import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
+import { GitHubApi } from './GitHubApi.ts';
+import { checkFlowNames, chooseFlows, enrolmentOf, flowChoices, type FlowStanding, loginsFor, movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
+import { migrateMachineConfig } from './migrate.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
-import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
+import { enrollInMachineConfig, entryFor, findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf, unenrollFromMachineConfig } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
 import { configTree } from './snapshot.ts';
@@ -345,6 +346,38 @@ const labels = Command.make(
 // The repo a path is in; the working directory's when none is given.
 const rootOf = (path: Option.Option<string>) => repoRoot(Option.getOrElse(path, () => '.'));
 
+// In a terminal, whether the person agrees; elsewhere, no.
+const confirmed = (message: string) =>
+  Effect.gen(function* () {
+    const stdio = yield* Stdio.Stdio;
+
+    if (!(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return false;
+
+    return yield* Prompt.Confirm({ message, initial: true });
+  });
+
+// A checkout that moved: its entry in machine config still names where it
+// was. Offers to point the entry here, settings and all.
+const offerRepoint = (root: string) =>
+  Effect.gen(function* () {
+    const slug = yield* Effect.option(slugOf(root));
+
+    if (Option.isNone(slug)) return;
+
+    for (const entry of yield* movedEntries(yield* loadMachineConfig, slug.value, root)) {
+      const named = repoNameOf(entry);
+
+      if (!(yield* confirmed(`${named} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`))) {
+        yield* Console.log(`${named} is enrolled at ${entry.path}, which is gone; chernabog enroll${suffix(Option.fromUndefinedOr(entry.name), ' --name ')} here points it here, keeping its settings`);
+        continue;
+      }
+
+      yield* repoint(entry, root);
+      yield* Console.log(`pointed ${named} at ${root}`);
+      yield* daemonReload.pipe(Effect.ignore);
+    }
+  });
+
 const init = Command.make('init', { path: Argument.String('path').pipe(Argument.optional) }, ({ path }) =>
   Effect.gen(function* () {
     const root = yield* rootOf(path);
@@ -357,13 +390,14 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
       }),
     );
 
+    yield* offerRepoint(root);
     yield* Console.log('Next: commit .chernabog/, merge it to the base branch, then chernabog enroll and chernabog trust here.');
   }),
-).pipe(Command.withDescription('Scaffold .chernabog/ in a repo with the default flows'));
+).pipe(Command.withDescription('Scaffold .chernabog/ in a repo with the default flows, and point a moved checkout\'s settings at it'));
 
 // The flows to run on this machine: --flows when given, else asked in a
-// terminal, else none chosen, which leaves local.yaml's choices as they are.
-const chosenFlows = <R>(root: string, flag: Option.Option<string>, login: Effect.Effect<Option.Option<string>, never, R>) =>
+// terminal, else none chosen, which leaves the entry's flows as they are.
+const chosenFlows = <E, R>(root: string, flag: Option.Option<string>, standing: Effect.Effect<ReadonlyArray<FlowStanding>, E, R>) =>
   Effect.gen(function* () {
     if (Option.isSome(flag)) {
       const names = flag.value.split(',').map((name) => name.trim()).filter((name) => name.length > 0);
@@ -373,7 +407,7 @@ const chosenFlows = <R>(root: string, flag: Option.Option<string>, login: Effect
     }
 
     const stdio = yield* Stdio.Stdio;
-    const choices = yield* flowChoices(root, login);
+    const choices = yield* standing;
 
     if (choices.length === 0 || !(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return Option.none<Array<string>>();
 
@@ -392,30 +426,38 @@ const enrollCommand = Command.make(
     account: Flag.String('account').pipe(Flag.withDescription('The account from machine config whose budget this repo spends'), Flag.optional),
     name: Flag.String('name').pipe(Flag.withDescription('A short name, when two enrolled repos share one'), Flag.optional),
     flows: Flag.String('flows').pipe(
-      Flag.withDescription('The flows to run on this machine, comma-separated; the rest are turned off in local.yaml. Asked in a terminal when left out'),
+      Flag.withDescription("The flows to run on this machine, comma-separated; the rest are off. Asked in a terminal when left out; else a new repo gets the team's defaults"),
       Flag.optional,
     ),
   },
   ({ account, flows, name, path }) =>
     Effect.gen(function* () {
       const root = yield* rootOf(path);
+      const repo = yield* enrolmentOf(root, { account, name });
+      const machine = yield* loadMachineConfig;
+      const entry = yield* entryFor(machine.repos, repo);
+      const listed = Option.flatMap(entry, (found) => Option.map(Option.fromUndefinedOr(found.entry.flows), Object.keys));
       // Looked up once, and only if the repo names runners.
-      const logins = yield* Cache.make({ capacity: 1, lookup: () => Effect.option(viewerLogin) });
-      const login = Cache.get(logins, 'login');
-      const chosen = yield* chosenFlows(root, flows, login);
-      const { action, repo } = yield* enroll(root, { account, name });
+      const logins = yield* Cache.make({ capacity: 1, lookup: () => loginsFor(machine, Option.map(entry, (found) => found.entry)) });
+      const standings = yield* Cache.make({ capacity: 1, lookup: () => flowChoices(root, listed, Cache.get(logins, 'logins')) });
+      const standing = Cache.get(standings, 'flows');
+      const chosen = yield* chosenFlows(root, flows, standing);
+      const action = yield* enrollInMachineConfig(repo);
 
       yield* Console.log(`${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? 'main'}) in ${yield* machineConfigFile}`);
 
-      if (yield* ensureLocalConfig(root)) yield* Console.log('wrote .chernabog/local.yaml');
+      // A repo whose entry lists no flows yet gets the team's defaults.
+      // A checkout without flows yet has nothing to choose from, so it waits for the next enroll.
+      const defaults = Effect.map(standing, (all) => Option.map(Option.liftPredicate(all, Arr.isReadonlyArrayNonEmpty), (found) => found.filter((flow) => flow.teamDefault).map((flow) => flow.name)));
+      const names = yield* Option.match(chosen, { onSome: Effect.succeedSome, onNone: () => Option.match(listed, { onNone: () => defaults, onSome: () => Effect.succeedNone }) });
 
-      for (const names of Option.toArray(chosen)) {
-        const choices = yield* chooseFlows(root, names, login);
+      for (const picked of Option.toArray(names)) {
+        const choices = yield* chooseFlows(root, repo, picked);
 
-        const listed = (enabled: boolean) =>
+        const listedAs = (enabled: boolean) =>
           Option.getOrElse(Option.liftPredicate(choices.filter((choice) => choice.enabled === enabled).map((choice) => choice.name).join(', '), (text) => text.length > 0), () => 'none');
 
-        yield* Console.log(`flows on this machine: ${listed(true)}; turned off: ${listed(false)} (in .chernabog/local.yaml)`);
+        yield* Console.log(`flows on this machine: ${listedAs(true)}; off: ${listedAs(false)} (in machine config)`);
       }
 
       // A running daemon restarts to schedule the repo; none running is fine.
@@ -423,6 +465,14 @@ const enrollCommand = Command.make(
       yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
     }),
 ).pipe(Command.withDescription("Add a repo to this machine's config, and choose which of its flows run here"));
+
+const unenroll = Command.make('unenroll', { repo: repoArgument }, ({ repo }) =>
+  Effect.gen(function* () {
+    const removed = yield* unenrollFromMachineConfig(repo);
+    yield* Console.log(`removed ${repoNameOf(removed)} (${removed.repo}, ${removed.path}) and its settings from ${yield* machineConfigFile}`);
+    yield* daemonReload.pipe(Effect.ignore);
+  }),
+).pipe(Command.withDescription("Remove a repo, and its settings, from this machine's config"));
 
 const attach = Command.make('attach', { run: Argument.String('run') }, ({ run: named }) =>
   Effect.gen(function* () {
@@ -481,6 +531,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     doctorCommand,
     init,
     enrollCommand,
+    unenroll,
     installCommand,
     uninstallCommand,
     start,
@@ -501,8 +552,17 @@ const AppLive = GitHubApi.layerFor(IMPLICIT).pipe(
   Layer.provideMerge(PlatformLive),
 );
 
+// Machine config from before each persona's settings lived there is brought
+// up to date before any command reads it. Not being able to is said, not fatal:
+// the command then reports the config as it finds it.
+const migrated = migrateMachineConfig.pipe(
+  Effect.flatMap((lines) => Effect.forEach(lines, (line) => Console.error(`chernabog: machine config: ${line}`), { discard: true })),
+  Effect.catch((error) => Console.error(`chernabog: could not update machine config: ${describeError(error)}`)),
+);
+
 if (import.meta.main) {
-  Command.run(chernabog, { version: VERSION }).pipe(
+  migrated.pipe(
+    Effect.andThen(Command.run(chernabog, { version: VERSION })),
     Effect.catch((error) => fail(`chernabog: ${describeError(error)}`)),
     Effect.provide(AppLive),
     BunRuntime.runMain({ disableErrorReporting: true }),

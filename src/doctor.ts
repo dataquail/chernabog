@@ -3,7 +3,6 @@
 
 import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';
-import * as Cache from 'effect/Cache';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
@@ -16,12 +15,13 @@ import { checkCodexAccount } from './codex-usage.ts';
 import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
 import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
-import { githubGetAllPages, viewerLogin, viewerLoginAs } from './GitHubApi.ts';
+import { githubGetAllPages, viewerLoginAs } from './GitHubApi.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
 import { flowNames } from './loader.ts';
+import { asSuffix } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
-import { type EffectiveRepo, type EnrolledRepo, FLOW_TURNED_OFF, flowOff, hasRunners, loadMachineConfig, loadRepo, type MachineAccount, type MachineConfig, repoNameOf } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineAccount, type MachineConfig, repoNameOf } from './repo-config.ts';
 import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { trustedTree } from './trust.ts';
@@ -151,55 +151,51 @@ export const doctor = Effect.gen(function* () {
 
   const launchersInUse = new Map<string, ResolvedLauncher>();
 
-  // Who this machine is on GitHub, asked once, by the first repo that names runners.
-  const logins = yield* Cache.make({ capacity: 1, lookup: () => Effect.result(viewerLogin) });
-  const login = Cache.get(logins, 'login');
-
-  // The flows a repo's runners keep off this machine. Not a failure: they run on the runners' machines.
-  const checkRunners = (effective: EffectiveRepo, name: string, configDir: string) =>
+  // The flows each persona runs: the ones machine config lists for it. Not a failure when none do.
+  const checkFlows = (effective: EffectiveRepo, name: string, configDir: string) =>
     Effect.gen(function* () {
-      if (!hasRunners(effective)) return;
-
-      const self = yield* login;
-
-      if (Result.isFailure(self)) {
-        check(false, `${name}: names runners, but who this machine is on GitHub is unknown (${self.failure.message})`, 'gh auth status');
-
-        return;
-      }
-
       const names = yield* flowNames(configDir).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      const off = names.filter((flow) => Option.exists(flowOff(effective, flow, Option.some(self.success)), (reason) => reason !== FLOW_TURNED_OFF));
-      const elsewhere = Option.match(Option.liftPredicate(off, Arr.isReadonlyArrayNonEmpty), { onNone: () => 'runs every flow it names', onSome: (flows) => `isn't a runner of ${flows.join(', ')}; they run elsewhere unless turned on in local.yaml` });
-      check(true, `${name}: this machine (${self.success} on GitHub) ${elsewhere}`, '');
+
+      for (const own of effective.personas) {
+        const on = names.filter((flow) => Option.isNone(flowOff(own, flow)));
+        const runs = Option.match(Option.liftPredicate(on, Arr.isReadonlyArrayNonEmpty), { onNone: () => 'runs none of its flows', onSome: (flows) => `runs ${flows.join(', ')}` });
+        check(true, `${name}${asSuffix(own.persona)}: ${runs}`, '');
+      }
     });
 
-  // Where the repo's interactive sessions run, whether that tool works, and whether Claude will open its worktrees without asking.
+  // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
     Effect.gen(function* () {
       const loaded = yield* Effect.result(Effect.flatMap(snapshotConfig(repo.path, baseBranch, false), (snapshot) => loadRepo(machine, repo, snapshot.configDir)));
 
       if (Result.isFailure(loaded)) {
-        check(false, `${name}: config loads (${loaded.failure.message})`, 'fix the setting it names; a launcher is chosen in local.yaml or machine config, within the repo\'s allowedLaunchers');
+        check(false, `${name}: config loads (${loaded.failure.message})`, 'fix the setting it names; a launcher is chosen on the repo\'s entry in machine config or machine config\'s own launcher:, within the repo\'s allowedLaunchers');
 
         return;
       }
 
-      const { settings } = loaded.success;
-      check(true, `${name}: launcher ${describeLauncher(settings)}`, '');
-      yield* checkRunners(loaded.success, name, settings.configDir);
+      yield* checkFlows(loaded.success, name, loaded.success.settings.configDir);
+      const trusted = new Set<string>();
 
-      if (settings.agent !== 'claude') return;
+      for (const { persona, settings } of loaded.success.personas) {
+        check(true, `${name}${asSuffix(persona)}: launcher ${describeLauncher(settings)}`, '');
 
-      if (Option.isNone(launcherFor(settings.launcher))) {
-        check(true, `${name}: runs use claude -p (launcher headless)`, '');
+        if (settings.agent !== 'claude') continue;
 
-        return;
+        if (Option.isNone(launcherFor(settings.launcher))) {
+          check(true, `${name}${asSuffix(persona)}: runs use claude -p (launcher headless)`, '');
+
+          continue;
+        }
+
+        launchersInUse.set(settings.launcher.name, settings.launcher);
+
+        if (trusted.has(settings.account.name)) continue;
+
+        trusted.add(settings.account.name);
+        const configDir = Option.getOrElse(settings.account.configDir, () => '~/.claude');
+        check(yield* claudeTrusts(settings.account, repo.path), `${name}: Claude trusts ${repo.path}, so its worktrees open without a prompt`, `cd ${repo.path} && CLAUDE_CONFIG_DIR=${configDir} claude, then choose "Yes, I trust this folder"`);
       }
-
-      launchersInUse.set(settings.launcher.name, settings.launcher);
-      const configDir = Option.getOrElse(settings.account.configDir, () => '~/.claude');
-      check(yield* claudeTrusts(settings.account, repo.path), `${name}: Claude trusts ${repo.path}, so its worktrees open without a prompt`, `cd ${repo.path} && CLAUDE_CONFIG_DIR=${configDir} claude, then choose "Yes, I trust this folder"`);
     });
 
   // Whether an editor types the repo's flows against this binary's SDK and effect. A snapshot that fails is checkLauncher's to report.
@@ -259,7 +255,7 @@ export const doctor = Effect.gen(function* () {
     const baseBranch = repo.baseBranch ?? 'main';
 
     if (!(yield* fs.exists(repo.path).pipe(Effect.orElseSucceed(() => false)))) {
-      check(false, `${name}: ${repo.path} exists`, `clone ${repo.repo} there, or chernabog enroll it again from where it lives`);
+      check(false, `${name}: checkout exists at ${repo.path}`, `clone ${repo.repo} there, run chernabog init where it lives now to point its settings there, or chernabog unenroll ${repo.repo}`);
       continue;
     }
 

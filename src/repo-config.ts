@@ -1,7 +1,9 @@
-// The three config layers. The team decides what work gets done and how
-// (.chernabog/config.yaml, committed); each person decides when it runs, which
-// agent it uses (.chernabog/local.yaml, gitignored) and how much of their
-// budget it spends (~/.config/chernabog/config.yaml). Later layers override
+// The config layers. The team decides what work gets done and how
+// (.chernabog/config.yaml, committed); each person decides, in machine config
+// (~/.config/chernabog/config.yaml), how much of their budget it spends and,
+// for each repo they enroll, which flows run as each of their GitHub personas,
+// when, and with which account. A repo's entry there is keyed by its slug, so
+// its settings follow the repo rather than the folder. Later layers override
 // earlier ones key by key, except that a repo can never raise machine limits,
 // and a person's launcher must be one the repo allows.
 
@@ -11,6 +13,7 @@ import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
+import type * as PlatformError from 'effect/PlatformError';
 import * as Record from 'effect/Record';
 import * as Schema from 'effect/Schema';
 import YAML from 'yaml';
@@ -20,7 +23,7 @@ import { ConfigError, expandHome, Home, homePaths } from './config.ts';
 import { checkConfigVersion } from './flow-deps.ts';
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
 import { nodeBinFor } from './node-version.ts';
-import { IMPLICIT, type Persona } from './persona.ts';
+import { asSuffix, IMPLICIT, type Persona, samePersona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
 import type { GateConfig } from './usage-gate.ts';
 
@@ -70,7 +73,7 @@ export type FlowSettings = typeof FlowSettings.Type;
 
 // GitHub logins whose machines run a flow by default; anyone's, when left out.
 const Runners = Schema.Array(Schema.String).annotate({
-  description: "GitHub logins whose machines run this by default; anyone's when unset. A person can still turn a flow on in their local.yaml.",
+  description: "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config.",
 });
 
 const RepoFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: Schema.optionalKey(Runners) });
@@ -98,13 +101,15 @@ const LabelsFile = Schema.Struct({
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.
 const MACHINE_ONLY = 'launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)';
-const TEAM_ONLY = 'runners is the team\'s choice, in .chernabog/config.yaml; to run a flow here anyway, set flows.<flow>.enabled: true';
+const TEAM_ONLY = 'runners is the team\'s choice, in .chernabog/config.yaml; to run a flow here anyway, list it under the repo\'s flows in machine config';
 
 // No value is allowed, so editors flag the key too.
 const MachineOnly = Schema.optionalKey(Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }));
 const TeamOnly = Schema.optionalKey(Schema.Never.annotate({ description: TEAM_ONLY, message: TEAM_ONLY }));
 
-const LocalFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: TeamOnly });
+// A flow as a persona runs it. Listing it turns it on; enabled: false turns
+// off one it would inherit from the repo's entry.
+const PersonaFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: TeamOnly });
 
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
@@ -130,20 +135,6 @@ export const RepoConfigFile = Schema.Struct({
 
 export type RepoConfigFile = typeof RepoConfigFile.Type;
 
-// .chernabog/local.yaml: when it runs for this person. Gitignored.
-export const LocalConfigFile = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  schedule: Schema.optionalKey(Schema.String),
-  activeHours: Schema.optionalKey(Schema.String),
-  agent: Schema.optionalKey(Schema.String),
-  launcher: Schema.optionalKey(Schema.String),
-  launchers: MachineOnly,
-  runners: TeamOnly,
-  flows: Schema.optionalKey(Schema.Record(Schema.String, LocalFlowSettings)),
-});
-
-export type LocalConfigFile = typeof LocalConfigFile.Type;
-
 const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
   expectedEmail: Nullable(Schema.String),
@@ -168,16 +159,44 @@ export const LauncherFile = Schema.Struct({
   attach: Schema.optionalKey(Strings),
 });
 
-export const EnrolledRepo = Schema.Struct({
-  path: Schema.String,
-  repo: Schema.String,
-  name: Schema.optionalKey(Schema.String),
+// What a persona chooses for a repo. On the repo's entry these are the
+// defaults every persona inherits; on a persona's entry, its own, each key
+// replacing the repo entry's.
+const PersonaChoices = {
+  // The account from accounts: whose budget the persona's runs spend.
   account: Schema.optionalKey(Schema.String),
+  agent: Schema.optionalKey(Schema.String.annotate({ description: "The adapter its agent steps run with, over the repo's agent and the account's." })),
+  roles: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.String).annotate({
+      description: 'An account by role, such as { reviewer: codex-work }, where a role needs another account than the persona\'s own: a step given { role } runs with that account\'s agent.',
+    }),
+  ),
+  // The flows that run: the ones listed, and no others.
+  flows: Schema.optionalKey(Schema.Record(Schema.String, PersonaFlowSettings)),
+  schedule: Schema.optionalKey(Schema.String),
+  activeHours: Schema.optionalKey(Schema.String),
+  launcher: Schema.optionalKey(Schema.String),
+  enabled: Schema.optionalKey(Schema.Boolean),
+};
+
+const PersonaEntry = Schema.Struct(PersonaChoices);
+
+export type PersonaEntry = typeof PersonaEntry.Type;
+
+export const EnrolledRepo = Schema.Struct({
+  // owner/name on GitHub: the key the entry's settings follow.
+  repo: Schema.String,
+  // Where its checkout is now.
+  path: Schema.String,
+  // A short name, which keeps two clones of one repo apart.
+  name: Schema.optionalKey(Schema.String),
   // The branch .chernabog/ is trusted from. Defaults to main.
   baseBranch: Schema.optionalKey(Schema.String),
-  // The GitHub personas, from machine config's github:, that run this repo's
-  // flows. Defaults to the only one; required when there are several.
-  personas: Schema.optionalKey(Schema.Array(Schema.String)),
+  ...PersonaChoices,
+  // The GitHub personas, by login from machine config's github:, that run
+  // this repo's flows, each with its own choices. Defaults to the only one;
+  // required when there are several.
+  personas: Schema.optionalKey(Schema.Record(Schema.String, PersonaEntry)),
 });
 
 export type EnrolledRepo = typeof EnrolledRepo.Type;
@@ -233,44 +252,60 @@ export type MachineConfig = {
   readonly repos: ReadonlyArray<EnrolledRepo>;
 };
 
-// One enrolled repo with every layer merged.
-export type EffectiveRepo = {
+// One enrolled repo as one persona runs it, with every layer merged.
+export type PersonaRepo = {
+  readonly persona: Persona;
   readonly settings: RepoSettings;
   readonly enabled: boolean;
-  // The repo-wide default from each layer. The person's beats every schedule
+  // The repo-wide default from each layer. The persona's beats every schedule
   // the team sets, a flow's own included; the team's is the last fallback.
-  readonly schedule: { readonly local: Option.Option<string>; readonly repo: Option.Option<string> };
+  readonly schedule: { readonly own: Option.Option<string>; readonly repo: Option.Option<string> };
   readonly activeHours: Option.Option<string>;
   readonly flows: Readonly<Record<string, FlowSettings>>;
-  // Whose machines run each flow by default, by GitHub login: the flow's own
-  // list, else the repo's; anyone's without either.
-  readonly runners: { readonly repo: Option.Option<ReadonlyArray<string>>; readonly flows: Readonly<Record<string, ReadonlyArray<string>>> };
-  // The flows the person turned on or off in local.yaml, which beat the runners.
-  readonly localEnabled: Readonly<Record<string, boolean>>;
-  // Who runs its flows: the repo's personas, or only the implicit one.
-  readonly personas: ReadonlyArray<Persona>;
+  // The flows this persona runs: the ones machine config lists for it.
+  readonly chosen: ReadonlyArray<string>;
 };
+
+// One enrolled repo: its settings as each persona that runs it sees them.
+// `settings` is the first persona's, for what every persona shares (its name,
+// path, labels and limits); account, agent and launcher are each persona's own.
+export type EffectiveRepo = {
+  readonly settings: RepoSettings;
+  // The repo's personas, or only the implicit one.
+  readonly personas: Arr.NonEmptyReadonlyArray<PersonaRepo>;
+};
+
+export const personaOf = (repo: EffectiveRepo, persona: Persona) => Arr.findFirst(repo.personas, (candidate) => samePersona(candidate.persona, persona));
 
 export const FLOW_TURNED_OFF = 'flow turned off';
 
-// Why this machine doesn't run a flow with these runners, if it doesn't.
-export const notARunner = (runners: ReadonlyArray<string>, login: Option.Option<string>) => {
-  const isRunner = Option.exists(login, (self) => runners.some((runner) => runner.toLowerCase() === self.toLowerCase()));
-  const who = Option.match(login, { onNone: () => "this machine's GitHub login is unknown", onSome: (self) => `this machine is ${self}` });
+// Whether a login is one of a flow's runners. Logins are case-insensitive, as on GitHub.
+export const isRunner = (runners: ReadonlyArray<string>, login: string) => runners.some((runner) => runner.toLowerCase() === login.toLowerCase());
 
-  return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !isRunner);
+// Why the team doesn't have these logins run a flow with these runners, if it doesn't.
+export const notARunner = (runners: ReadonlyArray<string>, logins: ReadonlyArray<string>) => {
+  const who = Option.match(Option.liftPredicate(logins, Arr.isReadonlyArrayNonEmpty), { onNone: () => "this machine's GitHub login is unknown", onSome: (found) => `this machine is ${found.join(', ')}` });
+
+  return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !logins.some((login) => isRunner(runners, login)));
 };
 
-export const runnersOf = (repo: EffectiveRepo, flow: string) => Option.orElse(Record.get(repo.runners.flows, flow), () => repo.runners.repo);
+// Why the team has a flow off for these logins, if it does: its
+// flows.<flow>.enabled, else its runners. What enrolling offers by default.
+export const teamOff = (repo: RepoConfigFile, flow: string, logins: ReadonlyArray<string>) =>
+  Option.orElse(Option.liftPredicate(FLOW_TURNED_OFF, () => repo.flows?.[flow]?.enabled === false), () =>
+    Option.flatMap(Option.orElse(Option.fromUndefinedOr(repo.flows?.[flow]?.runners), () => Option.fromUndefinedOr(repo.runners)), (runners) => notARunner(runners, logins)),
+  );
 
-export const hasRunners = (repo: EffectiveRepo) => Option.isSome(repo.runners.repo) || Object.keys(repo.runners.flows).length > 0;
+// Whether the team names runners for any of these flows, so the defaults need this machine's login.
+export const namesRunners = (repo: RepoConfigFile, flows: ReadonlyArray<string>) =>
+  Option.isSome(Option.fromUndefinedOr(repo.runners)) || flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
 
 export type Routing = { readonly assignee: Option.Option<ReadonlyArray<string>>; readonly reviewRequested: Option.Option<ReadonlyArray<string>> };
 
 const listOf = (who: Option.Option<string | ReadonlyArray<string>>) => Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
 
-// Whose work items a flow starts on this machine; anyone's without a filter.
-export const routingOf = (repo: EffectiveRepo, flow: string): Routing => {
+// Whose work items a flow starts as this persona; anyone's without a filter.
+export const routingOf = (repo: PersonaRepo, flow: string): Routing => {
   const settings = Record.get(repo.flows, flow);
 
   return {
@@ -282,28 +317,22 @@ export const routingOf = (repo: EffectiveRepo, flow: string): Routing => {
 const namesMe = (filter: Option.Option<ReadonlyArray<string>>) => Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === '@me'));
 
 // Whether the daemon must know this machine's GitHub login for the repo: for
-// its runners, or for a flow that starts only work for @me.
+// a flow the implicit persona runs that starts only work for @me. A named
+// persona's login is its own.
 export const needsLogin = (repo: EffectiveRepo) =>
-  hasRunners(repo) ||
-  Object.keys(repo.flows).some((flow) => {
-    const routing = routingOf(repo, flow);
+  repo.personas.some(
+    (own) =>
+      Option.isNone(own.persona) &&
+      own.chosen.some((flow) => {
+        const routing = routingOf(own, flow);
 
-    return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
-  });
+        return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
+      }),
+  );
 
-// Why a flow doesn't run on this machine, if it doesn't: the person's own
-// choice in local.yaml, else the team's flows.<flow>.enabled, else whether
-// this machine's GitHub login is one of the flow's runners. Logins are
-// case-insensitive, as on GitHub.
-export const flowOff = (repo: EffectiveRepo, flow: string, login: Option.Option<string>): Option.Option<string> => {
-  const own = Record.get(repo.localEnabled, flow);
-
-  if (Option.isSome(own)) return Option.liftPredicate(FLOW_TURNED_OFF, () => !own.value);
-
-  if (Option.exists(Record.get(repo.flows, flow), (settings) => settings.enabled === false)) return Option.some(FLOW_TURNED_OFF);
-
-  return Option.flatMap(runnersOf(repo, flow), (runners) => notARunner(runners, login));
-};
+// Why a persona doesn't run a flow, if it doesn't: machine config doesn't list
+// it for the persona.
+export const flowOff = (repo: PersonaRepo, flow: string): Option.Option<string> => Option.liftPredicate(FLOW_TURNED_OFF, () => !repo.chosen.includes(flow));
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.
 // `strict` refuses keys the schema doesn't name, rather than dropping them.
@@ -431,14 +460,15 @@ const limitsFrom = (file: RepoConfigFile['limits']): Limits => ({
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their
-// choice beats the team's default: local.yaml, then machine config, then the
-// repo. The team limits it with allowedLaunchers, and a launcher outside that
-// list fails the repo instead of quietly running under another one.
-export const resolveLauncher = (machine: MachineConfig, repoName: string, files: { readonly repo: RepoConfigFile; readonly local: LocalConfigFile }) =>
+// choice beats the team's default: the repo's entry in machine config (or its
+// persona's), then machine config's own, then the repo. The team limits it
+// with allowedLaunchers, and a launcher outside that list fails the repo
+// instead of quietly running under another one.
+export const resolveLauncher = (machine: MachineConfig, repoName: string, files: { readonly repo: RepoConfigFile; readonly own: PersonaEntry }) =>
   Effect.gen(function* () {
     const chosen = Arr.findFirst(
       [
-        { from: 'local.yaml', name: Option.fromUndefinedOr(files.local.launcher) },
+        { from: 'repo entry', name: Option.fromUndefinedOr(files.own.launcher) },
         { from: 'machine config', name: machine.launcher },
         { from: 'repo config', name: Option.fromUndefinedOr(files.repo.launcher) },
       ],
@@ -470,21 +500,20 @@ export const resolveLauncher = (machine: MachineConfig, repoName: string, files:
 
 // The personas that run a repo's flows. Without github:, only the implicit one.
 // With it, the repo's personas, each one of github:'s logins, defaulting to the
-// only login. Several logins and no choice is refused rather than guessed: a
-// login can be all digits, which a YAML map doesn't keep in order.
+// only login. Several logins and no choice is refused rather than guessed.
 export const personasOf = (machine: MachineConfig, enrolled: EnrolledRepo) =>
   Effect.gen(function* () {
-    const chosen = Option.fromUndefinedOr(enrolled.personas);
+    const chosen = Option.map(Option.fromUndefinedOr(enrolled.personas), Object.keys);
     const failed = (message: string) => new ConfigError({ message: `${enrolled.repo}: ${message}` });
 
     if (machine.github.length === 0) {
       if (Option.isSome(chosen)) return yield* failed('personas names GitHub logins, but machine config has no github: to list them');
 
-      return [IMPLICIT];
+      return Arr.of(IMPLICIT);
     }
 
     if (Option.isNone(chosen)) {
-      if (machine.github.length === 1) return [Option.some(machine.github[0])];
+      if (machine.github.length === 1) return Arr.of(Option.some(machine.github[0]));
 
       return yield* failed(`machine config lists several GitHub personas (${machine.github.join(', ')}); choose this repo's with personas:`);
     }
@@ -493,40 +522,69 @@ export const personasOf = (machine: MachineConfig, enrolled: EnrolledRepo) =>
 
     if (unknown.length > 0) return yield* failed(`personas ${unknown.join(', ')} not listed under github: (it has: ${machine.github.join(', ')})`);
 
-    if (chosen.value.length === 0) return yield* failed('personas is empty; leave the repo out of machine config instead');
+    if (!Arr.isReadonlyArrayNonEmpty(chosen.value)) return yield* failed('personas is empty; leave the repo out of machine config instead');
 
-    return Arr.dedupe(chosen.value).map((login): Persona => Option.some(login));
+    return Arr.map(chosen.value, (login): Persona => Option.some(login));
   });
 
-// Merges the layers for one repo. `configDir` is where its .chernabog/ was read
-// from; `env` is the extra environment its commands run with.
-export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, files: { readonly repo: RepoConfigFile; readonly local: LocalConfigFile }, configDir: string, env: Environment) =>
-  Effect.gen(function* () {
-    const accountName = Option.getOrElse(Option.orElse(Option.fromUndefinedOr(enrolled.account), () => Option.map(Arr.head(machine.accounts), (first) => first.name)), () => 'work');
-    const found = Arr.findFirst(machine.accounts, (candidate) => candidate.name === accountName);
+// A persona's choices for a repo: its own entry's keys over the repo entry's.
+export const choicesOf = (enrolled: EnrolledRepo, persona: Persona): PersonaEntry => {
+  const { baseBranch: _baseBranch, name: _name, path: _path, personas, repo: _repo, ...defaults } = enrolled;
+  const own = Option.flatMap(persona, (login) => Record.get(personas ?? {}, login));
 
-    if (Option.isNone(found)) {
-      return yield* new ConfigError({ message: `${enrolled.repo}: account "${accountName}" is not one of ${machine.accounts.map((known) => known.name).join(', ')}` });
+  return { ...defaults, ...Option.getOrElse(own, () => ({})) };
+};
+
+const findAccount = (machine: MachineConfig, name: string, failed: (message: string) => ConfigError) =>
+  Effect.fromOption(Arr.findFirst(machine.accounts, (candidate) => candidate.name === name)).pipe(
+    Effect.mapError(() => failed(`account "${name}" is not one of ${machine.accounts.map((known) => known.name).join(', ')}`)),
+  );
+
+// Each role's account, by the agent it runs, and the role's adapter. Accounts
+// are chosen by agent, so a role's must run another agent than the persona's own.
+const roleAccounts = (machine: MachineConfig, own: PersonaEntry, account: MachineAccount, failed: (message: string) => ConfigError) =>
+  Effect.gen(function* () {
+    const accounts: Record<string, Account> = {};
+    const agents: Record<string, string> = {};
+
+    for (const [role, name] of Object.entries(own.roles ?? {})) {
+      const picked = yield* findAccount(machine, name, failed);
+
+      if (picked.agent === account.agent && picked.name !== account.name) {
+        return yield* failed(`roles.${role} is ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); a role's account must run another agent`);
+      }
+
+      accounts[picked.agent] = ownAccount(picked);
+      agents[role] = picked.agent;
     }
 
-    const account = found.value;
-    const { local, repo } = files;
+    return { accounts, agents };
+  });
 
-    // A person who sets their own default schedule chooses when every flow
-    // runs for them, so the team's per-flow schedules give way to it.
+// Merges the layers for one persona of a repo. `configDir` is where its
+// .chernabog/ was read from; `env` is the extra environment its commands run with.
+const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: RepoConfigFile, persona: Persona, configDir: string, env: Environment) =>
+  Effect.gen(function* () {
+    const failed = (message: string) => new ConfigError({ message: `${enrolled.repo}${asSuffix(persona)}: ${message}` });
+    const own = choicesOf(enrolled, persona);
+    const accountName = Option.getOrElse(Option.orElse(Option.fromUndefinedOr(own.account), () => Option.map(Arr.head(machine.accounts), (first) => first.name)), () => 'work');
+    const account = yield* findAccount(machine, accountName, failed);
+
+    // A persona with its own default schedule chooses when every flow runs
+    // for it, so the team's per-flow schedules give way to it.
     const teamFlows = Record.map(repo.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
 
-    const repoFlows = Option.match(Option.fromUndefinedOr(local.schedule), {
+    const repoFlows = Option.match(Option.fromUndefinedOr(own.schedule), {
       onNone: () => teamFlows,
       onSome: () => Record.map(teamFlows, ({ schedule: _schedule, ...settings }) => settings),
     });
 
-    const localFlows = Record.map(local.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
-    const flows = mergeFlows([repoFlows, localFlows], machine.concurrency);
-    const agent = local.agent ?? repo.agent ?? account.agent;
-    const agentAccounts = accountsByAgent(machine, account);
-    const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), files);
-    const personas = yield* personasOf(machine, enrolled);
+    const ownFlows = Record.map(own.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
+    const flows = mergeFlows([repoFlows, ownFlows], machine.concurrency);
+    const agent = own.agent ?? repo.agent ?? account.agent;
+    const roles = yield* roleAccounts(machine, own, account, failed);
+    const agentAccounts = { ...accountsByAgent(machine, account), ...roles.accounts };
+    const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), { repo, own });
 
     const settings: RepoSettings = {
       name: repoNameOf(enrolled),
@@ -538,7 +596,8 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
       agentAccounts,
       launcher,
       flowAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agent), (adapter) => [flow, adapter] as const)))),
-      flowRoleAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agents), (roles) => [flow, roles] as const)))),
+      flowRoleAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agents), (byRole) => [flow, byRole] as const)))),
+      roleAgents: roles.agents,
       labels: { ...DEFAULT_LABELS, ...repo.labels },
       install: Option.flatten(Option.fromUndefinedOr(repo.install)),
       localGate: repo.localGate ?? [],
@@ -553,18 +612,25 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
     };
 
     return {
+      persona,
       settings,
-      enabled: local.enabled ?? true,
-      schedule: { local: Option.fromUndefinedOr(local.schedule), repo: Option.fromUndefinedOr(repo.schedule) },
-      activeHours: Option.fromUndefinedOr(local.activeHours),
+      enabled: own.enabled ?? true,
+      schedule: { own: Option.fromUndefinedOr(own.schedule), repo: Option.fromUndefinedOr(repo.schedule) },
+      activeHours: Option.fromUndefinedOr(own.activeHours),
       flows,
-      runners: {
-        repo: Option.fromUndefinedOr(repo.runners),
-        flows: Object.fromEntries(Object.entries(repo.flows ?? {}).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.runners), (runners) => [flow, runners] as const)))),
-      },
-      localEnabled: Object.fromEntries(Object.entries(localFlows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.enabled), (enabled) => [flow, enabled] as const)))),
-      personas,
-    } satisfies EffectiveRepo;
+      chosen: Object.entries(ownFlows).flatMap(([flow, chosen]) => Option.toArray(Option.liftPredicate(flow, () => chosen.enabled !== false))),
+    } satisfies PersonaRepo;
+  });
+
+// Merges the layers for each persona of a repo.
+export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, repo: RepoConfigFile, configDir: string, env: Environment) =>
+  Effect.gen(function* () {
+    const [first, ...rest] = yield* personasOf(machine, enrolled);
+    const merge = (persona: Persona) => mergePersona(machine, enrolled, repo, persona, configDir, env);
+    const head = yield* merge(first);
+    const tail = yield* Effect.forEach(rest, merge);
+
+    return { settings: head.settings, personas: [head, ...tail] } satisfies EffectiveRepo;
   });
 
 // launchd and systemd start with a bare PATH and no nvm, so the repo's pinned Node goes first.
@@ -579,44 +645,166 @@ export const repoEnvironment = (checkout: string) =>
     });
   });
 
-// Reads the repo's committed config from `configDir` (the trusted snapshot)
-// and the person's local.yaml from the working checkout. A .chernabog/ that
-// needs a newer binary is refused first. Past that, a key this binary doesn't
-// know is a typo or a newer key the floor wasn't raised for, and either one
-// may be a rule the repo counts on, so it fails the repo instead of being dropped.
+// Reads the repo's committed config from `configDir` (the trusted snapshot).
+// A .chernabog/ that needs a newer binary is refused first. Past that, a key
+// this binary doesn't know is a typo or a newer key the floor wasn't raised
+// for, and either one may be a rule the repo counts on, so it fails the repo
+// instead of being dropped.
 export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configDir: string) =>
   Effect.gen(function* () {
     yield* checkConfigVersion(configDir);
     const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
-    const local = yield* readYaml(LocalConfigFile, `${enrolled.path}/.chernabog/local.yaml`);
 
-    return yield* mergeRepoConfig(machine, enrolled, { repo, local }, configDir, yield* repoEnvironment(enrolled.path));
+    return yield* mergeRepoConfig(machine, enrolled, repo, configDir, yield* repoEnvironment(enrolled.path));
   });
 
-// Adds or updates a repo in machine config, keeping the file's comments. An
-// update sets only the keys given, so the rest of the entry, such as its
-// personas, survives a re-enroll.
-export const enrollInMachineConfig = (repo: EnrolledRepo) =>
+// Edits machine config in place, keeping the file's comments. `edit` changes
+// the document, given the file as it decodes now, and says what it did.
+export const editMachineConfig = <A, E, R>(edit: (document: YAML.Document, current: MachineConfigFile) => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
     const file = homePaths(home.root).machineConfig;
-    yield* fs.makeDirectory(home.root, { recursive: true });
+    const platform = <B>(effect: Effect.Effect<B, PlatformError.PlatformError>) => effect.pipe(Effect.mapError((error) => new ConfigError({ message: error.message })));
+    yield* platform(fs.makeDirectory(home.root, { recursive: true }));
     let document = new YAML.Document({});
 
-    if (yield* fs.exists(file)) document = YAML.parseDocument(yield* fs.readFileString(file));
+    if (yield* platform(fs.exists(file))) document = YAML.parseDocument(yield* platform(fs.readFileString(file)));
 
-    const current = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })));
-    const index = (current.repos ?? []).findIndex((entry) => entry.repo === repo.repo);
-    let action: 'added' | 'updated' = 'added';
+    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })));
+    // Paths as the rest of chernabog sees them; the document keeps them as written.
+    const current = { ...decoded, repos: (decoded.repos ?? []).map((entry) => ({ ...entry, path: expandHome(entry.path, home.user) })) };
+    const result = yield* edit(document, current);
+    yield* platform(fs.writeFileString(file, document.toString()));
 
-    if (index >= 0) {
-      for (const [key, value] of Object.entries(repo)) document.setIn(['repos', index, key], document.createNode(value));
-      action = 'updated';
-    } else if (document.has('repos')) document.addIn(['repos'], document.createNode(repo));
-    else document.set('repos', document.createNode([repo]));
+    return result;
+  });
 
-    yield* fs.writeFileString(file, document.toString());
+// The entry a repo's enrolment updates: the one with its slug, and its name
+// when one is given. Of several clones with no name given, the one at `path`.
+// None when the repo isn't enrolled yet.
+export const entryFor = (repos: ReadonlyArray<EnrolledRepo>, repo: EnrolledRepo) =>
+  Effect.gen(function* () {
+    const clones = Arr.filter(Arr.map(repos, (entry, index) => ({ entry, index })), ({ entry }) => entry.repo === repo.repo);
 
-    return action;
-  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));
+    const named = Option.fromUndefinedOr(repo.name);
+
+    if (Option.isSome(named)) return Arr.findFirst(clones, ({ entry }) => repoNameOf(entry) === named.value);
+
+    if (clones.length < 2) return Arr.head(clones);
+
+    const here = Arr.findFirst(clones, ({ entry }) => entry.path === repo.path);
+
+    if (Option.isSome(here)) return here;
+
+    return yield* new ConfigError({ message: `${repo.repo} is enrolled as ${clones.map(({ entry }) => repoNameOf(entry)).join(', ')}; name the one this is with --name` });
+  });
+
+// Adds or updates a repo in machine config, keeping the file's comments. An
+// update sets only the keys given, so the rest of the entry, such as its
+// personas and flows, survives a re-enroll, and a checkout that moved keeps
+// its settings at its new path.
+export const enrollInMachineConfig = (repo: EnrolledRepo) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const found = yield* entryFor(current.repos ?? [], repo);
+
+      if (Option.isSome(found)) {
+        for (const [key, value] of Object.entries(repo)) document.setIn(['repos', found.value.index, key], document.createNode(value));
+
+        return 'updated' as const;
+      }
+
+      if (document.has('repos')) document.addIn(['repos'], document.createNode(repo));
+      else document.set('repos', document.createNode([repo]));
+
+      return 'added' as const;
+    }),
+  );
+
+// The index of an enrolled repo in machine config, by name or owner/name.
+const indexOf = (current: MachineConfigFile, name: string) => {
+  const repos = current.repos ?? [];
+
+  return Effect.fromOption(Arr.findFirstIndex(repos, (entry) => repoNameOf(entry) === name || entry.repo === name)).pipe(
+    Effect.mapError(() => {
+      const enrolled = Option.getOrElse(Option.liftPredicate(repos.map(repoNameOf).join(', '), (names) => names.length > 0), () => 'none');
+
+      return new ConfigError({ message: `no enrolled repo named ${name} (enrolled: ${enrolled})` });
+    }),
+  );
+};
+
+// Removes a repo from machine config, settings and all.
+export const unenrollFromMachineConfig = (name: string) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const index = yield* indexOf(current, name);
+      const entry = (current.repos ?? [])[index];
+      document.deleteIn(['repos', index]);
+
+      return entry;
+    }),
+  );
+
+// Where a persona's flows are kept in machine config: its own entry's flows
+// when it has them, else the repo entry's, which every persona inherits. A
+// change for one of several personas that inherits them gives it its own
+// copy first, so the others keep theirs.
+const flowsPath = (document: YAML.Document, entry: EnrolledRepo, index: number, persona: Persona) =>
+  Option.match(persona, {
+    onNone: () => ['repos', index, 'flows'],
+    onSome: (login) => {
+      const own = ['repos', index, 'personas', login, 'flows'];
+
+      if (Record.get(entry.personas ?? {}, login).pipe(Option.exists((found) => Option.isSome(Option.fromUndefinedOr(found.flows))))) return own;
+
+      if (Object.keys(entry.personas ?? {}).length < 2) return ['repos', index, 'flows'];
+
+      document.setIn(own, document.createNode(entry.flows ?? {}));
+
+      return own;
+    },
+  });
+
+// Turns one flow on or off for a persona of a repo. Turning a flow off keeps
+// its settings, as enabled: false, when it has any.
+export const setFlowInMachineConfig = (name: string, persona: Persona, flow: string, enabled: boolean) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const index = yield* indexOf(current, name);
+      const path = [...flowsPath(document, (current.repos ?? [])[index], index, persona), flow];
+      const node = document.getIn(path);
+      const others = YAML.isMap(node) && node.items.some((pair) => YAML.isScalar(pair.key) && pair.key.value !== 'enabled');
+
+      if (enabled && YAML.isMap(node)) document.deleteIn([...path, 'enabled']);
+      else if (enabled) document.setIn(path, document.createNode({}));
+      else if (others) document.setIn([...path, 'enabled'], false);
+      else document.deleteIn(path);
+
+      if (!document.hasIn(path.slice(0, -1))) document.setIn(path.slice(0, -1), document.createNode({}));
+    }),
+  );
+
+// Lists exactly these flows on a repo's entry, keeping the settings of the
+// ones it already lists. What enrolling chooses for every persona.
+export const setRepoFlows = (repo: EnrolledRepo, flows: ReadonlyArray<string>) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const found = yield* entryFor(current.repos ?? [], repo);
+
+      if (Option.isNone(found)) return yield* new ConfigError({ message: `${repo.repo} isn't enrolled; run chernabog enroll in it` });
+
+      const { entry, index } = found.value;
+      const listed = Object.keys(entry.flows ?? {});
+
+      for (const flow of listed.filter((known) => !flows.includes(known))) document.deleteIn(['repos', index, 'flows', flow]);
+
+      if (!document.hasIn(['repos', index, 'flows'])) document.setIn(['repos', index, 'flows'], document.createNode({}));
+
+      for (const flow of flows) {
+        if (listed.includes(flow)) document.deleteIn(['repos', index, 'flows', flow, 'enabled']);
+        else document.setIn(['repos', index, 'flows', flow], document.createNode({}));
+      }
+    }),
+  );

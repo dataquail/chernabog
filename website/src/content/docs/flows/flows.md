@@ -10,7 +10,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `trigger`     | an Effect returning the work items in the state the flow acts on       |
 | `gate`        | optional; checked before each run starts — fail with `Skip` to hold it back |
 | `concurrency` | runs of this flow at once                                              |
-| `schedule`    | optional cron; `flows.<flow>.schedule` and `local.yaml`'s `schedule` override it |
+| `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it |
 | `labels`      | optional; labels of the flow's own, such as `{ name: "auto:ship" }`, which `chernabog labels` creates |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 

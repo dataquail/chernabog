@@ -26,7 +26,7 @@ export const FlowStatus = Schema.Struct({
 export const RepoStatus = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
-  status: Schema.Literals(['ready', 'untrusted', 'error']),
+  status: Schema.Literals(['ready', 'untrusted', 'error', 'missing']),
   message: Maybe,
   paused: Schema.Boolean,
   enabled: Schema.Boolean,

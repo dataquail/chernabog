@@ -26,6 +26,8 @@ export type MachineOptions = {
   // GitHub personas, and which of them run the repo.
   readonly github?: ReadonlyArray<string>;
   readonly personas?: ReadonlyArray<string>;
+  // The repo's flows on its entry; unset, the first command lists the team's defaults there.
+  readonly flows?: Readonly<Record<string, Json>>;
   readonly accounts?: Readonly<Record<string, Json>>;
   readonly account?: string;
   readonly agents?: Readonly<Record<string, Json>>;
@@ -48,7 +50,17 @@ const repoConfigText = (template: string, repoConfig: Readonly<Record<string, Js
 const machineConfigText = (root: string, checkout: string, machine: MachineOptions) => {
   const document = new YAML.Document({
     accounts: { work: { configDir: join(root, 'claude'), expectedEmail: 'dev@example.com' }, codex: { agent: 'codex', configDir: join(root, 'codex') }, ...machine.accounts },
-    repos: [{ path: checkout, repo: SLUG, name: 'demo', account: machine.account ?? 'work', baseBranch: 'main', ...Option.match(Option.fromUndefinedOr(machine.personas), { onNone: () => ({}), onSome: (personas) => ({ personas }) }) }],
+    repos: [
+      {
+        path: checkout,
+        repo: SLUG,
+        name: 'demo',
+        account: machine.account ?? 'work',
+        baseBranch: 'main',
+        ...Option.match(Option.fromUndefinedOr(machine.flows), { onNone: () => ({}), onSome: (flows) => ({ flows }) }),
+        ...Option.match(Option.fromUndefinedOr(machine.personas), { onNone: () => ({}), onSome: (personas) => ({ personas: Object.fromEntries(personas.map((login) => [login, {}])) }) }),
+      },
+    ],
   });
 
   const github = Option.fromUndefinedOr(machine.github);
@@ -129,7 +141,8 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   const [program = 'chernabog', ...programArgs] = chernabogCommand();
 
   const cli = (args: ReadonlyArray<string>, extraEnv: Readonly<Record<string, string>> = {}) =>
-    spawn(program, [...programArgs, ...args], { env: { ...env, ...extraEnv }, cwd: checkout, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    // From the sandbox's root once a test has moved the checkout away.
+    spawn(program, [...programArgs, ...args], { env: { ...env, ...extraEnv }, cwd: Option.getOrElse(Option.liftPredicate(checkout, existsSync), () => root), detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
   const runCli = (args: ReadonlyArray<string>, extraEnv: Readonly<Record<string, string>> = {}) =>
     new Promise<CliResult>((resolve) => {
@@ -158,9 +171,18 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   const opencodeCalls = () => callsIn(join(root, 'opencode.log'));
   const daemonLog = () => callsIn(join(home, 'daemon.log')).join('\n');
   const ghCalls = () => callsIn(ghLog);
+  const machineConfig = join(home, 'config.yaml');
+
+  // Edits machine config as a person would, keeping the rest of it.
+  const editMachine = (change: (document: YAML.Document) => void) => {
+    const document = YAML.parseDocument(readFileSync(machineConfig, 'utf8'));
+    change(document);
+    writeFileSync(machineConfig, document.toString());
+  };
+
   const agentTokens = () => callsIn(agentTokenLog);
 
-  return { root, bare, checkout, home, github, cli, runCli, claudeCalls, hookCalls, tmuxCalls, orcaCalls, codexCalls, opencodeCalls, daemonLog, ghCalls, agentTokens, git, env };
+  return { root, bare, checkout, home, machineConfig, editMachine, github, cli, runCli, claudeCalls, hookCalls, tmuxCalls, orcaCalls, codexCalls, opencodeCalls, daemonLog, ghCalls, agentTokens, git, env };
 };
 
 export type Sandbox = ReturnType<typeof openSandbox>;

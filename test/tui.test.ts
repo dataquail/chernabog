@@ -163,9 +163,9 @@ describe('keys', () => {
 
   test('e turns the selected flow off or on, from what was last turned here until the daemon restarts on it', () => {
     const onFlows = update(model(), { name: 'tab' }).model;
-    expect(update(onFlows, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', enabled: false });
+    expect(update(onFlows, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', persona: Option.none(), enabled: false });
     const pending = { ...onFlows, pendingFlows: { 'goodbones/implement': false } };
-    expect(update(pending, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', enabled: true });
+    expect(update(pending, { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', persona: Option.none(), enabled: true });
     expect(plain(view(pending))).toMatch(/implement\s+off, pending/);
     expect(update(model(), { name: 'e' }).action).toEqual({ kind: 'none' });
   });

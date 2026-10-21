@@ -18,7 +18,7 @@ import { viewerLogin } from './GitHubApi.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
 import { type Persona, samePersona } from './persona.ts';
-import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, routingOf } from './repo-config.ts';
+import { type EffectiveRepo, type EnrolledRepo, findEnrolled, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, personaOf, type PersonaRepo, routingOf } from './repo-config.ts';
 import { routeItems } from './schedule.ts';
 import { snapshotConfig } from './snapshot.ts';
 import { runLabel, type RunRow, State } from './state.ts';
@@ -56,12 +56,13 @@ export const openRepo = (machine: MachineConfig, enrolled: EnrolledRepo, fromChe
 // What a trigger, gate or step logs outside any run goes to stderr.
 const consoleRunLog = RunLog.of({ log: (line) => Console.error(line), step: () => Effect.void, stepDone: () => Effect.void });
 
-// One repo's services as one persona, built once at its composition point and
-// shared by every trigger, gate and run of its flows as that persona.
-export const buildRepoContext = (repo: EffectiveRepo, machine: MachineConfig, persona: Persona) =>
+// One repo's services as one persona, with its account, agent and launcher,
+// built once at its composition point and shared by every trigger, gate and
+// run of its flows as that persona.
+export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
-    const services = yield* Layer.build(Layer.mergeAll(repoServices(repo.settings, machine.usageGate, machine.agents, persona), Layer.succeed(RunLog, consoleRunLog)));
+    const services = yield* Layer.build(Layer.mergeAll(repoServices(repo.settings, machine.usageGate, machine.agents, repo.persona), Layer.succeed(RunLog, consoleRunLog)));
 
     return Context.merge(platform, services);
   });
@@ -75,7 +76,7 @@ export type PersonaContext = { readonly persona: Persona; readonly context: Repo
 
 // The repo's services for each of its personas.
 export const buildPersonaContexts = (repo: EffectiveRepo, machine: MachineConfig) =>
-  Effect.forEach(repo.personas, (persona) => Effect.map(buildRepoContext(repo, machine, persona), (context): PersonaContext => ({ persona, context })));
+  Effect.forEach(repo.personas, (own) => Effect.map(buildRepoContext(own, machine), (context): PersonaContext => ({ persona: own.persona, context })));
 
 // Picks a run's services by its persona.
 export const servicesFrom =
@@ -171,10 +172,10 @@ export type RunOptions = { readonly repo: string; readonly flow: string; readonl
 // The persona a person asked for, which must be one of the repo's, or its only one.
 export const choosePersona = (repo: EffectiveRepo, wanted: Option.Option<string>) =>
   Effect.gen(function* () {
-    const logins = repo.personas.flatMap((persona) => Option.toArray(persona));
+    const logins = repo.personas.flatMap((own) => Option.toArray(own.persona));
 
     if (Option.isSome(wanted)) {
-      const found = Arr.findFirst(repo.personas, (persona) => Option.contains(persona, wanted.value));
+      const found = Arr.findFirst(repo.personas, (own) => Option.contains(own.persona, wanted.value));
 
       if (Option.isNone(found)) {
         const runs = Option.match(Arr.head(logins), { onNone: () => 'acts as whoever this machine is on GitHub', onSome: () => `runs as ${logins.join(', ')}` });
@@ -182,7 +183,7 @@ export const choosePersona = (repo: EffectiveRepo, wanted: Option.Option<string>
         return yield* new ConfigError({ message: `${repo.settings.name} doesn't run as ${wanted.value}; it ${runs}` });
       }
 
-      return found.value;
+      return found.value.persona;
     }
 
     if (repo.personas.length > 1) return yield* new ConfigError({ message: `${repo.settings.name} runs as ${logins.join(', ')}; name one with --as` });
@@ -205,7 +206,8 @@ const resume = (handle: FlowHandle, persona: Persona, unfinished: RunRow, contex
 const firstOf = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
     const login = yield* loginOf(handle.repo, persona);
-    const routed = routeItems(items, routingOf(handle.repo, handle.name), login);
+    const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
+    const routed = routeItems(items, routingOf(own, handle.name), login);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) yield* Console.log(`left for other machines: ${routed.elsewhere.map((item) => item.key).join(', ')}; name one with --item to run it here`);
 

@@ -99,7 +99,7 @@ Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourl
 | `enter` | Follow the selected run's log; `↑` `↓` scroll it, `end` follows again, `esc` comes back |
 | `a` | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
 | `t` | Trigger the selected flow now, with its gates |
-| `e` | Turn the selected flow off or on for this machine, in `local.yaml`; it shows as pending until the daemon restarts on it, once idle |
+| `e` | Turn the selected flow off or on for the persona it runs as, in machine config; it shows as pending until the daemon restarts on it, once idle |
 | `p` | Pause or resume the repo |
 | `q` | Quit |
 
@@ -118,6 +118,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `labels [repo]` | Creates or corrects the repo's labels |
 | `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher and the daemon |
 | `init`, `enroll` | Set up a repo; add it to this machine and choose which of its flows run here (`--flows a,b` without asking) |
+| `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
 | `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service |
 
 `run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
@@ -135,7 +136,7 @@ No flow depends on a specific agent. The SDK's `Agent` service calls an adapter,
 
 Each piece of work has a stable session id, so a run that crashes mid-agent resumes the same session. Claude takes the id as given; Codex and opencode pick their own, which Chernabog records the moment they report it.
 
-Each account in machine config belongs to one agent (`agent: codex`; `claude` by default) and the repo's account decides which agent implements; `agent` in `local.yaml` or the repo's config overrides it. A flow can name a different adapter for one step, such as a Codex review of a Claude pull request, which then runs under that agent's account.
+Each account in machine config belongs to one agent (`agent: codex`; `claude` by default) and the repo's account decides which agent implements; `agent` in the repo's config overrides it, and `agent` on the repo's entry in machine config overrides that. A flow can name a different adapter for one step, such as a Codex review of a Claude pull request, which then runs under that agent's account.
 
 - **Usage gate.** Claude's comes from its usage endpoint, Codex's from the rate limits its own sessions log under `$CODEX_HOME/sessions`. opencode reports none, so its runs aren't gated on usage.
 - **Accounts.** A run refuses to start when the account is logged in as anyone but its `expectedEmail`, or Codex is logged in with an API key. API keys are removed from every agent's environment, so runs can't fall back to pay-per-token billing.
@@ -168,7 +169,7 @@ The usage gate refreshes an expired login token the same way: a one-line session
 
 Only Claude has an interactive mode. Codex, opencode and agents of your own run headless under any launcher, and `status` says so.
 
-**Who chooses.** The launcher describes a person's own machine, so their choice beats the team's default (unlike `agent`, where the repo's choice wins): `local.yaml`, then machine config, then the repo's `launcher`, then `headless`. A team limits the choice with `allowedLaunchers`. A launcher outside that list fails the repo, naming the layer that chose it; Chernabog never falls back to another launcher.
+**Who chooses.** The launcher describes a person's own machine, so their choice beats the team's default: the repo's entry in machine config (or its persona's), then machine config's top-level `launcher`, then the repo's `launcher`, then `headless`. A team limits the choice with `allowedLaunchers`. A launcher outside that list fails the repo, naming the layer that chose it; Chernabog never falls back to another launcher.
 
 ```yaml
 # .chernabog/config.yaml (team): Orca by default; tmux and headless also allowed
@@ -177,13 +178,10 @@ allowedLaunchers: [orca, tmux, headless]
 ```
 
 ```yaml
-# ~/.config/chernabog/config.yaml (one developer, every repo)
+# ~/.config/chernabog/config.yaml (one developer): tmux, except Orca for my-app
 launcher: tmux
-```
-
-```yaml
-# .chernabog/local.yaml (that developer, this repo only)
-launcher: orca
+repos:
+  - { repo: you/my-app, path: ~/code/my-app, launcher: orca }
 ```
 
 **Your own launcher.** Only machine config can define one; a repo can name launchers and limit them, but it can't define commands that run in your terminal setup. Templates fill in `{command}` (the whole command, quoted for a shell), `{cwd}`, `{title}` and `{handle}`. `start` prints the session's handle, or nothing to make `{title}` the handle. `close` is required. `alive` (exit 0 while the session runs) and `attach` are optional; without `alive`, a session counts as running until it is done.
@@ -203,7 +201,7 @@ Every launcher runs the same short command, `chernabog __launch <spec>`, which s
 
 One daemon per machine schedules every enrolled repo, runs the workflow engine (its journal in `~/.config/chernabog/state.db`), and serves the CLI over a local socket. A lock file next to the database keeps a second engine from starting. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity.
 
-The daemon checks each repo's `local.yaml` every ten seconds and, when it changes, restarts on it once nothing is executing, as it does after `trust`. It checks machine config's enrolled repos as often, so a repo `enroll` adds, or one dropped, moved or put on another base branch, is picked up the same way.
+The daemon checks machine config's enrolled repos every ten seconds and, when they change, restarts on them once nothing is executing, as it does after `trust`. So a repo `enroll` adds, one dropped or moved, or a flow turned on or off for a persona, is picked up without a restart by hand. A repo whose checkout is gone shows as `missing` (`checkout missing at <path>`) and starts no runs; its settings stay, and the daemon picks it up again when the checkout is back, or when `chernabog init` at the checkout's new place points the entry there.
 
 Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal, such as a review waiting for its author's push, holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
 
@@ -222,19 +220,18 @@ Agents keep running with the permissions their own CLI config grants; Chernabog 
 
 ## Configuration
 
-Config has three layers. Later layers override earlier ones key by key, except that a repo can never raise machine limits, and the launcher, where a person's choice wins within the repo's `allowedLaunchers` (see [Launchers](#launchers)).
+Config has two layers: the team's, committed in the repo, and each person's, in machine config. Later layers override earlier ones key by key, except that a repo can never raise machine limits, and the launcher, where a person's choice wins within the repo's `allowedLaunchers` (see [Launchers](#launchers)).
 
 | Layer             | Lives in                                 | Owns                                                                                              |
 | ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `assignee`, `reviewRequested` |
-| Personal override | `.chernabog/local.yaml`, gitignored     | Enabled, schedule and active hours, agent, launcher for this repo, flows turned off or on (over `runners`) |
-| Machine           | `~/.config/chernabog/config.yaml`       | Enrolled repos, agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own |
+| Machine           | `~/.config/chernabog/config.yaml`       | Agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own, GitHub personas, and the enrolled repos: for each, keyed by its `owner/name`, the flows that run and their settings, account, agent, roles, schedule, active hours, launcher and whether it's enabled, per persona |
 
-`init` writes `config.schema.json` and `local.schema.json` next to the YAML, so editors autocomplete them. They're generated, so `init` rewrites them whenever they're out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
+`init` writes `config.schema.json` next to the YAML, so editors autocomplete it. It's generated, so `init` rewrites it whenever it's out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
 
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 
-`runners: [alice]` in the repo's config (or `flows.<flow>.runners`) makes the flows run only on machines whose `gh` login is listed; anyone else's runs them only after turning them on in `local.yaml`. It coordinates who spends their budget; it doesn't restrict anyone.
+A flow runs on a machine only if the repo's entry in machine config lists it under `flows`. `enroll` writes that list, offering the team's defaults: the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose `runners` (`runners: [alice]`, or `flows.<flow>.runners`) include one of the repo's personas, or this machine's `gh` login. So `runners` coordinates who spends their budget without restricting anyone: whoever lists a flow runs it. A flow listed with `enabled: false` is off but keeps its settings.
 
 `flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review: { reviewRequested: "@me" }` reviews only pull requests that request your review. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
 
@@ -252,11 +249,18 @@ usageGate:
   humanRatePerHour: 0.005
 concurrency: 1
 repos:
-  - path: ~/code/my-app
-    repo: you/my-app
+  - repo: you/my-app        # the key: settings follow the repo, not the folder
+    path: ~/code/my-app     # where its checkout is now
     account: personal
     baseBranch: main
+    flows:                  # the flows that run here, and no others
+      implement: {}
+      review: { schedule: "*/20 * * * *" }
 ```
+
+A repo's entry can also set `agent`, `roles` (an account for a step's role, such as `{ reviewer: codex }`, which must run another agent than the entry's account), `schedule`, `activeHours`, `launcher` and `enabled: false`. With several GitHub personas, `personas:` maps each login to its own `flows`, `account` and the rest, each key replacing the repo entry's; see the [configuration reference](https://dataquail.github.io/chernabog/reference/configuration/). Two clones of one repo need a `name` (`enroll --name`) to keep them apart.
+
+Upgrading from a version that read `.chernabog/local.yaml`, the first command you run moves its choices onto the repo's entry in machine config, and says what it moved on stderr. It leaves `local.yaml` in place; delete it once you've checked the result.
 
 ## Flows and steps
 

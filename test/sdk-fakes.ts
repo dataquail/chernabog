@@ -28,6 +28,7 @@ import {
   Worktree,
 } from '@chernabog/sdk';
 import type { BunServices } from '@effect/platform-bun';
+import * as Arr from 'effect/Array';
 import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
@@ -37,8 +38,8 @@ import * as Schedule from 'effect/Schedule';
 
 import { Home, homePaths } from '../src/config.ts';
 import { type FlowHandle, flowLayer, forEveryPersona, pollRun, startRun, StateAt } from '../src/engine.ts';
-import { IMPLICIT } from '../src/persona.ts';
-import { DEFAULT_LIMITS, type EffectiveRepo } from '../src/repo-config.ts';
+import { IMPLICIT, type Persona } from '../src/persona.ts';
+import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from '../src/repo-config.ts';
 import type { RunRow, State } from '../src/state.ts';
 
 export const PULL = 7;
@@ -71,7 +72,24 @@ export const settings: RepoSettings = {
   configDir: fileURLToPath(new URL('../templates/.chernabog', import.meta.url)),
 };
 
-export const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {}, personas: [Option.none()] };
+// A repo as one persona runs it, with nothing chosen of its own.
+export const asPersona = (repoSettings: RepoSettings, persona: Persona): PersonaRepo => ({
+  persona,
+  settings: repoSettings,
+  enabled: true,
+  schedule: { own: Option.none(), repo: Option.none() },
+  activeHours: Option.none(),
+  flows: {},
+  chosen: [],
+});
+
+// A repo run as these personas: the implicit one, unless named.
+export const repoAs = (repoSettings: RepoSettings, personas: Arr.NonEmptyReadonlyArray<Persona> = [Option.none()]): EffectiveRepo => ({
+  settings: repoSettings,
+  personas: Arr.map(personas, (persona) => asPersona(repoSettings, persona)),
+});
+
+export const repo = repoAs(settings);
 
 export type Verdict = 'approve' | 'request-changes';
 

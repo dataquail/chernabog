@@ -93,7 +93,7 @@ export const forEveryPersona =
     Option.some(services);
 
 // Who a repo's runs act as when nothing says otherwise: its first persona.
-export const defaultPersona = (repo: EffectiveRepo): Persona => Option.flatten(Arr.head(repo.personas));
+export const defaultPersona = (repo: EffectiveRepo): Persona => Arr.headNonEmpty(repo.personas).persona;
 
 export type FlowHandle = {
   readonly repo: EffectiveRepo;

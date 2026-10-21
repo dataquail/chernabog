@@ -1,7 +1,7 @@
 // The daemon end to end: trust, scheduled ticks, gates, the socket the CLI uses.
 
 import { type ChildProcess, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -103,10 +103,12 @@ describe('the daemon', () => {
     expect(viaDaemon.output).toContain('nothing to start');
   }, 30_000);
 
-  test('restarts on an edit to local.yaml, and a flow turned off there starts nothing', async () => {
-    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), 'flows:\n  implement:\n    enabled: false\n');
+  test("restarts on an edit to the repo's entry in machine config, and a flow turned off there starts nothing", async () => {
+    sandbox.editMachine((document) => {
+      document.setIn(['repos', 0, 'flows', 'implement', 'enabled'], false);
+    });
     expect(await daemonExit).toBe(75);
-    expect(sandbox.daemonLog()).toContain('demo: local.yaml changed; restarting on it when idle');
+    expect(sandbox.daemonLog()).toContain('enrolled repos changed; restarting on them when idle');
     await startDaemon();
     expect((await sandbox.runCli(['status'])).output).toContain('  implement: off');
     await waitFor(() => sandbox.daemonLog().includes('demo/implement: skipped: flow turned off'), 'a tick of the flow turned off');
@@ -114,7 +116,9 @@ describe('the daemon', () => {
 
   test('with assignee: [@me, none], leaves an issue assigned to someone else to their machine', async () => {
     const issue = sandbox.github.addIssue('Assigned to alice', ['auto:eligible'], 'Do the thing.', ['alice']);
-    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), 'flows:\n  implement:\n    assignee: ["@me", none]\n');
+    sandbox.editMachine((document) => {
+      document.setIn(['repos', 0, 'flows', 'implement'], document.createNode({ assignee: ['@me', 'none'] }));
+    });
     expect(await daemonExit).toBe(75);
     await startDaemon();
     await waitFor(() => sandbox.daemonLog().includes(`demo/implement: skipped: only work for others: issue-${issue} (assignee: alice)`), 'a tick that leaves the issue to alice');

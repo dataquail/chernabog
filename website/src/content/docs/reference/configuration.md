@@ -1,15 +1,14 @@
 ---
 title: Configuration
-description: Every key in the repo, personal and machine config layers.
+description: Every key in the repo and machine config layers.
 ---
 
 | Layer    | File                              | Committed | Owns                                       |
 | -------- | --------------------------------- | --------- | ------------------------------------------ |
 | Repo     | `.chernabog/config.yaml`          | yes       | what work gets done, and how               |
-| Personal | `.chernabog/local.yaml`           | no        | when it runs for you, and with which agent |
-| Machine  | `~/.config/chernabog/config.yaml` | —         | accounts, budget, limits, enrolled repos   |
+| Machine  | `~/.config/chernabog/config.yaml` | —         | accounts, budget, limits, and for each enrolled repo which flows run as each persona, when, and with which account |
 
-Later layers override earlier ones key by key, with two exceptions: a repo can never raise machine limits, and the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`. `init` writes `config.schema.json` and `local.schema.json` beside the YAML for editor autocomplete. Unknown keys fail the repo.
+Later layers override earlier ones key by key, with two exceptions: a repo can never raise machine limits, and the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`. `init` writes `config.schema.json` beside the YAML for editor autocomplete. Unknown keys fail the repo.
 
 Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-HH:MM`, local time, and may wrap midnight.
 
@@ -30,8 +29,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
-| `runners`          | anyone                     | GitHub logins whose machines run the flows; see [Runners](#runners)      |
-| `flows.<flow>`     | —                          | `enabled`, `schedule`, `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
+| `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule`, `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `3`                     | reviews of one pull request before `auto:needs-human`                    |
@@ -42,9 +41,9 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 
 ### Runners
 
-`runners` names the GitHub logins whose machines run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Unset, every enrolled machine runs them. On any other machine the flow is off, and `status` says why: `off, not a runner (runners: alice; this machine is bob)`. A machine's login is the one its `gh` token belongs to, looked up when the daemon starts; `doctor` shows it, and which flows it isn't a runner of.
+`runners` names the GitHub logins who run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Like `flows.<flow>.enabled`, it's a default, not a gate: `chernabog enroll` offers a flow ticked only when the team doesn't turn it off and its runners, if any, include one of the repo's [personas](#github-personas), or else this machine's `gh` login. What runs is what the repo's entry in machine config [lists](#which-flows-run).
 
-It's coordination, not access control: whoever enrolls the repo can still run a flow, by setting `flows.<flow>.enabled: true` in their `local.yaml`, for instance to cover for a runner who is away. A flow the team turns off with `flows.<flow>.enabled: false` stays off for runners too. Claims are race-safe without it: two machines never implement the same issue.
+It's coordination, not access control: whoever enrolls the repo can still pick a flow, for instance to cover for a runner who is away. Claims are race-safe without it: two machines never implement the same issue.
 
 ```yaml
 # .chernabog/config.yaml
@@ -64,7 +63,7 @@ flows:
     agents: { reviewer: codex }
 ```
 
-A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs with that role's adapter. A step with no role, or a role the flow doesn't name, falls back to the flow's `agent` and then the repo's. `local.yaml` can override one role and keep the team's others. Each adapter runs under that agent's account in machine config.
+A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs with that role's adapter. A step with no role, or a role the flow doesn't name, falls back to the flow's `agent` and then the repo's. The repo's entry in machine config can override one role and keep the team's others, with `flows.<flow>.agents`, or with `roles`, which picks an [account](#roles) for the role and so its agent. Each adapter runs under that agent's account in machine config.
 
 ### Routing by assignee and reviewer
 
@@ -80,7 +79,7 @@ An item starts if anyone on the list matches. When a flow sets both filters, an 
 
 Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item, so a review keeps waking on pushes even after GitHub drops this machine from the requested reviewers. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
 
-`runners` and `enabled` decide first whether the flow runs on a machine at all. An issue assigned to someone the flow is off for waits until they turn it on in their `local.yaml`. The claim branch still keeps two machines from implementing the same issue.
+Whether the flow runs for a persona at all is decided first, by its [flows](#which-flows-run) in machine config. An issue assigned to someone the flow is off for waits until they turn it on. The claim branch still keeps two machines from implementing the same issue.
 
 ```yaml
 # .chernabog/config.yaml
@@ -89,7 +88,7 @@ flows:
   review: { reviewRequested: "@me" }       # pull requests requesting my review
 ```
 
-Both can go in `local.yaml` too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value.
+Both can go in a flow's settings in machine config too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value.
 
 ```yaml
 # .chernabog/config.yaml
@@ -100,26 +99,6 @@ humanOnlyPaths: [.github/**]
 flows:
   review: { agent: codex }
 limits: { reviewRounds: 2, staleAfter: 1 day }
-```
-
-## Personal
-
-| Key            | Meaning                                                       |
-| -------------- | ------------------------------------------------------------- |
-| `enabled`      | `false` stops every flow in this repo, for you                |
-| `schedule`     | cron for every flow, over every schedule the repo sets        |
-| `activeHours`  | start runs only within these hours                            |
-| `agent`        | adapter that implements, over the repo's                      |
-| `launcher`     | your launcher for this repo; wins over every other layer      |
-| `flows.<flow>` | `enabled`, `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` for one flow; `enabled: true` runs it here even when you aren't one of its runners |
-
-```yaml
-# .chernabog/local.yaml
-enabled: true
-activeHours: "09:00-18:00"
-launcher: orca
-flows:
-  review: { enabled: false }
 ```
 
 ## Machine
@@ -135,7 +114,7 @@ flows:
 | `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent) |
 | `launcher`              | —            | your launcher for every repo                                      |
 | `launchers.<name>`      | —            | `start`, `close`, `alive`, `attach`: [your own](/chernabog/agents/launchers/#your-own-launcher) |
-| `repos[]`               | —            | `path`, `repo` (`owner/name`), `name`, `account`, `baseBranch`, `personas`; written by `enroll` |
+| `repos[]`               | —            | the enrolled repos, written by `enroll`; see [Enrolled repos](#enrolled-repos) |
 
 ```yaml
 # ~/.config/chernabog/config.yaml
@@ -148,14 +127,66 @@ accounts:
 concurrency: 1
 quietHours: "23:00-07:00"
 repos:
-  - { path: ~/code/my-app, repo: you/my-app, account: personal, baseBranch: main }
+  - repo: you/my-app
+    path: ~/code/my-app
+    account: personal
+    baseBranch: main
+    flows:
+      implement: {}
+      review: {}
 ```
+
+### Enrolled repos
+
+Each entry in `repos` is one repo this machine runs, with each person's choices for it. It's keyed by `repo`, so settings follow the repo rather than the folder: a worktree or a moved checkout doesn't lose them.
+
+| Key            | Default         | Meaning                                                        |
+| -------------- | --------------- | -------------------------------------------------------------- |
+| `repo`         | —               | `owner/name` on GitHub: the key its settings follow            |
+| `path`         | —               | where its checkout is now                                      |
+| `name`         | the repo's name | a short name; keeps two clones of one repo apart (`enroll --name`) |
+| `baseBranch`   | `main`          | the branch `.chernabog/` is trusted from, unless the repo sets its own |
+| `account`      | the first account | whose budget its runs spend, from `accounts`                 |
+| `agent`        | the repo's, else the account's | adapter that implements, over the repo's        |
+| `roles.<role>` | —               | an account for one role; see [Roles](#roles)                   |
+| `flows.<flow>` | —               | the flows that run, and no others; see [Which flows run](#which-flows-run) |
+| `schedule`     | —               | cron for every flow, over every schedule the repo sets         |
+| `activeHours`  | —               | start runs only within these hours                             |
+| `launcher`     | —               | your launcher for this repo; wins over every other layer       |
+| `enabled`      | `true`          | `false` stops every flow in this repo                          |
+| `personas.<login>` | —           | each persona's own choices; see [GitHub personas](#github-personas) |
+
+`account` through `enabled` are the defaults every persona inherits. A persona's entry under `personas` takes the same keys, and each one it sets replaces the repo entry's whole: a persona with its own `flows` runs those, not the repo entry's plus its own.
+
+When the checkout is gone, the daemon shows the repo as `missing` (`checkout missing at <path>`) and starts no runs; its settings stay. When the checkout comes back, the daemon picks it up again. `chernabog init` at a checkout's new place finds the entry for the same `repo` whose path is gone and, in a terminal, offers to point it there, keeping its settings. `chernabog unenroll <name|owner/name>` removes an entry and its settings.
+
+### Which flows run
+
+A flow runs for a persona only when its `flows` lists it, its own or the repo entry's it inherits. Every flow not listed is off, whatever the team's `config.yaml` says, and `status` says `flow turned off`. A listed flow with `enabled: false` is off too, but keeps its settings for when it's turned back on.
+
+`chernabog enroll` writes the list, asking in a terminal or taking `--flows implement,review`; a newly enrolled repo with nothing listed gets the team's defaults, from `flows.<flow>.enabled` and [runners](#runners). Re-enrolling updates only what it's given, so each flow's settings survive. `e` in the [live view](/chernabog/work/live-view/) turns one flow off or on for a persona.
+
+A flow's settings take the keys of the repo's `flows.<flow>`, except `runners`: `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` and `enabled`. Each overrides the team's for that flow.
+
+### Roles
+
+`roles` picks an account by role, such as `{ reviewer: codex-personal }`, for a role that needs another account than the persona's own. A step given that role runs with the account's agent, under that account, over the team's `flows.<flow>.agents`. Accounts are chosen by agent, so a role's account must run a different agent than the persona's own account; one on the same agent fails the repo.
+
+### Moving from local.yaml
+
+Before, each person's choices lived in a gitignored `.chernabog/local.yaml` in the checkout, and `personas` was a list of logins. The first command you run after upgrading rewrites machine config, keeping its comments, and prints what it changed on stderr:
+
+- a `personas: [a, b]` list becomes `personas: { a: {}, b: {} }`;
+- for each repo entry that lists no flows anywhere, it lists the flows that ran there before (`local.yaml`'s choice, else the team's `flows.<flow>.enabled`, else its runners), on the repo entry, or per persona where they differ;
+- `local.yaml`'s flow settings, and its `enabled`, `schedule`, `activeHours`, `agent` and `launcher`, move onto the repo entry, so every persona inherits them, as they applied to the whole checkout before.
+
+It leaves `local.yaml` in place; nothing reads it any more, so delete it once you've checked the result.
 
 ### GitHub personas
 
 Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`'s active account. `github:` lists GitHub logins it acts as instead, each logged in to `gh` side by side (`gh auth login`, then `gh auth switch` back to your usual account). A persona's token always comes from `gh auth token --user <login>`; Chernabog never stores it.
 
-A repo's `personas` names which of them run its flows. With one login under `github:`, that one is the default; with several, the repo must choose. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
+A repo's `personas` maps each login that runs its flows to that persona's own choices. With one login under `github:`, that one is the default; with several, the repo must name them. Without `github:` there are no persona entries, and the repo entry's own settings run the one implicit account, so a `GH_TOKEN`-only host such as CI still works. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 
 A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
 
@@ -164,8 +195,23 @@ A flow several personas run should set `assignee` or `reviewRequested` to `@me`,
 github:
   you: {}
   your-reviewer: {}
+accounts:
+  personal: { configDir: ~/.claude-personal, expectedEmail: you@example.com }
+  codex-personal: { agent: codex, configDir: ~/.codex }
 repos:
-  - { path: ~/code/my-app, repo: you/my-app, baseBranch: main, personas: [you, your-reviewer] }
+  - repo: you/my-app                    # the key; settings follow the repo, not the folder
+    path: ~/code/my-app                 # where its checkout is now
+    account: personal                   # defaults every persona inherits
+    activeHours: "09:00-18:00"
+    personas:
+      you:
+        flows:
+          implement: { assignee: ["@me", none] }
+          address-review: { schedule: "*/20 * * * *" }
+      your-reviewer:
+        roles: { reviewer: codex-personal }   # only where a role needs another account
+        flows:
+          review: { reviewRequested: "@me" }
 ```
 
 `chernabog run` and `trigger` take `--as <login>` for a flow that runs as several personas.

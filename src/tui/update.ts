@@ -3,6 +3,7 @@
 import * as Arr from 'effect/Array';
 import * as Option from 'effect/Option';
 
+import { samePersona } from '../persona.ts';
 import { flowEnabled, type FlowRow, flowRows, type Model, type RunEntry, runRows } from './view.ts';
 
 export type Key = { readonly name: string; readonly ctrl?: boolean };
@@ -15,7 +16,7 @@ export type Action =
   | { readonly kind: 'attach'; readonly run: string }
   | { readonly kind: 'trigger'; readonly repo: string; readonly flow: string; readonly persona: Option.Option<string> }
   | { readonly kind: 'pause'; readonly repo: string; readonly paused: boolean }
-  | { readonly kind: 'toggle-flow'; readonly repo: string; readonly flow: string; readonly enabled: boolean };
+  | { readonly kind: 'toggle-flow'; readonly repo: string; readonly flow: string; readonly persona: Option.Option<string>; readonly enabled: boolean };
 
 export type Updated = { readonly model: Model; readonly action: Action };
 
@@ -120,12 +121,12 @@ export const update = (model: Model, key: Key): Updated => {
       const flow = Arr.get(flows, model.flowIndex).pipe(Option.filter(() => model.focus === 'flows'));
 
       const status = Option.flatMap(flow, (row) =>
-        Option.flatMap(model.status, (found) => Arr.findFirst(found.repos, (repo) => repo.name === row.repo)).pipe(Option.flatMap((repo) => Arr.findFirst(repo.flows, (candidate) => candidate.name === row.flow))),
+        Option.flatMap(model.status, (found) => Arr.findFirst(found.repos, (repo) => repo.name === row.repo)).pipe(Option.flatMap((repo) => Arr.findFirst(repo.flows, (candidate) => candidate.name === row.flow && samePersona(Option.fromUndefinedOr(candidate.persona), row.persona)))),
       );
 
       return Option.match(Option.all([flow, status]), {
         onNone: () => ({ model: { ...cleared, message: Option.some('select a flow to turn on or off (tab to the flows)') }, action: none }),
-        onSome: ([row, found]) => ({ model: cleared, action: { kind: 'toggle-flow', repo: row.repo, flow: row.flow, enabled: !flowEnabled(model, row.repo, found) } }),
+        onSome: ([row, found]) => ({ model: cleared, action: { kind: 'toggle-flow', repo: row.repo, flow: row.flow, persona: row.persona, enabled: !flowEnabled(model, row.repo, found) } }),
       });
     }
 

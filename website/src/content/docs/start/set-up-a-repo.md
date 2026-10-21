@@ -16,15 +16,17 @@ chernabog doctor                    # check logins, gh scopes, labels, trust and
 
 | Step     | Writes                                                                                 |
 | -------- | -------------------------------------------------------------------------------------- |
-| `init`   | `.chernabog/` (config, flows, prompts, stages, schemas, `package.json`, your `local.yaml`), and a `.gitignore` entry for `local.yaml` |
-| `enroll` | a `repos` entry in `~/.config/chernabog/config.yaml`, and the flows you chose in `local.yaml` |
+| `init`   | `.chernabog/` (config, flows, prompts, stages, schema, `package.json`), and a `.gitignore` entry for its `node_modules/` |
+| `enroll` | a `repos` entry in `~/.config/chernabog/config.yaml`, with the flows you chose |
 | `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
 | `labels` | the eight [labels](/chernabog/work/flows/#labels) on GitHub                            |
 | `install`| a launchd agent or systemd user unit running `chernabog daemon`                        |
 
-Re-running `init` rewrites only the generated schemas and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `enroll --name` gives a short name when two enrolled repos share one.
+Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `enroll --name` gives a short name when two enrolled repos share one, such as two clones of the same repo.
 
-In a terminal, `enroll` asks which of the repo's flows run on your machine, starting from what runs now; a flow whose [runners](/chernabog/reference/configuration/#runners) don't include your GitHub login starts unticked. Where your choice differs from the team's, it goes in `local.yaml` as `flows.<flow>.enabled`, and beats the team's: a flow `config.yaml` turns off, or leaves to its runners, still runs for you if you pick it. A choice that matches the team's is left out, so a later change to the team's config still reaches you. `--flows implement,review` chooses without asking; piped and without `--flows`, `enroll` leaves the choices as they are. It writes `local.yaml` from the template when you have none, so teammates who only enroll get one too. Run `enroll` again to choose again; it only updates the repo's entry. It lists the flows by file name and runs none of their code, since `.chernabog/` isn't trusted yet.
+In a terminal, `enroll` asks which of the repo's flows run on your machine, starting from what runs now, or for a new repo from the team's defaults: the flows `config.yaml` doesn't turn off, and whose [runners](/chernabog/reference/configuration/#runners) include one of the repo's personas (else your GitHub login). It lists the ones you pick under `flows` on the repo's entry in machine config, and only those run; a flow `config.yaml` turns off, or leaves to its runners, still runs for you if you pick it. `--flows implement,review` chooses without asking. Piped and without `--flows`, `enroll` leaves the choices as they are, and a newly enrolled repo gets the team's defaults. Run `enroll` again to choose again; it updates only the keys it's given, so each flow's settings, the repo's personas and the rest of its entry survive. It lists the flows by file name and runs none of their code, since `.chernabog/` isn't trusted yet.
+
+The entry is keyed by the repo's `owner/name`, not its folder, so settings follow the repo. If the checkout moves, `init` at its new place finds the entry whose checkout is gone and, in a terminal, offers to point it there, keeping its settings; `enroll` there does the same without asking. `chernabog unenroll <repo>` removes a repo and its settings from machine config.
 
 ## Queue work
 

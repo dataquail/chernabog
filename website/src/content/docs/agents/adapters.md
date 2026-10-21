@@ -16,7 +16,7 @@ Each piece of work has a stable session id, so a run that crashes mid-agent resu
 
 ## Which agent runs
 
-Each account in machine config belongs to one agent (`agent: codex`; `claude` by default). The repo's account decides which agent implements. `agent` in the repo's `config.yaml` overrides that, and `local.yaml` overrides the repo. A flow can name another agent for one step — `flows.review.agent: codex` reviews a Claude pull request with Codex — which then runs under that agent's account.
+Each account in machine config belongs to one agent (`agent: codex`; `claude` by default). The repo's account decides which agent implements. `agent` in the repo's `config.yaml` overrides that, and `agent` on the repo's entry in machine config (or its persona's) overrides the repo. A flow can name another agent for one step — `flows.review.agent: codex` reviews a Claude pull request with Codex — which then runs under that agent's account.
 
 ## Guarantees
 
