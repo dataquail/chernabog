@@ -10,14 +10,14 @@ with no edits in flight; one that overlaps an edit fails spuriously.
 
 ## Hard rules
 
-- **Never run Claude with `-p` / `--print`.** Every agent session is interactive,
-  through a launcher (orca, tmux, or the person's own). This is a billing
-  constraint, not a style choice.
+- **Chernabog never runs Claude with `-p` / `--print`.** Every agent session it
+  starts is interactive, through a launcher (orca, tmux, or the person's own).
+  This is a billing constraint, not a style choice.
 - **Never kill processes by name** (`pkill claude` and the like). Target the PID
   or launcher handle you captured.
-- **Multi-PR work is a `gh stack`.** Read the `gh-stack` skill before any stack
-  command, and always use its non-interactive forms (`gh stack view --json`,
-  `gh stack submit --auto`).
+- **Multi-PR work is a `gh stack`.** Read `gh stack --help` (or your agent's
+  gh-stack skill, if it has one) before any stack command, and always use the
+  non-interactive forms (`gh stack view --json`, `gh stack submit --auto`).
 
 ## Personas (#49, PR #56)
 
