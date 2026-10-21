@@ -13,11 +13,17 @@ export type FakeIssue = { number: number; title: string; body: string; labels: A
 
 export type FakeComment = { id: number; body: string; user: { login: string }; author_association: string; created_at: string };
 
-export type FakePull = { number: number; title: string; body: string; head: string; base: string; state: 'open' | 'closed'; merged: boolean; labels: Array<string>; reviewers: Array<string> };
+export type FakePull = { number: number; title: string; body: string; head: string; base: string; state: 'open' | 'closed'; merged: boolean; labels: Array<string>; reviewers: Array<string>; author: string };
 
 const ReviewComment = Schema.Struct({ path: Schema.String, line: Schema.Finite, side: Schema.optionalKey(Schema.String), body: Schema.String });
 
-export type FakeReview = { id: number; body: string; commit_id: string; comments: ReadonlyArray<typeof ReviewComment.Type> };
+export type FakeReview = { id: number; body: string; commit_id: string; comments: ReadonlyArray<typeof ReviewComment.Type>; author: string };
+
+// Who a request comes from: token-<login> is that login, as fakebin/gh hands
+// out for a persona; any other token, such as the sandbox's GH_TOKEN, is the bot.
+export const BOT = 'chernabog-bot';
+
+const loginOf = (request: Request) => Option.getOrElse(Option.flatMap(Option.fromNullishOr(/^Bearer token-(.+)$/.exec(request.headers.get('authorization') ?? '')), (match) => Option.fromUndefinedOr(match[1])), () => BOT);
 
 export type Checks = 'green' | 'red' | 'pending';
 
@@ -58,7 +64,7 @@ const AssigneesBody = Schema.Struct({ assignees: Schema.Array(Schema.String) });
 const NewPullBody = Schema.Struct({ title: Schema.String, body: Schema.String, head: Schema.String, base: Schema.String });
 const ReviewBody = Schema.Struct({ body: Schema.String, commit_id: Schema.String, comments: Schema.optionalKey(Schema.Array(ReviewComment)) });
 
-type Args = { readonly params: ReadonlyArray<string>; readonly body: Option.Option<Json>; readonly url: URL };
+type Args = { readonly params: ReadonlyArray<string>; readonly body: Option.Option<Json>; readonly url: URL; readonly login: string };
 
 type Route = { readonly method: string; readonly pattern: RegExp; readonly handle: (args: Args) => Response };
 
@@ -88,6 +94,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const pulls = new Map<number, FakePull>();
   const reviews = new Map<number, Array<FakeReview>>();
   const requests: Array<string> = [];
+  // Each request, as "<login> <method> <path>".
+  const requestsBy: Array<string> = [];
   let nextNumber = 1;
   let nextComment = 1;
   let checks: Checks = options.checks ?? 'green';
@@ -138,7 +146,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => '') },
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),
-    user: { login: 'chernabog-bot' },
+    user: { login: pull.author },
     requested_reviewers: pull.reviewers.map((login) => ({ login })),
   });
 
@@ -177,7 +185,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   const addComment = withBody(CommentBody, (body, args) => {
     const number = numberParam(args);
-    const comment = { id: takeCommentId(), body: body.body, user: { login: 'chernabog-bot' }, author_association: 'OWNER', created_at: now() };
+    const comment = { id: takeCommentId(), body: body.body, user: { login: args.login }, author_association: 'OWNER', created_at: now() };
     comments.set(number, [...(comments.get(number) ?? []), comment]);
 
     return json(comment, 201);
@@ -210,10 +218,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({}, 201);
   });
 
-  const createPull = withBody(NewPullBody, (body) => {
+  const createPull = withBody(NewPullBody, (body, args) => {
     if (Option.isNone(refSha(body.head))) return json({ message: `no branch ${body.head}` }, 422);
 
-    const pull: FakePull = { number: takeNumber(), title: body.title, body: body.body, head: body.head, base: body.base, state: 'open', merged: false, labels: [], reviewers: [] };
+    const pull: FakePull = { number: takeNumber(), title: body.title, body: body.body, head: body.head, base: body.base, state: 'open', merged: false, labels: [], reviewers: [], author: args.login };
     pulls.set(pull.number, pull);
 
     return encoded(PullJson, pullJson(pull), 201);
@@ -231,19 +239,19 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   const addReview = withBody(ReviewBody, (body, args) => {
     const number = numberParam(args);
-    const review: FakeReview = { id: takeCommentId(), body: body.body, commit_id: body.commit_id, comments: body.comments ?? [] };
+    const review: FakeReview = { id: takeCommentId(), body: body.body, commit_id: body.commit_id, comments: body.comments ?? [], author: args.login };
     reviews.set(number, [...(reviews.get(number) ?? []), review]);
 
     return json(review);
   });
 
   const listReviews = (args: Args) =>
-    json((reviews.get(numberParam(args)) ?? []).map((review) => ({ ...review, user: { login: 'chernabog-bot' }, author_association: 'OWNER', submitted_at: now() })));
+    json((reviews.get(numberParam(args)) ?? []).map(({ author, ...review }) => ({ ...review, user: { login: author }, author_association: 'OWNER', submitted_at: now() })));
 
   const listReviewComments = (args: Args) =>
     json(
       (reviews.get(numberParam(args)) ?? []).flatMap((review) =>
-        review.comments.map((comment, index) => ({ id: review.id * 100 + index, ...comment, original_line: comment.line, user: { login: 'chernabog-bot' }, author_association: 'OWNER', created_at: now() })),
+        review.comments.map((comment, index) => ({ id: review.id * 100 + index, ...comment, original_line: comment.line, user: { login: review.author }, author_association: 'OWNER', created_at: now() })),
       ),
     );
 
@@ -271,7 +279,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const repo = `/repos/${options.slug}`;
 
   const routes: ReadonlyArray<Route> = [
-    { method: 'GET', pattern: /^\/user$/, handle: () => json({ login: 'chernabog-bot' }) },
+    { method: 'GET', pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
     { method: 'GET', pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
     { method: 'POST', pattern: /^\/graphql$/, handle: searchIssues },
     { method: 'GET', pattern: new RegExp(`^${repo}/git/ref/heads/(.+)$`), handle: (args) => Option.match(refSha(args.params[0] ?? ''), { onNone: notFound, onSome: (sha) => json({ object: { sha } }) }) },
@@ -300,13 +308,15 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   const handle = async (request: Request) => {
     const url = new URL(request.url);
+    const login = loginOf(request);
     requests.push(`${request.method} ${url.pathname}`);
+    requestsBy.push(`${login} ${request.method} ${url.pathname}`);
     const body = parseJson(await request.text());
 
     const answered = Arr.findFirst(routes, (route) =>
       Option.map(
         Option.filter(Option.fromNullishOr(route.pattern.exec(url.pathname)), () => route.method === request.method),
-        (match) => route.handle({ params: match.slice(1), body, url }),
+        (match) => route.handle({ params: match.slice(1), body, url, login }),
       ),
     );
 
@@ -339,6 +349,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       pull.merged = merged;
     },
     requests,
+    requestsBy,
     setChecks: (state: Checks) => {
       checks = state;
     },

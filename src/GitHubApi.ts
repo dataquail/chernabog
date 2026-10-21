@@ -1,9 +1,8 @@
-// GitHub's REST and GraphQL APIs, authenticated as whoever `gh` is logged in as
-// (or GH_TOKEN / GITHUB_TOKEN when set). Bodies come back as JSON for the
-// caller to decode with its own schema.
+// GitHub's REST and GraphQL APIs, authenticated as one GitHub persona (see
+// github-auth.ts). Bodies come back as JSON for the caller to decode with its
+// own schema.
 
 import { GitHubError, type Json, printJson } from '@chernabog/sdk';
-import * as Cache from 'effect/Cache';
 import * as Config from 'effect/Config';
 import * as Context from 'effect/Context';
 import * as Effect from 'effect/Effect';
@@ -16,7 +15,8 @@ import * as Option from 'effect/Option';
 import * as Schedule from 'effect/Schedule';
 import * as Schema from 'effect/Schema';
 
-import { Exec, execOk } from './Exec.ts';
+import { GitHubTokens } from './github-auth.ts';
+import { IMPLICIT, type Persona } from './persona.ts';
 
 export { GitHubError };
 
@@ -25,68 +25,59 @@ export type GithubResponse = { readonly status: number; readonly body: Option.Op
 
 const nextPageUrl = (linkHeader: string) => Option.fromNullishOr(/<([^>]+)>;\s*rel="next"/.exec(linkHeader)).pipe(Option.map((match) => match[1]));
 
-const tokenFromConfig = Config.String('GH_TOKEN').pipe(
-  Config.orElse(() => Config.String('GITHUB_TOKEN')),
-  Config.option,
-);
-
 export class GitHubApi extends Context.Service<
   GitHubApi,
   {
     request(method: HttpMethod.HttpMethod, pathOrUrl: string, body: Option.Option<Json>): Effect.Effect<GithubResponse, GitHubError>;
   }
 >()('chernabog/GitHubApi') {
-  public static readonly layer: Layer.Layer<GitHubApi, never, Exec | HttpClient.HttpClient> = Layer.effect(
-    GitHubApi,
-    Effect.gen(function* () {
-      const exec = yield* Exec;
-      const client = yield* HttpClient.HttpClient;
-      // CHERNABOG_GITHUB_API points at another API, such as GitHub Enterprise or a test server.
-      const root = yield* Config.String('CHERNABOG_GITHUB_API').pipe(Config.withDefault('https://api.github.com'));
-      const fromConfig = yield* tokenFromConfig;
+  // The API as one persona: its token comes from GitHubTokens, on the first
+  // request that needs it.
+  public static readonly layerFor = (persona: Persona): Layer.Layer<GitHubApi, never, GitHubTokens | HttpClient.HttpClient> =>
+    Layer.effect(
+      GitHubApi,
+      Effect.gen(function* () {
+        const tokens = yield* GitHubTokens;
+        const client = yield* HttpClient.HttpClient;
+        // CHERNABOG_GITHUB_API points at another API, such as GitHub Enterprise or a test server.
+        const root = yield* Config.String('CHERNABOG_GITHUB_API').pipe(Config.withDefault('https://api.github.com'));
+        const token = tokens.token(persona);
 
-      const fromGh = execOk('gh', ['auth', 'token']).pipe(
-        Effect.provideService(Exec, exec),
-        Effect.map((token) => token.trim()),
-        Effect.mapError((error) => new GitHubError({ message: `gh auth token: ${error.message}` })),
-      );
+        const request = (method: HttpMethod.HttpMethod, pathOrUrl: string, body: Option.Option<Json>) =>
+          Effect.gen(function* () {
+            let url = `${root}${pathOrUrl}`;
 
-      // Looked up once, on the first request that needs it.
-      const tokens = yield* Cache.make({ capacity: 1, lookup: () => Option.match(fromConfig, { onNone: () => fromGh, onSome: Effect.succeed }) });
-      const token = Cache.get(tokens, 'token');
+            if (/^https?:\/\//.test(pathOrUrl)) url = pathOrUrl;
 
-      const request = (method: HttpMethod.HttpMethod, pathOrUrl: string, body: Option.Option<Json>) =>
-        Effect.gen(function* () {
-          let url = `${root}${pathOrUrl}`;
+            const base = HttpClientRequest.make(method)(url).pipe(
+              HttpClientRequest.bearerToken(yield* token),
+              HttpClientRequest.setHeaders({ Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }),
+            );
 
-          if (/^https?:\/\//.test(pathOrUrl)) url = pathOrUrl;
+            const withBody = Option.match(body, { onNone: () => base, onSome: (json) => HttpClientRequest.bodyJsonUnsafe(base, json) });
+            const response = yield* client.execute(withBody);
+            const text = yield* response.text;
+            let parsed = Option.none<Json>();
 
-          const base = HttpClientRequest.make(method)(url).pipe(
-            HttpClientRequest.bearerToken(yield* token),
-            HttpClientRequest.setHeaders({ Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }),
+            if (text.length > 0) parsed = Option.some(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(text));
+
+            return { status: response.status, body: parsed, nextUrl: Option.flatMap(Headers.get(response.headers, 'link'), nextPageUrl) };
+          }).pipe(
+            Effect.mapError((error) => new GitHubError({ message: `${method} ${pathOrUrl}: ${error.message}` })),
+            // GitHub answers a 5xx now and then; a network error or one of those is worth two more tries.
+            Effect.filterOrFail(
+              (response) => response.status < 500,
+              (response) => new GitHubError({ message: `${method} ${pathOrUrl} returned HTTP ${response.status}` }),
+            ),
+            Effect.retry({ schedule: Schedule.exponential('1 second'), times: 2 }),
           );
 
-          const withBody = Option.match(body, { onNone: () => base, onSome: (json) => HttpClientRequest.bodyJsonUnsafe(base, json) });
-          const response = yield* client.execute(withBody);
-          const text = yield* response.text;
-          let parsed = Option.none<Json>();
+        return GitHubApi.of({ request });
+      }).pipe(Effect.orDie),
+    );
 
-          if (text.length > 0) parsed = Option.some(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(text));
-
-          return { status: response.status, body: parsed, nextUrl: Option.flatMap(Headers.get(response.headers, 'link'), nextPageUrl) };
-        }).pipe(
-          Effect.mapError((error) => new GitHubError({ message: `${method} ${pathOrUrl}: ${error.message}` })),
-          // GitHub answers a 5xx now and then; a network error or one of those is worth two more tries.
-          Effect.filterOrFail(
-            (response) => response.status < 500,
-            (response) => new GitHubError({ message: `${method} ${pathOrUrl} returned HTTP ${response.status}` }),
-          ),
-          Effect.retry({ schedule: Schedule.exponential('1 second'), times: 2 }),
-        );
-
-      return GitHubApi.of({ request });
-    }).pipe(Effect.orDie),
-  );
+  // The API as whoever the daemon is (GH_TOKEN, then GITHUB_TOKEN, then gh's active account).
+  public static readonly layer = GitHubApi.layerFor(IMPLICIT).pipe(Layer.provide(GitHubTokens.layer));
 }
 
 export const githubRequest = (method: HttpMethod.HttpMethod, pathOrUrl: string, body: Option.Option<Json> = Option.none()) =>
@@ -163,3 +154,6 @@ export const githubTestLayer = (handler: (method: string, path: string, body: Op
 
 // The GitHub login of the token this machine uses.
 export const viewerLogin = githubJson('GET', '/user', Schema.Struct({ login: Schema.String })).pipe(Effect.map((user) => user.login));
+
+// The GitHub login a persona's token belongs to.
+export const viewerLoginAs = (persona: Persona) => Layer.build(GitHubApi.layerFor(persona)).pipe(Effect.flatMap((api) => Effect.provideContext(viewerLogin, api)), Effect.scoped);

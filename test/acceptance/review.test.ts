@@ -64,7 +64,7 @@ describe('the review loop', () => {
 
   test('a merge ends the review run and removes the worktrees', async () => {
     sandbox.github.closePull(pull().number);
-    await waitFor(() => /finished demo\.review\.pr-\d+\.\S+: done: #\d+ closed; worktrees removed/.test(sandbox.daemonLog()), 'the review run to clean up', 30_000);
+    await waitFor(() => /finished [\da-f-]{36} \(demo\/review pr-\d+\): done: #\d+ closed; worktrees removed/.test(sandbox.daemonLog()), 'the review run to clean up', 30_000);
     expect(existsSync(join(sandbox.home, 'worktrees/demo/auto-issue-1'))).toBe(false);
     expect(existsSync(join(sandbox.home, 'worktrees/demo/review-pr-2'))).toBe(false);
   }, 60_000);

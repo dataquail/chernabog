@@ -1,0 +1,46 @@
+#!/usr/bin/env bun
+// Stands in for `gh auth token --hostname github.com --user <login>`: a login
+// in $FAKE_GH_USERS (comma-separated) gets token-<login>, as the fake GitHub
+// expects. Like the real gh, it answers with GH_TOKEN instead when that is
+// set, so a lookup that let it through would act as the wrong account.
+// Anything else goes to the real gh further down PATH.
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
+
+const args = process.argv.slice(2);
+const here = dirname(import.meta.path);
+
+if (args[0] === 'auth' && args[1] === 'token' && args.includes('--user')) {
+  const login = args[args.indexOf('--user') + 1] ?? '';
+  const known = (process.env.FAKE_GH_USERS ?? '').split(',').filter((user) => user.length > 0);
+
+  if (process.env.FAKE_GH_LOG) appendFileSync(process.env.FAKE_GH_LOG, `${args.join(' ')}${process.env.GH_TOKEN ? ' with GH_TOKEN set' : ''}\n`);
+
+  if (process.env.GH_TOKEN) {
+    console.log(process.env.GH_TOKEN);
+    process.exit(0);
+  }
+
+  if (!known.includes(login)) {
+    console.error(`no oauth token found for github.com account ${login}`);
+    process.exit(1);
+  }
+
+  console.log(`token-${login}`);
+  process.exit(0);
+}
+
+const real = (process.env.PATH ?? '')
+  .split(delimiter)
+  .filter((dir) => dir !== here)
+  .map((dir) => join(dir, 'gh'))
+  .find((path) => existsSync(path));
+
+if (!real) {
+  console.error('gh: command not found');
+  process.exit(127);
+}
+
+const result = spawnSync(real, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);

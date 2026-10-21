@@ -29,20 +29,22 @@ import { daemonReload, daemonRun, daemonRunRow, daemonStatus, daemonTick } from 
 import { Home } from './config.ts';
 import { RELOAD_EXIT_CODE, runDaemon, setPaused } from './daemon.ts';
 import { doctor, formatCheck } from './doctor.ts';
-import { runLogFile } from './engine.ts';
+import { resolveRunId, runLogFile } from './engine.ts';
 import { Exec } from './Exec.ts';
+import { GitHubTokens } from './github-auth.ts';
 import { GitHubApi, viewerLogin } from './GitHubApi.ts';
 import { checkFlowNames, chooseFlows, enroll, ensureLocalConfig, flowChoices, repoRoot, scaffold } from './init.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
+import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
 import { configTree } from './snapshot.ts';
-import type { RunRow } from './state.ts';
+import { runLabel, type RunRow, shortRunId } from './state.ts';
 import { runStepChild, StepServicesLive } from './steps.ts';
 import { recordTrust, trustDiff, trustedTree } from './trust.ts';
 import { runTui } from './tui/app.ts';
@@ -99,11 +101,13 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   const upSince = Option.match(DateTime.make(status.startedAt), { onNone: () => status.startedAt, onSome: (at) => DateTime.formatLocal(at, { dateStyle: 'short', timeStyle: 'medium' }) });
 
   const flowLine = (flow: DaemonStatus['repos'][number]['flows'][number]) => {
-    if (!flow.enabled) return `  ${flow.name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
+    const name = `${flow.name}${asSuffix(Option.fromUndefinedOr(flow.persona))}`;
+
+    if (!flow.enabled) return `  ${name}: off${suffix(Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => reason !== FLOW_TURNED_OFF), ', ')}`;
 
     const elsewhere = flow.assignedElsewhere ?? [];
 
-    return `  ${flow.name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(', ')}`)}`;
+    return `  ${name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(', ')}`)}`;
   };
 
   return [
@@ -112,11 +116,11 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
     ...status.repos.flatMap((repo) => [`${repo.name} (${repo.slug}): ${repoLine(repo)}${suffix(repo.launcher, ', launcher ')}${suffix(repo.message, ' — ')}`, ...repo.flows.map(flowLine)]),
     '',
     Option.match(Arr.head(status.active), { onNone: () => 'nothing in flight', onSome: () => 'in flight:' }),
-    ...status.active.map((run) => `  ${run.id}  ${runLine(run)}${suffix(run.itemTitle, '  ')}`),
+    ...status.active.map((run) => `  ${shortRunId(run.id)}  ${runLabel(run)}  ${runLine(run)}${suffix(run.itemTitle, '  ')}`),
     ...Option.toArray(Option.map(Arr.head(finished), () => '\nrecent:')),
-    ...finished.slice(0, 8).map((run) => `  ${run.status.padEnd(11)} ${run.id}  ${Option.getOrElse(run.summary, () => '')}`),
+    ...finished.slice(0, 8).map((run) => `  ${run.status.padEnd(11)} ${shortRunId(run.id)}  ${runLabel(run)}  ${Option.getOrElse(run.summary, () => '')}`),
     ...Option.toArray(Option.map(Arr.head(status.skips), () => '\nrecent skips:')),
-    ...status.skips.slice(0, 5).map((skip) => `  ${skip.repo}/${skip.flow}${suffix(skip.itemKey, ' ')}: ${skip.reason} (${relative(Option.some(skip.at), now)})`),
+    ...status.skips.slice(0, 5).map((skip) => `  ${skip.repo}/${skip.flow}${suffix(Option.map(skip.persona, (login) => `@${login}`), '')}${suffix(skip.itemKey, ' ')}: ${skip.reason} (${relative(Option.some(skip.at), now)})`),
   ];
 };
 
@@ -195,6 +199,10 @@ const followStarted = (result: TickResult, detach: boolean) =>
     yield* reportFinished(yield* followRun(runId.value));
   });
 
+const asFlag = Flag.String('as').pipe(Flag.withDescription('The GitHub persona to act as, for a flow that runs as several'), Flag.optional);
+
+const personaField = (persona: Option.Option<string>) => Option.match(persona, { onNone: () => ({}), onSome: (login) => ({ persona: login }) });
+
 const run = Command.make(
   'run',
   {
@@ -206,11 +214,12 @@ const run = Command.make(
       Flag.withDefault(false),
     ),
     detach: Flag.Boolean('detach').pipe(Flag.withDescription('Start the run and return without following its log'), Flag.withDefault(false)),
+    as: asFlag,
   },
-  ({ detach, flow, fromCheckout, item, repo }) =>
+  ({ as, detach, flow, fromCheckout, item, repo }) =>
     Effect.gen(function* () {
       if (!fromCheckout) {
-        const viaDaemon = yield* Effect.result(daemonRun({ repo, flow, item }));
+        const viaDaemon = yield* Effect.result(daemonRun({ repo, flow, item, ...personaField(as) }));
 
         if (Result.isSuccess(viaDaemon)) return yield* followStarted(viaDaemon.success, detach);
 
@@ -218,13 +227,13 @@ const run = Command.make(
         if (Predicate.isTagged(viaDaemon.failure, 'DaemonRefused')) return yield* fail(viaDaemon.failure.message);
       }
 
-      yield* reportFinished(yield* runInForeground({ repo, flow, item, fromCheckout }));
+      yield* reportFinished(yield* runInForeground({ repo, flow, item, fromCheckout, persona: as }));
     }),
 ).pipe(Command.withDescription('One run of a flow now, skipping gates; through the daemon when it is running'));
 
-const trigger = Command.make('trigger', { flow: Argument.String('flow'), repo: repoFlag }, ({ flow, repo }) =>
+const trigger = Command.make('trigger', { flow: Argument.String('flow'), repo: repoFlag, as: asFlag }, ({ as, flow, repo }) =>
   Effect.gen(function* () {
-    const result = yield* daemonTick({ repo, flow, item: Option.none() });
+    const result = yield* daemonTick({ repo, flow, item: Option.none(), ...personaField(as) });
 
     const said = Option.match(Option.liftPredicate(result.started, Arr.isReadonlyArrayNonEmpty), {
       onNone: () => Option.getOrElse(result.skipped, () => 'nothing to start'),
@@ -254,9 +263,10 @@ const resume = Command.make('resume', { repo: repoArgument }, ({ repo }) =>
 const logs = Command.make(
   'logs',
   { run: Argument.String('run'), follow: Flag.Boolean('follow').pipe(Flag.withAlias('f'), Flag.withDefault(false)) },
-  ({ follow, run: runId }) =>
+  ({ follow, run: named }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const runId = yield* resolveRunId(named);
       const path = yield* runLogFile(runId);
 
       if (!(yield* fs.exists(path))) return yield* fail(`no log for ${runId} at ${path}`);
@@ -414,8 +424,9 @@ const enrollCommand = Command.make(
     }),
 ).pipe(Command.withDescription("Add a repo to this machine's config, and choose which of its flows run here"));
 
-const attach = Command.make('attach', { run: Argument.String('run') }, ({ run: runId }) =>
+const attach = Command.make('attach', { run: Argument.String('run') }, ({ run: named }) =>
   Effect.gen(function* () {
+    const runId = yield* resolveRunId(named);
     const session = Arr.last(yield* runSessions(runId));
 
     if (Option.isNone(session)) return yield* fail(`${runId} has opened no agent session`);
@@ -483,7 +494,12 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-const AppLive = GitHubApi.layer.pipe(Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)), Layer.provideMerge(PlatformLive));
+// One GitHubTokens for the process, so each persona's token is looked up once.
+const AppLive = GitHubApi.layerFor(IMPLICIT).pipe(
+  Layer.provideMerge(GitHubTokens.layer),
+  Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
+  Layer.provideMerge(PlatformLive),
+);
 
 if (import.meta.main) {
   Command.run(chernabog, { version: VERSION }).pipe(

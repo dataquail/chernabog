@@ -16,7 +16,7 @@ import { checkCodexAccount } from './codex-usage.ts';
 import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
 import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
-import { githubGetAllPages, viewerLogin } from './GitHubApi.ts';
+import { githubGetAllPages, viewerLogin, viewerLoginAs } from './GitHubApi.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
 import { flowNames } from './loader.ts';
@@ -78,6 +78,28 @@ export const claudeTrusts = (account: Account, path: string) =>
     return ancestorsOf(path).some((folder) => Option.exists(Record.get(projects, folder), (project) => project.hasTrustDialogAccepted === true));
   }).pipe(Effect.orElseSucceed(() => false));
 
+// Each GitHub persona: gh has its login, and GitHub says the token is its. A
+// persona pushes over https with its token; over ssh, git uses this machine's
+// key, whoever the persona.
+const checkPersonas = (machine: MachineConfig, check: (ok: boolean, label: string, fix: string) => void) =>
+  Effect.gen(function* () {
+    const exec = yield* Exec;
+
+    for (const login of machine.github) {
+      const answered = yield* Effect.result(viewerLoginAs(Option.some(login)));
+      const said = Result.match(answered, { onSuccess: (found) => found, onFailure: (error) => error.message });
+      check(Result.isSuccess(answered) && answered.success.toLowerCase() === login.toLowerCase(), `gh is logged in as ${login} (GitHub says: ${said})`, `gh auth login --hostname github.com, as ${login}, then gh auth switch back to your usual account`);
+    }
+
+    if (machine.github.length === 0) return;
+
+    for (const repo of machine.repos) {
+      const origin = yield* exec.run('git', ['-C', repo.path, 'remote', 'get-url', 'origin']).pipe(Effect.orElseSucceed(() => notRun));
+      const url = origin.stdout.trim();
+      check(url.startsWith('https://'), `${repoNameOf(repo)}: origin is https (${url}), so each persona pushes as itself`, `git -C ${repo.path} remote set-url origin https://github.com/${repo.repo}.git`);
+    }
+  });
+
 export const doctor = Effect.gen(function* () {
   const exec = yield* Exec;
   const fs = yield* FileSystem.FileSystem;
@@ -93,6 +115,9 @@ export const doctor = Effect.gen(function* () {
   check(scopes.includes("'repo'"), "gh's token has the repo scope", 'gh auth refresh -s repo');
 
   const machine = yield* loadMachineConfig;
+
+  yield* checkPersonas(machine, check);
+
   check(machine.repos.length > 0, `${machine.repos.length} repo(s) enrolled`, 'chernabog enroll, in a repo with .chernabog/ on its base branch');
 
   for (const account of accountsInUse(machine)) {

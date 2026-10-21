@@ -16,6 +16,7 @@ import {
   Usage,
   Worktree,
 } from '@chernabog/sdk';
+import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Layer from 'effect/Layer';
@@ -26,8 +27,11 @@ import { readCiState } from './ci.ts';
 import { checkCodexAccount, codexUsageGate } from './codex-usage.ts';
 import { Home, homePaths } from './config.ts';
 import { Exec, execOk } from './Exec.ts';
+import { execOptionsFor, type GitHubTokens } from './github-auth.ts';
 import { decodeBody, GitHubApi, githubGetAllPages, githubGraphql, githubJson, githubRequest, githubSend } from './GitHubApi.ts';
 import { eligibleIssuesFrom, interpretCreateRefResponse, LabelledIssueNode, moveIssueToStatus, orderClaimCandidates } from './issues.ts';
+import type { Persona } from './persona.ts';
+import type { HostEnvironment } from './platform/environment.ts';
 import { checkAccount, type GateConfig, runUsageGate, ungated } from './usage-gate.ts';
 
 const TRUSTED_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
@@ -345,42 +349,65 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
 
 const gitError = (error: { readonly message: string }) => new GitError({ message: error.message });
 
-export const GitLive: Layer.Layer<Git, never, Exec> = Layer.effect(
-  Git,
-  Effect.gen(function* () {
-    const exec = yield* Exec;
-    const run = (args: ReadonlyArray<string>, cwd: string) => execOk('git', args, { cwd }).pipe(Effect.provideService(Exec, exec), Effect.mapError(gitError));
-    const fetchBase = (cwd: string, base: string) => run(['fetch', '--quiet', 'origin', base], cwd);
+// Git as one persona: a push authenticates with its token.
+export const GitLive = (persona: Persona): Layer.Layer<Git, never, Exec | GitHubTokens | HostEnvironment> =>
+  Layer.effect(
+    Git,
+    Effect.gen(function* () {
+      const services = yield* Effect.context<Exec | GitHubTokens | HostEnvironment>();
 
-    return Git.of({
-      run,
-      headSha: (cwd) => run(['rev-parse', 'HEAD'], cwd).pipe(Effect.map((sha) => sha.trim())),
-      commitsAhead: (cwd, base) =>
-        fetchBase(cwd, base).pipe(
-          Effect.andThen(run(['rev-list', '--count', `origin/${base}..HEAD`], cwd)),
-          Effect.map((count) => Number(count.trim())),
-        ),
-      changedFiles: (cwd, base) =>
-        fetchBase(cwd, base).pipe(
-          Effect.andThen(run(['diff', '--name-only', `origin/${base}...HEAD`], cwd)),
-          Effect.map((output) => output.split('\n').filter((line) => line.length > 0)),
-        ),
-      // Only ever the run's own branch, so a lease is enough to never overwrite someone's push.
-      push: (cwd, branch) => run(['push', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`], cwd).pipe(Effect.asVoid),
-      pull: (cwd, branch) => run(['pull', '--ff-only', '--quiet', 'origin', branch], cwd).pipe(Effect.asVoid),
-    });
-  }),
-);
+      const run = (args: ReadonlyArray<string>, cwd: string) =>
+        execOptionsFor(persona, { cwd }).pipe(
+          Effect.flatMap((options) => execOk('git', args, options)),
+          Effect.provideContext(services),
+          Effect.mapError(gitError),
+        );
 
-export const WorktreeLive = (settings: RepoSettings): Layer.Layer<Worktree, never, Exec | FileSystem.FileSystem | Home> =>
+      const fetchBase = (cwd: string, base: string) => run(['fetch', '--quiet', 'origin', base], cwd);
+
+      return Git.of({
+        run,
+        headSha: (cwd) => run(['rev-parse', 'HEAD'], cwd).pipe(Effect.map((sha) => sha.trim())),
+        commitsAhead: (cwd, base) =>
+          fetchBase(cwd, base).pipe(
+            Effect.andThen(run(['rev-list', '--count', `origin/${base}..HEAD`], cwd)),
+            Effect.map((count) => Number(count.trim())),
+          ),
+        changedFiles: (cwd, base) =>
+          fetchBase(cwd, base).pipe(
+            Effect.andThen(run(['diff', '--name-only', `origin/${base}...HEAD`], cwd)),
+            Effect.map((output) => output.split('\n').filter((line) => line.length > 0)),
+          ),
+        // Only ever the run's own branch, so a lease is enough to never overwrite someone's push.
+        push: (cwd, branch) => run(['push', '--force-with-lease', 'origin', `HEAD:refs/heads/${branch}`], cwd).pipe(Effect.asVoid),
+        pull: (cwd, branch) => run(['pull', '--ff-only', '--quiet', 'origin', branch], cwd).pipe(Effect.asVoid),
+      });
+    }),
+  );
+
+// Worktrees, fetched as `persona`. A branch has one worktree whoever works on
+// it, since git allows a branch only one, and a resumed agent session finds
+// its transcript by the worktree it ran in. A detached checkout, such as a
+// review's, belongs to the repo's persona (Repo.persona), so two personas
+// reviewing one pull request never share one.
+export const WorktreeLive = (settings: RepoSettings, persona: Persona): Layer.Layer<Worktree, never, Exec | FileSystem.FileSystem | Home | GitHubTokens | HostEnvironment> =>
   Layer.effect(
     Worktree,
     Effect.gen(function* () {
       const exec = yield* Exec;
       const fs = yield* FileSystem.FileSystem;
+      const services = yield* Effect.context<Exec | GitHubTokens | HostEnvironment>();
       const root = homePaths((yield* Home).root).worktrees(settings.name);
-      const git = (args: ReadonlyArray<string>, cwd = settings.path) => execOk('git', args, { cwd }).pipe(Effect.provideService(Exec, exec), Effect.mapError(gitError));
+      const options = (cwd: string) => execOptionsFor(persona, { cwd }).pipe(Effect.provideContext(services), Effect.mapError(gitError));
+
+      const git = (args: ReadonlyArray<string>, cwd = settings.path) =>
+        options(cwd).pipe(
+          Effect.flatMap((found) => execOk('git', args, found).pipe(Effect.provideService(Exec, exec))),
+          Effect.mapError(gitError),
+        );
+
       const pathFor = (branch: string) => `${root}/${branch.replace(/[^\w.-]+/g, '-')}`;
+      const checkoutPathFor = (name: string) => pathFor(Option.match(Option.fromUndefinedOr(settings.persona), { onNone: () => name, onSome: (own) => `${name}@${own}` }));
       const exists = (path: string) => fs.exists(path).pipe(Effect.mapError(gitError));
       const makeRoot = fs.makeDirectory(root, { recursive: true }).pipe(Effect.mapError(gitError));
 
@@ -392,7 +419,7 @@ export const WorktreeLive = (settings: RepoSettings): Layer.Layer<Worktree, neve
 
           yield* makeRoot;
           yield* git(['worktree', 'prune']);
-          const remote = yield* exec.run('git', ['fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`], { cwd: settings.path }).pipe(Effect.mapError(gitError));
+          const remote = yield* exec.run('git', ['fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`], yield* options(settings.path)).pipe(Effect.mapError(gitError));
 
           if (remote.exitCode === 0) {
             yield* git(['worktree', 'add', '--force', '-B', branch, path, `origin/${branch}`]);
@@ -407,7 +434,7 @@ export const WorktreeLive = (settings: RepoSettings): Layer.Layer<Worktree, neve
 
       const checkout = (name: string, ref: string) =>
         Effect.gen(function* () {
-          const path = pathFor(name);
+          const path = checkoutPathFor(name);
           const branch = ref.replace(/^origin\//, '');
           yield* git(['fetch', '--quiet', 'origin', `${branch}:refs/remotes/origin/${branch}`]).pipe(Effect.catch(() => git(['fetch', '--quiet', 'origin'])));
 
@@ -424,11 +451,12 @@ export const WorktreeLive = (settings: RepoSettings): Layer.Layer<Worktree, neve
           return path;
         });
 
+      // The branch's worktree, and the persona's detached checkout of that name.
       const remove = (branch: string) =>
         Effect.gen(function* () {
-          const path = pathFor(branch);
-
-          if (yield* exists(path)) yield* git(['worktree', 'remove', '--force', path]);
+          for (const path of Arr.dedupe([pathFor(branch), checkoutPathFor(branch)])) {
+            if (yield* exists(path)) yield* git(['worktree', 'remove', '--force', path]);
+          }
 
           yield* exec.run('git', ['branch', '-D', branch], { cwd: settings.path }).pipe(Effect.ignore);
         });

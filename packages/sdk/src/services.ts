@@ -93,6 +93,9 @@ export const RepoSettings = Schema.Struct({
   slug: Schema.String,
   path: Schema.String,
   baseBranch: Schema.String,
+  // The GitHub login this run acts as, when machine config names personas;
+  // absent, it acts as whoever the daemon is.
+  persona: Schema.optionalKey(Schema.String),
   account: Account,
   // The adapter that implements, and the account each adapter runs under.
   agent: Schema.String,

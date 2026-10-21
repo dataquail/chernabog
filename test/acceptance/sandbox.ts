@@ -23,6 +23,9 @@ const SLUG = 'dataquail/demo';
 const NO_INSTALL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))(Option.none());
 
 export type MachineOptions = {
+  // GitHub personas, and which of them run the repo.
+  readonly github?: ReadonlyArray<string>;
+  readonly personas?: ReadonlyArray<string>;
   readonly accounts?: Readonly<Record<string, Json>>;
   readonly account?: string;
   readonly agents?: Readonly<Record<string, Json>>;
@@ -45,8 +48,12 @@ const repoConfigText = (template: string, repoConfig: Readonly<Record<string, Js
 const machineConfigText = (root: string, checkout: string, machine: MachineOptions) => {
   const document = new YAML.Document({
     accounts: { work: { configDir: join(root, 'claude'), expectedEmail: 'dev@example.com' }, codex: { agent: 'codex', configDir: join(root, 'codex') }, ...machine.accounts },
-    repos: [{ path: checkout, repo: SLUG, name: 'demo', account: machine.account ?? 'work', baseBranch: 'main' }],
+    repos: [{ path: checkout, repo: SLUG, name: 'demo', account: machine.account ?? 'work', baseBranch: 'main', ...Option.match(Option.fromUndefinedOr(machine.personas), { onNone: () => ({}), onSome: (personas) => ({ personas }) }) }],
   });
+
+  const github = Option.fromUndefinedOr(machine.github);
+
+  if (Option.isSome(github)) document.set('github', Object.fromEntries(github.value.map((login) => [login, {}])));
 
   for (const key of ['agents', 'launcher', 'launchers'] as const) {
     const value = Option.fromUndefinedOr(machine[key]);
@@ -96,6 +103,8 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   mkdirSync(join(root, 'claude'), { recursive: true });
   writeFileSync(join(root, 'claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fake-token', expiresAt: 4102444800000 } }));
   const github = startFakeGitHub({ slug: SLUG, bare });
+  const ghLog = join(root, 'gh.log');
+  const agentTokenLog = join(root, 'agent-tokens.log');
   const claudeLog = join(root, 'claude.log');
 
   const env = {
@@ -105,6 +114,9 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
     GH_TOKEN: 'test-token',
     PATH: `${join(ROOT, 'test/fakebin')}:${dirname(process.execPath)}:${process.env.PATH ?? ''}`,
     FAKE_CLAUDE_LOG: claudeLog,
+    FAKE_GH_USERS: (machine.github ?? []).join(','),
+    FAKE_GH_LOG: ghLog,
+    FAKE_AGENT_TOKEN_LOG: agentTokenLog,
     FAKE_CODEX_LOG: join(root, 'codex.log'),
     FAKE_OPENCODE_LOG: join(root, 'opencode.log'),
     FAKE_TMUX_STATE: join(root, 'tmux'),
@@ -145,8 +157,10 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   const codexCalls = () => callsIn(join(root, 'codex.log'));
   const opencodeCalls = () => callsIn(join(root, 'opencode.log'));
   const daemonLog = () => callsIn(join(home, 'daemon.log')).join('\n');
+  const ghCalls = () => callsIn(ghLog);
+  const agentTokens = () => callsIn(agentTokenLog);
 
-  return { root, bare, checkout, home, github, cli, runCli, claudeCalls, hookCalls, tmuxCalls, orcaCalls, codexCalls, opencodeCalls, daemonLog, git, env };
+  return { root, bare, checkout, home, github, cli, runCli, claudeCalls, hookCalls, tmuxCalls, orcaCalls, codexCalls, opencodeCalls, daemonLog, ghCalls, agentTokens, git, env };
 };
 
 export type Sandbox = ReturnType<typeof openSandbox>;

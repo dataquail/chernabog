@@ -229,7 +229,7 @@ export const runTui = Effect.gen(function* () {
         case 'attach':
           return yield* attach(action.run);
         case 'trigger': {
-          const result = yield* Effect.result(daemonTick({ repo: action.repo, flow: action.flow, item: Option.none() }));
+          const result = yield* Effect.result(daemonTick({ repo: action.repo, flow: action.flow, item: Option.none(), ...Option.match(action.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }) }));
 
           return yield* say(
             Result.match(result, {

@@ -11,7 +11,7 @@ description: Every chernabog command and flag.
 | `status`                          | Repos, schedules and trust, runs in flight, recent runs, why ticks were skipped |
 | `run <flow> --repo <repo>`        | One run now, skipping gates, through the daemon; follows its log                |
 | `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due                         |
-| `logs <run> [-f]`                 | A run's log; `-f` follows it                                                     |
+| `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
 | `attach <run>`                    | Open the run's agent session                                                     |
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |

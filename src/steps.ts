@@ -20,8 +20,11 @@ import * as Stdio from 'effect/Stdio';
 import * as Stream from 'effect/Stream';
 
 import { adaptersFor, AgentLive, type AgentsConfig } from './agents.ts';
+import { GitHubTokens } from './github-auth.ts';
 import { GitHubApi } from './GitHubApi.ts';
 import { findStage, loadStage } from './loader.ts';
+import { IMPLICIT, type Persona } from './persona.ts';
+import type { Environment } from './platform/environment.ts';
 import { AgentFile, UsageGateFile } from './repo-config.ts';
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from './sdk-live.ts';
 import { selfCommand } from './self.ts';
@@ -48,7 +51,8 @@ const lastLines = (text: string, count = 20) => text.trimEnd().split('\n').slice
 
 type ChildResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string };
 
-type Child = { readonly command: ReadonlyArray<string>; readonly cwd: string; readonly stdin: string; readonly timeout: Duration.Duration };
+// `env` is set over this process's environment, which the child inherits.
+type Child = { readonly command: ReadonlyArray<string>; readonly cwd: string; readonly stdin: string; readonly timeout: Duration.Duration; readonly env: Environment };
 
 // Runs the step's process, copying each line it writes to stderr into the run's log.
 const runChild = (name: string, child: Child, log: (line: string) => Effect.Effect<void>) =>
@@ -59,6 +63,7 @@ const runChild = (name: string, child: Child, log: (line: string) => Effect.Effe
     const handle = yield* spawner.spawn(
       ChildProcess.make(command, args, {
         cwd: child.cwd,
+        env: child.env,
         extendEnv: true,
         stdin: { stream: Stream.make(new TextEncoder().encode(child.stdin)) },
         forceKillAfter: '5 seconds',
@@ -122,11 +127,14 @@ const logFor = (name: string) =>
 
 const lastLine = (text: string) => Option.getOrElse(Arr.last(text.trim().split('\n')), () => '');
 
-export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents: AgentsConfig, timeout: Duration.Duration = DEFAULT_STEP_TIMEOUT) =>
+// Steps run as one persona: a step's process gets its token, so gh and git in
+// it, and the services of an Effect step, act as that persona.
+export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents: AgentsConfig, persona: Persona, timeout: Duration.Duration = DEFAULT_STEP_TIMEOUT) =>
   Layer.effect(
     StepRunner,
     Effect.gen(function* () {
       const services = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
+      const tokens = yield* GitHubTokens;
 
       const run = (name: string, input: Json) =>
         Effect.gen(function* () {
@@ -138,6 +146,7 @@ export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents:
           const stage = found.value;
           const runInfo = yield* Effect.serviceOption(Run);
           const log = yield* logFor(name);
+          const env = yield* tokens.env(persona).pipe(Effect.mapError((error) => new StepFailed({ step: name, message: error.message })));
 
           if (stage.kind === 'shell') {
             // A shell step gets its input and where it runs; the run is named when there is one.
@@ -146,7 +155,7 @@ export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents:
             if (Option.isSome(runInfo)) context = { input, repo: settings.slug, run: runInfo.value.runId };
 
             const stdin = printJson(context);
-            const result = yield* runChild(name, { command: [stage.path], cwd: settings.path, stdin, timeout }, log);
+            const result = yield* runChild(name, { command: [stage.path], cwd: settings.path, stdin, timeout, env }, log);
 
             return yield* interpretStepExit(name, result, parseJson(lastLine(result.stdout)));
           }
@@ -154,7 +163,7 @@ export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents:
           const scratch = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-step-' });
           const context: StepContext = { stage: stage.path, input, repo: settings, run: runInfo, gate, agents, outputPath: `${scratch}/output.json` };
           const stdin = yield* Schema.encodeEffect(StepContextJson)(context);
-          const result = yield* runChild(name, { command: [...selfCommand(), '__step'], cwd: settings.path, stdin, timeout }, log);
+          const result = yield* runChild(name, { command: [...selfCommand(), '__step'], cwd: settings.path, stdin, timeout, env }, log);
           let output = Option.none<Json>();
 
           if (result.exitCode === STEP_EXIT.ok) output = parseJson(yield* fs.readFileString(context.outputPath));
@@ -180,15 +189,17 @@ const stderrLog = RunLog.of({
   stepDone: () => Effect.void,
 });
 
-// The SDK services a step can use, for one repo.
+// The SDK services a step can use, for one repo. The step's process already
+// has its persona's token in its environment, so they act as the implicit
+// persona, which is that one.
 export const stepServices = (context: StepContext) =>
   Layer.mergeAll(
     RepoLive(context.repo),
     GitHubLive(context.repo).pipe(Layer.provide(GitHubApi.layer)),
-    GitLive,
-    WorktreeLive(context.repo),
+    GitLive(IMPLICIT),
+    WorktreeLive(context.repo, IMPLICIT),
     UsageLive(context.repo, context.gate),
-    AgentLive(context.repo, adaptersFor(context.agents)),
+    AgentLive(context.repo, adaptersFor(context.agents), IMPLICIT),
     Layer.succeed(RunLog, stderrLog),
     Option.match(context.run, { onNone: () => Layer.empty, onSome: (info) => Layer.succeed(Run, info) }),
   );

@@ -6,10 +6,12 @@
 
 import { describeError, type Flow, NeedsHuman, type RepoSettings, Run, RunLog, signalDeferred, Signals, Skip, WorkItem } from '@chernabog/sdk';
 import { SqliteClient } from '@effect/sql-sqlite-bun';
+import * as Arr from 'effect/Array';
 import * as Cause from 'effect/Cause';
 import * as ClusterWorkflowEngine from 'effect/cluster/ClusterWorkflowEngine';
 import * as SingleRunner from 'effect/cluster/SingleRunner';
-import * as DateTime from 'effect/DateTime';
+import type * as Context from 'effect/Context';
+import * as Crypto from 'effect/Crypto';
 import * as Effect from 'effect/Effect';
 import * as Exit from 'effect/Exit';
 import * as FileSystem from 'effect/FileSystem';
@@ -23,6 +25,7 @@ import * as Workflow from 'effect/workflow/Workflow';
 import { adaptersFor, AgentLive, type AgentsConfig } from './agents.ts';
 import { Home, homePaths } from './config.ts';
 import { GitHubApi } from './GitHubApi.ts';
+import { IMPLICIT, type Persona } from './persona.ts';
 import type { EffectiveRepo } from './repo-config.ts';
 import { noHooks, runLogWriting, type StepHooks } from './runlog.ts';
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from './sdk-live.ts';
@@ -57,19 +60,39 @@ export const StateAt = (database: string) => State.layer.pipe(Layer.provideMerge
 // The engine and state in this machine's state.db.
 export const StateLive = Layer.unwrap(Home.use((home) => Effect.succeed(StateAt(homePaths(home.root).state))));
 
-// The services every flow, trigger and step of one repo uses.
-export const repoServices = (settings: RepoSettings, gate: GateConfig, agents: AgentsConfig) =>
-  Layer.mergeAll(
-    RepoLive(settings),
-    GitHubLive(settings).pipe(Layer.provide(GitHubApi.layer)),
-    GitLive,
-    WorktreeLive(settings),
-    UsageLive(settings, gate),
-    AgentLive(settings, adaptersFor(agents)),
-    StepRunnerLive(settings, gate, agents),
-  );
+// The repo's settings as a persona sees them: Repo.persona names it.
+export const personaSettings = (settings: RepoSettings, persona: Persona): RepoSettings =>
+  Option.match(persona, { onNone: () => settings, onSome: (login) => ({ ...settings, persona: login }) });
 
-const FlowPayload = Schema.Struct({ runId: Schema.String, item: WorkItem });
+// The services every flow, trigger and step of one repo uses, as one persona.
+export const repoServices = (repoSettings: RepoSettings, gate: GateConfig, agents: AgentsConfig, persona: Persona) => {
+  const settings = personaSettings(repoSettings, persona);
+
+  return Layer.mergeAll(
+    RepoLive(settings),
+    GitHubLive(settings).pipe(Layer.provide(GitHubApi.layerFor(persona))),
+    GitLive(persona),
+    WorktreeLive(settings, persona),
+    UsageLive(settings, gate),
+    AgentLive(settings, adaptersFor(agents), persona),
+    StepRunnerLive(settings, gate, agents, persona),
+  );
+};
+
+// A run's persona is in its payload; a run started before personas has none there.
+const FlowPayload = Schema.Struct({ runId: Schema.String, item: WorkItem, persona: Schema.optionalKey(Schema.String) });
+
+// The services for a persona's runs; none for a persona the repo no longer has.
+export type ServicesFor<R> = (persona: Persona) => Option.Option<Context.Context<R>>;
+
+// The same services whatever the persona, as in tests.
+export const forEveryPersona =
+  <R>(services: Context.Context<R>): ServicesFor<R> =>
+  () =>
+    Option.some(services);
+
+// Who a repo's runs act as when nothing says otherwise: its first persona.
+export const defaultPersona = (repo: EffectiveRepo): Persona => Option.flatten(Arr.head(repo.personas));
 
 export type FlowHandle = {
   readonly repo: EffectiveRepo;
@@ -113,13 +136,36 @@ const outcomeOf = <E>(error: E) => {
 };
 
 // Registers a flow's workflow with the engine. The services each run uses
-// (repoServices, or fakes in tests) are built once per repo, then given the
-// run's own Run and RunLog.
-export const flowLayer = <ROut, RIn>(handle: FlowHandle, services: Layer.Layer<ROut, never, RIn>, hooks: StepHooks = noHooks) =>
-  handle.workflow
-    .toLayer((payload, executionId) =>
-      Effect.gen(function* () {
-        const state = yield* State;
+// (repoServices, or fakes in tests) are built once per persona of the repo,
+// chosen by the run's persona, then given the run's own Run and RunLog. One
+// workflow serves every persona, so its name, and the execution ids derived
+// from it, are what they were before personas.
+export const flowLayer = <R>(handle: FlowHandle, servicesFor: ServicesFor<R>, hooks: StepHooks = noHooks) =>
+  handle.workflow.toLayer((payload, executionId) =>
+    Effect.gen(function* () {
+      const state = yield* State;
+      const row = yield* state.run(payload.runId);
+      const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () => Option.flatMap(row, (found) => found.persona));
+
+      // A run from before personas acts as the implicit persona while the repo
+      // still has one, else as its first persona. Its row may not say so yet:
+      // the engine can resume it before the daemon adopts it.
+      const persona = Option.match(named, {
+        onSome: (login): Persona => Option.some(login),
+        onNone: () => {
+          if (Option.isSome(servicesFor(IMPLICIT))) return IMPLICIT;
+
+          return defaultPersona(handle.repo);
+        },
+      });
+
+      const services = servicesFor(persona);
+
+      if (Option.isNone(services)) {
+        const who = Option.getOrElse(persona, () => 'the implicit persona');
+
+        return yield* new RunFailed({ message: `${who} no longer runs ${handle.repo.settings.name}; add it back to the repo's personas to finish this run` });
+      }
 
         const runLog = yield* runLogFor(payload.runId, {
           onStep: (step) => state.setStep(payload.runId, step).pipe(Effect.andThen(hooks.onStep(step))),
@@ -134,36 +180,57 @@ export const flowLayer = <ROut, RIn>(handle: FlowHandle, services: Layer.Layer<R
           Effect.provideService(Run, { flow: handle.name, runId: payload.runId, executionId, item: payload.item }),
           Effect.provideService(RunLog, runLog),
           Effect.provideService(Signals, signals),
+          Effect.provideContext(services.value),
         );
 
         yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
 
         return outcome;
-      }).pipe(Effect.orDie),
-    )
-    .pipe(Layer.provide(services));
+      }).pipe(Effect.catchTag('RunFailed', Effect.fail), Effect.orDie),
+    );
 
-// 2026-10-17T16:50:44.229Z → 20261017-165044
-const timestamp = (now: DateTime.Utc) => DateTime.formatIso(now).replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
+// A run's id says nothing about it: its row records what it runs, and as whom.
+// Random rather than time-ordered, so a few characters of it name a run.
+const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
 
-export const makeRunId = (repo: string, flow: string, itemKey: string, now: DateTime.Utc) => `${repo}.${flow}.${itemKey.replace(/[^\w-]+/g, '-')}.${timestamp(now)}`;
+// The ids a prefix names, among the runs with a log, as `logs` and `attach` take them.
+export const resolveRunId = (prefix: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = homePaths((yield* Home).root).runs;
+    const ids = (yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))).filter((name) => name.endsWith('.log')).map((name) => name.slice(0, -'.log'.length));
+
+    if (ids.includes(prefix)) return prefix;
+
+    const matching = ids.filter((id) => id.startsWith(prefix));
+
+    if (matching.length === 1) return matching[0];
+
+    if (matching.length === 0) return yield* new RunFailed({ message: `no run ${prefix}` });
+
+    const shown = [...matching.slice(0, 5), ...Option.toArray(Option.liftPredicate('…', () => matching.length > 5))];
+
+    return yield* new RunFailed({ message: `${prefix} names ${matching.length} runs (${shown.join(', ')}); give more of the id` });
+  });
 
 export type Started = { readonly run: Option.Option<RunRow>; readonly started: boolean };
 
-// Starts one run of a flow for one work item, unless the item already has one.
-export const startRun = (handle: FlowHandle, item: WorkItem) =>
+// Starts one run of a flow, as a persona, for one work item, unless the
+// persona already has one for the item.
+export const startRun = (handle: FlowHandle, persona: Persona, item: WorkItem) =>
   Effect.gen(function* () {
     const state = yield* State;
     const repo = handle.repo.settings.name;
-    const active = yield* state.activeRunFor(repo, handle.name, item.key);
+    const active = yield* state.activeRunFor(repo, persona, handle.name, item.key);
 
     if (Option.isSome(active)) return { run: active, started: false } satisfies Started;
 
     if (item.wakeOnly === true) return { run: Option.none(), started: false } satisfies Started;
 
-    const runId = makeRunId(repo, handle.name, item.key, yield* DateTime.now);
-    yield* state.insertRun({ id: runId, repo, flow: handle.name, itemKey: item.key, itemTitle: Option.fromUndefinedOr(item.title), itemUrl: Option.fromUndefinedOr(item.url) });
-    const executionId = yield* handle.workflow.execute({ runId, item }, { discard: true });
+    const runId = yield* newRunId;
+    yield* state.insertRun({ id: runId, repo, persona, flow: handle.name, itemKey: item.key, itemTitle: Option.fromUndefinedOr(item.title), itemUrl: Option.fromUndefinedOr(item.url) });
+    const payload = Option.match(persona, { onNone: () => ({ runId, item }), onSome: (login) => ({ runId, item, persona: login }) });
+    const executionId = yield* handle.workflow.execute(payload, { discard: true });
     yield* state.setExecution(runId, executionId);
 
     return { run: yield* state.run(runId), started: true } satisfies Started;
@@ -197,14 +264,14 @@ export const pollRun = (handle: FlowHandle, run: RunRow) =>
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
 
-// Wakes the runs waiting on a signal the trigger reported for their item.
-export const deliverSignals = (handle: FlowHandle, items: ReadonlyArray<WorkItem>) =>
+// Wakes the persona's runs waiting on a signal its trigger reported for their item.
+export const deliverSignals = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
     const state = yield* State;
     let delivered = 0;
 
     for (const item of items) {
-      const run = yield* state.activeRunFor(handle.repo.settings.name, handle.name, item.key);
+      const run = yield* state.activeRunFor(handle.repo.settings.name, persona, handle.name, item.key);
 
       if (Option.isNone(run)) continue;
 
