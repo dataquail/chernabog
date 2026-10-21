@@ -70,7 +70,7 @@ export const settings: RepoSettings = {
   configDir: fileURLToPath(new URL('../templates/.chernabog', import.meta.url)),
 };
 
-export const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {} };
+export const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {}, personas: [Option.none()] };
 
 export type Verdict = 'approve' | 'request-changes';
 

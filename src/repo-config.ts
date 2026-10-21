@@ -20,6 +20,7 @@ import { ConfigError, expandHome, Home, homePaths } from './config.ts';
 import { checkConfigVersion } from './flow-deps.ts';
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
 import { nodeBinFor } from './node-version.ts';
+import { IMPLICIT, type Persona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
 import type { GateConfig } from './usage-gate.ts';
 
@@ -174,6 +175,9 @@ export const EnrolledRepo = Schema.Struct({
   account: Schema.optionalKey(Schema.String),
   // The branch .chernabog/ is trusted from. Defaults to main.
   baseBranch: Schema.optionalKey(Schema.String),
+  // The GitHub personas, from machine config's github:, that run this repo's
+  // flows. Defaults to the only one; required when there are several.
+  personas: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export type EnrolledRepo = typeof EnrolledRepo.Type;
@@ -185,8 +189,15 @@ export const UsageGateFile = Schema.Struct({
   humanRatePerHour: Schema.Finite,
 });
 
+// A GitHub persona on this machine. Its token always comes from
+// `gh auth token --user <login>` and is never written here.
+const GitHubPersonaFile = Schema.Struct({});
+
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
 export const MachineConfigFile = Schema.Struct({
+  // GitHub personas by login. Without it, the one persona is whoever the
+  // daemon is: GH_TOKEN, then GITHUB_TOKEN, then gh's active account.
+  github: Schema.optionalKey(Schema.Record(Schema.String, GitHubPersonaFile)),
   accounts: Schema.optionalKey(Schema.Record(Schema.String, AccountFile)),
   usageGate: Schema.optionalKey(UsageGateFile),
   concurrency: Schema.optionalKey(Schema.Int),
@@ -209,6 +220,8 @@ export const DEFAULT_LIMITS: Limits = { localGateRounds: 2, ciRounds: 3, reviewR
 export type MachineAccount = Account & { readonly agent: string };
 
 export type MachineConfig = {
+  // The logins under github:; none when it's left out.
+  readonly github: ReadonlyArray<string>;
   readonly accounts: ReadonlyArray<MachineAccount>;
   readonly agents: AgentsConfig;
   readonly launcher: Option.Option<string>;
@@ -234,6 +247,8 @@ export type EffectiveRepo = {
   readonly runners: { readonly repo: Option.Option<ReadonlyArray<string>>; readonly flows: Readonly<Record<string, ReadonlyArray<string>>> };
   // The flows the person turned on or off in local.yaml, which beat the runners.
   readonly localEnabled: Readonly<Record<string, boolean>>;
+  // Who runs its flows: the repo's personas, or only the implicit one.
+  readonly personas: ReadonlyArray<Persona>;
 };
 
 export const FLOW_TURNED_OFF = 'flow turned off';
@@ -337,6 +352,7 @@ const launcherCommandsOf = (file: typeof LauncherFile.Type): LauncherCommands =>
 });
 
 export const normalizeMachineConfig = (file: MachineConfigFile, home: string): MachineConfig => ({
+  github: Object.keys(file.github ?? {}),
   accounts: Object.entries(file.accounts ?? { work: {} }).map(fromAccountFile(home)),
   agents: file.agents ?? {},
   launcher: Option.fromUndefinedOr(file.launcher),
@@ -452,6 +468,36 @@ export const resolveLauncher = (machine: MachineConfig, repoName: string, files:
     return { name, from, custom } satisfies ResolvedLauncher;
   });
 
+// The personas that run a repo's flows. Without github:, only the implicit one.
+// With it, the repo's personas, each one of github:'s logins, defaulting to the
+// only login. Several logins and no choice is refused rather than guessed: a
+// login can be all digits, which a YAML map doesn't keep in order.
+export const personasOf = (machine: MachineConfig, enrolled: EnrolledRepo) =>
+  Effect.gen(function* () {
+    const chosen = Option.fromUndefinedOr(enrolled.personas);
+    const failed = (message: string) => new ConfigError({ message: `${enrolled.repo}: ${message}` });
+
+    if (machine.github.length === 0) {
+      if (Option.isSome(chosen)) return yield* failed('personas names GitHub logins, but machine config has no github: to list them');
+
+      return [IMPLICIT];
+    }
+
+    if (Option.isNone(chosen)) {
+      if (machine.github.length === 1) return [Option.some(machine.github[0])];
+
+      return yield* failed(`machine config lists several GitHub personas (${machine.github.join(', ')}); choose this repo's with personas:`);
+    }
+
+    const unknown = chosen.value.filter((login) => !machine.github.includes(login));
+
+    if (unknown.length > 0) return yield* failed(`personas ${unknown.join(', ')} not listed under github: (it has: ${machine.github.join(', ')})`);
+
+    if (chosen.value.length === 0) return yield* failed('personas is empty; leave the repo out of machine config instead');
+
+    return Arr.dedupe(chosen.value).map((login): Persona => Option.some(login));
+  });
+
 // Merges the layers for one repo. `configDir` is where its .chernabog/ was read
 // from; `env` is the extra environment its commands run with.
 export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, files: { readonly repo: RepoConfigFile; readonly local: LocalConfigFile }, configDir: string, env: Environment) =>
@@ -480,6 +526,7 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
     const agent = local.agent ?? repo.agent ?? account.agent;
     const agentAccounts = accountsByAgent(machine, account);
     const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), files);
+    const personas = yield* personasOf(machine, enrolled);
 
     const settings: RepoSettings = {
       name: repoNameOf(enrolled),
@@ -516,6 +563,7 @@ export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, 
         flows: Object.fromEntries(Object.entries(repo.flows ?? {}).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.runners), (runners) => [flow, runners] as const)))),
       },
       localEnabled: Object.fromEntries(Object.entries(localFlows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.enabled), (enabled) => [flow, enabled] as const)))),
+      personas,
     } satisfies EffectiveRepo;
   });
 
@@ -545,7 +593,9 @@ export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configD
     return yield* mergeRepoConfig(machine, enrolled, { repo, local }, configDir, yield* repoEnvironment(enrolled.path));
   });
 
-// Adds or updates a repo in machine config, keeping the file's comments.
+// Adds or updates a repo in machine config, keeping the file's comments. An
+// update sets only the keys given, so the rest of the entry, such as its
+// personas, survives a re-enroll.
 export const enrollInMachineConfig = (repo: EnrolledRepo) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -561,7 +611,7 @@ export const enrollInMachineConfig = (repo: EnrolledRepo) =>
     let action: 'added' | 'updated' = 'added';
 
     if (index >= 0) {
-      document.setIn(['repos', index], document.createNode(repo));
+      for (const [key, value] of Object.entries(repo)) document.setIn(['repos', index, key], document.createNode(value));
       action = 'updated';
     } else if (document.has('repos')) document.addIn(['repos'], document.createNode(repo));
     else document.set('repos', document.createNode([repo]));

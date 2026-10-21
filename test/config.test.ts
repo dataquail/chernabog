@@ -10,7 +10,22 @@ import YAML from 'yaml';
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
 import { chooseFlows, ensureLocalConfig, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
-import { DEFAULT_LIMITS, type EnrolledRepo, flowOff, loadRepo, LocalConfigFile, MachineConfigFile, mergeRepoConfig, needsLogin, normalizeMachineConfig, RepoConfigFile, routingOf } from '../src/repo-config.ts';
+import {
+  DEFAULT_LIMITS,
+  type EnrolledRepo,
+  enrollInMachineConfig,
+  flowOff,
+  loadRepo,
+  LocalConfigFile,
+  MachineConfigFile,
+  machineConfigFile,
+  mergeRepoConfig,
+  needsLogin,
+  normalizeMachineConfig,
+  personasOf,
+  RepoConfigFile,
+  routingOf,
+} from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
 import { effect, effectAtHome } from './effect-test.ts';
@@ -432,6 +447,72 @@ describe('loading a repo', () => {
     Effect.gen(function* () {
       const loaded = yield* load({ 'config.yaml': 'baseBranch: develop\n' });
       expect(Result.isSuccess(loaded) && loaded.success.settings.baseBranch).toBe('develop');
+    }),
+  );
+});
+
+describe('GitHub personas', () => {
+  type Logins = Readonly<Record<string, object>>;
+
+  const machineWith = (github: Option.Option<Logins>) =>
+    normalizeMachineConfig(Schema.decodeSync(MachineConfigFile)({ ...Option.match(github, { onNone: () => ({}), onSome: (logins) => ({ github: logins }) }), repos: [] }), '/Users/dev');
+
+  const personas = (github: Option.Option<Logins>, chosen: Option.Option<ReadonlyArray<string>> = Option.none()) =>
+    Effect.result(personasOf(machineWith(github), { ...enrolled, ...Option.match(chosen, { onNone: () => ({}), onSome: (logins) => ({ personas: logins }) }) }));
+
+  effect('without github:, the one persona is the implicit one', () =>
+    Effect.gen(function* () {
+      expect(yield* personas(Option.none())).toEqual(Result.succeed([Option.none()]));
+    }),
+  );
+
+  effect('personas without github: is refused', () =>
+    Effect.gen(function* () {
+      const chosen = yield* personas(Option.none(), Option.some(['alice']));
+      expect(Result.isFailure(chosen) && chosen.failure.message).toContain('machine config has no github:');
+    }),
+  );
+
+  effect('one login under github: is the default', () =>
+    Effect.gen(function* () {
+      expect(yield* personas(Option.some({ alice: {} }))).toEqual(Result.succeed([Option.some('alice')]));
+    }),
+  );
+
+  effect('several logins need the repo to choose', () =>
+    Effect.gen(function* () {
+      const unchosen = yield* personas(Option.some({ alice: {}, bob: {} }));
+      expect(Result.isFailure(unchosen) && unchosen.failure.message).toContain('choose this repo\'s with personas:');
+      expect(yield* personas(Option.some({ alice: {}, bob: {} }), Option.some(['bob', 'alice']))).toEqual(Result.succeed([Option.some('bob'), Option.some('alice')]));
+    }),
+  );
+
+  effect('a persona must be one of github:\'s logins', () =>
+    Effect.gen(function* () {
+      const chosen = yield* personas(Option.some({ alice: {} }), Option.some(['alice', 'mallory']));
+      expect(Result.isFailure(chosen) && chosen.failure.message).toContain('personas mallory not listed under github:');
+    }),
+  );
+
+  effect('the merged repo carries its personas', () =>
+    Effect.gen(function* () {
+      const files = { repo: yield* Schema.decodeEffect(RepoConfigFile)({}), local: yield* Schema.decodeEffect(LocalConfigFile)({}) };
+      const merged = yield* mergeRepoConfig({ ...machine, github: ['alice', 'bob'] }, { ...enrolled, personas: ['bob'] }, files, '/snapshot/.chernabog', {});
+      expect(merged.personas).toEqual([Option.some('bob')]);
+    }),
+  );
+
+  effectAtHome('re-enrolling a repo keeps the keys enrolling does not set', () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const file = yield* machineConfigFile;
+      yield* fs.writeFileString(file, 'github:\n  alice: {}\nrepos:\n  - path: /old\n    repo: dataquail/demo\n    # who runs it\n    personas: [alice]\n');
+      expect(yield* enrollInMachineConfig({ path: '/new', repo: 'dataquail/demo', baseBranch: 'main' })).toBe('updated');
+
+      const text = yield* fs.readFileString(file);
+      const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(text));
+      expect(decoded.repos).toEqual([{ path: '/new', repo: 'dataquail/demo', personas: ['alice'], baseBranch: 'main' }]);
+      expect(text).toContain('# who runs it');
     }),
   );
 });
