@@ -10,9 +10,7 @@ import * as Schema from 'effect/Schema';
 import { ConfigError } from './config.ts';
 import { execOk } from './Exec.ts';
 import { checkConfigVersion, flowPackageText, withBundledPins } from './flow-deps.ts';
-import { viewerLogin } from './GitHubApi.ts';
-import { flowNames } from './loader.ts';
-import { type EnrolledRepo, enrollInMachineConfig, type MachineConfig, MachineConfigFile, namesRunners, readYaml, RepoConfigFile, setRepoFlows, teamOff } from './repo-config.ts';
+import { type EnrolledRepo, enrollInMachineConfig, type MachineConfig, MachineConfigFile, RepoConfigFile } from './repo-config.ts';
 import { TEMPLATES } from './templates.ts';
 
 const JsonText = Schema.fromJsonString(Schema.Json, { space: 2 });
@@ -138,14 +136,6 @@ export const enrolmentOf = (path: string, enrolment: Enrolment) =>
     return repo;
   });
 
-export const enroll = (path: string, enrolment: Enrolment) =>
-  Effect.gen(function* () {
-    const repo = yield* enrolmentOf(path, enrolment);
-    const action = yield* enrollInMachineConfig(repo);
-
-    return { repo, action };
-  });
-
 // Entries for a repo whose checkout is gone: what chernabog init at its new
 // place offers to point there.
 export const movedEntries = (machine: MachineConfig, slug: string, root: string) =>
@@ -163,61 +153,3 @@ export const movedEntries = (machine: MachineConfig, slug: string, root: string)
 // Points an entry at its checkout's new place, keeping every setting.
 export const repoint = (entry: EnrolledRepo, root: string) =>
   enrollInMachineConfig({ repo: entry.repo, path: root, ...Option.match(Option.fromUndefinedOr(entry.name), { onNone: () => ({}), onSome: (name) => ({ name }) }) });
-
-// The GitHub logins the team's runners are matched against for a repo: its
-// personas, else machine config's, else whoever this machine is on GitHub.
-export const loginsFor = (machine: MachineConfig, entry: Option.Option<EnrolledRepo>) => {
-  const named = Option.getOrElse(Option.map(Option.flatMap(entry, (found) => Option.fromUndefinedOr(found.personas)), Object.keys), () => machine.github);
-
-  if (named.length > 0) return Effect.succeed(named);
-
-  return Effect.map(Effect.option(viewerLogin), Option.toArray);
-};
-
-export type FlowChoice = { readonly name: string; readonly enabled: boolean };
-
-// A flow as it stands for this repo: whether it runs, whether the team's
-// config.yaml offers it here, and why not when it doesn't.
-export type FlowStanding = FlowChoice & { readonly teamDefault: boolean; readonly teamOff: Option.Option<string> };
-
-// The checkout's flows, and whether each runs: as the repo's entry in machine
-// config lists them, else as the team offers them: flows.<flow>.enabled, then
-// whether one of `logins` is a runner. `logins` is looked up only when the
-// team names runners.
-export const flowChoices = <R>(root: string, listed: Option.Option<ReadonlyArray<string>>, logins: Effect.Effect<ReadonlyArray<string>, never, R>) =>
-  Effect.gen(function* () {
-    const names = yield* flowNames(`${root}/.chernabog`);
-    const repo = yield* readYaml(RepoConfigFile, `${root}/.chernabog/config.yaml`);
-    let self: ReadonlyArray<string> = [];
-
-    if (namesRunners(repo, names)) self = yield* logins;
-
-    return names.map((name): FlowStanding => {
-      const off = teamOff(repo, name, self);
-
-      return { name, enabled: Option.getOrElse(Option.map(listed, (flows) => flows.includes(name)), () => Option.isNone(off)), teamDefault: Option.isNone(off), teamOff: off };
-    });
-  });
-
-// Fails on a name that isn't one of the checkout's flows; else, all their names.
-export const checkFlowNames = (root: string, chosen: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const names = yield* flowNames(`${root}/.chernabog`);
-    const unknown = chosen.filter((name) => !names.includes(name));
-
-    if (unknown.length > 0) return yield* new ConfigError({ message: `no flow named ${unknown.join(', ')} in .chernabog/flows/ (it has: ${names.join(', ')})` });
-
-    return names;
-  });
-
-// Lists the chosen flows on the repo's entry in machine config, for every
-// persona that doesn't list its own, and leaves the rest off.
-export const chooseFlows = (root: string, repo: EnrolledRepo, chosen: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const names = yield* checkFlowNames(root, chosen);
-    const choices = names.map((name): FlowChoice => ({ name, enabled: chosen.includes(name) }));
-
-    yield* setRepoFlows(repo, chosen);
-
-    return choices;
-  });

@@ -1,32 +1,48 @@
 ---
 title: Set up a repo
-description: Scaffold .chernabog/, enroll the repo on your machine, and start the daemon.
+description: Scaffold .chernabog/, enroll the repo on your machine, and trust it.
 ---
 
 ```bash
+chernabog install                   # once per machine: personas, accounts and the daemon; see Installation
 cd ~/code/my-app
-chernabog init                      # scaffold .chernabog/ with the default flows
+chernabog init                      # scaffold .chernabog/ with the default flows, and enroll the repo
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
-chernabog enroll --account personal # add the repo to this machine's config, and pick its flows
 chernabog trust my-app              # approve the base branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
-chernabog install                   # register the daemon with launchd or systemd, and start it
 chernabog doctor                    # check logins, gh scopes, labels, trust and the daemon
 ```
 
 | Step     | Writes                                                                                 |
 | -------- | -------------------------------------------------------------------------------------- |
-| `init`   | `.chernabog/` (config, flows, prompts, stages, schema, `package.json`), and a `.gitignore` entry for its `node_modules/` |
-| `enroll` | a `repos` entry in `~/.config/chernabog/config.yaml`, with the flows you chose |
+| `install`| [machine config](/chernabog/start/installation/#set-up-the-machine)'s personas and accounts, and a launchd agent or systemd user unit running `chernabog daemon` |
+| `init`   | `.chernabog/` (config, flows, prompts, stages, schema, `package.json`), a `.gitignore` entry for its `node_modules/`, and the repo's entry in `~/.config/chernabog/config.yaml` |
 | `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
 | `labels` | the eight [labels](/chernabog/work/flows/#labels) on GitHub                            |
-| `install`| a launchd agent or systemd user unit running `chernabog daemon`                        |
 
-Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `enroll --name` gives a short name when two enrolled repos share one, such as two clones of the same repo.
+Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `chernabog enroll` enrolls a repo without scaffolding, such as one a teammate already set up, and choosing again is running it again.
 
-In a terminal, `enroll` asks which of the repo's flows run on your machine, starting from what runs now, or for a new repo from the team's defaults: the flows `config.yaml` doesn't turn off, and whose [runners](/chernabog/reference/configuration/#runners) include one of the repo's personas (else your GitHub login). It lists the ones you pick under `flows` on the repo's entry in machine config, and only those run; a flow `config.yaml` turns off, or leaves to its runners, still runs for you if you pick it. `--flows implement,review` chooses without asking. Piped and without `--flows`, `enroll` leaves the choices as they are, and a newly enrolled repo gets the team's defaults. Run `enroll` again to choose again; it updates only the keys it's given, so each flow's settings, the repo's personas and the rest of its entry survive. It lists the flows by file name and runs none of their code, since `.chernabog/` isn't trusted yet.
+## Enroll
 
-The entry is keyed by the repo's `owner/name`, not its folder, so settings follow the repo. If the checkout moves, `init` at its new place finds the entry whose checkout is gone and, in a terminal, offers to point it there, keeping its settings; `enroll` there does the same without asking. `chernabog unenroll <repo>` removes a repo and its settings from machine config.
+After scaffolding, `init` enrolls the repo on this machine, as `enroll` does. It asks only what it has to, in three steps:
+
+1. **Personas.** With one [GitHub persona](/chernabog/reference/configuration/#github-personas) in machine config, or none, there's no question. With several, you pick which ones work in this repo.
+2. **Flows, for each chosen persona,** even when there's only one. The first question offers "Accept the defaults", so enter takes them; then "Keep the current ones" when you're re-enrolling and they differ; then "Choose flows", a checklist prefilled with the current flows or the defaults. The defaults are the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose [runners](/chernabog/reference/configuration/#runners) include that persona's login. A flow that runs an agent machine config has no account for (its `flows.<flow>.agent`, its role agents in `flows.<flow>.agents`, or the repo's `agent`) is listed but can't be picked, and says why: `needs codex; add an account for each with chernabog setup`.
+3. **Accounts.** The persona's own account, from the accounts for the repo's `agent`, or from all of them: with one there's no question, with several you pick. Then, for each other agent the chosen flows need that has several accounts, you pick one; those go in the persona's [`accounts`](/chernabog/reference/configuration/#enrolled-repos).
+
+The answers go on the repo's entry in machine config: under `personas:`, per persona, when machine config has several GitHub logins or the entry already has personas; otherwise on the repo entry itself. Only the flows chosen are listed, and only those run; a flow `config.yaml` turns off, or leaves to its runners, still runs for you if you choose it. Flows already listed keep their settings, and so does the rest of the entry. Enrolling lists the flows by file name and runs none of their code, since `.chernabog/` isn't trusted yet.
+
+| Flag               | Answers                                                                  |
+| ------------------ | ------------------------------------------------------------------------ |
+| `--persona <a,b>`  | the personas that work in this repo                                      |
+| `--flows <a,b>`    | the flows for every chosen persona; naming one that can't run here fails, with the reason |
+| `--defaults`       | the team's defaults for every chosen persona                             |
+| `--account <a,b>`  | accounts from machine config: the persona's own, and one for each other agent its flows need |
+| `--name <name>`    | a short name, when two enrolled repos share one, such as two clones      |
+
+`init` and `enroll` take the same flags. Piped and without them, each persona keeps the flows it lists, or gets the team's defaults; with several personas in machine config, a repo enrolled for the first time needs `--persona`.
+
+The entry is keyed by the repo's `owner/name`, not its folder, so settings follow the repo. If the checkout moves, `init` at its new place finds the entry whose checkout is gone and, in a terminal, offers to point it there, keeping its settings; `enroll` there does the same without asking. If you decline, `init` doesn't enroll the checkout, and says to run `enroll --name <another name>` to run it alongside the one that moved. `chernabog unenroll <repo>` removes a repo and its settings from machine config.
 
 ## Queue work
 

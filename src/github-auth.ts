@@ -18,7 +18,7 @@ import { type Environment, HostEnvironment, withVariables } from './platform/env
 
 // Variables gh reads a token from before any login it keeps. A persona's token
 // lookup must not see them, or gh answers with them whatever --user asks for.
-const TOKEN_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
+export const TOKEN_VARIABLES = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
 
 // Git configuration, through the environment, that answers github.com's
 // credential requests with $GH_TOKEN. Set at command scope, it outranks the

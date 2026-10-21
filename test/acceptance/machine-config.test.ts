@@ -79,3 +79,31 @@ describe('machine config', () => {
     expect(reposOf(sandbox)).toEqual([]);
   }, 30_000);
 });
+
+describe('setting up and enrolling with flags', () => {
+  let sandbox: Sandbox;
+
+  beforeAll(() => {
+    sandbox = openSandbox({ flows: { fix: { enabled: false } } }, { github: [], flows: {} });
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("setup chooses gh's logins, and enroll each persona's flows, without asking", async () => {
+    sandbox.editMachine((document) => {
+      document.deleteIn(['repos']);
+    });
+    // An origin that reads as github.com/dataquail/demo, so enroll knows the repo.
+    sandbox.git(sandbox.checkout, 'remote', 'set-url', 'origin', join(sandbox.root, 'github.com', 'dataquail', 'demo.git'));
+
+    const setUp = await sandbox.runCli(['setup', '--persona', 'alice,bob'], { FAKE_GH_USERS: 'alice,bob' });
+    expect(setUp.output).toContain('GitHub personas: alice, bob');
+
+    const enrolled = await sandbox.runCli(['enroll', '--persona', 'bob', '--defaults'], { FAKE_GH_USERS: 'alice,bob' });
+    expect(enrolled.output).toContain('demo as bob: flows implement, review');
+    expect(entryOf(sandbox).personas).toEqual({ bob: { flows: { implement: {}, review: {} }, account: 'work' } });
+  }, 30_000);
+});
+

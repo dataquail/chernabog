@@ -17,9 +17,10 @@ description: Every chernabog command and flag.
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher and the daemon      |
-| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins                         |
-| `enroll [path]`                   | Add a repo to this machine's config, and choose which of its flows run here      |
-| `install`, `uninstall`            | Register the daemon with launchd or systemd and start it; or remove it          |
+| `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
+| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, then enroll the repo   |
+| `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
+| `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again            |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
 
@@ -31,9 +32,13 @@ description: Every chernabog command and flag.
 | `--detach`               | `run`    | Start the run and return without following its log                      |
 | `--from-checkout`        | `run`    | Run in this process with the working copy's `.chernabog/`; daemon stopped |
 | `--from-checkout`        | `labels` | Read labels from the working copy, before `.chernabog/` is merged       |
-| `--account <name>`       | `enroll` | The machine-config account whose budget this repo spends                |
-| `--name <name>`          | `enroll` | A short name, when two enrolled repos share one                         |
-| `--flows <a,b>`          | `enroll` | The flows to run here; the rest are turned off. Asked in a terminal when left out |
+| `--persona <a,b>`        | `setup`, `install` | The GitHub logins to act as, from `gh auth status`. Asked in a terminal when `gh` has several |
+| `--account <dir[:agent],…>` | `setup`, `install` | Account directories to add, such as `~/.claude-personal`. Found ones are asked about in a terminal |
+| `--persona <a,b>`        | `init`, `enroll` | The personas that work in this repo. Asked in a terminal when machine config has several |
+| `--flows <a,b>`          | `init`, `enroll` | The flows to run, for every chosen persona; the rest are off. Asked in a terminal for each persona |
+| `--defaults`             | `init`, `enroll` | The team's default flows, for every chosen persona, without asking |
+| `--account <a,b>`        | `init`, `enroll` | Accounts from machine config: the persona's own, and one for each other agent its flows need. Asked in a terminal where there's a choice |
+| `--name <name>`          | `init`, `enroll` | A short name, when two enrolled repos share one                         |
 | `-f`, `--follow`         | `logs`   | Keep printing as the log grows                                          |
 
 ## Files
