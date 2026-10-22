@@ -40,7 +40,7 @@ import { openPr } from './open-pr.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
-import { chooseRecipes, docsOf, installedRecipes, installRecipes, recipeNamed,RECIPES } from './recipes.ts';
+import { chooseRecipes, diffRecipes, docsOf, installedRecipes, installRecipes, recipeNamed, RECIPES } from './recipes.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf, unenrollFromMachineConfig } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
@@ -533,9 +533,16 @@ const recipesAdd = Command.make('add', { names: Argument.String('recipe').pipe(A
   }),
 ).pipe(Command.withDescription("Bake recipes into this repo's .chernabog/flows/, never overwriting a flow it has"));
 
+const recipesDiff = Command.make('diff', { names: Argument.String('recipe').pipe(Argument.withDescription('Recipes to compare; every one the repo has when none is named'), Argument.variadic()) }, ({ names }) =>
+  Effect.gen(function* () {
+    yield* Console.log(`Against the recipes of chernabog ${VERSION}:`);
+    yield* printLines(yield* diffRecipes(yield* rootOf(Option.none()), names));
+  }),
+).pipe(Command.withDescription("Show how this repo's flows differ from the current versions of the recipes they came from"));
+
 const recipesCommand = Command.make('recipes', {}, () => Effect.void).pipe(
   Command.withDescription('Complete flows to bake into a repo, as code it then owns'),
-  Command.withSubcommands([recipesList, recipesAdd]),
+  Command.withSubcommands([recipesList, recipesAdd, recipesDiff]),
 );
 
 const enrollCommand = Command.make('enroll', { path: Argument.String('path').pipe(Argument.optional), ...enrollFlags }, ({ path, ...flags }) =>

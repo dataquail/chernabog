@@ -9,9 +9,10 @@
 // `step("name", input, OutputSchema)`. Side effects belong inside activities or
 // steps, never in the workflow body, which runs again whenever the run resumes.
 //
-// This file is chernabog's implement recipe, and this repo's to change. The
-// names of its steps ("claim", "local-gate-1") are the keys a run in flight
-// resumes by, so renaming one restarts that step.
+// This file is chernabog's implement recipe, and this repo's to change:
+// `chernabog recipes diff` shows how it differs from the recipe's current
+// version. The names of its steps ("claim", "local-gate-1") are the keys a run
+// in flight resumes by, so renaming one restarts that step.
 
 import { defineFlow, GitHub, Implement, Repo } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';

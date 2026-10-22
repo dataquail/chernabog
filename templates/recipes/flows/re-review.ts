@@ -5,9 +5,10 @@
 // request to a person. limits.reviewRounds caps the re-reviews, and a pull
 // request labelled auto:needs-human is left alone.
 //
-// This file is chernabog's re-review recipe, and this repo's to change. The
-// names of its steps ("find-review", "review-2") are the keys a run in flight
-// resumes by, so renaming one restarts that step.
+// This file is chernabog's re-review recipe, and this repo's to change:
+// `chernabog recipes diff` shows how it differs from the recipe's current
+// version. The names of its steps ("find-review", "review-2") are the keys a
+// run in flight resumes by, so renaming one restarts that step.
 
 import { defineFlow, PullRequest, Repo, Review, type WorkItem } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';

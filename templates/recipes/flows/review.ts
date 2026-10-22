@@ -6,9 +6,10 @@
 // auto:ship pull request merges it, when that's safe; changes requested go
 // back to the author.
 //
-// This file is chernabog's review recipe, and this repo's to change. The
-// names of its steps ("review-1", "ships-pr-7") are the keys a run in flight
-// resumes by, so renaming one restarts that step.
+// This file is chernabog's review recipe, and this repo's to change:
+// `chernabog recipes diff` shows how it differs from the recipe's current
+// version. The names of its steps ("review-1", "ships-pr-7") are the keys a
+// run in flight resumes by, so renaming one restarts that step.
 
 import { defineFlow, PullRequest, Review, type WorkItem } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';

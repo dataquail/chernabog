@@ -5,9 +5,10 @@
 // gate, pushes, waits for CI and asks the reviewer again, whose re-review
 // takes it from there.
 //
-// This file is chernabog's address-review recipe, and this repo's to change.
-// The names of its steps ("consider-review-1", "push-review-1") are the keys
-// a run in flight resumes by, so renaming one restarts that step.
+// This file is chernabog's address-review recipe, and this repo's to change:
+// `chernabog recipes diff` shows how it differs from the recipe's current
+// version. The names of its steps ("consider-review-1", "push-review-1") are
+// the keys a run in flight resumes by, so renaming one restarts that step.
 
 import { defineFlow, Implement, NeedsHuman, PullRequest, Repo, Review, type WorkItem } from '@chernabog/sdk';
 import * as Arr from 'effect/Array';

@@ -6,9 +6,11 @@ import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
+import * as Order from 'effect/Order';
 
 import { Asker, type Choice } from './ask.ts';
 import { ConfigError } from './config.ts';
+import { Exec } from './Exec.ts';
 import { RECIPE_FILES } from './templates.ts';
 
 type RecipeFile = keyof typeof RECIPE_FILES;
@@ -120,3 +122,67 @@ export const chooseRecipes = (named: Option.Option<ReadonlyArray<string>>, insta
 
     return offered.filter((recipe) => picked.includes(recipe.name));
   });
+
+// One recipe file against the repo's copy, as a unified diff with the
+// recipe's side first; empty when they match. git diff runs on copies in a
+// scratch directory, so its headers read recipe/… and repo/….
+const diffFile = (file: RecipeFile, theirs: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const scratch = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-recipe-diff-' });
+
+      for (const [side, text] of [['recipe', RECIPE_FILES[file]], ['repo', theirs]] as const) {
+        const path = `${scratch}/${side}/.chernabog/${file}`;
+        yield* fs.makeDirectory(path.slice(0, path.lastIndexOf('/')), { recursive: true });
+        yield* fs.writeFileString(path, text);
+      }
+
+      const result = yield* (yield* Exec).run('git', ['diff', '--no-index', '--no-color', '--no-prefix', '--', `recipe/.chernabog/${file}`, `repo/.chernabog/${file}`], { cwd: scratch });
+
+      // git diff --no-index exits 1 when the files differ, 0 when they don't.
+      if (result.exitCode > 1) return yield* new ConfigError({ message: `git diff: ${result.stderr.trim()}` });
+
+      return result.stdout.trimEnd();
+    }),
+  );
+
+// How each of the repo's flows differs from the current version of the
+// recipe it came from, the one it is named for, and the prompts that recipe
+// renders; with names, only those recipes'. A flow from no recipe is named as
+// such.
+export const diffRecipes = (repoPath: string, named: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const lines: Array<string> = [];
+    let recipes = yield* installedRecipes(repoPath);
+
+    if (named.length > 0) recipes = yield* Effect.forEach(Arr.dedupe(named), recipeNamed);
+
+    for (const recipe of recipes) {
+      for (const file of recipe.files) {
+        const path = `${repoPath}/.chernabog/${file}`;
+
+        if (!(yield* fs.exists(path))) {
+          lines.push(`.chernabog/${file}: not in the repo; chernabog recipes add ${recipe.name} bakes it`);
+          continue;
+        }
+
+        const diff = yield* diffFile(file, yield* fs.readFileString(path));
+
+        if (diff.length === 0) lines.push(`.chernabog/${file}: the same as the ${recipe.name} recipe`);
+        else lines.push(`.chernabog/${file}: differs from the ${recipe.name} recipe (${docsOf(recipe)})`, diff);
+      }
+    }
+
+    if (named.length === 0) {
+      const directory = `${repoPath}/.chernabog/flows`;
+      const flows = yield* Effect.map(Effect.orElseSucceed(fs.readDirectory(directory), (): ReadonlyArray<string> => []), (entries) => Arr.sort(entries.filter((entry) => entry.endsWith('.ts')), Order.String));
+
+      for (const flow of flows.filter((entry) => !recipes.some((recipe) => flowFileOf(recipe) === `flows/${entry}`))) lines.push(`.chernabog/flows/${flow}: from no recipe`);
+    }
+
+    if (lines.length === 0) lines.push(`.chernabog/flows/ has no flows; chernabog recipes list shows the recipes`);
+
+    return lines;
+  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));

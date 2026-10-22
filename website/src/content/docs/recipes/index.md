@@ -28,11 +28,16 @@ Later, in a repo that's already set up:
 ```bash
 chernabog recipes list                      # each recipe, with a check by the ones the repo has
 chernabog recipes add human-initiated       # bake one more; with none named, asks which
+chernabog recipes diff                      # how the repo's flows differ from the current recipes
 ```
 
 Baking writes the recipe's flow, `.chernabog/flows/<name>.ts`, and the prompts it renders (`.chernabog/prompts/implement.md`, `review.md`) when the repo doesn't have them. It never overwrites a file: a flow already there under the recipe's name is kept and said so. Commit the new files, merge them, and `chernabog trust` the repo. Then `chernabog enroll` chooses which personas run them.
 
 A repo with no flows isn't enrolled: `init` says so, and enrolls it once a recipe or a flow of your own is there.
+
+## Keeping up with a recipe
+
+A baked recipe doesn't get later fixes on its own: upgrading chernabog changes the recipes it offers, not the files a repo baked. `chernabog recipes diff` shows how each of the repo's flows differs from the current version of the recipe it came from, as a unified diff with the recipe's side first, along with the prompts each recipe renders. Bring over what you want by hand. A flow came from the recipe it's named for; one named for no recipe is listed as from none. Name recipes, `chernabog recipes diff review re-review`, to compare only those.
 
 ## Changing a baked recipe
 

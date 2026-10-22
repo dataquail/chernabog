@@ -23,6 +23,7 @@ description: Every chernabog command and flag.
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, bake the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
 | `recipes list [path]`             | Each recipe, with its description and docs page, and a check by the ones the repo has |
 | `recipes add [names…]`            | Bake recipes into this repo's `.chernabog/flows/`; asked in a terminal when none is named. Never overwrites a flow the repo has |
+| `recipes diff [names…]`           | How this repo's flows, and the prompts their recipes render, differ from the current versions of the recipes they came from |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
