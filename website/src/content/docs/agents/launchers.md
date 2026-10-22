@@ -29,8 +29,8 @@ The launcher describes a person's own machine, so their choice beats the team's 
 
 | Precedence | Layer                    | Key                |
 | ---------- | ------------------------ | ------------------ |
-| 1          | `.chernabog/local.yaml`  | `launcher`         |
-| 2          | machine config           | `launcher`         |
+| 1          | the repo's entry in machine config, or its persona's | `launcher` |
+| 2          | machine config           | `launcher`, at the top level |
 | 3          | `.chernabog/config.yaml` | `launcher`         |
 | 4          | —                        | `headless`         |
 

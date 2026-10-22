@@ -9,14 +9,13 @@ import * as Schema from 'effect/Schema';
 import YAML from 'yaml';
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from '../src/flow-deps.ts';
-import { chooseFlows, ensureLocalConfig, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
+import { chooseFlows, flowChoices, scaffold, scaffoldFiles, slugFromRemote } from '../src/init.ts';
 import {
   DEFAULT_LIMITS,
-  type EnrolledRepo,
+  EnrolledRepo,
   enrollInMachineConfig,
   flowOff,
   loadRepo,
-  LocalConfigFile,
   MachineConfigFile,
   machineConfigFile,
   mergeRepoConfig,
@@ -25,6 +24,7 @@ import {
   personasOf,
   RepoConfigFile,
   routingOf,
+  setFlowInMachineConfig,
 } from '../src/repo-config.ts';
 import { scheduleFor } from '../src/schedule.ts';
 import { VERSION } from '../src/version.ts';
@@ -42,12 +42,18 @@ const machine = normalizeMachineConfig(
 
 const enrolled: EnrolledRepo = { path: '/Users/dev/code/demo', repo: 'dataquail/demo', account: 'personal' };
 
-const merge = (repo: typeof RepoConfigFile.Encoded, local: typeof LocalConfigFile.Encoded, onto: EnrolledRepo = enrolled) =>
-  Effect.gen(function* () {
-    const files = { repo: yield* Schema.decodeEffect(RepoConfigFile)(repo), local: yield* Schema.decodeEffect(LocalConfigFile)(local) };
+// The persona's own choices for a repo, as its entry in machine config writes them.
+type Own = Partial<typeof EnrolledRepo.Encoded>;
 
-    return yield* mergeRepoConfig(machine, onto, files, '/snapshot/.chernabog', {});
+const mergeAll = (repo: typeof RepoConfigFile.Encoded, own: Own, onto: EnrolledRepo = enrolled, on = machine) =>
+  Effect.gen(function* () {
+    const entry = yield* Schema.decodeUnknownEffect(EnrolledRepo)({ ...onto, ...own });
+
+    return yield* mergeRepoConfig(on, entry, yield* Schema.decodeEffect(RepoConfigFile)(repo), '/snapshot/.chernabog', {});
   });
+
+// The repo as its one persona, the implicit one, runs it.
+const merge = (repo: typeof RepoConfigFile.Encoded, own: Own, onto: EnrolledRepo = enrolled) => Effect.map(mergeAll(repo, own, onto), (merged) => merged.personas[0]);
 
 const flowSettings = (merged: Effect.Success<ReturnType<typeof merge>>, flow: string) => Record.get(merged.flows, flow);
 
@@ -72,6 +78,7 @@ describe('config layers', () => {
     "a flow's agents by role merge role by role, and reach the SDK as flowRoleAgents",
     () => Effect.gen(function* () {
       const merged = yield* merge({ flows: { ship: { agent: 'claude', agents: { reviewer: 'codex', author: 'claude' } } } }, { flows: { ship: { agents: { reviewer: 'opencode' } } } });
+      expect(merged.chosen).toEqual(['ship']);
       expect(Option.map(flowSettings(merged, 'ship'), (ship) => ship.agents)).toEqual(Option.some({ reviewer: 'opencode', author: 'claude' }));
       expect(merged.settings.flowRoleAgents).toEqual({ ship: { reviewer: 'opencode', author: 'claude' } });
       expect(merged.settings.flowAgents).toEqual({ ship: 'claude' });
@@ -79,14 +86,14 @@ describe('config layers', () => {
   );
 
   effect(
-    "the person's local.yaml overrides the repo's config key by key",
+    "the persona's settings in machine config override the repo's config key by key",
     () => Effect.gen(function* () {
       const merged = yield* merge(
         { schedule: '0 * * * *', localGate: ['pnpm test'], flows: { review: { schedule: '30 * * * *', concurrency: 5 } } },
         { schedule: '15 * * * *', flows: { review: { enabled: false } } },
       );
 
-      expect(merged.schedule).toEqual({ local: Option.some('15 * * * *'), repo: Option.some('0 * * * *') });
+      expect(merged.schedule).toEqual({ own: Option.some('15 * * * *'), repo: Option.some('0 * * * *') });
       expect(flowSettings(merged, 'review')).toEqual(Option.some({ enabled: false, concurrency: 2 }));
       expect(merged.settings.localGate).toEqual(['pnpm test']);
       expect(merged.settings.humanOnly).toEqual(['a machine-wide limit']);
@@ -96,12 +103,12 @@ describe('config layers', () => {
   );
 
   effect(
-    "the person's schedules beat the team's, a flow's own included",
+    "the persona's schedules beat the team's, a flow's own included",
     () => Effect.gen(function* () {
       const scheduled = defineFlow({ trigger: Effect.succeed([]), schedule: '45 * * * *', workflow: () => Effect.void });
       const unscheduled = defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void });
       const team = { schedule: '0 * * * *', flows: { review: { schedule: '30 * * * *' } } };
-      const scheduleOf = (local: typeof LocalConfigFile.Encoded, name: string, flow = unscheduled) => merge(team, local).pipe(Effect.map((merged) => scheduleFor(merged, name, flow, 0, 1)));
+      const scheduleOf = (own: Own, name: string, flow = unscheduled) => merge(team, own).pipe(Effect.map((merged) => scheduleFor(merged, name, flow, 0, 1)));
 
       expect(yield* scheduleOf({}, 'review')).toBe('30 * * * *');
       expect(yield* scheduleOf({}, 'implement', scheduled)).toBe('45 * * * *');
@@ -114,20 +121,49 @@ describe('config layers', () => {
   );
 
   effect(
-    "a flow runs only on its runners' machines, unless the person turns it on",
+    'a persona runs the flows machine config lists for it, and no others',
     () => Effect.gen(function* () {
       const team = { runners: ['Alice'], flows: { review: { runners: ['alice', 'bob'] }, fix: { enabled: false } } };
-      const offFor = (local: typeof LocalConfigFile.Encoded, flow: string, login: Option.Option<string>) => merge(team, local).pipe(Effect.map((merged) => flowOff(merged, flow, login)));
+      const offFor = (own: Own, flow: string) => merge(team, own).pipe(Effect.map((merged) => flowOff(merged, flow)));
 
-      expect(yield* offFor({}, 'implement', Option.some('alice'))).toEqual(Option.none());
-      expect(yield* offFor({}, 'implement', Option.some('bob'))).toEqual(Option.some('not a runner (runners: Alice; this machine is bob)'));
-      expect(yield* offFor({}, 'review', Option.some('bob'))).toEqual(Option.none());
-      expect(yield* offFor({}, 'implement', Option.none())).toEqual(Option.some("not a runner (runners: Alice; this machine's GitHub login is unknown)"));
-      expect(yield* offFor({ flows: { implement: { enabled: true } } }, 'implement', Option.some('bob'))).toEqual(Option.none());
-      expect(yield* offFor({ flows: { review: { enabled: false } } }, 'review', Option.some('alice'))).toEqual(Option.some('flow turned off'));
-      expect(yield* offFor({}, 'fix', Option.some('alice'))).toEqual(Option.some('flow turned off'));
-      expect(yield* merge({}, {}).pipe(Effect.map((merged) => flowOff(merged, 'implement', Option.none())))).toEqual(Option.none());
+      expect(yield* offFor({ flows: { implement: {}, fix: {} } }, 'implement')).toEqual(Option.none());
+      // The team's enabled and runners are what enroll offers, not what runs.
+      expect(yield* offFor({ flows: { implement: {}, fix: {} } }, 'fix')).toEqual(Option.none());
+      expect(yield* offFor({ flows: { implement: {} } }, 'review')).toEqual(Option.some('flow turned off'));
+      expect(yield* offFor({ flows: { review: { enabled: false } } }, 'review')).toEqual(Option.some('flow turned off'));
+      expect(yield* offFor({}, 'implement')).toEqual(Option.some('flow turned off'));
       expect(flowSettings(yield* merge(team, {}), 'review')).toEqual(Option.some({}));
+    }),
+  );
+
+  effect(
+    "a persona's own keys replace the repo entry's, and the rest are inherited",
+    () => Effect.gen(function* () {
+      const on = { ...machine, github: ['alice', 'bob'] };
+      const merged = yield* mergeAll({}, { schedule: '5 * * * *', flows: { implement: {} }, personas: { alice: {}, bob: { flows: { review: { schedule: '10 * * * *' } }, account: 'work' } } }, enrolled, on);
+      const [alice, bob] = merged.personas;
+
+      expect(alice.persona).toEqual(Option.some('alice'));
+      expect(alice.chosen).toEqual(['implement']);
+      expect(alice.settings.account.name).toBe('personal');
+      expect(bob.chosen).toEqual(['review']);
+      expect(bob.schedule.own).toEqual(Option.some('5 * * * *'));
+      expect(bob.settings.account.name).toBe('work');
+      expect(bob.settings.agent).toBe('claude');
+      expect(merged.settings).toBe(alice.settings);
+    }),
+  );
+
+  effect(
+    "a role uses the persona's pick of account, which runs that account's agent",
+    () => Effect.gen(function* () {
+      const merged = yield* merge({}, { account: 'work', roles: { reviewer: 'personal' } });
+      expect(merged.settings.roleAgents).toEqual({ reviewer: 'codex' });
+      expect(Option.map(Record.get(merged.settings.agentAccounts, 'codex'), (account) => account.name)).toEqual(Option.some('personal'));
+      expect(merged.settings.account.name).toBe('work');
+
+      const same = yield* Effect.flip(merge({}, { account: 'work', roles: { reviewer: 'ci' } }));
+      expect(same.message).toBe("dataquail/demo: roles.reviewer is ci, a claude account like the persona's own (work); a role's account must run another agent");
     }),
   );
 
@@ -135,28 +171,30 @@ describe('config layers', () => {
     'a flow filters work by assignee or requested reviewer only when the team or the person says so',
     () => Effect.gen(function* () {
       const team = { flows: { implement: { assignee: ['@me', 'none'] }, review: { reviewRequested: 'alice' } } };
-      const merged = yield* merge(team, {});
+      const merged = yield* merge(team, { flows: { implement: {}, review: {} } });
 
       expect(routingOf(merged, 'implement')).toEqual({ assignee: Option.some(['@me', 'none']), reviewRequested: Option.none() });
       expect(routingOf(merged, 'review')).toEqual({ assignee: Option.none(), reviewRequested: Option.some(['alice']) });
       expect(routingOf(merged, 'fix')).toEqual({ assignee: Option.none(), reviewRequested: Option.none() });
-      expect(needsLogin(merged)).toBe(true);
-      expect(needsLogin(yield* merge({ flows: { review: { reviewRequested: 'alice' } } }, {}))).toBe(false);
-      expect(needsLogin(yield* merge({}, {}))).toBe(false);
-      expect(routingOf(yield* merge(team, yield* Schema.encodeEffect(LocalConfigFile)({ flows: { implement: { assignee: Option.none() } } })), 'implement').assignee).toEqual(Option.none());
+      expect(needsLogin(yield* mergeAll(team, { flows: { implement: {} } }))).toBe(true);
+      // Only a flow that runs needs the login.
+      expect(needsLogin(yield* mergeAll(team, { flows: { review: {} } }))).toBe(false);
+      expect(needsLogin(yield* mergeAll({}, {}))).toBe(false);
+      const cleared = yield* Schema.encodeEffect(Schema.OptionFromNullOr(Schema.String))(Option.none());
+      expect(routingOf(yield* merge(team, { flows: { implement: { assignee: cleared } } }), 'implement').assignee).toEqual(Option.none());
       expect(routingOf(yield* merge({}, { flows: { review: { reviewRequested: '@me' } } }), 'review').reviewRequested).toEqual(Option.some(['@me']));
     }),
   );
 
-  test('runners belong to the team, not to local.yaml', () => {
-    const decoded = Schema.decodeUnknownResult(LocalConfigFile)({ flows: { review: { runners: ['me'] } } });
+  test('runners belong to the team, not to machine config', () => {
+    const decoded = Schema.decodeUnknownResult(EnrolledRepo)({ ...enrolled, flows: { review: { runners: ['me'] } } });
     expect(Option.map(Result.getFailure(decoded), (issue) => issue.message)).toEqual(Option.some(expect.stringContaining("runners is the team's choice")));
   });
 
   effect(
-    "the agent comes from local.yaml, then the repo, then the account's own agent",
+    "the agent comes from machine config, then the repo, then the account's own agent",
     () => Effect.gen(function* () {
-      const agentOf = (repo: typeof RepoConfigFile.Encoded, local: typeof LocalConfigFile.Encoded) => merge(repo, local).pipe(Effect.map((merged) => merged.settings.agent));
+      const agentOf = (repo: typeof RepoConfigFile.Encoded, own: Own) => merge(repo, own).pipe(Effect.map((merged) => merged.settings.agent));
       expect(yield* agentOf({ agent: 'opencode' }, { agent: 'claude' })).toBe('claude');
       expect(yield* agentOf({ agent: 'opencode' }, {})).toBe('opencode');
       expect(yield* agentOf({}, {})).toBe('codex');
@@ -186,7 +224,7 @@ describe('config layers', () => {
     'an unknown account is refused',
     () => Effect.gen(function* () {
       const error = yield* Effect.flip(merge({}, {}, { ...enrolled, account: 'other' }));
-      expect(error.message).toContain('"other" is not one of work, personal');
+      expect(error.message).toBe('dataquail/demo: account "other" is not one of work, personal, ci');
     }),
   );
 
@@ -194,21 +232,16 @@ describe('config layers', () => {
     const machineWith = (extra: Partial<typeof MachineConfigFile.Encoded>) =>
       normalizeMachineConfig(Schema.decodeSync(MachineConfigFile)({ repos: [{ path: '~/code/demo', repo: 'dataquail/demo' }], ...extra }), '/Users/dev');
 
-    const resolve = (repo: typeof RepoConfigFile.Encoded, local: typeof LocalConfigFile.Encoded, extra: Partial<typeof MachineConfigFile.Encoded> = {}) =>
-      Effect.gen(function* () {
-        const files = { repo: yield* Schema.decodeEffect(RepoConfigFile)(repo), local: yield* Schema.decodeEffect(LocalConfigFile)(local) };
-        const merged = yield* mergeRepoConfig(machineWith(extra), { path: '/Users/dev/code/demo', repo: 'dataquail/demo' }, files, '/snapshot/.chernabog', {});
+    const resolve = (repo: typeof RepoConfigFile.Encoded, own: Own, extra: Partial<typeof MachineConfigFile.Encoded> = {}) =>
+      Effect.map(mergeAll(repo, own, { path: '/Users/dev/code/demo', repo: 'dataquail/demo' }, machineWith(extra)), (merged) => merged.settings.launcher);
 
-        return merged.settings.launcher;
-      });
-
-    const chosen = (repo: typeof RepoConfigFile.Encoded, local: typeof LocalConfigFile.Encoded, extra: Partial<typeof MachineConfigFile.Encoded> = {}) =>
-      Effect.map(resolve(repo, local, extra), (launcher) => `${launcher.name} (${launcher.from})`);
+    const chosen = (repo: typeof RepoConfigFile.Encoded, own: Own, extra: Partial<typeof MachineConfigFile.Encoded> = {}) =>
+      Effect.map(resolve(repo, own, extra), (launcher) => `${launcher.name} (${launcher.from})`);
 
     effect(
-      "comes from local.yaml, then machine config, then the repo's default, then headless",
+      "comes from the repo's entry in machine config, then machine config's own, then the repo's default, then headless",
       () => Effect.gen(function* () {
-        expect(yield* chosen({ launcher: 'tmux' }, { launcher: 'orca' }, { launcher: 'tmux' })).toBe('orca (local.yaml)');
+        expect(yield* chosen({ launcher: 'tmux' }, { launcher: 'orca' }, { launcher: 'tmux' })).toBe('orca (repo entry)');
         expect(yield* chosen({ launcher: 'tmux' }, {}, { launcher: 'orca' })).toBe('orca (machine config)');
         expect(yield* chosen({ launcher: 'tmux' }, {})).toBe('tmux (repo config)');
         expect(yield* chosen({}, {})).toBe('headless (default)');
@@ -220,7 +253,7 @@ describe('config layers', () => {
       () => Effect.gen(function* () {
         const error = yield* Effect.flip(resolve({ launcher: 'orca', allowedLaunchers: ['orca', 'headless'] }, {}, { launcher: 'tmux' }));
         expect(error.message).toBe(`launcher "tmux" (from machine config) isn't allowed by demo's config: allowedLaunchers is orca, headless`);
-        expect(yield* chosen({ launcher: 'orca', allowedLaunchers: ['orca', 'tmux'] }, { launcher: 'tmux' })).toBe('tmux (local.yaml)');
+        expect(yield* chosen({ launcher: 'orca', allowedLaunchers: ['orca', 'tmux'] }, { launcher: 'tmux' })).toBe('tmux (repo entry)');
         const unset = yield* Effect.flip(resolve({ allowedLaunchers: ['orca'] }, {}));
         expect(unset.message).toContain('launcher "headless" (from default)');
       }),
@@ -230,7 +263,7 @@ describe('config layers', () => {
       'an unknown launcher is refused, listing the known ones',
       () => Effect.gen(function* () {
         const error = yield* Effect.flip(resolve({}, { launcher: 'screen' }, { launchers: { mine: { start: ['x'], close: ['y'] } } }));
-        expect(error.message).toBe('unknown launcher "screen" (from local.yaml); known launchers: headless, orca, tmux, mine');
+        expect(error.message).toBe('unknown launcher "screen" (from repo entry); known launchers: headless, orca, tmux, mine');
       }),
     );
 
@@ -243,12 +276,10 @@ describe('config layers', () => {
       }),
     );
 
-    test('launcher commands in a repo or local.yaml are refused', () => {
+    test('launcher commands in a repo are refused', () => {
       const launchers = { mine: { start: ['curl', 'evil.sh'], close: ['true'] } };
       const repo = Schema.decodeUnknownResult(RepoConfigFile)({ launchers });
-      const local = Schema.decodeUnknownResult(LocalConfigFile)({ launchers });
       expect(Option.map(Result.getFailure(repo), (issue) => issue.message)).toEqual(Option.some(expect.stringMatching(/only be defined in machine config/)));
-      expect(Result.isFailure(local)).toBe(true);
     });
   });
 
@@ -264,7 +295,7 @@ describe('config layers', () => {
 
 describe('init', () => {
   effect(
-    'scaffolds .chernabog/ without overwriting, and gitignores local.yaml once',
+    'scaffolds .chernabog/ without overwriting',
     () => Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
@@ -275,43 +306,41 @@ describe('init', () => {
       yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'baseBranch: develop\n');
       expect(yield* scaffold(repo)).toEqual([]);
       expect(yield* fs.readFileString(`${repo}/.chernabog/config.yaml`)).toBe('baseBranch: develop\n');
-      expect(yield* fs.readFileString(`${repo}/.gitignore`)).toBe('node_modules/\n.chernabog/local.yaml\n');
+      expect(yield* fs.exists(`${repo}/.chernabog/local.yaml`)).toBe(false);
+      expect(yield* fs.readFileString(`${repo}/.gitignore`)).toBe('node_modules/');
     }),
   );
 
-  effect(
-    "records in local.yaml only the flow choices that differ from the team's",
+  effectAtHome(
+    "offers the team's flows by default, and records the chosen ones on the repo's entry",
     () => Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
-      const localPath = `${repo}/.chernabog/local.yaml`;
-      const bob = Effect.succeedSome('bob');
-      const localFlows = Effect.flatMap(fs.readFileString(localPath), (text) => Schema.decodeUnknownEffect(LocalConfigFile)(YAML.parse(text))).pipe(Effect.map((local) => local.flows));
+      const bob = Effect.succeed(['bob']);
+      const entry: EnrolledRepo = { path: repo, repo: 'dataquail/demo' };
+      const listed = Effect.flatMap(machineConfigFile, (file) => Effect.flatMap(fs.readFileString(file), (text) => Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(text)))).pipe(Effect.map((decoded) => decoded.repos?.[0].flows));
       yield* scaffold(repo);
-      yield* fs.remove(localPath);
       yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'runners: [alice]\nflows:\n  fix:\n    enabled: false\n  review:\n    runners: [alice, bob]\n');
-      expect(yield* flowChoices(repo, bob)).toEqual([
+      expect(yield* flowChoices(repo, Option.none(), bob)).toEqual([
         { name: 'fix', enabled: false, teamDefault: false, teamOff: Option.some('flow turned off') },
         { name: 'implement', enabled: false, teamDefault: false, teamOff: Option.some('not a runner (runners: alice; this machine is bob)') },
         { name: 'review', enabled: true, teamDefault: true, teamOff: Option.none() },
       ]);
 
-      expect((yield* Effect.flip(chooseFlows(repo, ['implement', 'nope'], bob))).message).toContain('no flow named nope');
-      expect(yield* fs.exists(localPath)).toBe(false);
+      yield* enrollInMachineConfig(entry);
+      expect((yield* Effect.flip(chooseFlows(repo, entry, ['implement', 'nope']))).message).toContain('no flow named nope');
+      expect(yield* listed).toBeUndefined();
 
-      expect(yield* chooseFlows(repo, ['fix', 'implement', 'review'], bob)).toEqual([
+      expect(yield* chooseFlows(repo, entry, ['fix', 'implement'])).toEqual([
         { name: 'fix', enabled: true },
         { name: 'implement', enabled: true },
-        { name: 'review', enabled: true },
+        { name: 'review', enabled: false },
       ]);
-      expect(yield* fs.readFileString(localPath)).toContain('# Your own settings for this repo');
-      expect(yield* localFlows).toEqual({ fix: { enabled: true }, implement: { enabled: true } });
-      expect((yield* flowChoices(repo, bob)).map((choice) => choice.enabled)).toEqual([true, true, true]);
+      expect(yield* listed).toEqual({ fix: {}, implement: {} });
+      expect((yield* flowChoices(repo, Option.some(['fix', 'implement']), bob)).map((choice) => choice.enabled)).toEqual([true, true, false]);
 
-      // Back to the team's choices: local.yaml keeps none of them.
-      yield* chooseFlows(repo, ['review'], bob);
-      expect(yield* localFlows).toBeUndefined();
-      expect(yield* ensureLocalConfig(repo)).toBe(false);
+      yield* chooseFlows(repo, entry, []);
+      expect(yield* listed).toEqual({});
     }),
   );
 
@@ -321,7 +350,7 @@ describe('init', () => {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
       yield* scaffold(repo);
-      const choices = yield* flowChoices(repo, Effect.die('looked up the login'));
+      const choices = yield* flowChoices(repo, Option.none(), Effect.die('looked up the login'));
       expect(choices.every((choice) => choice.enabled && choice.teamDefault)).toBe(true);
     }),
   );
@@ -341,12 +370,12 @@ describe('init', () => {
   );
 
   effect(
-    'gitignores local.yaml and .chernabog/node_modules/ in a repo that ignores nothing yet',
+    'gitignores .chernabog/node_modules/ in a repo that ignores nothing yet',
     () => Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
       yield* scaffold(repo);
-      expect(yield* fs.readFileString(`${repo}/.gitignore`)).toBe('.chernabog/local.yaml\n.chernabog/node_modules/\n');
+      expect(yield* fs.readFileString(`${repo}/.gitignore`)).toBe('.chernabog/node_modules/\n');
     }),
   );
 
@@ -458,7 +487,7 @@ describe('GitHub personas', () => {
     normalizeMachineConfig(Schema.decodeSync(MachineConfigFile)({ ...Option.match(github, { onNone: () => ({}), onSome: (logins) => ({ github: logins }) }), repos: [] }), '/Users/dev');
 
   const personas = (github: Option.Option<Logins>, chosen: Option.Option<ReadonlyArray<string>> = Option.none()) =>
-    Effect.result(personasOf(machineWith(github), { ...enrolled, ...Option.match(chosen, { onNone: () => ({}), onSome: (logins) => ({ personas: logins }) }) }));
+    Effect.result(personasOf(machineWith(github), { ...enrolled, ...Option.match(chosen, { onNone: () => ({}), onSome: (logins) => ({ personas: Object.fromEntries(logins.map((login) => [login, {}])) }) }) }));
 
   effect('without github:, the one persona is the implicit one', () =>
     Effect.gen(function* () {
@@ -496,9 +525,15 @@ describe('GitHub personas', () => {
 
   effect('the merged repo carries its personas', () =>
     Effect.gen(function* () {
-      const files = { repo: yield* Schema.decodeEffect(RepoConfigFile)({}), local: yield* Schema.decodeEffect(LocalConfigFile)({}) };
-      const merged = yield* mergeRepoConfig({ ...machine, github: ['alice', 'bob'] }, { ...enrolled, personas: ['bob'] }, files, '/snapshot/.chernabog', {});
-      expect(merged.personas).toEqual([Option.some('bob')]);
+      const merged = yield* mergeAll({}, { personas: { bob: {} } }, enrolled, { ...machine, github: ['alice', 'bob'] });
+      expect(merged.personas.map((own) => own.persona)).toEqual([Option.some('bob')]);
+    }),
+  );
+
+  effect('personas: {} is refused', () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(mergeAll({}, { personas: {} }, enrolled, { ...machine, github: ['alice'] }));
+      expect(error.message).toContain('personas is empty');
     }),
   );
 
@@ -506,13 +541,47 @@ describe('GitHub personas', () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const file = yield* machineConfigFile;
-      yield* fs.writeFileString(file, 'github:\n  alice: {}\nrepos:\n  - path: /old\n    repo: dataquail/demo\n    # who runs it\n    personas: [alice]\n');
+      yield* fs.writeFileString(file, 'github:\n  alice: {}\nrepos:\n  - path: /old\n    repo: dataquail/demo\n    # who runs it\n    personas:\n      alice:\n        flows: { implement: {} }\n');
       expect(yield* enrollInMachineConfig({ path: '/new', repo: 'dataquail/demo', baseBranch: 'main' })).toBe('updated');
 
       const text = yield* fs.readFileString(file);
       const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(text));
-      expect(decoded.repos).toEqual([{ path: '/new', repo: 'dataquail/demo', personas: ['alice'], baseBranch: 'main' }]);
+      expect(decoded.repos).toEqual([{ path: '/new', repo: 'dataquail/demo', personas: { alice: { flows: { implement: {} } } }, baseBranch: 'main' }]);
       expect(text).toContain('# who runs it');
+    }),
+  );
+});
+
+describe('turning a flow on or off in machine config', () => {
+  const read = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(yield* fs.readFileString(yield* machineConfigFile)));
+
+    return (decoded.repos ?? [])[0];
+  });
+
+  const write = (text: string) => Effect.flatMap(machineConfigFile, (file) => FileSystem.FileSystem.use((fs) => fs.writeFileString(file, text)));
+
+  effectAtHome("turns a flow off on the repo's entry, keeping its settings, and on again", () =>
+    Effect.gen(function* () {
+      yield* write('repos:\n  - repo: dataquail/demo\n    path: /demo\n    flows:\n      implement: {}\n      review: { schedule: "5 * * * *" }\n');
+      yield* setFlowInMachineConfig('demo', Option.none(), 'implement', false);
+      yield* setFlowInMachineConfig('demo', Option.none(), 'review', false);
+      yield* setFlowInMachineConfig('demo', Option.none(), 'fix', true);
+      expect((yield* read).flows).toEqual({ review: { schedule: '5 * * * *', enabled: false }, fix: {} });
+      yield* setFlowInMachineConfig('demo', Option.none(), 'review', true);
+      expect((yield* read).flows?.review).toEqual({ schedule: '5 * * * *' });
+    }),
+  );
+
+  effectAtHome('gives one of several personas its own copy of the flows it inherits before changing them', () =>
+    Effect.gen(function* () {
+      yield* write('github: { alice: {}, bob: {} }\nrepos:\n  - repo: dataquail/demo\n    path: /demo\n    flows: { implement: {} }\n    personas: { alice: {}, bob: {} }\n');
+      yield* setFlowInMachineConfig('dataquail/demo', Option.some('bob'), 'review', true);
+      const entry = yield* read;
+      expect(entry.flows).toEqual({ implement: {} });
+      expect(entry.personas).toEqual({ alice: {}, bob: { flows: { implement: {}, review: {} } } });
     }),
   );
 });

@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=./config.schema.json
 #
 # What work Chernabog does in this repo, and how. Committed, so the whole team
-# shares it. Each person's .chernabog/local.yaml (gitignored) decides when it
-# runs for them and with which agent.
+# shares it. Each person's machine config (~/.config/chernabog/config.yaml)
+# decides which flows run for them, when, and with which agent.
 
 baseBranch: main
 
@@ -40,12 +40,13 @@ notes:
 # Default schedule for every flow, as cron. Unset spreads repos across the hour.
 # schedule: "17 * * * *"
 
-# Whose machines run the flows, by GitHub login. Unset: anyone's. Elsewhere a
-# flow is off unless that person turns it on in their local.yaml.
+# Who runs the flows, by GitHub login. Unset: anyone. A default, not a gate:
+# chernabog enroll offers the flows ticked only to these logins, and anyone can
+# still pick them.
 # runners: [alice]
 
-# Per flow: schedule, concurrency, enabled, agent, runners, assignee and
-# reviewRequested. A reviewer on another agent than the one that wrote the code
+# Per flow: schedule, concurrency, enabled (the default chernabog enroll
+# offers), agent, runners, assignee and reviewRequested. A reviewer on another agent than the one that wrote the code
 # avoids a model approving its own work; it runs under that agent's account in
 # machine config. assignee and reviewRequested work like GitHub's assignee: and
 # review-requested: qualifiers: "@me" (this machine's GitHub login), a login,
@@ -66,7 +67,7 @@ flows:
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose
-# their own in machine config or local.yaml; launcher here is only the default,
+# their own in machine config; launcher here is only the default,
 # and allowedLaunchers limits what they may choose. Unset: any launcher, with
 # headless as the default.
 # launcher: orca

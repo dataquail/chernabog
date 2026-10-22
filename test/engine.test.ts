@@ -15,6 +15,7 @@ import { IMPLICIT } from '../src/persona.ts';
 import { DEFAULT_LIMITS, type EffectiveRepo } from '../src/repo-config.ts';
 import { type RunRow, State } from '../src/state.ts';
 import { effect } from './effect-test.ts';
+import { repoAs } from './sdk-fakes.ts';
 
 const settings: RepoSettings = {
   name: 'demo',
@@ -39,7 +40,7 @@ const settings: RepoSettings = {
   configDir: '/tmp/demo/.chernabog',
 };
 
-const repo: EffectiveRepo = { settings, enabled: true, schedule: { local: Option.none(), repo: Option.none() }, activeHours: Option.none(), flows: {}, runners: { repo: Option.none(), flows: {} }, localEnabled: {}, personas: [Option.none()] };
+const repo: EffectiveRepo = repoAs(settings);
 
 const item = (key: string, signals: ReadonlyArray<string> = []): WorkItem => ({ key, data: { key }, signals });
 
@@ -247,7 +248,7 @@ describe('personas', () => {
   effect(
     "a run from before personas, resumed before it's adopted, acts as the repo's first persona",
     () => Effect.gen(function* () {
-      const asPersonas = flowHandle({ ...repo, personas: [alice, bob] }, 'demo', flow);
+      const asPersonas = flowHandle(repoAs(settings, [alice, bob]), 'demo', flow);
 
       const unadopted = Effect.gen(function* () {
         const state = yield* State;

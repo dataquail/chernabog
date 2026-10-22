@@ -20,9 +20,8 @@ import { daemonReload, daemonStatus, daemonTick } from '../client.ts';
 import { Home } from '../config.ts';
 import { setPaused } from '../daemon.ts';
 import { runLogFile } from '../engine.ts';
-import { viewerLogin } from '../GitHubApi.ts';
-import { writeFlowChoices } from '../init.ts';
-import { DEFAULT_GATE, findEnrolled, loadMachineConfig } from '../repo-config.ts';
+import { asSuffix, type Persona } from '../persona.ts';
+import { DEFAULT_GATE, loadMachineConfig, setFlowInMachineConfig } from '../repo-config.ts';
 import { readUsageLogLine } from '../usage-gate.ts';
 import { type Action, type Key, update } from './update.ts';
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from './view.ts';
@@ -107,18 +106,19 @@ const tickMessage = (repo: string, flow: string, started: ReadonlyArray<string>,
   return `${repo}/${flow}: ${Option.getOrElse(skipped, () => 'nothing to start')}`;
 };
 
-// Records the choice in the person's local.yaml; the daemon restarts on it once idle.
-const setFlowEnabled = (repo: string, flow: string, enabled: boolean) =>
+// Records the choice for the persona in machine config; the daemon restarts on it once idle.
+const setFlowEnabled = (repo: string, flow: string, persona: Persona, enabled: boolean) =>
   Effect.gen(function* () {
-    const enrolled = yield* findEnrolled(yield* loadMachineConfig, repo);
-    yield* writeFlowChoices(enrolled.path, [{ name: flow, enabled }], Effect.option(viewerLogin));
+    yield* setFlowInMachineConfig(repo, persona, flow, enabled);
     yield* daemonReload.pipe(Effect.ignore);
   });
 
-const toggleMessage = (repo: string, flow: string, enabled: boolean) => {
-  if (enabled) return `turned ${repo}/${flow} on in local.yaml; the daemon picks it up when idle`;
+const toggleMessage = (repo: string, flow: string, persona: Persona, enabled: boolean) => {
+  const name = `${repo}/${flow}${asSuffix(persona)}`;
 
-  return `turned ${repo}/${flow} off in local.yaml; the daemon picks it up when idle`;
+  if (enabled) return `turned ${name} on in machine config; the daemon picks it up when idle`;
+
+  return `turned ${name} off in machine config; the daemon picks it up when idle`;
 };
 
 const pauseMessage = (repo: string, paused: boolean) => {
@@ -240,13 +240,13 @@ export const runTui = Effect.gen(function* () {
         }
 
         case 'toggle-flow': {
-          const toggled = yield* Effect.result(setFlowEnabled(action.repo, action.flow, action.enabled));
+          const toggled = yield* Effect.result(setFlowEnabled(action.repo, action.flow, action.persona, action.enabled));
 
-          if (Result.isSuccess(toggled)) model = { ...model, pendingFlows: { ...model.pendingFlows, [flowKey(action.repo, action.flow)]: action.enabled } };
+          if (Result.isSuccess(toggled)) model = { ...model, pendingFlows: { ...model.pendingFlows, [flowKey(action.repo, action.flow, action.persona)]: action.enabled } };
 
           return yield* say(
             Result.match(toggled, {
-              onSuccess: () => toggleMessage(action.repo, action.flow, action.enabled),
+              onSuccess: () => toggleMessage(action.repo, action.flow, action.persona, action.enabled),
               onFailure: (failure) => failure.message,
             }),
           );

@@ -54,13 +54,12 @@ export type Model = {
 
 const segment = (text: string, style: Style = 'plain'): Segment => ({ text, style });
 
-export const flowKey = (repo: string, flow: string) => `${repo}/${flow}`;
+export const flowKey = (repo: string, flow: string, persona: Option.Option<string>) => `${repo}/${flow}${Option.match(persona, { onNone: () => '', onSome: (login) => `@${login}` })}`;
 
-// Whether a flow runs on this machine: as turned from here, else as the daemon
-// has it. Turning a flow on or off is the same for each of its personas, as
-// local.yaml has it.
-export const flowEnabled = (model: Model, repo: string, flow: { readonly name: string; readonly enabled: boolean }) =>
-  Option.getOrElse(Record.get(model.pendingFlows, flowKey(repo, flow.name)), () => flow.enabled);
+// Whether a persona runs a flow: as turned from here, else as the daemon has
+// it. Each persona turns its flows on and off for itself.
+export const flowEnabled = (model: Model, repo: string, flow: { readonly name: string; readonly enabled: boolean; readonly persona?: string }) =>
+  Option.getOrElse(Record.get(model.pendingFlows, flowKey(repo, flow.name, Option.fromUndefinedOr(flow.persona))), () => flow.enabled);
 
 const onlyIf = <A>(condition: boolean, items: ReadonlyArray<A>): ReadonlyArray<A> => {
   if (condition) return items;

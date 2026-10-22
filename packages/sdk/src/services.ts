@@ -87,7 +87,7 @@ export type ResolvedLauncher = typeof ResolvedLauncher.Type;
 export const HEADLESS: ResolvedLauncher = { name: 'headless', from: 'default', custom: Option.none() };
 
 // Everything a run knows about the repo it works on, merged from the repo's
-// committed config, the person's override and machine config.
+// committed config and the persona's settings in machine config.
 export const RepoSettings = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
@@ -105,6 +105,9 @@ export const RepoSettings = Schema.Struct({
   flowAgents: Schema.Record(Schema.String, Schema.String),
   // The adapters a flow gave its roles in config (flows.<name>.agents), such as { reviewer: codex }.
   flowRoleAgents: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
+  // The adapters a persona's own role picks run with, in every flow: the
+  // agent of the account it chose for the role (roles: { reviewer: codex-work }).
+  roleAgents: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   labels: Labels,
   install: Schema.Option(Schema.String),
   localGate: Strings,
