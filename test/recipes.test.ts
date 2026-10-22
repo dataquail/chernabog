@@ -10,7 +10,8 @@ import * as Option from 'effect/Option';
 import * as Result from 'effect/Result';
 
 import { Asker } from '../src/ask.ts';
-import { chooseRecipes, docsOf, flowFileOf, installedRecipes, installRecipes, type Recipe, recipeNamed,RECIPES } from '../src/recipes.ts';
+import { Exec } from '../src/Exec.ts';
+import { chooseRecipes, diffRecipes, docsOf, flowFileOf, installedRecipes, installRecipes, type Recipe, recipeNamed, RECIPES } from '../src/recipes.ts';
 import { RECIPE_FILES } from '../src/templates.ts';
 import implement from '../templates/recipes/flows/implement.ts';
 import { scripted } from './asker.ts';
@@ -139,6 +140,54 @@ describe("the implement recipe's trigger", () => {
       expect((yield* flowTriggered(fake, implement)).map((work) => work.data)).toEqual([{ issue: ISSUE }]);
       fake.setLabels(ISSUE, []);
       expect(yield* flowTriggered(fake, implement)).toEqual([]);
+    }),
+  );
+});
+
+const diffing = (repo: string, names: ReadonlyArray<string>) => diffRecipes(repo, names).pipe(Effect.provide(Exec.layer));
+
+describe('diffing against the recipes', () => {
+  // A repo that baked review and re-review, edited review's flow, and has a flow of its own.
+  const baked = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const repo = yield* checkout;
+    yield* installRecipes(repo, yield* named('review', 're-review'));
+    yield* fs.writeFileString(`${repo}/.chernabog/flows/review.ts`, RECIPE_FILES['flows/review.ts'].replace('concurrency: 1,', 'concurrency: 2,'));
+    yield* fs.writeFileString(`${repo}/.chernabog/flows/security.ts`, 'export default {};\n');
+
+    return repo;
+  });
+
+  effect("shows each of the repo's flows against the recipe it came from, and the flows from none", () =>
+    Effect.gen(function* () {
+      const lines = yield* diffing(yield* baked, []);
+      expect(lines[0]).toBe('.chernabog/flows/review.ts: differs from the review recipe (https://dataquail.github.io/chernabog/recipes/review/)');
+      expect(lines[1]).toContain('--- recipe/.chernabog/flows/review.ts\n+++ repo/.chernabog/flows/review.ts');
+      expect(lines[1]).toContain('-  concurrency: 1,\n+  concurrency: 2,');
+      expect(lines.slice(2)).toEqual([
+        '.chernabog/prompts/review.md: the same as the review recipe',
+        '.chernabog/flows/re-review.ts: the same as the re-review recipe',
+        '.chernabog/prompts/review.md: the same as the re-review recipe',
+        '.chernabog/flows/security.ts: from no recipe',
+      ]);
+    }),
+  );
+
+  effect('with names, only those recipes, including one the repo lacks', () =>
+    Effect.gen(function* () {
+      const lines = yield* diffing(yield* baked, ['re-review', 'implement']);
+      expect(lines).toEqual([
+        '.chernabog/flows/re-review.ts: the same as the re-review recipe',
+        '.chernabog/prompts/review.md: the same as the re-review recipe',
+        '.chernabog/flows/implement.ts: not in the repo; chernabog recipes add implement bakes it',
+        '.chernabog/prompts/implement.md: not in the repo; chernabog recipes add implement bakes it',
+      ]);
+    }),
+  );
+
+  effect('says when the repo has no flows', () =>
+    Effect.gen(function* () {
+      expect(yield* diffing(yield* checkout, [])).toEqual(['.chernabog/flows/ has no flows; chernabog recipes list shows the recipes']);
     }),
   );
 });

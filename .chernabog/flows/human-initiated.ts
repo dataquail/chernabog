@@ -5,9 +5,10 @@
 // and asks a reviewer from the pool. review, address-review and re-review take
 // it from there, and a person merges. Nothing starts it on a schedule.
 //
-// This file is chernabog's human-initiated recipe, and this repo's to change.
-// The names of its steps ("claim", "work-with-person") are the keys a run in
-// flight resumes by, so renaming one restarts that step.
+// This file is chernabog's human-initiated recipe, and this repo's to change:
+// `chernabog recipes diff` shows how it differs from the recipe's current
+// version. The names of its steps ("claim", "work-with-person") are the keys a
+// run in flight resumes by, so renaming one restarts that step.
 
 import { defineFlow, Hybrid, Implement, type WorkItem } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';

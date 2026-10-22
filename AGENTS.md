@@ -104,9 +104,12 @@ after that the file is theirs, and chernabog never rewrites it.
   policy is in the repo's file. The SDK exports no whole workflows or
   review-loop triggers; add a block rather than hide a decision in one.
 - This repo's own `.chernabog/flows/` are baked recipes. Keep them in step
-  with `templates/recipes/`.
+  with `templates/recipes/` (`chernabog recipes diff`, from a sandbox, shows
+  where they differ).
 - **Activity names are journal keys**: a run in flight resumes by them. Keep a
   recipe's step names when you change it, and never rename one in a block.
+- `chernabog recipes diff` compares a repo's flows with the current recipes,
+  matching each flow to the recipe it's named for.
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
   which its description links to.
 

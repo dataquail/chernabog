@@ -75,7 +75,7 @@ Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourl
 
 ## Recipes and the review loop
 
-A recipe is a complete flow, its trigger, steps and endings written out from the SDK's `Implement`, `Review`, `PullRequest` and `Hybrid` blocks, that a repo chooses to bake into `.chernabog/flows/`. Once baked, the file is the repo's code: read it, edit it, reorder its steps; a later chernabog never rewrites it. `chernabog init` offers them, and `chernabog recipes add <name>` adds one to a repo that's already set up; `chernabog recipes list` shows which the repo has. Each has [a page in the docs](https://dataquail.github.io/chernabog/recipes/). The names of a recipe's steps are the keys a run in flight resumes by, so they're part of what it bakes.
+A recipe is a complete flow, its trigger, steps and endings written out from the SDK's `Implement`, `Review`, `PullRequest` and `Hybrid` blocks, that a repo chooses to bake into `.chernabog/flows/`. Once baked, the file is the repo's code: read it, edit it, reorder its steps; a later chernabog never rewrites it. `chernabog init` offers them, and `chernabog recipes add <name>` adds one to a repo that's already set up; `chernabog recipes list` shows which the repo has, and `chernabog recipes diff` how its flows differ from the current recipes, so a person can bring later fixes over on purpose. Each has [a page in the docs](https://dataquail.github.io/chernabog/recipes/). The names of a recipe's steps are the keys a run in flight resumes by, so they're part of what it bakes.
 
 Four recipes make the review loop: `implement`, `review`, `re-review` and `address-review`. They hand pull requests to each other through GitHub's own review requests and reviews; labels are the public record people see, and a few flows trigger on them.
 
@@ -137,7 +137,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `labels [repo]` | Creates or corrects the repo's labels |
 | `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon |
 | `setup` | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again |
-| `recipes list`, `recipes add [names…]` | Lists the recipes, with a check by each the repo has; bakes recipes into the repo's `.chernabog/flows/`, asking which when none is named, and never overwriting a flow it has |
+| `recipes list`, `recipes add [names…]`, `recipes diff [names…]` | Lists the recipes, with a check by each the repo has; bakes recipes into the repo's `.chernabog/flows/`, asking which when none is named, and never overwriting a flow it has; shows how the repo's flows differ from the current recipes they came from |
 | `init`, `enroll` | `init` scaffolds `.chernabog/`, bakes the recipes chosen (`--recipes a,b` without asking; none piped) and enrolls the repo once it has a flow; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
 | `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
 | `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service; `install` runs `setup` first, and takes its flags. `start` with no issue starts the daemon |

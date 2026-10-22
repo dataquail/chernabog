@@ -1,7 +1,7 @@
 // Recipes through the CLI: init bakes only the ones chosen, none without a
-// choice, and a set-up repo adds more later.
+// choice, and a set-up repo adds more later and diffs its flows against them.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -56,5 +56,16 @@ describe('recipes', () => {
 
     const refused = await sandbox.runCli(['recipes', 'add', 'ship']);
     expect(refused.output).toContain('no recipe named ship');
+  }, 30_000);
+
+  test("recipes diff shows how the repo's flows differ from the current recipes", async () => {
+    writeFileSync(flow('implement'), RECIPE_FILES['flows/implement.ts'].replace('concurrency: 1,', 'concurrency: 3,'));
+    const { code, output } = await sandbox.runCli(['recipes', 'diff']);
+    expect(code).toBe(0);
+    expect(output).toContain('Against the recipes of chernabog ');
+    expect(output).toContain('.chernabog/flows/implement.ts: differs from the implement recipe (https://dataquail.github.io/chernabog/recipes/implement/)');
+    expect(output).toContain('-  concurrency: 1,\n+  concurrency: 3,');
+    expect(output).toContain('.chernabog/flows/review.ts: the same as the review recipe');
+    expect(output).toContain('.chernabog/flows/human-initiated.ts: the same as the human-initiated recipe');
   }, 30_000);
 });
