@@ -15,7 +15,7 @@ description: Install the chernabog binary with Homebrew, from a release, or from
 brew install dataquail/tap/chernabog
 ```
 
-The formula installs the release binary for your platform and pulls in `gh`. Each release updates it. Then [set up a repo](/chernabog/start/set-up-a-repo/), which ends by registering the daemon with `chernabog install`.
+The formula installs the release binary for your platform and pulls in `gh`. Each release updates it. Then [set up the machine](#set-up-the-machine).
 
 After an upgrade, move the daemon onto the new version:
 
@@ -55,3 +55,23 @@ mv dist/chernabog ~/.local/bin/
 ```
 
 Every method needs `git`, `gh` logged in with the `repo` scope, and your agent's own CLI. See [Requirements](/chernabog/start/introduction/#requirements).
+
+## Set up the machine
+
+```bash
+chernabog install
+```
+
+`install` runs `chernabog setup`, then registers the daemon as a launchd agent or systemd user unit and starts it. `setup` writes `~/.config/chernabog/config.yaml`, asking only what it has to, and is safe to run again to add a login or an account.
+
+- **GitHub personas.** The logins `gh auth status` lists, asked without `GH_TOKEN`. With one, it's added without asking, alongside any already in machine config; with several, you pick which ones Chernabog [acts as](/chernabog/reference/configuration/#github-personas). It won't drop a login an enrolled repo still runs as. With none, runs act as `GH_TOKEN` or `gh`'s active account.
+- **AI accounts.** It finds `~/.claude*` and `~/.codex*` directories that machine config doesn't have yet and asks which to add, then asks for any others, such as `~/.claude-personal` behind a `pclaude` alias, and which agent each is for when the name doesn't say. It stores the account's config directory, home-relative, and its agent, never the alias, and names the account after the directory: `~/.claude-personal` becomes `claude-personal`. Without `accounts:`, machine config has one implicit account, `work`, on `~/.claude`; the first time `setup` writes `accounts:` it keeps `work` there too.
+
+| Flag                         | Answers                                                          |
+| ---------------------------- | ---------------------------------------------------------------- |
+| `--persona <a,b>`            | the GitHub logins to act as; each must be logged in to `gh`      |
+| `--account <dir[:agent],…>`  | the account directories to add, such as `~/.codex-work:codex`; the agent is inferred from a name like `.codex-work` |
+
+Both commands take both flags. Piped and without them, `setup` still takes a single `gh` login, leaves the personas as they are when there are several, and adds an account only when machine config has no `accounts:` yet and it finds exactly one.
+
+Then [set up a repo](/chernabog/start/set-up-a-repo/).

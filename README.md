@@ -58,15 +58,18 @@ The lint baseline is [functional-domain-driven-hexagon](https://github.com/dataq
 ## Set up a repo
 
 ```bash
+chernabog install                   # chooses GitHub personas and AI accounts, then registers the daemon and starts it
 cd ~/code/my-app
-chernabog init                      # scaffolds .chernabog/ with the default flows
+chernabog init                      # scaffolds .chernabog/, then enrolls the repo: its personas, their flows and accounts
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
-chernabog enroll --account personal # adds the repo to this machine's config, and asks which flows run here
 chernabog trust my-app              # approves the base branch's .chernabog/
 chernabog labels my-app             # creates the auto:* labels
-chernabog install                   # registers the daemon with launchd or systemd, and starts it
 chernabog doctor                    # checks logins, gh scopes, labels, trust and the daemon
 ```
+
+`install` runs `chernabog setup` first, which you can run again on its own. It asks only what it has to. **GitHub personas:** the logins in `gh auth status`; with one it's chosen without asking, with several you pick which ones Chernabog acts as. **AI accounts:** it finds `~/.claude*` and `~/.codex*` directories not yet in machine config, asks which to add, then asks for others, such as `~/.claude-personal` behind a `pclaude` alias. It stores each account's config directory and agent, never the alias, and names it after the directory (`claude-personal`). `--persona a,b` and `--account ~/.claude-personal,~/.codex-work:codex` answer without asking.
+
+`init` then enrolls the repo, asking: which personas work in it (when there are several), which flows each one runs (a checklist prefilled with the team's defaults, with "Accept the defaults" first, so enter takes them), and which account each persona spends where machine config has a choice. A flow whose agent has no account is listed but can't be picked, and says to add one with `chernabog setup`. `chernabog enroll` runs the same questions on its own, to enroll a repo that already has `.chernabog/` or to choose again. `--persona`, `--flows a,b`, `--defaults` and `--account` answer without asking; piped and without them, a repo keeps the flows it lists, and a new one gets the team's defaults.
 
 Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and hands off with `auto:needs-review`.
 
@@ -117,9 +120,10 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
 | `labels [repo]` | Creates or corrects the repo's labels |
 | `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher and the daemon |
-| `init`, `enroll` | Set up a repo; add it to this machine and choose which of its flows run here (`--flows a,b` without asking) |
+| `setup` | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again |
+| `init`, `enroll` | `init` scaffolds `.chernabog/` and enrolls the repo; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
 | `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
-| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service |
+| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service; `install` runs `setup` first, and takes its flags |
 
 `run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
 
@@ -231,7 +235,7 @@ Config has two layers: the team's, committed in the repo, and each person's, in 
 
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 
-A flow runs on a machine only if the repo's entry in machine config lists it under `flows`. `enroll` writes that list, offering the team's defaults: the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose `runners` (`runners: [alice]`, or `flows.<flow>.runners`) include one of the repo's personas, or this machine's `gh` login. So `runners` coordinates who spends their budget without restricting anyone: whoever lists a flow runs it. A flow listed with `enabled: false` is off but keeps its settings.
+A flow runs on a machine only if the repo's entry in machine config lists it under `flows`. `init` and `enroll` write that list, offering the team's defaults: the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose `runners` (`runners: [alice]`, or `flows.<flow>.runners`) include one of the repo's personas, or this machine's `gh` login. So `runners` coordinates who spends their budget without restricting anyone: whoever lists a flow runs it. A flow listed with `enabled: false` is off but keeps its settings.
 
 `flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review: { reviewRequested: "@me" }` reviews only pull requests that request your review. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
 
@@ -258,7 +262,7 @@ repos:
       review: { schedule: "*/20 * * * *" }
 ```
 
-A repo's entry can also set `agent`, `roles` (an account for a step's role, such as `{ reviewer: codex }`, which must run another agent than the entry's account), `schedule`, `activeHours`, `launcher` and `enabled: false`. With several GitHub personas, `personas:` maps each login to its own `flows`, `account` and the rest, each key replacing the repo entry's; see the [configuration reference](https://dataquail.github.io/chernabog/reference/configuration/). Two clones of one repo need a `name` (`enroll --name`) to keep them apart.
+A repo's entry can also set `agent`, `accounts` (accounts for steps on other agents, one per agent, such as `[codex-personal]`; enrolling asks when an agent has several), `roles` (an account for a step's role, such as `{ reviewer: codex }`, which must run another agent than the entry's account), `schedule`, `activeHours`, `launcher` and `enabled: false`. With several GitHub personas, `personas:` maps each login to its own `flows`, `account` and the rest, each key replacing the repo entry's; see the [configuration reference](https://dataquail.github.io/chernabog/reference/configuration/). Two clones of one repo need a `name` (`enroll --name`) to keep them apart.
 
 Upgrading from a version that read `.chernabog/local.yaml`, the first command you run moves its choices onto the repo's entry in machine config, and says what it moved on stderr. It leaves `local.yaml` in place; delete it once you've checked the result.
 

@@ -41,7 +41,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 
 ### Runners
 
-`runners` names the GitHub logins who run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Like `flows.<flow>.enabled`, it's a default, not a gate: `chernabog enroll` offers a flow ticked only when the team doesn't turn it off and its runners, if any, include one of the repo's [personas](#github-personas), or else this machine's `gh` login. What runs is what the repo's entry in machine config [lists](#which-flows-run).
+`runners` names the GitHub logins who run the repo's flows by default; `flows.<flow>.runners` names them for one flow, over the repo's. Like `flows.<flow>.enabled`, it's a default, not a gate: `chernabog enroll` offers a flow among each persona's defaults only when the team doesn't turn it off and its runners, if any, include that [persona](#github-personas)'s login, or, without personas, this machine's `gh` login. What runs is what the repo's entry in machine config [lists](#which-flows-run).
 
 It's coordination, not access control: whoever enrolls the repo can still pick a flow, for instance to cover for a runner who is away. Claims are race-safe without it: two machines never implement the same issue.
 
@@ -105,8 +105,8 @@ limits: { reviewRounds: 2, staleAfter: 1 day }
 
 | Key                     | Default      | Meaning                                                           |
 | ----------------------- | ------------ | ----------------------------------------------------------------- |
-| `github.<login>`        | —            | a GitHub persona this machine acts as; see [GitHub personas](#github-personas) |
-| `accounts.<name>`       | —            | `configDir`, `expectedEmail`, `oauthTokenEnv`, `usageGate` (`none` to run ungated), `agent` (default `claude`) |
+| `github.<login>`        | —            | a GitHub persona this machine acts as, written by `chernabog setup`; see [GitHub personas](#github-personas) |
+| `accounts.<name>`       | `work`, on `~/.claude` | `configDir`, `expectedEmail`, `oauthTokenEnv`, `usageGate` (`none` to run ungated), `agent` (default `claude`); `chernabog setup` adds them |
 | `usageGate`             | see [the gate](/chernabog/agents/usage-gate/) | all four thresholds, or none            |
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
 | `quietHours`            | none         | start no runs within these hours                                  |
@@ -148,6 +148,7 @@ Each entry in `repos` is one repo this machine runs, with each person's choices 
 | `baseBranch`   | `main`          | the branch `.chernabog/` is trusted from, unless the repo sets its own |
 | `account`      | the first account | whose budget its runs spend, from `accounts`                 |
 | `agent`        | the repo's, else the account's | adapter that implements, over the repo's        |
+| `accounts`     | each agent's first account | other accounts its runs use, at most one per agent, each on another agent than `account`'s; see [Roles](#roles) |
 | `roles.<role>` | —               | an account for one role; see [Roles](#roles)                   |
 | `flows.<flow>` | —               | the flows that run, and no others; see [Which flows run](#which-flows-run) |
 | `schedule`     | —               | cron for every flow, over every schedule the repo sets         |
@@ -156,7 +157,7 @@ Each entry in `repos` is one repo this machine runs, with each person's choices 
 | `enabled`      | `true`          | `false` stops every flow in this repo                          |
 | `personas.<login>` | —           | each persona's own choices; see [GitHub personas](#github-personas) |
 
-`account` through `enabled` are the defaults every persona inherits. A persona's entry under `personas` takes the same keys, and each one it sets replaces the repo entry's whole: a persona with its own `flows` runs those, not the repo entry's plus its own.
+`chernabog init` and `enroll` write `flows`, `account`, `accounts` and `personas` from what you [choose](/chernabog/start/set-up-a-repo/#enroll); the rest you edit by hand. `account` through `enabled` are the defaults every persona inherits. A persona's entry under `personas` takes the same keys, and each one it sets replaces the repo entry's whole: a persona with its own `flows` runs those, not the repo entry's plus its own.
 
 When the checkout is gone, the daemon shows the repo as `missing` (`checkout missing at <path>`) and starts no runs; its settings stay. When the checkout comes back, the daemon picks it up again. `chernabog init` at a checkout's new place finds the entry for the same `repo` whose path is gone and, in a terminal, offers to point it there, keeping its settings. `chernabog unenroll <name|owner/name>` removes an entry and its settings.
 
@@ -164,13 +165,15 @@ When the checkout is gone, the daemon shows the repo as `missing` (`checkout mis
 
 A flow runs for a persona only when its `flows` lists it, its own or the repo entry's it inherits. Every flow not listed is off, whatever the team's `config.yaml` says, and `status` says `flow turned off`. A listed flow with `enabled: false` is off too, but keeps its settings for when it's turned back on.
 
-`chernabog enroll` writes the list, asking in a terminal or taking `--flows implement,review`; a newly enrolled repo with nothing listed gets the team's defaults, from `flows.<flow>.enabled` and [runners](#runners). Re-enrolling updates only what it's given, so each flow's settings survive. `e` in the [live view](/chernabog/work/live-view/) turns one flow off or on for a persona.
+`chernabog init` and `enroll` write the list for each chosen persona, asking in a terminal or taking `--flows implement,review` or `--defaults`; piped, a persona keeps what it lists, and one with nothing listed gets the team's defaults, from `flows.<flow>.enabled` and [runners](#runners). A flow whose agent has no account in machine config can't be chosen. Re-enrolling keeps the settings of each flow still listed. `e` in the [live view](/chernabog/work/live-view/) turns one flow off or on for a persona.
 
 A flow's settings take the keys of the repo's `flows.<flow>`, except `runners`: `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` and `enabled`. Each overrides the team's for that flow.
 
 ### Roles
 
 `roles` picks an account by role, such as `{ reviewer: codex-personal }`, for a role that needs another account than the persona's own. A step given that role runs with the account's agent, under that account, over the team's `flows.<flow>.agents`. Accounts are chosen by agent, so a role's account must run a different agent than the persona's own account; one on the same agent fails the repo.
+
+`accounts` does the same for every step on an agent, rather than for one role: `accounts: [codex-personal]` runs every codex step under `codex-personal`. It lists at most one account per agent, none on the persona's own account's agent; a list that breaks either rule fails the repo. Unset, each agent uses its first account in machine config. Enrolling asks for one where the chosen flows need an agent with several accounts, and writes the answer here. Where `roles` names an account on the same agent, the role's account wins.
 
 ### Moving from local.yaml
 

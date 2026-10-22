@@ -4,11 +4,9 @@
 import { describeError } from '@chernabog/sdk';
 import { BunRuntime, BunServices } from '@effect/platform-bun';
 import * as Arr from 'effect/Array';
-import * as Cache from 'effect/Cache';
 import * as Argument from 'effect/cli/Argument';
 import * as Command from 'effect/cli/Command';
 import * as Flag from 'effect/cli/Flag';
-import * as Prompt from 'effect/cli/Prompt';
 import * as Console from 'effect/Console';
 import * as DateTime from 'effect/DateTime';
 import * as Effect from 'effect/Effect';
@@ -25,15 +23,17 @@ import * as Stdio from 'effect/Stdio';
 
 import { attachCommand, runSessions } from './agents.ts';
 import { stopHook } from './agents/stop-hook.ts';
+import { Asker } from './ask.ts';
 import { daemonReload, daemonRun, daemonRunRow, daemonStatus, daemonTick } from './client.ts';
 import { Home } from './config.ts';
 import { RELOAD_EXIT_CODE, runDaemon, setPaused } from './daemon.ts';
 import { doctor, formatCheck } from './doctor.ts';
 import { resolveRunId, runLogFile } from './engine.ts';
+import { enrollRepo } from './enrollment.ts';
 import { Exec } from './Exec.ts';
 import { GitHubTokens } from './github-auth.ts';
 import { GitHubApi } from './GitHubApi.ts';
-import { checkFlowNames, chooseFlows, enrolmentOf, flowChoices, type FlowStanding, loginsFor, movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
+import { movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
@@ -41,9 +41,10 @@ import { migrateMachineConfig } from './migrate.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
-import { enrollInMachineConfig, entryFor, findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf, unenrollFromMachineConfig } from './repo-config.ts';
+import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf, unenrollFromMachineConfig } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
+import { setup } from './setup.ts';
 import { configTree } from './snapshot.ts';
 import { runLabel, type RunRow, shortRunId } from './state.ts';
 import { runStepChild, StepServicesLive } from './steps.ts';
@@ -149,8 +150,26 @@ const statusHandler = Effect.gen(function* () {
 
 const status = Command.make('status', {}, () => statusHandler).pipe(Command.withDescription('What the daemon is doing: repos, schedules, runs in flight, recent runs and skips'));
 
-const installCommand = Command.make('install', {}, () => Effect.flatMap(install, Console.log)).pipe(
-  Command.withDescription('Register the daemon with launchd (macOS) or systemd (Linux) and start it'),
+// A comma-separated list flag, such as --flows implement,review.
+const listFlag = (name: string, description: string) =>
+  Flag.String(name).pipe(
+    Flag.withDescription(description),
+    Flag.optional,
+    Flag.map(Option.map((text) => text.split(',').map((item) => item.trim()).filter((item) => item.length > 0))),
+  );
+
+const setupFlags = {
+  persona: listFlag('persona', "The GitHub logins to act as, comma-separated, from gh auth status. Asked in a terminal when gh has several; the only one otherwise"),
+  account: listFlag('account', 'AI account directories to add, comma-separated, each dir or dir:agent, such as ~/.claude-personal. Found ones are asked about in a terminal'),
+};
+
+const runSetup = (options: { readonly persona: Option.Option<ReadonlyArray<string>>; readonly account: Option.Option<ReadonlyArray<string>> }) =>
+  Effect.flatMap(setup({ personas: options.persona, accounts: options.account }), printLines);
+
+const setupCommand = Command.make('setup', setupFlags, runSetup).pipe(Command.withDescription('Choose the GitHub personas this machine acts as and the AI accounts its runs spend; safe to run again'));
+
+const installCommand = Command.make('install', setupFlags, (options) => runSetup(options).pipe(Effect.andThen(Effect.flatMap(install, Console.log)))).pipe(
+  Command.withDescription('Set up personas and accounts, then register the daemon with launchd (macOS) or systemd (Linux) and start it'),
 );
 
 const uninstallCommand = Command.make('uninstall', {}, () => Effect.flatMap(uninstall, Console.log)).pipe(Command.withDescription('Stop the daemon and remove its service'));
@@ -349,26 +368,29 @@ const rootOf = (path: Option.Option<string>) => repoRoot(Option.getOrElse(path, 
 // In a terminal, whether the person agrees; elsewhere, no.
 const confirmed = (message: string) =>
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
+    const asker = yield* Asker;
 
-    if (!(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return false;
+    if (!asker.interactive) return false;
 
-    return yield* Prompt.Confirm({ message, initial: true });
+    return (yield* asker.choose(message, [{ title: 'Yes', value: 'yes' }, { title: 'No', value: 'no' }])) === 'yes';
   });
 
 // A checkout that moved: its entry in machine config still names where it
-// was. Offers to point the entry here, settings and all.
+// was. Offers to point the entry here, settings and all, and says whether any
+// such entry was left where it was.
 const offerRepoint = (root: string) =>
   Effect.gen(function* () {
     const slug = yield* Effect.option(slugOf(root));
+    let declined = false;
 
-    if (Option.isNone(slug)) return;
+    if (Option.isNone(slug)) return declined;
 
     for (const entry of yield* movedEntries(yield* loadMachineConfig, slug.value, root)) {
       const named = repoNameOf(entry);
 
       if (!(yield* confirmed(`${named} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`))) {
         yield* Console.log(`${named} is enrolled at ${entry.path}, which is gone; chernabog enroll${suffix(Option.fromUndefinedOr(entry.name), ' --name ')} here points it here, keeping its settings`);
+        declined = true;
         continue;
       }
 
@@ -376,9 +398,38 @@ const offerRepoint = (root: string) =>
       yield* Console.log(`pointed ${named} at ${root}`);
       yield* daemonReload.pipe(Effect.ignore);
     }
+
+    return declined;
   });
 
-const init = Command.make('init', { path: Argument.String('path').pipe(Argument.optional) }, ({ path }) =>
+const enrollFlags = {
+  account: listFlag('account', "Accounts from machine config to spend, comma-separated: the persona's own, and one for each other agent its flows need. Asked in a terminal where there's a choice"),
+  name: Flag.String('name').pipe(Flag.withDescription('A short name, when two enrolled repos share one'), Flag.optional),
+  persona: listFlag('persona', "The GitHub personas that work in this repo, comma-separated. Asked in a terminal when machine config has several"),
+  flows: listFlag('flows', 'The flows to run, comma-separated, for every chosen persona. Asked in a terminal for each persona'),
+  defaults: Flag.Boolean('defaults').pipe(Flag.withDescription("Run the team's default flows for every chosen persona, without asking"), Flag.withDefault(false)),
+};
+
+type EnrollFlags = {
+  readonly account: Option.Option<ReadonlyArray<string>>;
+  readonly name: Option.Option<string>;
+  readonly persona: Option.Option<ReadonlyArray<string>>;
+  readonly flows: Option.Option<ReadonlyArray<string>>;
+  readonly defaults: boolean;
+};
+
+// Enrolls the repo at `root` and says what it chose. A running daemon restarts to schedule it; none running is fine.
+const enrollHere = (root: string, flags: EnrollFlags) =>
+  Effect.gen(function* () {
+    const { action, lines, repo } = yield* enrollRepo(root, { account: flags.account, name: flags.name, personas: flags.persona, flows: flags.flows, defaults: flags.defaults });
+    yield* Console.log(`${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? 'main'}) in ${yield* machineConfigFile}`);
+    yield* printLines(lines);
+    yield* daemonReload.pipe(Effect.ignore);
+
+    return repo;
+  });
+
+const init = Command.make('init', { path: Argument.String('path').pipe(Argument.optional), ...enrollFlags }, ({ path, ...flags }) =>
   Effect.gen(function* () {
     const root = yield* rootOf(path);
     const written = yield* scaffold(root);
@@ -390,81 +441,25 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
       }),
     );
 
-    yield* offerRepoint(root);
-    yield* Console.log('Next: commit .chernabog/, merge it to the base branch, then chernabog enroll and chernabog trust here.');
-  }),
-).pipe(Command.withDescription('Scaffold .chernabog/ in a repo with the default flows, and point a moved checkout\'s settings at it'));
+    // Enrolling would point a moved entry here after all, so a checkout that
+    // isn't the moved one enrolls only under a name of its own.
+    if ((yield* offerRepoint(root)) && Option.isNone(flags.name)) {
+      yield* Console.log('Not enrolled: to run this checkout alongside the one that moved, chernabog enroll --name <another name> here');
 
-// The flows to run on this machine: --flows when given, else asked in a
-// terminal, else none chosen, which leaves the entry's flows as they are.
-const chosenFlows = <E, R>(root: string, flag: Option.Option<string>, standing: Effect.Effect<ReadonlyArray<FlowStanding>, E, R>) =>
-  Effect.gen(function* () {
-    if (Option.isSome(flag)) {
-      const names = flag.value.split(',').map((name) => name.trim()).filter((name) => name.length > 0);
-      yield* checkFlowNames(root, names);
-
-      return Option.some(names);
+      return;
     }
 
-    const stdio = yield* Stdio.Stdio;
-    const choices = yield* standing;
+    const repo = yield* enrollHere(root, flags);
+    yield* Console.log(`Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repoNameOf(repo)}.`);
+  }),
+).pipe(Command.withDescription("Scaffold .chernabog/ in a repo with the default flows, enroll it on this machine, and point a moved checkout's settings at it"));
 
-    if (choices.length === 0 || !(yield* stdio.stdinIsTerminal) || !(yield* stdio.stdoutIsTerminal)) return Option.none<Array<string>>();
-
-    const picked = yield* Prompt.MultiSelect({
-      message: 'Which flows should run on this machine?',
-      choices: choices.map((choice) => ({ title: choice.name, value: choice.name, selected: choice.enabled, description: Option.getOrUndefined(choice.teamOff) })),
-    });
-
-    return Option.some(picked);
-  });
-
-const enrollCommand = Command.make(
-  'enroll',
-  {
-    path: Argument.String('path').pipe(Argument.optional),
-    account: Flag.String('account').pipe(Flag.withDescription('The account from machine config whose budget this repo spends'), Flag.optional),
-    name: Flag.String('name').pipe(Flag.withDescription('A short name, when two enrolled repos share one'), Flag.optional),
-    flows: Flag.String('flows').pipe(
-      Flag.withDescription("The flows to run on this machine, comma-separated; the rest are off. Asked in a terminal when left out; else a new repo gets the team's defaults"),
-      Flag.optional,
-    ),
-  },
-  ({ account, flows, name, path }) =>
-    Effect.gen(function* () {
-      const root = yield* rootOf(path);
-      const repo = yield* enrolmentOf(root, { account, name });
-      const machine = yield* loadMachineConfig;
-      const entry = yield* entryFor(machine.repos, repo);
-      const listed = Option.flatMap(entry, (found) => Option.map(Option.fromUndefinedOr(found.entry.flows), Object.keys));
-      // Looked up once, and only if the repo names runners.
-      const logins = yield* Cache.make({ capacity: 1, lookup: () => loginsFor(machine, Option.map(entry, (found) => found.entry)) });
-      const standings = yield* Cache.make({ capacity: 1, lookup: () => flowChoices(root, listed, Cache.get(logins, 'logins')) });
-      const standing = Cache.get(standings, 'flows');
-      const chosen = yield* chosenFlows(root, flows, standing);
-      const action = yield* enrollInMachineConfig(repo);
-
-      yield* Console.log(`${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? 'main'}) in ${yield* machineConfigFile}`);
-
-      // A repo whose entry lists no flows yet gets the team's defaults.
-      // A checkout without flows yet has nothing to choose from, so it waits for the next enroll.
-      const defaults = Effect.map(standing, (all) => Option.map(Option.liftPredicate(all, Arr.isReadonlyArrayNonEmpty), (found) => found.filter((flow) => flow.teamDefault).map((flow) => flow.name)));
-      const names = yield* Option.match(chosen, { onSome: Effect.succeedSome, onNone: () => Option.match(listed, { onNone: () => defaults, onSome: () => Effect.succeedNone }) });
-
-      for (const picked of Option.toArray(names)) {
-        const choices = yield* chooseFlows(root, repo, picked);
-
-        const listedAs = (enabled: boolean) =>
-          Option.getOrElse(Option.liftPredicate(choices.filter((choice) => choice.enabled === enabled).map((choice) => choice.name).join(', '), (text) => text.length > 0), () => 'none');
-
-        yield* Console.log(`flows on this machine: ${listedAs(true)}; off: ${listedAs(false)} (in machine config)`);
-      }
-
-      // A running daemon restarts to schedule the repo; none running is fine.
-      yield* daemonReload.pipe(Effect.ignore);
-      yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
-    }),
-).pipe(Command.withDescription("Add a repo to this machine's config, and choose which of its flows run here"));
+const enrollCommand = Command.make('enroll', { path: Argument.String('path').pipe(Argument.optional), ...enrollFlags }, ({ path, ...flags }) =>
+  Effect.gen(function* () {
+    const repo = yield* enrollHere(yield* rootOf(path), flags);
+    yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
+  }),
+).pipe(Command.withDescription("Add a repo to this machine's config: which personas work in it, which flows each runs, and which accounts they spend"));
 
 const unenroll = Command.make('unenroll', { repo: repoArgument }, ({ repo }) =>
   Effect.gen(function* () {
@@ -529,6 +524,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     trust,
     labels,
     doctorCommand,
+    setupCommand,
     init,
     enrollCommand,
     unenroll,
@@ -546,7 +542,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once.
-const AppLive = GitHubApi.layerFor(IMPLICIT).pipe(
+const AppLive = Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer).pipe(
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

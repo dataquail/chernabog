@@ -3,7 +3,7 @@ title: The daemon
 description: Scheduling, limits, the workflow engine and where it logs.
 ---
 
-One daemon per machine schedules every enrolled repo, runs the workflow engine, and serves the CLI over a local socket. `chernabog install` registers it as a launchd agent (macOS) or systemd user service (Linux) that restarts on exit.
+One daemon per machine schedules every enrolled repo, runs the workflow engine, and serves the CLI over a local socket. `chernabog install` runs [`chernabog setup`](/chernabog/start/installation/#set-up-the-machine), then registers it as a launchd agent (macOS) or systemd user service (Linux) that restarts on exit.
 
 ## Ticks
 

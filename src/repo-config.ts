@@ -165,6 +165,11 @@ export const LauncherFile = Schema.Struct({
 const PersonaChoices = {
   // The account from accounts: whose budget the persona's runs spend.
   account: Schema.optionalKey(Schema.String),
+  accounts: Schema.optionalKey(
+    Schema.Array(Schema.String).annotate({
+      description: "Other accounts from accounts: the persona's runs use, at most one per agent, for steps on another agent than its account's, such as a codex reviewer. Unset, each agent uses its first account.",
+    }),
+  ),
   agent: Schema.optionalKey(Schema.String.annotate({ description: "The adapter its agent steps run with, over the repo's agent and the account's." })),
   roles: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.String).annotate({
@@ -540,12 +545,23 @@ const findAccount = (machine: MachineConfig, name: string, failed: (message: str
     Effect.mapError(() => failed(`account "${name}" is not one of ${machine.accounts.map((known) => known.name).join(', ')}`)),
   );
 
-// Each role's account, by the agent it runs, and the role's adapter. Accounts
-// are chosen by agent, so a role's must run another agent than the persona's own.
-const roleAccounts = (machine: MachineConfig, own: PersonaEntry, account: MachineAccount, failed: (message: string) => ConfigError) =>
+// The persona's other accounts, and each role's, by the agent they run, and
+// each role's adapter. Accounts are chosen by agent, so each must run another
+// agent than the persona's own account, and no two the same one.
+const otherAccounts = (machine: MachineConfig, own: PersonaEntry, account: MachineAccount, failed: (message: string) => ConfigError) =>
   Effect.gen(function* () {
     const accounts: Record<string, Account> = {};
     const agents: Record<string, string> = {};
+
+    for (const name of own.accounts ?? []) {
+      const picked = yield* findAccount(machine, name, failed);
+
+      if (picked.agent === account.agent) return yield* failed(`accounts names ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); list only accounts of other agents`);
+
+      if (picked.agent in accounts) return yield* failed(`accounts names two ${picked.agent} accounts; list one per agent`);
+
+      accounts[picked.agent] = ownAccount(picked);
+    }
 
     for (const [role, name] of Object.entries(own.roles ?? {})) {
       const picked = yield* findAccount(machine, name, failed);
@@ -582,7 +598,7 @@ const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: Repo
     const ownFlows = Record.map(own.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
     const flows = mergeFlows([repoFlows, ownFlows], machine.concurrency);
     const agent = own.agent ?? repo.agent ?? account.agent;
-    const roles = yield* roleAccounts(machine, own, account, failed);
+    const roles = yield* otherAccounts(machine, own, account, failed);
     const agentAccounts = { ...accountsByAgent(machine, account), ...roles.accounts };
     const launcher = yield* resolveLauncher(machine, repoNameOf(enrolled), { repo, own });
 
@@ -786,9 +802,33 @@ export const setFlowInMachineConfig = (name: string, persona: Persona, flow: str
     }),
   );
 
-// Lists exactly these flows on a repo's entry, keeping the settings of the
-// ones it already lists. What enrolling chooses for every persona.
-export const setRepoFlows = (repo: EnrolledRepo, flows: ReadonlyArray<string>) =>
+// Lists exactly these flows at `path`, keeping the settings of the ones it
+// already lists there.
+const setFlowsAt = (document: YAML.Document, path: ReadonlyArray<string | number>, listed: ReadonlyArray<string>, flows: ReadonlyArray<string>) => {
+  for (const flow of listed.filter((known) => !flows.includes(known))) document.deleteIn([...path, flow]);
+
+  if (!document.hasIn(path)) document.setIn(path, document.createNode({}));
+
+  for (const flow of flows) {
+    if (listed.includes(flow)) document.deleteIn([...path, flow, 'enabled']);
+    else document.setIn([...path, flow], document.createNode({}));
+  }
+};
+
+// What enrolling chose for one persona of a repo.
+export type PersonaEnrolment = {
+  readonly persona: Persona;
+  readonly flows: ReadonlyArray<string>;
+  // Its account, when the machine has a choice of them.
+  readonly account: Option.Option<string>;
+  // Its accounts for other agents, where an agent has several.
+  readonly accounts: ReadonlyArray<string>;
+};
+
+// Writes what enrolling chose: on the repo's entry, which every persona
+// inherits, or, with `perPersona`, on each persona's own entry, dropping
+// personas no longer chosen. Flows already listed keep their settings.
+export const writeEnrolment = (repo: EnrolledRepo, chosen: ReadonlyArray<PersonaEnrolment>, perPersona: boolean) =>
   editMachineConfig((document, current) =>
     Effect.gen(function* () {
       const found = yield* entryFor(current.repos ?? [], repo);
@@ -796,15 +836,23 @@ export const setRepoFlows = (repo: EnrolledRepo, flows: ReadonlyArray<string>) =
       if (Option.isNone(found)) return yield* new ConfigError({ message: `${repo.repo} isn't enrolled; run chernabog enroll in it` });
 
       const { entry, index } = found.value;
-      const listed = Object.keys(entry.flows ?? {});
+      const logins = chosen.flatMap((one) => Option.toArray(one.persona));
 
-      for (const flow of listed.filter((known) => !flows.includes(known))) document.deleteIn(['repos', index, 'flows', flow]);
+      if (perPersona) for (const login of Object.keys(entry.personas ?? {}).filter((known) => !logins.includes(known))) document.deleteIn(['repos', index, 'personas', login]);
 
-      if (!document.hasIn(['repos', index, 'flows'])) document.setIn(['repos', index, 'flows'], document.createNode({}));
+      for (const one of chosen) {
+        const own = Option.filter(one.persona, () => perPersona);
+        const base = Option.match(own, { onNone: () => ['repos', index], onSome: (login) => ['repos', index, 'personas', login] });
+        const listed = Object.keys(Option.match(own, { onNone: () => entry, onSome: (login) => entry.personas?.[login] ?? {} }).flows ?? {});
 
-      for (const flow of flows) {
-        if (listed.includes(flow)) document.deleteIn(['repos', index, 'flows', flow, 'enabled']);
-        else document.setIn(['repos', index, 'flows', flow], document.createNode({}));
+        if (!document.hasIn(base)) document.setIn(base, document.createNode({}));
+
+        setFlowsAt(document, [...base, 'flows'], listed, one.flows);
+
+        for (const account of Option.toArray(one.account)) document.setIn([...base, 'account'], account);
+
+        if (one.accounts.length > 0) document.setIn([...base, 'accounts'], document.createNode(one.accounts));
+        else document.deleteIn([...base, 'accounts']);
       }
     }),
   );

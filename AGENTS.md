@@ -73,6 +73,21 @@ no longer read.
   ones that ran before plus `local.yaml`'s settings. It prints what it
   changed to stderr and leaves `local.yaml` for the person to delete.
 
+## Setup and enrollment (#51)
+
+`chernabog setup` (run by `install`) picks GitHub personas and AI accounts
+(`src/setup.ts`); `init` and `enroll` run the enrollment wizard
+(`src/enrollment.ts`): personas, then flows per persona, then accounts.
+
+- **Every question goes through `Asker`** (`src/ask.ts`): `pick`, `choose`,
+  `text`. `Asker.layer` prompts only when stdin and stdout are terminals;
+  `Asker.none` is no one to ask. Check `asker.interactive` before asking, and
+  fall back to the current choice, then the default, or fail naming the flag.
+- **Every interactive choice has a flag** (`--persona`, `--account`, `--flows`,
+  `--defaults`), and a question with one possible answer isn't asked.
+- **Tests answer with `scripted(answers)`** (`test/asker.ts`), which also
+  records what was `asked`, rather than driving a TTY.
+
 ## Effect and lint
 
 `bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the
