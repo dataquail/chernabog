@@ -90,6 +90,25 @@ no longer read.
 - **Tests answer with `scripted(answers)`** (`test/asker.ts`), which also
   records what was `asked`, rather than driving a TTY.
 
+## Recipes (#67)
+
+`chernabog init` scaffolds no flows. A **recipe** is a complete flow a person
+chooses to bake into their repo (`init --recipes`, `chernabog recipes add`);
+after that the file is theirs, and chernabog never rewrites it.
+
+- Recipe sources are `templates/recipes/` (flows and the prompts they render),
+  listed with a description in `src/recipes.ts`; the base scaffold is
+  `templates/.chernabog/`. Run `bun scripts/gen-templates.ts` after changing
+  either.
+- A recipe is written out from SDK **blocks**, trigger included. It never calls
+  a whole-workflow export (`Review.workflow` and the like) or an SDK trigger,
+  so its policy is in the repo's file. Add a block to the SDK rather than
+  hiding a decision in one.
+- **Activity names are journal keys**: a run in flight resumes by them. Keep a
+  recipe's step names when you change it, and never rename one in a block.
+- Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
+  which its description links to.
+
 ## Effect and lint
 
 `bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the

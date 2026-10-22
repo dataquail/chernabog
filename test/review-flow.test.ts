@@ -2,17 +2,17 @@
 // in-memory GitHub: who they pick up, the reviews they post, and where each
 // ending leaves the pull request.
 
-import { DEFAULT_LABELS, Review, reviewMarker, type WorkItem } from '@chernabog/sdk';
+import { DEFAULT_LABELS, type Flow, reviewMarker } from '@chernabog/sdk';
 import { describe, expect } from 'bun:test';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 
 import { flowHandle } from '../src/engine.ts';
-import addressReview from '../templates/.chernabog/flows/address-review.ts';
-import reReview from '../templates/.chernabog/flows/re-review.ts';
-import review from '../templates/.chernabog/flows/review.ts';
+import addressReview from '../templates/recipes/flows/address-review.ts';
+import reReview from '../templates/recipes/flows/re-review.ts';
+import review from '../templates/recipes/flows/review.ts';
 import { effect } from './effect-test.ts';
-import { type Fake, HEAD, item, makeFake, PULL, repo, runToEnd, summaryOf, triggered, type Verdict } from './sdk-fakes.ts';
+import { type Fake, flowTriggered, HEAD, item, makeFake, PULL, repo, runToEnd, summaryOf, type Verdict } from './sdk-fakes.ts';
 
 const reviewing = flowHandle(repo, 'review', review);
 const reReviewing = flowHandle(repo, 're-review', reReview);
@@ -34,17 +34,17 @@ const askAgain = (fake: Fake) => {
   fake.people.requested = ['data-quail'];
 };
 
-const keys = <E, R>(fake: Fake, trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) => Effect.map(triggered(fake, trigger), (items) => items.map((found) => found.key));
+const keys = (fake: Fake, flow: Flow) => Effect.map(flowTriggered(fake, flow), (items) => items.map((found) => found.key));
 
 describe('review', () => {
   effect('picks up a pull request whose review is requested of this persona, until it has reviewed it', () =>
     Effect.gen(function* () {
       const fake = asked(['approve']);
-      expect(yield* keys(fake, Review.trigger)).toEqual([`pr-${PULL}`]);
-      expect(yield* keys(fake, Review.reReviewTrigger)).toEqual([]);
+      expect(yield* keys(fake, review)).toEqual([`pr-${PULL}`]);
+      expect(yield* keys(fake, reReview)).toEqual([]);
 
       fake.people.me = 'zach';
-      expect(yield* keys(fake, Review.trigger)).toEqual([]);
+      expect(yield* keys(fake, review)).toEqual([]);
     }),
   );
 
@@ -108,11 +108,11 @@ describe('re-review', () => {
   effect('picks up a pull request this persona reviewed and is asked about again, unless a person has it', () =>
     Effect.gen(function* () {
       const fake = yield* reviewedOnce(['approve']);
-      expect(yield* keys(fake, Review.reReviewTrigger)).toEqual([`pr-${PULL}-review-2`]);
-      expect(yield* keys(fake, Review.trigger)).toEqual([]);
+      expect(yield* keys(fake, reReview)).toEqual([`pr-${PULL}-review-2`]);
+      expect(yield* keys(fake, review)).toEqual([]);
 
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
-      expect(yield* keys(fake, Review.reReviewTrigger)).toEqual([]);
+      expect(yield* keys(fake, reReview)).toEqual([]);
     }),
   );
 
@@ -171,22 +171,22 @@ describe('address-review', () => {
   effect("picks up its own pull request with changes asked on the head, until it's pushed, approved or a person has it", () =>
     Effect.gen(function* () {
       const fake = changesAsked();
-      expect(yield* keys(fake, Review.addressTrigger)).toEqual([`pr-${PULL}-changes-1`]);
+      expect(yield* keys(fake, addressReview)).toEqual([`pr-${PULL}-changes-1`]);
 
       fake.people.me = 'zach';
-      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      expect(yield* keys(fake, addressReview)).toEqual([]);
       fake.people.me = 'chernabog-bot';
 
       fake.git.head = 'fix20000000';
-      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      expect(yield* keys(fake, addressReview)).toEqual([]);
       fake.git.head = HEAD;
 
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
-      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      expect(yield* keys(fake, addressReview)).toEqual([]);
       fake.setLabels(PULL, []);
 
       fake.submitted.push({ author: 'data-quail', state: 'APPROVED', commitSha: HEAD });
-      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      expect(yield* keys(fake, addressReview)).toEqual([]);
     }),
   );
 

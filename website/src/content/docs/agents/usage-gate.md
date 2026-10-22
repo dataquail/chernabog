@@ -3,7 +3,7 @@ title: The usage gate
 description: How Chernabog decides an account has room for one more task.
 ---
 
-Before `implement` or `address-review` starts a run, its gate (`Implement.gate`) checks the account, then the usage gate reads current usage and decides whether one more task fits. `review` and `re-review` have no gate, and neither does a [`human-initiated`](/chernabog/work/flows/#human-initiated) flow like chernabog's, since a person starts each of its runs. Every refusal is recorded as the tick's skip reason.
+Before `implement` or `address-review` starts a run, its gate (`Implement.gate`) checks the account, then the usage gate reads current usage and decides whether one more task fits. `review` and `re-review` have no gate, and neither does a [`human-initiated`](/chernabog/recipes/human-initiated/) flow, since a person starts each of its runs. Every refusal is recorded as the tick's skip reason.
 
 | Agent      | Usage comes from                                              |
 | ---------- | ------------------------------------------------------------- |

@@ -297,13 +297,14 @@ describe('config layers', () => {
 
 describe('init', () => {
   effect(
-    'scaffolds .chernabog/ without overwriting',
+    'scaffolds .chernabog/ without flows, which come from recipes, and without overwriting',
     () => Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-init-' });
       yield* fs.writeFileString(`${repo}/.gitignore`, 'node_modules/');
       const first = yield* scaffold(repo);
-      expect(first).toContain('.chernabog/flows/implement.ts');
+      expect(first).toContain('.chernabog/config.yaml');
+      expect(first.filter((path) => path.startsWith('.chernabog/flows/') || path.startsWith('.chernabog/prompts/'))).toEqual([]);
       expect(yield* fs.exists(`${repo}/.chernabog/config.schema.json`)).toBe(true);
       yield* fs.writeFileString(`${repo}/.chernabog/config.yaml`, 'baseBranch: develop\n');
       expect(yield* scaffold(repo)).toEqual([]);

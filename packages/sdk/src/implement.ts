@@ -1,4 +1,4 @@
-// The building blocks of the default `implement` flow: find a queued issue,
+// The building blocks of the `implement` recipe: find a queued issue,
 // claim it, prepare a worktree, let the agent implement it, run the local gate,
 // open the pull request, wait for CI and hand off for review. Each block is an
 // activity, so a flow can reorder them, leave one out, or put its own step

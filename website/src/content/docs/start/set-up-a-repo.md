@@ -1,12 +1,12 @@
 ---
 title: Set up a repo
-description: Scaffold .chernabog/, enroll the repo on your machine, and trust it.
+description: Scaffold .chernabog/, bake the recipes you choose, enroll the repo on your machine, and trust it.
 ---
 
 ```bash
 chernabog install                   # once per machine: personas, accounts and the daemon; see Installation
 cd ~/code/my-app
-chernabog init                      # scaffold .chernabog/ with the default flows, and enroll the repo
+chernabog init                      # scaffold .chernabog/, bake the recipes you pick, and enroll the repo
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
 chernabog trust my-app              # approve the base branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
@@ -16,15 +16,21 @@ chernabog doctor                    # check logins, gh scopes, labels, trust and
 | Step     | Writes                                                                                 |
 | -------- | -------------------------------------------------------------------------------------- |
 | `install`| [machine config](/chernabog/start/installation/#set-up-the-machine)'s personas and accounts, and a launchd agent or systemd user unit running `chernabog daemon` |
-| `init`   | `.chernabog/` (config, flows, prompts, stages, schema, `package.json`), a `.gitignore` entry for its `node_modules/`, and the repo's entry in `~/.config/chernabog/config.yaml` |
+| `init`   | `.chernabog/` (config, stages, schema, `package.json`), the flows and prompts of the [recipes](/chernabog/recipes/) you pick, a `.gitignore` entry for its `node_modules/`, and the repo's entry in `~/.config/chernabog/config.yaml` |
 | `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
 | `labels` | the ten [labels](/chernabog/work/flows/#labels) on GitHub                              |
 
-Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `chernabog enroll` enrolls a repo without scaffolding, such as one a teammate already set up, and choosing again is running it again.
+Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file, and offers only the recipes the repo doesn't have yet. `chernabog enroll` enrolls a repo without scaffolding, such as one a teammate already set up, and choosing again is running it again.
+
+## Choose recipes
+
+After scaffolding, `init` lists the [recipes](/chernabog/recipes/), each with a short description and a link to its page, and bakes the ones you pick into `.chernabog/flows/`. None is picked to begin with, and none is installed unless you choose it. The four that make [the review loop](/chernabog/work/flows/) are `implement`, `review`, `re-review` and `address-review`; `human-initiated` is the hybrid path. `--recipes a,b` chooses without asking; piped and without it, `init` bakes none.
+
+`chernabog recipes add <name>` bakes one later, and `chernabog recipes list` shows which the repo has. A baked recipe is the repo's code from then on.
 
 ## Enroll
 
-After scaffolding, `init` enrolls the repo on this machine, as `enroll` does. It asks only what it has to, in three steps:
+After baking, `init` enrolls the repo on this machine, as `enroll` does, once `.chernabog/flows/` has a flow; with none, it says so and enrolls nothing. It asks only what it has to, in three steps:
 
 1. **Personas.** With one [GitHub persona](/chernabog/reference/configuration/#github-personas) in machine config, or none, there's no question. With several, you pick which ones work in this repo.
 2. **Flows, for each chosen persona,** even when there's only one. The first question offers "Accept the defaults", so enter takes them; then "Keep the current ones" when you're re-enrolling and they differ; then "Choose flows", a checklist prefilled with the current flows or the defaults. The defaults are the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose [runners](/chernabog/reference/configuration/#runners) include that persona's login. A flow that runs an agent machine config has no account for (its `flows.<flow>.agent`, its role agents in `flows.<flow>.agents`, or the repo's `agent`) is listed but can't be picked, and says why: `needs codex; add an account for each with chernabog setup`.

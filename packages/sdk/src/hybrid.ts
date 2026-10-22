@@ -1,5 +1,5 @@
-// The building blocks of the hybrid path, for a flow a repo writes itself;
-// this repo's is .chernabog/flows/human-initiated.ts. A person hands
+// The building blocks of the hybrid path, which chernabog's human-initiated
+// recipe composes. A person hands
 // chernabog an issue with `chernabog start`, and plans and implements it with
 // the agent in an interactive session in front of them (workWithPerson).
 // `chernabog open-pr`, run from that session, ends it; the flow then runs the

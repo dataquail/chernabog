@@ -168,23 +168,25 @@ export const handToPerson = (pullRequest: number, reason: string) =>
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
 
+// Whether chernabog may merge the pull request, as `ships` decides it,
+// read once in an activity so a replay decides the same.
+export const shipping = (pullRequest: number) =>
+  activity(
+    `ships-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const repo = yield* Repo;
+
+      return ships(yield* (yield* GitHub).pullRequest(pullRequest), repo.labels);
+    }),
+    Schema.Boolean,
+  );
+
 // After an approval: on the automated path, merges the pull request when that
 // is safe, and otherwise hands it to a person; any other pull request is left
 // for a person to merge.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
-    const shipping = yield* activity(
-      `ships-pr-${pullRequest}`,
-      Effect.gen(function* () {
-        const repo = yield* Repo;
-
-        return ships(yield* (yield* GitHub).pullRequest(pullRequest), repo.labels);
-      }),
-      Schema.Boolean,
-    );
-
-    if (!shipping) return `#${pullRequest} approved; a person merges`;
+    if (!(yield* shipping(pullRequest))) return `#${pullRequest} approved; a person merges`;
 
     return yield* merge(pullRequest, { method: 'squash' }).pipe(Effect.catchTag('NeedsHuman', (refused) => handToPerson(pullRequest, refused.reason)));
   });
-

@@ -67,6 +67,17 @@ export default defineConfig({
           items: [{ slug: "work/flows" }, { slug: "work/live-view" }, { slug: "work/commands" }],
         },
         {
+          label: "Recipes",
+          items: [
+            { slug: "recipes" },
+            { slug: "recipes/implement" },
+            { slug: "recipes/review" },
+            { slug: "recipes/re-review" },
+            { slug: "recipes/address-review" },
+            { slug: "recipes/human-initiated" },
+          ],
+        },
+        {
           label: "Agents",
           items: [
             { slug: "agents/adapters" },

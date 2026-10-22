@@ -16,12 +16,12 @@ import { type AttachCommand, liveAttach, runSessions } from './agents.ts';
 import { daemonRun, daemonRunRow, daemonStatus } from './client.ts';
 import { ConfigError } from './config.ts';
 import { HostEnvironment } from './platform/environment.ts';
+import { RECIPES_DOCS } from './recipes.ts';
 import { findEnrolled, loadMachineConfig, repoNameOf } from './repo-config.ts';
 import { shortRunId } from './state.ts';
 
 export const START_FLOW = 'human-initiated';
 
-const HYBRID_DOCS = 'https://dataquail.github.io/chernabog/work/flows/#the-hybrid-path';
 
 // How long the session has to open before the command leaves it to `chernabog attach`.
 const OPENING_POLLS = 120;
@@ -99,7 +99,7 @@ export const startIssue = (issue: number, named: Option.Option<string>, persona:
       Effect.catchIf(Predicate.isTagged('DaemonUnavailable'), (unavailable) => Effect.fail(new ConfigError({ message: `${unavailable.message}; the hybrid path runs through it` }))),
       Effect.catchIf(
         (error) => Predicate.isTagged(error, 'DaemonRefused') && error.message.includes(`no flow named ${START_FLOW}`),
-        () => Effect.fail(new ConfigError({ message: `${repo} has no ${START_FLOW} flow in .chernabog/flows/; the hybrid path needs one: ${HYBRID_DOCS}` })),
+        () => Effect.fail(new ConfigError({ message: `${repo} has no ${START_FLOW} flow in .chernabog/flows/; the hybrid path needs one. chernabog recipes add ${START_FLOW} bakes it: ${RECIPES_DOCS}${START_FLOW}/` })),
       ),
     );
 

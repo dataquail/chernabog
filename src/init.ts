@@ -1,6 +1,6 @@
-// `chernabog init` scaffolds .chernabog/ in a repo, with the default flows
-// built from today's logic; `chernabog enroll` adds the repo to this
-// machine's config.
+// `chernabog init` scaffolds .chernabog/ in a repo: its config, schema and
+// pins, and no flows, which come from the recipes a person picks
+// (src/recipes.ts); `chernabog enroll` adds the repo to this machine's config.
 
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
@@ -28,7 +28,7 @@ export const schemaFiles = () => ({
   'config.schema.json': jsonSchemaOf(RepoConfigFile),
 });
 
-// Every file init writes, by path under .chernabog/.
+// Every file init writes, by path under .chernabog/, before any recipe.
 export const scaffoldFiles = () => ({ ...TEMPLATES, ...schemaFiles(), 'package.json': flowPackageText() });
 
 export const machineSchema = () => jsonSchemaOf(MachineConfigFile);
