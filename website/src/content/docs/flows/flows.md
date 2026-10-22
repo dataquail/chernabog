@@ -61,9 +61,9 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 - `Implement.trigger` queues issues labelled `auto:eligible`, then `auto:ship`; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
 - `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
 - `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
-- `Review.trigger` and `Review.workflow` make `review`; `Review.reReviewTrigger` and `Review.reReviewWorkflow` make `re-review`; `Review.fixTrigger` and `Review.fixWorkflow` make `fix`.
+- `Review.trigger` and `Review.workflow` make `review`; `Review.reReviewTrigger` and `Review.reReviewWorkflow` make `re-review`; `Review.addressTrigger` and `Review.addressWorkflow` make `address-review`.
 - `PullRequest.mergeOrLeave(pr)` is the one merge on the automated path: it merges a pull request that `PullRequest.ships` (it carries `auto:ship`), and leaves any other for a person. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
-- `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `fix` flows leave it alone.
+- `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
@@ -72,7 +72,7 @@ See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each
 | `trigger`, `triggerFor`, `queuedBy`, `gate` | `trigger`, `workflow` | `PullRequest.requestReview`, `ships` |
 | `issueOf`, `claim`   | `reReviewTrigger`, `reReviewWorkflow` | `PullRequest.merge`, `mergeOrLeave`, `handToPerson` |
 | `prepareWorktree`    | `round`, `recheck`           | `PullRequest.comment`, `Issue.comment` |
-| `implementWithAgent`, `askForClarification` | `fixTrigger`, `fixWorkflow` | `PullRequest.own`, `release`, `owning` |
+| `implementWithAgent`, `askForClarification` | `addressTrigger`, `addressWorkflow` | `PullRequest.own`, `release`, `owning` |
 | `localGate`, `push`  |                              |                          |
 | `openPullRequest`, `waitForCi` |                    |                          |
 | `considerFindings`, `addressFindings` |             |                          |
@@ -86,7 +86,7 @@ A flow that answers its own reviews resumes sessions instead of starting new one
 
 - `Review.recheck(pr, review)` resumes the reviewer's session from `review` with the change since the head it saw, and posts the next review. It returns the same verdict as `Review.round`, plus `findings`: each earlier finding, with whether it was `remediated`. It counts as the next round, so `review-2` after `review-1`. The default `re-review` flow is built on it.
 - `Implement.considerFindings(pr, review, session)` resumes the author's session with the review and returns `{ status: "address" | "decline", reasons }`. It changes nothing.
-- `Implement.addressFindings(pr, review, session)` resumes the same session to make the changes and commit, and returns the answer `fixWithAgent` does. The flow then runs `localGate`, `push` and `waitForCi` as usual.
+- `Implement.addressFindings(pr, review, session)` resumes the same session to make the changes and commit, and returns the answer `fixWithAgent` does. The flow then runs `localGate`, `push` and `waitForCi` as usual. The default `address-review` flow is built on these two.
 - `PullRequest.comment(pr, body)` and `Issue.comment(issue, body)` post a comment and do nothing else. A run posts each distinct comment on an item once.
 
 Each of these has its own prompt, `recheck`, `consider` and `address`. The SDK carries a default for each, and a repo overrides one with `.chernabog/prompts/<name>.md`.

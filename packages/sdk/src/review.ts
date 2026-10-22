@@ -4,10 +4,10 @@
 // as a persona whose review is requested on a pull request it hasn't reviewed,
 // and `re-review` as one asked again, resuming its own review session. On the
 // automated path (auto:ship), the approving reviewer merges, when that's safe.
-// The `fix` flow is the author, for pull requests an agent wrote: it resumes
-// the session that implemented them, addresses the review, pushes, and asks
-// the reviewer again.
+// `address-review` is the author's side: it answers a review that asks for
+// changes in the session that wrote the code, and asks the reviewer again.
 
+import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
@@ -15,7 +15,7 @@ import * as Schema from 'effect/Schema';
 import { RECHECK } from './default-prompts.ts';
 import { NeedsHuman, StepFailed } from './errors.ts';
 import { activity } from './flow.ts';
-import { fixWithAgent, push, sessionIdFor, waitForCi } from './implement.ts';
+import { addressFindings, considerFindings, localGate, push, sessionIdFor, waitForCi } from './implement.ts';
 import type { Json } from './json.ts';
 import { latestMarker, type ReviewMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
 import { renderPrompt, renderPromptOr } from './prompt.ts';
@@ -32,17 +32,12 @@ export const ReviewItem = Schema.Struct({ pullRequest: Schema.Finite, headRef: S
 
 export type ReviewItem = typeof ReviewItem.Type;
 
-export const FixItem = Schema.Struct({ ...ReviewItem.fields, round: Schema.Finite, reviewedSha: Schema.String });
-
-export type FixItem = typeof FixItem.Type;
-
 const itemData =
   <A>(schema: Schema.Codec<A, Json>) =>
   (item: WorkItem) =>
     Schema.decodeEffect(schema)(item.data).pipe(Effect.mapError((issue) => new StepFailed({ step: 'work item', message: `${item.key}: ${issue.message}` })));
 
 export const pullRequestOf = itemData(ReviewItem);
-const fixItemOf = itemData(FixItem);
 
 const reviewItem = (pull: PullRequest, key: string): WorkItem => ({
   key,
@@ -301,26 +296,10 @@ export const doneReviewing = (pullRequest: number) =>
     Worktree.use((worktree) => worktree.remove(`review-pr-${pullRequest}`)),
   );
 
-// Changes requested on a first review: the author answers. Until address-review
-// (#54) answers GitHub's review itself, `fix` finds such pull requests by the
-// changes-requested label.
-const changesRequested = (pullRequest: number, round: number) =>
-  activity(
-    `changes-requested-${round}`,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.removeLabel(pullRequest, repo.labels.needsReview);
-      yield* github.addLabel(pullRequest, repo.labels.changesRequested);
-
-      return `#${pullRequest}: review ${round} requested changes`;
-    }),
-    Schema.String,
-  );
-
 // `review`: reviews the pull request as the persona whose review is
 // requested, in a fresh session of the reviewer role. An approval on the
-// automated path merges; a request for changes goes to the author.
+// automated path merges; a request for changes goes to the author's
+// address-review.
 export const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
     const { pullRequest } = yield* pullRequestOf(item);
@@ -329,7 +308,7 @@ export const workflow = (item: WorkItem) =>
 
     if (review.verdict === 'approve') return yield* PullRequestSteps.mergeOrLeave(pullRequest);
 
-    return yield* changesRequested(pullRequest, 1);
+    return `#${pullRequest}: review 1 requested changes`;
   });
 
 // This persona's latest review of the pull request, as its marker recorded it, to resume.
@@ -387,40 +366,32 @@ export const reReviewWorkflow = (item: WorkItem) =>
   });
 
 
-// Moves a pull request from some labels to another, saying why when there is something to say.
-type Relabel = { readonly remove: ReadonlyArray<string>; readonly add: string; readonly comment: Option.Option<string> };
-
-const relabel = (name: string, pullRequest: number, change: Relabel) =>
-  activity(
-    name,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-
-      for (const label of change.remove) yield* github.removeLabel(pullRequest, label);
-
-      yield* github.addLabel(pullRequest, change.add);
-
-      if (Option.isSome(change.comment)) yield* github.comment(pullRequest, change.comment.value);
-    }),
-  );
-
-// The fix flow's work items: agent-written pull requests with changes requested
-// and no push since, one per review that asked, unless another flow's run owns one.
-export const fixTrigger = Effect.gen(function* () {
+// address-review's work items: pull requests this persona wrote whose latest
+// review requests changes on the current head, so nothing was pushed since,
+// unless a person has them (needs-human) or another flow's run owns them.
+export const addressTrigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
+  const me = yield* github.login;
   const items: Array<WorkItem> = [];
 
-  for (const pull of yield* github.pullRequestsLabelled(repo.labels.changesRequested)) {
-    const bodies = yield* commentBodies(pull);
-    const reviewed = latestMarker(reviewMarker.read, bodies);
+  for (const pull of yield* github.openPullRequests) {
+    if (!sameLogin(pull.author, me) || pull.labels.includes(repo.labels.needsHuman)) continue;
 
-    if (isAgentBranch(pull.headRef) && Option.isSome(reviewed) && reviewed.value.sha === pull.headSha && !(yield* ownedByARun(bodies))) {
+    const decisive = (yield* github.reviews(pull.number)).filter((review) => review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED');
+    const latest = Arr.last(decisive);
+
+    if (!Option.exists(latest, (review) => review.state === 'CHANGES_REQUESTED' && review.commitSha === pull.headSha)) continue;
+
+    if (yield* ownedByARun(yield* commentBodies(pull))) continue;
+
+    for (const review of Option.toArray(latest)) {
       items.push({
-        key: `pr-${pull.number}-review-${reviewed.value.round}`,
+        key: `pr-${pull.number}-changes-${decisive.length}`,
         title: pull.title,
         url: pull.url,
-        data: { pullRequest: pull.number, headRef: pull.headRef, agentWritten: true, round: reviewed.value.round, reviewedSha: reviewed.value.sha },
+        data: { pullRequest: pull.number, headRef: pull.headRef, agentWritten: isAgentBranch(pull.headRef), reviewer: review.author, reviewedSha: review.commitSha },
+        assignees: pull.assignees,
       });
     }
   }
@@ -428,25 +399,11 @@ export const fixTrigger = Effect.gen(function* () {
   return items;
 });
 
-// Asks the reviewer who requested the changes to review again, which starts
-// re-review; needs-review for a person, when the review doesn't say who.
-const handBack = (fix: FixItem, summary: string) =>
-  activity(
-    'hand-back',
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      const repo = yield* Repo;
-      const bodies = (yield* github.comments(fix.pullRequest)).map((comment) => comment.body);
-      const reviewer = Option.flatMap(latestMarker(reviewMarker.read, bodies), (marker) => Option.fromUndefinedOr(marker.reviewer));
-      yield* github.removeLabel(fix.pullRequest, repo.labels.changesRequested);
-      yield* github.comment(fix.pullRequest, `Addressed review ${fix.round}: ${summary}`);
+export const AddressItem = Schema.Struct({ ...ReviewItem.fields, reviewer: Schema.String, reviewedSha: Schema.String });
 
-      yield* Option.match(reviewer, {
-        onNone: () => github.addLabel(fix.pullRequest, repo.labels.needsReview),
-        onSome: (login) => github.requestReviewers(fix.pullRequest, [login]),
-      });
-    }),
-  );
+export type AddressItem = typeof AddressItem.Type;
+
+const addressItemOf = itemData(AddressItem);
 
 // The author's session, from the marker the implement run left; a fresh one if there is none.
 const authorSession = (pullRequest: number) =>
@@ -462,12 +419,12 @@ const authorSession = (pullRequest: number) =>
         (yield* github.comments(pullRequest)).map((comment) => comment.body),
       );
 
-      return Option.getOrElse(found, () => ({ adapter: repo.agent, sessionId: sessionIdFor(run.runId, 'fix'), issue: 0, branch: '' }));
+      return Option.getOrElse(found, () => ({ adapter: repo.agent, sessionId: sessionIdFor(run.runId, 'address-review'), issue: 0, branch: '' }));
     }),
     SessionMarker,
   );
 
-const prepareFix = (headRef: string) =>
+const prepareWorktree = (headRef: string) =>
   activity(
     'prepare-worktree',
     Effect.gen(function* () {
@@ -485,65 +442,85 @@ const describeReviewLine = (note: ReviewNote) =>
     onSome: (location) => `${location.path}:${location.line}: ${withoutMarkers(note.body)}`,
   });
 
-const readReview = (fix: FixItem) =>
+// The review that asks for changes, as the author considers it: its round,
+// from the reviewer's marker, and what the reviewer said.
+const changesAsked = (address: AddressItem) =>
   activity(
     'read-review',
     Effect.gen(function* () {
-      const notes = (yield* (yield* GitHub).reviewComments(fix.pullRequest)).filter((note) => note.trusted);
+      const github = yield* GitHub;
+      const bodies = (yield* github.comments(address.pullRequest)).map((comment) => comment.body);
+      const marker = latestMarker((body) => Option.filter(reviewMarker.read(body), (found) => found.sha === address.reviewedSha), bodies);
+      const notes = (yield* github.reviewComments(address.pullRequest)).filter((note) => note.trusted && sameLogin(note.author, address.reviewer));
+      const round = Option.getOrElse(Option.map(marker, (found) => found.round), () => 1);
 
-      return yield* renderPrompt('fix', { pullRequest: fix.pullRequest, round: fix.round, review: notes.map(describeReviewLine) });
+      return { verdict: 'request-changes' as const, sha: address.reviewedSha, round, summary: notes.map(describeReviewLine).join('\n\n') };
     }),
-    Schema.String,
+    ReviewResult,
   );
 
-const checkChanged = (fix: FixItem, worktree: string) =>
+const checkChanged = (pullRequest: number, round: number, reviewedSha: string, worktree: string) =>
   activity(
-    'check-changed',
+    `check-changed-${round}`,
     Effect.gen(function* () {
-      if ((yield* (yield* Git).headSha(worktree)) === fix.reviewedSha) {
-        return yield* new NeedsHuman({ reason: `#${fix.pullRequest}: the author agent committed nothing in answer to review ${fix.round}` });
+      if ((yield* (yield* Git).headSha(worktree)) === reviewedSha) {
+        return yield* new NeedsHuman({ reason: `#${pullRequest}: the author agent committed nothing in answer to review ${round}` });
       }
     }),
   );
 
-const fixPullRequest = (fix: FixItem) =>
-  Effect.gen(function* () {
-    const author = yield* authorSession(fix.pullRequest);
-    const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter) };
-    const worktree = yield* prepareFix(fix.headRef);
-    const prompt = yield* readReview(fix);
-    const outcome = yield* fixWithAgent(`address-review-${fix.round}`, worktree, prompt, session);
+// Asks the reviewer who requested the changes to review again, which starts
+// their re-review.
+const askAgain = (pullRequest: number, round: number, reviewer: string, summary: string) =>
+  activity(
+    `ask-again-${round}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      yield* github.comment(pullRequest, `Addressed review ${round}: ${summary}`);
+      yield* github.requestReviewers(pullRequest, [reviewer]);
+    }),
+  );
 
-    if (outcome.status === 'needs-clarification') {
-      return yield* new NeedsHuman({ reason: `the author agent needs a person to answer review ${fix.round}:\n\n${outcome.questions ?? outcome.summary}` });
+const answerReview = (address: AddressItem) =>
+  Effect.gen(function* () {
+    const review = yield* changesAsked(address);
+    const round = review.round ?? 1;
+    const author = yield* authorSession(address.pullRequest);
+    const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter) };
+    const worktree = yield* prepareWorktree(address.headRef);
+    const decision = yield* considerFindings(address.pullRequest, review, session);
+
+    // A dispute is a person's to settle: it never pushes, nor asks the reviewer again.
+    if (decision.status === 'decline') {
+      yield* PullRequestSteps.comment(address.pullRequest, `Not addressing review ${round}:\n\n${decision.reasons}`);
+
+      return yield* new NeedsHuman({ reason: `the author disputes review ${round}; see its reasons above` });
     }
 
-    yield* checkChanged(fix, worktree);
-    yield* push(`push-fix-${fix.round}`, worktree, fix.headRef);
-    yield* waitForCi(fix.pullRequest, worktree, { ...session, branch: fix.headRef });
-    yield* handBack(fix, outcome.summary);
+    const outcome = yield* addressFindings(address.pullRequest, review, session);
 
-    return `#${fix.pullRequest}: addressed review ${fix.round}`;
+    if (outcome.status === 'needs-clarification') return yield* new NeedsHuman({ reason: `the author agent needs a person to answer review ${round}:\n\n${outcome.questions ?? outcome.summary}` });
+
+    yield* checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
+    yield* localGate(worktree, { id: `review-${round}` });
+    yield* push(`push-review-${round}`, worktree, address.headRef);
+    yield* waitForCi(address.pullRequest, worktree, { ...session, branch: address.headRef }, { id: `review-${round}` });
+    yield* askAgain(address.pullRequest, round, address.reviewer, outcome.summary);
+
+    return `#${address.pullRequest}: addressed review ${round}; asked ${address.reviewer} to review again`;
   });
 
-// Resumes the author's session with the review, pushes the fix once CI is
-// green, and hands the pull request back for another review.
-export const fixWorkflow = (item: WorkItem) =>
+// `address-review`: the author's answer to a review that asks for changes,
+// in the session that wrote the code. It considers the findings first: a
+// dispute is posted with its reasons and handed to a person; otherwise it
+// makes the changes, runs the local gate, pushes, waits for CI and asks the
+// reviewer again. Anything that stops it hands the pull request to a person.
+export const addressWorkflow = (item: WorkItem) =>
   Effect.gen(function* () {
-    const fix = yield* fixItemOf(item);
+    const address = yield* addressItemOf(item);
 
-    return yield* fixPullRequest(fix).pipe(
-      Effect.catchTag('NeedsHuman', (needsHuman) =>
-        Effect.gen(function* () {
-          const repo = yield* Repo;
-          yield* relabel('needs-human', fix.pullRequest, {
-            remove: [repo.labels.changesRequested],
-            add: repo.labels.needsHuman,
-            comment: Option.some(`Chernabog stopped and needs a person: ${needsHuman.reason}`),
-          });
-
-          return yield* needsHuman;
-        }),
-      ),
+    return yield* answerReview(address).pipe(
+      Effect.catchTag('NeedsHuman', (needsHuman) => PullRequestSteps.handToPerson(address.pullRequest, needsHuman.reason)),
+      Effect.catchTag('StepFailed', (failed) => PullRequestSteps.handToPerson(address.pullRequest, `${failed.step}: ${failed.message}`)),
     );
   });

@@ -48,14 +48,23 @@ if (hang && existsSync(hang)) {
 const hold = process.env.FAKE_CLAUDE_HOLD;
 while (hold && existsSync(hold)) await Bun.sleep(100);
 
-const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
-writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
-execFileSync('git', ['add', '.'], { cwd });
-execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count}`], { cwd });
+// Asked whether to address a review, it decides without touching the code:
+// address it, or $FAKE_CLAUDE_CONSIDER (decline).
+const considering = prompt.includes('decide whether to address the review');
 
-const answer = process.env.FAKE_CLAUDE_ANSWER
-  ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
-  : { status: 'done', summary: 'Added a change file and a test.', title: 'feat: do the thing', body: 'Adds the thing.' };
+if (!considering) {
+  const count = Number(execFileSync('git', ['rev-list', '--count', 'HEAD'], { cwd, encoding: 'utf8' }).trim());
+  writeFileSync(join(cwd, `change-${count}.txt`), `change ${count}\n`);
+  execFileSync('git', ['add', '.'], { cwd });
+  execFileSync('git', ['-c', 'user.name=Fake', '-c', 'user.email=fake@example.com', 'commit', '-m', `feat: change ${count}`], { cwd });
+}
+
+const considered = { status: process.env.FAKE_CLAUDE_CONSIDER ?? 'address', reasons: 'The review is right; the README should mention it.' };
+const answer = considering
+  ? considered
+  : process.env.FAKE_CLAUDE_ANSWER
+    ? JSON.parse(process.env.FAKE_CLAUDE_ANSWER)
+    : { status: 'done', summary: 'Added a change file and a test.', title: 'feat: do the thing', body: 'Adds the thing.' };
 const working = { type: 'assistant', message: { content: [{ type: 'text', text: 'Working on it.' }, { type: 'tool_use', name: 'Bash', input: { command: 'git commit' } }] } };
 
 if (headless) {

@@ -20,7 +20,7 @@ describe('machine config', () => {
   let sandbox: Sandbox;
 
   beforeAll(() => {
-    sandbox = openSandbox({ flows: { fix: { enabled: false } } }, { github: ['alice', 'bob'], flows: {} });
+    sandbox = openSandbox({ flows: { 'address-review': { enabled: false } } }, { github: ['alice', 'bob'], flows: {} });
   });
 
   afterAll(async () => {
@@ -32,16 +32,16 @@ describe('machine config', () => {
       document.deleteIn(['repos', 0, 'flows']);
       document.setIn(['repos', 0, 'personas'], document.createNode(['alice', 'bob']));
     });
-    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), '# mine\nschedule: "5 * * * *"\nflows:\n  review:\n    enabled: false\n  fix:\n    enabled: true\n    concurrency: 1\n');
+    writeFileSync(join(sandbox.checkout, '.chernabog', 'local.yaml'), '# mine\nschedule: "5 * * * *"\nflows:\n  review:\n    enabled: false\n  address-review:\n    enabled: true\n    concurrency: 1\n');
 
     const { output } = await sandbox.runCli(['--version']);
     expect(output).toContain("dataquail/demo: personas is now a map of login to that persona's own settings: alice, bob");
-    expect(output).toContain('dataquail/demo: listed the flows that ran here: fix, implement, re-review');
+    expect(output).toContain('dataquail/demo: listed the flows that ran here: address-review, implement, re-review');
     expect(output).toContain(`dataquail/demo: moved its schedule and flow choices from ${join(sandbox.checkout, '.chernabog', 'local.yaml')} onto its entry in machine config`);
 
     const entry = entryOf(sandbox);
     expect(entry.personas).toEqual({ alice: {}, bob: {} });
-    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {}, 're-review': {} });
+    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {} });
     expect(entry.schedule).toBe('5 * * * *');
 
     // Once is enough: the next command finds nothing to change.
@@ -70,7 +70,7 @@ describe('machine config', () => {
     expect(enrolled.output).toContain(`updated dataquail/demo (${root}`);
     const entry = entryOf(sandbox);
     expect(entry.path).toBe(root);
-    expect(entry.flows).toEqual({ fix: { concurrency: 1 }, implement: {}, 're-review': {} });
+    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {} });
   }, 45_000);
 
   test('unenroll removes a repo and its settings', async () => {
@@ -84,7 +84,7 @@ describe('setting up and enrolling with flags', () => {
   let sandbox: Sandbox;
 
   beforeAll(() => {
-    sandbox = openSandbox({ flows: { fix: { enabled: false } } }, { github: [], flows: {} });
+    sandbox = openSandbox({ flows: { 'address-review': { enabled: false } } }, { github: [], flows: {} });
   });
 
   afterAll(async () => {

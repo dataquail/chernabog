@@ -1,6 +1,6 @@
 ---
 title: The default flows
-description: implement, review, re-review and fix, and how they hand pull requests to each other through GitHub's review requests.
+description: implement, review, re-review and address-review, and how they hand pull requests to each other through GitHub's review requests.
 ---
 
 `init` scaffolds four flows in `.chernabog/flows/`, built from the SDK's `Implement`, `Review` and `PullRequest` blocks. Edit them freely; see [Writing flows](/chernabog/flows/flows/).
@@ -10,7 +10,7 @@ description: implement, review, re-review and fix, and how they hand pull reques
 | `implement` | the oldest `auto:eligible` or `auto:ship` issue         | a green pull request, and a review requested of one reviewer from the pool |
 | `review`    | an open pull request whose review is requested of this persona, which it hasn't reviewed | an approval, which merges an `auto:ship` pull request, or changes requested |
 | `re-review` | a pull request that asks this persona again after it reviewed | an approval, or `auto:needs-human`     |
-| `fix`       | an agent's pull request labelled `auto:changes-requested` | a green push, and the reviewer asked again  |
+| `address-review` | a pull request this persona wrote whose latest review requests changes, with nothing pushed since | a green push and the reviewer asked again, or `auto:needs-human` |
 
 The flows hand work to each other through GitHub's own review requests and reviews. With [personas](/chernabog/reference/configuration/#github-personas), one machine can be both the author and the reviewer.
 
@@ -45,7 +45,7 @@ Each line is one SDK block, in the order the scaffolded flow calls them.
 Runs as the persona whose review is requested, on an open pull request it hasn't reviewed yet. Its trigger checks the persona's own login, so it needs no `reviewRequested` setting. It reviews in a read-only checkout, in a fresh session of the reviewer role — `flows.review.agents`, or the persona's `roles` pick — so a different agent from the one that wrote the code can review it. It posts a real GitHub review, approving or requesting changes, with a marker comment that records the reviewer and its session. GitHub won't let an account approve its own pull request; such a review is posted as a comment.
 
 - **Approve.** An `auto:ship` pull request is merged with `PullRequest.merge(pr, { method: "squash" })` when that is safe, and otherwise labelled `auto:needs-human` with the reason. Any other pull request is left for a person to merge.
-- **Request changes.** The pull request is labelled `auto:changes-requested`, which starts `fix` on an agent's pull request. A person answering a review on their own pull request pushes and asks the reviewer again.
+- **Request changes.** No label moves. The author's `address-review` picks the pull request up from the review itself. A person answering a review on their own pull request pushes and asks the reviewer again.
 
 ## `re-review`
 
@@ -56,9 +56,14 @@ Runs as a persona asked to review a pull request it has already reviewed. It res
 
 `limits.reviewRounds` caps the re-reviews of one pull request, 1 by default: past it, `re-review` hands the pull request to a person without reviewing. It never runs on a pull request labelled `auto:needs-human`, so asking again during a dispute doesn't restart the loop; a person removes the label to hand it back.
 
-## `fix`
+## `address-review`
 
-The author for pull requests an agent wrote: on one labelled `auto:changes-requested` whose latest review saw its head, it resumes the session that implemented it with the review, pushes once CI is green, removes the label, and asks the reviewer who requested the changes to review again, which starts `re-review`. If the review doesn't say who gave it, the pull request is labelled `auto:needs-review` for a person. Until the `address-review` flow answers GitHub's review itself, `fix` finds its work by the label.
+Runs as the persona that wrote the pull request: its trigger checks the persona's own login, and the flow sets `ownWork: true`. It picks up an open pull request whose latest decisive review, an approval or a request for changes (comments don't count), requests changes on the current head, so nothing has been pushed since. It leaves alone a pull request labelled `auto:needs-human` or owned by another run. It resumes the session that implemented the pull request, from the session marker `implement` left, and has it consider the findings first (`Implement.considerFindings`):
+
+- **Disagree.** It posts "Not addressing review N:" with its reasons and hands the pull request to a person with `auto:needs-human`. It doesn't push, and doesn't ask the reviewer again.
+- **Agree.** `Implement.addressFindings` makes and commits the changes. The flow checks that something was committed, runs the local gate, pushes, and waits for CI, fixing red up to `limits.ciRounds`. Then it comments "Addressed review N:" with what changed and asks the reviewer who requested the changes to review again, which starts their `re-review`.
+
+Anything else that stops it, such as CI still red, a failing local gate, the agent needing an answer, or a failed step, hands the pull request to a person with `auto:needs-human`. A person settles a dispute, removes the label, and asks the reviewer again if it should look again.
 
 ## Labels
 
@@ -69,11 +74,11 @@ Labels are the public record people see, and some flows trigger on them. Rename 
 | `auto:eligible`            | `eligible`           | a person           | Queued; `implement` claims the oldest                   |
 | `auto:ship`                | `ship`               | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
 | `auto:in-progress`         | `inProgress`         | `implement`        | A run owns the issue                                    |
-| `auto:needs-review`        | `needsReview`        | `implement`, `fix` | Open and green, with no reviewer in the pool; a person reviews |
-| `auto:changes-requested`   | `changesRequested`   | `review`           | Changes requested; `fix` answers an agent's pull request |
+| `auto:needs-review`        | `needsReview`        | `implement`        | Open and green, with no reviewer in the pool; a person reviews |
 | `auto:needs-human`         | `needsHuman`         | any flow           | A loop cap or rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `needsClarification` | `implement`        | Questions are on the issue; answer and requeue          |
 | `auto:approved`            | `approved`           | no default flow    | Kept in the label set for flows of your own             |
 | `auto:stale`               | `stale`              | no default flow    | Kept in the label set for flows of your own             |
+| `auto:changes-requested`   | `changesRequested`   | no default flow    | Kept in the label set for flows of your own             |
 
 With a `board`, an issue is queued only when it is labelled **and** its Status is `readyStatus`.

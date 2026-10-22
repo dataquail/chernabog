@@ -122,7 +122,16 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
   const requests: Array<AgentRequest> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
   const merge: MergeFake = { ci: { state: 'green' }, files: ['src/a.ts'], refusal: Option.none(), requests: [] };
-  const git = { head: HEAD, pushes: 0, opened: false };
+  // The pushed head, pushes so far, whether the pull request is open, and the commits the agent made since the last push.
+  const git = { head: HEAD, pushes: 0, opened: false, commits: 0 };
+
+  // The worktree's head: the pushed one, or a commit of the agent's on top.
+  const localHead = () => {
+    if (git.commits > 0) return `local${git.commits}000000`;
+
+    return git.head;
+  };
+
   // How the author answers a review it is asked to consider.
   const author = { consider: 'address' };
   let reviewed = 0;
@@ -156,7 +165,11 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
 
     if (schema.includes('decline')) return { status: author.consider, reasons: 'The review is right.' };
 
-    if (schema.includes('needs-clarification')) return { status: 'done', summary: 'Mentioned the change.', title: 'feat: a change', body: 'The change.' };
+    if (schema.includes('needs-clarification')) {
+      git.commits += 1;
+
+      return { status: 'done', summary: 'Mentioned the change.', title: 'feat: a change', body: 'The change.' };
+    }
 
     return { verdict: nextVerdict(), summary: 'Reviewed.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change.' }] };
   };
@@ -238,10 +251,13 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
     }),
     Layer.mock(Git)({
       commitsAhead: () => Effect.succeed(1),
+      pull: () => Effect.void,
+      headSha: () => Effect.sync(localHead),
       changedFiles: () => Effect.sync(() => merge.files),
       push: () =>
         Effect.sync(() => {
           git.pushes += 1;
+          git.commits = 0;
 
           if (git.pushes > 1) git.head = `fix${git.pushes}0000000`;
         }),

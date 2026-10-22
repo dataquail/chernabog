@@ -179,18 +179,17 @@ describe('owning a pull request', () => {
   };
 
   effect(
-    'the review and fix triggers leave alone a pull request another run owns',
+    'the review and address-review triggers leave alone a pull request another run owns',
     () => Effect.gen(function* () {
       const review = requested(makeFake('approve'));
       owned(review, false);
       expect(yield* triggered(review, Review.trigger)).toEqual([]);
 
-      const fix = makeFake('approve');
-      fix.setLabels(PULL, [DEFAULT_LABELS.changesRequested]);
-      fix.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: 'request-changes' }));
-      expect((yield* triggered(fix, Review.fixTrigger)).length).toBe(1);
-      owned(fix, false);
-      expect(yield* triggered(fix, Review.fixTrigger)).toEqual([]);
+      const address = makeFake('approve');
+      address.submitted.push({ author: 'data-quail', state: 'CHANGES_REQUESTED', commitSha: HEAD });
+      expect((yield* triggered(address, Review.addressTrigger)).length).toBe(1);
+      owned(address, false);
+      expect(yield* triggered(address, Review.addressTrigger)).toEqual([]);
     }),
   );
 

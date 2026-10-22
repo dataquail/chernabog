@@ -34,7 +34,7 @@ describe('the review loop', () => {
       {
         github: ['alice', 'bob'],
         personas: ['alice', 'bob'],
-        personaFlows: { alice: { implement: often, fix: often }, bob: { review: often, 're-review': often } },
+        personaFlows: { alice: { implement: often, 'address-review': often }, bob: { review: often, 're-review': often } },
       },
     );
     await sandbox.runCli(['trust', 'demo']);
@@ -50,7 +50,7 @@ describe('the review loop', () => {
     await sandbox.github.stop();
   });
 
-  test('alice implements an auto:ship issue, bob requests changes, alice fixes in her session, bob re-reviews in his and merges', async () => {
+  test("alice implements an auto:ship issue, bob requests changes, alice's address-review fixes in her session, bob re-reviews in his and merges", async () => {
     sandbox.github.addIssue('Shipped work', ['auto:ship']);
     await waitFor(() => sandbox.github.merges.length > 0, 'the pull request to merge', 90_000);
 
@@ -64,15 +64,16 @@ describe('the review loop', () => {
     expect(changes.comments[0]).toEqual({ path: 'README.md', line: 1, side: 'RIGHT', body: 'Mention the change here.' });
     expect(approval.commit_id).not.toBe(changes.commit_id);
 
-    // Claude wrote it and fixed it in one session; Codex reviewed it in one session and resumed it to re-review.
+    // Claude wrote it, then, in the same session, weighed the review and fixed it; Codex reviewed it in one session and resumed it to re-review.
     const claude = sandbox.claudeCalls();
-    expect(claude.map((call) => call.split(' ')[0])).toEqual(['start', 'resume']);
-    expect(claude[1]?.split(' ')[1]).toBe(claude[0]?.split(' ')[1]);
+    expect(claude.map((call) => call.split(' ')[0])).toEqual(['start', 'resume', 'resume']);
+    expect(new Set(claude.map((call) => call.split(' ')[1])).size).toBe(1);
     const codex = sandbox.codexCalls();
     expect(codex.map((call) => call.split(' ')[0])).toEqual(['start', 'resume']);
     expect(codex[1]?.split(' ')[1]).toBe(codex[0]?.split(' ')[1]);
 
     expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/review pr-\d+ as bob\)/);
+    expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-1 as alice\)/);
     expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/re-review pr-\d+-review-2 as bob\)/);
     expect(existsSync(join(sandbox.home, `worktrees/demo/review-pr-${pull().number}`))).toBe(false);
     expect(pull().labels).not.toContain('auto:changes-requested');
@@ -85,7 +86,7 @@ describe('a pull request a person opened', () => {
   let daemon: ChildProcess;
 
   beforeAll(() => {
-    sandbox = openSandbox({ flows: { review: { ...often, agent: 'codex' }, implement: { enabled: false }, fix: { enabled: false }, 're-review': { enabled: false } } }, { flows: { review: often } });
+    sandbox = openSandbox({ flows: { review: { ...often, agent: 'codex' }, implement: { enabled: false }, 'address-review': { enabled: false }, 're-review': { enabled: false } } }, { flows: { review: often } });
   });
 
   afterAll(async () => {
@@ -121,4 +122,39 @@ describe('a pull request a person opened', () => {
     expect(sandbox.github.merges).toEqual([]);
     expect(sandbox.github.pull(number).reviewers).toEqual(['alice']);
   }, 60_000);
+});
+
+describe('a review the author disputes', () => {
+  let sandbox: Sandbox;
+  let daemon: ChildProcess;
+
+  beforeAll(async () => {
+    sandbox = openSandbox(
+      { reviewers: ['bob'], flows: { review: { agent: 'codex' }, 're-review': { agent: 'codex' } } },
+      { github: ['alice', 'bob'], personas: ['alice', 'bob'], personaFlows: { alice: { implement: often, 'address-review': often }, bob: { review: often, 're-review': often } } },
+    );
+    await sandbox.runCli(['trust', 'demo']);
+    daemon = sandbox.cli(['daemon'], { FAKE_CLAUDE_CONSIDER: 'decline' });
+    await waitFor(() => existsSync(join(sandbox.home, 'daemon.sock')), 'the daemon');
+  });
+
+  afterAll(async () => {
+    daemon.kill('SIGTERM');
+    await closed(daemon);
+    await sandbox.github.stop();
+  });
+
+  test('is answered with its reasons and handed to a person, with no push and no new review request', async () => {
+    sandbox.github.addIssue('Disputed work', ['auto:ship']);
+    await waitFor(() => Option.exists(sandbox.github.firstPull(), (first) => first.labels.includes('auto:needs-human')), 'the dispute to reach a person', 60_000);
+
+    const [first] = [...sandbox.github.pulls.values()];
+    const said = sandbox.github.commentsOn(first.number).map((comment) => comment.body);
+    expect(said.some((body) => body.startsWith('Not addressing review 1:') && body.includes('The review is right'))).toBe(true);
+    expect(sandbox.github.reviewsOf(first.number).map((review) => review.state)).toEqual(['CHANGES_REQUESTED']);
+    expect(first.reviewers).toEqual([]);
+    expect(sandbox.github.merges).toEqual([]);
+    // Nothing was pushed after the review: one commit, the implement run's.
+    expect(sandbox.claudeCalls().map((call) => call.split(' ')[0])).toEqual(['start', 'resume']);
+  }, 90_000);
 });
