@@ -99,12 +99,14 @@ Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourl
 | Key | Does |
 | --- | --- |
 | `tab`, `↑` `↓` | Switch between the flows and the runs, and select |
-| `enter` | Follow the selected run's log; `↑` `↓` scroll it, `end` follows again, `esc` comes back |
+| `enter` | On a run: follow its log; `↑` `↓` scroll it, `end` follows again, `esc` comes back. On a flow: its persona's settings for the repo (below) |
 | `a` | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
 | `t` | Trigger the selected flow now, with its gates |
 | `e` | Turn the selected flow off or on for the persona it runs as, in machine config; it shows as pending until the daemon restarts on it, once idle |
 | `p` | Pause or resume the repo |
 | `q` | Quit |
+
+**Settings.** `enter` on a flow opens that persona's settings for the repo: each of its flows with its schedule next to the team's, then its account and each role's. There, `e` turns a flow on or off; `s` types a schedule (cron) for it, checked before it's saved; `enter` on the account or a role chooses one from machine config's accounts; and `c` clears an override, back to the team's schedule or the default account. Each change goes to the repo's entry in machine config (the persona's own, where it has one), keeping its comments, and the daemon picks it up when idle. An account that would clash with the persona's others, such as a second account on one agent, is refused and nothing is written.
 
 The view never runs work itself; it reads the daemon's state over its socket. `chernabog attach <run>` does the same attach from the command line.
 

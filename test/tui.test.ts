@@ -16,7 +16,7 @@ import { describeStatus } from '../src/main.ts';
 import type { DaemonStatus } from '../src/protocol.ts';
 import type { RunRow, RunStatus } from '../src/state.ts';
 import { initialModel, readUsage } from '../src/tui/app.ts';
-import { update } from '../src/tui/update.ts';
+import { type Key, update, type Updated } from '../src/tui/update.ts';
 import { type Model, plain, view } from '../src/tui/view.ts';
 import { effectAtHome, effectAtHomeWith } from './effect-test.ts';
 
@@ -244,3 +244,68 @@ effectWithTmux('attach brings up a session still running under tmux, and resumes
     expect([ended.command, ...ended.args]).toEqual(['claude', '--resume', 'abc']);
   }),
 );
+
+describe('the settings view', () => {
+  const withOverrides: DaemonStatus = {
+    ...status,
+    accounts: [
+      { name: 'work', agent: 'claude' },
+      { name: 'codex-work', agent: 'codex' },
+    ],
+    repos: status.repos.map((repo) => ({
+      ...repo,
+      flows: repo.flows.map((flow) => ({ ...flow, teamSchedule: '17 * * * *', ...Option.match(Option.liftPredicate(flow.name, (name) => name === 'review'), { onNone: () => ({}), onSome: () => ({ ownSchedule: '5 * * * *', schedule: '5 * * * *' }) }) })),
+      personas: [{ account: 'work', ownAccount: Option.none(), roles: [{ role: 'reviewer', account: Option.some('codex-work') }] }],
+    })),
+  };
+
+  // Enter on the first flow opens its persona's settings.
+  const opened = () => {
+    const onFlows = update(model({ status: Option.some(withOverrides) }), { name: 'tab' }).model;
+
+    return update(onFlows, { name: 'return' }).model;
+  };
+
+  const press = (from: Model, ...keys: ReadonlyArray<Key>) => keys.reduce((state: Updated, key) => update(state.model, key), { model: from, action: { kind: 'none' } });
+
+  test("shows each flow's schedule next to the team's, and the accounts with what's yours", () => {
+    const screen = plain(view(opened()));
+    expect(screen).toMatch(/implement\s+on\s+17 \* \* \* \*\s+team's/);
+    expect(screen).toMatch(/review\s+on\s+5 \* \* \* \*\s+yours; team's 17 \* \* \* \*/);
+    expect(screen).toMatch(/account\s+work \(default\)/);
+    expect(screen).toMatch(/role reviewer\s+codex-work \(yours\)/);
+  });
+
+  test('a schedule is checked before it is saved, and an invalid one is refused with the reason', () => {
+    const typed = press(opened(), { name: 's' }, ...[...'*/20 * * *'].map((sequence) => ({ name: sequence, sequence })), { name: 'return' });
+    expect(typed.action).toEqual({ kind: 'none' });
+    expect(Option.getOrElse(typed.model.message, () => '')).toContain('"*/20 * * *" isn\'t a schedule');
+
+    const fixed = press(typed.model, { name: 'space', sequence: ' ' }, { name: '*', sequence: '*' }, { name: 'return' });
+    expect(fixed.action).toEqual({ kind: 'set-schedule', repo: 'goodbones', flow: 'implement', persona: Option.none(), schedule: Option.some('*/20 * * * *') });
+  });
+
+  test('q types into a schedule instead of quitting, and esc cancels it', () => {
+    const typing = press(opened(), { name: 's' }, { name: 'q', sequence: 'q' });
+    expect(typing.action).toEqual({ kind: 'none' });
+    expect(press(typing.model, { name: 'escape' }).model.settings.pipe(Option.map((found) => found.editing.kind))).toEqual(Option.some('browse'));
+  });
+
+  test("c clears an override back to the team's, and says when there's none to clear", () => {
+    expect(press(opened(), { name: 'j' }, { name: 'c' }).action).toEqual({ kind: 'set-schedule', repo: 'goodbones', flow: 'review', persona: Option.none(), schedule: Option.none() });
+    const none = press(opened(), { name: 'c' });
+    expect(none.action).toEqual({ kind: 'none' });
+    expect(Option.getOrElse(none.model.message, () => '')).toContain('nothing of yours to clear');
+    expect(press(opened(), { name: 'j' }, { name: 'j' }, { name: 'j' }, { name: 'c' }).action).toEqual({ kind: 'set-account', repo: 'goodbones', persona: Option.none(), role: Option.some('reviewer'), account: Option.none() });
+  });
+
+  test('picks the account for the persona, or for a role', () => {
+    expect(press(opened(), { name: 'j' }, { name: 'j' }, { name: 'return' }, { name: 'j' }, { name: 'return' }).action).toEqual({ kind: 'set-account', repo: 'goodbones', persona: Option.none(), role: Option.none(), account: Option.some('codex-work') });
+    expect(press(opened(), { name: 'j' }, { name: 'j' }, { name: 'j' }, { name: 'return' }, { name: 'return' }).action).toEqual({ kind: 'set-account', repo: 'goodbones', persona: Option.none(), role: Option.some('reviewer'), account: Option.some('work') });
+  });
+
+  test('e turns the selected flow off, and esc goes back to the main view', () => {
+    expect(press(opened(), { name: 'e' }).action).toEqual({ kind: 'toggle-flow', repo: 'goodbones', flow: 'implement', persona: Option.none(), enabled: false });
+    expect(press(opened(), { name: 'escape' }).model.view).toBe('main');
+  });
+});

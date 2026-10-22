@@ -12,6 +12,9 @@ export const FlowStatus = Schema.Struct({
   // The GitHub persona it runs as; absent for the implicit one.
   persona: Schema.optionalKey(Schema.String),
   schedule: Schema.String,
+  // The schedule the team gives it, and the persona's own over it, if any.
+  teamSchedule: Schema.optionalKey(Schema.String),
+  ownSchedule: Schema.optionalKey(Schema.String),
   next: Maybe,
   lastTick: Maybe,
   enabled: Schema.Boolean,
@@ -22,6 +25,17 @@ export const FlowStatus = Schema.Struct({
   // What it left for other machines, by flows.<flow>.assignee and reviewRequested.
   assignedElsewhere: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+
+// The accounts a persona spends in a repo: the one its runs use, and its own
+// pick of it and of each role's, if any; none falls back to the default.
+export const PersonaStatus = Schema.Struct({
+  persona: Schema.optionalKey(Schema.String),
+  account: Schema.String,
+  ownAccount: Maybe,
+  roles: Schema.Array(Schema.Struct({ role: Schema.String, account: Maybe })),
+});
+
+export type PersonaStatus = typeof PersonaStatus.Type;
 
 export const RepoStatus = Schema.Struct({
   name: Schema.String,
@@ -34,6 +48,7 @@ export const RepoStatus = Schema.Struct({
   // Where its interactive agent sessions run, and which config layer chose it.
   launcher: Maybe,
   flows: Schema.Array(FlowStatus),
+  personas: Schema.optionalKey(Schema.Array(PersonaStatus)),
 });
 
 export type RepoStatus = typeof RepoStatus.Type;
@@ -46,6 +61,8 @@ export const DaemonStatus = Schema.Struct({
   busy: Schema.Finite,
   reloadPending: Schema.Boolean,
   repos: Schema.Array(RepoStatus),
+  // The accounts in machine config, for choosing one.
+  accounts: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String, agent: Schema.String }))),
   active: Schema.Array(ActiveRun),
   recent: Schema.Array(RunRow),
   skips: Schema.Array(SkipRow),

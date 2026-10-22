@@ -7,7 +7,7 @@ import * as Option from 'effect/Option';
 import * as Record from 'effect/Record';
 
 import { samePersona } from '../persona.ts';
-import type { ActiveRun, DaemonStatus, RepoStatus } from '../protocol.ts';
+import type { ActiveRun, DaemonStatus, PersonaStatus, RepoStatus } from '../protocol.ts';
 import { FLOW_TURNED_OFF } from '../repo-config.ts';
 import type { RunStatus } from '../state.ts';
 
@@ -31,6 +31,19 @@ export type FlowRow = { readonly repo: string; readonly flow: string; readonly p
 
 export type RunEntry = typeof ActiveRun.Type;
 
+// A line of a persona's settings: one of its flows, its account, or a role's.
+export type SettingsRow = { readonly kind: 'flow'; readonly flow: string } | { readonly kind: 'account' } | { readonly kind: 'role'; readonly role: string };
+
+// What the settings view is doing: browsing its rows, typing a flow's
+// schedule, or choosing an account for the persona or one of its roles.
+export type Editing =
+  | { readonly kind: 'browse' }
+  | { readonly kind: 'cron'; readonly flow: string; readonly text: string }
+  | { readonly kind: 'pick'; readonly role: Option.Option<string>; readonly choices: ReadonlyArray<string>; readonly index: number };
+
+// The settings of one persona of one repo, as the settings view shows them.
+export type Settings = { readonly repo: string; readonly persona: Option.Option<string>; readonly index: number; readonly editing: Editing };
+
 export type Model = {
   readonly status: Option.Option<DaemonStatus>;
   readonly error: Option.Option<string>;
@@ -39,7 +52,8 @@ export type Model = {
   readonly focus: 'flows' | 'runs';
   readonly flowIndex: number;
   readonly runIndex: number;
-  readonly view: 'main' | 'log';
+  readonly view: 'main' | 'log' | 'settings';
+  readonly settings: Option.Option<Settings>;
   readonly logRun: Option.Option<string>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.
@@ -137,8 +151,11 @@ const select = (line: Line, selected: boolean): Line => {
   return line.map((part) => ({ ...part, style: 'selected' }));
 };
 
-export const KEYS_MAIN = 'tab switch pane · ↑↓ select · enter log · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit';
+export const KEYS_MAIN = 'tab switch pane · ↑↓ select · enter log or settings · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit';
 export const KEYS_LOG = '↑↓ scroll · end follow · a attach · esc back · q quit';
+export const KEYS_SETTINGS = '↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit';
+export const KEYS_CRON = 'type a cron, such as */20 * * * * · enter save · esc cancel';
+export const KEYS_PICK = '↑↓ select · enter save · esc cancel';
 
 const repoState = (repo: RepoStatus) => {
   if (repo.paused) return 'paused';
@@ -293,6 +310,82 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   return lines;
 };
 
+const repoNamed = (model: Model, name: string) => Option.flatMap(model.status, (status) => Arr.findFirst(status.repos, (repo) => repo.name === name));
+
+// The persona's flows in a repo, as the daemon has them.
+export const personaFlows = (model: Model, settings: Settings) =>
+  Option.match(repoNamed(model, settings.repo), { onNone: () => [], onSome: (repo) => repo.flows.filter((flow) => samePersona(Option.fromUndefinedOr(flow.persona), settings.persona)) });
+
+export const personaAccounts = (model: Model, settings: Settings): Option.Option<PersonaStatus> =>
+  Option.flatMap(repoNamed(model, settings.repo), (repo) => Arr.findFirst(repo.personas ?? [], (found) => samePersona(Option.fromUndefinedOr(found.persona), settings.persona)));
+
+const ACCOUNT_ROW: SettingsRow = { kind: 'account' };
+
+export const sameRow = (left: SettingsRow, right: SettingsRow) => {
+  if (left.kind === 'flow' && right.kind === 'flow') return left.flow === right.flow;
+
+  if (left.kind === 'role' && right.kind === 'role') return left.role === right.role;
+
+  return left.kind === right.kind;
+};
+
+const onOff = (enabled: boolean) => {
+  if (enabled) return 'on';
+
+  return 'off';
+};
+
+// The settings view's rows: the persona's flows, then its account and each role's.
+export const settingsRows = (model: Model, settings: Settings): ReadonlyArray<SettingsRow> => [
+  ...personaFlows(model, settings).map((flow): SettingsRow => ({ kind: 'flow', flow: flow.name })),
+  ...Option.match(personaAccounts(model, settings), {
+    onNone: (): ReadonlyArray<SettingsRow> => [],
+    onSome: (found) => [ACCOUNT_ROW, ...found.roles.map((role): SettingsRow => ({ kind: 'role', role: role.role }))],
+  }),
+];
+
+const whose = (pick: Option.Option<string>, fallback: string) => Option.match(pick, { onNone: () => `${fallback} (default)`, onSome: (name) => `${name} (yours)` });
+
+const editingLines = (editing: Editing): ReadonlyArray<Line> => {
+  if (editing.kind === 'cron') return [[], [segment(`  schedule for ${editing.flow}: `, 'bold'), segment(`${editing.text}▏`, 'cyan')]];
+
+  if (editing.kind === 'pick') {
+    const title = Option.match(editing.role, { onNone: () => 'account', onSome: (role) => `account for ${role}` });
+
+    return [[], heading(`  Choose the ${title}`), ...editing.choices.map((choice, index) => select([segment(`    ${choice}`)], index === editing.index))];
+  }
+
+  return [];
+};
+
+const settingsView = (model: Model, settings: Settings): ReadonlyArray<Line> => {
+  const who = Option.match(settings.persona, { onNone: () => '', onSome: (login) => ` as ${login}` });
+  const rows = settingsRows(model, settings);
+  const browsing = settings.editing.kind === 'browse';
+  const isSelected = (row: SettingsRow) => browsing && Option.exists(Arr.get(rows, settings.index), (found) => sameRow(found, row));
+  const lines: Array<Line> = [[segment(`${settings.repo}${who}`, 'bold'), segment('  saved to machine config; the daemon picks changes up when idle', 'dim')], [], heading('Flows')];
+
+  for (const flow of personaFlows(model, settings)) {
+    const enabled = flowEnabled(model, settings.repo, flow);
+
+    const schedule = Option.match(Option.fromUndefinedOr(flow.ownSchedule), {
+      onNone: () => segment(`${pad(flow.schedule, 16)} team's`, 'plain'),
+      onSome: (own) => segment(`${pad(own, 16)} yours; team's ${flow.teamSchedule ?? flow.schedule}`, 'cyan'),
+    });
+
+    lines.push(select([segment(`  ${pad(flow.name, 14)}`), segment(pad(onOff(enabled), 5), styleIf(!enabled, 'dim')), schedule, segment(`  next ${ago(flow.next, model.now)}`, 'dim')], isSelected({ kind: 'flow', flow: flow.name })));
+  }
+
+  for (const found of Option.toArray(personaAccounts(model, settings))) {
+    lines.push([], heading('Accounts'));
+    lines.push(select([segment(`  ${pad('account', 20)}`), segment(whose(found.ownAccount, found.account))], isSelected(ACCOUNT_ROW)));
+
+    for (const role of found.roles) lines.push(select([segment(`  ${pad(`role ${role.role}`, 20)}`), segment(whose(role.account, 'its agent\'s account'))], isSelected({ kind: 'role', role: role.role })));
+  }
+
+  return [...lines, ...editingLines(settings.editing)];
+};
+
 const mainView = (model: Model): ReadonlyArray<Line> =>
   Option.match(model.status, {
     onNone: () => [[segment(Option.getOrElse(model.error, () => 'connecting to the daemon…'), 'yellow')]],
@@ -337,13 +430,15 @@ const clipLine = (line: Line, width: number): Line => {
 const bodyOf = (model: Model) => {
   if (model.view === 'log') return logView(model);
 
-  return mainView(model);
+  return Option.match(Option.filter(model.settings, () => model.view === 'settings'), { onNone: () => mainView(model), onSome: (settings) => settingsView(model, settings) });
 };
+
+const SETTINGS_KEYS: Readonly<Record<Editing['kind'], string>> = { browse: KEYS_SETTINGS, cron: KEYS_CRON, pick: KEYS_PICK };
 
 const keysOf = (model: Model) => {
   if (model.view === 'log') return KEYS_LOG;
 
-  return KEYS_MAIN;
+  return Option.match(Option.filter(model.settings, () => model.view === 'settings'), { onNone: () => KEYS_MAIN, onSome: (settings) => SETTINGS_KEYS[settings.editing.kind] });
 };
 
 // The whole screen: the view, then the message and the keys on the last lines.

@@ -25,6 +25,7 @@ import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
 import { nodeBinFor } from './node-version.ts';
 import { asSuffix, IMPLICIT, type Persona, samePersona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
+import { cronProblem } from './schedule.ts';
 import type { GateConfig } from './usage-gate.ts';
 
 const Strings = Schema.Array(Schema.String);
@@ -269,6 +270,10 @@ export type PersonaRepo = {
   readonly flows: Readonly<Record<string, FlowSettings>>;
   // The flows this persona runs: the ones machine config lists for it.
   readonly chosen: ReadonlyArray<string>;
+  // What the persona chose in machine config, its own keys over the repo
+  // entry's, and the team's flow settings before them: what overrides what.
+  readonly own: PersonaEntry;
+  readonly teamFlows: Readonly<Record<string, FlowSettings>>;
 };
 
 // One enrolled repo: its settings as each persona that runs it sees them.
@@ -635,6 +640,8 @@ const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: Repo
       activeHours: Option.fromUndefinedOr(own.activeHours),
       flows,
       chosen: Object.entries(ownFlows).flatMap(([flow, chosen]) => Option.toArray(Option.liftPredicate(flow, () => chosen.enabled !== false))),
+      own,
+      teamFlows,
     } satisfies PersonaRepo;
   });
 
@@ -799,6 +806,69 @@ export const setFlowInMachineConfig = (name: string, persona: Persona, flow: str
       else document.deleteIn(path);
 
       if (!document.hasIn(path.slice(0, -1))) document.setIn(path.slice(0, -1), document.createNode({}));
+    }),
+  );
+
+// Where a persona's own choices are kept: its entry under personas when it
+// has one, else the repo entry's, which it runs from.
+const choicesPath = (entry: EnrolledRepo, index: number, persona: Persona) =>
+  Option.match(Option.filter(persona, (login) => Record.has(entry.personas ?? {}, login)), {
+    onNone: () => ['repos', index],
+    onSome: (login) => ['repos', index, 'personas', login],
+  });
+
+// Overrides a flow's schedule for a persona, or clears the override so the
+// team's applies again. A flow the persona doesn't run keeps the override, off.
+export const setFlowSchedule = (name: string, persona: Persona, flow: string, schedule: Option.Option<string>) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      for (const reason of Option.toArray(Option.flatMap(schedule, cronProblem))) return yield* new ConfigError({ message: reason });
+
+      const index = yield* indexOf(current, name);
+      const path = [...flowsPath(document, (current.repos ?? [])[index], index, persona), flow];
+
+      if (Option.isSome(schedule) && !document.hasIn(path)) document.setIn(path, document.createNode({ enabled: false }));
+
+      for (const cron of Option.toArray(schedule)) document.setIn([...path, 'schedule'], cron);
+
+      if (Option.isNone(schedule) && document.hasIn(path)) document.deleteIn([...path, 'schedule']);
+    }),
+  );
+
+// Fails, before anything is written, when the persona's accounts in the
+// edited document would fail the repo: an unknown one, or two on one agent.
+const checkAccounts = (document: YAML.Document, index: number, persona: Persona) =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    const file = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(Effect.mapError((issue) => new ConfigError({ message: issue.message })));
+    const machine = normalizeMachineConfig(file, home.user);
+    const entry = machine.repos[index];
+    const own = choicesOf(entry, persona);
+    const failed = (message: string) => new ConfigError({ message: `${entry.repo}${asSuffix(persona)}: ${message}` });
+    const accountName = Option.getOrElse(Option.orElse(Option.fromUndefinedOr(own.account), () => Option.map(Arr.head(machine.accounts), (first) => first.name)), () => 'work');
+    yield* otherAccounts(machine, own, yield* findAccount(machine, accountName, failed), failed);
+  });
+
+// Picks the account a persona spends, or one of its roles does, or clears
+// the pick so the default applies again. Refused, with nothing written,
+// when the accounts would clash.
+export const setAccountInMachineConfig = (name: string, persona: Persona, role: Option.Option<string>, account: Option.Option<string>) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const index = yield* indexOf(current, name);
+      const base = choicesPath((current.repos ?? [])[index], index, persona);
+      const path = Option.match(role, { onNone: () => [...base, 'account'], onSome: (named) => [...base, 'roles', named] });
+
+      for (const chosen of Option.toArray(account)) document.setIn(path, chosen);
+
+      if (Option.isNone(account)) {
+        document.deleteIn(path);
+        const roles = document.getIn([...base, 'roles']);
+
+        if (YAML.isMap(roles) && roles.items.length === 0) document.deleteIn([...base, 'roles']);
+      }
+
+      yield* checkAccounts(document, index, persona);
     }),
   );
 
