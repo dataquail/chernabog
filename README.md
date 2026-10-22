@@ -82,19 +82,18 @@ Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourl
 | `auto:eligible` | a person | Queued; `implement` claims the oldest |
 | `auto:ship` | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
 | `auto:in-progress` | `implement` | A run owns the issue |
-| `auto:needs-review` | `implement`, `fix` | Open and green, with no reviewer in the pool; a person reviews |
-| `auto:changes-requested` | `review` | Changes requested; `fix` answers an agent's pull request |
+| `auto:needs-review` | `implement` | Open and green, with no reviewer in the pool; a person reviews |
 | `auto:needs-human` | any flow | A loop cap or a rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `implement` | Questions are on the issue; answer them and requeue |
 
-`auto:approved` and `auto:stale` are still created, for flows of your own; the default flows no longer set them.
+`auto:approved`, `auto:stale` and `auto:changes-requested` are still created, for flows of your own; the default flows no longer set them.
 
 `reviewers: [alice, data-quail]` in the team's `config.yaml` is the reviewer pool. Every login in it needs write access to the repo, since the reviewer merges on the automated path.
 
 - **`implement`** claims the oldest issue labelled `auto:eligible` or `auto:ship`, lets the agent implement it test first in a worktree, runs the local gate (sending the agent back on failure, up to `limits.localGateRounds`), opens the pull request (labelled `auto:ship` for an `auto:ship` issue), waits for CI (fixing red, up to `limits.ciRounds`) and asks one reviewer from the pool, at random and never the author, to review it. Without a pool it labels the pull request `auto:needs-review` for a person.
-- **`review`** runs as the persona whose review is requested, on a pull request it hasn't reviewed yet. It reviews in a read-only checkout, in a fresh session of the reviewer role (so Codex can review what Claude wrote), and posts a real GitHub review. An approval merges an `auto:ship` pull request with `PullRequest.merge`, which merges only when that's safe and otherwise labels it `auto:needs-human`; any other pull request is left for a person to merge. A request for changes labels it `auto:changes-requested`.
+- **`review`** runs as the persona whose review is requested, on a pull request it hasn't reviewed yet. It reviews in a read-only checkout, in a fresh session of the reviewer role (so Codex can review what Claude wrote), and posts a real GitHub review. An approval merges an `auto:ship` pull request with `PullRequest.merge`, which merges only when that's safe and otherwise labels it `auto:needs-human`; any other pull request is left for a person to merge. A request for changes goes to the author's `address-review`.
 - **`re-review`** runs as a persona asked again on a pull request it already reviewed. It resumes its own review session, posts which findings are remediated, and approves (merging an `auto:ship` pull request the same way) or hands the pull request to a person. `limits.reviewRounds` (default 1) caps the re-reviews, and it leaves pull requests labelled `auto:needs-human` alone.
-- **`fix`** is the author for pull requests an agent wrote: on one labelled `auto:changes-requested`, it resumes the session that implemented the pull request with the review, pushes the fix once CI is green, and asks the reviewer who requested the changes to review again, which starts `re-review`.
+- **`address-review`** runs as the persona that wrote the pull request, when its latest review requests changes and nothing has been pushed since. It resumes the session that implemented the pull request and has it consider the findings first. If it disagrees, it posts its reasons and hands the pull request to a person with `auto:needs-human`, without pushing or asking the reviewer again. Otherwise it makes and commits the changes, runs the local gate, pushes, waits for CI (fixing red, up to `limits.ciRounds`) and asks the reviewer who requested the changes to review again, which starts `re-review`. Anything else that stops it hands the pull request to a person.
 
 Chernabog merges only pull requests labelled `auto:ship`; anything else, a missing or misspelt label included, is merged by a person.
 
@@ -245,7 +244,7 @@ Flows, steps and prompts are read from the base branch, never from the branch or
 
 A flow runs on a machine only if the repo's entry in machine config lists it under `flows`. `init` and `enroll` write that list, offering the team's defaults: the flows `config.yaml` doesn't turn off with `flows.<flow>.enabled: false`, and whose `runners` (`runners: [alice]`, or `flows.<flow>.runners`) include one of the repo's personas, or this machine's `gh` login. So `runners` coordinates who spends their budget without restricting anyone: whoever lists a flow runs it. A flow listed with `enabled: false` is off but keeps its settings.
 
-`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review` and `re-review` need no filter: their triggers take only pull requests that request the review of the persona they run as. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
+`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` route work per item, like GitHub's `assignee:` and `review-requested:` qualifiers. Each takes `"@me"` (this machine's `gh` login), a login, `none`, or a list of these. `implement: { assignee: ["@me", none] }` takes your issues and unassigned ones; `review`, `re-review` and `address-review` need no filter: their triggers take only pull requests that request the review of the persona they run as, or, for `address-review`, that it wrote. The rest waits for those people's machines, and `status` shows it as assigned elsewhere.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

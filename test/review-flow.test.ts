@@ -8,6 +8,7 @@ import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 
 import { flowHandle } from '../src/engine.ts';
+import addressReview from '../templates/.chernabog/flows/address-review.ts';
 import reReview from '../templates/.chernabog/flows/re-review.ts';
 import review from '../templates/.chernabog/flows/review.ts';
 import { effect } from './effect-test.ts';
@@ -15,6 +16,7 @@ import { type Fake, HEAD, item, makeFake, PULL, repo, runToEnd, summaryOf, trigg
 
 const reviewing = flowHandle(repo, 'review', review);
 const reReviewing = flowHandle(repo, 're-review', reReview);
+const addressing = flowHandle(repo, 'address-review', addressReview);
 const work = item(`pr-${PULL}`, { pullRequest: PULL, headRef: 'auto/issue-3', agentWritten: true });
 
 // A pull request that asks data-quail, the persona these runs act as, for a
@@ -85,7 +87,8 @@ describe('review', () => {
       const finished = yield* runToEnd(reviewing, fake, work);
       expect(summaryOf(finished)).toBe(`#${PULL}: review 1 requested changes`);
       expect(fake.submitted.map((submitted) => submitted.state)).toEqual(['CHANGES_REQUESTED']);
-      expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.changesRequested]);
+      // No label: the author's address-review reads the review itself.
+      expect(fake.labelsOf(PULL)).toEqual([]);
     }),
   );
 });
@@ -151,3 +154,70 @@ describe('re-review', () => {
     }),
   );
 });
+
+describe('address-review', () => {
+  // A pull request this persona, the author, wrote, whose latest review, by data-quail, asks for changes on its head.
+  const changesAsked = (consider: 'address' | 'decline' = 'address') => {
+    const fake = makeFake(['approve']);
+    fake.author.consider = consider;
+    fake.submitted.push({ author: 'data-quail', state: 'CHANGES_REQUESTED', commitSha: HEAD });
+    fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: 'request-changes', reviewer: 'data-quail', sessionId: 'review-session', adapter: 'codex' }));
+
+    return fake;
+  };
+
+  const addressWork = item(`pr-${PULL}-changes-1`, { pullRequest: PULL, headRef: 'auto/issue-3', agentWritten: true, reviewer: 'data-quail', reviewedSha: HEAD });
+
+  effect("picks up its own pull request with changes asked on the head, until it's pushed, approved or a person has it", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      expect(yield* keys(fake, Review.addressTrigger)).toEqual([`pr-${PULL}-changes-1`]);
+
+      fake.people.me = 'zach';
+      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      fake.people.me = 'chernabog-bot';
+
+      fake.git.head = 'fix20000000';
+      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      fake.git.head = HEAD;
+
+      fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+      fake.setLabels(PULL, []);
+
+      fake.submitted.push({ author: 'data-quail', state: 'APPROVED', commitSha: HEAD });
+      expect(yield* keys(fake, Review.addressTrigger)).toEqual([]);
+    }),
+  );
+
+  effect('agrees: fixes in the implementing session, pushes with green CI, and asks the reviewer again', () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.comment('Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->');
+      // The fix moves the head; the fake's first push is the implement run's.
+      fake.git.pushes = 1;
+      const finished = yield* runToEnd(addressing, fake, addressWork);
+      expect(finished.status).toBe('done');
+      expect(summaryOf(finished)).toBe(`#${PULL}: addressed review 1; asked data-quail to review again`);
+      expect(fake.requests.map((request) => request.sessionId)).toEqual(['implement-session', 'implement-session']);
+      expect(fake.requests[0]?.prompt).toContain('Review 1 of pull request #7 asks for changes');
+      expect(fake.git.pushes).toBe(2);
+      expect(fake.people.requested).toEqual(['data-quail']);
+      expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+    }),
+  );
+
+  effect('disagrees: replies with its reasons and hands the pull request to a person, without pushing or asking again', () =>
+    Effect.gen(function* () {
+      const fake = changesAsked('decline');
+      const finished = yield* runToEnd(addressing, fake, addressWork);
+      expect(finished.status).toBe('needs-human');
+      expect(summaryOf(finished)).toContain('the author disputes review 1');
+      expect(fake.comments.some((comment) => comment.body.startsWith('Not addressing review 1:'))).toBe(true);
+      expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+      expect(fake.git.pushes).toBe(0);
+      expect(fake.people.requested).toEqual([]);
+    }),
+  );
+});
+

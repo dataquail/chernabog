@@ -23,7 +23,7 @@ cd .chernabog && bun install   # or npm, pnpm: dev dependencies, for the editor
 
 ## The label contract
 
-Labels are how people see where work stands, and how some flows hand it on. Pull requests pass between `implement`, `review` and `re-review` through GitHub's review requests instead. A flow that composes its own sequence from the building blocks has to leave the labels the way the other flows expect them. Keys are under [`labels`](/chernabog/reference/configuration/#repo); the names here are the defaults.
+Labels are how people see where work stands, and how some flows hand it on. Pull requests pass between `implement`, `review`, `address-review` and `re-review` through GitHub's review requests and reviews instead. A flow that composes its own sequence from the building blocks has to leave the labels the way the other flows expect them. Keys are under [`labels`](/chernabog/reference/configuration/#repo); the names here are the defaults.
 
 | Label                      | On    | Means                                     | Set by                                                          | Removed by                                     | Read by |
 | -------------------------- | ----- | ----------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ------- |
@@ -31,25 +31,24 @@ Labels are how people see where work stands, and how some flows hand it on. Pull
 | `auto:ship`                | both  | queued, or on a pull request: the automated path, which chernabog merges once approved | a person, on the issue; `Implement.openPullRequest`, on its pull request | `Implement.claim`, on the issue          | `Implement.trigger`; `PullRequest.ships`, which `mergeOrLeave` asks |
 | `auto:in-progress`         | issue | a run owns the issue                      | `Implement.claim`                                               | `handOff`, `handToHuman`, `askForClarification` | people |
 | `auto:needs-clarification` | issue | questions are on the issue                | `Implement.askForClarification`                                 | a person, on requeue                           | people |
-| `auto:needs-review`        | PR    | open and green, with no reviewer in the pool; a person reviews | `PullRequest.requestReview` (so `Implement.handOff`), the `fix` flow when the review names no reviewer | a person | people |
-| `auto:changes-requested`   | PR    | changes requested; waiting for the author | the `review` flow                                               | the `fix` flow                                 | `Review.fixTrigger`, which starts `fix` on an `auto/` branch whose latest review saw its head |
-| `auto:needs-human`         | both  | a cap or rule stopped it; a person takes over | `Implement.handToHuman`, `PullRequest.handToPerson`, `PullRequest.mergeOrLeave`, the `fix` flow | a person | `Review.reReviewTrigger`, which skips it; no flow picks it up again |
+| `auto:needs-review`        | PR    | open and green, with no reviewer in the pool; a person reviews | `PullRequest.requestReview` (so `Implement.handOff`) | a person | people |
+| `auto:needs-human`         | both  | a cap or rule stopped it; a person takes over | `Implement.handToHuman`, `PullRequest.handToPerson`, `PullRequest.mergeOrLeave`, the `address-review` flow | a person | `Review.reReviewTrigger` and `Review.addressTrigger`, which skip it; no flow picks it up again |
 
-`auto:approved` and `auto:stale` stay in the label set, and `chernabog labels` creates them, but no default flow sets or reads them.
+`auto:approved`, `auto:stale` and `auto:changes-requested` stay in the label set, and `chernabog labels` creates them, but no default flow sets or reads them.
 
 Most steps only post. The ones above that move labels say so; `Review.round` and `Review.recheck` post a review and move none.
 
 **What a flow leaves behind at each ending.**
 
 - **The issue** never keeps `auto:in-progress` once its run ends: the run that claimed it is the only thing that removes it. `handOff`, `handToHuman` and `askForClarification` each remove it; a flow that ends another way removes it too.
-- **A pull request handed on for review** has a review requested of one reviewer from the pool, or `auto:needs-review` without one, and the session marker `handOff` posts, so the `fix` flow can resume the session that wrote it. A review request starts `review` as that reviewer, and a second one, after it reviewed, starts `re-review`.
-- **A pull request the run reviewed itself** carries at most one of `auto:changes-requested` and `auto:needs-human`, or none. `auto:changes-requested` on an `auto/` branch, with the latest review at its head, starts the `fix` flow, so leave it only when that is what should happen next.
+- **A pull request handed on for review** has a review requested of one reviewer from the pool, or `auto:needs-review` without one, and the session marker `handOff` posts, so the `address-review` flow can resume the session that wrote it. A review request starts `review` as that reviewer, and a second one, after it reviewed, starts `re-review`.
+- **A pull request the run reviewed itself** carries `auto:needs-human` or no label. A review that requests changes on the current head starts the author's `address-review`, so post one only when that is what should happen next, or hand the pull request to a person.
 - **A merge** happens only through `PullRequest.mergeOrLeave`, or behind a check of `PullRequest.ships`, so chernabog merges nothing that doesn't carry `auto:ship`.
 - **Worktrees** of a review, `review-pr-<n>`, are removed by `Review.workflow` and `Review.reReviewWorkflow` once they're done. A flow of your own that calls `Review.round` removes it with `Review.doneReviewing(pr)`.
 
 `chernabog status` lists each flow's work from its trigger, so a label left behind shows up there as work waiting to start.
 
-**Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That posts an owner marker on the pull request, and a release marker when the work ends, whether it succeeded or failed. A run waiting on a signal keeps the pull request. While a pull request is owned, `Review.trigger`, `Review.reReviewTrigger` and `Review.fixTrigger` don't start on it. A run this machine knows has ended no longer owns anything, even without a release. One on another machine owns the pull request until its release marker appears.
+**Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That posts an owner marker on the pull request, and a release marker when the work ends, whether it succeeded or failed. A run waiting on a signal keeps the pull request. While a pull request is owned, `Review.trigger`, `Review.reReviewTrigger` and `Review.addressTrigger` don't start on it. A run this machine knows has ended no longer owns anything, even without a release. One on another machine owns the pull request until its release marker appears.
 
 **Labels of a flow's own.** A flow keyed by its own label, such as `auto:docs`, declares it in `defineFlow({ labels: [{ name: "auto:docs" }] })`, uses `Implement.triggerFor("auto:docs")`, and claims with `Implement.claim(issue, yield* Implement.queuedBy(item))`, which removes that label in place of `auto:eligible`. `chernabog labels` creates declared labels beside the repo's own.
 

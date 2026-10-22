@@ -89,7 +89,7 @@ A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs wit
 
 An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively. When the machine's login can't be looked up, `@me` matches no one.
 
-`implement` items carry the issue's assignees. `review` and `re-review` items carry the pull request's assignees and its requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, so they need no `reviewRequested`. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
+`implement` items carry the issue's assignees. `review` and `re-review` items carry the pull request's assignees and its requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, so they need no `reviewRequested`. `address-review` items carry the pull request's assignees; its trigger takes only pull requests the persona wrote. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
 
 Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
 
@@ -205,7 +205,7 @@ Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `G
 
 A repo's `personas` maps each login that runs its flows to that persona's own choices. With one login under `github:`, that one is the default; with several, the repo must name them. Without `github:` there are no persona entries, and the repo entry's own settings run the one implicit account, so a `GH_TOKEN`-only host such as CI still works. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 
-A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither, unless the flow says `ownWork: true` in `defineFlow`, as `review` and `re-review` do: their triggers take only the pull requests that request their own persona's review. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
+A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither, unless the flow says `ownWork: true` in `defineFlow`, as `review`, `re-review` and `address-review` do: their triggers take only the pull requests that request their own persona's review, or, for `address-review`, that it wrote. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

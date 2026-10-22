@@ -3,7 +3,7 @@ title: Composing a flow
 description: How the default flows are built from the SDK's steps, and how to change one.
 ---
 
-The default flows each cover one stage and hand work to each other through GitHub's own review requests: `implement` asks a reviewer from the pool, `review` runs as that persona, `fix` asks it again, and `re-review` resumes its own review. Each flow is a short sequence of SDK steps, so a repo changes a stage by editing its flow: reorder the steps, leave one out, put a step of its own in between, or end differently.
+The default flows each cover one stage and hand work to each other through GitHub's own review requests: `implement` asks a reviewer from the pool, `review` runs as that persona, `address-review` answers a request for changes and asks it again, and `re-review` resumes its own review. Each flow is a short sequence of SDK steps, so a repo changes a stage by editing its flow: reorder the steps, leave one out, put a step of its own in between, or end differently.
 
 ## The `implement` flow
 
@@ -58,7 +58,7 @@ export default defineFlow({
 
 ## A review flow of your own
 
-`review` is `Review.trigger` with `Review.workflow`. A repo that wants every request for changes to go to a person, rather than to `fix`, writes its own workflow from the same steps:
+`review` is `Review.trigger` with `Review.workflow`. A repo that wants every request for changes to go to a person, rather than to `address-review`, writes its own workflow from the same steps:
 
 ```ts
 // .chernabog/flows/review.ts

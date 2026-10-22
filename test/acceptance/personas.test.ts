@@ -19,7 +19,7 @@ describe('personas', () => {
 
   beforeAll(() => {
     sandbox = openSandbox(
-      { reviewers: ['alice', 'bob'], flows: { review: { schedule: '*/2 * * * * *', agent: 'codex' }, implement: { enabled: false }, fix: { enabled: false }, 're-review': { enabled: false } } },
+      { reviewers: ['alice', 'bob'], flows: { review: { schedule: '*/2 * * * * *', agent: 'codex' }, implement: { enabled: false }, 'address-review': { enabled: false }, 're-review': { enabled: false } } },
       { github: ['alice', 'bob'], personas: ['alice', 'bob'] },
     );
   });

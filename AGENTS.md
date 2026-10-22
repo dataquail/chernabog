@@ -41,7 +41,8 @@ act as the right one.
 - **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
   A flow several personas run should filter with `assignee` or
   `reviewRequested: "@me"`.
-  `review` and `re-review` filter in their triggers, by the persona's login.
+  `review`, `re-review` and `address-review` filter in their triggers, by the
+  persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
   does and as whom; show runs with `runLabel` and `shortRunId`, and resolve user
   input with `resolveRunId` (unique prefix).
@@ -141,7 +142,7 @@ Decisions that cut across them:
   chernabog), but each one gets a migration that rewrites machine config and
   says what it changed.
 
-### Review flows (#53)
+### Review flows (#53, #54)
 
 - `reviewers:` in the team's config is the pool. `Implement.handOff` calls
   `PullRequest.requestReview`, which picks one at random, never the author,
@@ -156,8 +157,17 @@ Decisions that cut across them:
 - `PullRequest.mergeOrLeave` is the one merge path: it merges only what
   `PullRequest.ships` (carries `auto:ship`), through `PullRequest.merge`'s
   safety checks, and otherwise hands to a person. Don't merge anywhere else.
-- `fix` is still label-driven (`auto:changes-requested`) until #54's
-  `address-review`; its hand-back re-requests the reviewer from the marker.
-- Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`, and
-  review's wait-for-push loop. `auto:approved` and `auto:stale` stay in the
-  label set but no default flow sets them.
+- `address-review` (`Review.addressTrigger`/`addressWorkflow`, `ownWork:
+  true`) runs as the pull request's author persona, when the latest decisive
+  review (APPROVED or CHANGES_REQUESTED) requests changes on the current head;
+  item key `pr-<n>-changes-<count>`. It resumes the implementing session from
+  the session marker, `Implement.considerFindings` first: "decline" posts the
+  reasons and hands to a person, never pushing or re-requesting; "address"
+  runs `Implement.addressFindings`, the local gate, push and CI, then
+  re-requests the reviewer who asked. `re-review` skips `auto:needs-human`, so
+  re-requesting mid-dispute doesn't restart the loop.
+- Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
+  review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
+  `fixWorkflow`, `FixItem`, the `fix` prompt). `auto:approved`, `auto:stale`
+  and `auto:changes-requested` stay in the label set but no default flow sets
+  them.
