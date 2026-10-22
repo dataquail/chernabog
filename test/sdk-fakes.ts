@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   Agent,
+  AgentError,
   type AgentRequest,
   type CiState,
   type Comment,
@@ -132,8 +133,10 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
     return git.head;
   };
 
-  // How the author answers a review it is asked to consider.
-  const author = { consider: 'address' };
+  // How the author answers a review it is asked to consider, and whether the person closes a session with them before it answers.
+  const author = { consider: 'address', closes: false };
+  // Whether the issue's branch exists already, as an earlier run left it.
+  const existing = { branch: false };
   let reviewed = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -171,6 +174,13 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
       return { status: 'done', summary: 'Mentioned the change.', title: 'feat: a change', body: 'The change.' };
     }
 
+    // The hybrid path's open-pr, once the person and the agent are done.
+    if (schema.includes('"title"')) {
+      git.commits += 1;
+
+      return { title: 'feat: worked out together', body: 'Built with a person.', summary: 'Done with a person.' };
+    }
+
     return { verdict: nextVerdict(), summary: 'Reviewed.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change.' }] };
   };
 
@@ -198,7 +208,12 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
       issue: () => Effect.succeed(issue()),
       trustedComments: () => Effect.succeed([]),
       branchSha: () => Effect.succeedSome('base1234'),
-      createBranch: () => Effect.succeed('created' as const),
+      createBranch: () =>
+        Effect.sync((): 'created' | 'already-exists' => {
+          if (existing.branch) return 'already-exists';
+
+          return 'created';
+        }),
       deleteBranch: () => Effect.void,
       assignSelf: () => Effect.void,
       moveToStatus: () => Effect.void,
@@ -267,18 +282,20 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
     Layer.mock(Agent)({
       adapters: [],
       run: (request) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
           adapters.push(request.adapter);
           requests.push(request);
 
-          return { sessionId: request.sessionId, output: answerFor(request), costUsd: Option.none() };
+          if (author.closes && request.withPerson === true) return Effect.fail(new AgentError({ message: 'claude: the person closed the session before it finished' }));
+
+          return Effect.succeed({ sessionId: request.sessionId, output: answerFor(request), costUsd: Option.none() });
         }),
     }),
     Layer.mock(StepRunner)({}),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
-  return { services, git, author, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment, people, submitted };
+  return { services, git, author, existing, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment, people, submitted };
 };
 
 export type Fake = ReturnType<typeof makeFake>;
@@ -311,6 +328,9 @@ export const runUntil = (handle: FlowHandle, fake: Fake, work: WorkItem, until: 
   });
 
 export const runToEnd = (handle: FlowHandle, fake: Fake, work: WorkItem) => runUntil(handle, fake, work, (run) => Effect.succeed(!isRunning(run)));
+
+// Runs any effect, such as a flow's item lookup, against the fake.
+export const onFake = <A, E, R>(fake: Fake, effect: Effect.Effect<A, E, R>) => Effect.provide(effect, fake.services);
 
 // Runs a trigger against the fake, as a tick would.
 export const triggered = <E, R>(fake: Fake, trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) => Effect.provide(trigger, fake.services);

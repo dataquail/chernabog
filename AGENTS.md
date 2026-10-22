@@ -171,3 +171,29 @@ Decisions that cut across them:
   `fixWorkflow`, `FixItem`, the `fix` prompt). `auto:approved`, `auto:stale`
   and `auto:changes-requested` stay in the label set but no default flow sets
   them.
+
+### Hybrid path (#55)
+
+- No hybrid flow is scaffolded: `init` writes the same four defaults. The
+  SDK ships only blocks (`Hybrid.trigger`/`itemFor`/`claim`/`workWithPerson`/
+  `personSession`/`openPullRequest`/`handOff`; no `Hybrid.workflow`), and a
+  repo writes its own `human-initiated` flow from them, as this repo's
+  `.chernabog/flows/human-initiated.ts` does (`ownWork: true`, no gate). Its
+  trigger finds nothing on a schedule; `chernabog start <issue>`
+  (`src/start.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
+  `issue-<n>` (failing with a link to the docs' `#the-hybrid-path` when the
+  repo has no such flow). The optional `Flow.item(key)` finds an item the
+  trigger doesn't report (`unreportedItem` in `src/engine.ts`, for the daemon
+  and `run --item`). It then attaches to the session (`liveAttach`).
+- `Hybrid.claim` takes over an earlier start's claim (`ClaimMarker.withPerson`)
+  but skips a branch an unattended run claimed. One Claude session per
+  repo+issue (`sessionIdFor(slug#issue, 'human-initiated')`), so a restart resumes it.
+- `AgentRequest.withPerson`: only claude under an interactive launcher; the
+  Stop hook gets `--person` and never blocks; the session stays open after
+  answering; a session the person closes fails the call. The session's env
+  carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/open-pr.ts`)
+  uses to write the answer and `done` once the worktree is clean.
+- `Hybrid.handOff` posts a `SessionMarker` with `withPerson: true`, so
+  `address-review` reopens the person's session (consider, address, local
+  gate and CI fixes). The pull request is labelled `labels.hybrid`, which no
+  flow reads; it never carries `auto:ship`, so a person merges.

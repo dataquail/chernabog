@@ -13,6 +13,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it |
 | `labels`      | optional; labels of the flow's own, such as `{ name: "auto:docs" }`, which `chernabog labels` creates |
 | `ownWork`     | optional; `true` when the trigger finds only the work of the persona it runs as, as `review`'s does by its review requests, so the daemon doesn't warn that several personas each take any of it |
+| `item`        | optional; `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 Each step in a workflow is an **activity** whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
@@ -56,11 +57,12 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 ## Building blocks
 
-`Implement`, `Review` and `PullRequest` hold the blocks of [the default flows](/chernabog/work/flows/), each an activity a flow can reorder, leave out or wrap.
+`Implement`, `Review` and `PullRequest` hold the blocks of [the default flows](/chernabog/work/flows/), and `Hybrid` those of the hybrid path; each is an activity a flow can reorder, leave out or wrap.
 
 - `Implement.trigger` queues issues labelled `auto:eligible`, then `auto:ship`; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
 - `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
 - `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
+- `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), which no default flow provides: a repo writes its own `human-initiated` flow from them, as chernabog's [`.chernabog/flows/human-initiated.ts`](https://github.com/dataquail/chernabog/blob/main/.chernabog/flows/human-initiated.ts) does. `Hybrid.trigger` finds nothing and `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
 - `Review.trigger` and `Review.workflow` make `review`; `Review.reReviewTrigger` and `Review.reReviewWorkflow` make `re-review`; `Review.addressTrigger` and `Review.addressWorkflow` make `address-review`.
 - `PullRequest.mergeOrLeave(pr)` is the one merge on the automated path: it merges a pull request that `PullRequest.ships` (it carries `auto:ship`), and leaves any other for a person. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
 - `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone.
@@ -89,7 +91,9 @@ A flow that answers its own reviews resumes sessions instead of starting new one
 - `Implement.addressFindings(pr, review, session)` resumes the same session to make the changes and commit, and returns the answer `fixWithAgent` does. The flow then runs `localGate`, `push` and `waitForCi` as usual. The default `address-review` flow is built on these two.
 - `PullRequest.comment(pr, body)` and `Issue.comment(issue, body)` post a comment and do nothing else. A run posts each distinct comment on an item once.
 
-Each of these has its own prompt, `recheck`, `consider` and `address`. The SDK carries a default for each, and a repo overrides one with `.chernabog/prompts/<name>.md`.
+On a pull request whose session marker has `withPerson`, as `Hybrid.handOff` leaves, `address-review` passes `withPerson` on, so `considerFindings`, `addressFindings` and its local gate and CI fixes reopen the session in front of the person.
+
+Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybrid.workWithPerson` has one, `human-initiated`. The SDK carries a default for each, and a repo overrides one with `.chernabog/prompts/<name>.md`.
 
 ### Merging
 

@@ -1,7 +1,8 @@
-// `chernabog __stop-hook --dir <session dir>`: Claude's Stop hook for an
-// interactive session. The session is done once the agent has written a valid
-// answer file; until then the hook sends the agent back to write it, three
-// times at most. Under every launcher, `done` is how Chernabog knows.
+// `chernabog __stop-hook --dir <session dir> [--person]`: Claude's Stop hook
+// for an interactive session. The session is done once the agent has written a
+// valid answer file; until then the hook sends the agent back to write it,
+// three times at most, unless a person works in the session. Under every
+// launcher, `done` is how Chernabog knows.
 
 import { type Json, parseJson, printJson } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';
@@ -46,8 +47,9 @@ const writeDone = (files: SessionFiles, done: Done) =>
     yield* fs.writeFileString(files.done, yield* Schema.encodeEffect(Done)(done));
   });
 
-// What the hook prints: a block with its reason, or nothing to let the session stop.
-export const stopHook = (dir: string) =>
+// What the hook prints: a block with its reason, or nothing to let the session
+// stop. With a person, it never blocks: the agent stopping waits on them.
+export const stopHook = (dir: string, withPerson = false) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const files = sessionFilesIn(dir);
@@ -63,6 +65,8 @@ export const stopHook = (dir: string) =>
 
       return Option.none<string>();
     }
+
+    if (withPerson) return Option.none<string>();
 
     const blocks = Option.getOrElse(Option.filter(Option.map(yield* readText(files.blocks), (text) => Number.parseInt(text, 10)), Number.isFinite), () => 0);
 

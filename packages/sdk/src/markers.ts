@@ -7,7 +7,10 @@ import * as Schema from 'effect/Schema';
 
 import type { Json } from './json.ts';
 
-export const SessionMarker = Schema.Struct({ adapter: Schema.String, sessionId: Schema.String, issue: Schema.Finite, branch: Schema.String });
+// The session that wrote a pull request. withPerson: a person worked in it
+// with the agent, on the hybrid path, so answering a review reopens it in
+// front of them.
+export const SessionMarker = Schema.Struct({ adapter: Schema.String, sessionId: Schema.String, issue: Schema.Finite, branch: Schema.String, withPerson: Schema.optionalKey(Schema.Boolean) });
 
 export type SessionMarker = typeof SessionMarker.Type;
 
@@ -36,7 +39,8 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   };
 };
 
-export const ClaimMarker = Schema.Struct({ runId: Schema.String, claimedAt: Schema.String, branch: Schema.String });
+// withPerson: claimed by a person's `chernabog start`, which another start of the issue may take over.
+export const ClaimMarker = Schema.Struct({ runId: Schema.String, claimedAt: Schema.String, branch: Schema.String, withPerson: Schema.optionalKey(Schema.Boolean) });
 
 export type ClaimMarker = typeof ClaimMarker.Type;
 

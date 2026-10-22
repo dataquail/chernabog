@@ -32,6 +32,9 @@ export const sessionFilesIn = (dir: string) => ({
 
 export type SessionFiles = ReturnType<typeof sessionFilesIn>;
 
+// Names a session with a person's directory in its environment, for `chernabog open-pr`.
+export const SESSION_ENV = 'CHERNABOG_SESSION';
+
 export const sessionFiles = (root: string, sessionId: string) => sessionFilesIn(`${homePaths(root).sessions}/interactive/${sessionId}`);
 
 export const Done = Schema.fromJsonString(Schema.Struct({ ok: Schema.Boolean, reason: Schema.optionalKey(Schema.String) }));

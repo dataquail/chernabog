@@ -20,6 +20,8 @@ export const Labels = Schema.Struct({
   stale: Schema.String,
   // The automated path: chernabog merges a pull request only when it carries this.
   ship: Schema.String,
+  // The hybrid path, for people reading GitHub: a person started the work. No flow decides anything from it.
+  hybrid: Schema.String,
 });
 
 export type Labels = typeof Labels.Type;
@@ -34,6 +36,7 @@ export const DEFAULT_LABELS: Labels = {
   needsClarification: 'auto:needs-clarification',
   stale: 'auto:stale',
   ship: 'auto:ship',
+  hybrid: 'hybrid',
 };
 
 export const Board = Schema.Struct({ projectNumber: Schema.Finite, readyStatus: Schema.String, inProgressStatus: Schema.String });
@@ -311,6 +314,11 @@ export type AgentRequest = {
   readonly outputSchema: Option.Option<Json>;
   // Another adapter than the repo's own, such as a Codex reviewer.
   readonly adapter: Option.Option<string>;
+  // A person works in the session with the agent, on the hybrid path: it
+  // opens in front of them under the launcher, the agent is never sent back
+  // to answer, and it is done once its answer is written. Only Claude under
+  // a launcher can.
+  readonly withPerson?: boolean;
 };
 
 export class Agent extends Context.Service<

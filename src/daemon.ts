@@ -23,7 +23,7 @@ import * as Result from 'effect/Result';
 import * as Schema from 'effect/Schema';
 
 import { Home, homePaths } from './config.ts';
-import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive } from './engine.ts';
+import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive, unreportedItem } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
@@ -327,7 +327,11 @@ export const runDaemon = Effect.gen(function* () {
 
           if (Result.isFailure(triggered)) return yield* record(`trigger failed: ${describeError(triggered.failure)}`, Option.none());
 
-          const items = triggered.success;
+          const lookedUp = yield* Effect.result(withRepo(context, unreportedItem(flow, options.item, triggered.success)));
+
+          if (Result.isFailure(lookedUp)) return yield* record(`could not find ${Option.getOrElse(options.item, () => 'the item')}: ${describeError(lookedUp.failure)}`, options.item);
+
+          const items = [...triggered.success, ...lookedUp.success];
           yield* deliverSignals(handle, persona, items);
           const waiting = yield* unstarted(handle, persona, items);
           // Work for others is left to them, unless a person names the item.

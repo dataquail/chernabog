@@ -13,6 +13,7 @@ Teams commit flows to each repo in `.chernabog/`, the way husky commits git hook
 | sets budgets and hours           | runs only within them, and only with weekly headroom to spare |
 | answers escalations              | stops at `auto:needs-human` or `auto:needs-clarification`     |
 | merges, or labels `auto:ship`    | reviews, fixes review comments, waits for CI; merges `auto:ship` work once approved |
+| runs `chernabog start <issue>` and works on it with the agent, in a repo with a [hybrid flow](/chernabog/work/flows/#the-hybrid-path) | opens the pull request, waits for CI and asks for a review; reopens the session for changes requested |
 
 ## Requirements
 

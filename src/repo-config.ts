@@ -99,6 +99,7 @@ const LabelsFile = Schema.Struct({
   needsClarification: Schema.optionalKey(Schema.String),
   stale: Schema.optionalKey(Schema.String),
   ship: Schema.optionalKey(Schema.String),
+  hybrid: Schema.optionalKey(Schema.String),
 });
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.

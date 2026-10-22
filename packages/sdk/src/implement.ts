@@ -262,8 +262,9 @@ export const implementWithAgent = (issue: number, worktree: string) =>
     ImplementOutcome,
   );
 
-// Which session a fix goes to: this run's implement session when none is given.
-export type AuthorSession = { readonly sessionId: Option.Option<string>; readonly adapter: Option.Option<string> };
+// Which session a fix goes to: this run's implement session when none is
+// given. withPerson: a person works in it with the agent, on the hybrid path.
+export type AuthorSession = { readonly sessionId: Option.Option<string>; readonly adapter: Option.Option<string>; readonly withPerson?: boolean };
 
 export const thisRunsSession: AuthorSession = { sessionId: Option.none(), adapter: Option.none() };
 
@@ -281,6 +282,7 @@ export const fixWithAgent = (name: string, worktree: string, prompt: string, ses
         resumePrompt: Option.some(prompt),
         outputSchema: Option.some(implementOutcomeJsonSchema),
         adapter: session.adapter,
+        withPerson: session.withPerson === true,
       });
 
       return yield* decodeOutcome(result);
@@ -333,6 +335,7 @@ export const considerFindings = (pullRequest: number, review: ReviewResult, sess
         resumePrompt: Option.some(prompt),
         outputSchema: Option.some(considerationJsonSchema),
         adapter: session.adapter,
+        withPerson: session.withPerson === true,
       });
 
       return yield* Schema.decodeUnknownEffect(Consideration)(result.output).pipe(Effect.mapError((issue) => new StepFailed({ step: `consider-review-${round}`, message: `agent answer: ${issue.message}` })));
@@ -393,6 +396,9 @@ const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.Stri
 // activities are named like `local-gate-1#fix-1`, as `step` does with its id.
 export type RepeatOptions = { readonly id?: string };
 
+// The session the local gate sends the agent back to: this run's implement session unless given.
+export type LocalGateOptions = RepeatOptions & { readonly session?: AuthorSession };
+
 const named = (options: RepeatOptions, name: string) => Option.match(Option.fromUndefinedOr(options.id), { onNone: () => name, onSome: (id) => `${name}#${id}` });
 
 const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =>
@@ -416,7 +422,7 @@ const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =
 
 // Runs the repo's local gate, and sends the agent back to fix what fails, up to
 // limits.localGateRounds times.
-export const localGate = (worktree: string, options: RepeatOptions = {}) =>
+export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
   Effect.gen(function* () {
     const repo = yield* Repo;
 
@@ -429,7 +435,7 @@ export const localGate = (worktree: string, options: RepeatOptions = {}) =>
         return yield* new NeedsHuman({ reason: `the local gate still fails after ${repo.limits.localGateRounds} fix attempts:\n\n${result.failure}` });
       }
 
-      yield* fixWithAgent(named(options, `fix-local-gate-${round}`), worktree, `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`, thisRunsSession);
+      yield* fixWithAgent(named(options, `fix-local-gate-${round}`), worktree, `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`, options.session ?? thisRunsSession);
     }
   });
 

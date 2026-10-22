@@ -28,6 +28,7 @@ const LOOK = {
   needsClarification: { color: 'd876e3', description: 'Questions are on the issue; answer, then requeue' },
   stale: { color: '7f8c8d', description: 'No push before the staleness timeout' },
   ship: { color: '5319e7', description: 'The automated path: chernabog implements, and merges once a review approves' },
+  hybrid: { color: 'bfd4f2', description: 'The hybrid path: a person worked on it with an agent; a person merges' },
 } satisfies Readonly<Record<keyof Labels, { readonly color: string; readonly description: string }>>;
 
 export const desiredLabels = (labels: Labels): ReadonlyArray<DesiredLabel> => Struct.keys(LOOK).map((key) => ({ name: labels[key], ...LOOK[key] }));

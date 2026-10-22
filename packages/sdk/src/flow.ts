@@ -72,6 +72,9 @@ export type Flow = {
   // review's does by its review requests, so several personas can run the
   // flow without assignee or reviewRequested to tell them apart.
   readonly ownWork?: boolean;
+  // The work item for a key a person names, when the trigger doesn't report
+  // it: the issue `chernabog start` hands over, say. None when there is no such item.
+  readonly item?: (key: string) => Effect.Effect<Option.Option<WorkItem>, FlowFailure, TriggerServices>;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowFailure, WorkflowServices>;
 };
