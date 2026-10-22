@@ -35,6 +35,8 @@ export type MachineOptions = {
   readonly agents?: Readonly<Record<string, Json>>;
   readonly launcher?: string;
   readonly launchers?: Readonly<Record<string, Json>>;
+  // Files under .chernabog/ beyond the scaffold's, such as a flow of the repo's own.
+  readonly repoFiles?: Readonly<Record<string, string>>;
 };
 
 export type CliResult = { readonly code: number; readonly output: string };
@@ -101,7 +103,7 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   execFileSync('git', ['clone', '-q', bare, checkout]);
   const files = scaffoldFiles();
 
-  for (const [relative, content] of Object.entries({ ...files, 'config.yaml': repoConfigText(files['config.yaml'], repoConfig) })) {
+  for (const [relative, content] of Object.entries({ ...files, 'config.yaml': repoConfigText(files['config.yaml'], repoConfig), ...machine.repoFiles })) {
     const path = join(checkout, '.chernabog', relative);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);

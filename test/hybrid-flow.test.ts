@@ -1,4 +1,5 @@
-// The hybrid path through the engine, on an in-memory GitHub: the start flow
+// The hybrid path through the engine, on an in-memory GitHub, with this
+// repo's human-initiated flow: the flow
 // a person hands an issue to, the session it opens with them, the pull request
 // it opens, and how review answers it with the person at the decisions.
 
@@ -8,23 +9,23 @@ import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 
+import humanInitiated from '../.chernabog/flows/human-initiated.ts';
 import { sessionFilesIn } from '../src/agents/session-files.ts';
 import { stopHook } from '../src/agents/stop-hook.ts';
 import { flowHandle } from '../src/engine.ts';
 import addressReview from '../templates/.chernabog/flows/address-review.ts';
 import review from '../templates/.chernabog/flows/review.ts';
-import start from '../templates/.chernabog/flows/start.ts';
 import { effect } from './effect-test.ts';
 import { HEAD, ISSUE, item, makeFake, onFake, PULL, repo, runToEnd, summaryOf, triggered } from './sdk-fakes.ts';
 
-const starting = flowHandle(repo, 'start', start);
+const starting = flowHandle(repo, 'human-initiated', humanInitiated);
 const reviewing = flowHandle(repo, 'review', review);
 const addressing = flowHandle(repo, 'address-review', addressReview);
 const work = item(`issue-${ISSUE}`, { issue: ISSUE });
 const POOL = { reviewers: ['zach', 'data-quail'] };
-const PERSON_SESSION = Implement.sessionIdFor(`dataquail/demo#${ISSUE}`, 'start');
+const PERSON_SESSION = Implement.sessionIdFor(`dataquail/demo#${ISSUE}`, 'human-initiated');
 
-describe('start', () => {
+describe('human-initiated', () => {
   effect('finds no work on a schedule, and the issue a person names by its key', () =>
     Effect.gen(function* () {
       const fake = makeFake('approve');

@@ -1,5 +1,5 @@
 // `chernabog start <issue>`: the hybrid path. The daemon runs the repo's
-// `start` flow on the issue, whatever its trigger reports, and its session
+// `human-initiated` flow on the issue, whatever its trigger reports, and its session
 // opens under the launcher; this brings it up in front of the person who
 // asked: the Orca terminal, or `tmux attach`.
 
@@ -19,7 +19,9 @@ import { HostEnvironment } from './platform/environment.ts';
 import { findEnrolled, loadMachineConfig, repoNameOf } from './repo-config.ts';
 import { shortRunId } from './state.ts';
 
-export const START_FLOW = 'start';
+export const START_FLOW = 'human-initiated';
+
+const HYBRID_DOCS = 'https://dataquail.github.io/chernabog/work/flows/#the-hybrid-path';
 
 // How long the session has to open before the command leaves it to `chernabog attach`.
 const OPENING_POLLS = 120;
@@ -95,6 +97,10 @@ export const startIssue = (issue: number, named: Option.Option<string>, persona:
 
     const result = yield* daemonRun({ repo, flow: START_FLOW, item: Option.some(key), ...Option.match(persona, { onNone: () => ({}), onSome: (login) => ({ persona: login }) }) }).pipe(
       Effect.catchIf(Predicate.isTagged('DaemonUnavailable'), (unavailable) => Effect.fail(new ConfigError({ message: `${unavailable.message}; the hybrid path runs through it` }))),
+      Effect.catchIf(
+        (error) => Predicate.isTagged(error, 'DaemonRefused') && error.message.includes(`no flow named ${START_FLOW}`),
+        () => Effect.fail(new ConfigError({ message: `${repo} has no ${START_FLOW} flow in .chernabog/flows/; the hybrid path needs one: ${HYBRID_DOCS}` })),
+      ),
     );
 
     const runId = yield* runFor(repo, key, result.started);

@@ -50,7 +50,7 @@ You decided to address this review. You are back in the same worktree, on the sa
 `;
 
 // Hybrid.workWithPerson: a person handed the agent an issue with `chernabog start`, and works on it with it.
-export const START = `# Work on issue #{{issue}} in {{repo}}, with a person
+export const HUMAN_INITIATED = `# Work on issue #{{issue}} in {{repo}}, with a person
 
 A person handed you this issue with \`chernabog start\`, and is here in this session with you. Plan and implement it together, in this worktree on branch \`{{branch}}\`, cut from \`{{base}}\`. Ask them what you need to, and agree a plan with them before you build it.
 

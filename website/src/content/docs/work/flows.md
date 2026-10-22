@@ -1,14 +1,13 @@
 ---
 title: The default flows
-description: implement, start, review, re-review and address-review, and how they hand pull requests to each other through GitHub's review requests.
+description: implement, review, re-review and address-review, how they hand pull requests to each other through GitHub's review requests, and the hybrid path a repo can add.
 ---
 
-`init` scaffolds five flows in `.chernabog/flows/`, built from the SDK's `Implement`, `Hybrid`, `Review` and `PullRequest` blocks. Edit them freely; see [Writing flows](/chernabog/flows/flows/).
+`init` scaffolds four flows in `.chernabog/flows/`, built from the SDK's `Implement`, `Review` and `PullRequest` blocks. Edit them freely; see [Writing flows](/chernabog/flows/flows/).
 
 | Flow        | Picks up                                                | Ends with                                     |
 | ----------- | ------------------------------------------------------- | --------------------------------------------- |
 | `implement` | the oldest `auto:eligible` or `auto:ship` issue         | a green pull request, and a review requested of one reviewer from the pool |
-| `start`     | the issue a person names with `chernabog start`; nothing on a schedule | a green pull request labelled `hybrid`, and a review requested of one reviewer from the pool |
 | `review`    | an open pull request whose review is requested of this persona, which it hasn't reviewed | an approval, which merges an `auto:ship` pull request, or changes requested |
 | `re-review` | a pull request that asks this persona again after it reviewed | an approval, or `auto:needs-human`     |
 | `address-review` | a pull request this persona wrote whose latest review requests changes, with nothing pushed since | a green push and the reviewer asked again, or `auto:needs-human` |
@@ -31,9 +30,11 @@ An issue labelled `auto:ship` instead of `auto:eligible` is implemented the same
 
 ## The hybrid path
 
-Some work needs a person through planning and implementation. `chernabog start <issue>` hands the issue to the `start` flow, which opens an interactive session where the person and the agent work on it together. When they're done, `chernabog open-pr`, run from that session, hands the work back, and chernabog opens the pull request and asks a reviewer from the pool. From there `review`, `address-review` and `re-review` run as usual, with the person at the decisions: a request for changes reopens their session, and a person merges, since the pull request never carries `auto:ship`.
+Some work needs a person through planning and implementation. `chernabog start <issue>` hands the issue to the repo's `human-initiated` flow, which opens an interactive session where the person and the agent work on it together. When they're done, `chernabog open-pr`, run from that session, hands the work back, and chernabog opens the pull request and asks a reviewer from the pool. From there `review`, `address-review` and `re-review` run as usual, with the person at the decisions: a request for changes reopens their session, and a person merges, since the pull request never carries `auto:ship`.
 
 The pull request is labelled `hybrid` so the path shows on GitHub. No flow decides anything from it, so a missing or wrong label changes nothing.
+
+`init` doesn't scaffold this flow: a repo that wants the hybrid path adds `.chernabog/flows/human-initiated.ts` itself, from the SDK's `Hybrid` blocks, as [described below](#human-initiated). Without one, `chernabog start` fails and says so.
 
 ## `implement`
 
@@ -47,17 +48,29 @@ Each line is one SDK block, in the order the scaffolded flow calls them.
 6. `openPullRequest`, then `waitForCi` — an `auto:ship` issue's pull request is labelled `auto:ship`. Waits up to `limits.ciTimeout`, fixing red up to `limits.ciRounds`.
 7. `handOff` — posts `reviewTrigger` on the pull request if set, and asks one reviewer from the pool for a review.
 
-## `start`
+## `human-initiated`
 
-Runs only when a person names an issue, with `chernabog start <issue>` (or `chernabog run start --item issue-<n>`), whatever its labels. Its trigger finds nothing, so its scheduled ticks start no runs. It needs Claude under a [launcher](/chernabog/agents/launchers/#with-a-person) (`orca`, `tmux` or your own); headless, or another agent, fails the run with the reason.
+A flow a repo adds for [the hybrid path](#the-hybrid-path); chernabog's own is [`.chernabog/flows/human-initiated.ts`](https://github.com/dataquail/chernabog/blob/main/.chernabog/flows/human-initiated.ts). It runs only when a person names an issue, with `chernabog start <issue>` (or `chernabog run human-initiated --item issue-<n>`), whatever its labels: `Hybrid.trigger` finds nothing, so its scheduled ticks start no runs, and `Hybrid.itemFor` finds the issue named. It needs Claude under a [launcher](/chernabog/agents/launchers/#with-a-person) (`orca`, `tmux` or your own); headless, or another agent, fails the run with the reason. Its default export, with `workflow` defined above it in the file:
 
-1. `claim` — the issue's branch, `auto/issue-<n>`, labelled `auto:in-progress`, with `auto:eligible` and `auto:ship` removed. A branch an unattended run claimed is left to it. An earlier start's claim is taken over.
+```ts
+export default defineFlow({
+  trigger: Hybrid.trigger,
+  item: Hybrid.itemFor,
+  // No trigger finds work for several personas to share: each run is a person's.
+  ownWork: true,
+  workflow,
+});
+```
+
+Its `workflow` calls these blocks, in this order:
+
+1. `Hybrid.claim` — the issue's branch, `auto/issue-<n>`, labelled `auto:in-progress`, with `auto:eligible` and `auto:ship` removed. A branch an unattended run claimed is left to it. An earlier start's claim is taken over.
 2. `prepareWorktree` — as `implement`'s.
-3. `workWithPerson` — the session with the person, from the `start` prompt (`.chernabog/prompts/start.md`, or the SDK's own). It ends when `chernabog open-pr` records the pull request's title, body and summary. If the person closes the session before that, the run fails and keeps the claim.
-4. `localGate` — on failure, sends the fix back to the person's session.
-5. `push`, `openPullRequest` — labelled `hybrid`, never `auto:ship`.
+3. `Hybrid.workWithPerson` — the session with the person, from the `human-initiated` prompt (`.chernabog/prompts/human-initiated.md`, or the SDK's own). It ends when `chernabog open-pr` records the pull request's title, body and summary. If the person closes the session before that, the run fails and keeps the claim.
+4. `localGate(worktree, { session })` — with `Hybrid.personSession(issue)`, so a failure's fix goes back to the person's session.
+5. `push`, `Hybrid.openPullRequest` — labelled `hybrid`, never `auto:ship`.
 6. `waitForCi` — red goes back to the person's session, up to `limits.ciRounds`.
-7. `handOff` — posts `reviewTrigger` if set and the session marker, comments on the issue, and asks one reviewer from the pool.
+7. `Hybrid.handOff` — posts `reviewTrigger` if set and the session marker, comments on the issue, and asks one reviewer from the pool.
 
 Anything that stops it after the session hands the issue to a person with `auto:needs-human`.
 
@@ -98,11 +111,11 @@ Labels are the public record people see, and some flows trigger on them. Rename 
 | -------------------------- | -------------------- | ------------------ | ------------------------------------------------------- |
 | `auto:eligible`            | `eligible`           | a person           | Queued; `implement` claims the oldest                   |
 | `auto:ship`                | `ship`               | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
-| `auto:in-progress`         | `inProgress`         | `implement`, `start` | A run owns the issue                                    |
+| `auto:in-progress`         | `inProgress`         | `implement`, `Hybrid.claim` | A run owns the issue                                    |
 | `auto:needs-review`        | `needsReview`        | `implement`        | Open and green, with no reviewer in the pool; a person reviews |
 | `auto:needs-human`         | `needsHuman`         | any flow           | A loop cap or rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `needsClarification` | `implement`        | Questions are on the issue; answer and requeue          |
-| `hybrid`                   | `hybrid`             | `start`            | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
+| `hybrid`                   | `hybrid`             | `Hybrid.openPullRequest` | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
 | `auto:approved`            | `approved`           | no default flow    | Kept in the label set for flows of your own             |
 | `auto:stale`               | `stale`              | no default flow    | Kept in the label set for flows of your own             |
 | `auto:changes-requested`   | `changesRequested`   | no default flow    | Kept in the label set for flows of your own             |

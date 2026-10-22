@@ -1,9 +1,10 @@
-// The building blocks of the default `start` flow, the hybrid path: a person
-// hands chernabog an issue with `chernabog start`, and plans and implements
-// it with the agent in an interactive session in front of them. When they're
-// done, `chernabog open-pr`, run from that session, ends it, and the flow
-// takes it from there: it runs the local gate, pushes, opens the pull request,
-// waits for CI and asks a reviewer from the pool. review, address-review and
+// The building blocks of the hybrid path, for a flow a repo writes itself;
+// this repo's is .chernabog/flows/human-initiated.ts. A person hands
+// chernabog an issue with `chernabog start`, and plans and implements it with
+// the agent in an interactive session in front of them (workWithPerson).
+// `chernabog open-pr`, run from that session, ends it; the flow then runs the
+// local gate, pushes, opens the pull request (openPullRequest), waits for CI
+// and asks a reviewer from the pool (handOff). review, address-review and
 // re-review follow, with the person at the decisions: answering a review
 // reopens their session, and only a person merges, since the pull request
 // isn't on the automated path (auto:ship).
@@ -13,22 +14,15 @@ import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
 
-import { START } from './default-prompts.ts';
+import { HUMAN_INITIATED } from './default-prompts.ts';
 import { Skip, StepFailed } from './errors.ts';
 import { activity } from './flow.ts';
 import {
   type AuthorSession,
   branchFor,
-  endForPerson,
-  handToHuman,
   issueItem,
-  issueOf,
-  localGate,
-  prepareWorktree,
   PullRequestRef,
-  push,
   sessionIdFor,
-  waitForCi,
 } from './implement.ts';
 import type { Json } from './json.ts';
 import { claimMarker, latestMarker, sessionMarker } from './markers.ts';
@@ -49,7 +43,7 @@ export const itemFor = (key: string) =>
   });
 
 // One session per issue, whichever run opens it, so starting an issue again picks up the conversation.
-const sessionIdOf = (issue: number) => Repo.use((repo) => Effect.succeed(sessionIdFor(`${repo.slug}#${issue}`, 'start')));
+const sessionIdOf = (issue: number) => Repo.use((repo) => Effect.succeed(sessionIdFor(`${repo.slug}#${issue}`, 'human-initiated')));
 
 // The person's session, as the steps that send the agent back to it name it.
 export const personSession = (issue: number) =>
@@ -128,7 +122,7 @@ const RESUME_PROMPT = 'You are back in your session on this issue, with the pers
 
 // The person and the agent work on the issue in a session in front of the
 // person, until `chernabog open-pr` records the pull request's title, body and
-// summary. Its prompt is .chernabog/prompts/start.md, or the SDK's own.
+// summary. Its prompt is .chernabog/prompts/human-initiated.md, or the SDK's own.
 export const workWithPerson = (issue: number, worktree: string) =>
   activity(
     'work-with-person',
@@ -138,7 +132,7 @@ export const workWithPerson = (issue: number, worktree: string) =>
       const details = yield* github.issue(issue);
       const comments = yield* github.trustedComments(issue);
 
-      const prompt = yield* renderPromptOr('start', START, {
+      const prompt = yield* renderPromptOr('human-initiated', HUMAN_INITIATED, {
         repo: repo.slug,
         issue,
         title: details.title,
@@ -213,30 +207,3 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
     }),
     Schema.String,
   ).pipe(Effect.tap(() => requestReview(pullRequest.number)));
-
-// The whole default flow. A session the person ends without open-pr fails the
-// run and keeps the claim, so `chernabog start` on the issue again picks it
-// back up. Anything that stops it after that hands the issue to a person.
-export const workflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const issue = yield* issueOf(item);
-    const { branch } = yield* claim(issue);
-    const worktree = yield* prepareWorktree(branch);
-    const finished = yield* workWithPerson(issue, worktree);
-    let pullRequest = Option.none<number>();
-    const toPerson = (reason: string) => handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(endForPerson));
-
-    return yield* Effect.gen(function* () {
-      const session = yield* personSession(issue);
-      yield* localGate(worktree, { session });
-      yield* push('push', worktree, branch);
-      const opened = yield* openPullRequest(issue, finished);
-      pullRequest = Option.some(opened.number);
-      yield* waitForCi(opened.number, worktree, { ...session, branch });
-
-      return yield* handOff(issue, opened, finished);
-    }).pipe(
-      Effect.catchTag('NeedsHuman', (needsHuman) => toPerson(needsHuman.reason)),
-      Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)),
-    );
-  });

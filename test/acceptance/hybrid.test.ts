@@ -1,4 +1,5 @@
-// The hybrid path end to end, through the daemon and tmux: alice starts an
+// The hybrid path end to end, through the daemon and tmux, with this repo's
+// human-initiated flow: alice starts an
 // issue with `chernabog start`, works on it with Claude in a session in front
 // of her and finishes with `chernabog open-pr`. bob, the team's reviewer,
 // asks for changes; alice's session opens again to answer them; bob approves.
@@ -7,6 +8,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import * as Option from 'effect/Option';
@@ -24,7 +26,14 @@ describe('the hybrid path', () => {
   beforeAll(async () => {
     sandbox = openSandbox(
       { reviewers: ['bob'], flows: { review: { agent: 'codex' }, 're-review': { agent: 'codex' } } },
-      { github: ['alice', 'bob'], personas: ['alice', 'bob'], launcher: 'tmux', personaFlows: { alice: { 'address-review': often }, bob: { review: often, 're-review': often } } },
+      {
+        github: ['alice', 'bob'],
+        personas: ['alice', 'bob'],
+        launcher: 'tmux',
+        personaFlows: { alice: { 'address-review': often }, bob: { review: often, 're-review': often } },
+        // This repo's own hybrid flow: none is scaffolded.
+        repoFiles: { 'flows/human-initiated.ts': readFileSync(fileURLToPath(new URL('../../.chernabog/flows/human-initiated.ts', import.meta.url)), 'utf8') },
+      },
     );
     await sandbox.runCli(['trust', 'demo']);
     daemon = sandbox.cli(['daemon']);
@@ -65,9 +74,28 @@ describe('the hybrid path', () => {
     expect(new Set(sessions.map((call) => call.split(' ')[1])).size).toBe(1);
     expect(claude.some((call) => call.startsWith('open-pr') && call.includes('exited 0'))).toBe(true);
 
-    expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/start issue-1 as alice\)/);
+    expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/human-initiated issue-1 as alice\)/);
     expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-1 as alice\)/);
     expect(sandbox.daemonLog()).toMatch(/finished [\da-f-]{36} \(demo\/re-review pr-\d+-review-2 as bob\): done: #\d+ approved; a person merges/);
     expect(sandbox.github.issue(1).labels).not.toContain('auto:in-progress');
   }, 150_000);
+});
+
+describe('a repo without a human-initiated flow', () => {
+  test('refuses chernabog start, pointing at the docs for writing one', async () => {
+    const sandbox = openSandbox();
+    await sandbox.runCli(['trust', 'demo']);
+    const daemon = sandbox.cli(['daemon']);
+    await waitFor(() => existsSync(join(sandbox.home, 'daemon.sock')), 'the daemon');
+    sandbox.github.addIssue('Work it out together', []);
+
+    const refused = await sandbox.runCli(['start', '1']);
+    expect(refused.code).toBe(1);
+    expect(refused.output).toContain('demo has no human-initiated flow in .chernabog/flows/');
+    expect(refused.output).toContain('#the-hybrid-path');
+
+    daemon.kill('SIGTERM');
+    await closed(daemon);
+    await sandbox.github.stop();
+  }, 60_000);
 });

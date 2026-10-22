@@ -41,7 +41,7 @@ describe('machine config', () => {
 
     const entry = entryOf(sandbox);
     expect(entry.personas).toEqual({ alice: {}, bob: {} });
-    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {}, start: {} });
+    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {} });
     expect(entry.schedule).toBe('5 * * * *');
 
     // Once is enough: the next command finds nothing to change.
@@ -70,7 +70,7 @@ describe('machine config', () => {
     expect(enrolled.output).toContain(`updated dataquail/demo (${root}`);
     const entry = entryOf(sandbox);
     expect(entry.path).toBe(root);
-    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {}, start: {} });
+    expect(entry.flows).toEqual({ 'address-review': { concurrency: 1 }, implement: {}, 're-review': {} });
   }, 45_000);
 
   test('unenroll removes a repo and its settings', async () => {
@@ -102,8 +102,8 @@ describe('setting up and enrolling with flags', () => {
     expect(setUp.output).toContain('GitHub personas: alice, bob');
 
     const enrolled = await sandbox.runCli(['enroll', '--persona', 'bob', '--defaults'], { FAKE_GH_USERS: 'alice,bob' });
-    expect(enrolled.output).toContain('demo as bob: flows implement, re-review, review, start');
-    expect(entryOf(sandbox).personas).toEqual({ bob: { flows: { implement: {}, 're-review': {}, review: {}, start: {} }, account: 'work' } });
+    expect(enrolled.output).toContain('demo as bob: flows implement, re-review, review');
+    expect(entryOf(sandbox).personas).toEqual({ bob: { flows: { implement: {}, 're-review': {}, review: {} }, account: 'work' } });
   }, 30_000);
 });
 

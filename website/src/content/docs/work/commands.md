@@ -13,8 +13,8 @@ description: Every chernabog command and flag.
 | `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due                         |
 | `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
 | `attach <run>`                    | Open the run's agent session                                                     |
-| `start <issue>`                   | Run the [`start` flow](/chernabog/work/flows/#start) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
-| `open-pr --title <title>`         | From inside the session `start` opened: check the worktree is clean, and hand the work to chernabog, which runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
+| `start <issue>`                   | Run the repo's [`human-initiated` flow](/chernabog/work/flows/#the-hybrid-path) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
+| `open-pr --title <title>`         | From inside the session `chernabog start` opened: check the worktree is clean, and hand the work to chernabog, which runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
