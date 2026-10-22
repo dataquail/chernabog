@@ -15,8 +15,6 @@ import * as FetchHttpClient from 'effect/http/FetchHttpClient';
 import * as Layer from 'effect/Layer';
 import * as Option from 'effect/Option';
 import * as Predicate from 'effect/Predicate';
-import * as ChildProcess from 'effect/process/ChildProcess';
-import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 import * as Result from 'effect/Result';
 import * as Schedule from 'effect/Schedule';
 import * as Stdio from 'effect/Stdio';
@@ -38,6 +36,7 @@ import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { loadFlows } from './loader.ts';
 import { migrateMachineConfig } from './migrate.ts';
+import { openPr } from './open-pr.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
@@ -46,6 +45,7 @@ import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
 import { setup } from './setup.ts';
 import { configTree } from './snapshot.ts';
+import { openSession, startIssue } from './start.ts';
 import { runLabel, type RunRow, shortRunId } from './state.ts';
 import { runStepChild, StepServicesLive } from './steps.ts';
 import { recordTrust, trustDiff, trustedTree } from './trust.ts';
@@ -173,7 +173,33 @@ const installCommand = Command.make('install', setupFlags, (options) => runSetup
 );
 
 const uninstallCommand = Command.make('uninstall', {}, () => Effect.flatMap(uninstall, Console.log)).pipe(Command.withDescription('Stop the daemon and remove its service'));
-const start = Command.make('start', {}, () => Effect.flatMap(startService, Console.log)).pipe(Command.withDescription('Start the daemon'));
+
+const start = Command.make(
+  'start',
+  {
+    issue: Argument.Int('issue').pipe(Argument.withDescription('An issue to work on with an agent, on the hybrid path; left out, start the daemon'), Argument.optional),
+    repo: Flag.String('repo').pipe(Flag.withDescription('The enrolled repo the issue is in, by name or owner/name; the one this directory is in when left out'), Flag.optional),
+    as: Flag.String('as').pipe(Flag.withDescription('The GitHub persona that authors the work, for a repo that runs as several'), Flag.optional),
+  },
+  ({ as, issue, repo }) =>
+    Effect.gen(function* () {
+      if (Option.isSome(issue)) return yield* startIssue(issue.value, repo, as);
+
+      yield* Console.log(yield* startService);
+    }),
+).pipe(Command.withDescription("Start the daemon; with an issue, open a session where you and an agent work on it, and chernabog takes the pull request to review"));
+
+const openPrCommand = Command.make(
+  'open-pr',
+  {
+    title: Flag.String('title').pipe(Flag.withDescription('The pull request title, following the repo commit convention')),
+    body: Flag.String('body').pipe(Flag.withDescription('The pull request body in Markdown, without the Closes line'), Flag.optional),
+    bodyFile: Flag.String('body-file').pipe(Flag.withDescription('A file holding the pull request body, instead of --body'), Flag.optional),
+    summary: Flag.String('summary').pipe(Flag.withDescription('What changed and how it was tested, for the issue; the title when left out'), Flag.optional),
+  },
+  (options) => Effect.flatMap(openPr(options), printLines),
+).pipe(Command.withDescription('From the session chernabog start opened: hand the committed work to chernabog, which pushes it, opens the pull request, waits for CI and asks for a review'));
+
 const stop = Command.make('stop', {}, () => Effect.flatMap(stopService, Console.log)).pipe(Command.withDescription('Stop the daemon; runs in flight resume when it starts again'));
 
 const daemon = Command.make('daemon', {}, () =>
@@ -476,17 +502,9 @@ const attach = Command.make('attach', { run: Argument.String('run') }, ({ run: n
 
     if (Option.isNone(session)) return yield* fail(`${runId} has opened no agent session`);
 
-    const { args, command, cwd, env } = yield* attachCommand(session.value);
-    yield* Console.log(`Attaching to ${session.value.adapter} session ${session.value.sessionId} in ${cwd}`);
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-
-    const agent = ChildProcess.make(command, [...args], { cwd, env, extendEnv: false, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit', forceKillAfter: '5 seconds' });
-
-    yield* spawner.spawn(agent).pipe(
-      Effect.flatMap((handle) => handle.exitCode),
-      Effect.scoped,
-      Effect.catch((error) => fail(`could not start ${command}: ${describeError(error)}`)),
-    );
+    const command = yield* attachCommand(session.value);
+    yield* Console.log(`Attaching to ${session.value.adapter} session ${session.value.sessionId} in ${command.cwd}`);
+    yield* openSession(command).pipe(Effect.catch((error) => fail(error.message)));
   }),
 ).pipe(Command.withDescription("Open a run's agent session in the agent's own interactive UI, in its worktree"));
 
@@ -500,7 +518,9 @@ const launchChild = Command.make('__launch', { spec: Argument.String('spec') }, 
 );
 
 // Claude's Stop hook in an interactive session.
-const stopHookChild = Command.make('__stop-hook', { dir: Flag.String('dir') }, ({ dir }) => Effect.flatMap(stopHook(dir), Option.match({ onNone: () => Effect.void, onSome: Console.log })));
+const stopHookChild = Command.make('__stop-hook', { dir: Flag.String('dir'), person: Flag.Boolean('person').pipe(Flag.withDefault(false)) }, ({ dir, person }) =>
+  Effect.flatMap(stopHook(dir, person), Option.match({ onNone: () => Effect.void, onSome: Console.log })),
+);
 
 // With no subcommand, in a terminal: the live view. Piped, the status instead.
 const live = Effect.gen(function* () {
@@ -518,6 +538,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     attach,
     run,
     trigger,
+    openPrCommand,
     logs,
     pause,
     resume,

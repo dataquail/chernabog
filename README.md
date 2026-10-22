@@ -71,31 +71,33 @@ chernabog doctor                    # checks logins, gh scopes, labels, trust an
 
 `init` then enrolls the repo, asking: which personas work in it (when there are several), which flows each one runs (a checklist prefilled with the team's defaults, with "Accept the defaults" first, so enter takes them), and which account each persona spends where machine config has a choice. A flow whose agent has no account is listed but can't be picked, and says to add one with `chernabog setup`. `chernabog enroll` runs the same questions on its own, to enroll a repo that already has `.chernabog/` or to choose again. `--persona`, `--flows a,b`, `--defaults` and `--account` answer without asking; piped and without them, a repo keeps the flows it lists, and a new one gets the team's defaults.
 
-Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and asks one reviewer from the team's pool to review it. Label it `auto:ship` instead for the automated path, where the approving reviewer merges.
+Queue work by labelling an issue `auto:eligible`. On each repo's schedule (hourly by default, repos spread across the hour) the daemon runs the `implement` flow's trigger; if the machine has a free slot and the account's usage gate passes, it claims the oldest queued issue, lets the agent implement it in a worktree, runs the local gate, opens the pull request, waits for CI and asks one reviewer from the team's pool to review it. Label it `auto:ship` instead for the automated path, where the approving reviewer merges. For work that needs a person through planning and implementation, `chernabog start <issue>` is the hybrid path, below.
 
 ## The default flows
 
-`init` scaffolds four flows, built from the SDK's `Implement`, `Review` and `PullRequest` blocks. They hand pull requests to each other through GitHub's own review requests and reviews; labels are the public record people see, and a few flows trigger on them.
+`init` scaffolds five flows, built from the SDK's `Implement`, `Hybrid`, `Review` and `PullRequest` blocks. They hand pull requests to each other through GitHub's own review requests and reviews; labels are the public record people see, and a few flows trigger on them.
 
 | Label | Set by | Means |
 | --- | --- | --- |
 | `auto:eligible` | a person | Queued; `implement` claims the oldest |
 | `auto:ship` | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
-| `auto:in-progress` | `implement` | A run owns the issue |
+| `auto:in-progress` | `implement`, `start` | A run owns the issue |
 | `auto:needs-review` | `implement` | Open and green, with no reviewer in the pool; a person reviews |
 | `auto:needs-human` | any flow | A loop cap or a rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `implement` | Questions are on the issue; answer them and requeue |
+| `hybrid` | `start` | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
 
 `auto:approved`, `auto:stale` and `auto:changes-requested` are still created, for flows of your own; the default flows no longer set them.
 
 `reviewers: [alice, data-quail]` in the team's `config.yaml` is the reviewer pool. Every login in it needs write access to the repo, since the reviewer merges on the automated path.
 
 - **`implement`** claims the oldest issue labelled `auto:eligible` or `auto:ship`, lets the agent implement it test first in a worktree, runs the local gate (sending the agent back on failure, up to `limits.localGateRounds`), opens the pull request (labelled `auto:ship` for an `auto:ship` issue), waits for CI (fixing red, up to `limits.ciRounds`) and asks one reviewer from the pool, at random and never the author, to review it. Without a pool it labels the pull request `auto:needs-review` for a person.
+- **`start`** is the hybrid path. `chernabog start <issue>` runs it on the issue, whatever its labels; its trigger finds nothing, so it never runs on a schedule. It claims the issue (`auto/issue-<n>`, taking it out of `auto:eligible` and `auto:ship`, and leaving alone a branch an unattended run claimed), prepares the worktree and opens a Claude session under the launcher, in front of the person, from the `start` prompt. They plan and implement together. `chernabog open-pr`, run from the session, ends it; the flow then runs the local gate, pushes, opens the pull request labelled `hybrid`, waits for CI (fixes go back to the person's session) and asks one reviewer from the pool. If the person closes the session before `open-pr`, the run fails and keeps the claim; `chernabog start` on the issue again takes it over and resumes the same session.
 - **`review`** runs as the persona whose review is requested, on a pull request it hasn't reviewed yet. It reviews in a read-only checkout, in a fresh session of the reviewer role (so Codex can review what Claude wrote), and posts a real GitHub review. An approval merges an `auto:ship` pull request with `PullRequest.merge`, which merges only when that's safe and otherwise labels it `auto:needs-human`; any other pull request is left for a person to merge. A request for changes goes to the author's `address-review`.
 - **`re-review`** runs as a persona asked again on a pull request it already reviewed. It resumes its own review session, posts which findings are remediated, and approves (merging an `auto:ship` pull request the same way) or hands the pull request to a person. `limits.reviewRounds` (default 1) caps the re-reviews, and it leaves pull requests labelled `auto:needs-human` alone.
-- **`address-review`** runs as the persona that wrote the pull request, when its latest review requests changes and nothing has been pushed since. It resumes the session that implemented the pull request and has it consider the findings first. If it disagrees, it posts its reasons and hands the pull request to a person with `auto:needs-human`, without pushing or asking the reviewer again. Otherwise it makes and commits the changes, runs the local gate, pushes, waits for CI (fixing red, up to `limits.ciRounds`) and asks the reviewer who requested the changes to review again, which starts `re-review`. Anything else that stops it hands the pull request to a person.
+- **`address-review`** runs as the persona that wrote the pull request, when its latest review requests changes and nothing has been pushed since. It resumes the session that implemented the pull request and has it consider the findings first; on a pull request from `start`, that is the person's session, reopened in front of them, so they weigh and answer the review together. If it disagrees, it posts its reasons and hands the pull request to a person with `auto:needs-human`, without pushing or asking the reviewer again. Otherwise it makes and commits the changes, runs the local gate, pushes, waits for CI (fixing red, up to `limits.ciRounds`) and asks the reviewer who requested the changes to review again, which starts `re-review`. Anything else that stops it hands the pull request to a person.
 
-Chernabog merges only pull requests labelled `auto:ship`; anything else, a missing or misspelt label included, is merged by a person.
+Chernabog merges only pull requests labelled `auto:ship`; anything else, a `hybrid` pull request or a missing or misspelt label included, is merged by a person.
 
 ## The live view
 
@@ -122,6 +124,8 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `status` | Repos, their schedules and trust, runs in flight, recent runs and why ticks were skipped |
 | `run <flow> --repo <name>` | One run now, skipping gates, through the daemon; follows its log. `--detach` returns at once |
 | `trigger <flow> --repo <name>` | A tick now, with its gates, as if the schedule came due |
+| `start <issue> [--repo <name>] [--as <login>]` | The hybrid path: runs `start` on the issue through the daemon, which must be running, and brings its session up here (the Orca tab, `tmux attach`). `--repo` defaults to the enrolled repo this directory is in, else the only one. On an issue whose run is in flight, it brings up that session |
+| `open-pr --title <t> [--body <b> \| --body-file <f>] [--summary <s>]` | From inside the session `start` opened: checks the worktree is clean and hands the work back; chernabog runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
 | `logs <run> [-f]` | A run's log |
 | `pause <repo>`, `resume <repo>` | Start no new runs in a repo; runs in flight continue |
 | `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
@@ -130,7 +134,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `setup` | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again |
 | `init`, `enroll` | `init` scaffolds `.chernabog/` and enrolls the repo; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
 | `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
-| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service; `install` runs `setup` first, and takes its flags |
+| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service; `install` runs `setup` first, and takes its flags. `start` with no issue starts the daemon |
 
 `run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
 
@@ -177,6 +181,8 @@ A launcher decides where an interactive Claude session runs. Nothing runs `claud
 Under a launcher, the prompt asks the agent to write its final answer as JSON to a file and stop. A Stop hook checks that file against the answer's schema: until it is valid, the hook sends the agent back to write it, three times at most, and then the run fails. So whether the session is done is decided the same way under every launcher, and an answer can't be lost to a later turn. When the session is done, Chernabog closes it. If it ends without an answer, Chernabog resumes it twice before failing. A session still running when the daemon restarts is waited on again, never started twice. The run log follows the session's transcript.
 
 The usage gate refreshes an expired login token the same way: a one-line session under the repo's launcher, closed once the token is fresh.
+
+On the hybrid path a person works in the session with the agent. That needs Claude under a launcher; headless, or another agent, fails the run. The prompt says a person is there, the Stop hook never sends the agent back, the session stays open after it answers for the person to close (the next call on it closes it first), and a session the person closes before answering fails the run instead of being resumed.
 
 Only Claude has an interactive mode. Codex, opencode and agents of your own run headless under any launcher, and `status` says so.
 
@@ -275,7 +281,7 @@ Upgrading from a version that read `.chernabog/local.yaml`, the first command yo
 
 ## Flows and steps
 
-A flow is a TypeScript module in `.chernabog/flows/` whose default export is `defineFlow({ trigger, gate, concurrency, workflow })`. The trigger returns the work items in the state the flow acts on; the workflow is the durable work for one item. Each step in it is an activity whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
+A flow is a TypeScript module in `.chernabog/flows/` whose default export is `defineFlow({ trigger, gate, concurrency, workflow })`. The trigger returns the work items in the state the flow acts on; the workflow is the durable work for one item. An optional `item(key)` finds the work item for a key a person names that the trigger doesn't report, for `run --item` and `chernabog start`. Each step in it is an activity whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
 
 The scaffolded `implement` flow composes the SDK's `Implement` building blocks. Reorder them, leave one out, or put a step of your own between them with `step("name", input)`: either `.chernabog/stages/name.ts` exporting `defineStage({ input, output, run })`, or an executable `name` that reads JSON on stdin and prints JSON. Each step runs in its own process; exit 0 continues, 78 skips the run, anything else fails it. A step that crashes partway runs again, so every step must be safe to repeat.
 

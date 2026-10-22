@@ -107,6 +107,9 @@
         },
         "ship": {
           "type": "string"
+        },
+        "hybrid": {
+          "type": "string"
         }
       },
       "additionalProperties": true

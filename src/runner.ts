@@ -13,7 +13,7 @@ import * as Option from 'effect/Option';
 import type * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
 
 import { ConfigError, Home, homePaths } from './config.ts';
-import { defaultPersona, deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, repoServices, runLogFile, type ServicesFor, startRun, StateLive } from './engine.ts';
+import { defaultPersona, deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, repoServices, runLogFile, type ServicesFor, startRun, StateLive, unreportedItem } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
@@ -216,7 +216,8 @@ const firstOf = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<Work
 
 const startFirst = (handle: FlowHandle, persona: Persona, options: RunOptions, context: RepoContext) =>
   Effect.gen(function* () {
-    const items = (yield* withRepo(context, handle.flow.trigger)).filter((candidate) => candidate.wakeOnly !== true);
+    const reported = yield* withRepo(context, handle.flow.trigger);
+    const items = [...reported, ...(yield* withRepo(context, unreportedItem(handle.flow, options.item, reported)))].filter((candidate) => candidate.wakeOnly !== true);
 
     const found = yield* Option.match(options.item, {
       onNone: () => firstOf(handle, persona, items),

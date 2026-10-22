@@ -18,7 +18,7 @@ chernabog doctor                    # check logins, gh scopes, labels, trust and
 | `install`| [machine config](/chernabog/start/installation/#set-up-the-machine)'s personas and accounts, and a launchd agent or systemd user unit running `chernabog daemon` |
 | `init`   | `.chernabog/` (config, flows, prompts, stages, schema, `package.json`), a `.gitignore` entry for its `node_modules/`, and the repo's entry in `~/.config/chernabog/config.yaml` |
 | `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
-| `labels` | the eight [labels](/chernabog/work/flows/#labels) on GitHub                            |
+| `labels` | the ten [labels](/chernabog/work/flows/#labels) on GitHub                              |
 
 Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file. `chernabog enroll` enrolls a repo without scaffolding, such as one a teammate already set up, and choosing again is running it again.
 

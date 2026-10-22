@@ -20,7 +20,7 @@ import { knownLaunch, sessionFiles } from './agents/session-files.ts';
 import { knownSession, recordRunSession, type SessionRecord } from './agents/sessions.ts';
 import { codexHomeOf, Home } from './config.ts';
 import { GitHubTokens } from './github-auth.ts';
-import { launcherFor } from './launchers.ts';
+import { isInteractive, launcherFor } from './launchers.ts';
 import type { Persona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
 
@@ -71,6 +71,10 @@ export const AgentLive = (settings: RepoSettings, adapters: ReadonlyArray<Adapte
               return yield* new AgentError({ message: `no agent adapter named ${name} (known: ${adapters.map((known) => known.name).join(', ')})` });
             }
 
+            if (request.withPerson === true && !(name === 'claude' && isInteractive(settings.launcher))) {
+              return yield* new AgentError({ message: `a session with a person needs claude under a launcher (orca, tmux or your own), but this one is ${name} with launcher ${settings.launcher.name}` });
+            }
+
             // Each agent runs under its own account: a Codex reviewer on a Claude repo spends the Codex account.
             const account = Option.getOrElse(Record.get(settings.agentAccounts, name), () => settings.account);
             const run = yield* Effect.serviceOption(Run);
@@ -88,7 +92,7 @@ export const AgentLive = (settings: RepoSettings, adapters: ReadonlyArray<Adapte
 export type AttachCommand = { readonly command: string; readonly args: ReadonlyArray<string>; readonly cwd: string; readonly env: Environment };
 
 // What brings up an interactive session that is still running: the Orca tab, `tmux attach`.
-const liveAttach = (record: SessionRecord, host: Environment) =>
+export const liveAttach = (record: SessionRecord, host: Environment) =>
   Effect.gen(function* () {
     const launch = yield* knownLaunch(sessionFiles((yield* Home).root, record.sessionId));
 

@@ -20,10 +20,11 @@ import { Exec } from '../Exec.ts';
 import { type Launcher, launcherFor } from '../launchers.ts';
 import { shellCommand } from '../launchers/launcher.ts';
 import { LaunchSpecJson } from '../launchers/shim.ts';
+import { type Environment } from '../platform/environment.ts';
 import { selfCommand } from '../self.ts';
 import { type AdapterContext, promptFor, resumingOrStarting } from './adapter.ts';
 import { claudeEnvironment, describeTranscriptLine, transcriptExists, transcriptFile } from './claude-events.ts';
-import { Done, knownLaunch, LaunchRecord, readDecoded, readText, type SessionFiles, sessionFiles } from './session-files.ts';
+import { Done, knownLaunch, LaunchRecord, readDecoded, readText, SESSION_ENV, type SessionFiles, sessionFiles } from './session-files.ts';
 
 const POLL = '2 seconds';
 
@@ -45,18 +46,38 @@ export const interactiveClaudeArgs = (request: AgentRequest, resuming: boolean, 
   return [...session, '--permission-mode', 'auto', '--settings', settingsFile];
 };
 
+// What a session with a person adds: whatever the prompt says about working
+// unattended, the person decides with the agent, and chernabog is at hand.
+const personNote = () =>
+  [
+    '## A person is here',
+    '',
+    "A person is working in this session with you. Where this prompt says you are unattended, that doesn't hold: talk it over with them, ask what you need to, and decide together. Stopping to wait for them is fine.",
+    '',
+    `To run \`chernabog\` from here, use \`${shellCommand(selfCommand())}\`.`,
+    '',
+  ].join('\n');
+
 // Added here, not in the repo's prompts, so those stay the same under every launcher.
-export const withAnswerFile = (prompt: string, files: SessionFiles, schema: Option.Option<Json>) => {
+export const withAnswerFile = (prompt: string, files: SessionFiles, schema: Option.Option<Json>, withPerson = false) => {
   const format = Option.match(schema, {
     onNone: () => 'as a JSON string',
     onSome: (json) => `as JSON matching this JSON Schema (also in ${files.schema}):\n\n\`\`\`json\n${printJson(json)}\n\`\`\`\n`,
   });
 
+  if (withPerson) {
+    return `${prompt}\n\n${personNote()}\n## Your final answer\n\nOnce the two of you agree you are finished, your final answer goes to \`${files.answer}\` ${format}\nWhere this prompt names a command that records it, run that; otherwise write the file yourself. Until then, keep working with the person.\n`;
+  }
+
   return `${prompt}\n\n## Your final answer\n\nWhen you are finished, write your final answer to \`${files.answer}\` ${format}\nThen stop. Don't start background work after writing it.\n`;
 };
 
-const stopHookSettings = (files: SessionFiles) =>
-  printJson({ hooks: { Stop: [{ hooks: [{ type: 'command', command: shellCommand([...selfCommand(), '__stop-hook', '--dir', files.dir]) }] }] } });
+// With a person, the hook never sends the agent back: stopping to wait for them is the point.
+const stopHookSettings = (files: SessionFiles, withPerson: boolean) => {
+  const person = Option.toArray(Option.liftPredicate('--person', () => withPerson));
+
+  return printJson({ hooks: { Stop: [{ hooks: [{ type: 'command', command: shellCommand([...selfCommand(), '__stop-hook', '--dir', files.dir, ...person]) }] }] } });
+};
 
 // Which call the session files belong to: a fix on the same session is a new call.
 const callOf = (request: AgentRequest) =>
@@ -179,19 +200,27 @@ const waitForEnd = (files: SessionFiles, running: Running, tail: Tail, log: Adap
     }
   });
 
+const personEnv = (files: SessionFiles, withPerson: boolean): Environment => {
+  if (withPerson) return { [SESSION_ENV]: files.dir };
+
+  return {};
+};
+
 const start = (request: AgentRequest, context: AdapterContext, launcher: Launcher, files: SessionFiles, configDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const resuming = yield* transcriptExists(request, configDir);
-    yield* fs.writeFileString(files.prompt, withAnswerFile(promptFor(request, resuming), files, request.outputSchema));
+    const withPerson = request.withPerson === true;
+    yield* fs.writeFileString(files.prompt, withAnswerFile(promptFor(request, resuming), files, request.outputSchema, withPerson));
     yield* Option.match(request.outputSchema, { onNone: () => fs.remove(files.schema, { force: true }), onSome: (json) => fs.writeFileString(files.schema, printJson(json)) });
-    yield* fs.writeFileString(files.settings, stopHookSettings(files));
+    yield* fs.writeFileString(files.settings, stopHookSettings(files, withPerson));
 
     const spec = yield* Schema.encodeEffect(LaunchSpecJson)({
       command: 'claude',
       args: interactiveClaudeArgs(request, resuming, files.settings),
       cwd: request.cwd,
-      env: claudeEnvironment(context),
+      // chernabog open-pr, run in a session with a person, finds the session by it.
+      env: { ...claudeEnvironment(context), ...personEnv(files, withPerson) },
       promptFile: files.prompt,
       pidFile: files.pid,
     });
@@ -208,9 +237,10 @@ const start = (request: AgentRequest, context: AdapterContext, launcher: Launche
     return { launcher, handle } satisfies Running;
   });
 
+// A session with a person stays open for them to close; the next call on it closes it first.
 const finish = (request: AgentRequest, done: Done, files: SessionFiles, context: AdapterContext) =>
   Effect.gen(function* () {
-    const running = yield* liveSession(files);
+    const running = Option.filter(yield* liveSession(files), () => request.withPerson !== true);
 
     if (Option.isSome(running)) yield* closeSession(running.value, context.log);
 
@@ -257,6 +287,11 @@ export const runInteractiveClaude = (request: AgentRequest, context: AdapterCont
       if (Option.isSome(live)) {
         yield* context.log(`claude: session ${request.sessionId} is still running in ${live.value.launcher.name}; waiting on it`);
         running = live.value;
+      } else if (request.withPerson === true && starts > 0) {
+        // The person closed the session this call opened: reopening it is
+        // theirs, with chernabog start again. (After a daemon restart, starts
+        // counts from zero, so a session closed while it was down opens once.)
+        return yield* new AgentError({ message: 'claude: the person closed the session before it finished' });
       } else if (starts > MAX_RESUMES) return yield* new AgentError({ message: `claude: the session ended ${starts} times without an answer` });
       else {
         running = yield* start(request, context, launcher, files, configDir);

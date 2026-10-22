@@ -486,7 +486,8 @@ const answerReview = (address: AddressItem) =>
     const review = yield* changesAsked(address);
     const round = review.round ?? 1;
     const author = yield* authorSession(address.pullRequest);
-    const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter) };
+    // A pull request a person worked on with the agent reopens their session in front of them.
+    const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter), withPerson: author.withPerson === true };
     const worktree = yield* prepareWorktree(address.headRef);
     const decision = yield* considerFindings(address.pullRequest, review, session);
 
@@ -502,7 +503,7 @@ const answerReview = (address: AddressItem) =>
     if (outcome.status === 'needs-clarification') return yield* new NeedsHuman({ reason: `the author agent needs a person to answer review ${round}:\n\n${outcome.questions ?? outcome.summary}` });
 
     yield* checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
-    yield* localGate(worktree, { id: `review-${round}` });
+    yield* localGate(worktree, { id: `review-${round}`, session });
     yield* push(`push-review-${round}`, worktree, address.headRef);
     yield* waitForCi(address.pullRequest, worktree, { ...session, branch: address.headRef }, { id: `review-${round}` });
     yield* askAgain(address.pullRequest, round, address.reviewer, outcome.summary);

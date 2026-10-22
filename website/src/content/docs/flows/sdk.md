@@ -10,7 +10,7 @@ description: The services @chernabog/sdk provides to flows and Effect steps.
 | `Repo`     | the repo's merged settings: slug, base branch, reviewer pool, labels, limits, gates, notes |
 | `Run`      | the run: flow, run id and work item                                         |
 | `GitHub`   | queued issues, claims, labels, comments, branches, pull requests, review requests and reviews, CI state, merges |
-| `Agent`    | starting and resuming agent sessions through an [adapter](/chernabog/agents/adapters/) |
+| `Agent`    | starting and resuming agent sessions through an [adapter](/chernabog/agents/adapters/); `withPerson` on a request opens the session [in front of a person](/chernabog/agents/launchers/#with-a-person) |
 | `Git`      | commits ahead, changed files, pushes                                        |
 | `Worktree` | one worktree per branch                                                     |
 | `Usage`    | the account check and the [usage gate](/chernabog/agents/usage-gate/)        |
@@ -27,11 +27,12 @@ Labels are how people see where work stands, and how some flows hand it on. Pull
 
 | Label                      | On    | Means                                     | Set by                                                          | Removed by                                     | Read by |
 | -------------------------- | ----- | ----------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ------- |
-| `auto:eligible`            | issue | queued                                    | a person                                                        | `Implement.claim`                              | `Implement.trigger`, which starts `implement` |
-| `auto:ship`                | both  | queued, or on a pull request: the automated path, which chernabog merges once approved | a person, on the issue; `Implement.openPullRequest`, on its pull request | `Implement.claim`, on the issue          | `Implement.trigger`; `PullRequest.ships`, which `mergeOrLeave` asks |
-| `auto:in-progress`         | issue | a run owns the issue                      | `Implement.claim`                                               | `handOff`, `handToHuman`, `askForClarification` | people |
+| `auto:eligible`            | issue | queued                                    | a person                                                        | `Implement.claim`, `Hybrid.claim`              | `Implement.trigger`, which starts `implement` |
+| `auto:ship`                | both  | queued, or on a pull request: the automated path, which chernabog merges once approved | a person, on the issue; `Implement.openPullRequest`, on its pull request | `Implement.claim` and `Hybrid.claim`, on the issue | `Implement.trigger`; `PullRequest.ships`, which `mergeOrLeave` asks |
+| `auto:in-progress`         | issue | a run owns the issue                      | `Implement.claim`, `Hybrid.claim`                               | `handOff`, `handToHuman`, `askForClarification` | people |
 | `auto:needs-clarification` | issue | questions are on the issue                | `Implement.askForClarification`                                 | a person, on requeue                           | people |
 | `auto:needs-review`        | PR    | open and green, with no reviewer in the pool; a person reviews | `PullRequest.requestReview` (so `Implement.handOff`) | a person | people |
+| `hybrid`                   | PR    | a person worked on it with an agent; a person merges | `Hybrid.openPullRequest` | a person | people; no flow reads it |
 | `auto:needs-human`         | both  | a cap or rule stopped it; a person takes over | `Implement.handToHuman`, `PullRequest.handToPerson`, `PullRequest.mergeOrLeave`, the `address-review` flow | a person | `Review.reReviewTrigger` and `Review.addressTrigger`, which skip it; no flow picks it up again |
 
 `auto:approved`, `auto:stale` and `auto:changes-requested` stay in the label set, and `chernabog labels` creates them, but no default flow sets or reads them.

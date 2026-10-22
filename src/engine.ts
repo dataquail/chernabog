@@ -266,6 +266,17 @@ export const pollRun = (handle: FlowHandle, run: RunRow) =>
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
 
+// The item a person named that the trigger didn't report, when the flow can
+// find it by its key, as `start` finds the issue `chernabog start` names.
+export const unreportedItem = (flow: Flow, named: Option.Option<string>, items: ReadonlyArray<WorkItem>) =>
+  Option.match(
+    Option.filter(Option.product(named, Option.fromUndefinedOr(flow.item)), ([key]) => !items.some((found) => found.key === key)),
+    {
+      onNone: () => Effect.succeed<ReadonlyArray<WorkItem>>([]),
+      onSome: ([key, find]) => Effect.map(find(key), Option.toArray),
+    },
+  );
+
 // Wakes the persona's runs waiting on a signal its trigger reported for their item.
 export const deliverSignals = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {

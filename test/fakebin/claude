@@ -10,6 +10,8 @@
 // FAKE_CLAUDE_SKIP_ANSWER_ONCE: if this file exists, remove it and stop once without writing the answer.
 // FAKE_CLAUDE_NEVER_ANSWER: never write the answer.
 // FAKE_CLAUDE_HOLD: while this file exists, wait before doing the work.
+// In a session with a person that `chernabog start` opened, it commits, then
+// finishes as its prompt says, with `chernabog open-pr`.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,13 +80,20 @@ if (headless) {
 }
 
 appendFileSync(transcript, `${JSON.stringify(working)}\n`);
-const answerFile = /write your final answer to `([^`]+)`/.exec(prompt)?.[1];
+const answerFile = /(?:write your final answer to|your final answer goes to) `([^`]+)`/.exec(prompt)?.[1];
+
+// The person agreed: hand the work over as the start prompt says.
+const chernabog = /To run `chernabog` from here, use `([^`]+)`/.exec(prompt)?.[1];
+if (chernabog && prompt.includes('chernabog open-pr')) {
+  const opened = spawnSync('/bin/sh', ['-c', `${chernabog} open-pr --title 'feat: worked out with a person' --body 'Built together.' --summary 'Done with a person.'`], { cwd, encoding: 'utf8' });
+  if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, `open-pr ${sessionId} exited ${opened.status}: ${JSON.stringify((opened.stdout + opened.stderr).slice(0, 200))}\n`);
+}
 const settings = JSON.parse(readFileSync(flag('--settings')!, 'utf8'));
 const hook: string = settings.hooks.Stop[0].hooks[0].command;
 const skipOnce = process.env.FAKE_CLAUDE_SKIP_ANSWER_ONCE;
 
 const writeAnswer = () => {
-  if (process.env.FAKE_CLAUDE_NEVER_ANSWER || !answerFile) return;
+  if (process.env.FAKE_CLAUDE_NEVER_ANSWER || !answerFile || (chernabog && prompt.includes('chernabog open-pr'))) return;
   writeFileSync(answerFile, JSON.stringify(answer));
 };
 

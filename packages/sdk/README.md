@@ -31,7 +31,9 @@ export default defineFlow({
 | `renderPrompt(name, values)` | Fills `.chernabog/prompts/<name>.md`. |
 | `Skip`, `NeedsHuman` | End a run cleanly, or hand its item to a person. |
 
-`Implement` and `Review` hold the building blocks of the default flows, each an activity a flow can reorder, leave out or wrap.
+`Implement`, `Hybrid`, `Review` and `PullRequest` hold the building blocks of the default flows, each an activity a flow can reorder, leave out or wrap. `Hybrid` makes `start`, the hybrid path, where a person works on an issue with the agent in an interactive session.
+
+A flow can also give `item: (key) => Effect<Option<WorkItem>>`, the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names.
 
 Side effects belong inside activities or steps, never in the workflow body, which runs again on every replay.
 
@@ -62,7 +64,7 @@ export default defineStage({
 | `Repo` | The repo's merged settings: slug, base branch, labels, limits, gates, notes |
 | `Run` | The run: flow, run id and work item |
 | `GitHub` | Queued issues, claims, labels, comments, branches, pull requests, CI state |
-| `Agent` | Starting and resuming agent sessions through an adapter |
+| `Agent` | Starting and resuming agent sessions through an adapter; `withPerson` opens one in front of a person |
 | `Git`, `Worktree` | Commits ahead, changed files, pushes; one worktree per branch |
 | `Usage` | The account check and the usage gate |
 | `RunLog` | The run's log |
