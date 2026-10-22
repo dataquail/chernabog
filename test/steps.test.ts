@@ -8,8 +8,11 @@ import * as Option from 'effect/Option';
 
 import { flowHandle } from '../src/engine.ts';
 import { type RunRow, State } from '../src/state.ts';
+import addressReview from '../templates/recipes/flows/address-review.ts';
+import implement from '../templates/recipes/flows/implement.ts';
+import reviewFlow from '../templates/recipes/flows/review.ts';
 import { effect } from './effect-test.ts';
-import { type Fake, HEAD, ISSUE, item, makeFake, PULL, repo, runToEnd as runFlowToEnd, runUntil as runFlowUntil, summaryOf, triggered } from './sdk-fakes.ts';
+import { type Fake, flowTriggered, HEAD, ISSUE, item, makeFake, PULL, repo, runToEnd as runFlowToEnd, runUntil as runFlowUntil, summaryOf, triggered } from './sdk-fakes.ts';
 
 const SHIP = 'auto:ship';
 
@@ -131,10 +134,10 @@ describe('a flow keyed by its own label', () => {
       fake.setLabels(ISSUE, ['auto:queued']);
       const found = yield* triggered(fake, Implement.triggerFor('auto:queued'));
       expect(found.map((work) => work.data)).toEqual([{ issue: ISSUE, label: 'auto:queued' }]);
-      expect(yield* triggered(fake, Implement.trigger)).toEqual([]);
+      expect(yield* flowTriggered(fake, implement)).toEqual([]);
       // auto:ship queues an issue too, the automated path, and says so for claim and openPullRequest.
       fake.setLabels(ISSUE, [SHIP]);
-      expect((yield* triggered(fake, Implement.trigger)).map((work) => work.data)).toEqual([{ issue: ISSUE, label: SHIP }]);
+      expect((yield* flowTriggered(fake, implement)).map((work) => work.data)).toEqual([{ issue: ISSUE, label: SHIP }]);
 
       expect((yield* runToEnd(fake, 'claim-ship')).status).toBe('done');
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
@@ -179,17 +182,17 @@ describe('owning a pull request', () => {
   };
 
   effect(
-    'the review and address-review triggers leave alone a pull request another run owns',
+    'the review and address-review recipes\' triggers leave alone a pull request another run owns',
     () => Effect.gen(function* () {
       const review = requested(makeFake('approve'));
       owned(review, false);
-      expect(yield* triggered(review, Review.trigger)).toEqual([]);
+      expect(yield* flowTriggered(review, reviewFlow)).toEqual([]);
 
       const address = makeFake('approve');
       address.submitted.push({ author: 'data-quail', state: 'CHANGES_REQUESTED', commitSha: HEAD });
-      expect((yield* triggered(address, Review.addressTrigger)).length).toBe(1);
+      expect((yield* flowTriggered(address, addressReview)).length).toBe(1);
       owned(address, false);
-      expect(yield* triggered(address, Review.addressTrigger)).toEqual([]);
+      expect(yield* flowTriggered(address, addressReview)).toEqual([]);
     }),
   );
 
@@ -199,14 +202,14 @@ describe('owning a pull request', () => {
       const released = requested(makeFake('approve'));
       owned(released, false);
       owned(released, true);
-      expect((yield* triggered(released, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
+      expect((yield* flowTriggered(released, reviewFlow)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
 
       // A run this machine doesn't know, such as one on another machine, still owns it.
       const ended = requested(makeFake('approve'));
       owned(ended, false);
-      expect(yield* triggered(ended, Review.trigger)).toEqual([]);
+      expect(yield* flowTriggered(ended, reviewFlow)).toEqual([]);
       ended.knowRun(false);
-      expect((yield* triggered(ended, Review.trigger)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
+      expect((yield* flowTriggered(ended, reviewFlow)).map((work) => work.key)).toEqual([`pr-${PULL}`]);
     }),
   );
 });

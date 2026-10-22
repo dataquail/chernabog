@@ -1,5 +1,5 @@
-// The building blocks of the `review` and `re-review` recipes, which work
-// through GitHub's own review requests: a pull request asks one reviewer
+// The building blocks of the `review`, `re-review` and `address-review`
+// recipes, which work through GitHub's own review requests: a pull request asks one reviewer
 // from the team's pool once its CI is green (Implement.handOff), `review` runs
 // as a persona whose review is requested on a pull request it hasn't reviewed,
 // and `re-review` as one asked again, resuming its own review session. On the
@@ -7,7 +7,6 @@
 // `address-review` is the author's side: it answers a review that asks for
 // changes in the session that wrote the code, and asks the reviewer again.
 
-import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
@@ -15,7 +14,7 @@ import * as Schema from 'effect/Schema';
 import { RECHECK } from './default-prompts.ts';
 import { NeedsHuman, StepFailed } from './errors.ts';
 import { activity } from './flow.ts';
-import { addressFindings, considerFindings, localGate, push, sessionIdFor, waitForCi } from './implement.ts';
+import { sessionIdFor } from './implement.ts';
 import type { Json } from './json.ts';
 import { latestMarker, type ReviewMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
 import { renderPrompt, renderPromptOr } from './prompt.ts';
@@ -75,20 +74,6 @@ export const reviewRequests = Effect.gen(function* () {
   }
 
   return found;
-});
-
-// `review`'s work items: pull requests whose review is requested of this
-// persona, which it hasn't reviewed yet.
-export const trigger = Effect.map(reviewRequests, (found) => found.flatMap(({ pull, reviewed }) => Option.toArray(Option.liftPredicate(reviewItem(pull, `pr-${pull.number}`), () => reviewed === 0))));
-
-// `re-review`'s work items: pull requests that ask this persona again after it
-// reviewed them, one per request, unless a person has them (needs-human).
-export const reReviewTrigger = Effect.gen(function* () {
-  const repo = yield* Repo;
-
-  return (yield* reviewRequests).flatMap(({ pull, reviewed }) =>
-    Option.toArray(Option.liftPredicate(reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`), () => reviewed > 0 && !pull.labels.includes(repo.labels.needsHuman))),
-  );
 });
 
 export const Verdict = Schema.Struct({
@@ -300,21 +285,6 @@ export const doneReviewing = (pullRequest: number) =>
     Worktree.use((worktree) => worktree.remove(`review-pr-${pullRequest}`)),
   );
 
-// `review`: reviews the pull request as the persona whose review is
-// requested, in a fresh session of the reviewer role. An approval on the
-// automated path merges; a request for changes goes to the author's
-// address-review.
-export const workflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const { pullRequest } = yield* pullRequestOf(item);
-    const review = yield* reviewOnly(pullRequest, 1, { role: 'reviewer' });
-    yield* doneReviewing(pullRequest);
-
-    if (review.verdict === 'approve') return yield* PullRequestSteps.mergeOrLeave(pullRequest);
-
-    return `#${pullRequest}: review 1 requested changes`;
-  });
-
 // This persona's latest review of the pull request, as its marker recorded
 // it, to resume: none when it has none, or one posted before markers named
 // their reviewer.
@@ -334,43 +304,6 @@ export const latestOwnReview = (pullRequest: number) =>
     }),
     Schema.Option(ReviewResult),
   );
-
-const listed = (findings: ReadonlyArray<Finding>, remediated: boolean) => findings.flatMap((finding) => Option.toArray(Option.liftPredicate(`- ${finding.finding}`, () => finding.remediated === remediated)));
-
-const reReviews = (count: number) => {
-  if (count === 1) return '1 re-review';
-
-  return `${count} re-reviews`;
-};
-
-// `re-review`: the persona is asked again after reviewing. It resumes its own
-// review session, up to limits.reviewRounds re-reviews, and either approves,
-// which merges on the automated path, or requests changes again and hands the
-// pull request to a person.
-export const reReviewWorkflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const repo = yield* Repo;
-    const { pullRequest } = yield* pullRequestOf(item);
-    const earlier = yield* latestOwnReview(pullRequest);
-
-    // No review of its own to resume, as one posted before markers named their reviewer: review afresh.
-    if (Option.isNone(earlier) || Option.isNone(Option.fromUndefinedOr(earlier.value.sessionId))) return yield* workflow(item);
-
-    const done = (earlier.value.round ?? 1) - 1;
-
-    if (done >= repo.limits.reviewRounds) {
-      return yield* PullRequestSteps.handToPerson(pullRequest, `asked to review again after ${reReviews(done)}, and limits.reviewRounds is ${repo.limits.reviewRounds}, so a person decides. Review ${earlier.value.round ?? 1}'s findings are in its review above.`);
-    }
-
-    const rechecked = yield* recheck(pullRequest, earlier.value);
-    yield* doneReviewing(pullRequest);
-    yield* PullRequestSteps.comment(pullRequest, [`Review ${earlier.value.round ?? 1}'s findings, re-reviewed.`, '', 'Remediated:', ...listed(rechecked.findings, true), '', 'Still open:', ...listed(rechecked.findings, false)].join('\n'));
-
-    if (rechecked.verdict === 'approve') return yield* PullRequestSteps.mergeOrLeave(pullRequest);
-
-    return yield* PullRequestSteps.handToPerson(pullRequest, `review ${rechecked.round ?? 2} still requests changes after a round of fixes`);
-  });
-
 
 // Open pull requests this persona wrote.
 export const authoredByMe = Effect.gen(function* () {
@@ -392,29 +325,6 @@ export const addressItem = (pull: PullRequest, review: SubmittedReview, count: n
   url: pull.url,
   data: { pullRequest: pull.number, headRef: pull.headRef, agentWritten: isAgentBranch(pull.headRef), reviewer: review.author, reviewedSha: review.commitSha },
   assignees: pull.assignees,
-});
-
-// address-review's work items: pull requests this persona wrote whose latest
-// review requests changes on the current head, so nothing was pushed since,
-// unless a person has them (needs-human) or another flow's run owns them.
-export const addressTrigger = Effect.gen(function* () {
-  const repo = yield* Repo;
-  const items: Array<WorkItem> = [];
-
-  for (const pull of yield* authoredByMe) {
-    if (pull.labels.includes(repo.labels.needsHuman)) continue;
-
-    const decisive = yield* decisiveReviews(pull.number);
-    const latest = Arr.last(decisive);
-
-    if (!Option.exists(latest, (review) => review.state === 'CHANGES_REQUESTED' && review.commitSha === pull.headSha)) continue;
-
-    if (yield* ownedByARun(pull)) continue;
-
-    for (const review of Option.toArray(latest)) items.push(addressItem(pull, review, decisive.length));
-  }
-
-  return items;
 });
 
 export const AddressItem = Schema.Struct({ ...ReviewItem.fields, reviewer: Schema.String, reviewedSha: Schema.String });
@@ -500,48 +410,3 @@ export const askAgain = (pullRequest: number, round: number, reviewer: string, s
       yield* github.requestReviewers(pullRequest, [reviewer]);
     }),
   );
-
-const answerReview = (address: AddressItem) =>
-  Effect.gen(function* () {
-    const review = yield* changesAsked(address);
-    const round = review.round ?? 1;
-    const author = yield* authorSession(address.pullRequest);
-    // A pull request a person worked on with the agent reopens their session in front of them.
-    const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter), withPerson: author.withPerson === true };
-    const worktree = yield* prepareAuthorWorktree(address.headRef);
-    const decision = yield* considerFindings(address.pullRequest, review, session);
-
-    // A dispute is a person's to settle: it never pushes, nor asks the reviewer again.
-    if (decision.status === 'decline') {
-      yield* PullRequestSteps.comment(address.pullRequest, `Not addressing review ${round}:\n\n${decision.reasons}`);
-
-      return yield* new NeedsHuman({ reason: `the author disputes review ${round}; see its reasons above` });
-    }
-
-    const outcome = yield* addressFindings(address.pullRequest, review, session);
-
-    if (outcome.status === 'needs-clarification') return yield* new NeedsHuman({ reason: `the author agent needs a person to answer review ${round}:\n\n${outcome.questions ?? outcome.summary}` });
-
-    yield* checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
-    yield* localGate(worktree, { id: `review-${round}`, session });
-    yield* push(`push-review-${round}`, worktree, address.headRef);
-    yield* waitForCi(address.pullRequest, worktree, { ...session, branch: address.headRef }, { id: `review-${round}` });
-    yield* askAgain(address.pullRequest, round, address.reviewer, outcome.summary);
-
-    return `#${address.pullRequest}: addressed review ${round}; asked ${address.reviewer} to review again`;
-  });
-
-// `address-review`: the author's answer to a review that asks for changes,
-// in the session that wrote the code. It considers the findings first: a
-// dispute is posted with its reasons and handed to a person; otherwise it
-// makes the changes, runs the local gate, pushes, waits for CI and asks the
-// reviewer again. Anything that stops it hands the pull request to a person.
-export const addressWorkflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const address = yield* addressItemOf(item);
-
-    return yield* answerReview(address).pipe(
-      Effect.catchTag('NeedsHuman', (needsHuman) => PullRequestSteps.handToPerson(address.pullRequest, needsHuman.reason)),
-      Effect.catchTag('StepFailed', (failed) => PullRequestSteps.handToPerson(address.pullRequest, `${failed.step}: ${failed.message}`)),
-    );
-  });

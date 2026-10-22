@@ -8,13 +8,29 @@
 // one out, or put a step of your own from .chernabog/stages/ in between with
 // `step("name", input, OutputSchema)`. Side effects belong inside activities or
 // steps, never in the workflow body, which runs again whenever the run resumes.
+//
+// This file is chernabog's implement recipe, and this repo's to change. The
+// names of its steps ("claim", "local-gate-1") are the keys a run in flight
+// resumes by, so renaming one restarts that step.
 
-import { defineFlow, Implement } from '@chernabog/sdk';
+import { defineFlow, GitHub, Implement, Repo } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 
+// Issues labelled auto:eligible, then ones labelled auto:ship, the automated
+// path, whose pull request chernabog merges once it's approved. Oldest first;
+// with a board, only those whose Status is its readyStatus.
+const trigger = Effect.gen(function* () {
+  const github = yield* GitHub;
+  const repo = yield* Repo;
+  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
+  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
+
+  return [...eligible.map((issue) => Implement.issueItem(issue)), ...shipping.map((issue) => Implement.issueItem(issue, Option.some(repo.labels.ship)))];
+});
+
 export default defineFlow({
-  trigger: Implement.trigger,
+  trigger,
   gate: Implement.gate,
   concurrency: 1,
   workflow: (item) =>

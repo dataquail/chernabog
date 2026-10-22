@@ -9,7 +9,7 @@ import { defineFlow, Implement, step } from '@chernabog/sdk';
 import { Effect, Schema } from 'effect';
 
 export default defineFlow({
-  trigger: Implement.trigger, // the work items to act on
+  trigger: Implement.triggerFor('auto:eligible'), // the work items to act on
   gate: Implement.gate,       // checked before each run starts; fail with Skip to hold it back
   concurrency: 1,
   workflow: (item) =>

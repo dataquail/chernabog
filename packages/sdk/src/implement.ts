@@ -59,18 +59,6 @@ export const sessionIdFor = (runId: string, purpose: string) => {
 // keyed by its own label pairs it with `claim(issue, queuedBy(item))`.
 export const triggerFor = (label: string) => GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(Effect.map((issues) => issues.map((issue) => issueItem(issue, Option.some(label)))));
 
-// Issues labelled eligible, then ones labelled ship (auto:ship), the automated
-// path, whose pull request chernabog merges once it's approved. Oldest first,
-// each with its assignees.
-export const trigger = Effect.gen(function* () {
-  const github = yield* GitHub;
-  const repo = yield* Repo;
-  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
-  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
-
-  return [...eligible.map((issue) => issueItem(issue)), ...shipping.map((issue) => issueItem(issue, Option.some(repo.labels.ship)))];
-});
-
 // Which label queued the issue: eligible unless the flow is keyed by its own.
 export type QueueOptions = { readonly label?: string };
 
@@ -615,33 +603,3 @@ export const handToHuman = (issue: number, reason: string, pullRequest: Option.O
 // Ends the run as waiting on a person, once the issue says why.
 export const endForPerson = (summary: string) => Effect.fail(new NeedsHuman({ reason: summary }));
 
-// The whole default flow, for a flow file that wants it as it is.
-export const workflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const issue = yield* issueOf(item);
-    const queued = yield* queuedBy(item);
-    const { branch } = yield* claim(issue, queued);
-    let pullRequest = Option.none<number>();
-    const toPerson = (reason: string) => handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(endForPerson));
-
-    return yield* Effect.gen(function* () {
-      const worktree = yield* prepareWorktree(branch);
-      const outcome = yield* implementWithAgent(issue, worktree);
-
-      if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome, queued).pipe(Effect.flatMap(endForPerson));
-
-      return yield* Effect.gen(function* () {
-        yield* localGate(worktree);
-        yield* push('push', worktree, branch);
-        const opened = yield* openPullRequest(issue, outcome, queued);
-        pullRequest = Option.some(opened.number);
-        yield* waitForCi(opened.number, worktree, { ...thisRunsSession, branch });
-
-        return yield* handOff(issue, opened, outcome);
-      }).pipe(Effect.catchTag('NeedsHuman', (needsHuman) => toPerson(needsHuman.reason)));
-    }).pipe(
-      // Any other failure once the issue is claimed hands it to a person, rather
-      // than leaving it claimed with nobody working on it.
-      Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)),
-    );
-  });
