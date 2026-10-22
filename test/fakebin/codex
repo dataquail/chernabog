@@ -33,13 +33,19 @@ if (hang && existsSync(hang)) {
   await Bun.sleep(60_000);
 }
 
-const reviewing = prompt.includes('# Review pull request');
+// A first review asks for changes; a later one, or a re-check of the first in
+// its own session, approves.
+const reviewing = prompt.includes('# Review pull request') || prompt.includes('# Re-check pull request');
 if (reviewing) {
   const round = Number(prompt.match(/This is review (\d+)/)?.[1] ?? 1);
+  const rechecking = prompt.includes('# Re-check pull request');
+  const approved = { verdict: 'approve', summary: 'The test is there now. Looks good.', comments: [] };
   const verdict =
-    round === 1
-      ? { verdict: 'request-changes', summary: 'Please add a test for the change.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change here.' }] }
-      : { verdict: 'approve', summary: 'The test is there now. Looks good.', comments: [] };
+    rechecking
+      ? { ...approved, findings: [{ finding: 'Mention the change in the README', remediated: true }] }
+      : round === 1
+        ? { verdict: 'request-changes', summary: 'Please add a test for the change.', comments: [{ path: 'README.md', line: 1, body: 'Mention the change here.' }] }
+        : approved;
   console.log(JSON.stringify({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: JSON.stringify(verdict) } }));
   console.log(JSON.stringify({ type: 'turn.completed', usage: {} }));
   const last = flag('-o');

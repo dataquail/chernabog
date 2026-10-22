@@ -21,12 +21,13 @@ export type LabelChange = { readonly action: 'create' | 'update'; readonly label
 const LOOK = {
   eligible: { color: '0e8a16', description: 'Queued for an unattended run; removed on claim' },
   inProgress: { color: 'fbca04', description: 'An unattended run owns this issue' },
-  needsReview: { color: '1d76db', description: 'PR is open and green; waiting for an agent review' },
+  needsReview: { color: '1d76db', description: 'PR is open and green; waiting for a person to review it' },
   changesRequested: { color: 'e99695', description: 'Review comments posted; waiting for a push' },
   approved: { color: '0e8a16', description: 'Approved by an agent review; a person merges' },
   needsHuman: { color: 'b60205', description: 'A loop cap or a rule stopped the run; a person takes over' },
   needsClarification: { color: 'd876e3', description: 'Questions are on the issue; answer, then requeue' },
   stale: { color: '7f8c8d', description: 'No push before the staleness timeout' },
+  ship: { color: '5319e7', description: 'The automated path: chernabog implements, and merges once a review approves' },
 } satisfies Readonly<Record<keyof Labels, { readonly color: string; readonly description: string }>>;
 
 export const desiredLabels = (labels: Labels): ReadonlyArray<DesiredLabel> => Struct.keys(LOOK).map((key) => ({ name: labels[key], ...LOOK[key] }));

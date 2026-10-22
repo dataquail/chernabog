@@ -18,6 +18,8 @@ export const Labels = Schema.Struct({
   needsHuman: Schema.String,
   needsClarification: Schema.String,
   stale: Schema.String,
+  // The automated path: chernabog merges a pull request only when it carries this.
+  ship: Schema.String,
 });
 
 export type Labels = typeof Labels.Type;
@@ -31,6 +33,7 @@ export const DEFAULT_LABELS: Labels = {
   needsHuman: 'auto:needs-human',
   needsClarification: 'auto:needs-clarification',
   stale: 'auto:stale',
+  ship: 'auto:ship',
 };
 
 export const Board = Schema.Struct({ projectNumber: Schema.Finite, readyStatus: Schema.String, inProgressStatus: Schema.String });
@@ -93,6 +96,9 @@ export const RepoSettings = Schema.Struct({
   slug: Schema.String,
   path: Schema.String,
   baseBranch: Schema.String,
+  // The team's reviewer pool, by GitHub login: a pull request with green CI
+  // gets one of them, never its author. None, when the team names no pool.
+  reviewers: Schema.optionalKey(Strings),
   // The GitHub login this run acts as, when machine config names personas;
   // absent, it acts as whoever the daemon is.
   persona: Schema.optionalKey(Schema.String),
@@ -187,7 +193,14 @@ export type ReviewComment = { readonly path: string; readonly line: number; read
 
 export type NewPullRequest = { readonly head: string; readonly base: string; readonly title: string; readonly body: string };
 
-export type NewReview = { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<ReviewComment> };
+// A review approves, requests changes, or only comments, which is the default.
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+export type NewReview = { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<ReviewComment>; readonly event?: ReviewEvent };
+
+// A review someone submitted: who, its state as GitHub gives it (APPROVED,
+// CHANGES_REQUESTED, COMMENTED, DISMISSED), and the head it saw.
+export type SubmittedReview = { readonly author: string; readonly state: string; readonly commitSha: string };
 
 export type MergeMethod = 'merge' | 'squash' | 'rebase';
 
@@ -225,13 +238,19 @@ export class GitHub extends Context.Service<
     pullRequest(number: number): Effect.Effect<PullRequest, GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    readonly openPullRequests: Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    // Asks these logins to review the pull request, or to review it again.
+    requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, GitHubError>;
+    // The reviews submitted on a pull request, oldest first.
+    reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     // Changed paths of a pull request, for path rules such as humanOnlyPaths.
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
     // Recently closed or merged pull requests carrying the label, newest first.
     closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
-    // Posts a review as a comment (an account cannot approve its own pull request; labels carry the verdict).
+    // Posts a review. GitHub won't let an account approve or request changes on
+    // its own pull request; such a review is posted as a comment instead.
     review(pullRequest: number, review: NewReview): Effect.Effect<void, GitHubError>;
     // Review summaries and line comments on a pull request.
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;

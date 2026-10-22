@@ -157,3 +157,14 @@ export const viewerLogin = githubJson('GET', '/user', Schema.Struct({ login: Sch
 
 // The GitHub login a persona's token belongs to.
 export const viewerLoginAs = (persona: Persona) => Layer.build(GitHubApi.layerFor(persona)).pipe(Effect.flatMap((api) => Effect.provideContext(viewerLogin, api)), Effect.scoped);
+
+const Permission = Schema.Struct({ permission: Schema.String, role_name: Schema.optionalKey(Schema.String) });
+
+// Whether a login can push to and merge in a repo: write, maintain or admin.
+// Asked as that login, whose token can read its own permission.
+export const canMerge = (slug: string, login: string) =>
+  Layer.build(GitHubApi.layerFor(Option.some(login))).pipe(
+    Effect.flatMap((api) => Effect.provideContext(githubJson('GET', `/repos/${slug}/collaborators/${login}/permission`, Permission), api)),
+    Effect.map((found) => ({ ok: ['admin', 'maintain', 'write'].includes(found.role_name ?? found.permission), permission: found.role_name ?? found.permission })),
+    Effect.scoped,
+  );

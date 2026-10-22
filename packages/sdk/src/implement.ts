@@ -22,18 +22,20 @@ import type { Json } from './json.ts';
 import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from './markers.ts';
 import { pathsMatching } from './paths.ts';
 import { renderPrompt, renderPromptOr } from './prompt.ts';
+import { requestReview } from './pull-request.ts';
 import type { ReviewResult } from './review.ts';
 import { Agent, type AgentResult, Git, GitHub, type Issue, Repo, Run, RunLog, Usage, type WorkItem, Worktree } from './services.ts';
 
 export const branchFor = (issue: number) => `auto/issue-${issue}`;
 
-export const IssueItem = Schema.Struct({ issue: Schema.Finite });
+// An issue to implement, and the label that queued it, when it's not eligible's.
+export const IssueItem = Schema.Struct({ issue: Schema.Finite, label: Schema.optionalKey(Schema.String) });
 
-export const issueItem = (issue: Issue): WorkItem => ({
+export const issueItem = (issue: Issue, label: Option.Option<string> = Option.none()): WorkItem => ({
   key: `issue-${issue.number}`,
   title: issue.title,
   url: issue.url,
-  data: { issue: issue.number },
+  data: { issue: issue.number, ...Option.match(label, { onNone: () => ({}), onSome: (queued) => ({ label: queued }) }) },
   assignees: issue.assignees,
 });
 
@@ -54,14 +56,31 @@ export const sessionIdFor = (runId: string, purpose: string) => {
 };
 
 // Issues with a queue label, oldest first, each with its assignees. A flow
-// keyed by its own label, such as auto:ship, pairs it with `claim(issue, { label })`.
-export const triggerFor = (label: string) => GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(Effect.map((issues) => issues.map(issueItem)));
+// keyed by its own label pairs it with `claim(issue, queuedBy(item))`.
+export const triggerFor = (label: string) => GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(Effect.map((issues) => issues.map((issue) => issueItem(issue, Option.some(label)))));
 
-// Issues labelled eligible, oldest first, each with its assignees.
-export const trigger = Repo.use((repo) => triggerFor(repo.labels.eligible));
+// Issues labelled eligible, then ones labelled ship (auto:ship), the automated
+// path, whose pull request chernabog merges once it's approved. Oldest first,
+// each with its assignees.
+export const trigger = Effect.gen(function* () {
+  const github = yield* GitHub;
+  const repo = yield* Repo;
+  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
+  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
+
+  return [...eligible.map((issue) => issueItem(issue)), ...shipping.map((issue) => issueItem(issue, Option.some(repo.labels.ship)))];
+});
 
 // Which label queued the issue: eligible unless the flow is keyed by its own.
 export type QueueOptions = { readonly label?: string };
+
+// The label that queued a work item from `trigger`, for claim,
+// askForClarification and openPullRequest.
+export const queuedBy = (item: WorkItem) =>
+  Schema.decodeUnknownEffect(IssueItem)(item.data).pipe(
+    Effect.map((data): QueueOptions => Option.match(Option.fromUndefinedOr(data.label), { onNone: () => ({}), onSome: (label) => ({ label }) })),
+    Effect.mapError((issue) => new StepFailed({ step: 'work item', message: `${item.key} is not an issue: ${issue.message}` })),
+  );
 
 const queueLabel = (options: QueueOptions) => Repo.use((repo) => Effect.succeed(options.label ?? repo.labels.eligible));
 
@@ -440,24 +459,31 @@ export const PullRequestRef = Schema.Struct({ number: Schema.Finite, url: Schema
 
 export type PullRequestRef = typeof PullRequestRef.Type;
 
-// Opens the pull request for the branch, or finds the one already open.
-export const openPullRequest = (issue: number, outcome: ImplementOutcome) =>
+const footer = (shipping: boolean) => {
+  if (shipping) return 'Opened by Chernabog for an unattended run, on the automated path: it merges once its review approves.';
+
+  return 'Opened by Chernabog for an unattended run. A person merges.';
+};
+
+// Opens the pull request for the branch, or finds the one already open. An
+// issue queued by ship (auto:ship) gives its pull request the label too, the
+// automated path, which merges once approved.
+export const openPullRequest = (issue: number, outcome: ImplementOutcome, options: QueueOptions = {}) =>
   activity(
     'open-pull-request',
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
       const branch = branchFor(issue);
+      const shipping = options.label === repo.labels.ship;
       const existing = Option.filter(yield* github.pullRequestForBranch(branch), (pull) => pull.state === 'open');
 
-      if (Option.isSome(existing)) return { number: existing.value.number, url: existing.value.url };
-
-      const opened = yield* github.openPullRequest({
-        head: branch,
-        base: repo.baseBranch,
-        title: outcome.title,
-        body: `Closes #${issue}\n\n${outcome.body}\n\n---\nOpened by Chernabog for an unattended run. A person reviews and merges.`,
+      const opened = yield* Option.match(existing, {
+        onSome: Effect.succeed,
+        onNone: () => github.openPullRequest({ head: branch, base: repo.baseBranch, title: outcome.title, body: `Closes #${issue}\n\n${outcome.body}\n\n---\n${footer(shipping)}` }),
       });
+
+      if (shipping) yield* github.addLabel(opened.number, repo.labels.ship);
 
       return { number: opened.number, url: opened.url };
     }),
@@ -525,13 +551,20 @@ export const waitForCi = (pullRequest: number, worktree: string, target: CiBranc
     }
   });
 
-// Whether hand-off labels the pull request needs-review, which starts the review
-// flow on it. A flow that reviews the pull request itself says false.
+const askForReview = (pullRequest: number, options: HandOffOptions) => {
+  if (options.needsReview) return requestReview(pullRequest).pipe(Effect.asVoid);
+
+  return Effect.void;
+};
+
+// Whether hand-off asks the team's reviewer pool for a review. A flow that
+// reviews the pull request itself says false.
 export type HandOffOptions = { readonly needsReview: boolean };
 
 // Hands the green pull request to review: the review trigger if the repo has
-// one, the needs-review label unless the options leave it off, and a closing
-// comment on the issue.
+// one, a review requested of one reviewer from the pool (needs-review for a
+// person without one) unless the options leave it off, and a closing comment
+// on the issue.
 export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: ImplementOutcome, options: HandOffOptions = { needsReview: true }) =>
   activity(
     'hand-off',
@@ -546,15 +579,13 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, outcome: Imp
       const session = { adapter: repo.agent, sessionId: sessionIdFor(run.runId, 'implement'), issue, branch: branchFor(issue) };
       yield* github.comment(pullRequest.number, `Implemented by ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`);
 
-      if (options.needsReview) yield* github.addLabel(pullRequest.number, repo.labels.needsReview);
-
       yield* github.removeLabel(issue, repo.labels.inProgress);
       yield* github.comment(issue, `Pull request ready for review: ${pullRequest.url}\n\n${outcome.summary}`);
 
       return `#${issue}: ${pullRequest.url} is ready for review`;
     }),
     Schema.String,
-  );
+  ).pipe(Effect.tap(() => askForReview(pullRequest.number, options)));
 
 // Labels the work item for a person and says why. No flow picks it up again.
 export const handToHuman = (issue: number, reason: string, pullRequest: Option.Option<number>) =>
@@ -582,7 +613,8 @@ export const endForPerson = (summary: string) => Effect.fail(new NeedsHuman({ re
 export const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
     const issue = yield* issueOf(item);
-    const { branch } = yield* claim(issue);
+    const queued = yield* queuedBy(item);
+    const { branch } = yield* claim(issue, queued);
     let pullRequest = Option.none<number>();
     const toPerson = (reason: string) => handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(endForPerson));
 
@@ -590,12 +622,12 @@ export const workflow = (item: WorkItem) =>
       const worktree = yield* prepareWorktree(branch);
       const outcome = yield* implementWithAgent(issue, worktree);
 
-      if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome).pipe(Effect.flatMap(endForPerson));
+      if (outcome.status === 'needs-clarification') return yield* askForClarification(issue, outcome, queued).pipe(Effect.flatMap(endForPerson));
 
       return yield* Effect.gen(function* () {
         yield* localGate(worktree);
         yield* push('push', worktree, branch);
-        const opened = yield* openPullRequest(issue, outcome);
+        const opened = yield* openPullRequest(issue, outcome, queued);
         pullRequest = Option.some(opened.number);
         yield* waitForCi(opened.number, worktree, { ...thisRunsSession, branch });
 

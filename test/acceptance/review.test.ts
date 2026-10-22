@@ -1,5 +1,6 @@
-// The review loop end to end, through the daemon: a Claude-written pull request
-// gets a Codex review, a fix, and a second review, without anyone stepping in.
+// The review loop end to end, through the daemon and GitHub's own review
+// requests: alice, one persona, writes the pull request; bob, another on the
+// same machine, is the team's reviewer. Nobody steps in.
 
 import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -12,6 +13,8 @@ import * as Schema from 'effect/Schema';
 import { closed, openSandbox, type Sandbox, waitFor } from './sandbox.ts';
 
 const CreatedPull = Schema.Struct({ number: Schema.Finite });
+
+const often = { schedule: '*/2 * * * * *' };
 
 describe('the review loop', () => {
   let sandbox: Sandbox;
@@ -26,8 +29,14 @@ describe('the review loop', () => {
   };
 
   beforeAll(async () => {
-    const often = { schedule: '*/2 * * * * *' };
-    sandbox = openSandbox({ flows: { implement: often, review: { ...often, agent: 'codex' }, fix: often } });
+    sandbox = openSandbox(
+      { reviewers: ['alice', 'bob'], flows: { review: { agent: 'codex' }, 're-review': { agent: 'codex' } } },
+      {
+        github: ['alice', 'bob'],
+        personas: ['alice', 'bob'],
+        personaFlows: { alice: { implement: often, fix: often }, bob: { review: often, 're-review': often } },
+      },
+    );
     await sandbox.runCli(['trust', 'demo']);
     daemon = sandbox.cli(['daemon']);
     await waitFor(() => existsSync(join(sandbox.home, 'daemon.sock')), 'the daemon');
@@ -41,41 +50,42 @@ describe('the review loop', () => {
     await sandbox.github.stop();
   });
 
-  test('Claude implements, Codex requests changes, Claude fixes in the same session, Codex approves', async () => {
-    sandbox.github.addIssue('Reviewed work', ['auto:eligible']);
-    await waitFor(() => Option.exists(sandbox.github.firstPull(), (first) => first.labels.includes('auto:approved')), 'the pull request to be approved', 60_000);
+  test('alice implements an auto:ship issue, bob requests changes, alice fixes in her session, bob re-reviews in his and merges', async () => {
+    sandbox.github.addIssue('Shipped work', ['auto:ship']);
+    await waitFor(() => sandbox.github.merges.length > 0, 'the pull request to merge', 90_000);
 
+    expect(pull().author).toBe('alice');
+    expect(pull().labels).toContain('auto:ship');
+    expect(sandbox.github.merges).toEqual([{ number: pull().number, method: 'squash', by: 'bob' }]);
+
+    // Bob, never alice, its author, reviewed it: once asking for changes, once approving the fixed head.
     const [changes, approval] = sandbox.github.reviewsOf(pull().number);
-    expect(sandbox.github.reviewsOf(pull().number)).toHaveLength(2);
-    expect(changes.body).toContain('Changes requested by codex');
+    expect(sandbox.github.reviewsOf(pull().number).map((review) => `${review.author} ${review.state}`)).toEqual(['bob CHANGES_REQUESTED', 'bob APPROVED']);
     expect(changes.comments[0]).toEqual({ path: 'README.md', line: 1, side: 'RIGHT', body: 'Mention the change here.' });
-    expect(approval.body).toContain('Approved by codex');
     expect(approval.commit_id).not.toBe(changes.commit_id);
 
-    // Claude wrote it and fixed it, resuming its own session; Codex only reviewed.
+    // Claude wrote it and fixed it in one session; Codex reviewed it in one session and resumed it to re-review.
     const claude = sandbox.claudeCalls();
     expect(claude.map((call) => call.split(' ')[0])).toEqual(['start', 'resume']);
-    const [start = '', resume = ''] = claude;
-    expect(resume.split(' ')[1]).toBe(start.split(' ')[1]);
-    expect(sandbox.codexCalls()).toHaveLength(2);
+    expect(claude[1]?.split(' ')[1]).toBe(claude[0]?.split(' ')[1]);
+    const codex = sandbox.codexCalls();
+    expect(codex.map((call) => call.split(' ')[0])).toEqual(['start', 'resume']);
+    expect(codex[1]?.split(' ')[1]).toBe(codex[0]?.split(' ')[1]);
+
+    expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/review pr-\d+ as bob\)/);
+    expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/re-review pr-\d+-review-2 as bob\)/);
+    expect(existsSync(join(sandbox.home, `worktrees/demo/review-pr-${pull().number}`))).toBe(false);
     expect(pull().labels).not.toContain('auto:changes-requested');
-    expect(pull().labels).not.toContain('auto:needs-review');
-  }, 90_000);
-
-  test('a merge ends the review run and removes the worktrees', async () => {
-    sandbox.github.closePull(pull().number);
-    await waitFor(() => /finished [\da-f-]{36} \(demo\/review pr-\d+\): done: #\d+ closed; worktrees removed/.test(sandbox.daemonLog()), 'the review run to clean up', 30_000);
-    expect(existsSync(join(sandbox.home, 'worktrees/demo/auto-issue-1'))).toBe(false);
-    expect(existsSync(join(sandbox.home, 'worktrees/demo/review-pr-2'))).toBe(false);
-  }, 60_000);
+    expect(pull().labels).not.toContain('auto:needs-human');
+  }, 120_000);
 });
 
-describe('a pull request nobody answers', () => {
+describe('a pull request a person opened', () => {
   let sandbox: Sandbox;
   let daemon: ChildProcess;
 
   beforeAll(() => {
-    sandbox = openSandbox({ flows: { review: { schedule: '*/2 * * * * *', agent: 'codex' }, fix: { enabled: false } }, limits: { staleAfter: '3 seconds' } });
+    sandbox = openSandbox({ flows: { review: { ...often, agent: 'codex' }, implement: { enabled: false }, fix: { enabled: false }, 're-review': { enabled: false } } }, { flows: { review: often } });
   });
 
   afterAll(async () => {
@@ -84,61 +94,31 @@ describe('a pull request nobody answers', () => {
     await sandbox.github.stop();
   });
 
-  test('goes stale when no push comes before the timeout', async () => {
+  test("is reviewed once this machine's review is requested, and left for a person to merge", async () => {
     await sandbox.runCli(['trust', 'demo']);
     sandbox.git(sandbox.checkout, 'checkout', '-qb', 'feature');
     sandbox.git(sandbox.checkout, 'commit', '-q', '--allow-empty', '-m', 'feat: by a person');
     sandbox.git(sandbox.checkout, 'push', '-q', 'origin', 'feature');
 
+    // Opened by a person, carol, so the machine (the sandbox's bot) can review it.
     const response = await fetch(`${sandbox.github.url}/repos/dataquail/demo/pulls`, {
       method: 'POST',
+      headers: { authorization: 'Bearer token-carol' },
       body: JSON.stringify({ head: 'feature', base: 'main', title: 'feat: by a person', body: '' }),
     });
 
     const { number } = Schema.decodeUnknownSync(CreatedPull)(await response.json());
-    sandbox.github.pull(number).labels.push('auto:needs-review');
-    daemon = sandbox.cli(['daemon']);
-
-    await waitFor(() => sandbox.github.pull(number).labels.includes('auto:stale'), 'the pull request to go stale', 45_000);
-    expect(sandbox.github.pull(number).labels).not.toContain('auto:changes-requested');
-  }, 60_000);
-});
-
-describe('reviews claimed by requested reviewer', () => {
-  let sandbox: Sandbox;
-  let daemon: ChildProcess;
-
-  beforeAll(() => {
-    sandbox = openSandbox({ flows: { review: { schedule: '*/2 * * * * *', agent: 'codex', reviewRequested: '@me' }, fix: { enabled: false } } });
-  });
-
-  afterAll(async () => {
-    daemon.kill('SIGTERM');
-    await closed(daemon);
-    await sandbox.github.stop();
-  });
-
-  test("leave a pull request to its requested reviewers' machines, and review one this machine is asked to", async () => {
-    await sandbox.runCli(['trust', 'demo']);
-    sandbox.git(sandbox.checkout, 'checkout', '-qb', 'feature');
-    sandbox.git(sandbox.checkout, 'commit', '-q', '--allow-empty', '-m', 'feat: by a person');
-    sandbox.git(sandbox.checkout, 'push', '-q', 'origin', 'feature');
-
-    const response = await fetch(`${sandbox.github.url}/repos/dataquail/demo/pulls`, {
-      method: 'POST',
-      body: JSON.stringify({ head: 'feature', base: 'main', title: 'feat: by a person', body: '' }),
-    });
-
-    const { number } = Schema.decodeUnknownSync(CreatedPull)(await response.json());
-    sandbox.github.pull(number).labels.push('auto:needs-review');
     sandbox.github.pull(number).reviewers.push('alice');
     daemon = sandbox.cli(['daemon']);
+    await waitFor(() => existsSync(join(sandbox.home, 'daemon.sock')), 'the daemon');
+    // Ticks every two seconds; a few of them leave the pull request to alice.
+    await Bun.sleep(5000);
+    expect(sandbox.github.reviewsOf(number)).toEqual([]);
 
-    await waitFor(() => sandbox.daemonLog().includes(`demo/review: skipped: only work for others: pr-${number} (review requested: alice)`), 'a tick that leaves the pull request to alice');
-    expect((await sandbox.runCli(['status'])).output).toContain(`assigned elsewhere: pr-${number} (review requested: alice)`);
-    expect(sandbox.github.pull(number).labels).toContain('auto:needs-review');
-
-    sandbox.github.pull(number).reviewers.push('Chernabog-Bot');
-    await waitFor(() => !sandbox.github.pull(number).labels.includes('auto:needs-review'), 'the review once this machine is asked', 45_000);
+    sandbox.github.pull(number).reviewers.push('chernabog-bot');
+    await waitFor(() => sandbox.github.reviewsOf(number).length > 0, 'the review once this machine is asked', 45_000);
+    expect(sandbox.github.reviewsOf(number).map((review) => `${review.author} ${review.state}`)).toEqual(['chernabog-bot CHANGES_REQUESTED']);
+    expect(sandbox.github.merges).toEqual([]);
+    expect(sandbox.github.pull(number).reviewers).toEqual(['alice']);
   }, 60_000);
 });

@@ -21,8 +21,10 @@ import {
   type PullRequest,
   Repo,
   type RepoSettings,
+  type ReviewEvent,
   Runs,
   StepRunner,
+  type SubmittedReview,
   Usage,
   type WorkItem,
   Worktree,
@@ -95,6 +97,9 @@ export const repo = repoAs(settings);
 
 export type Verdict = 'approve' | 'request-changes';
 
+// A review's state on GitHub once it's submitted with its event.
+const STATE_OF: Readonly<Record<ReviewEvent, string>> = { APPROVE: 'APPROVED', REQUEST_CHANGES: 'CHANGES_REQUESTED', COMMENT: 'COMMENTED' };
+
 // CI on the head, the files the pull request changes, whether GitHub refuses the merge, and the merges asked for.
 export type MergeFake = { ci: CiState; files: Array<string>; refusal: Option.Option<string>; requests: Array<MergeRequest> };
 
@@ -110,6 +115,9 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
 
   const comments: Array<Comment> = [];
   const reviews: Array<string> = [];
+  // Who this run acts as, who the pull request asks to review it, and the reviews submitted on it.
+  const people = { me: 'chernabog-bot', requested: new Array<string>() };
+  const submitted: Array<SubmittedReview> = [];
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
@@ -165,7 +173,7 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
     labels: labelsOf(PULL),
     author: 'chernabog-bot',
     assignees: [],
-    requestedReviewers: [],
+    requestedReviewers: [...people.requested],
   });
 
   const issue = (): Issue => ({ number: ISSUE, title: 'A queued issue', body: '', url: `https://github.com/dataquail/demo/issues/${ISSUE}`, createdAt: '2026-10-20T00:00:00Z', labels: labelsOf(ISSUE), assignees: [] });
@@ -188,7 +196,14 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
 
           return pull();
         }),
-      pullRequestsLabelled: (label) => Effect.succeed([pull()].filter((open) => open.labels.includes(label))),
+      pullRequestsLabelled: (label) => Effect.sync(() => [pull()].filter((open) => open.labels.includes(label))),
+      openPullRequests: Effect.sync(() => [pull()]),
+      login: Effect.sync(() => people.me),
+      reviews: () => Effect.sync(() => [...submitted]),
+      requestReviewers: (_, logins) =>
+        Effect.sync(() => {
+          people.requested = [...people.requested.filter((login) => !logins.includes(login)), ...logins];
+        }),
       closedPullRequestsLabelled: () => Effect.succeed([]),
       pullRequest: () => Effect.sync(pull),
       ciState: () => Effect.sync(() => merge.ci),
@@ -205,9 +220,12 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
         Effect.sync(() => {
           comment(body);
         }),
+      // As on GitHub, a review drops its author from the requested reviewers.
       review: (_, review) =>
         Effect.sync(() => {
           reviews.push(review.body);
+          submitted.push({ author: people.me, state: STATE_OF[review.event ?? 'COMMENT'], commitSha: review.commitSha });
+          people.requested = people.requested.filter((login) => login !== people.me);
         }),
       addLabel: (number, label) =>
         Effect.sync(() => {
@@ -228,7 +246,7 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
           if (git.pushes > 1) git.head = `fix${git.pushes}0000000`;
         }),
     }),
-    Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`), checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`) }),
+    Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}`, ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`), checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`), remove: () => Effect.void }),
     Layer.mock(Usage)({}),
     Layer.mock(Agent)({
       adapters: [],
@@ -244,7 +262,7 @@ export const makeFake = (verdicts: Verdict | ReadonlyArray<Verdict>, overrides: 
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
-  return { services, git, author, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment };
+  return { services, git, author, merge, requests, knowRun, labelsOf, setLabels, comments, reviews, adapters, comment, people, submitted };
 };
 
 export type Fake = ReturnType<typeof makeFake>;

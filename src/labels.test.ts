@@ -39,8 +39,8 @@ test("a repo's own label names are the ones synced", () => {
 });
 
 test('labels a flow declares are synced too, after the repo\'s own', () => {
-  const ship = defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void, labels: [{ name: 'auto:ship', description: 'Implement, review and merge' }, { name: 'auto:approved', color: '000000' }] });
+  const ship = defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void, labels: [{ name: 'auto:deploy', description: 'Deploy once merged' }, { name: 'auto:approved', color: '000000' }] });
   const all = withFlowLabels(DESIRED, [ship]);
-  expect(all.slice(DESIRED.length)).toEqual([{ name: 'auto:ship', color: 'c5def5', description: 'Implement, review and merge' }]);
+  expect(all.slice(DESIRED.length)).toEqual([{ name: 'auto:deploy', color: 'c5def5', description: 'Deploy once merged' }]);
   expect(all.find((label) => label.name === 'auto:approved')?.color).toBe('0e8a16');
 });

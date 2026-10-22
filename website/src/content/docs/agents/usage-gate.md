@@ -3,7 +3,7 @@ title: The usage gate
 description: How Chernabog decides an account has room for one more task.
 ---
 
-Before `implement` or `fix` starts a run, its gate (`Implement.gate`) checks the account, then the usage gate reads current usage and decides whether one more task fits. `review` has no gate. Every refusal is recorded as the tick's skip reason.
+Before `implement` or `fix` starts a run, its gate (`Implement.gate`) checks the account, then the usage gate reads current usage and decides whether one more task fits. `review` and `re-review` have no gate. Every refusal is recorded as the tick's skip reason.
 
 | Agent      | Usage comes from                                              |
 | ---------- | ------------------------------------------------------------- |

@@ -22,7 +22,7 @@ Each flow's trigger runs on a cron schedule. When it runs is the person's call, 
 
 Hours are `HH:MM-HH:MM` in local time, and may wrap midnight. Every skipped tick is recorded with its reason; `status` shows the latest. A repo can lower `concurrency`, never raise it past the machine's.
 
-A run waiting on a signal — a review waiting for its author's push — holds no slot.
+A run waiting on a signal holds no slot.
 
 The daemon reads machine config's enrolled repos when it starts, and checks them every ten seconds. When they change — a repo `chernabog enroll` adds, one dropped or moved, a flow turned on or off for a persona — the daemon restarts on them once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
 

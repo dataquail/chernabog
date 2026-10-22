@@ -68,6 +68,10 @@ export type Flow = {
   readonly schedule?: string;
   // Labels of the flow's own, for `chernabog labels` to create.
   readonly labels?: ReadonlyArray<FlowLabel>;
+  // Whether the trigger finds only the work of the persona it runs as, as
+  // review's does by its review requests, so several personas can run the
+  // flow without assignee or reviewRequested to tell them apart.
+  readonly ownWork?: boolean;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowFailure, WorkflowServices>;
 };

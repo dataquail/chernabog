@@ -41,6 +41,7 @@ act as the right one.
 - **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
   A flow several personas run should filter with `assignee` or
   `reviewRequested: "@me"`.
+  `review` and `re-review` filter in their triggers, by the persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
   does and as whom; show runs with `runLabel` and `shortRunId`, and resolve user
   input with `resolveRunId` (unique prefix).
@@ -139,3 +140,24 @@ Decisions that cut across them:
 - Breaking config changes are fine (only this repo and goodbones use
   chernabog), but each one gets a migration that rewrites machine config and
   says what it changed.
+
+### Review flows (#53)
+
+- `reviewers:` in the team's config is the pool. `Implement.handOff` calls
+  `PullRequest.requestReview`, which picks one at random, never the author,
+  inside an activity so a replay asks the same login; no pool means
+  `auto:needs-review` for a person.
+- `review` (`Review.trigger`/`workflow`) runs as a persona whose review is
+  requested and who hasn't reviewed; `re-review`
+  (`Review.reReviewTrigger`/`reReviewWorkflow`) as one asked again, resuming
+  its session with `Review.recheck` from the review marker (which records
+  reviewer, sessionId and adapter). `limits.reviewRounds` (default 1) caps
+  re-reviews.
+- `PullRequest.mergeOrLeave` is the one merge path: it merges only what
+  `PullRequest.ships` (carries `auto:ship`), through `PullRequest.merge`'s
+  safety checks, and otherwise hands to a person. Don't merge anywhere else.
+- `fix` is still label-driven (`auto:changes-requested`) until #54's
+  `address-review`; its hand-back re-requests the reviewer from the marker.
+- Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`, and
+  review's wait-for-push loop. `auto:approved` and `auto:stale` stay in the
+  label set but no default flow sets them.

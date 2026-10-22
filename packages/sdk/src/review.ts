@@ -1,9 +1,12 @@
-// The building blocks of the default `review` and `fix` flows. A review run
-// stays inside one workflow: after each review it waits on whichever comes
-// first, the author's push or the staleness timeout. It ends when the pull
-// request closes, the timeout labels it stale, or the loop cap hands it to a
-// person. The fix flow is the author, for pull requests an agent wrote: it
-// resumes the session that implemented them, addresses the review and pushes.
+// The building blocks of the default `review` and `re-review` flows, which
+// work through GitHub's own review requests: a pull request asks one reviewer
+// from the team's pool once its CI is green (Implement.handOff), `review` runs
+// as a persona whose review is requested on a pull request it hasn't reviewed,
+// and `re-review` as one asked again, resuming its own review session. On the
+// automated path (auto:ship), the approving reviewer merges, when that's safe.
+// The `fix` flow is the author, for pull requests an agent wrote: it resumes
+// the session that implemented them, addresses the review, pushes, and asks
+// the reviewer again.
 
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
@@ -11,14 +14,14 @@ import * as Schema from 'effect/Schema';
 
 import { RECHECK } from './default-prompts.ts';
 import { NeedsHuman, StepFailed } from './errors.ts';
-import { activity, awaitSignal } from './flow.ts';
+import { activity } from './flow.ts';
 import { fixWithAgent, push, sessionIdFor, waitForCi } from './implement.ts';
 import type { Json } from './json.ts';
-import { latestMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
+import { latestMarker, type ReviewMarker, reviewMarker, SessionMarker, sessionMarker } from './markers.ts';
 import { renderPrompt, renderPromptOr } from './prompt.ts';
 import * as PullRequestSteps from './pull-request.ts';
 import { adapterFor, type RoleOptions } from './roles.ts';
-import { Agent, Git, GitHub, type PullRequest, Repo, type ReviewNote, Run, type WorkItem, Worktree } from './services.ts';
+import { Agent, Git, GitHub, type PullRequest, Repo, type ReviewEvent, type ReviewNote, Run, type WorkItem, Worktree } from './services.ts';
 
 export { type ReviewMarker, reviewMarker, type SessionMarker, sessionMarker } from './markers.ts';
 
@@ -41,8 +44,8 @@ const itemData =
 export const pullRequestOf = itemData(ReviewItem);
 const fixItemOf = itemData(FixItem);
 
-const reviewItem = (pull: PullRequest): WorkItem => ({
-  key: `pr-${pull.number}`,
+const reviewItem = (pull: PullRequest, key: string): WorkItem => ({
+  key,
   title: pull.title,
   url: pull.url,
   data: { pullRequest: pull.number, headRef: pull.headRef, agentWritten: isAgentBranch(pull.headRef) },
@@ -52,48 +55,41 @@ const reviewItem = (pull: PullRequest): WorkItem => ({
 
 const commentBodies = (pull: PullRequest) => GitHub.use((github) => github.comments(pull.number)).pipe(Effect.map((comments) => comments.map((comment) => comment.body)));
 
-// The head the latest review saw.
-const reviewedSha = (bodies: ReadonlyArray<string>) => latestMarker(reviewMarker.read, bodies).pipe(Option.map((marker) => marker.sha));
-
-const changedSinceReview = (pull: PullRequest, bodies: ReadonlyArray<string>) => Option.exists(reviewedSha(bodies), (sha) => sha !== pull.headSha);
-
-// Whether a run of another flow owns the pull request, as a composite flow does
-// while it reviews and fixes it itself; the standalone flows leave it alone.
+// Whether a run of another flow owns the pull request; the standalone flows leave it alone.
 const ownedByARun = (bodies: ReadonlyArray<string>) => PullRequestSteps.ownerOf(bodies).pipe(Effect.map(Option.isSome));
 
-// Pull requests to review, and the signals that wake reviews already waiting:
-// "pushed" when a pull request changed since its last review (for one an agent
-// wrote, once the fix flow handed it back), "closed" when it merged or closed.
-// A pull request another flow's run owns gets neither a review nor a push.
-export const trigger = Effect.gen(function* () {
+const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+
+// Open pull requests that ask this persona for a review, each with how many
+// reviews it has submitted on it so far.
+const requestedOfMe = Effect.gen(function* () {
   const github = yield* GitHub;
+  const me = yield* github.login;
+  const found: Array<{ readonly pull: PullRequest; readonly reviewed: number }> = [];
+
+  for (const pull of yield* github.openPullRequests) {
+    if (!pull.requestedReviewers.some((login) => sameLogin(login, me))) continue;
+
+    if (yield* ownedByARun(yield* commentBodies(pull))) continue;
+
+    found.push({ pull, reviewed: (yield* github.reviews(pull.number)).filter((review) => sameLogin(review.author, me)).length });
+  }
+
+  return found;
+});
+
+// `review`'s work items: pull requests whose review is requested of this
+// persona, which it hasn't reviewed yet.
+export const trigger = Effect.map(requestedOfMe, (found) => found.flatMap(({ pull, reviewed }) => Option.toArray(Option.liftPredicate(reviewItem(pull, `pr-${pull.number}`), () => reviewed === 0))));
+
+// `re-review`'s work items: pull requests that ask this persona again after it
+// reviewed them, one per request, unless a person has them (needs-human).
+export const reReviewTrigger = Effect.gen(function* () {
   const repo = yield* Repo;
-  const items: Array<WorkItem> = [];
 
-  for (const pull of yield* github.pullRequestsLabelled(repo.labels.needsReview)) {
-    const bodies = yield* commentBodies(pull);
-
-    if (yield* ownedByARun(bodies)) continue;
-
-    const item = reviewItem(pull);
-
-    if (changedSinceReview(pull, bodies)) items.push({ ...item, signals: ['pushed'] });
-    else items.push(item);
-  }
-
-  for (const pull of yield* github.pullRequestsLabelled(repo.labels.changesRequested)) {
-    if (isAgentBranch(pull.headRef)) continue;
-
-    const bodies = yield* commentBodies(pull);
-
-    if (changedSinceReview(pull, bodies) && !(yield* ownedByARun(bodies))) items.push({ ...reviewItem(pull), signals: ['pushed'], wakeOnly: true });
-  }
-
-  for (const label of [repo.labels.changesRequested, repo.labels.approved, repo.labels.needsReview]) {
-    for (const pull of yield* github.closedPullRequestsLabelled(label)) items.push({ ...reviewItem(pull), signals: ['closed'], wakeOnly: true });
-  }
-
-  return items;
+  return (yield* requestedOfMe).flatMap(({ pull, reviewed }) =>
+    Option.toArray(Option.liftPredicate(reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`), () => reviewed > 0 && !pull.labels.includes(repo.labels.needsHuman))),
+  );
 });
 
 export const Verdict = Schema.Struct({
@@ -185,13 +181,21 @@ const headingFor = (verdict: Verdict['verdict'], reviewer: string) => {
   return `Changes requested by ${reviewer}`;
 };
 
-// Reviews the head in a detached worktree and posts the review with its marker.
-// Posts a review of the head with its marker, as a review and as a plain comment, which the trigger reads back.
-const postReview = (pull: PullRequest, round: number, verdict: Verdict, heading: string) =>
+const eventOf = (verdict: Verdict['verdict']): ReviewEvent => {
+  if (verdict === 'approve') return 'APPROVE';
+
+  return 'REQUEST_CHANGES';
+};
+
+// Posts a review of the head with its marker: as a real review, approving or
+// requesting changes, and as a plain comment, which later runs read back. The
+// marker records who reviewed in which session, so a re-review resumes it.
+const postReview = (pull: PullRequest, review: ReviewMarker, verdict: Verdict, heading: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const marker = reviewMarker.write({ sha: pull.headSha, round, verdict: verdict.verdict });
-    yield* github.review(pull.number, { body: `**${heading}** (review ${round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments });
+    const marker = reviewMarker.write(review);
+    const event = eventOf(verdict.verdict);
+    yield* github.review(pull.number, { body: `**${heading}** (review ${review.round})\n\n${verdict.summary}\n\n${marker}`, commitSha: pull.headSha, comments: verdict.comments, event });
     yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
   });
 
@@ -233,33 +237,24 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
     );
 
     const reviewer = Option.getOrElse(adapter, () => repo.agent);
-    yield* postReview(pull, round, verdict, headingFor(verdict.verdict, reviewer));
+    const me = yield* github.login;
+    yield* postReview(pull, { sha: pull.headSha, round, verdict: verdict.verdict, reviewer: me, sessionId, adapter: reviewer }, verdict, headingFor(verdict.verdict, reviewer));
 
     return { verdict: verdict.verdict, sha: pull.headSha, round, summary: verdict.summary, comments: verdict.comments, sessionId, adapter: reviewer };
   });
 
-const moveVerdictLabels = (pullRequest: number, verdict: ReviewResult['verdict']) =>
-  Effect.gen(function* () {
-    const github = yield* GitHub;
-    const repo = yield* Repo;
-    yield* github.removeLabel(pullRequest, repo.labels.needsReview);
-
-    if (verdict === 'approve') yield* github.addLabel(pullRequest, repo.labels.approved);
-    else yield* github.addLabel(pullRequest, repo.labels.changesRequested);
-  });
-
 // One review of the pull request's current head, in a detached worktree, in a
 // fresh session that is given the earlier reviews. The reviewer is the role's
-// adapter (flows.<flow>.agents), else the flow's agent (flows.<flow>.agent).
-// Posts it and leaves the labels alone; `labelVerdict` moves them.
+// adapter (the persona's roles pick, or flows.<flow>.agents), else the flow's
+// agent (flows.<flow>.agent). Posts it as a real review.
 const reviewOnly = (pullRequest: number, round: number, options: RoleOptions = {}) =>
   activity(`review-${round}`, reviewAndPost(pullRequest, round, Option.fromUndefinedOr(options.role)), ReviewResult);
 
 export { reviewOnly as round };
 
 // Resumes the reviewer's session from `review` with the change since the head
-// it saw, and posts what it finds as the next review: the same verdict, and
-// whether each finding of `review` is remediated. Its prompt is
+// it saw, and posts what it finds as the next review: a verdict, and whether
+// each finding of `review` is remediated. Its prompt is
 // .chernabog/prompts/recheck.md, or the SDK's own.
 export const recheck = (pullRequest: number, review: ReviewResult) => {
   const round = (review.round ?? 1) + 1;
@@ -288,7 +283,8 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
       );
 
       const reviewer = Option.getOrElse(adapter, () => repo.agent);
-      yield* postReview(pull, round, verdict, headingFor(verdict.verdict, reviewer));
+      const me = yield* github.login;
+      yield* postReview(pull, { sha: pull.headSha, round, verdict: verdict.verdict, reviewer: me, sessionId: sessionId.value, adapter: reviewer }, verdict, headingFor(verdict.verdict, reviewer));
 
       return { verdict: verdict.verdict, sha: pull.headSha, round, summary: verdict.summary, comments: verdict.comments, sessionId: sessionId.value, adapter: reviewer, findings: verdict.findings };
     }),
@@ -296,30 +292,100 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
   );
 };
 
-// Moves the pull request from needs-review to approved or changes-requested, as
-// the review said. A verdict that is no longer the latest review on the pull
-// request, as when a run from before this step existed replays it, leaves the
-// labels to whatever came after.
-export const labelVerdict = (pullRequest: number, round: number, review: ReviewResult) =>
+// Removes the review's checkout of the pull request, once the run is done
+// with it; a re-review checks it out again. Review.round and Review.recheck
+// leave it, for a flow of your own to remove when it's done.
+export const doneReviewing = (pullRequest: number) =>
   activity(
-    `label-review-${round}`,
+    `clean-up-review-pr-${pullRequest}`,
+    Worktree.use((worktree) => worktree.remove(`review-pr-${pullRequest}`)),
+  );
+
+// Changes requested on a first review: the author answers. Until address-review
+// (#54) answers GitHub's review itself, `fix` finds such pull requests by the
+// changes-requested label.
+const changesRequested = (pullRequest: number, round: number) =>
+  activity(
+    `changes-requested-${round}`,
     Effect.gen(function* () {
-      const latest = latestMarker(
-        reviewMarker.read,
-        (yield* (yield* GitHub).comments(pullRequest)).map((comment) => comment.body),
-      );
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      yield* github.removeLabel(pullRequest, repo.labels.needsReview);
+      yield* github.addLabel(pullRequest, repo.labels.changesRequested);
 
-      if (Option.exists(latest, (marker) => marker.round === round && marker.sha === review.sha)) yield* moveVerdictLabels(pullRequest, review.verdict);
+      return `#${pullRequest}: review ${round} requested changes`;
     }),
+    Schema.String,
   );
 
-// `round` and `labelVerdict` in one step: reviews, posts, and moves the labels.
-export const reviewRound = (pullRequest: number, round: number) =>
+// `review`: reviews the pull request as the persona whose review is
+// requested, in a fresh session of the reviewer role. An approval on the
+// automated path merges; a request for changes goes to the author.
+export const workflow = (item: WorkItem) =>
+  Effect.gen(function* () {
+    const { pullRequest } = yield* pullRequestOf(item);
+    const review = yield* reviewOnly(pullRequest, 1, { role: 'reviewer' });
+    yield* doneReviewing(pullRequest);
+
+    if (review.verdict === 'approve') return yield* PullRequestSteps.mergeOrLeave(pullRequest);
+
+    return yield* changesRequested(pullRequest, 1);
+  });
+
+// This persona's latest review of the pull request, as its marker recorded it, to resume.
+const myLatestReview = (pullRequest: number) =>
   activity(
-    `review-${round}`,
-    reviewAndPost(pullRequest, round, Option.none()).pipe(Effect.tap((review) => moveVerdictLabels(pullRequest, review.verdict))),
-    ReviewResult,
+    'find-review',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const me = yield* github.login;
+      const bodies = (yield* github.comments(pullRequest)).map((comment) => comment.body);
+      const mine = latestMarker((body) => Option.filter(reviewMarker.read(body), (marker) => Option.exists(Option.fromUndefinedOr(marker.reviewer), (reviewer) => sameLogin(reviewer, me))), bodies);
+
+      return Option.match(mine, {
+        onNone: () => Option.none<ReviewResult>(),
+        onSome: (marker) => Option.some<ReviewResult>({ verdict: marker.verdict, sha: marker.sha, round: marker.round, ...Option.match(Option.fromUndefinedOr(marker.sessionId), { onNone: () => ({}), onSome: (sessionId) => ({ sessionId }) }), ...Option.match(Option.fromUndefinedOr(marker.adapter), { onNone: () => ({}), onSome: (adapter) => ({ adapter }) }) }),
+      });
+    }),
+    Schema.Option(ReviewResult),
   );
+
+const listed = (findings: ReadonlyArray<Finding>, remediated: boolean) => findings.flatMap((finding) => Option.toArray(Option.liftPredicate(`- ${finding.finding}`, () => finding.remediated === remediated)));
+
+const reReviews = (count: number) => {
+  if (count === 1) return '1 re-review';
+
+  return `${count} re-reviews`;
+};
+
+// `re-review`: the persona is asked again after reviewing. It resumes its own
+// review session, up to limits.reviewRounds re-reviews, and either approves,
+// which merges on the automated path, or requests changes again and hands the
+// pull request to a person.
+export const reReviewWorkflow = (item: WorkItem) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+    const { pullRequest } = yield* pullRequestOf(item);
+    const earlier = yield* myLatestReview(pullRequest);
+
+    // No review of its own to resume, as one posted before markers named their reviewer: review afresh.
+    if (Option.isNone(earlier) || Option.isNone(Option.fromUndefinedOr(earlier.value.sessionId))) return yield* workflow(item);
+
+    const done = (earlier.value.round ?? 1) - 1;
+
+    if (done >= repo.limits.reviewRounds) {
+      return yield* PullRequestSteps.handToPerson(pullRequest, `asked to review again after ${reReviews(done)}, and limits.reviewRounds is ${repo.limits.reviewRounds}, so a person decides. Review ${earlier.value.round ?? 1}'s findings are in its review above.`);
+    }
+
+    const rechecked = yield* recheck(pullRequest, earlier.value);
+    yield* doneReviewing(pullRequest);
+    yield* PullRequestSteps.comment(pullRequest, [`Review ${earlier.value.round ?? 1}'s findings, re-reviewed.`, '', 'Remediated:', ...listed(rechecked.findings, true), '', 'Still open:', ...listed(rechecked.findings, false)].join('\n'));
+
+    if (rechecked.verdict === 'approve') return yield* PullRequestSteps.mergeOrLeave(pullRequest);
+
+    return yield* PullRequestSteps.handToPerson(pullRequest, `review ${rechecked.round ?? 2} still requests changes after a round of fixes`);
+  });
+
 
 // Moves a pull request from some labels to another, saying why when there is something to say.
 type Relabel = { readonly remove: ReadonlyArray<string>; readonly add: string; readonly comment: Option.Option<string> };
@@ -337,71 +403,6 @@ const relabel = (name: string, pullRequest: number, change: Relabel) =>
       if (Option.isSome(change.comment)) yield* github.comment(pullRequest, change.comment.value);
     }),
   );
-
-// Removes the worktrees of a pull request that merged or closed: the branch's own and the review's.
-export const cleanUp = (pullRequest: number, headRef: string) =>
-  activity(
-    'clean-up',
-    Effect.gen(function* () {
-      const worktree = yield* Worktree;
-      yield* worktree.remove(`review-pr-${pullRequest}`);
-      yield* worktree.remove(headRef);
-
-      return `#${pullRequest} closed; worktrees removed`;
-    }),
-    Schema.String,
-  );
-
-// How long an approved pull request's worktrees wait for it to merge before the run lets go.
-const APPROVED_WAIT = '14 days';
-
-const afterApproval = (pullRequest: number, headRef: string) =>
-  Effect.gen(function* () {
-    const closed = yield* awaitSignal(['closed'], { id: 'approved', timeout: APPROVED_WAIT });
-
-    if (closed === 'closed') return yield* cleanUp(pullRequest, headRef);
-
-    return `#${pullRequest} approved; a person merges`;
-  });
-
-export const workflow = (item: WorkItem) =>
-  Effect.gen(function* () {
-    const repo = yield* Repo;
-    const { headRef, pullRequest } = yield* pullRequestOf(item);
-
-    for (let round = 1; ; round++) {
-      const review = yield* reviewOnly(pullRequest, round);
-      yield* labelVerdict(pullRequest, round, review);
-
-      if (review.verdict === 'approve') return yield* afterApproval(pullRequest, headRef);
-
-      if (round >= repo.limits.reviewRounds) {
-        yield* relabel('needs-human', pullRequest, {
-          remove: [repo.labels.changesRequested],
-          add: repo.labels.needsHuman,
-          comment: Option.some(`Still changes requested after ${round} reviews, so a person takes it from here.`),
-        });
-
-        return yield* new NeedsHuman({ reason: `#${pullRequest}: still changes requested after ${round} reviews` });
-      }
-
-      const woke = yield* awaitSignal(['pushed', 'closed'], { id: `round-${round}`, timeout: repo.limits.staleAfter });
-
-      if (woke === 'closed') return yield* cleanUp(pullRequest, headRef);
-
-      if (woke === 'timeout') {
-        yield* relabel(`stale-${round}`, pullRequest, {
-          remove: [repo.labels.changesRequested],
-          add: repo.labels.stale,
-          comment: Option.some('No push since the last review, so this is marked stale.'),
-        });
-
-        return `#${pullRequest} went stale waiting for a push`;
-      }
-
-      yield* relabel(`re-review-${round}`, pullRequest, { remove: [repo.labels.changesRequested], add: repo.labels.needsReview, comment: Option.none() });
-    }
-  });
 
 // The fix flow's work items: agent-written pull requests with changes requested
 // and no push since, one per review that asked, unless another flow's run owns one.
@@ -426,6 +427,26 @@ export const fixTrigger = Effect.gen(function* () {
 
   return items;
 });
+
+// Asks the reviewer who requested the changes to review again, which starts
+// re-review; needs-review for a person, when the review doesn't say who.
+const handBack = (fix: FixItem, summary: string) =>
+  activity(
+    'hand-back',
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+      const bodies = (yield* github.comments(fix.pullRequest)).map((comment) => comment.body);
+      const reviewer = Option.flatMap(latestMarker(reviewMarker.read, bodies), (marker) => Option.fromUndefinedOr(marker.reviewer));
+      yield* github.removeLabel(fix.pullRequest, repo.labels.changesRequested);
+      yield* github.comment(fix.pullRequest, `Addressed review ${fix.round}: ${summary}`);
+
+      yield* Option.match(reviewer, {
+        onNone: () => github.addLabel(fix.pullRequest, repo.labels.needsReview),
+        onSome: (login) => github.requestReviewers(fix.pullRequest, [login]),
+      });
+    }),
+  );
 
 // The author's session, from the marker the implement run left; a fresh one if there is none.
 const authorSession = (pullRequest: number) =>
@@ -487,7 +508,6 @@ const checkChanged = (fix: FixItem, worktree: string) =>
 
 const fixPullRequest = (fix: FixItem) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
     const author = yield* authorSession(fix.pullRequest);
     const session = { sessionId: Option.some(author.sessionId), adapter: Option.some(author.adapter) };
     const worktree = yield* prepareFix(fix.headRef);
@@ -501,11 +521,7 @@ const fixPullRequest = (fix: FixItem) =>
     yield* checkChanged(fix, worktree);
     yield* push(`push-fix-${fix.round}`, worktree, fix.headRef);
     yield* waitForCi(fix.pullRequest, worktree, { ...session, branch: fix.headRef });
-    yield* relabel('hand-back', fix.pullRequest, {
-      remove: [repo.labels.changesRequested],
-      add: repo.labels.needsReview,
-      comment: Option.some(`Addressed review ${fix.round}: ${outcome.summary}`),
-    });
+    yield* handBack(fix, outcome.summary);
 
     return `#${fix.pullRequest}: addressed review ${fix.round}`;
   });
