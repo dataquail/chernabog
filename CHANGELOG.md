@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.8.0](https://github.com/dataquail/chernabog/compare/v0.7.0...v0.8.0) (2026-10-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove the SDK's whole workflows and review-loop triggers; the recipes write them out ([#67](https://github.com/dataquail/chernabog/issues/67)) (#69)
+* opt-in flow recipes, baked into the repo as code, chosen at init and later ([#67](https://github.com/dataquail/chernabog/issues/67)) (#68)
+* the fix flow is gone, with Review.fixTrigger, Review.fixWorkflow, Review.FixItem and the fix prompt; address-review replaces them.
+* the ship flow and the label-driven review loop are gone, with Review.labelVerdict, Review.reviewRound and Review.cleanUp; Review.trigger and Review.workflow now work from review requests. limits.reviewRounds defaults to 1.
+
+### Features
+
+* act as several GitHub personas from one daemon ([#56](https://github.com/dataquail/chernabog/issues/56)) ([e83ddfe](https://github.com/dataquail/chernabog/commit/e83ddfed61b7ca33a58b5e73eb0a51a5d1ae68c2))
+* answer a review that requests changes in the author's session, with address-review ([#54](https://github.com/dataquail/chernabog/issues/54)) ([#65](https://github.com/dataquail/chernabog/issues/65)) ([770505c](https://github.com/dataquail/chernabog/commit/770505c1f22cfda81d20148162a4e10b198e5494))
+* keep each persona's flow choices in machine config, keyed by repo slug ([#50](https://github.com/dataquail/chernabog/issues/50)) ([#60](https://github.com/dataquail/chernabog/issues/60)) ([9f2c65e](https://github.com/dataquail/chernabog/commit/9f2c65ea27cbbbc42adeecb59db43173b8bf1114))
+* opt-in flow recipes, baked into the repo as code, chosen at init and later ([#67](https://github.com/dataquail/chernabog/issues/67)) ([#68](https://github.com/dataquail/chernabog/issues/68)) ([a1d6db3](https://github.com/dataquail/chernabog/commit/a1d6db3602d5cbfdf24527ce60ca26a963f27bcf))
+* remove the SDK's whole workflows and review-loop triggers; the recipes write them out ([#67](https://github.com/dataquail/chernabog/issues/67)) ([#69](https://github.com/dataquail/chernabog/issues/69)) ([0c0207a](https://github.com/dataquail/chernabog/commit/0c0207a9530e8745106e528516e8690e9b9a736a))
+* review through GitHub review requests, with a reviewer pool, review and re-review ([#53](https://github.com/dataquail/chernabog/issues/53)) ([#64](https://github.com/dataquail/chernabog/issues/64)) ([4599fb4](https://github.com/dataquail/chernabog/commit/4599fb415b05ac44caeb995156564bd93fb0ed62))
+* set up personas at install, and choose flows per persona at enrollment ([#51](https://github.com/dataquail/chernabog/issues/51)) ([#61](https://github.com/dataquail/chernabog/issues/61)) ([9a31b2f](https://github.com/dataquail/chernabog/commit/9a31b2f1378274bf159d6c8b3237e8ec6659cc97))
+* show how a repo's flows differ from the current recipes, with chernabog recipes diff ([#67](https://github.com/dataquail/chernabog/issues/67)) ([#70](https://github.com/dataquail/chernabog/issues/70)) ([33ed21b](https://github.com/dataquail/chernabog/commit/33ed21b86cdca23485618b6915991c8b1ce3abec))
+* start an issue with a person on the hybrid path, with a human-initiated flow a repo writes itself ([#66](https://github.com/dataquail/chernabog/issues/66)) ([0122fd8](https://github.com/dataquail/chernabog/commit/0122fd8ca4d514c804cb7cbdf36c9a3af840b9e4))
+* **tui:** override a persona's flows, schedules and accounts in the live view ([#52](https://github.com/dataquail/chernabog/issues/52)) ([#63](https://github.com/dataquail/chernabog/issues/63)) ([b0b6357](https://github.com/dataquail/chernabog/commit/b0b6357484d1348173c616658e46d548a4dfd7f4))
+
+
+### Bug Fixes
+
+* **engine:** list an ambiguous run id's matches in sorted order ([#59](https://github.com/dataquail/chernabog/issues/59)) ([e39a190](https://github.com/dataquail/chernabog/commit/e39a1909b6070efe8708c25c624364b89ad2bde5))
+
 ## [0.7.0](https://github.com/dataquail/chernabog/compare/v0.6.1...v0.7.0) (2026-10-20)
 
 
