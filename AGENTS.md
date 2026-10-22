@@ -100,10 +100,11 @@ after that the file is theirs, and chernabog never rewrites it.
   listed with a description in `src/recipes.ts`; the base scaffold is
   `templates/.chernabog/`. Run `bun scripts/gen-templates.ts` after changing
   either.
-- A recipe is written out from SDK **blocks**, trigger included. It never calls
-  a whole-workflow export (`Review.workflow` and the like) or an SDK trigger,
-  so its policy is in the repo's file. Add a block to the SDK rather than
-  hiding a decision in one.
+- A recipe is written out from SDK **blocks**, trigger included, so its
+  policy is in the repo's file. The SDK exports no whole workflows or
+  review-loop triggers; add a block rather than hide a decision in one.
+- This repo's own `.chernabog/flows/` are baked recipes. Keep them in step
+  with `templates/recipes/`.
 - **Activity names are journal keys**: a run in flight resumes by them. Keep a
   recipe's step names when you change it, and never rename one in a block.
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
@@ -167,17 +168,16 @@ Decisions that cut across them:
   `PullRequest.requestReview`, which picks one at random, never the author,
   inside an activity so a replay asks the same login; no pool means
   `auto:needs-review` for a person.
-- `review` (`Review.trigger`/`workflow`) runs as a persona whose review is
-  requested and who hasn't reviewed; `re-review`
-  (`Review.reReviewTrigger`/`reReviewWorkflow`) as one asked again, resuming
+- `review` runs as a persona whose review is requested and who hasn't
+  reviewed; `re-review` as one asked again, resuming
   its session with `Review.recheck` from the review marker (which records
   reviewer, sessionId and adapter). `limits.reviewRounds` (default 1) caps
   re-reviews.
-- `PullRequest.mergeOrLeave` is the one merge path: it merges only what
-  `PullRequest.ships` (carries `auto:ship`), through `PullRequest.merge`'s
-  safety checks, and otherwise hands to a person. Don't merge anywhere else.
-- `address-review` (`Review.addressTrigger`/`addressWorkflow`, `ownWork:
-  true`) runs as the pull request's author persona, when the latest decisive
+- Merging goes through `PullRequest.merge`'s safety checks, and only for what
+  `PullRequest.ships` (carries `auto:ship`), read once per run with
+  `PullRequest.shipping`; the recipes do this, and `PullRequest.mergeOrLeave`
+  is the same in one block. Otherwise hand to a person.
+- `address-review` (`ownWork: true`) runs as the pull request's author persona, when the latest decisive
   review (APPROVED or CHANGES_REQUESTED) requests changes on the current head;
   item key `pr-<n>-changes-<count>`. It resumes the implementing session from
   the session marker, `Implement.considerFindings` first: "decline" posts the
@@ -187,7 +187,10 @@ Decisions that cut across them:
   re-requesting mid-dispute doesn't restart the loop.
 - Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
   review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
-  `fixWorkflow`, `FixItem`, the `fix` prompt). `auto:approved`, `auto:stale`
+  `fixWorkflow`, `FixItem`, the `fix` prompt), and the whole workflows and
+  triggers `Implement.workflow`/`trigger`, `Review.workflow`/`trigger`,
+  `reReviewWorkflow`/`reReviewTrigger` and `addressWorkflow`/`addressTrigger`
+  (#67: the recipes write them out). `auto:approved`, `auto:stale`
   and `auto:changes-requested` stay in the label set but no default flow sets
   them.
 
