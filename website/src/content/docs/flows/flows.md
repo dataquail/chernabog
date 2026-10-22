@@ -23,7 +23,7 @@ import { defineFlow, Implement, step } from "@chernabog/sdk";
 import { Effect, Schema } from "effect";
 
 export default defineFlow({
-  trigger: Implement.trigger,
+  trigger: Implement.triggerFor("auto:eligible"),
   gate: Implement.gate,
   concurrency: 1,
   workflow: (item) =>
@@ -57,25 +57,27 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 ## Building blocks
 
-`Implement`, `Review` and `PullRequest` hold the blocks of [the default flows](/chernabog/work/flows/), and `Hybrid` those of the hybrid path; each is an activity a flow can reorder, leave out or wrap.
+`Implement`, `Review` and `PullRequest` hold the blocks of [the review loop](/chernabog/work/flows/), and `Hybrid` those of the hybrid path; each is an activity a flow can reorder, leave out or wrap. The [recipes](/chernabog/recipes/) are written out from them, and are the place to see them used.
 
-- `Implement.trigger` queues issues labelled `auto:eligible`, then `auto:ship`; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
+- `Implement.issueItem(issue, label)` is an issue as a work item, with the label that queued it; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
 - `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
 - `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
-- `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), which no default flow provides: a repo writes its own `human-initiated` flow from them, as chernabog's [`.chernabog/flows/human-initiated.ts`](https://github.com/dataquail/chernabog/blob/main/.chernabog/flows/human-initiated.ts) does. `Hybrid.trigger` finds nothing and `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
-- `Review.trigger` and `Review.workflow` make `review`; `Review.reReviewTrigger` and `Review.reReviewWorkflow` make `re-review`; `Review.addressTrigger` and `Review.addressWorkflow` make `address-review`.
-- `PullRequest.mergeOrLeave(pr)` is the one merge on the automated path: it merges a pull request that `PullRequest.ships` (it carries `auto:ship`), and leaves any other for a person. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
+- `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), as the [`human-initiated` recipe](/chernabog/recipes/human-initiated/) composes them. `Hybrid.trigger` finds nothing and `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
+- `Review.reviewRequests` lists the open pull requests that ask this persona for a review, each with how many reviews it has posted; `Review.reviewItem(pull, key)` makes one a work item. `Review.latestOwnReview(pr)` finds this persona's latest review to resume with `Review.recheck`.
+- `Review.authoredByMe`, `Review.decisiveReviews(pr)` and `Review.addressItem` find the reviews that ask for changes on this persona's pull requests; `Review.changesAsked`, `authorSession`, `prepareAuthorWorktree`, `checkChanged` and `askAgain` are `address-review`'s steps around `Implement.considerFindings` and `addressFindings`. `Review.ownedByARun(pull)` says whether another flow's run owns a pull request.
+- `Review.trigger`, `reReviewTrigger` and `addressTrigger`, and the whole workflows `Implement.workflow`, `Review.workflow`, `reReviewWorkflow` and `addressWorkflow`, are what flow files used before recipes. The recipes don't call them.
+- `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
 - `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 
 | `Implement.`         | `Review.`                    | `PullRequest.`, `Issue.` |
 | -------------------- | ---------------------------- | ------------------------ |
-| `trigger`, `triggerFor`, `queuedBy`, `gate` | `trigger`, `workflow` | `PullRequest.requestReview`, `ships` |
-| `issueOf`, `claim`   | `reReviewTrigger`, `reReviewWorkflow` | `PullRequest.merge`, `mergeOrLeave`, `handToPerson` |
-| `prepareWorktree`    | `round`, `recheck`           | `PullRequest.comment`, `Issue.comment` |
-| `implementWithAgent`, `askForClarification` | `addressTrigger`, `addressWorkflow` | `PullRequest.own`, `release`, `owning` |
-| `localGate`, `push`  |                              |                          |
+| `issueItem`, `triggerFor`, `queuedBy`, `gate` | `reviewRequests`, `reviewItem`, `pullRequestOf` | `PullRequest.requestReview`, `ships`, `shipping` |
+| `issueOf`, `claim`   | `round`, `recheck`, `doneReviewing`, `latestOwnReview` | `PullRequest.merge`, `mergeOrLeave`, `handToPerson` |
+| `prepareWorktree`    | `authoredByMe`, `decisiveReviews`, `addressItem`, `addressItemOf` | `PullRequest.comment`, `Issue.comment` |
+| `implementWithAgent`, `askForClarification` | `changesAsked`, `authorSession`, `prepareAuthorWorktree` | `PullRequest.own`, `release`, `owning` |
+| `localGate`, `push`  | `checkChanged`, `askAgain`, `ownedByARun` |                          |
 | `openPullRequest`, `waitForCi` |                    |                          |
 | `considerFindings`, `addressFindings` |             |                          |
 | `handOff`, `handToHuman`, `endForPerson` |          |                          |
@@ -104,7 +106,7 @@ Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybr
 - it touches no `humanOnlyPaths`;
 - GitHub's rules for the repo allow it. The merge is of exactly the reviewed head, so GitHub refuses it if the head moves in between.
 
-Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it. The default flows call it only through `PullRequest.mergeOrLeave`, and so only for a pull request labelled `auto:ship`.
+Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
 
 ## Dependencies
 

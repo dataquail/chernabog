@@ -34,12 +34,13 @@ import { GitHubApi } from './GitHubApi.ts';
 import { movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
-import { loadFlows } from './loader.ts';
+import { flowNames, loadFlows } from './loader.ts';
 import { migrateMachineConfig } from './migrate.ts';
 import { openPr } from './open-pr.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import type { DaemonStatus, TickResult } from './protocol.ts';
+import { chooseRecipes, docsOf, installedRecipes, installRecipes, recipeNamed,RECIPES } from './recipes.ts';
 import { findEnrolled, FLOW_TURNED_OFF, loadMachineConfig, loadRepo, machineConfigFile, repoNameOf, unenrollFromMachineConfig } from './repo-config.ts';
 import { repoConfigDir, runInForeground, tailer } from './runner.ts';
 import { install, startService, stopService, uninstall } from './service.ts';
@@ -455,7 +456,18 @@ const enrollHere = (root: string, flags: EnrollFlags) =>
     return repo;
   });
 
-const init = Command.make('init', { path: Argument.String('path').pipe(Argument.optional), ...enrollFlags }, ({ path, ...flags }) =>
+const RECIPES_LIST = RECIPES.map((recipe) => recipe.name).join(', ');
+
+const recipesFlag = listFlag('recipes', `Recipes to bake into .chernabog/flows/, comma-separated: ${RECIPES_LIST}. Asked in a terminal; none otherwise`);
+
+// Bakes the chosen recipes into the repo at `root`, and says what it wrote.
+const bakeRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>) =>
+  Effect.gen(function* () {
+    const recipes = yield* chooseRecipes(named, yield* installedRecipes(root));
+    yield* printLines(yield* installRecipes(root, recipes));
+  });
+
+const init = Command.make('init', { path: Argument.String('path').pipe(Argument.optional), recipes: recipesFlag, ...enrollFlags }, ({ path, recipes, ...flags }) =>
   Effect.gen(function* () {
     const root = yield* rootOf(path);
     const written = yield* scaffold(root);
@@ -467,6 +479,8 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
       }),
     );
 
+    yield* bakeRecipes(root, recipes);
+
     // Enrolling would point a moved entry here after all, so a checkout that
     // isn't the moved one enrolls only under a name of its own.
     if ((yield* offerRepoint(root)) && Option.isNone(flags.name)) {
@@ -475,10 +489,54 @@ const init = Command.make('init', { path: Argument.String('path').pipe(Argument.
       return;
     }
 
+    // Enrolling chooses among the repo's flows, so a repo with none waits for one.
+    if ((yield* flowNames(`${root}/.chernabog`)).length === 0) {
+      yield* Console.log(`Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (${RECIPES_LIST}), or write a flow, then chernabog enroll here.`);
+
+      return;
+    }
+
     const repo = yield* enrollHere(root, flags);
     yield* Console.log(`Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repoNameOf(repo)}.`);
   }),
-).pipe(Command.withDescription("Scaffold .chernabog/ in a repo with the default flows, enroll it on this machine, and point a moved checkout's settings at it"));
+).pipe(Command.withDescription("Scaffold .chernabog/ in a repo, bake the recipes you choose into its flows, enroll it on this machine, and point a moved checkout's settings at it"));
+
+const recipesList = Command.make('list', { path: Argument.String('path').pipe(Argument.optional) }, ({ path }) =>
+  Effect.gen(function* () {
+    const installed = yield* installedRecipes(yield* rootOf(path));
+
+    for (const recipe of RECIPES) {
+      let mark = ' ';
+
+      if (installed.includes(recipe)) mark = '✓';
+
+      yield* printLines([`${mark} ${recipe.name}: ${recipe.description}`, `    ${docsOf(recipe)}`]);
+    }
+  }),
+).pipe(Command.withDescription('List the recipes, with a check by each one the repo has'));
+
+const recipesAdd = Command.make('add', { names: Argument.String('recipe').pipe(Argument.withDescription(`Recipes to bake: ${RECIPES_LIST}. Asked in a terminal when none is named`), Argument.variadic()) }, ({ names }) =>
+  Effect.gen(function* () {
+    const root = yield* rootOf(Option.none());
+    const named = Option.liftPredicate(names, Arr.isReadonlyArrayNonEmpty);
+
+    // Checked first, so a typo is said before anything is asked.
+    for (const name of Option.getOrElse(named, (): ReadonlyArray<string> => [])) yield* recipeNamed(name);
+
+    const recipes = yield* chooseRecipes(named, yield* installedRecipes(root));
+    const lines = yield* installRecipes(root, recipes);
+
+    if (lines.length === 0) return yield* Console.log('Nothing added');
+
+    yield* printLines(lines);
+    yield* Console.log('Next: commit and merge them to the base branch, chernabog trust the repo, and chernabog enroll here to choose which personas run them.');
+  }),
+).pipe(Command.withDescription("Bake recipes into this repo's .chernabog/flows/, never overwriting a flow it has"));
+
+const recipesCommand = Command.make('recipes', {}, () => Effect.void).pipe(
+  Command.withDescription('Complete flows to bake into a repo, as code it then owns'),
+  Command.withSubcommands([recipesList, recipesAdd]),
+);
 
 const enrollCommand = Command.make('enroll', { path: Argument.String('path').pipe(Argument.optional), ...enrollFlags }, ({ path, ...flags }) =>
   Effect.gen(function* () {
@@ -547,6 +605,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     doctorCommand,
     setupCommand,
     init,
+    recipesCommand,
     enrollCommand,
     unenroll,
     installCommand,

@@ -31,7 +31,7 @@ export default defineFlow({
 | `renderPrompt(name, values)` | Fills `.chernabog/prompts/<name>.md`. |
 | `Skip`, `NeedsHuman` | End a run cleanly, or hand its item to a person. |
 
-`Implement`, `Review` and `PullRequest` hold the building blocks of the default flows, each an activity a flow can reorder, leave out or wrap. `Hybrid` holds the blocks of the hybrid path, where a person works on an issue with the agent in an interactive session; no default flow uses them, and a repo writes its own `human-initiated` flow from them, as chernabog's [`.chernabog/flows/human-initiated.ts`](https://github.com/dataquail/chernabog/blob/main/.chernabog/flows/human-initiated.ts) does.
+`Implement`, `Review` and `PullRequest` hold the building blocks of the review loop, each an activity a flow can reorder, leave out or wrap. `Hybrid` holds the blocks of the hybrid path, where a person works on an issue with the agent in an interactive session. Chernabog's [recipes](https://dataquail.github.io/chernabog/recipes/) are complete flows written out from these blocks, which a repo bakes into its own `.chernabog/flows/`; [`templates/recipes/flows/`](https://github.com/dataquail/chernabog/tree/main/templates/recipes/flows) holds their current versions.
 
 A flow can also give `item: (key) => Effect<Option<WorkItem>>`, the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names.
 

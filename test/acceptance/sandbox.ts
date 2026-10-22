@@ -1,4 +1,5 @@
-// A throwaway repo with the scaffolded .chernabog/ on its base branch, a fake
+// A throwaway repo with the scaffolded .chernabog/ and the review loop's
+// recipes (or the ones a test names) on its base branch, a fake
 // GitHub for it (refs in a local bare repo), a fake `claude` on PATH, and the
 // CLI pointed at all of it.
 
@@ -14,6 +15,8 @@ import * as Schema from 'effect/Schema';
 import YAML from 'yaml';
 
 import { scaffoldFiles } from '../../src/init.ts';
+import { RECIPES } from '../../src/recipes.ts';
+import { RECIPE_FILES } from '../../src/templates.ts';
 import { startFakeGitHub } from './fake-github.ts';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -37,7 +40,11 @@ export type MachineOptions = {
   readonly launchers?: Readonly<Record<string, Json>>;
   // Files under .chernabog/ beyond the scaffold's, such as a flow of the repo's own.
   readonly repoFiles?: Readonly<Record<string, string>>;
+  // The recipes baked in; the review loop's four when unset.
+  readonly recipes?: ReadonlyArray<string>;
 };
+
+const REVIEW_LOOP = ['implement', 'review', 're-review', 'address-review'];
 
 export type CliResult = { readonly code: number; readonly output: string };
 
@@ -102,8 +109,10 @@ export const openSandbox = (repoConfig: Readonly<Record<string, Json>> = {}, mac
   execFileSync('git', ['init', '--bare', '-b', 'main', bare]);
   execFileSync('git', ['clone', '-q', bare, checkout]);
   const files = scaffoldFiles();
+  const recipes = RECIPES.filter((recipe) => (machine.recipes ?? REVIEW_LOOP).includes(recipe.name));
+  const baked = Object.fromEntries(recipes.flatMap((recipe) => recipe.files.map((file): [string, string] => [file, RECIPE_FILES[file]])));
 
-  for (const [relative, content] of Object.entries({ ...files, 'config.yaml': repoConfigText(files['config.yaml'], repoConfig), ...machine.repoFiles })) {
+  for (const [relative, content] of Object.entries({ ...files, ...baked, 'config.yaml': repoConfigText(files['config.yaml'], repoConfig), ...machine.repoFiles })) {
     const path = join(checkout, '.chernabog', relative);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, content);

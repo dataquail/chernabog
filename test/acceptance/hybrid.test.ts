@@ -1,5 +1,5 @@
-// The hybrid path end to end, through the daemon and tmux, with this repo's
-// human-initiated flow: alice starts an
+// The hybrid path end to end, through the daemon and tmux, with the
+// human-initiated recipe: alice starts an
 // issue with `chernabog start`, works on it with Claude in a session in front
 // of her and finishes with `chernabog open-pr`. bob, the team's reviewer,
 // asks for changes; alice's session opens again to answer them; bob approves.
@@ -8,7 +8,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import * as Option from 'effect/Option';
@@ -31,8 +30,7 @@ describe('the hybrid path', () => {
         personas: ['alice', 'bob'],
         launcher: 'tmux',
         personaFlows: { alice: { 'address-review': often }, bob: { review: often, 're-review': often } },
-        // This repo's own hybrid flow: none is scaffolded.
-        repoFiles: { 'flows/human-initiated.ts': readFileSync(fileURLToPath(new URL('../../.chernabog/flows/human-initiated.ts', import.meta.url)), 'utf8') },
+        recipes: ['implement', 'review', 're-review', 'address-review', 'human-initiated'],
       },
     );
     await sandbox.runCli(['trust', 'demo']);
@@ -82,7 +80,7 @@ describe('the hybrid path', () => {
 });
 
 describe('a repo without a human-initiated flow', () => {
-  test('refuses chernabog start, pointing at the docs for writing one', async () => {
+  test('refuses chernabog start, pointing at the recipe that bakes one', async () => {
     const sandbox = openSandbox();
     await sandbox.runCli(['trust', 'demo']);
     const daemon = sandbox.cli(['daemon']);
@@ -92,7 +90,7 @@ describe('a repo without a human-initiated flow', () => {
     const refused = await sandbox.runCli(['start', '1']);
     expect(refused.code).toBe(1);
     expect(refused.output).toContain('demo has no human-initiated flow in .chernabog/flows/');
-    expect(refused.output).toContain('#the-hybrid-path');
+    expect(refused.output).toContain('chernabog recipes add human-initiated bakes it: https://dataquail.github.io/chernabog/recipes/human-initiated/');
 
     daemon.kill('SIGTERM');
     await closed(daemon);

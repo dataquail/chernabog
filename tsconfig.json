@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["src", "packages/sdk/src", "scripts", "test", "templates/.chernabog"]
+  "include": ["src", "packages/sdk/src", "scripts", "test", "templates/.chernabog", "templates/recipes"]
 }

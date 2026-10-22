@@ -13,14 +13,16 @@ description: Every chernabog command and flag.
 | `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due                         |
 | `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
 | `attach <run>`                    | Open the run's agent session                                                     |
-| `start <issue>`                   | Run the repo's [`human-initiated` flow](/chernabog/work/flows/#the-hybrid-path) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
+| `start <issue>`                   | Run the repo's [`human-initiated` flow](/chernabog/recipes/human-initiated/) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
 | `open-pr --title <title>`         | From inside the session `chernabog start` opened: check the worktree is clean, and hand the work to chernabog, which runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
-| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, then enroll the repo   |
+| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, bake the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
+| `recipes list [path]`             | Each recipe, with its description and docs page, and a check by the ones the repo has |
+| `recipes add [names…]`            | Bake recipes into this repo's `.chernabog/flows/`; asked in a terminal when none is named. Never overwrites a flow the repo has |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
@@ -36,6 +38,7 @@ description: Every chernabog command and flag.
 | `--from-checkout`        | `labels` | Read labels from the working copy, before `.chernabog/` is merged       |
 | `--persona <a,b>`        | `setup`, `install` | The GitHub logins to act as, from `gh auth status`. Asked in a terminal when `gh` has several |
 | `--account <dir[:agent],…>` | `setup`, `install` | Account directories to add, such as `~/.claude-personal`. Found ones are asked about in a terminal |
+| `--recipes <a,b>`        | `init`   | The recipes to bake. Asked in a terminal; piped and without it, none   |
 | `--persona <a,b>`        | `init`, `enroll` | The personas that work in this repo. Asked in a terminal when machine config has several |
 | `--flows <a,b>`          | `init`, `enroll` | The flows to run, for every chosen persona; the rest are off. Asked in a terminal for each persona |
 | `--defaults`             | `init`, `enroll` | The team's default flows, for every chosen persona, without asking |

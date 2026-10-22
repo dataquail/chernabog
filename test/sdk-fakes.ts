@@ -11,6 +11,7 @@ import {
   type CiState,
   type Comment,
   DEFAULT_LABELS,
+  type Flow,
   Git,
   GitHub,
   HEADLESS,
@@ -23,6 +24,7 @@ import {
   Repo,
   type RepoSettings,
   type ReviewEvent,
+  RunLog,
   Runs,
   StepRunner,
   type SubmittedReview,
@@ -71,8 +73,8 @@ export const settings: RepoSettings = {
   reviewTrigger: Option.none(),
   limits: DEFAULT_LIMITS,
   env: {},
-  // The scaffolded prompts, which the implement and review steps render.
-  configDir: fileURLToPath(new URL('../templates/.chernabog', import.meta.url)),
+  // The recipes' prompts, which the implement and review steps render.
+  configDir: fileURLToPath(new URL('../templates/recipes', import.meta.url)),
 };
 
 // A repo as one persona runs it, with nothing chosen of its own.
@@ -334,5 +336,11 @@ export const onFake = <A, E, R>(fake: Fake, effect: Effect.Effect<A, E, R>) => E
 
 // Runs a trigger against the fake, as a tick would.
 export const triggered = <E, R>(fake: Fake, trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) => Effect.provide(trigger, fake.services);
+
+// A run log that keeps nothing, for a flow's trigger run outside the engine.
+const quietLog = Layer.succeed(RunLog, RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }));
+
+// What a flow's own trigger reports on the fake.
+export const flowTriggered = (fake: Fake, flow: Flow) => Effect.provide(flow.trigger, Layer.mergeAll(fake.services, quietLog));
 
 export const summaryOf = (run: RunRow) => Option.getOrElse(run.summary, () => '');

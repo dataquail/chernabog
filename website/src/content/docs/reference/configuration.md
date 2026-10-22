@@ -35,7 +35,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
-| `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the default flows no longer read it         |
+| `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 
 `launchers` is refused here: only machine config defines launcher commands.
@@ -55,7 +55,7 @@ flows:
 
 ### Reviewers
 
-`reviewers` names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the default flows](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
+`reviewers` names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
 
 On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
 
@@ -205,7 +205,7 @@ Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `G
 
 A repo's `personas` maps each login that runs its flows to that persona's own choices. With one login under `github:`, that one is the default; with several, the repo must name them. Without `github:` there are no persona entries, and the repo entry's own settings run the one implicit account, so a `GH_TOKEN`-only host such as CI still works. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 
-A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither, unless the flow says `ownWork: true` in `defineFlow`, as `review`, `re-review` and `address-review` do: their triggers take only the pull requests that request their own persona's review, or, for `address-review`, that it wrote. A [`human-initiated`](/chernabog/work/flows/#human-initiated) flow says it too, since a person starts each of its runs. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
+A flow several personas run should set `assignee` or `reviewRequested` to `@me`, so each persona takes only its own work; the daemon warns about one that sets neither, unless the flow says `ownWork: true` in `defineFlow`, as `review`, `re-review` and `address-review` do: their triggers take only the pull requests that request their own persona's review, or, for `address-review`, that it wrote. A [`human-initiated`](/chernabog/recipes/human-initiated/) flow says it too, since a person starts each of its runs. Pushes authenticate with the persona's token only over https; `doctor` checks each login and each origin.
 
 ```yaml
 # ~/.config/chernabog/config.yaml

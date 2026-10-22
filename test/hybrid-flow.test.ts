@@ -1,6 +1,5 @@
-// The hybrid path through the engine, on an in-memory GitHub, with this
-// repo's human-initiated flow: the flow
-// a person hands an issue to, the session it opens with them, the pull request
+// The hybrid path through the engine, on an in-memory GitHub, with the
+// human-initiated recipe: the flow a person hands an issue to, the session it opens with them, the pull request
 // it opens, and how review answers it with the person at the decisions.
 
 import { claimMarker, DEFAULT_LABELS, Hybrid, Implement, reviewMarker, sessionMarker } from '@chernabog/sdk';
@@ -9,12 +8,12 @@ import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 
-import humanInitiated from '../.chernabog/flows/human-initiated.ts';
 import { sessionFilesIn } from '../src/agents/session-files.ts';
 import { stopHook } from '../src/agents/stop-hook.ts';
 import { flowHandle } from '../src/engine.ts';
-import addressReview from '../templates/.chernabog/flows/address-review.ts';
-import review from '../templates/.chernabog/flows/review.ts';
+import addressReview from '../templates/recipes/flows/address-review.ts';
+import humanInitiated from '../templates/recipes/flows/human-initiated.ts';
+import review from '../templates/recipes/flows/review.ts';
 import { effect } from './effect-test.ts';
 import { HEAD, ISSUE, item, makeFake, onFake, PULL, repo, runToEnd, summaryOf, triggered } from './sdk-fakes.ts';
 
