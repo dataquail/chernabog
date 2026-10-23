@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type Persona, samePersona } from "../../../kernel/persona.value-object.ts";
+import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts";
 import {
   EnrolledRepoRootOps,
   type PersonaEnrolment,
@@ -69,6 +70,7 @@ export const applyEnrollmentUseCase = Effect.fn("applyEnrollmentUseCase")(functi
   );
 
   const chosen: Array<PersonaEnrolment> = [];
+  const unserved: Array<{ persona: Persona; reviewers: ReadonlyArray<string> }> = [];
 
   for (const persona of personas) {
     const asked = Arr.findFirst(answers.asked, (answer) => samePersona(answer.persona, persona));
@@ -119,6 +121,15 @@ export const applyEnrollmentUseCase = Effect.fn("applyEnrollmentUseCase")(functi
     );
 
     chosen.push({ persona, flows, ...accounts });
+
+    // A persona that opens pull requests, whose reviewers no persona here serves.
+    if (flows.some((flow) => (checkout.authoring ?? []).includes(flow))) {
+      for (const reviewers of Option.toArray(
+        unservedReviewers(checkout.team.reviewers ?? [], Arr.head(logins), machine.personas),
+      )) {
+        unserved.push({ persona, reviewers });
+      }
+    }
   }
 
   const { added, repo } = yield* Effect.fromResult(
@@ -140,5 +151,6 @@ export const applyEnrollmentUseCase = Effect.fn("applyEnrollmentUseCase")(functi
     path: enrolled.path,
     baseBranch: EnrolledRepoRootOps.baseBranchOf(enrolled),
     chosen,
+    unserved,
   });
 });

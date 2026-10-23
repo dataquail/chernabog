@@ -18,7 +18,7 @@ description: Every chernabog command and flag.
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
-| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon |
+| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon; warn when a persona's pull requests can only go to reviewers this machine doesn't act as |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, bake the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
 | `recipes list [path]`             | Each recipe, with its description and docs page, and a check by the ones the repo has |

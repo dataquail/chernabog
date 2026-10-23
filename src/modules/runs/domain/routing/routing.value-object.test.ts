@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { describeElsewhere, namesMe, routeItems } from "./routing.value-object.ts";
+import {
+  describeElsewhere,
+  namesMe,
+  routeItems,
+  waitingElsewhere,
+} from "./routing.value-object.ts";
 
 describe("routing by assignee and requested reviewer", () => {
   const issue = (key: string, assignees: ReadonlyArray<string>) => ({ key, data: {}, assignees });
@@ -81,5 +86,19 @@ describe("routing by assignee and requested reviewer", () => {
     expect(namesMe(Option.some(["alice", "@ME"]))).toBe(true);
     expect(namesMe(Option.some(["alice"]))).toBe(false);
     expect(namesMe(Option.none())).toBe(false);
+  });
+});
+
+describe("review requests waiting elsewhere", () => {
+  test("open pull requests waiting on a login this machine does not act as", () => {
+    const pulls = [
+      { number: 73, requestedReviewers: ["data-quail"] },
+      { number: 74, requestedReviewers: ["Alice"] },
+      { number: 75, requestedReviewers: [] },
+    ];
+
+    expect(waitingElsewhere(pulls, ["alice"])).toEqual([
+      "#73 waits on data-quail (not on this machine)",
+    ]);
   });
 });

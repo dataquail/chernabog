@@ -4,6 +4,8 @@
 
 import * as Option from "effect/Option";
 
+import { actsAs } from "../../../../kernel/reviewer-pool.value-object.ts";
+
 // Whose work items a flow starts as a persona; anyone's without a filter.
 export type Routing = {
   readonly assignee: Option.Option<ReadonlyArray<string>>;
@@ -84,3 +86,30 @@ export const describeElsewhere = (routing: Routing) => (item: Routable) => {
 // Whether a filter names this machine's login, as @me.
 export const namesMe = (filter: Option.Option<ReadonlyArray<string>>) =>
   Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === "@me"));
+
+// The flow whose status lists the review requests no persona here serves,
+// which its trigger never finds.
+export const REVIEW_FLOW = "review";
+
+// An open pull request, as far as its review requests go.
+export type ReviewRequest = {
+  readonly number: number;
+  readonly requestedReviewers: ReadonlyArray<string>;
+};
+
+// Open pull requests waiting on a review from a login this machine doesn't
+// act as, as status lists them: "#73 waits on data-quail (not on this machine)".
+export const waitingElsewhere = (
+  pulls: ReadonlyArray<ReviewRequest>,
+  here: ReadonlyArray<string>,
+) =>
+  pulls.flatMap((pull) => {
+    const others = pull.requestedReviewers.filter((login) => !actsAs(here)(login));
+
+    return Option.toArray(
+      Option.liftPredicate(
+        `#${pull.number} waits on ${others.join(", ")} (not on this machine)`,
+        () => others.length > 0,
+      ),
+    );
+  });

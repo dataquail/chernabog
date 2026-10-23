@@ -21,7 +21,9 @@ export class Delivered extends Schema.Class<Delivered, { readonly brand: "Delive
 // What a tick of a persona's flow would do: the work whose signals go to the
 // runs in flight (none when its trigger didn't run), the work it may start
 // runs for, in order, why it would start nothing when it wouldn't, and, once
-// its trigger ran, what it queued for this machine and left for others.
+// its trigger ran, what it queued for this machine and left for others. For
+// the review flow, past the machine's gates, the review requests no persona
+// here serves.
 export class TickPlan extends Schema.Class<TickPlan, { readonly brand: "TickPlan" }>("TickPlan")({
   signalled: Schema.Array(WorkItem),
   start: Schema.Array(WorkItem),
@@ -32,6 +34,7 @@ export class TickPlan extends Schema.Class<TickPlan, { readonly brand: "TickPlan
       elsewhere: Schema.Array(Schema.String),
     }),
   ),
+  unserved: Schema.Option(Schema.Array(Schema.String)),
 }) {}
 
 // Whether a flow's own gate holds its runs back, and why.

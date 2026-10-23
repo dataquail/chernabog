@@ -1,6 +1,6 @@
 // What the team's .chernabog/config.yaml says about its flows that enrolling
-// weighs: which agents each runs, whether the team has it on, and who it runs
-// as. These are only the defaults enrolling offers; a persona's own choices
+// weighs: which agents each runs, whether the team has it on, who it runs
+// as, and who reviews. These are only the defaults enrolling offers; a persona's own choices
 // in machine config decide what runs.
 
 import * as Schema from "effect/Schema";
@@ -22,6 +22,8 @@ export class TeamFlows extends Schema.Class<TeamFlows, { readonly brand: "TeamFl
   // Who runs every flow, unless a flow says.
   runners: Schema.Option(Schema.Array(Schema.String)),
   flows: Schema.Record(Schema.String, TeamFlow),
+  // The reviewer pool, reviewers: in the team's config.
+  reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
 }) {}
 
 // Why a flow is off when the team, or a person, turned it off.

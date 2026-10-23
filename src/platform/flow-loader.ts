@@ -14,6 +14,7 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { authorsPullRequests } from "../kernel/reviewer-pool.value-object.ts";
 import { effectModules, effectRoot } from "./effect-modules.ts";
 
 export class LoadError extends Schema.TaggedError<LoadError, { readonly brand: "LoadError" }>()(
@@ -116,6 +117,25 @@ const flowFiles = (configDir: string) =>
 // listing an untrusted .chernabog/ runs none of its code.
 export const flowNames = (configDir: string) =>
   Effect.map(flowFiles(configDir), (files) => files.map(([name]) => name));
+
+// The flows in <configDir>/flows/ that open pull requests asking the pool for
+// a review. Their code is read, not imported, so it runs nothing; none when
+// the folder can't be read.
+export const authoringFlows = (configDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const authoring: Array<string> = [];
+
+    for (const [name, path] of yield* flowFiles(configDir)) {
+      const source = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+
+      if (authorsPullRequests(name, source)) {
+        authoring.push(name);
+      }
+    }
+
+    return authoring;
+  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
 // Every flow in <configDir>/flows/, by file name.
 export const loadFlows = (configDir: string) =>

@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
+import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts";
 import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
@@ -40,7 +41,7 @@ import {
   pinDrift,
   requiredVersion,
 } from "../../../platform/flow-deps.ts";
-import { flowNames } from "../../../platform/flow-loader.ts";
+import { authoringFlows, flowNames } from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
 import { Home } from "../../../platform/home.ts";
 import { VERSION } from "../../../platform/version.ts";
@@ -57,15 +58,22 @@ import {
 import { daemonStatus } from "../../daemon/daemon.client.ts";
 import { printJson, printLines } from "../cli.output.ts";
 import { jsonFlag } from "../output.arguments.ts";
+import { describeUnserved } from "../reviewer-pool.output.ts";
 
+// A warning passes, as doctor's exit code goes, but says what may need doing.
 export type Check = {
   readonly ok: boolean;
+  readonly warning: boolean;
   readonly label: string;
   readonly fix: Option.Option<string>;
 };
 
-const markOf = (ok: boolean) => {
-  if (ok) {
+const markOf = (check: Check) => {
+  if (check.warning) {
+    return "!";
+  }
+
+  if (check.ok) {
     return "✓";
   }
 
@@ -73,7 +81,7 @@ const markOf = (ok: boolean) => {
 };
 
 export const formatCheck = (check: Check) => {
-  const mark = markOf(check.ok);
+  const mark = markOf(check);
 
   return `${mark} ${check.label}${Option.match(check.fix, { onNone: () => "", onSome: (fix) => `\n    fix: ${fix}` })}`;
 };
@@ -194,7 +202,11 @@ export const doctor = Effect.gen(function* () {
   const checks: Array<Check> = [];
 
   const check = (ok: boolean, label: string, fix: string) => {
-    checks.push({ ok, label, fix: Option.liftPredicate(fix, () => !ok) });
+    checks.push({ ok, warning: false, label, fix: Option.liftPredicate(fix, () => !ok) });
+  };
+
+  const warn = (label: string, fix: string) => {
+    checks.push({ ok: true, warning: true, label, fix: Option.some(fix) });
   };
 
   const gh = yield* exec
@@ -338,6 +350,33 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // Each persona that opens pull requests asking the pool for a review: some
+  // reviewer it may ask is a persona here. A warning, since another person's
+  // machine may serve that login. The implicit account authors as gh's login.
+  const checkReviewCoverage = (effective: EffectiveRepo, name: string, configDir: string) =>
+    Effect.gen(function* () {
+      const authoring = yield* authoringFlows(configDir);
+      const reviewers = effective.settings.reviewers ?? [];
+
+      for (const own of effective.personas.filter((candidate) =>
+        authoring.some((flow) => Option.isNone(flowOff(candidate, flow))),
+      )) {
+        const author = yield* Option.match(own.persona, {
+          onSome: (login) => Effect.succeedSome(login),
+          onNone: () => Effect.option(viewerLoginAs(Option.none())),
+        });
+
+        for (const unserved of Option.toArray(
+          unservedReviewers(reviewers, author, machine.github),
+        )) {
+          warn(
+            `${name}${asSuffix(own.persona)}: ${describeUnserved(own.persona, unserved)}`,
+            `run review as one of ${unserved.join(", ")} on this machine (chernabog setup, then chernabog enroll), or make sure another machine does`,
+          );
+        }
+      }
+    });
+
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
     Effect.gen(function* () {
@@ -359,6 +398,7 @@ export const doctor = Effect.gen(function* () {
 
       yield* checkFlows(loaded.success, name, loaded.success.settings.configDir);
       yield* checkReviewers(repo, name, loaded.success.settings.reviewers ?? []);
+      yield* checkReviewCoverage(loaded.success, name, loaded.success.settings.configDir);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
@@ -577,12 +617,14 @@ export const doctor = Effect.gen(function* () {
   return checks;
 });
 
-// The checks as JSON, for a script: each one's result, and how to fix it.
+// The checks as JSON, for a script: each one's result, whether it's only a
+// warning, and how to fix it.
 const DoctorReport = Schema.Struct({
   ok: Schema.Boolean,
   checks: Schema.Array(
     Schema.Struct({
       ok: Schema.Boolean,
+      warning: Schema.Boolean,
       label: Schema.String,
       fix: Schema.OptionFromNullOr(Schema.String),
     }),

@@ -59,6 +59,11 @@ flows:
 
 On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
 
+A review request for a login this machine doesn't act as waits for the machine that does. Nothing fails, so chernabog says so instead:
+
+- `doctor` warns, for each persona that opens pull requests (it runs `implement`, `human-initiated`, or a flow that asks for a review), when no one in the pool but that persona is a login under `github:` here: `pull requests authored as alice go to data-quail, which this machine doesn't act as; they wait until another machine reviews them`. `enroll` notes the same when you choose those flows. It's a warning, since a teammate's machine may serve that login.
+- `status` lists, under the `review` flow, the open pull requests that wait on such a login: `assigned elsewhere: #73 waits on data-quail (not on this machine)`. One drops off once that review is in.
+
 ```yaml
 # .chernabog/config.yaml
 reviewers: [alice, data-quail]

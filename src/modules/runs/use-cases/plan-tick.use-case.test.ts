@@ -76,6 +76,7 @@ const open: TickInput = {
   },
   routing: { assignee: Option.none(), reviewRequested: Option.none() },
   login: Option.some("bob"),
+  here: ["bob"],
   concurrency: { flow: 1, machine: 4 },
 };
 
@@ -86,6 +87,52 @@ const reasons = listRecentSkipsUseCase(5).pipe(
 const keys = (items: ReadonlyArray<WorkItem>) => items.map((found) => found.key);
 
 describe("planTickUseCase", () => {
+  effect(
+    "lists the review requests no persona here serves, for the review flow only, even when its trigger fails",
+    () =>
+      Effect.gen(function* () {
+        const reviewing = yield* planTickUseCase(review, open);
+        const failing = yield* planTickUseCase({ ...review, repo: "other" }, open);
+        const implementing = yield* planTickUseCase({ ...review, flow: "implement" }, open);
+
+        const paused = yield* planTickUseCase(review, {
+          ...open,
+          conditions: { ...open.conditions, paused: true },
+        });
+
+        expect(reviewing.unserved).toEqual(
+          Option.some(["#73 waits on data-quail (not on this machine)"]),
+        );
+        expect(failing.skipped).toEqual(Option.some("trigger failed: rate limited"));
+        expect(failing.unserved).toEqual(Option.some(["#9 waits on carol (not on this machine)"]));
+        expect(implementing.unserved).toEqual(Option.none());
+        expect(paused.unserved).toEqual(Option.none());
+      }).pipe(
+        Effect.provide(
+          runtime(fakeEngine(), {
+            flows: {
+              "demo/review": {
+                items: [],
+                reviewRequests: [
+                  { number: 73, requestedReviewers: ["data-quail"] },
+                  { number: 74, requestedReviewers: ["Bob"] },
+                ],
+              },
+              "other/review": {
+                items: [],
+                fails: "rate limited",
+                reviewRequests: [{ number: 9, requestedReviewers: ["carol"] }],
+              },
+              "demo/implement": {
+                items: [],
+                reviewRequests: [{ number: 9, requestedReviewers: ["carol"] }],
+              },
+            },
+          }),
+        ),
+      ),
+  );
+
   effect("starts runs for the work its trigger finds, up to the flow's limit", () =>
     Effect.gen(function* () {
       const plan = yield* planTickUseCase(review, open);

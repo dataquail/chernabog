@@ -5,6 +5,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
+import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
 
@@ -18,6 +19,8 @@ export type FakeFlow = {
   readonly notReady?: string;
   readonly findable?: ReadonlyArray<WorkItem>;
   readonly gate?: string;
+  // The open pull requests, and whom each asks to review.
+  readonly reviewRequests?: ReadonlyArray<ReviewRequest>;
 };
 
 const keyOf = (flow: FlowRef) => `${flow.repo}/${flow.flow}`;
@@ -54,6 +57,11 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
         flowOf(flow).pipe(
           Effect.map((found) => Option.fromUndefinedOr(found.gate)),
           Effect.orElseSucceed(() => Option.none<string>()),
+        ),
+      reviewRequests: (flow) =>
+        flowOf(flow).pipe(
+          Effect.map((found): ReadonlyArray<ReviewRequest> => found.reviewRequests ?? []),
+          Effect.orElseSucceed((): ReadonlyArray<ReviewRequest> => []),
         ),
     }),
   );

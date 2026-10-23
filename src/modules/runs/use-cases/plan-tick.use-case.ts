@@ -11,8 +11,10 @@ import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts"
 import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
 import {
   describeElsewhere,
+  REVIEW_FLOW,
   routeItems,
   type Routing,
+  waitingElsewhere,
 } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
@@ -36,6 +38,8 @@ export type TickInput = {
   readonly routing: Routing;
   // Who @me is for this persona; none when it isn't known.
   readonly login: Option.Option<string>;
+  // The logins this machine acts as, the personas under github:.
+  readonly here: ReadonlyArray<string>;
   readonly concurrency: { readonly flow: number; readonly machine: number };
 };
 
@@ -58,10 +62,7 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
   const flows = yield* FlowsClient;
   const skips = yield* SkipsRepository;
 
-  const skip = (
-    reason: string,
-    plan: { readonly signalled: ReadonlyArray<WorkItem>; readonly routed: TickPlan["routed"] },
-  ) =>
+  const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed" | "unserved">) =>
     Effect.gen(function* () {
       yield* skips.save(
         SkipRoot.make({
@@ -77,15 +78,32 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
       return TickPlan.make({ ...plan, start: [], skipped: Option.some(reason) });
     });
 
-  const nothing = { signalled: [], routed: Option.none() };
-
   if (input.gates) {
     const decision = decideTick({ ...input.conditions, now: yield* DateTime.now });
 
     if (!decision.go) {
-      return yield* skip(decision.reason, nothing);
+      return yield* skip(decision.reason, {
+        signalled: [],
+        routed: Option.none(),
+        unserved: Option.none(),
+      });
     }
   }
+
+  // Review requests no persona here serves, which the review flow's trigger
+  // never finds; looked up before it, so a tick that fails still lists them.
+  const unserved = yield* Option.match(
+    Option.liftPredicate(flow, () => flow.flow === REVIEW_FLOW),
+    {
+      onNone: () => Effect.succeedNone,
+      onSome: (review) =>
+        Effect.map(flows.reviewRequests(review), (pulls) =>
+          Option.some(waitingElsewhere(pulls, input.here)),
+        ),
+    },
+  );
+
+  const nothing = { signalled: [], routed: Option.none(), unserved };
 
   // A persona that can't run its flows says why itself, fix included.
   const failedReason = (what: string, failure: FlowFailed | PersonaNotReady) => {
@@ -153,6 +171,7 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
   const so = {
     signalled: items,
     routed: Option.some({ queued: routed.mine.map(describeQueued), elsewhere }),
+    unserved,
   };
 
   const candidates = Option.match(input.item, {
