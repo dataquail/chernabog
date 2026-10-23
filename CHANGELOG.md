@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.9.0](https://github.com/dataquail/chernabog/compare/v0.8.0...v0.9.0) (2026-10-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* flows that let errors through no longer compile, and GitHub.merge fails with MergeRefused instead of returning MergeOutcome. Repos move their baked flows with `chernabog recipes diff`.
+
+### Features
+
+* a flow with no trigger is manual, and runs only when a person names its work ([#74](https://github.com/dataquail/chernabog/issues/74)) ([#111](https://github.com/dataquail/chernabog/issues/111)) ([2e1c539](https://github.com/dataquail/chernabog/commit/2e1c5394eafe9473819a21c4174b9a13fa56ef96))
+* enroll as a plan and an apply, and every machine-config write through the enrolled repo ([#93](https://github.com/dataquail/chernabog/issues/93)) ([925e97d](https://github.com/dataquail/chernabog/commit/925e97d1135e742d129d8193aae8ca692a3dd6e6))
+* let a person's session push changes to humanOnlyPaths on the hybrid path ([#72](https://github.com/dataquail/chernabog/issues/72)) ([#73](https://github.com/dataquail/chernabog/issues/73)) ([9b0d0a3](https://github.com/dataquail/chernabog/commit/9b0d0a391f3811b815278f622534d45a84724068))
+* pause and resume as use-cases over an enrolled-repos repository, keyed by slug ([#84](https://github.com/dataquail/chernabog/issues/84)) ([e629c96](https://github.com/dataquail/chernabog/commit/e629c96cf81eae52c46648267ad82dca6f8649ac))
+* recipes and init's scaffold as a module, `recipes add` asking between a list and an add ([#94](https://github.com/dataquail/chernabog/issues/94)) ([c647baf](https://github.com/dataquail/chernabog/commit/c647baf7b097e6e534100837cc830d3dac6c5456))
+* setup as a plan and an apply over the machine module, the CLI asking between ([#92](https://github.com/dataquail/chernabog/issues/92)) ([9bf3f08](https://github.com/dataquail/chernabog/commit/9bf3f08dc423bf924b3bd12eece6092d58d9f5a5))
+* show review requests no machine here serves, in doctor, enroll and status ([#76](https://github.com/dataquail/chernabog/issues/76)) ([#79](https://github.com/dataquail/chernabog/issues/79)) ([bb136fc](https://github.com/dataquail/chernabog/commit/bb136fc3c6afe99c8d7ad9710ff9d484211a7564))
+* status and logs as adapters over use-cases, each with --json ([#90](https://github.com/dataquail/chernabog/issues/90)) ([bb22fd9](https://github.com/dataquail/chernabog/commit/bb22fd9621e4844f81612e144d9855289136e200))
+* stopping takes at most 3 seconds, and a second Ctrl-C exits at once ([#106](https://github.com/dataquail/chernabog/issues/106)) ([2b7fbbd](https://github.com/dataquail/chernabog/commit/2b7fbbd8b14f2c4a32c26d64636d873bc1033e14))
+* trust as its own module, with the trust command over its use-case ([#85](https://github.com/dataquail/chernabog/issues/85)) ([2270d3b](https://github.com/dataquail/chernabog/commit/2270d3ba80df2e8a145db882949630404497db9d))
+* typed SDK errors; flows handle the work's errors, and setup errors stop a persona before its flows run ([#75](https://github.com/dataquail/chernabog/issues/75)) ([#78](https://github.com/dataquail/chernabog/issues/78)) ([d6cc447](https://github.com/dataquail/chernabog/commit/d6cc4472f1ce24624db8091ba21991964ac6c126))
+
+
+### Bug Fixes
+
+* a start a crash interrupts is finished at the next startup ([#105](https://github.com/dataquail/chernabog/issues/105)) ([ce18884](https://github.com/dataquail/chernabog/commit/ce1888418e727f463608f09f2883f8a5ded0dd64))
+* changes to machine config, paused.json and trust.json take turns ([#109](https://github.com/dataquail/chernabog/issues/109)) ([fa77dd4](https://github.com/dataquail/chernabog/commit/fa77dd4d4344badd8bf53109e202c869afa9c763))
+* replace state files whole, so an interrupted write can't empty them ([#108](https://github.com/dataquail/chernabog/issues/108)) ([cb4693e](https://github.com/dataquail/chernabog/commit/cb4693eedbdef93505e31dc6fe06e314d501ca4c))
+* restart the daemon once per trusted tree, not every five minutes while a repo fails to load ([#77](https://github.com/dataquail/chernabog/issues/77)) ([#81](https://github.com/dataquail/chernabog/issues/81)) ([a30b72e](https://github.com/dataquail/chernabog/commit/a30b72ec2b4445b53aa9d1ada2d0a9f48d3ef6cd))
+* the engine's lock can't be deleted by a process starting alongside it ([#110](https://github.com/dataquail/chernabog/issues/110)) ([47cb0a8](https://github.com/dataquail/chernabog/commit/47cb0a8f09e760d1057516ca8f5a59975b2313bb))
+
 ## [0.8.0](https://github.com/dataquail/chernabog/compare/v0.7.0...v0.8.0) (2026-10-22)
 
 
