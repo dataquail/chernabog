@@ -211,6 +211,12 @@ transitive reach), the coverage floors and the baseline.
   started is the one attached, never a second (`test/engine.test.ts` covers
   both windows). A run from before runs kept their item ends as failed, so
   its item can start again.
+- **Stopping is bounded.** `main.ts` wraps the program in
+  `withShutdownDeadline` (`src/platform/shutdown.ts`): after SIGINT or
+  SIGTERM the finalizers get 3 seconds, then the process exits; a second
+  Ctrl-C exits at once. Keep finalizers to bookkeeping (the socket, the lock,
+  a log line). Never make correctness wait on a clean stop; recover at
+  startup instead.
   Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows
