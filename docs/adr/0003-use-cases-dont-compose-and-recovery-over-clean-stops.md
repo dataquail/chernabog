@@ -88,6 +88,31 @@ point, and a person who pressed Ctrl-C won't wait long for it to finish.
   safely. Only the runs module has transactions (SQLite). The machine and
   enrollment modules write JSON, so events there would need a different
   durability story.
-- Not yet reviewed for crashes: the apply steps of setup and enrollment. They
-  write JSON configuration and register a launchd or systemd service. Check
-  them next.
+- **Setup and enrollment, reviewed for crashes.** Each apply use-case makes
+  one save, so a kill can't leave half a choice. The risk was the write
+  itself. Machine config, `paused.json` and `trust.json` were rewritten in
+  place, which truncates the file before writing it. An interrupted write
+  fails in different ways per file:
+  - **Machine config** reads as one that sets nothing, which unenrolls every
+    repo, and the next write saves that.
+  - **`paused.json`** reads as pausing nothing.
+  - **`trust.json`** reads as trusting nothing.
+
+  They, and the daemon's service unit, are now written by `writeFileAtomic`
+  (`src/platform/atomic-write.ts`): it writes beside the file, flushes it to
+  disk and renames it over the file, and it keeps a symlinked file a symlink.
+  A SIGKILL probe hit none of the old window in 55 kills, since it lies
+  between two syscalls. Full disks, I/O errors and power loss are what it
+  guards against. A kill partway can leave a `<file>.<pid>.tmp` beside it,
+  which is safe to delete.
+
+- **What restarts cover.**
+  - `chernabog enroll` saves, then asks the daemon to reload. If it is killed
+    in between, the daemon still notices within 10 seconds, because it
+    re-reads machine config on its own.
+  - `chernabog install` stops the service, writes the unit, then starts it. If
+    it is killed in between, the daemon stays stopped until `chernabog install`
+    or `chernabog start` runs again; both are safe to repeat.
+- **Out of scope here: concurrent writers.** Machine config is
+  read-modified-written without a lock, so two processes editing it at once
+  can lose one edit.

@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { asSuffix, type Persona } from "./kernel/persona.value-object.ts";
+import { writeFileAtomic } from "./platform/atomic-write.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { flowNames } from "./platform/flow-loader.ts";
 import { viewerLogin } from "./platform/github-api.ts";
@@ -262,7 +263,8 @@ const migratePaused = (entries: ReadonlyArray<Entry>) =>
       ...byName.flatMap((name) => Option.toArray(slugOf(name))),
     ]);
 
-    yield* fs.writeFileString(
+    yield* writeFileAtomic(
+      fs,
       file,
       `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`,
     );
@@ -343,7 +345,7 @@ export const migrateMachineConfig = Effect.gen(function* () {
   }
 
   if (lines.length > 0) {
-    yield* fs.writeFileString(file, document.toString());
+    yield* writeFileAtomic(fs, file, document.toString());
   }
 
   const entries = (machine.value.repos ?? []).flatMap((raw) =>

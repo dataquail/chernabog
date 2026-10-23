@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { writeFileAtomic } from "../../../../platform/atomic-write.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
@@ -51,7 +52,8 @@ export const EnrolledReposRepositoryLive = Layer.effect(
 
     const writePaused = (slugs: ReadonlyArray<RepoSlug>) =>
       Effect.gen(function* () {
-        yield* fs.writeFileString(
+        yield* writeFileAtomic(
+          fs,
           pausedPath,
           `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`,
         );

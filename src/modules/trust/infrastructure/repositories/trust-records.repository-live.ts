@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { writeFileAtomic } from "../../../../platform/atomic-write.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { type TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
@@ -45,7 +46,7 @@ export const TrustRecordsRepositoryLive = Layer.effect(
       Effect.gen(function* () {
         const records = { ...(yield* readAll), [record.repo]: toEntry(record) };
         yield* fs.makeDirectory(home.root, { recursive: true });
-        yield* fs.writeFileString(file, `${yield* Schema.encodeEffect(TrustFile)(records)}\n`);
+        yield* writeFileAtomic(fs, file, `${yield* Schema.encodeEffect(TrustFile)(records)}\n`);
       }).pipe(
         Effect.mapError(
           (error) => new PersistenceFailed({ message: `trust.json: ${error.message}` }),
