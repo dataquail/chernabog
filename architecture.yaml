@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.83, structure: 0.8, members: 0.44, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.83, structure: 0.81, members: 0.46, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -407,8 +407,8 @@ tree:
                     - "@/platform/**"
                     - "@/interface/daemon/**"
                     - "@/modules/*/use-cases/**"
+                    - "@/modules/*/*.layer.ts"
                     - "@/modules/runs/domain/schedule/*.value-object.ts"
-                    - "@/modules/runs/domain/routing/*.value-object.ts"
                     - "~/sdk/src/**"
                     - "@/engine.ts"
                     - "@/launchers.ts"
@@ -454,10 +454,11 @@ tree:
             imports:
               reset: true
               message: >-
-                A module's layer assembles its live adapters: it names its own module, and
-                effect to merge them.
+                A module's layer assembles its live adapters: it names its own module, effect
+                to merge them, the platform, and, for the runs module, the legacy engine its
+                stores sit beside until the engine moves in.
               external: [effect]
-              allow: ["@/modules/{module}/**"]
+              allow: ["@/modules/{module}/**", "@/platform/**", "@/engine.ts"]
 
           "domain/":
             message: >-
@@ -570,14 +571,15 @@ tree:
               reset: true
               message: >-
                 A use-case names effect, the kernel, its own module's domain (aggregates and
-                ports) and its sibling results. Never infrastructure (adapters are provided at a
-                composition root), never interface/ (it doesn't know who called it), never another
-                module's internals.
+                ports), its sibling results, and its sibling use-cases, which it may compose.
+                Never infrastructure (adapters are provided at a composition root), never
+                interface/ (it doesn't know who called it), never another module's internals.
               external: [effect]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/use-cases/*.result.ts"
+                - "@/modules/{module}/use-cases/*.use-case.ts"
             children:
               "*.use-case.ts":
                 message: >-
@@ -626,8 +628,10 @@ tree:
                     through the platform adapters (commands, GitHub, the home, this program),
                     and, until each moves into its module, the legacy machinery it wraps:
                     snapshot.ts's git helpers, config.ts, loader.ts for a checkout's flows,
-                    repo-config.ts for the team's config, and templates.ts and flow-deps.ts for
-                    what this binary bundles. Nothing else of the legacy tier.
+                    repo-config.ts for the team's config, templates.ts and flow-deps.ts for
+                    what this binary bundles, and engine.ts for the workflow engine and the flow
+                    handles it runs. It names the published SDK whose flows it runs. Nothing
+                    else of the legacy tier.
                   allow:
                     - "@/platform/**"
                     - "@/snapshot.ts"
@@ -636,6 +640,8 @@ tree:
                     - "@/repo-config.ts"
                     - "@/templates.ts"
                     - "@/flow-deps.ts"
+                    - "@/engine.ts"
+                    - "~/sdk/src/**"
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
@@ -655,6 +661,8 @@ tree:
                           "@/platform/exec.ts",
                           "@/platform/github-api.ts",
                           "@/config.ts",
+                          "@/engine.ts",
+                          "~/sdk/src/**",
                           "test/*.ts",
                         ]
       "*.test.ts":

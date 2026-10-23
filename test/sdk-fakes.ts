@@ -42,17 +42,13 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { Home, homePaths } from "../src/config.ts";
-import {
-  type FlowHandle,
-  flowLayer,
-  forEveryPersona,
-  pollRun,
-  startRun,
-  StateAt,
-} from "../src/engine.ts";
+import { type FlowHandle, flowLayer, forEveryPersona } from "../src/engine.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
-import { type RunsLayer } from "../src/modules/runs/runs.layer.ts";
+import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
+import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-signals.use-case.ts";
+import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
+import { startFlowRunUseCase } from "../src/modules/runs/use-cases/start-flow-run.use-case.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
 export const PULL = 7;
@@ -436,6 +432,33 @@ export type RunsServices = Layer.Success<typeof RunsLayer>;
 
 const isRunning = (run: EngineRun) => run.status === "running";
 
+// A flow as a persona runs it, as the runs module names it.
+const refOf = (handle: FlowHandle, persona: Persona) => ({
+  repo: handle.repo.settings.name,
+  flow: handle.name,
+  persona,
+});
+
+// The runs module's runtime over one flow's workflow. These tests start and
+// poll runs themselves, so it runs no trigger or gate.
+export const runtimeFor = (handle: FlowHandle) =>
+  RuntimeLayer({ handles: [handle], services: () => Option.none() });
+
+// Starting, polling and waking runs as the daemon does, through the runs module.
+export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
+  startFlowRunUseCase(refOf(handle, persona), work);
+
+export const pollRun = (run: EngineRun) =>
+  pollRunUseCase(run.id).pipe(
+    Effect.map((found): EngineRun => Option.getOrElse(found.run, () => run)),
+  );
+
+export const deliverSignals = (
+  handle: FlowHandle,
+  persona: Persona,
+  items: ReadonlyArray<WorkItem>,
+) => deliverSignalsUseCase(refOf(handle, persona), items).pipe(Effect.map(({ count }) => count));
+
 // Starts a run of the flow on the fake, and polls until `until` says it has got far enough.
 export const runUntil = (
   handle: FlowHandle,
@@ -447,8 +470,11 @@ export const runUntil = (
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-steps-" });
 
+    const services = forEveryPersona(yield* Layer.build(fake.services));
+
     const engine = yield* Layer.build(
-      flowLayer(handle, forEveryPersona(yield* Layer.build(fake.services))).pipe(
+      runtimeFor(handle).pipe(
+        Layer.provideMerge(flowLayer(handle, services)),
         Layer.provideMerge(StateAt(homePaths(home).state)),
         Layer.provideMerge(Home.at(home, home)),
       ),
@@ -459,7 +485,7 @@ export const runUntil = (
     const run = startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
       Effect.flatMap((started) =>
-        pollRun(handle, started).pipe(
+        pollRun(started).pipe(
           Effect.flatMap((polled) => until(polled).pipe(Effect.map((done) => ({ polled, done })))),
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),

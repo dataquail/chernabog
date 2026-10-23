@@ -186,6 +186,16 @@ transitive reach), the coverage floors and the baseline.
   `decideTick`/`freeSlots` in `tick.value-object.ts`), `routing/` (whose work
   items a persona's flow starts here) and `usage/` (`decideLaunch`, the usage
   gate's decision).
+- **A tick is a use-case.** `tickFlowUseCase` is one tick of a persona's
+  flow: the machine's gates, the trigger, waking the runs its signals are
+  for, routing, the concurrency limits, the flow's own gate, and starting runs
+  (`startFlowRunUseCase`), recording a skip when it starts nothing. It runs
+  flows through `FlowsClient` (trigger, item lookup, gate) and workflows
+  through `WorkflowsClient` (execute, poll, resume, wake, note); the daemon
+  and `chernabog run` build both from the flows they loaded
+  (`RuntimeLayer(registry)` in `runs.layer.ts`) and pass in what other
+  modules know, such as whether the repo is paused. `pollRunsUseCase` records
+  the runs that ended.
   Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows

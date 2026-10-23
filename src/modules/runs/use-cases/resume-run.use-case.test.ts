@@ -1,0 +1,76 @@
+import { describe, expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import { effect } from "../../../../test/effect-test.ts";
+import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunRoot } from "../domain/run/run.root.ts";
+import { type RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
+import {
+  type FakeEngine,
+  fakeEngine,
+  WorkflowsClientFake,
+} from "../infrastructure/clients/workflows.client-fake.ts";
+import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
+import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
+import { resumeRunUseCase } from "./resume-run.use-case.ts";
+
+const run = (id: string, fields: Partial<RunRoot> = {}) =>
+  RunRoot.make({
+    id: RunId.make(id),
+    repo: "demo",
+    persona: Option.some("bob"),
+    flow: "review",
+    itemKey: "pr-1",
+    itemTitle: Option.none(),
+    itemUrl: Option.none(),
+    executionId: Option.some(`execution-${id}`),
+    status: "running",
+    currentStep: Option.none(),
+    summary: Option.none(),
+    startedAt: "2026-10-20T00:00:00.000Z",
+    finishedAt: Option.none(),
+    ...fields,
+  });
+
+// The runs module over these runs, waits and flows, and a fake engine.
+const runtime = (
+  engine: FakeEngine,
+  stored: {
+    readonly runs?: ReadonlyArray<RunRoot>;
+    readonly waits?: ReadonlyArray<RunWaitRoot>;
+    readonly flows?: Readonly<Record<string, FakeFlow>>;
+  } = {},
+) =>
+  Layer.mergeAll(
+    RunsRepositoryFake(stored.runs ?? []),
+    RunWaitsRepositoryFake(stored.waits ?? []),
+    SkipsRepositoryFake([]),
+    FlowsClientFake(stored.flows ?? {}),
+    WorkflowsClientFake(engine),
+  );
+
+describe("resumeRunUseCase", () => {
+  const engine = fakeEngine();
+
+  effect("resumes a running run's execution, and leaves one that ended alone", () =>
+    Effect.gen(function* () {
+      yield* resumeRunUseCase(RunId.make("a"));
+      yield* resumeRunUseCase(RunId.make("done"));
+
+      expect(engine.resumed).toEqual(["execution-a"]);
+    }).pipe(
+      Effect.provide(
+        runtime(engine, {
+          runs: [
+            run("a"),
+            run("done", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00.000Z") }),
+          ],
+        }),
+      ),
+    ),
+  );
+});

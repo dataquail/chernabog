@@ -68,3 +68,10 @@ export class RunLogMissing extends Schema.TaggedError<
     return `no log for ${this.runId} at ${this.path}`;
   }
 }
+
+// A flow's trigger, the lookup of an item it didn't report, or its gate
+// failed; the message says how.
+export class FlowFailed extends Schema.TaggedError<FlowFailed, { readonly brand: "FlowFailed" }>()(
+  "FlowFailed",
+  { message: Schema.String },
+) {}

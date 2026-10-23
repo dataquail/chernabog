@@ -2,7 +2,7 @@
 // records state in SQLite, and serves the CLI and TUI over a local socket. It
 // is the only process that runs the workflow engine.
 
-import { describeError, type FlowFailure, type WorkItem } from "@chernabog/sdk";
+import { describeError } from "@chernabog/sdk";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -15,40 +15,27 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import {
-  deliverSignals,
-  type FlowHandle,
-  flowHandle,
-  flowLayer,
-  pollRun,
-  startRun,
-  StateLive,
-  unreportedItem,
-} from "../../engine.ts";
-import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
+import { type FlowHandle, flowHandle, flowLayer } from "../../engine.ts";
+import { type Persona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
 import { describeLauncher } from "../../launchers.ts";
 import { loadFlows } from "../../loader.ts";
 import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
-import {
-  describeElsewhere,
-  routeItems,
-} from "../../modules/runs/domain/routing/routing.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
-import { decideTick, freeSlots } from "../../modules/runs/domain/schedule/tick.value-object.ts";
-import { findActiveRunUseCase } from "../../modules/runs/use-cases/find-active-run.use-case.ts";
+import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
+import { pollRunsUseCase } from "../../modules/runs/use-cases/poll-runs.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
+import { tickFlowUseCase } from "../../modules/runs/use-cases/tick-flow.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
@@ -63,7 +50,6 @@ import {
   needsLogin,
   type PersonaRepo,
   repoNameOf,
-  type Routing,
   routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
@@ -72,9 +58,7 @@ import {
   adoptRuns,
   buildPersonaContexts,
   type PersonaContext,
-  type RepoContext,
   servicesFrom,
-  withRepo,
 } from "../../runner.ts";
 import { configTree, snapshotConfig } from "../../snapshot.ts";
 import {
@@ -236,69 +220,6 @@ export const loadRepoState = (
 
 export type TickOptions = { readonly gates: boolean; readonly item: Option.Option<string> };
 
-const describeQueued = (item: WorkItem) =>
-  Option.match(Option.fromUndefinedOr(item.title), {
-    onNone: () => item.key,
-    onSome: (title) => `${item.key} ${title}`,
-  });
-
-// The items a persona's run may start for: not only waking one, and without its run already.
-const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
-  Effect.gen(function* () {
-    const waiting: Array<WorkItem> = [];
-
-    for (const item of items) {
-      if (
-        item.wakeOnly !== true &&
-        Option.isNone(
-          (yield* findActiveRunUseCase({
-            repo: handle.repo.settings.name,
-            persona,
-            flow: handle.name,
-            itemKey: item.key,
-          })).run,
-        )
-      ) {
-        waiting.push(item);
-      }
-    }
-
-    return waiting;
-  });
-
-type Routed = {
-  readonly mine: ReadonlyArray<WorkItem>;
-  readonly elsewhere: ReadonlyArray<WorkItem>;
-};
-
-// What a tick may start: the items this machine may start, or the one a
-// person named, whoever it is assigned to.
-const candidatesOf = (
-  waiting: ReadonlyArray<WorkItem>,
-  routed: Routed,
-  named: Option.Option<string>,
-) =>
-  Option.match(named, {
-    onNone: () => routed.mine,
-    onSome: (key) => waiting.filter((item) => item.key === key),
-  });
-
-// Why a tick starts nothing although its trigger found work: all of it is for others.
-const onlyElsewhere = (routed: Routed, routing: Routing, named: Option.Option<string>) =>
-  Option.liftPredicate(
-    `only work for others: ${routed.elsewhere.map(describeElsewhere(routing)).join(", ")}`,
-    () => Option.isNone(named) && routed.mine.length === 0 && routed.elsewhere.length > 0,
-  );
-
-// The gate's Skip is its own reason; anything else is the gate failing.
-const gateReason = (failure: FlowFailure) => {
-  if (Predicate.isTagged(failure, "Skip") && Predicate.hasProperty(failure, "reason")) {
-    return String(failure.reason);
-  }
-
-  return `gate failed: ${describeError(failure)}`;
-};
-
 const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTime.formatIso);
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
@@ -451,8 +372,22 @@ export const runDaemon = Effect.gen(function* () {
     ),
   );
 
+  // What the runs module drives a tick through: the flows loaded here, each
+  // with its persona's services, and their workflows in the engine.
+  const registry: FlowRegistry = {
+    handles,
+    services: (repoName, persona) =>
+      Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
+        servicesFrom(personas)(persona),
+      ),
+  };
+
   const engine = yield* Layer.build(
-    Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+    RuntimeLayer(registry).pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+      ),
+    ),
   );
 
   return yield* Effect.provideContext(
@@ -466,154 +401,71 @@ export const runDaemon = Effect.gen(function* () {
       const reloadPending = yield* Ref.make(false);
       const reloaded = yield* Deferred.make<true>();
 
-      const handleFor = (repoName: string, flowName: string) =>
-        Arr.findFirst(
-          handles,
-          (handle) => handle.repo.settings.name === repoName && handle.name === flowName,
-        );
-
       const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
 
-      const tick = (
-        repo: RepoState,
-        context: RepoContext,
-        schedule: FlowSchedule,
-        options: TickOptions,
-      ) =>
+      const tick = (repo: RepoState, schedule: FlowSchedule, options: TickOptions) =>
         Effect.gen(function* () {
           const { handle, own: settings, persona } = schedule;
-          const { flow } = handle;
-          const flowSettings = Record.get(settings.flows, handle.name);
-          const self = loginFor(persona);
+          const ref = { repo: repo.name, flow: handle.name, persona };
 
-          const record = (reason: string, itemKey: Option.Option<string>) =>
-            recordSkipUseCase({
-              repo: repo.name,
-              persona,
-              flow: handle.name,
-              itemKey,
-              reason,
-            }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
-
-          if (options.gates) {
-            // Not knowing whether a repo is paused starts nothing in it.
-            const paused = yield* Effect.result(listPausedReposUseCase());
-
-            if (Result.isFailure(paused)) {
-              return yield* record(
-                `could not tell whether it is paused: ${paused.failure.message}`,
-                Option.none(),
-              );
-            }
-
-            const decision = decideTick({
-              enabled: settings.enabled,
-              flowOff: flowOff(settings, handle.name),
-              paused: paused.success.repos.includes(RepoSlug.make(repo.enrolled.repo)),
-              quietHours: machine.quietHours,
-              activeHours: settings.activeHours,
-              now: yield* DateTime.now,
-            });
-
-            if (!decision.go) {
-              return yield* record(decision.reason, Option.none());
-            }
-          }
-
-          const triggered = yield* Effect.result(withRepo(context, flow.trigger));
-
-          if (Result.isFailure(triggered)) {
-            return yield* record(
-              `trigger failed: ${describeError(triggered.failure)}`,
-              Option.none(),
-            );
-          }
-
-          const lookedUp = yield* Effect.result(
-            withRepo(context, unreportedItem(flow, options.item, triggered.success)),
+          // Not knowing whether a repo is paused starts nothing in it.
+          const paused = yield* Option.match(
+            Option.liftPredicate(options, () => options.gates),
+            {
+              onNone: () => Effect.succeed(Result.succeed(false)),
+              onSome: () =>
+                Effect.result(
+                  listPausedReposUseCase().pipe(
+                    Effect.map((found) => found.repos.includes(RepoSlug.make(repo.enrolled.repo))),
+                  ),
+                ),
+            },
           );
 
-          if (Result.isFailure(lookedUp)) {
-            return yield* record(
-              `could not find ${Option.getOrElse(options.item, () => "the item")}: ${describeError(lookedUp.failure)}`,
-              options.item,
-            );
+          if (Result.isFailure(paused)) {
+            const reason = `could not tell whether it is paused: ${paused.failure.message}`;
+            yield* recordSkipUseCase({ ...ref, itemKey: Option.none(), reason });
+
+            return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
 
-          const items = [...triggered.success, ...lookedUp.success];
-          yield* deliverSignals(handle, persona, items);
-          const waiting = yield* unstarted(handle, persona, items);
-          // Work for others is left to them, unless a person names the item.
-          const routing = routingOf(settings, handle.name);
-          const routed = routeItems(waiting, routing, self);
-          schedule.lastTick = Option.some(yield* DateTime.now);
-          schedule.queued = routed.mine.map(describeQueued);
-          schedule.elsewhere = routed.elsewhere.map(describeElsewhere(routing));
-
-          const candidates = candidatesOf(waiting, routed, options.item);
-          const elsewhereOnly = onlyElsewhere(routed, routing, options.item);
-
-          if (Option.isSome(elsewhereOnly)) {
-            return yield* record(elsewhereOnly.value, Option.none());
-          }
-
-          if (candidates.length === 0) {
-            return { started: [], skipped: Option.none() } satisfies TickResult;
-          }
-
-          let slots = candidates.length;
-
-          if (options.gates) {
-            const working = (yield* active).filter((activeRun) => !activeRun.parked);
-
-            slots = freeSlots({
-              activeForFlow: working.filter(
-                (activeRun) =>
-                  activeRun.repo === repo.name &&
-                  samePersona(activeRun.persona, persona) &&
-                  activeRun.flow === handle.name,
-              ).length,
-              flowConcurrency: Option.getOrElse(
-                Option.flatMap(flowSettings, (found) => Option.fromUndefinedOr(found.concurrency)),
-                () => flow.concurrency ?? 1,
+          const outcome = yield* tickFlowUseCase(ref, {
+            gates: options.gates,
+            item: options.item,
+            conditions: {
+              enabled: settings.enabled,
+              flowOff: flowOff(settings, handle.name),
+              paused: paused.success,
+              quietHours: machine.quietHours,
+              activeHours: settings.activeHours,
+            },
+            routing: routingOf(settings, handle.name),
+            login: loginFor(persona),
+            concurrency: {
+              flow: Option.getOrElse(
+                Option.flatMap(Record.get(settings.flows, handle.name), (found) =>
+                  Option.fromUndefinedOr(found.concurrency),
+                ),
+                () => handle.flow.concurrency ?? 1,
               ),
-              activeOnMachine: working.length,
-              machineConcurrency: machine.concurrency,
-            });
+              machine: machine.concurrency,
+            },
+          });
 
-            if (slots === 0) {
-              return yield* record(
-                `at the concurrency limit; waiting: ${candidates.map((item) => item.key).join(", ")}`,
-                Option.none(),
-              );
-            }
+          for (const routed of Option.toArray(outcome.routed)) {
+            schedule.lastTick = Option.some(yield* DateTime.now);
+            schedule.queued = routed.queued;
+            schedule.elsewhere = routed.elsewhere;
           }
 
-          const started: Array<string> = [];
-          const gate = Option.fromUndefinedOr(flow.gate).pipe(Option.filter(() => options.gates));
-
-          for (const item of candidates.slice(0, slots)) {
-            if (Option.isSome(gate)) {
-              const passed = yield* Effect.result(withRepo(context, gate.value));
-
-              // The gate holds back every item this tick, not only this one.
-              if (Result.isFailure(passed)) {
-                const reason = gateReason(passed.failure);
-                yield* record(reason, Option.some(item.key));
-
-                return { started, skipped: Option.some(reason) } satisfies TickResult;
-              }
-            }
-
-            const outcome = yield* startRun(handle, persona, item);
-
-            if (outcome.started && Option.isSome(outcome.run)) {
-              started.push(outcome.run.value.id);
-              yield* log(`started ${outcome.run.value.id} (${runLabel(outcome.run.value)})`);
-            }
+          for (const run of outcome.started) {
+            yield* log(`started ${run.id} (${runLabel(run)})`);
           }
 
-          return { started, skipped: Option.none() } satisfies TickResult;
+          return {
+            started: outcome.started.map((run) => run.id),
+            skipped: outcome.skipped,
+          } satisfies TickResult;
         }).pipe(
           Effect.catchCause((cause) =>
             log(`${scheduleName(repo.name, schedule)}: tick failed: ${String(cause)}`).pipe(
@@ -640,20 +492,10 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            for (const activeRun of yield* active) {
-              const handle = handleFor(activeRun.repo, activeRun.flow);
-
-              if (Option.isNone(handle)) {
-                continue;
-              }
-
-              const polled = yield* pollRun(handle.value, activeRun);
-
-              if (polled.status !== "running") {
-                yield* log(
-                  `finished ${polled.id} (${runLabel(polled)}): ${polled.status}: ${Option.getOrElse(polled.summary, () => "")}`,
-                );
-              }
+            for (const finished of (yield* pollRunsUseCase()).runs) {
+              yield* log(
+                `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
+              );
             }
 
             yield* Effect.sleep("3 seconds");
@@ -688,7 +530,7 @@ export const runDaemon = Effect.gen(function* () {
                   continue;
                 }
 
-                const result = yield* tick(repo, context.value, schedule, {
+                const result = yield* tick(repo, schedule, {
                   gates: true,
                   item: Option.none(),
                 });
@@ -972,10 +814,10 @@ export const runDaemon = Effect.gen(function* () {
             return yield* refuse(404, found.failure);
           }
 
-          const { context, repo, schedule } = found.success;
+          const { repo, schedule } = found.success;
 
           return yield* HttpServerResponse.schemaJson(TickResult)(
-            yield* tick(repo, context, schedule, { gates, item: body.item }),
+            yield* tick(repo, schedule, { gates, item: body.item }),
           );
         });
 
