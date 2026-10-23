@@ -242,7 +242,8 @@ transitive reach), the coverage floors and the baseline.
   composition root of its own under the `cli-root` allowlist, as `main.ts` is.
 - **The legacy tier** (the flat `src/*.ts` still left: machine config and its
   migration, and the effective repo settings in `repo-config.ts`) is one
-  `unrestricted` node. A migration moves files out of it and
+  `unrestricted` node. Why those two are left, and the decision that moves
+  them, is in `docs/adr/0002-the-sweep-into-modules.md`. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
   ceiling when the numbers move (`bun run architecture:coverage`,
   `architecture:conformance`), never the other way to make a run green.
