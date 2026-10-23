@@ -20,6 +20,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
@@ -59,6 +60,7 @@ import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import {
+  checkManualSchedules,
   type EffectiveRepo,
   EnrolledRepo,
   flowOff,
@@ -91,9 +93,10 @@ type FlowSchedule = {
   readonly handle: FlowHandle;
   readonly persona: Persona;
   readonly own: PersonaRepo;
-  readonly expression: string;
+  // None for a manual flow, which never ticks on a schedule.
+  readonly expression: Option.Option<string>;
   // The schedule without the persona's own: the team's, or the flow's.
-  readonly teamExpression: string;
+  readonly teamExpression: Option.Option<string>;
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
@@ -178,7 +181,10 @@ export const loadRepoState = (
     }
 
     const loaded = yield* Effect.result(
-      Effect.all({ repo: loadRepo(machine, enrolled, configDir), flows: loadFlows(configDir) }),
+      Effect.all({
+        repo: loadRepo(machine, enrolled, configDir),
+        flows: loadFlows(configDir),
+      }).pipe(Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows))),
     );
 
     if (Result.isFailure(loaded)) {
@@ -218,7 +224,7 @@ export const loadRepoState = (
             own,
             expression,
             teamExpression,
-            next: nextTick(expression, now),
+            next: Option.flatMap(expression, (cron) => nextTick(cron, now)),
             lastTick: Option.none(),
             queued: [],
             elsewhere: [],
@@ -594,7 +600,7 @@ export const runDaemon = Effect.gen(function* () {
                   continue;
                 }
 
-                schedule.next = nextTick(schedule.expression, now);
+                schedule.next = Option.flatMap(schedule.expression, (cron) => nextTick(cron, now));
                 const context = ready.value.contextFor(schedule.persona);
 
                 if (Option.isNone(context)) {
@@ -762,8 +768,12 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => ({}),
               onSome: (persona) => ({ persona }),
             }),
-            schedule: flow.expression,
-            teamSchedule: flow.teamExpression,
+            schedule: Option.getOrElse(flow.expression, () => manualSchedule(flow.handle.name)),
+            // A manual flow has no schedule, the team's or anyone's.
+            ...Option.match(flow.teamExpression, {
+              onNone: () => ({ manual: true }),
+              onSome: (teamSchedule) => ({ teamSchedule }),
+            }),
             ...Option.match(
               Option.fromUndefinedOr(flow.own.own.flows?.[flow.handle.name]?.schedule),
               { onNone: () => ({}), onSome: (ownSchedule) => ({ ownSchedule }) },
@@ -897,6 +907,11 @@ export const runDaemon = Effect.gen(function* () {
           }
 
           const { repo, schedule } = found.success;
+
+          // Nothing finds a manual flow's work, so a person must name it.
+          if (Option.isNone(schedule.expression) && Option.isNone(body.item)) {
+            return yield* refuse(400, nothingNamed(schedule.handle.name));
+          }
 
           return yield* HttpServerResponse.schemaJson(TickResult)(
             yield* tick(repo, schedule, { gates, item: body.item }),

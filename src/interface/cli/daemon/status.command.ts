@@ -95,6 +95,11 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
       )}`;
     }
 
+    // A manual flow has no next tick: it runs when a person names its work.
+    if (flow.manual === true) {
+      return `  ${name}: ${flow.schedule}`;
+    }
+
     const elsewhere = flow.assignedElsewhere ?? [];
 
     return `  ${name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;

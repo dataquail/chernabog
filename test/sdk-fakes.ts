@@ -30,6 +30,7 @@ import {
   Runs,
   StepRunner,
   type SubmittedReview,
+  triggerOf,
   Usage,
   type WorkItem,
   Worktree,
@@ -542,6 +543,6 @@ const quietLog = Layer.succeed(
 
 // What a flow's own trigger reports on the fake.
 export const flowTriggered = (fake: Fake, flow: Flow) =>
-  Effect.provide(flow.trigger, Layer.mergeAll(fake.services, quietLog));
+  Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
 
 export const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");

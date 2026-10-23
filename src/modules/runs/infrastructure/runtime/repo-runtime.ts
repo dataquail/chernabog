@@ -21,6 +21,7 @@ import { snapshotConfig } from "../../../../platform/config-snapshot.ts";
 import { loadFlows } from "../../../../platform/flow-loader.ts";
 import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
+  checkManualSchedules,
   type EffectiveRepo,
   type EnrolledRepo,
   loadRepo,
@@ -65,6 +66,7 @@ export const openRepo = (machine: MachineConfig, enrolled: EnrolledRepo, fromChe
     const { configDir, tree } = yield* repoConfigDir(enrolled, fromCheckout);
     const repo = yield* loadRepo(machine, enrolled, configDir);
     const flows = yield* loadFlows(configDir);
+    yield* checkManualSchedules(repo, flows);
 
     return { repo, flows, tree } satisfies OpenRepo;
   });

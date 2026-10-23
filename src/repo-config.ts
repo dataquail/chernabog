@@ -11,6 +11,7 @@ import {
   type Account,
   DEFAULT_LABELS,
   type Flow,
+  isManual,
   type LauncherCommands,
   type Limits,
   type RepoSettings,
@@ -26,6 +27,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
+import { howToStart } from "./kernel/manual-flow.value-object.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
@@ -363,7 +365,8 @@ export const needsLogin = (repo: EffectiveRepo) =>
 // When a persona's flow ticks: the flow's own setting for the persona in
 // machine config, then the persona's default, then the team's: the flow's
 // setting in config.yaml, the flow module's, the repo's. `index` of `count`
-// spreads the repos without one across the hour.
+// spreads the repos without one across the hour. None for a manual flow,
+// which never ticks on a schedule.
 export const scheduleFor = (
   repo: PersonaRepo,
   flowName: string,
@@ -371,17 +374,60 @@ export const scheduleFor = (
   index: number,
   count: number,
 ) =>
-  chooseSchedule(
-    {
-      flow: Option.flatMap(Record.get(repo.flows, flowName), (settings) =>
-        Option.fromUndefinedOr(settings.schedule),
+  Option.map(
+    Option.liftPredicate(flow, (found) => !isManual(found)),
+    (scheduled) =>
+      chooseSchedule(
+        {
+          flow: Option.flatMap(Record.get(repo.flows, flowName), (settings) =>
+            Option.fromUndefinedOr(settings.schedule),
+          ),
+          persona: repo.schedule.own,
+          module: Option.fromUndefinedOr(scheduled.schedule),
+          repo: repo.schedule.repo,
+        },
+        index,
+        count,
       ),
-      persona: repo.schedule.own,
-      module: Option.fromUndefinedOr(flow.schedule),
-      repo: repo.schedule.repo,
-    },
-    index,
-    count,
+  );
+
+// Where config gives a manual flow a schedule of its own: the team's
+// config.yaml, or a persona's choices in machine config.
+const manualSchedules = (repo: EffectiveRepo, flowName: string) =>
+  repo.personas.flatMap((own) => [
+    ...Option.toArray(
+      Option.as(
+        Option.flatMap(Record.get(own.teamFlows, flowName), (settings) =>
+          Option.fromUndefinedOr(settings.schedule),
+        ),
+        "config.yaml",
+      ),
+    ),
+    ...Option.toArray(
+      Option.as(
+        Option.fromUndefinedOr(own.own.flows?.[flowName]?.schedule),
+        `machine config${asSuffix(own.persona)}`,
+      ),
+    ),
+  ]);
+
+// Fails when config gives a manual flow a schedule: nothing would run on it,
+// since a person starts each of the flow's runs. A repo's default schedule
+// doesn't apply to manual flows, so only a flow's own is refused.
+export const checkManualSchedules = (repo: EffectiveRepo, flows: ReadonlyMap<string, Flow>) =>
+  Effect.forEach(
+    [...flows].filter(([, flow]) => isManual(flow)),
+    ([flowName]) =>
+      Option.match(Arr.head(Arr.dedupe(manualSchedules(repo, flowName))), {
+        onNone: () => Effect.void,
+        onSome: (where) =>
+          Effect.fail(
+            new ConfigError({
+              message: `${repo.settings.name}: ${where} gives flows.${flowName} a schedule, but ${flowName} is a manual flow, started only with ${howToStart(flowName)}; remove the schedule`,
+            }),
+          ),
+      }),
+    { discard: true },
   );
 
 // Why a persona doesn't run a flow, if it doesn't: machine config doesn't list

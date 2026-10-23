@@ -411,10 +411,13 @@ const updateSettings = (model: Model, settings: Settings, key: Key): Updated => 
       return Option.match(Option.flatMap(row, flowOfRow), {
         onNone: () => stay("select a flow to give it a schedule"),
         onSome: (name) => {
-          const own = Option.flatMap(
-            Arr.findFirst(personaFlows(model, settings), (found) => found.name === name),
-            (found) => Option.fromUndefinedOr(found.ownSchedule),
-          );
+          const flow = Arr.findFirst(personaFlows(model, settings), (found) => found.name === name);
+
+          if (Option.exists(flow, (found) => found.manual === true)) {
+            return stay(`${name} is a manual flow; it has no schedule to set`);
+          }
+
+          const own = Option.flatMap(flow, (found) => Option.fromUndefinedOr(found.ownSchedule));
 
           return {
             model: withSettings(cleared, {

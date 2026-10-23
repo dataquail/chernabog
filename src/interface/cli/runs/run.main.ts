@@ -3,7 +3,7 @@
 // personas' services and the engine, and resumes or starts a run, following
 // its log until it ends.
 
-import { type WorkItem } from "@chernabog/sdk";
+import { isManual, triggerOf, type WorkItem } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { nothingNamed } from "../../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
@@ -103,7 +104,7 @@ const followRun = (
       if (now - lastSignalCheck > SIGNAL_EVERY_MS) {
         lastSignalCheck = now;
 
-        const items = yield* withRepo(context, handle.flow.trigger).pipe(
+        const items = yield* withRepo(context, triggerOf(handle.flow)).pipe(
           Effect.orElseSucceed(() => []),
         );
 
@@ -207,7 +208,12 @@ const startFirst = (
   context: RepoContext,
 ) =>
   Effect.gen(function* () {
-    const reported = yield* withRepo(context, handle.flow.trigger);
+    // Nothing finds a manual flow's work, so a person must name it.
+    if (isManual(handle.flow) && Option.isNone(options.item)) {
+      return yield* new ConfigError({ message: nothingNamed(handle.name) });
+    }
+
+    const reported = yield* withRepo(context, triggerOf(handle.flow));
 
     const items = [
       ...reported,

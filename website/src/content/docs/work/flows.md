@@ -36,7 +36,7 @@ Some work needs a person through planning and implementation. `chernabog start <
 
 The pull request is labelled `hybrid` so the path shows on GitHub. No flow decides anything from it, so a missing or wrong label changes nothing.
 
-The hybrid path is the [`human-initiated` recipe](/chernabog/recipes/human-initiated/), which a repo bakes like any other: `chernabog recipes add human-initiated`. Without it, `chernabog start` fails and says so.
+The hybrid path is the [`human-initiated` recipe](/chernabog/recipes/human-initiated/), which a repo bakes like any other: `chernabog recipes add human-initiated`. Without it, `chernabog start` fails and says so. It's a [manual flow](/chernabog/flows/flows/#manual-flows), with no trigger and no schedule: only `chernabog start` starts it.
 
 ## Labels
 
