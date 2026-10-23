@@ -1,0 +1,506 @@
+# yaml-language-server: $schema=https://dataquail.github.io/goodbones/schema/architecture.schema.json
+#
+# The architecture policy for chernabog, as one manifest. Its shape follows
+# dataquail/functional-domain-driven-hexagon's: use-cases over a domain of
+# aggregates, driven by inbound adapters, with persistence and external systems
+# behind ports (docs/adr/0001-ddd-use-cases-and-ports.md). AGENTS.md says how
+# to run it and how to change it.
+#
+# It reads like a directory listing — a key ending in `/` is a folder, anything
+# else is a file — and everything the policy says about a part of the tree is
+# written at that part of the tree.
+#
+# Patterns are globs over repo-relative paths, matched against FULLY RESOLVED
+# targets:
+#
+#   *          part of one path segment          {name}   captures one segment
+#   **         any number of segments            [A-Z]    a character class
+#   a/**       `a` itself as well as a/b/c       |        several patterns, one node
+#
+# Every glob and every message is quoted: `*`, `@`, a backtick and `{` all mean
+# something to YAML when bare.
+#
+# The policy is tight on the new tree (src/modules/, src/kernel/,
+# src/interface/) and honest about the old one: the flat src/*.ts files and
+# the folders beside them are one `unrestricted`, `layout: open` node. Each
+# migration moves files out of it, and the limits below only ever tighten.
+
+baseline: .architecture-baseline.json
+
+resolve:
+  scopes:
+    - files: ""
+      language: typescript
+      options: { tsconfig: tsconfig.json }
+  # An import nobody can resolve is an import no rule can police.
+  unresolved: error
+  ignoreUnresolved:
+    # Bun's runtime modules (bun:test, bun:sqlite) have no file on disk.
+    - "^bun:"
+
+aliases:
+  "@": src
+  "~": packages
+
+# Ratchets on the policy itself: the ceilings are how many tiers may say "not
+# tightened yet" and how much acknowledged debt the conformance report may
+# show; the floors are how much of the tree each family must reach, as
+# `bun run architecture:coverage` reported it, rounded down. Raise a floor or
+# lower a ceiling when a migration earns it; never move one the other way to
+# make a red run green.
+limits:
+  unrestricted: 1
+  partial: 0
+  coverage: { imports: 0.44, structure: 0.40, members: 0, surface: 0.84, graph: 1 }
+  # vacant: the tiers declared ahead of their first file (kernel/ and the
+  # module tiers); it falls as the migration fills them.
+  conformance: { residue: 0, vacant: 12, slack: 0, concentration: 0 }
+
+# Prohibitions that hold for every file in the repo.
+deny:
+  - match: "**/*.test.ts"
+    message: >-
+      This file depends on a test. A test's only job is to test; a fixture two tests share belongs
+      in a harness beside them (test/*.ts), not inside one of them.
+  - match: "**/node_modules/yaml/**"
+    except:
+      - "**/infrastructure/repositories/**"
+      - "@/*.ts"
+      - "test/**"
+    message: >-
+      The yaml package is how machine config is stored, not what it means. Only a repository
+      adapter (infrastructure/repositories/) reads or writes a YAML document; the domain and the
+      use cases see aggregates, never a Document.
+  - match: "**/node_modules/@effect/sql*/**"
+    except:
+      - "@/modules/runs/infrastructure/**"
+      - "@/engine.ts"
+      - "test/**"
+    message: >-
+      SQLite is where runs and the workflow journal are stored. Only the runs module's
+      infrastructure and the engine name the SQL client; everything else reads and writes runs
+      through the Run repository.
+  - match: "**/node_modules/@opentui/**"
+    except: ["@/tui/**"]
+    message: >-
+      @opentui is the TUI's renderer. Only the TUI names it, so the rest of the code stays
+      runnable without a terminal.
+
+# Rules about the shape of the whole import graph. Only `bun run
+# lint:architecture` evaluates them; the oxlint plugin compiles and probes them.
+graph:
+  cycles:
+    - name: no-cycles
+      message: >-
+        These files import each other, so none of them can be understood, tested or loaded
+        without the rest. Break the cycle by moving the shared piece below both, or by inverting
+        one edge through a port.
+      within: ["@/**", "~/**", "test/**", "scripts/**", "templates/**"]
+  orphans:
+    - name: no-orphans
+      message: >-
+        Nothing imports this file and it is not an entry point. Delete it, or, if something
+        outside the import graph loads it by design, list it under `entry` with the reason.
+      within: ["@/**", "~/**", "test/**", "scripts/**", "templates/**"]
+      # A fake is owed to its port, whether or not a test currently takes it.
+      withinNot: "**/*-fake.ts"
+      entry:
+        # bun test loads these by glob.
+        - "**/*.test.ts"
+        # The CLI binary (`bun build --compile src/main.ts`).
+        - "@/main.ts"
+        # The published SDK's entry (packages/sdk/package.json `exports`).
+        - "~/sdk/src/index.ts"
+        # Run with `bun scripts/<name>.ts`.
+        - "scripts/gen-*.ts"
+        - "scripts/homebrew-formula.ts"
+        # A repo's flows are loaded by path (src/loader.ts); these are the ones
+        # `chernabog init` and `chernabog recipes add` write out.
+        - "templates/**"
+  reach:
+    - name: domain-reaches-no-adapter
+      message: >-
+        A module's domain transitively reaches an adapter. The domain sees effect, the kernel and
+        its own module's domain; a route from it to infrastructure/, interface/ or platform/
+        means a file on the route has widened past what the domain may know about.
+      from: "@/modules/*/domain/**"
+      fromNot: "**/*.test.ts"
+      to:
+        - "@/modules/*/infrastructure/**"
+        - "@/interface/**"
+        - "@/platform/**"
+    - name: use-cases-reach-no-adapter
+      message: >-
+        A use-case transitively reaches an adapter. A use-case depends on its module's domain and
+        ports; the adapters are wired against them at a composition root, never beneath them.
+      from: "@/modules/*/use-cases/**"
+      fromNot: "**/*.test.ts"
+      to:
+        - "@/modules/*/infrastructure/**"
+        - "@/interface/**"
+        - "@/platform/**"
+    - name: sdk-reaches-no-daemon
+      message: >-
+        @chernabog/sdk is published and runs inside a person's flows. A route from it into src/
+        would ship the daemon's internals with the SDK, or fail to resolve once it is installed.
+      from: "~/sdk/**"
+      to: "@/**"
+
+defs:
+  # A default export has no canonical name, so every importer invents one.
+  no-default-exports:
+    message: >-
+      No default exports: a default has no canonical name, so every importer invents one and the
+      symbol becomes ungreppable. Export it by name.
+    kinds: [default]
+
+  no-star-exports:
+    message: >-
+      No `export *`: a star re-export republishes every name of its target, so a reader can't
+      see what a file offers. Re-export by name.
+    kinds: [namespace]
+
+  # What a use-case file exports: the one use-case, named for it.
+  one-use-case-export:
+    message: >-
+      A use-case file exports exactly one `<verbNoun>UseCase`. A second one is a second use-case
+      that wants its own file; none means this isn't a use-case.
+    declares: [function, variable]
+    match: "*UseCase"
+    count: { min: 1, max: 1 }
+
+  # A port is a declaration: the service's shape and the Context.Service class
+  # that names it. A value beside them is an implementation.
+  port-declares-no-value:
+    message: >-
+      A port declares a shape and the Context.Service that names it. `{name}` is a value: an
+      implementation belongs in infrastructure/ behind the port.
+    declares: [function, variable]
+
+  # A port is consumed by its module's domain and use-cases, by the adapter
+  # that implements it and by the layer that wires the two.
+  port-consumers:
+    message: >-
+      A port is consumed by its module's use-cases, the infrastructure adapter that implements it
+      and the module's layer. An adapter in interface/ or another module reaching for one is
+      bypassing the use-case boundary: call a use-case instead.
+    allow:
+      - "@/modules/*/domain/**"
+      - "@/modules/*/use-cases/**"
+      - "@/modules/*/infrastructure/**"
+      - "@/modules/*/*.layer.ts"
+      - "**/*.test.ts"
+
+  # A domain test names its subject and the kernel.
+  unit-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A domain test names its subject, the kernel and effect's test runner. It runs no adapter.
+      external: [effect, effect-bun-test]
+      allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
+
+  # A use-case or adapter test runs its subject over the module's fakes, or
+  # the live adapter over a scratch home.
+  module-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A use-case or adapter test names its module, the kernel, the platform adapters and the
+        shared test harness (test/*.ts) — the scratch home, scripted askers and fixtures.
+      external: [effect, effect-bun-test, yaml]
+      allow: ["node:**", "@/kernel/**", "@/modules/{module}/**", "@/platform/**", "test/*.ts"]
+
+  test-exports-nothing:
+    message: >-
+      A test exports nothing. Nothing may import a test, so an export here has no consumer; a
+      fixture two tests share belongs in a harness beside them.
+    count: { max: 0 }
+
+tree:
+  "@/":
+    message: >-
+      src/ holds the daemon and CLI. New code goes under modules/ (a module's domain, use-cases
+      and infrastructure), kernel/ (domain primitives every module shares) or interface/ (the
+      inbound adapters). The flat files beside them are the legacy tier the migration empties.
+    imports:
+      unrestricted: true
+      message: >-
+        The legacy tier has no allowlist yet. Each migration moves files out of it into a tier
+        that has one.
+    surface:
+      - use: no-default-exports
+        # Bun imports the generated templates with `with { type: 'file' }`.
+        except: ["@/templates.ts"]
+      - use: no-star-exports
+    children:
+      # The legacy tier: flat files and the folders beside them, not yet
+      # sorted into modules. A migration deletes from here.
+      "*.ts": {}
+      "agents/": { layout: open }
+      "launchers/": { layout: open }
+      "platform/": { layout: open }
+      "tui/": { layout: open }
+
+      "kernel/":
+        message: >-
+          kernel/ holds the domain primitives every module shares: branded ids (*.id.ts), value
+          objects (*.value-object.ts) and the errors they raise (*.errors.ts). Anything one
+          module owns belongs in that module's domain/.
+        name: kebab-case
+        imports:
+          reset: true
+          message: >-
+            The kernel is the bottom of the domain: it names effect and itself, nothing else.
+          external: [effect]
+          allow: ["@/kernel/**"]
+        children:
+          "*.id.ts": {}
+          "*.value-object.ts": {}
+          "*.errors.ts": {}
+          "*.test.ts":
+            surface: [{ use: test-exports-nothing }]
+            imports:
+              message: >-
+                A kernel test names the kernel and effect's test runner.
+              external: [effect, effect-bun-test]
+              allow: []
+
+      "modules/{module}/":
+        message: >-
+          A module admits domain/ (its aggregates, their ops and errors, and its ports),
+          use-cases/ (what the adapters invoke), infrastructure/ (the adapters behind its ports)
+          and one <module>.layer.ts that builds the module's live Layer.
+        name: kebab-case
+        children:
+          "*.layer.ts":
+            name: { like: "{module}" }
+            imports:
+              reset: true
+              message: >-
+                A module's layer assembles its live adapters: it names its own infrastructure, the
+                kernel and the platform adapters they need.
+              external: [effect]
+              allow: ["@/modules/{module}/**", "@/kernel/**", "@/platform/**"]
+
+          "domain/":
+            message: >-
+              domain/ is a container: one folder per aggregate (named for it), and ports/ for the
+              repositories and clients the use-cases depend on. No files live directly in
+              domain/.
+            imports:
+              reset: true
+              message: >-
+                The domain names effect, the kernel and its own module's domain. No YAML, no SQL,
+                no process, no platform adapter, no other module: those are adapters, wired
+                against the domain's ports.
+              external: [effect]
+              allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
+            children:
+              "ports/":
+                message: >-
+                  domain/ports/ is a container: repositories/ (the module's own stores) and
+                  clients/ (third-party systems such as gh, git or launchd).
+                children:
+                  "repositories/":
+                    children:
+                      "*.repository.ts":
+                        message: >-
+                          A repository port needs its live adapter, its fake and the live
+                          adapter's test in ../../../infrastructure/repositories/.
+                        surface: [{ use: port-declares-no-value }]
+                        requires:
+                          - "../../../infrastructure/repositories/{base}-live.ts"
+                          - "../../../infrastructure/repositories/{base}-fake.ts"
+                          - "../../../infrastructure/repositories/{base}-live.test.ts"
+                        importedBy: { use: port-consumers }
+                  "clients/":
+                    children:
+                      "*.client.ts":
+                        message: >-
+                          A client port needs its live adapter, its fake and the live adapter's
+                          test in ../../../infrastructure/clients/.
+                        surface: [{ use: port-declares-no-value }]
+                        requires:
+                          - "../../../infrastructure/clients/{base}-live.ts"
+                          - "../../../infrastructure/clients/{base}-fake.ts"
+                          - "../../../infrastructure/clients/{base}-live.test.ts"
+                        importedBy: { use: port-consumers }
+
+              # One folder per aggregate. ports/ above is matched first, so this
+              # catch-all is only ever an aggregate.
+              "{aggregate}/":
+                message: >-
+                  An aggregate's folder admits its root (*.root.ts, a Schema.Class value), its
+                  operations (*.root-ops.ts, pure functions returning Result), its id
+                  (*.id.ts), its value objects (*.value-object.ts) and its errors
+                  (*.errors.ts). A free-standing helper is an op that hasn't found its root.
+                imports:
+                  message: >-
+                    An aggregate sees itself, the kernel and effect. It does not reach another
+                    aggregate or the ports: composing aggregates is a use-case's job.
+                  allow: ["@/modules/{module}/domain/{aggregate}/**"]
+                children:
+                  # The folder is the aggregate, so its root carries the folder's name.
+                  "*.root.ts":
+                    name: { like: "{aggregate}" }
+                  "*.root-ops.ts":
+                    name: { like: "{aggregate}" }
+                    message: >-
+                      An aggregate's operations own its invariants, so they carry the test
+                      obligation: add the sibling *.root-ops.test.ts.
+                    requires: ["{base}.test.ts"]
+                    importedBy:
+                      message: >-
+                        *.root-ops.ts is the aggregate's mutation surface. Only its module's
+                        domain, its use-cases, its repository fakes and tests may call it; an
+                        adapter reaching for an op is bypassing the use-case that should own the
+                        change.
+                      allow:
+                        - "@/modules/*/domain/**"
+                        - "@/modules/*/use-cases/**"
+                        - "**/*.repository-fake.ts"
+                        - "**/*.test.ts"
+                  "*.id.ts": {}
+                  "*.value-object.ts": {}
+                  "*.errors.ts": {}
+                  "*.test.ts": { use: unit-test-file }
+
+          "use-cases/":
+            message: >-
+              use-cases/ holds one <verb-noun>.use-case.ts per thing an adapter can ask the module
+              to do, the <verb-noun>.result.ts schema it answers with when that isn't inline, and
+              their tests. A shared helper here is an aggregate op or a port that hasn't been
+              written yet.
+            imports:
+              reset: true
+              message: >-
+                A use-case names effect, the kernel, its own module's domain (aggregates and
+                ports) and its sibling results. Never infrastructure (adapters are provided at a
+                composition root), never interface/ (it doesn't know who called it), never another
+                module's internals.
+              external: [effect]
+              allow:
+                - "@/kernel/**"
+                - "@/modules/{module}/domain/**"
+                - "@/modules/{module}/use-cases/*.result.ts"
+            children:
+              "*.use-case.ts":
+                message: >-
+                  A use-case owes a sibling *.use-case.test.ts, run over its ports' fakes.
+                requires: ["{base}.test.ts"]
+                surface: [{ use: one-use-case-export }]
+              "*.result.ts": {}
+              "*.test.ts": { use: module-test-file }
+
+          "infrastructure/":
+            message: >-
+              infrastructure/ is a container mirroring domain/ports/: repositories/ and clients/.
+              No files live directly in infrastructure/.
+            imports:
+              reset: true
+              message: >-
+                An adapter implements one of its module's ports. It names its module's domain,
+                the kernel, the platform adapters and its sibling adapters; each bucket below adds
+                the third-party packages it adapts.
+              external: [effect]
+              allow:
+                - "node:**"
+                - "@/kernel/**"
+                - "@/modules/{module}/domain/**"
+                - "@/modules/{module}/infrastructure/**"
+                - "@/platform/**"
+            children:
+              "repositories/":
+                imports:
+                  message: >-
+                    A repository adapts the module's aggregates to their storage: YAML for
+                    machine config, JSON for runtime state, SQLite for runs.
+                  external: [yaml, "@effect/sql-sqlite-bun"]
+                  allow: []
+                children:
+                  "*.repository-live.ts": {}
+                  "*.repository-fake.ts": {}
+                  "*.mapper.ts": {}
+                  "*.test.ts": { use: module-test-file }
+              "clients/":
+                imports:
+                  message: >-
+                    A client adapts a third-party system (gh, git, launchd, an agent CLI) to the
+                    module's client port.
+                  allow: []
+                children:
+                  "*.client-live.ts": {}
+                  "*.client-fake.ts": {}
+                  "*.test.ts": { use: module-test-file }
+      "*.test.ts":
+        surface: [{ use: test-exports-nothing }]
+
+  "~/sdk/src/":
+    message: >-
+      The published @chernabog/sdk: the services and blocks a repo's flows are written from.
+    layout: open
+    imports:
+      reset: true
+      message: >-
+        The SDK is published and runs inside a person's flows, so it names effect and the
+        platform, and nothing of the daemon's.
+      external: [effect]
+      allow: ["node:**", "~/sdk/src/**"]
+    surface:
+      - use: no-default-exports
+
+  "test/":
+    message: >-
+      test/ holds the unit and engine tests, the harnesses they share (fakes, scripted askers,
+      fixtures), the acceptance tier that drives the built CLI, and its fake binaries.
+    layout: open
+    imports:
+      reset: true
+      message: >-
+        A test names the code under test, its harnesses, the SDK, effect and the runtime it
+        drives — nothing else.
+      external:
+        - effect
+        - effect-bun-test
+        - "@effect/platform-bun"
+        - "@effect/sql-sqlite-bun"
+        - yaml
+      allow: ["node:**", "@/**", "~/sdk/**", "test/**", "scripts/**", "templates/**"]
+    children:
+      "acceptance/": { layout: open }
+      "fakebin/": { layout: open }
+      "*.test.ts":
+        surface: [{ use: test-exports-nothing }]
+
+  "scripts/":
+    message: >-
+      scripts/ holds the generators and release helpers run with `bun scripts/<name>.ts`.
+    layout: open
+    imports:
+      reset: true
+      message: >-
+        A script generates or packages the daemon's sources; it names effect, node and the files
+        it reads.
+      external: [effect, "@effect/platform-bun"]
+      allow: ["node:**", "scripts/**", "~/sdk/**"]
+    surface:
+      - use: no-default-exports
+      - use: no-star-exports
+
+  "templates/":
+    message: >-
+      templates/ holds the scaffold `chernabog init` writes and the recipes a person bakes into
+      their repo. They are written from the published SDK, as a person's own flows are.
+    layout: open
+    imports:
+      reset: true
+      message: >-
+        A template is a person's flow-to-be: it names the published SDK and effect, and nothing of
+        the daemon's.
+      external: [effect]
+      allow: ["~/sdk/**"]
+    children:
+      "recipes/": { layout: open }
