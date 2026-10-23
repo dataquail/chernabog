@@ -21,7 +21,6 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "./config.ts";
 import {
   deliverSignals,
   type FlowHandle,
@@ -31,38 +30,29 @@ import {
   startRun,
   StateLive,
   unreportedItem,
-} from "./engine.ts";
-import {
-  DaemonStatus,
-  type PersonaStatus,
-  Refusal,
-  Reloaded,
-  type RepoStatus,
-  RunReply,
-  RunRequest,
-  TickResult,
-} from "./interface/daemon/daemon.protocol.ts";
-import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
-import { RepoSlug } from "./kernel/repo-slug.id.ts";
-import { RunId, runLabel } from "./kernel/run-id.id.ts";
-import { describeLauncher } from "./launchers.ts";
-import { loadFlows } from "./loader.ts";
-import { listPausedReposUseCase } from "./modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+} from "../../engine.ts";
+import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
+import { RepoSlug } from "../../kernel/repo-slug.id.ts";
+import { RunId, runLabel } from "../../kernel/run-id.id.ts";
+import { describeLauncher } from "../../launchers.ts";
+import { loadFlows } from "../../loader.ts";
+import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
 import {
   describeElsewhere,
   routeItems,
-} from "./modules/runs/domain/routing/routing.value-object.ts";
-import { nextTick } from "./modules/runs/domain/schedule/schedule.value-object.ts";
-import { decideTick, freeSlots } from "./modules/runs/domain/schedule/tick.value-object.ts";
-import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
-import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
-import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
-import { listRecentRunsUseCase } from "./modules/runs/use-cases/list-recent-runs.use-case.ts";
-import { listRecentSkipsUseCase } from "./modules/runs/use-cases/list-recent-skips.use-case.ts";
-import { recordSkipUseCase } from "./modules/runs/use-cases/record-skip.use-case.ts";
-import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
-import { viewerLogin } from "./platform/github-api.ts";
-import { acquireLock } from "./platform/lock.ts";
+} from "../../modules/runs/domain/routing/routing.value-object.ts";
+import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
+import { decideTick, freeSlots } from "../../modules/runs/domain/schedule/tick.value-object.ts";
+import { findActiveRunUseCase } from "../../modules/runs/use-cases/find-active-run.use-case.ts";
+import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
+import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
+import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
+import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
+import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
+import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { viewerLogin } from "../../platform/github-api.ts";
+import { Home, homePaths } from "../../platform/home.ts";
+import { acquireLock } from "../../platform/lock.ts";
 import {
   type EffectiveRepo,
   EnrolledRepo,
@@ -76,8 +66,8 @@ import {
   type Routing,
   routingOf,
   scheduleFor,
-} from "./repo-config.ts";
-import { runLogWriting } from "./runlog.ts";
+} from "../../repo-config.ts";
+import { runLogWriting } from "../../runlog.ts";
 import {
   adoptRuns,
   buildPersonaContexts,
@@ -85,8 +75,18 @@ import {
   type RepoContext,
   servicesFrom,
   withRepo,
-} from "./runner.ts";
-import { configTree, snapshotConfig } from "./snapshot.ts";
+} from "../../runner.ts";
+import { configTree, snapshotConfig } from "../../snapshot.ts";
+import {
+  DaemonStatus,
+  type PersonaStatus,
+  Refusal,
+  Reloaded,
+  type RepoStatus,
+  RunReply,
+  RunRequest,
+  TickResult,
+} from "./daemon.protocol.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;

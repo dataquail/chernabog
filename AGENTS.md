@@ -212,8 +212,13 @@ transitive reach), the coverage floors and the baseline.
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
   `github-auth.ts`, `self.ts`, `version.ts` and the engine's `lock.ts`. It
   names effect, node, the SDK, the kernel and itself, nothing else.
-- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`,
-  `tui/`) is one `unrestricted` node. A migration moves files out of it and
+- **The composition roots are adapters too**: the CLI's
+  `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
+  and the live view in `src/interface/tui/`. Each has its own allowlist in
+  `architecture.yaml`, which names, file by file, the legacy runtime it still
+  drives; moving a file into a module takes it off those lists.
+- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`) is one
+  `unrestricted` node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
   ceiling when the numbers move (`bun run architecture:coverage`,
   `architecture:conformance`), never the other way to make a run green.

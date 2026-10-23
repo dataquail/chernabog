@@ -10,7 +10,7 @@
   "scripts": {
     "test": "bun test",
     "check": "tsc --noEmit",
-    "build": "bun build --compile src/main.ts --outfile dist/chernabog",
+    "build": "bun build --compile src/interface/cli/main.ts --outfile dist/chernabog",
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
     "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",
     "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",

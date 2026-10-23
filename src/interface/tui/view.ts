@@ -6,14 +6,10 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import type {
-  DaemonStatus,
-  PersonaStatus,
-  RepoStatus,
-} from "../interface/daemon/daemon.protocol.ts";
-import { samePersona } from "../kernel/persona.value-object.ts";
-import { ActiveRun } from "../modules/runs/use-cases/run.result.ts";
-import { FLOW_TURNED_OFF } from "../repo-config.ts";
+import { samePersona } from "../../kernel/persona.value-object.ts";
+import { FLOW_TURNED_OFF } from "../../modules/enrollment/use-cases/enrolled-repos.result.ts";
+import { ActiveRun } from "../../modules/runs/use-cases/run.result.ts";
+import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
 
 export type Style =
   "plain" | "bold" | "dim" | "green" | "red" | "yellow" | "cyan" | "magenta" | "selected";

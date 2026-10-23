@@ -16,57 +16,52 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stdio from "effect/Stdio";
 
-import { attachCommand, runSessions } from "./agents.ts";
-import { stopHook } from "./agents/stop-hook.ts";
-import { Home } from "./config.ts";
-import { RELOAD_EXIT_CODE, runDaemon } from "./daemon.ts";
-import { doctor, formatCheck } from "./doctor.ts";
-import { runLogFile } from "./engine.ts";
-import { Asker } from "./interface/cli/asker.prompt.ts";
-import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
-import { enrollCommand } from "./interface/cli/enrollment/enroll.command.ts";
-import { pauseCommand } from "./interface/cli/enrollment/pause.command.ts";
-import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
-import { unenrollCommand } from "./interface/cli/enrollment/unenroll.command.ts";
-import {
-  installCommand,
-  stopCommand,
-  uninstallCommand,
-} from "./interface/cli/machine/service.command.ts";
-import { setupCommand } from "./interface/cli/machine/setup.command.ts";
-import { initCommand } from "./interface/cli/recipes/init.command.ts";
-import { recipesCommand } from "./interface/cli/recipes/recipes.command.ts";
-import { optionalRepo, repoFlag } from "./interface/cli/repo.arguments.ts";
-import { logsCommand } from "./interface/cli/runs/logs.command.ts";
-import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
-import { trustCommand } from "./interface/cli/trust/trust.command.ts";
-import { daemonRun, daemonTick } from "./interface/daemon/daemon.client.ts";
-import type { TickResult } from "./interface/daemon/daemon.protocol.ts";
-import { IMPLICIT } from "./kernel/persona.value-object.ts";
-import { RunId } from "./kernel/run-id.id.ts";
-import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
-import { runLaunch } from "./launchers/shim.ts";
-import { loadFlows } from "./loader.ts";
-import { migrateMachineConfig } from "./migrate.ts";
-import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
-import { MachineLayer } from "./modules/machine/machine.layer.ts";
-import { startServiceUseCase } from "./modules/machine/use-cases/start-service.use-case.ts";
-import { RecipesLayer } from "./modules/recipes/recipes.layer.ts";
-import { RunLogsLayer } from "./modules/runs/runs.layer.ts";
-import { resolveRunIdUseCase } from "./modules/runs/use-cases/resolve-run-id.use-case.ts";
-import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
-import { TrustLayer } from "./modules/trust/trust.layer.ts";
-import { openPr } from "./open-pr.ts";
-import { HostEnvironment } from "./platform/environment.ts";
-import { Exec } from "./platform/exec.ts";
-import { GitHubApi } from "./platform/github-api.ts";
-import { GitHubTokens } from "./platform/github-auth.ts";
-import { VERSION } from "./platform/version.ts";
-import { findEnrolled, loadMachineConfig, loadRepo } from "./repo-config.ts";
-import { repoConfigDir, runInForeground } from "./runner.ts";
-import { openSession, startIssue } from "./start.ts";
-import { runStepChild, StepServicesLive } from "./steps.ts";
-import { runTui } from "./tui/app.ts";
+import { attachCommand, runSessions } from "../../agents.ts";
+import { stopHook } from "../../agents/stop-hook.ts";
+import { doctor, formatCheck } from "../../doctor.ts";
+import { IMPLICIT } from "../../kernel/persona.value-object.ts";
+import { RunId } from "../../kernel/run-id.id.ts";
+import { desiredLabels, syncLabels, withFlowLabels } from "../../labels.ts";
+import { runLaunch } from "../../launchers/shim.ts";
+import { loadFlows } from "../../loader.ts";
+import { migrateMachineConfig } from "../../migrate.ts";
+import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
+import { MachineLayer } from "../../modules/machine/machine.layer.ts";
+import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
+import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
+import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
+import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
+import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { TrustLayer } from "../../modules/trust/trust.layer.ts";
+import { openPr } from "../../open-pr.ts";
+import { HostEnvironment } from "../../platform/environment.ts";
+import { Exec } from "../../platform/exec.ts";
+import { GitHubApi } from "../../platform/github-api.ts";
+import { GitHubTokens } from "../../platform/github-auth.ts";
+import { Home, homePaths } from "../../platform/home.ts";
+import { VERSION } from "../../platform/version.ts";
+import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
+import { repoConfigDir, runInForeground } from "../../runner.ts";
+import { openSession, startIssue } from "../../start.ts";
+import { runStepChild, StepServicesLive } from "../../steps.ts";
+import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
+import type { TickResult } from "../daemon/daemon.protocol.ts";
+import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
+import { runTui } from "../tui/app.ts";
+import { Asker } from "./asker.prompt.ts";
+import { showStatus, statusCommand } from "./daemon/status.command.ts";
+import { enrollCommand } from "./enrollment/enroll.command.ts";
+import { pauseCommand } from "./enrollment/pause.command.ts";
+import { resumeCommand } from "./enrollment/resume.command.ts";
+import { unenrollCommand } from "./enrollment/unenroll.command.ts";
+import { installCommand, stopCommand, uninstallCommand } from "./machine/service.command.ts";
+import { setupCommand } from "./machine/setup.command.ts";
+import { initCommand } from "./recipes/init.command.ts";
+import { recipesCommand } from "./recipes/recipes.command.ts";
+import { optionalRepo, repoFlag } from "./repo.arguments.ts";
+import { logsCommand } from "./runs/logs.command.ts";
+import { followRunLog } from "./runs/run-log.output.ts";
+import { trustCommand } from "./trust/trust.command.ts";
 
 const printLines = (lines: Iterable<string>) =>
   Effect.forEach(lines, (line) => Console.log(line), { discard: true });
@@ -184,7 +179,9 @@ const followStarted = (result: TickResult, detach: boolean) =>
       );
     }
 
-    yield* Console.log(`started ${runId.value}, log: ${yield* runLogFile(runId.value)}`);
+    yield* Console.log(
+      `started ${runId.value}, log: ${homePaths((yield* Home).root).runLog(runId.value)}`,
+    );
 
     if (detach) {
       return;
