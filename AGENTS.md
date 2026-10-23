@@ -5,8 +5,10 @@ requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect
 
 ## Before you finish
 
-`bun run check`, `bun run lint`, `bun run lint:architecture` and `bun test`
-must all pass. Run the full suite with no edits in flight; one that overlaps an
+`bun run format:check`, `bun run check`, `bun run lint`,
+`bun run lint:architecture` and `bun test` must all pass. `bun run format`
+applies Prettier; oxlint's `curly` rule requires a braced block for every if,
+else and loop body, which Prettier then breaks onto lines of its own. Run the full suite with no edits in flight; one that overlaps an
 edit fails spuriously.
 
 ## Hard rules
@@ -25,7 +27,7 @@ edit fails spuriously.
 One daemon acts as several GitHub logins. Everything that touches GitHub must
 act as the right one.
 
-- `Persona = Option<string>` (`src/persona.ts`). `none` is the *implicit*
+- `Persona = Option<string>` (`src/persona.ts`). `none` is the _implicit_
   persona: whoever `GH_TOKEN`, `GITHUB_TOKEN` or gh's active account is. Machine
   config without `github:` behaves exactly as before personas.
 - **Tokens only via `GitHubTokens`** (`src/github-auth.ts`), which runs
@@ -204,7 +206,7 @@ disabling the rule.
 ## The redesign in flight
 
 Issues build on each other; implement them in order, each as a `gh stack`
-layer on the one below, and read the issue *and* the PR beneath yours first.
+layer on the one below, and read the issue _and_ the PR beneath yours first.
 
 1. #50 per-persona settings in machine config, `local.yaml` retired
 2. #51 install and enrollment wizards

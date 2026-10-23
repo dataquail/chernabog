@@ -5,18 +5,22 @@
 // set, so a lookup that let it through would act as the wrong account.
 // `gh auth status` lists those logins. Anything else goes to the real gh
 // further down PATH.
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
+import { spawnSync } from "node:child_process";
+import { appendFileSync, existsSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 
 const args = process.argv.slice(2);
 const here = dirname(import.meta.path);
 
-if (args[0] === 'auth' && args[1] === 'token' && args.includes('--user')) {
-  const login = args[args.indexOf('--user') + 1] ?? '';
-  const known = (process.env.FAKE_GH_USERS ?? '').split(',').filter((user) => user.length > 0);
+if (args[0] === "auth" && args[1] === "token" && args.includes("--user")) {
+  const login = args[args.indexOf("--user") + 1] ?? "";
+  const known = (process.env.FAKE_GH_USERS ?? "").split(",").filter((user) => user.length > 0);
 
-  if (process.env.FAKE_GH_LOG) appendFileSync(process.env.FAKE_GH_LOG, `${args.join(' ')}${process.env.GH_TOKEN ? ' with GH_TOKEN set' : ''}\n`);
+  if (process.env.FAKE_GH_LOG)
+    appendFileSync(
+      process.env.FAKE_GH_LOG,
+      `${args.join(" ")}${process.env.GH_TOKEN ? " with GH_TOKEN set" : ""}\n`,
+    );
 
   if (process.env.GH_TOKEN) {
     console.log(process.env.GH_TOKEN);
@@ -33,22 +37,27 @@ if (args[0] === 'auth' && args[1] === 'token' && args.includes('--user')) {
 }
 
 // `gh auth status`: logged in to github.com as each of $FAKE_GH_USERS.
-if (args[0] === 'auth' && args[1] === 'status') {
-  const known = (process.env.FAKE_GH_USERS ?? '').split(',').filter((user) => user.length > 0);
-  console.log(['github.com', ...known.map((login) => `  ✓ Logged in to github.com account ${login} (keyring)`)].join('\n'));
+if (args[0] === "auth" && args[1] === "status") {
+  const known = (process.env.FAKE_GH_USERS ?? "").split(",").filter((user) => user.length > 0);
+  console.log(
+    [
+      "github.com",
+      ...known.map((login) => `  ✓ Logged in to github.com account ${login} (keyring)`),
+    ].join("\n"),
+  );
   process.exit(0);
 }
 
-const real = (process.env.PATH ?? '')
+const real = (process.env.PATH ?? "")
   .split(delimiter)
   .filter((dir) => dir !== here)
-  .map((dir) => join(dir, 'gh'))
+  .map((dir) => join(dir, "gh"))
   .find((path) => existsSync(path));
 
 if (!real) {
-  console.error('gh: command not found');
+  console.error("gh: command not found");
   process.exit(127);
 }
 
-const result = spawnSync(real, args, { stdio: 'inherit' });
+const result = spawnSync(real, args, { stdio: "inherit" });
 process.exit(result.status ?? 1);

@@ -40,7 +40,7 @@ adopted:
    JSON (`--json`) or MCP tool results.
 5. **Prompts belong to adapters.** A command that asks questions part way
    through (`setup`, `init`, `enroll`, `recipes add`) becomes two use-cases: a
-   *plan* that returns the choices and an *apply* that takes the answers. The
+   _plan_ that returns the choices and an _apply_ that takes the answers. The
    CLI prompts between them.
 6. **Streaming output** (`logs --follow`, step-by-step progress) is a `Stream`
    or a result plus events. It is never `Console.log` inside a use-case.

@@ -2,42 +2,86 @@
 // records state in SQLite, and serves the CLI and TUI over a local socket. It
 // is the only process that runs the workflow engine.
 
-import { describeError, type FlowFailure, type WorkItem } from '@chernabog/sdk';
-import * as BunHttpServer from '@effect/platform-bun/BunHttpServer';
-import * as Arr from 'effect/Array';
-import * as DateTime from 'effect/DateTime';
-import * as Deferred from 'effect/Deferred';
-import * as Effect from 'effect/Effect';
-import * as Equivalence from 'effect/Equivalence';
-import * as FileSystem from 'effect/FileSystem';
-import * as HttpRouter from 'effect/http/HttpRouter';
-import * as HttpServerRequest from 'effect/http/HttpServerRequest';
-import * as HttpServerResponse from 'effect/http/HttpServerResponse';
-import * as Layer from 'effect/Layer';
-import * as Option from 'effect/Option';
-import * as Predicate from 'effect/Predicate';
-import * as Record from 'effect/Record';
-import * as Ref from 'effect/Ref';
-import * as Result from 'effect/Result';
-import * as Schema from 'effect/Schema';
+import { describeError, type FlowFailure, type WorkItem } from "@chernabog/sdk";
+import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Equivalence from "effect/Equivalence";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Record from "effect/Record";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from './config.ts';
-import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive, unreportedItem } from './engine.ts';
-import { viewerLogin } from './GitHubApi.ts';
-import { RepoSlug } from './kernel/repo-slug.id.ts';
-import { describeLauncher } from './launchers.ts';
-import { loadFlows } from './loader.ts';
-import { acquireLock } from './lock.ts';
-import { listPausedReposUseCase } from './modules/enrollment/use-cases/list-paused-repos.use-case.ts';
-import { findTrustedTreeUseCase } from './modules/trust/use-cases/find-trusted-tree.use-case.ts';
-import { type Persona, samePersona } from './persona.ts';
-import { DaemonStatus, type PersonaStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
-import { type EffectiveRepo, EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, type PersonaRepo, repoNameOf, type Routing, routingOf } from './repo-config.ts';
-import { runLogWriting } from './runlog.ts';
-import { adoptRuns, buildPersonaContexts, type PersonaContext, type RepoContext, servicesFrom, withRepo } from './runner.ts';
-import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
-import { configTree, snapshotConfig } from './snapshot.ts';
-import { everyRun, runLabel, State } from './state.ts';
+import { Home, homePaths } from "./config.ts";
+import {
+  deliverSignals,
+  type FlowHandle,
+  flowHandle,
+  flowLayer,
+  pollRun,
+  startRun,
+  StateLive,
+  unreportedItem,
+} from "./engine.ts";
+import { viewerLogin } from "./GitHubApi.ts";
+import { RepoSlug } from "./kernel/repo-slug.id.ts";
+import { describeLauncher } from "./launchers.ts";
+import { loadFlows } from "./loader.ts";
+import { acquireLock } from "./lock.ts";
+import { listPausedReposUseCase } from "./modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { type Persona, samePersona } from "./persona.ts";
+import {
+  DaemonStatus,
+  type PersonaStatus,
+  Refusal,
+  Reloaded,
+  type RepoStatus,
+  RunReply,
+  RunRequest,
+  TickResult,
+} from "./protocol.ts";
+import {
+  type EffectiveRepo,
+  EnrolledRepo,
+  flowOff,
+  loadMachineConfig,
+  loadRepo,
+  type MachineConfig,
+  needsLogin,
+  type PersonaRepo,
+  repoNameOf,
+  type Routing,
+  routingOf,
+} from "./repo-config.ts";
+import { runLogWriting } from "./runlog.ts";
+import {
+  adoptRuns,
+  buildPersonaContexts,
+  type PersonaContext,
+  type RepoContext,
+  servicesFrom,
+  withRepo,
+} from "./runner.ts";
+import {
+  decideTick,
+  describeElsewhere,
+  freeSlots,
+  nextTick,
+  routeItems,
+  scheduleFor,
+} from "./schedule.ts";
+import { configTree, snapshotConfig } from "./snapshot.ts";
+import { everyRun, runLabel, State } from "./state.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -61,7 +105,7 @@ type FlowSchedule = {
 export type RepoState = {
   readonly enrolled: EnrolledRepo;
   readonly name: string;
-  readonly status: RepoStatus['status'];
+  readonly status: RepoStatus["status"];
   readonly message: Option.Option<string>;
   readonly tree: Option.Option<string>;
   readonly repo: Option.Option<EffectiveRepo>;
@@ -69,28 +113,50 @@ export type RepoState = {
   latestTree: Option.Option<string>;
 };
 
-const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? 'main';
+const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? "main";
 
-const checkoutExists = (enrolled: EnrolledRepo) => FileSystem.FileSystem.use((fs) => fs.exists(enrolled.path)).pipe(Effect.orElseSucceed(() => false));
+const checkoutExists = (enrolled: EnrolledRepo) =>
+  FileSystem.FileSystem.use((fs) => fs.exists(enrolled.path)).pipe(
+    Effect.orElseSucceed(() => false),
+  );
 
 // Snapshots a repo's .chernabog/ from its base branch and loads its flows,
 // unless the snapshot is not the tree that was trusted. A repo whose checkout
 // is gone is paused, its settings kept, until the checkout is back or
 // chernabog init points it at the checkout's new place.
-export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, index: number, now: DateTime.Utc) =>
+export const loadRepoState = (
+  machine: MachineConfig,
+  enrolled: EnrolledRepo,
+  index: number,
+  now: DateTime.Utc,
+) =>
   Effect.gen(function* () {
     const name = repoNameOf(enrolled);
     const unloaded = { enrolled, name, repo: Option.none(), flows: [] };
 
-    const failed = (message: string, tree: Option.Option<string>): RepoState => ({ ...unloaded, status: 'error', message: Option.some(message), tree, latestTree: tree });
+    const failed = (message: string, tree: Option.Option<string>): RepoState => ({
+      ...unloaded,
+      status: "error",
+      message: Option.some(message),
+      tree,
+      latestTree: tree,
+    });
 
     if (!(yield* checkoutExists(enrolled))) {
-      return { ...unloaded, status: 'missing', message: Option.some(`checkout missing at ${enrolled.path}`), tree: Option.none(), latestTree: Option.none() } satisfies RepoState;
+      return {
+        ...unloaded,
+        status: "missing",
+        message: Option.some(`checkout missing at ${enrolled.path}`),
+        tree: Option.none(),
+        latestTree: Option.none(),
+      } satisfies RepoState;
     }
 
     const snapshot = yield* Effect.result(snapshotConfig(enrolled.path, baseBranchOf(enrolled)));
 
-    if (Result.isFailure(snapshot)) return failed(describeError(snapshot.failure), Option.none());
+    if (Result.isFailure(snapshot)) {
+      return failed(describeError(snapshot.failure), Option.none());
+    }
 
     const { configDir, tree } = snapshot.success;
     const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(enrolled.repo))).tree;
@@ -98,22 +164,33 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
     if (!Option.contains(trusted, tree)) {
       const message = Option.match(trusted, {
         onNone: () => `not trusted yet; run chernabog trust ${name}`,
-        onSome: () => `.chernabog/ changed on the base branch; review it with chernabog trust ${name}`,
+        onSome: () =>
+          `.chernabog/ changed on the base branch; review it with chernabog trust ${name}`,
       });
 
-      return { ...unloaded, status: 'untrusted', message: Option.some(message), tree: Option.some(tree), latestTree: Option.some(tree) } satisfies RepoState;
+      return {
+        ...unloaded,
+        status: "untrusted",
+        message: Option.some(message),
+        tree: Option.some(tree),
+        latestTree: Option.some(tree),
+      } satisfies RepoState;
     }
 
-    const loaded = yield* Effect.result(Effect.all({ repo: loadRepo(machine, enrolled, configDir), flows: loadFlows(configDir) }));
+    const loaded = yield* Effect.result(
+      Effect.all({ repo: loadRepo(machine, enrolled, configDir), flows: loadFlows(configDir) }),
+    );
 
-    if (Result.isFailure(loaded)) return failed(describeError(loaded.failure), Option.some(tree));
+    if (Result.isFailure(loaded)) {
+      return failed(describeError(loaded.failure), Option.some(tree));
+    }
 
     const { flows, repo } = loaded.success;
 
     return {
       enrolled,
       name,
-      status: 'ready',
+      status: "ready",
       message: Option.none(),
       tree: Option.some(tree),
       repo: Option.some(repo),
@@ -122,9 +199,30 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
 
         return repo.personas.map((own) => {
           const expression = scheduleFor(own, flowName, flow, index, machine.repos.length);
-          const teamExpression = scheduleFor({ ...own, flows: own.teamFlows, schedule: { own: Option.none(), repo: own.schedule.repo } }, flowName, flow, index, machine.repos.length);
 
-          return { handle, persona: own.persona, own, expression, teamExpression, next: nextTick(expression, now), lastTick: Option.none(), queued: [], elsewhere: [] };
+          const teamExpression = scheduleFor(
+            {
+              ...own,
+              flows: own.teamFlows,
+              schedule: { own: Option.none(), repo: own.schedule.repo },
+            },
+            flowName,
+            flow,
+            index,
+            machine.repos.length,
+          );
+
+          return {
+            handle,
+            persona: own.persona,
+            own,
+            expression,
+            teamExpression,
+            next: nextTick(expression, now),
+            lastTick: Option.none(),
+            queued: [],
+            elsewhere: [],
+          };
         });
       }),
       latestTree: Option.some(tree),
@@ -133,7 +231,11 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
 
 export type TickOptions = { readonly gates: boolean; readonly item: Option.Option<string> };
 
-const describeQueued = (item: WorkItem) => Option.match(Option.fromUndefinedOr(item.title), { onNone: () => item.key, onSome: (title) => `${item.key} ${title}` });
+const describeQueued = (item: WorkItem) =>
+  Option.match(Option.fromUndefinedOr(item.title), {
+    onNone: () => item.key,
+    onSome: (title) => `${item.key} ${title}`,
+  });
 
 // The items a persona's run may start for: not only waking one, and without its run already.
 const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
@@ -142,7 +244,14 @@ const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<Wo
     const waiting: Array<WorkItem> = [];
 
     for (const item of items) {
-      if (item.wakeOnly !== true && Option.isNone(yield* state.activeRunFor(handle.repo.settings.name, persona, handle.name, item.key))) waiting.push(item);
+      if (
+        item.wakeOnly !== true &&
+        Option.isNone(
+          yield* state.activeRunFor(handle.repo.settings.name, persona, handle.name, item.key),
+        )
+      ) {
+        waiting.push(item);
+      }
     }
 
     return waiting;
@@ -152,16 +261,28 @@ type Routed = ReturnType<typeof routeItems>;
 
 // What a tick may start: the items this machine may start, or the one a
 // person named, whoever it is assigned to.
-const candidatesOf = (waiting: ReadonlyArray<WorkItem>, routed: Routed, named: Option.Option<string>) =>
-  Option.match(named, { onNone: () => routed.mine, onSome: (key) => waiting.filter((item) => item.key === key) });
+const candidatesOf = (
+  waiting: ReadonlyArray<WorkItem>,
+  routed: Routed,
+  named: Option.Option<string>,
+) =>
+  Option.match(named, {
+    onNone: () => routed.mine,
+    onSome: (key) => waiting.filter((item) => item.key === key),
+  });
 
 // Why a tick starts nothing although its trigger found work: all of it is for others.
 const onlyElsewhere = (routed: Routed, routing: Routing, named: Option.Option<string>) =>
-  Option.liftPredicate(`only work for others: ${routed.elsewhere.map(describeElsewhere(routing)).join(', ')}`, () => Option.isNone(named) && routed.mine.length === 0 && routed.elsewhere.length > 0);
+  Option.liftPredicate(
+    `only work for others: ${routed.elsewhere.map(describeElsewhere(routing)).join(", ")}`,
+    () => Option.isNone(named) && routed.mine.length === 0 && routed.elsewhere.length > 0,
+  );
 
 // The gate's Skip is its own reason; anything else is the gate failing.
 const gateReason = (failure: FlowFailure) => {
-  if (Predicate.isTagged(failure, 'Skip') && Predicate.hasProperty(failure, 'reason')) return String(failure.reason);
+  if (Predicate.isTagged(failure, "Skip") && Predicate.hasProperty(failure, "reason")) {
+    return String(failure.reason);
+  }
 
   return `gate failed: ${describeError(failure)}`;
 };
@@ -178,28 +299,40 @@ const sameEnrolled = Schema.toEquivalence(Schema.Array(EnrolledRepo));
 const sameLogins = Equivalence.Array(Equivalence.String);
 
 // How a schedule names itself in the log: repo/flow, and @login for a persona.
-const scheduleName = (repo: string, schedule: FlowSchedule) => `${repo}/${schedule.handle.name}${Option.match(schedule.persona, { onNone: () => '', onSome: (login) => `@${login}` })}`;
+const scheduleName = (repo: string, schedule: FlowSchedule) =>
+  `${repo}/${schedule.handle.name}${Option.match(schedule.persona, { onNone: () => "", onSome: (login) => `@${login}` })}`;
 
 // The roles a persona can give an account: the team's flows' roles, and its own picks.
-const rolesOf = (own: PersonaRepo) => Arr.dedupe([...Object.values(own.teamFlows).flatMap((flow) => Object.keys(flow.agents ?? {})), ...Object.keys(own.own.roles ?? {})]);
+const rolesOf = (own: PersonaRepo) =>
+  Arr.dedupe([
+    ...Object.values(own.teamFlows).flatMap((flow) => Object.keys(flow.agents ?? {})),
+    ...Object.keys(own.own.roles ?? {}),
+  ]);
 
 const personaStatus = (own: PersonaRepo): PersonaStatus => ({
   ...Option.match(own.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }),
   account: own.settings.account.name,
   ownAccount: Option.fromUndefinedOr(own.own.account),
-  roles: rolesOf(own).map((role) => ({ role, account: Option.fromUndefinedOr(own.own.roles?.[role]) })),
+  roles: rolesOf(own).map((role) => ({
+    role,
+    account: Option.fromUndefinedOr(own.own.roles?.[role]),
+  })),
 });
 
 const checkoutChange = (missing: boolean) => {
-  if (missing) return 'missing';
+  if (missing) {
+    return "missing";
+  }
 
-  return 'back';
+  return "back";
 };
 
 const changedAction = (trusted: boolean) => {
-  if (trusted) return 'trusted, restarting on it when idle';
+  if (trusted) {
+    return "trusted, restarting on it when idle";
+  }
 
-  return 'not trusted, starting no new runs until chernabog trust';
+  return "not trusted, starting no new runs until chernabog trust";
 };
 
 const SOONEST_MS = 200;
@@ -210,16 +343,25 @@ const PathParams = Schema.Struct({ id: Schema.String });
 export const runDaemon = Effect.gen(function* () {
   const paths = homePaths((yield* Home).root);
   const fs = yield* FileSystem.FileSystem;
-  yield* acquireLock(paths.engineLock, 'daemon');
+  yield* acquireLock(paths.engineLock, "daemon");
   const daemonLog = yield* runLogWriting(paths.daemonLog);
   const log = daemonLog.log;
   const machine = yield* loadMachineConfig;
   const startedAt = yield* DateTime.now;
-  const repos = yield* Effect.forEach(machine.repos, (enrolled, index) => loadRepoState(machine, enrolled, index, startedAt));
+
+  const repos = yield* Effect.forEach(machine.repos, (enrolled, index) =>
+    loadRepoState(machine, enrolled, index, startedAt),
+  );
 
   for (const repo of repos) {
-    const message = Option.match(repo.message, { onNone: () => '', onSome: (said) => `: ${said}` });
-    const flows = Option.match(Option.liftPredicate(repo.flows, Arr.isReadonlyArrayNonEmpty), { onNone: () => '', onSome: (found) => ` (flows: ${Arr.dedupe(found.map((flow) => flow.handle.name)).join(', ')})` });
+    const message = Option.match(repo.message, { onNone: () => "", onSome: (said) => `: ${said}` });
+
+    const flows = Option.match(Option.liftPredicate(repo.flows, Arr.isReadonlyArrayNonEmpty), {
+      onNone: () => "",
+      onSome: (found) =>
+        ` (flows: ${Arr.dedupe(found.map((flow) => flow.handle.name)).join(", ")})`,
+    });
+
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
@@ -230,57 +372,104 @@ export const runDaemon = Effect.gen(function* () {
   if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
     const found = yield* Effect.result(viewerLogin);
     login = Result.getSuccess(found);
-    yield* log(Result.match(found, { onSuccess: (self) => `this machine is ${self} on GitHub`, onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}` }));
+    yield* log(
+      Result.match(found, {
+        onSuccess: (self) => `this machine is ${self} on GitHub`,
+        onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}`,
+      }),
+    );
   }
 
-  if (machine.github.length > 0) yield* log(`acting on GitHub as ${machine.github.join(', ')}`);
+  if (machine.github.length > 0) {
+    yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
+  }
 
   const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
 
   // Several personas on one flow each see all its work unless @me tells them apart.
   for (const repo of repos) {
     for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const running = repo.flows.filter((schedule) => schedule.handle.name === flow && schedule.handle.flow.ownWork !== true && Option.isNone(flowOff(schedule.own, flow)));
-      const unrouted = running.some((schedule) => Option.isNone(routingOf(schedule.own, flow).assignee) && Option.isNone(routingOf(schedule.own, flow).reviewRequested));
+      const running = repo.flows.filter(
+        (schedule) =>
+          schedule.handle.name === flow &&
+          schedule.handle.flow.ownWork !== true &&
+          Option.isNone(flowOff(schedule.own, flow)),
+      );
+
+      const unrouted = running.some(
+        (schedule) =>
+          Option.isNone(routingOf(schedule.own, flow).assignee) &&
+          Option.isNone(routingOf(schedule.own, flow).reviewRequested),
+      );
 
       if (running.length > 1 && unrouted) {
-        yield* log(`${repo.name}/${flow}: runs as ${running.flatMap((schedule) => Option.toArray(schedule.persona)).join(', ')} with no assignee or reviewRequested, so each takes any of its work`);
+        yield* log(
+          `${repo.name}/${flow}: runs as ${running.flatMap((schedule) => Option.toArray(schedule.persona)).join(", ")} with no assignee or reviewRequested, so each takes any of its work`,
+        );
       }
     }
   }
 
   const busy = yield* Ref.make(0);
-  const hooks = { onStep: () => Ref.update(busy, (count) => count + 1), onStepDone: () => Ref.update(busy, (count) => count - 1) };
+
+  const hooks = {
+    onStep: () => Ref.update(busy, (count) => count + 1),
+    onStepDone: () => Ref.update(busy, (count) => count - 1),
+  };
 
   // Each repo's services, once per persona.
   const contexts = new Map<string, ReadonlyArray<PersonaContext>>();
 
   for (const repo of repos) {
-    if (Option.isSome(repo.repo)) contexts.set(repo.name, yield* buildPersonaContexts(repo.repo.value, machine));
+    if (Option.isSome(repo.repo)) {
+      contexts.set(repo.name, yield* buildPersonaContexts(repo.repo.value, machine));
+    }
   }
 
   const handles = Arr.dedupe(repos.flatMap((repo) => repo.flows.map((flow) => flow.handle)));
 
   const flowLayers = handles.flatMap((handle) =>
-    Option.toArray(Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) => flowLayer(handle, servicesFrom(personas), hooks))),
+    Option.toArray(
+      Option.map(Option.fromUndefinedOr(contexts.get(handle.repo.settings.name)), (personas) =>
+        flowLayer(handle, servicesFrom(personas), hooks),
+      ),
+    ),
   );
 
-  const engine = yield* Layer.build(Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)));
+  const engine = yield* Layer.build(
+    Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+  );
 
   return yield* Effect.provideContext(
     Effect.gen(function* () {
       const state = yield* State;
 
-      for (const repo of repos) if (Option.isSome(repo.repo)) yield* adoptRuns(repo.repo.value);
+      for (const repo of repos) {
+        if (Option.isSome(repo.repo)) {
+          yield* adoptRuns(repo.repo.value);
+        }
+      }
 
       const reloadPending = yield* Ref.make(false);
       const reloaded = yield* Deferred.make<true>();
 
-      const handleFor = (repoName: string, flowName: string) => Arr.findFirst(handles, (handle) => handle.repo.settings.name === repoName && handle.name === flowName);
+      const handleFor = (repoName: string, flowName: string) =>
+        Arr.findFirst(
+          handles,
+          (handle) => handle.repo.settings.name === repoName && handle.name === flowName,
+        );
 
-      const parked = Effect.all({ active: state.activeRuns(everyRun), parkedIds: state.parkedRunIds });
+      const parked = Effect.all({
+        active: state.activeRuns(everyRun),
+        parkedIds: state.parkedRunIds,
+      });
 
-      const tick = (repo: RepoState, context: RepoContext, schedule: FlowSchedule, options: TickOptions) =>
+      const tick = (
+        repo: RepoState,
+        context: RepoContext,
+        schedule: FlowSchedule,
+        options: TickOptions,
+      ) =>
         Effect.gen(function* () {
           const { handle, own: settings, persona } = schedule;
           const { flow } = handle;
@@ -288,13 +477,20 @@ export const runDaemon = Effect.gen(function* () {
           const self = loginFor(persona);
 
           const record = (reason: string, itemKey: Option.Option<string>) =>
-            state.recordSkip({ repo: repo.name, persona, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
+            state
+              .recordSkip({ repo: repo.name, persona, flow: handle.name, itemKey, reason })
+              .pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
 
           if (options.gates) {
             // Not knowing whether a repo is paused starts nothing in it.
             const paused = yield* Effect.result(listPausedReposUseCase());
 
-            if (Result.isFailure(paused)) return yield* record(`could not tell whether it is paused: ${paused.failure.message}`, Option.none());
+            if (Result.isFailure(paused)) {
+              return yield* record(
+                `could not tell whether it is paused: ${paused.failure.message}`,
+                Option.none(),
+              );
+            }
 
             const decision = decideTick({
               enabled: settings.enabled,
@@ -305,16 +501,30 @@ export const runDaemon = Effect.gen(function* () {
               now: yield* DateTime.now,
             });
 
-            if (!decision.go) return yield* record(decision.reason, Option.none());
+            if (!decision.go) {
+              return yield* record(decision.reason, Option.none());
+            }
           }
 
           const triggered = yield* Effect.result(withRepo(context, flow.trigger));
 
-          if (Result.isFailure(triggered)) return yield* record(`trigger failed: ${describeError(triggered.failure)}`, Option.none());
+          if (Result.isFailure(triggered)) {
+            return yield* record(
+              `trigger failed: ${describeError(triggered.failure)}`,
+              Option.none(),
+            );
+          }
 
-          const lookedUp = yield* Effect.result(withRepo(context, unreportedItem(flow, options.item, triggered.success)));
+          const lookedUp = yield* Effect.result(
+            withRepo(context, unreportedItem(flow, options.item, triggered.success)),
+          );
 
-          if (Result.isFailure(lookedUp)) return yield* record(`could not find ${Option.getOrElse(options.item, () => 'the item')}: ${describeError(lookedUp.failure)}`, options.item);
+          if (Result.isFailure(lookedUp)) {
+            return yield* record(
+              `could not find ${Option.getOrElse(options.item, () => "the item")}: ${describeError(lookedUp.failure)}`,
+              options.item,
+            );
+          }
 
           const items = [...triggered.success, ...lookedUp.success];
           yield* deliverSignals(handle, persona, items);
@@ -329,9 +539,13 @@ export const runDaemon = Effect.gen(function* () {
           const candidates = candidatesOf(waiting, routed, options.item);
           const elsewhereOnly = onlyElsewhere(routed, routing, options.item);
 
-          if (Option.isSome(elsewhereOnly)) return yield* record(elsewhereOnly.value, Option.none());
+          if (Option.isSome(elsewhereOnly)) {
+            return yield* record(elsewhereOnly.value, Option.none());
+          }
 
-          if (candidates.length === 0) return { started: [], skipped: Option.none() } satisfies TickResult;
+          if (candidates.length === 0) {
+            return { started: [], skipped: Option.none() } satisfies TickResult;
+          }
 
           let slots = candidates.length;
 
@@ -340,13 +554,26 @@ export const runDaemon = Effect.gen(function* () {
             const working = active.filter((activeRun) => !parkedIds.includes(activeRun.id));
 
             slots = freeSlots({
-              activeForFlow: working.filter((activeRun) => activeRun.repo === repo.name && samePersona(activeRun.persona, persona) && activeRun.flow === handle.name).length,
-              flowConcurrency: Option.getOrElse(Option.flatMap(flowSettings, (found) => Option.fromUndefinedOr(found.concurrency)), () => flow.concurrency ?? 1),
+              activeForFlow: working.filter(
+                (activeRun) =>
+                  activeRun.repo === repo.name &&
+                  samePersona(activeRun.persona, persona) &&
+                  activeRun.flow === handle.name,
+              ).length,
+              flowConcurrency: Option.getOrElse(
+                Option.flatMap(flowSettings, (found) => Option.fromUndefinedOr(found.concurrency)),
+                () => flow.concurrency ?? 1,
+              ),
               activeOnMachine: working.length,
               machineConcurrency: machine.concurrency,
             });
 
-            if (slots === 0) return yield* record(`at the concurrency limit; waiting: ${candidates.map((item) => item.key).join(', ')}`, Option.none());
+            if (slots === 0) {
+              return yield* record(
+                `at the concurrency limit; waiting: ${candidates.map((item) => item.key).join(", ")}`,
+                Option.none(),
+              );
+            }
           }
 
           const started: Array<string> = [];
@@ -376,15 +603,24 @@ export const runDaemon = Effect.gen(function* () {
           return { started, skipped: Option.none() } satisfies TickResult;
         }).pipe(
           Effect.catchCause((cause) =>
-            log(`${scheduleName(repo.name, schedule)}: tick failed: ${String(cause)}`).pipe(Effect.as({ started: [], skipped: Option.some('tick failed') } satisfies TickResult)),
+            log(`${scheduleName(repo.name, schedule)}: tick failed: ${String(cause)}`).pipe(
+              Effect.as({ started: [], skipped: Option.some("tick failed") } satisfies TickResult),
+            ),
           ),
         );
 
       // A repo whose flows may run: loaded, and its base branch still on the
       // trusted tree. Its services, as each persona.
       const runnable = (repo: RepoState) =>
-        Option.filter(repo.repo, () => repo.status === 'ready' && sameTree(repo.latestTree, repo.tree)).pipe(
-          Option.flatMap(() => Option.map(Option.fromUndefinedOr(contexts.get(repo.name)), (personas) => ({ contextFor: servicesFrom(personas) }))),
+        Option.filter(
+          repo.repo,
+          () => repo.status === "ready" && sameTree(repo.latestTree, repo.tree),
+        ).pipe(
+          Option.flatMap(() =>
+            Option.map(Option.fromUndefinedOr(contexts.get(repo.name)), (personas) => ({
+              contextFor: servicesFrom(personas),
+            })),
+          ),
         );
 
       // Polls running workflows and records the ones that finished.
@@ -394,14 +630,20 @@ export const runDaemon = Effect.gen(function* () {
             for (const activeRun of yield* state.activeRuns(everyRun)) {
               const handle = handleFor(activeRun.repo, activeRun.flow);
 
-              if (Option.isNone(handle)) continue;
+              if (Option.isNone(handle)) {
+                continue;
+              }
 
               const polled = yield* pollRun(handle.value, activeRun);
 
-              if (polled.status !== 'running') yield* log(`finished ${polled.id} (${runLabel(polled)}): ${polled.status}: ${Option.getOrElse(polled.summary, () => '')}`);
+              if (polled.status !== "running") {
+                yield* log(
+                  `finished ${polled.id} (${runLabel(polled)}): ${polled.status}: ${Option.getOrElse(polled.summary, () => "")}`,
+                );
+              }
             }
 
-            yield* Effect.sleep('3 seconds');
+            yield* Effect.sleep("3 seconds");
           }),
         ),
       );
@@ -415,23 +657,41 @@ export const runDaemon = Effect.gen(function* () {
             for (const repo of repos) {
               const ready = runnable(repo);
 
-              if (Option.isNone(ready)) continue;
+              if (Option.isNone(ready)) {
+                continue;
+              }
 
               for (const schedule of repo.flows) {
-                if (!Option.exists(schedule.next, (next) => DateTime.isLessThanOrEqualTo(next, now))) continue;
+                if (
+                  !Option.exists(schedule.next, (next) => DateTime.isLessThanOrEqualTo(next, now))
+                ) {
+                  continue;
+                }
 
                 schedule.next = nextTick(schedule.expression, now);
                 const context = ready.value.contextFor(schedule.persona);
 
-                if (Option.isNone(context)) continue;
+                if (Option.isNone(context)) {
+                  continue;
+                }
 
-                const result = yield* tick(repo, context.value, schedule, { gates: true, item: Option.none() });
+                const result = yield* tick(repo, context.value, schedule, {
+                  gates: true,
+                  item: Option.none(),
+                });
 
-                if (Option.isSome(result.skipped)) yield* log(`${scheduleName(repo.name, schedule)}: skipped: ${result.skipped.value}`);
+                if (Option.isSome(result.skipped)) {
+                  yield* log(
+                    `${scheduleName(repo.name, schedule)}: skipped: ${result.skipped.value}`,
+                  );
+                }
               }
             }
 
-            const dueIn = repos.flatMap((repo) => repo.flows.flatMap((flow) => Option.toArray(flow.next))).map((next) => DateTime.toEpochMillis(next) - DateTime.toEpochMillis(now));
+            const dueIn = repos
+              .flatMap((repo) => repo.flows.flatMap((flow) => Option.toArray(flow.next)))
+              .map((next) => DateTime.toEpochMillis(next) - DateTime.toEpochMillis(now));
+
             yield* Effect.sleep(Math.max(SOONEST_MS, Math.min(LATEST_MS, ...dueIn)));
           }),
         ),
@@ -441,21 +701,40 @@ export const runDaemon = Effect.gen(function* () {
       // daemon on it once nothing is executing; untrusted, the repo starts no new runs.
       const checkConfig = Effect.gen(function* () {
         for (const repo of repos) {
-          const tree = yield* Effect.result(configTree(repo.enrolled.path, baseBranchOf(repo.enrolled)));
+          const tree = yield* Effect.result(
+            configTree(repo.enrolled.path, baseBranchOf(repo.enrolled)),
+          );
 
-          if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) continue;
+          if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) {
+            continue;
+          }
 
           repo.latestTree = Option.some(tree.success);
-          const trusted = Option.contains((yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree, tree.success);
-          yield* log(`${repo.name}: .chernabog/ changed (${tree.success.slice(0, 8)}); ${changedAction(trusted)}`);
 
-          if (trusted) yield* Ref.set(reloadPending, true);
+          const trusted = Option.contains(
+            (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree,
+            tree.success,
+          );
+
+          yield* log(
+            `${repo.name}: .chernabog/ changed (${tree.success.slice(0, 8)}); ${changedAction(trusted)}`,
+          );
+
+          if (trusted) {
+            yield* Ref.set(reloadPending, true);
+          }
         }
 
         for (const repo of repos) {
           const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
 
-          if (repo.status !== 'ready' && Option.isSome(repo.latestTree) && sameTree(trusted, repo.latestTree)) yield* Ref.set(reloadPending, true);
+          if (
+            repo.status !== "ready" &&
+            Option.isSome(repo.latestTree) &&
+            sameTree(trusted, repo.latestTree)
+          ) {
+            yield* Ref.set(reloadPending, true);
+          }
         }
       });
 
@@ -467,10 +746,14 @@ export const runDaemon = Effect.gen(function* () {
         for (const repo of repos) {
           const missing = !(yield* checkoutExists(repo.enrolled));
 
-          if (noticed.has(repo.name) || missing === (repo.status === 'missing')) continue;
+          if (noticed.has(repo.name) || missing === (repo.status === "missing")) {
+            continue;
+          }
 
           noticed.add(repo.name);
-          yield* log(`${repo.name}: checkout ${checkoutChange(missing)} at ${repo.enrolled.path}; restarting on it when idle`);
+          yield* log(
+            `${repo.name}: checkout ${checkoutChange(missing)} at ${repo.enrolled.path}; restarting on it when idle`,
+          );
           yield* Ref.set(reloadPending, true);
         }
       });
@@ -482,28 +765,46 @@ export const runDaemon = Effect.gen(function* () {
       const checkEnrolled = Effect.gen(function* () {
         const current = yield* Effect.option(loadMachineConfig);
 
-        if (enrolledChanged || Option.isNone(current) || (sameEnrolled(current.value.repos, machine.repos) && sameLogins(current.value.github, machine.github))) return;
+        if (
+          enrolledChanged ||
+          Option.isNone(current) ||
+          (sameEnrolled(current.value.repos, machine.repos) &&
+            sameLogins(current.value.github, machine.github))
+        ) {
+          return;
+        }
 
         enrolledChanged = true;
-        yield* log('enrolled repos changed; restarting on them when idle');
+        yield* log("enrolled repos changed; restarting on them when idle");
         yield* Ref.set(reloadPending, true);
       });
 
-      yield* Effect.forkScoped(Effect.forever(Effect.sleep('5 minutes').pipe(Effect.andThen(checkConfig))));
-      yield* Effect.forkScoped(Effect.forever(Effect.sleep('10 seconds').pipe(Effect.andThen(checkCheckouts), Effect.andThen(checkEnrolled))));
+      yield* Effect.forkScoped(
+        Effect.forever(Effect.sleep("5 minutes").pipe(Effect.andThen(checkConfig))),
+      );
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.sleep("10 seconds").pipe(
+            Effect.andThen(checkCheckouts),
+            Effect.andThen(checkEnrolled),
+          ),
+        ),
+      );
 
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            yield* Effect.sleep('2 seconds');
+            yield* Effect.sleep("2 seconds");
 
-            if ((yield* Ref.get(reloadPending)) && (yield* Ref.get(busy)) === 0) yield* Deferred.succeed(reloaded, true);
+            if ((yield* Ref.get(reloadPending)) && (yield* Ref.get(busy)) === 0) {
+              yield* Deferred.succeed(reloaded, true);
+            }
           }),
         ),
       );
 
       const repoStatus = (paused: ReadonlyArray<RepoSlug>) => (repo: RepoState) => {
-        const stale = repo.status === 'ready' && !sameTree(repo.latestTree, repo.tree);
+        const stale = repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
         const offReason = (schedule: FlowSchedule) => flowOff(schedule.own, schedule.handle.name);
 
         const status: RepoStatus = {
@@ -512,28 +813,51 @@ export const runDaemon = Effect.gen(function* () {
           status: repo.status,
           message: repo.message,
           paused: paused.includes(RepoSlug.make(repo.enrolled.repo)),
-          enabled: Option.match(repo.repo, { onNone: () => true, onSome: (settings) => settings.personas.some((own) => own.enabled) }),
+          enabled: Option.match(repo.repo, {
+            onNone: () => true,
+            onSome: (settings) => settings.personas.some((own) => own.enabled),
+          }),
           tree: repo.tree,
           launcher: Option.map(repo.repo, (loaded) => describeLauncher(loaded.settings)),
           flows: repo.flows.map((flow) => ({
             name: flow.handle.name,
-            ...Option.match(flow.persona, { onNone: () => ({}), onSome: (persona) => ({ persona }) }),
+            ...Option.match(flow.persona, {
+              onNone: () => ({}),
+              onSome: (persona) => ({ persona }),
+            }),
             schedule: flow.expression,
             teamSchedule: flow.teamExpression,
-            ...Option.match(Option.fromUndefinedOr(flow.own.own.flows?.[flow.handle.name]?.schedule), { onNone: () => ({}), onSome: (ownSchedule) => ({ ownSchedule }) }),
+            ...Option.match(
+              Option.fromUndefinedOr(flow.own.own.flows?.[flow.handle.name]?.schedule),
+              { onNone: () => ({}), onSome: (ownSchedule) => ({ ownSchedule }) },
+            ),
             next: formatOption(flow.next),
             lastTick: formatOption(flow.lastTick),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
             enabled: Option.isNone(offReason(flow)),
-            ...Option.match(offReason(flow), { onNone: () => ({}), onSome: (reason) => ({ offReason: reason }) }),
+            ...Option.match(offReason(flow), {
+              onNone: () => ({}),
+              onSome: (reason) => ({ offReason: reason }),
+            }),
           })),
-          ...Option.match(repo.repo, { onNone: () => ({}), onSome: (loaded) => ({ personas: loaded.personas.map(personaStatus) }) }),
+          ...Option.match(repo.repo, {
+            onNone: () => ({}),
+            onSome: (loaded) => ({ personas: loaded.personas.map(personaStatus) }),
+          }),
         };
 
-        if (!stale) return status;
+        if (!stale) {
+          return status;
+        }
 
-        return { ...status, status: 'untrusted', message: Option.some(`.chernabog/ changed on the base branch; review it with chernabog trust ${repo.name}`) } satisfies RepoStatus;
+        return {
+          ...status,
+          status: "untrusted",
+          message: Option.some(
+            `.chernabog/ changed on the base branch; review it with chernabog trust ${repo.name}`,
+          ),
+        } satisfies RepoStatus;
       };
 
       const status = Effect.gen(function* () {
@@ -544,9 +868,22 @@ export const runDaemon = Effect.gen(function* () {
           startedAt: DateTime.formatIso(startedAt),
           busy: yield* Ref.get(busy),
           reloadPending: yield* Ref.get(reloadPending),
-          repos: repos.map(repoStatus(yield* listPausedReposUseCase().pipe(Effect.map((found) => found.repos), Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => [])))),
-          accounts: machine.accounts.map((account) => ({ name: account.name, agent: account.agent })),
-          active: active.map((activeRun) => ({ ...activeRun, parked: parkedIds.includes(activeRun.id) })),
+          repos: repos.map(
+            repoStatus(
+              yield* listPausedReposUseCase().pipe(
+                Effect.map((found) => found.repos),
+                Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => []),
+              ),
+            ),
+          ),
+          accounts: machine.accounts.map((account) => ({
+            name: account.name,
+            agent: account.agent,
+          })),
+          active: active.map((activeRun) => ({
+            ...activeRun,
+            parked: parkedIds.includes(activeRun.id),
+          })),
           recent: yield* state.recentRuns(20),
           skips: yield* state.recentSkips(20),
         } satisfies DaemonStatus;
@@ -554,18 +891,29 @@ export const runDaemon = Effect.gen(function* () {
 
       // The schedule a person names: the flow's only persona, or the one asked for.
       const findSchedule = (repoName: string, flowName: string, persona: Option.Option<string>) => {
-        const repo = Arr.findFirst(repos, (candidate) => candidate.name === repoName || candidate.enrolled.repo === repoName);
+        const repo = Arr.findFirst(
+          repos,
+          (candidate) => candidate.name === repoName || candidate.enrolled.repo === repoName,
+        );
 
-        if (Option.isNone(repo)) return Result.fail(`no enrolled repo named ${repoName}`);
+        if (Option.isNone(repo)) {
+          return Result.fail(`no enrolled repo named ${repoName}`);
+        }
 
         const ready = runnable(repo.value);
 
-        if (Option.isNone(ready)) return Result.fail(`${repo.value.name} is ${repo.value.status}: ${Option.getOrElse(repo.value.message, () => 'not ready')}`);
+        if (Option.isNone(ready)) {
+          return Result.fail(
+            `${repo.value.name} is ${repo.value.status}: ${Option.getOrElse(repo.value.message, () => "not ready")}`,
+          );
+        }
 
         const named = repo.value.flows.filter((flow) => flow.handle.name === flowName);
 
         if (named.length === 0) {
-          return Result.fail(`${repo.value.name} has no flow named ${flowName} (flows: ${Arr.dedupe(repo.value.flows.map((flow) => flow.handle.name)).join(', ')})`);
+          return Result.fail(
+            `${repo.value.name} has no flow named ${flowName} (flows: ${Arr.dedupe(repo.value.flows.map((flow) => flow.handle.name)).join(", ")})`,
+          );
         }
 
         const personas = named.flatMap((flow) => Option.toArray(flow.persona));
@@ -578,40 +926,60 @@ export const runDaemon = Effect.gen(function* () {
         if (Option.isNone(schedule)) {
           return Result.fail(
             Option.match(persona, {
-              onNone: () => `${repo.value.name} runs ${flowName} as ${personas.join(', ')}; name one with --as`,
-              onSome: (wanted) => `${repo.value.name} doesn't run ${flowName} as ${wanted} (it runs it as ${personas.join(', ')})`,
+              onNone: () =>
+                `${repo.value.name} runs ${flowName} as ${personas.join(", ")}; name one with --as`,
+              onSome: (wanted) =>
+                `${repo.value.name} doesn't run ${flowName} as ${wanted} (it runs it as ${personas.join(", ")})`,
             }),
           );
         }
 
         const context = ready.value.contextFor(schedule.value.persona);
 
-        if (Option.isNone(context)) return Result.fail(`${repo.value.name} has no services for ${scheduleName(repo.value.name, schedule.value)}`);
+        if (Option.isNone(context)) {
+          return Result.fail(
+            `${repo.value.name} has no services for ${scheduleName(repo.value.name, schedule.value)}`,
+          );
+        }
 
-        return Result.succeed({ repo: repo.value, context: context.value, schedule: schedule.value });
+        return Result.succeed({
+          repo: repo.value,
+          context: context.value,
+          schedule: schedule.value,
+        });
       };
 
-      const refuse = (code: number, error: string) => HttpServerResponse.schemaJson(Refusal)({ error }, { status: code });
+      const refuse = (code: number, error: string) =>
+        HttpServerResponse.schemaJson(Refusal)({ error }, { status: code });
 
-      const answer = <E, R>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) => handler.pipe(Effect.catch((error) => refuse(500, describeError(error))));
+      const answer = <E, R>(handler: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+        handler.pipe(Effect.catch((error) => refuse(500, describeError(error))));
 
       const runOrTick = (gates: boolean) =>
         Effect.gen(function* () {
           const body = yield* HttpServerRequest.schemaBodyJson(RunRequest);
           const found = findSchedule(body.repo, body.flow, Option.fromUndefinedOr(body.persona));
 
-          if (Result.isFailure(found)) return yield* refuse(404, found.failure);
+          if (Result.isFailure(found)) {
+            return yield* refuse(404, found.failure);
+          }
 
           const { context, repo, schedule } = found.success;
 
-          return yield* HttpServerResponse.schemaJson(TickResult)(yield* tick(repo, context, schedule, { gates, item: body.item }));
+          return yield* HttpServerResponse.schemaJson(TickResult)(
+            yield* tick(repo, context, schedule, { gates, item: body.item }),
+          );
         });
 
       const routes = Layer.mergeAll(
-        HttpRouter.add('GET', '/status', answer(status.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DaemonStatus))))),
         HttpRouter.add(
-          'GET',
-          '/runs/:id',
+          "GET",
+          "/status",
+          answer(status.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DaemonStatus)))),
+        ),
+        HttpRouter.add(
+          "GET",
+          "/runs/:id",
           answer(
             Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
@@ -620,18 +988,37 @@ export const runDaemon = Effect.gen(function* () {
             }),
           ),
         ),
-        HttpRouter.add('POST', '/reload', answer(checkConfig.pipe(Effect.andThen(checkCheckouts), Effect.andThen(checkEnrolled), Effect.andThen(Ref.get(reloadPending)), Effect.flatMap((pending) => HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }))))),
-        HttpRouter.add('POST', '/run', answer(runOrTick(false))),
-        HttpRouter.add('POST', '/tick', answer(runOrTick(true))),
+        HttpRouter.add(
+          "POST",
+          "/reload",
+          answer(
+            checkConfig.pipe(
+              Effect.andThen(checkCheckouts),
+              Effect.andThen(checkEnrolled),
+              Effect.andThen(Ref.get(reloadPending)),
+              Effect.flatMap((pending) =>
+                HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }),
+              ),
+            ),
+          ),
+        ),
+        HttpRouter.add("POST", "/run", answer(runOrTick(false))),
+        HttpRouter.add("POST", "/tick", answer(runOrTick(true))),
       );
 
       yield* fs.remove(paths.socket, { force: true });
-      yield* Effect.addFinalizer(() => fs.remove(paths.socket, { force: true }).pipe(Effect.ignore));
-      yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(Layer.provide(BunHttpServer.layer({ unix: paths.socket }))));
+      yield* Effect.addFinalizer(() =>
+        fs.remove(paths.socket, { force: true }).pipe(Effect.ignore),
+      );
+      yield* Layer.build(
+        HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+          Layer.provide(BunHttpServer.layer({ unix: paths.socket })),
+        ),
+      );
       yield* log(`daemon ${process.pid} listening on ${paths.socket}`);
 
       yield* Deferred.await(reloaded);
-      yield* log('restarting on new config');
+      yield* log("restarting on new config");
 
       return RELOAD_EXIT_CODE;
     }),

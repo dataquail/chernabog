@@ -14,6 +14,8 @@
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
     "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",
     "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint:architecture": "architecture check src packages test scripts templates",
     "architecture:baseline": "architecture baseline src packages test scripts templates",
     "architecture:coverage": "architecture coverage src packages test scripts templates",
@@ -46,6 +48,7 @@
     "oxlint": "1.88.0",
     "oxlint-plugin-effect": "0.28.1",
     "oxlint-tsgolint": "7.0.2004",
+    "prettier": "3.9.6",
     "read-package-up": "^12.0.0",
     "typescript": "^5.9.3"
   }

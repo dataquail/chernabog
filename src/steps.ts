@@ -4,31 +4,45 @@
 // the workflow engine. Both kinds follow one contract: context on stdin, exit 0
 // to continue, 78 to skip, anything else to fail.
 
-import { describeError, type Json, parseJson, printJson, type RepoSettings, RepoSettings as RepoSettingsSchema, Run, RunInfo, RunLog, Skip, STEP_EXIT, StepFailed, StepRunner } from '@chernabog/sdk';
-import * as Arr from 'effect/Array';
-import * as Console from 'effect/Console';
-import * as Context from 'effect/Context';
-import * as Duration from 'effect/Duration';
-import * as Effect from 'effect/Effect';
-import * as FileSystem from 'effect/FileSystem';
-import * as Layer from 'effect/Layer';
-import * as Option from 'effect/Option';
-import * as ChildProcess from 'effect/process/ChildProcess';
-import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
-import * as Schema from 'effect/Schema';
-import * as Stdio from 'effect/Stdio';
-import * as Stream from 'effect/Stream';
+import {
+  describeError,
+  type Json,
+  parseJson,
+  printJson,
+  type RepoSettings,
+  RepoSettings as RepoSettingsSchema,
+  Run,
+  RunInfo,
+  RunLog,
+  Skip,
+  STEP_EXIT,
+  StepFailed,
+  StepRunner,
+} from "@chernabog/sdk";
+import * as Arr from "effect/Array";
+import * as Console from "effect/Console";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 
-import { adaptersFor, AgentLive, type AgentsConfig } from './agents.ts';
-import { GitHubTokens } from './github-auth.ts';
-import { GitHubApi } from './GitHubApi.ts';
-import { findStage, loadStage } from './loader.ts';
-import { IMPLICIT, type Persona } from './persona.ts';
-import type { Environment } from './platform/environment.ts';
-import { AgentFile, UsageGateFile } from './repo-config.ts';
-import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from './sdk-live.ts';
-import { selfCommand } from './self.ts';
-import type { GateConfig } from './usage-gate.ts';
+import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
+import { GitHubTokens } from "./github-auth.ts";
+import { GitHubApi } from "./GitHubApi.ts";
+import { findStage, loadStage } from "./loader.ts";
+import { IMPLICIT, type Persona } from "./persona.ts";
+import type { Environment } from "./platform/environment.ts";
+import { AgentFile, UsageGateFile } from "./repo-config.ts";
+import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from "./sdk-live.ts";
+import { selfCommand } from "./self.ts";
+import type { GateConfig } from "./usage-gate.ts";
 
 // What the parent hands an Effect step's process on stdin.
 export const StepContext = Schema.Struct({
@@ -47,18 +61,24 @@ const StepContextJson = Schema.fromJsonString(Schema.toCodecJson(StepContext));
 
 const DEFAULT_STEP_TIMEOUT = Duration.hours(1);
 
-const lastLines = (text: string, count = 20) => text.trimEnd().split('\n').slice(-count).join('\n');
+const lastLines = (text: string, count = 20) => text.trimEnd().split("\n").slice(-count).join("\n");
 
 type ChildResult = { readonly exitCode: number; readonly stdout: string; readonly stderr: string };
 
 // `env` is set over this process's environment, which the child inherits.
-type Child = { readonly command: ReadonlyArray<string>; readonly cwd: string; readonly stdin: string; readonly timeout: Duration.Duration; readonly env: Environment };
+type Child = {
+  readonly command: ReadonlyArray<string>;
+  readonly cwd: string;
+  readonly stdin: string;
+  readonly timeout: Duration.Duration;
+  readonly env: Environment;
+};
 
 // Runs the step's process, copying each line it writes to stderr into the run's log.
 const runChild = (name: string, child: Child, log: (line: string) => Effect.Effect<void>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const [command = 'sh', ...args] = child.command;
+    const [command = "sh", ...args] = child.command;
 
     const handle = yield* spawner.spawn(
       ChildProcess.make(command, args, {
@@ -66,11 +86,11 @@ const runChild = (name: string, child: Child, log: (line: string) => Effect.Effe
         env: child.env,
         extendEnv: true,
         stdin: { stream: Stream.make(new TextEncoder().encode(child.stdin)) },
-        forceKillAfter: '5 seconds',
+        forceKillAfter: "5 seconds",
       }),
     );
 
-    let stderr = '';
+    let stderr = "";
 
     const errors = handle.stderr.pipe(
       Stream.decodeText(),
@@ -85,7 +105,10 @@ const runChild = (name: string, child: Child, log: (line: string) => Effect.Effe
       ),
     );
 
-    const [stdout, , exitCode] = yield* Effect.all([Stream.mkString(Stream.decodeText(handle.stdout)), errors, handle.exitCode], { concurrency: 'unbounded' });
+    const [stdout, , exitCode] = yield* Effect.all(
+      [Stream.mkString(Stream.decodeText(handle.stdout)), errors, handle.exitCode],
+      { concurrency: "unbounded" },
+    );
 
     return { exitCode: Number(exitCode), stdout, stderr } satisfies ChildResult;
   }).pipe(
@@ -95,19 +118,29 @@ const runChild = (name: string, child: Child, log: (line: string) => Effect.Effe
   );
 
 const orElse = (text: string, fallback: string) => {
-  if (text.length > 0) return text;
+  if (text.length > 0) {
+    return text;
+  }
 
   return fallback;
 };
 
 // Turns a step's exit into its output, a Skip, or a failure.
-export const interpretStepExit = (name: string, result: ChildResult, output: Option.Option<Json>) => {
+export const interpretStepExit = (
+  name: string,
+  result: ChildResult,
+  output: Option.Option<Json>,
+) => {
   if (result.exitCode === STEP_EXIT.ok) {
-    return Effect.fromOption(output).pipe(Effect.mapError(() => new StepFailed({ step: name, message: 'its output is not JSON' })));
+    return Effect.fromOption(output).pipe(
+      Effect.mapError(() => new StepFailed({ step: name, message: "its output is not JSON" })),
+    );
   }
 
   if (result.exitCode === STEP_EXIT.skip) {
-    return Effect.fail(new Skip({ reason: orElse(lastLines(result.stderr, 1), `step ${name} skipped`) }));
+    return Effect.fail(
+      new Skip({ reason: orElse(lastLines(result.stderr, 1), `step ${name} skipped`) }),
+    );
   }
 
   const said = lastLines(orElse(result.stderr, result.stdout));
@@ -125,15 +158,24 @@ const logFor = (name: string) =>
     ),
   );
 
-const lastLine = (text: string) => Option.getOrElse(Arr.last(text.trim().split('\n')), () => '');
+const lastLine = (text: string) => Option.getOrElse(Arr.last(text.trim().split("\n")), () => "");
 
 // Steps run as one persona: a step's process gets its token, so gh and git in
 // it, and the services of an Effect step, act as that persona.
-export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents: AgentsConfig, persona: Persona, timeout: Duration.Duration = DEFAULT_STEP_TIMEOUT) =>
+export const StepRunnerLive = (
+  settings: RepoSettings,
+  gate: GateConfig,
+  agents: AgentsConfig,
+  persona: Persona,
+  timeout: Duration.Duration = DEFAULT_STEP_TIMEOUT,
+) =>
   Layer.effect(
     StepRunner,
     Effect.gen(function* () {
-      const services = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
+      const services = yield* Effect.context<
+        FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+      >();
+
       const tokens = yield* GitHubTokens;
 
       const run = (name: string, input: Json) =>
@@ -141,39 +183,76 @@ export const StepRunnerLive = (settings: RepoSettings, gate: GateConfig, agents:
           const fs = yield* FileSystem.FileSystem;
           const found = yield* findStage(settings.configDir, name);
 
-          if (Option.isNone(found)) return yield* new StepFailed({ step: name, message: `no step named ${name} in ${settings.configDir}/stages` });
+          if (Option.isNone(found)) {
+            return yield* new StepFailed({
+              step: name,
+              message: `no step named ${name} in ${settings.configDir}/stages`,
+            });
+          }
 
           const stage = found.value;
           const runInfo = yield* Effect.serviceOption(Run);
           const log = yield* logFor(name);
-          const env = yield* tokens.env(persona).pipe(Effect.mapError((error) => new StepFailed({ step: name, message: error.message })));
 
-          if (stage.kind === 'shell') {
+          const env = yield* tokens
+            .env(persona)
+            .pipe(
+              Effect.mapError((error) => new StepFailed({ step: name, message: error.message })),
+            );
+
+          if (stage.kind === "shell") {
             // A shell step gets its input and where it runs; the run is named when there is one.
             let context: Json = { input, repo: settings.slug };
 
-            if (Option.isSome(runInfo)) context = { input, repo: settings.slug, run: runInfo.value.runId };
+            if (Option.isSome(runInfo)) {
+              context = { input, repo: settings.slug, run: runInfo.value.runId };
+            }
 
             const stdin = printJson(context);
-            const result = yield* runChild(name, { command: [stage.path], cwd: settings.path, stdin, timeout, env }, log);
+
+            const result = yield* runChild(
+              name,
+              { command: [stage.path], cwd: settings.path, stdin, timeout, env },
+              log,
+            );
 
             return yield* interpretStepExit(name, result, parseJson(lastLine(result.stdout)));
           }
 
-          const scratch = yield* fs.makeTempDirectoryScoped({ prefix: 'chernabog-step-' });
-          const context: StepContext = { stage: stage.path, input, repo: settings, run: runInfo, gate, agents, outputPath: `${scratch}/output.json` };
+          const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-step-" });
+
+          const context: StepContext = {
+            stage: stage.path,
+            input,
+            repo: settings,
+            run: runInfo,
+            gate,
+            agents,
+            outputPath: `${scratch}/output.json`,
+          };
+
           const stdin = yield* Schema.encodeEffect(StepContextJson)(context);
-          const result = yield* runChild(name, { command: [...selfCommand(), '__step'], cwd: settings.path, stdin, timeout, env }, log);
+
+          const result = yield* runChild(
+            name,
+            { command: [...selfCommand(), "__step"], cwd: settings.path, stdin, timeout, env },
+            log,
+          );
+
           let output = Option.none<Json>();
 
-          if (result.exitCode === STEP_EXIT.ok) output = parseJson(yield* fs.readFileString(context.outputPath));
+          if (result.exitCode === STEP_EXIT.ok) {
+            output = parseJson(yield* fs.readFileString(context.outputPath));
+          }
 
           return yield* interpretStepExit(name, result, output);
         }).pipe(
           Effect.scoped,
           Effect.catchTags({
-            PlatformError: (error) => Effect.fail(new StepFailed({ step: name, message: error.message })),
-            SchemaError: (error) => Effect.fail(new StepFailed({ step: name, message: error.message })),
+            PlatformError: (error) =>
+              Effect.fail(new StepFailed({ step: name, message: error.message })),
+            SchemaError: (error) =>
+              Effect.fail(new StepFailed({ step: name, message: error.message })),
           }),
           Effect.provide(services),
         );
@@ -201,11 +280,16 @@ export const stepServices = (context: StepContext) =>
     UsageLive(context.repo, context.gate),
     AgentLive(context.repo, adaptersFor(context.agents), IMPLICIT),
     Layer.succeed(RunLog, stderrLog),
-    Option.match(context.run, { onNone: () => Layer.empty, onSome: (info) => Layer.succeed(Run, info) }),
+    Option.match(context.run, {
+      onNone: () => Layer.empty,
+      onSome: (info) => Layer.succeed(Run, info),
+    }),
   );
 
 // The step this process runs: `chernabog __step` reads it from stdin.
-export class CurrentStep extends Context.Service<CurrentStep, StepContext>()('chernabog/CurrentStep') {
+export class CurrentStep extends Context.Service<CurrentStep, StepContext>()(
+  "chernabog/CurrentStep",
+) {
   public static readonly layer = Layer.effect(
     CurrentStep,
     Effect.gen(function* () {
@@ -218,22 +302,40 @@ export class CurrentStep extends Context.Service<CurrentStep, StepContext>()('ch
 }
 
 // The step's services, for the repo its context names.
-export const StepServicesLive = Layer.unwrap(CurrentStep.use((context) => Effect.succeed(stepServices(context)))).pipe(Layer.provideMerge(CurrentStep.layer));
+export const StepServicesLive = Layer.unwrap(
+  CurrentStep.use((context) => Effect.succeed(stepServices(context))),
+).pipe(Layer.provideMerge(CurrentStep.layer));
 
-const toStepFailure = (name: string) => <E>(error: E) => {
-  if (Schema.is(Skip)(error)) return error;
+const toStepFailure =
+  (name: string) =>
+  <E>(error: E) => {
+    if (Schema.is(Skip)(error)) {
+      return error;
+    }
 
-  return new StepFailed({ step: name, message: describeError(error) });
-};
+    return new StepFailed({ step: name, message: describeError(error) });
+  };
 
 // The child side: run the step, write its output where the parent reads it.
 export const runStepChild = Effect.gen(function* () {
   const context = yield* CurrentStep;
   const fs = yield* FileSystem.FileSystem;
   const stage = yield* loadStage(context.stage);
-  const input = yield* Schema.decodeEffect(stage.input)(context.input).pipe(Effect.mapError((issue) => new StepFailed({ step: stage.name, message: `input: ${issue.message}` })));
+
+  const input = yield* Schema.decodeEffect(stage.input)(context.input).pipe(
+    Effect.mapError(
+      (issue) => new StepFailed({ step: stage.name, message: `input: ${issue.message}` }),
+    ),
+  );
+
   const output = yield* stage.run(input).pipe(Effect.mapError(toStepFailure(stage.name)));
-  const encoded = yield* Schema.encodeEffect(stage.output)(output).pipe(Effect.mapError((issue) => new StepFailed({ step: stage.name, message: `output: ${issue.message}` })));
+
+  const encoded = yield* Schema.encodeEffect(stage.output)(output).pipe(
+    Effect.mapError(
+      (issue) => new StepFailed({ step: stage.name, message: `output: ${issue.message}` }),
+    ),
+  );
+
   yield* fs.writeFileString(context.outputPath, printJson(encoded));
 }).pipe(
   Effect.catch((error) =>

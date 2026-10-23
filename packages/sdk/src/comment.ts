@@ -2,15 +2,15 @@
 // it posted, so each distinct comment on an issue or pull request posts once
 // per run.
 
-import { createHash } from 'node:crypto';
+import { createHash } from "node:crypto";
 
-import * as Effect from 'effect/Effect';
+import * as Effect from "effect/Effect";
 
-import { activity } from './flow.ts';
-import { GitHub } from './services.ts';
+import { activity } from "./flow.ts";
+import { GitHub } from "./services.ts";
 
-export const commentStep = (kind: 'issue' | 'pr', number: number, body: string) =>
+export const commentStep = (kind: "issue" | "pr", number: number, body: string) =>
   activity(
-    `comment-${kind}-${number}-${createHash('sha256').update(body).digest('hex').slice(0, 12)}`,
+    `comment-${kind}-${number}-${createHash("sha256").update(body).digest("hex").slice(0, 12)}`,
     GitHub.use((github) => github.comment(number, body)).pipe(Effect.asVoid),
   );

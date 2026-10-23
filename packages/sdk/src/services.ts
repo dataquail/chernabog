@@ -1,13 +1,13 @@
 // The services a flow, trigger or step can use. Chernabog provides each one;
 // a team can replace any of them with its own layer, and tests can use fakes.
 
-import * as Context from 'effect/Context';
-import type * as Effect from 'effect/Effect';
-import * as Option from 'effect/Option';
-import * as Schema from 'effect/Schema';
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-import type { AgentError, GitError, GitHubError, UsageError } from './errors.ts';
-import type { Json } from './json.ts';
+import type { AgentError, GitError, GitHubError, UsageError } from "./errors.ts";
+import type { Json } from "./json.ts";
 
 export const Labels = Schema.Struct({
   eligible: Schema.String,
@@ -27,19 +27,23 @@ export const Labels = Schema.Struct({
 export type Labels = typeof Labels.Type;
 
 export const DEFAULT_LABELS: Labels = {
-  eligible: 'auto:eligible',
-  inProgress: 'auto:in-progress',
-  needsReview: 'auto:needs-review',
-  changesRequested: 'auto:changes-requested',
-  approved: 'auto:approved',
-  needsHuman: 'auto:needs-human',
-  needsClarification: 'auto:needs-clarification',
-  stale: 'auto:stale',
-  ship: 'auto:ship',
-  hybrid: 'hybrid',
+  eligible: "auto:eligible",
+  inProgress: "auto:in-progress",
+  needsReview: "auto:needs-review",
+  changesRequested: "auto:changes-requested",
+  approved: "auto:approved",
+  needsHuman: "auto:needs-human",
+  needsClarification: "auto:needs-clarification",
+  stale: "auto:stale",
+  ship: "auto:ship",
+  hybrid: "hybrid",
 };
 
-export const Board = Schema.Struct({ projectNumber: Schema.Finite, readyStatus: Schema.String, inProgressStatus: Schema.String });
+export const Board = Schema.Struct({
+  projectNumber: Schema.Finite,
+  readyStatus: Schema.String,
+  inProgressStatus: Schema.String,
+});
 
 export type Board = typeof Board.Type;
 
@@ -47,7 +51,7 @@ export type Board = typeof Board.Type;
 // oauthTokenEnv names the environment variable holding a Claude login token
 // (from `claude setup-token`), for a host with no login of its own, such as CI.
 // usageGate none launches without reading usage, which such a token cannot.
-export const UsageGateMode = Schema.Literals(['usage', 'none']);
+export const UsageGateMode = Schema.Literals(["usage", "none"]);
 
 export type UsageGateMode = typeof UsageGateMode.Type;
 
@@ -80,17 +84,30 @@ const Strings = Schema.Array(Schema.String);
 
 // A launcher of your own, from machine config: command templates with
 // {command}, {cwd}, {title} and {handle}.
-export const LauncherCommands = Schema.Struct({ start: Strings, close: Strings, alive: Schema.Option(Strings), attach: Schema.Option(Strings) });
+export const LauncherCommands = Schema.Struct({
+  start: Strings,
+  close: Strings,
+  alive: Schema.Option(Strings),
+  attach: Schema.Option(Strings),
+});
 
 export type LauncherCommands = typeof LauncherCommands.Type;
 
 // Where interactive agent sessions run (orca, tmux, a custom one, or headless
 // for none), which config layer chose it, and a custom launcher's commands.
-export const ResolvedLauncher = Schema.Struct({ name: Schema.String, from: Schema.String, custom: Schema.Option(LauncherCommands) });
+export const ResolvedLauncher = Schema.Struct({
+  name: Schema.String,
+  from: Schema.String,
+  custom: Schema.Option(LauncherCommands),
+});
 
 export type ResolvedLauncher = typeof ResolvedLauncher.Type;
 
-export const HEADLESS: ResolvedLauncher = { name: 'headless', from: 'default', custom: Option.none() };
+export const HEADLESS: ResolvedLauncher = {
+  name: "headless",
+  from: "default",
+  custom: Option.none(),
+};
 
 // Everything a run knows about the repo it works on, merged from the repo's
 // committed config and the persona's settings in machine config.
@@ -113,7 +130,9 @@ export const RepoSettings = Schema.Struct({
   // The adapter a flow asked for in config (flows.<name>.agent), such as a Codex reviewer.
   flowAgents: Schema.Record(Schema.String, Schema.String),
   // The adapters a flow gave its roles in config (flows.<name>.agents), such as { reviewer: codex }.
-  flowRoleAgents: Schema.optionalKey(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String))),
+  flowRoleAgents: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
+  ),
   // The adapters a persona's own role picks run with, in every flow: the
   // agent of the account it chose for the role (roles: { reviewer: codex-work }).
   roleAgents: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
@@ -134,7 +153,7 @@ export const RepoSettings = Schema.Struct({
 
 export type RepoSettings = typeof RepoSettings.Type;
 
-export class Repo extends Context.Service<Repo, RepoSettings>()('@chernabog/sdk/Repo') {}
+export class Repo extends Context.Service<Repo, RepoSettings>()("@chernabog/sdk/Repo") {}
 
 // One thing a flow works on: an issue, a pull request. `key` identifies it
 // across ticks, so it never has two runs at once. `signals` are events the
@@ -155,11 +174,16 @@ export const WorkItem = Schema.Struct({
 
 export type WorkItem = typeof WorkItem.Type;
 
-export const RunInfo = Schema.Struct({ flow: Schema.String, runId: Schema.String, executionId: Schema.String, item: WorkItem });
+export const RunInfo = Schema.Struct({
+  flow: Schema.String,
+  runId: Schema.String,
+  executionId: Schema.String,
+  item: WorkItem,
+});
 
 export type RunInfo = typeof RunInfo.Type;
 
-export class Run extends Context.Service<Run, RunInfo>()('@chernabog/sdk/Run') {}
+export class Run extends Context.Service<Run, RunInfo>()("@chernabog/sdk/Run") {}
 
 export type Issue = {
   readonly number: number;
@@ -171,17 +195,25 @@ export type Issue = {
   readonly assignees: ReadonlyArray<string>;
 };
 
-export type Comment = { readonly id: number; readonly author: string; readonly body: string; readonly createdAt: string; readonly trusted: boolean };
+export type Comment = {
+  readonly id: number;
+  readonly author: string;
+  readonly body: string;
+  readonly createdAt: string;
+  readonly trusted: boolean;
+};
 
 // A review summary, or a comment on one line of the diff.
-export type ReviewNote = Comment & { readonly location: Option.Option<{ readonly path: string; readonly line: number }> };
+export type ReviewNote = Comment & {
+  readonly location: Option.Option<{ readonly path: string; readonly line: number }>;
+};
 
 export type PullRequest = {
   readonly number: number;
   readonly title: string;
   readonly body: string;
   readonly url: string;
-  readonly state: 'open' | 'closed' | 'merged';
+  readonly state: "open" | "closed" | "merged";
   readonly headRef: string;
   readonly headSha: string;
   readonly baseRef: string;
@@ -194,26 +226,45 @@ export type PullRequest = {
 
 export type ReviewComment = { readonly path: string; readonly line: number; readonly body: string };
 
-export type NewPullRequest = { readonly head: string; readonly base: string; readonly title: string; readonly body: string };
+export type NewPullRequest = {
+  readonly head: string;
+  readonly base: string;
+  readonly title: string;
+  readonly body: string;
+};
 
 // A review approves, requests changes, or only comments, which is the default.
-export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+export type ReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
 
-export type NewReview = { readonly body: string; readonly commitSha: string; readonly comments: ReadonlyArray<ReviewComment>; readonly event?: ReviewEvent };
+export type NewReview = {
+  readonly body: string;
+  readonly commitSha: string;
+  readonly comments: ReadonlyArray<ReviewComment>;
+  readonly event?: ReviewEvent;
+};
 
 // A review someone submitted: who, its state as GitHub gives it (APPROVED,
 // CHANGES_REQUESTED, COMMENTED, DISMISSED), and the head it saw.
-export type SubmittedReview = { readonly author: string; readonly state: string; readonly commitSha: string };
+export type SubmittedReview = {
+  readonly author: string;
+  readonly state: string;
+  readonly commitSha: string;
+};
 
-export type MergeMethod = 'merge' | 'squash' | 'rebase';
+export type MergeMethod = "merge" | "squash" | "rebase";
 
 // The merge of exactly `sha`: GitHub refuses one whose head has moved since.
 export type MergeRequest = { readonly method: MergeMethod; readonly sha: string };
 
 // Merged, or refused by GitHub (branch protection, a conflict, a moved head), with its reason.
-export type MergeOutcome = { readonly status: 'merged'; readonly sha: string } | { readonly status: 'refused'; readonly reason: string };
+export type MergeOutcome =
+  | { readonly status: "merged"; readonly sha: string }
+  | { readonly status: "refused"; readonly reason: string };
 
-export type CiState = { state: 'pending'; waitingOn: Array<string> } | { state: 'green' } | { state: 'red'; failedChecks: Array<string> };
+export type CiState =
+  | { state: "pending"; waitingOn: Array<string> }
+  | { state: "green" }
+  | { state: "red"; failedChecks: Array<string> };
 
 export class GitHub extends Context.Service<
   GitHub,
@@ -236,14 +287,20 @@ export class GitHub extends Context.Service<
     readonly login: Effect.Effect<string, GitHubError>;
     branchSha(branch: string): Effect.Effect<Option.Option<string>, GitHubError>;
     // Whoever creates a branch first owns it: the claim.
-    createBranch(branch: string, sha: string): Effect.Effect<'created' | 'already-exists', GitHubError>;
+    createBranch(
+      branch: string,
+      sha: string,
+    ): Effect.Effect<"created" | "already-exists", GitHubError>;
     deleteBranch(branch: string): Effect.Effect<void, GitHubError>;
     pullRequest(number: number): Effect.Effect<PullRequest, GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     readonly openPullRequests: Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     // Asks these logins to review the pull request, or to review it again.
-    requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, GitHubError>;
+    requestReviewers(
+      pullRequest: number,
+      logins: ReadonlyArray<string>,
+    ): Effect.Effect<void, GitHubError>;
     // The reviews submitted on a pull request, oldest first.
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
@@ -251,7 +308,9 @@ export class GitHub extends Context.Service<
     // Changed paths of a pull request, for path rules such as humanOnlyPaths.
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
     // Recently closed or merged pull requests carrying the label, newest first.
-    closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    closedPullRequestsLabelled(
+      label: string,
+    ): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     // Posts a review. GitHub won't let an account approve or request changes on
     // its own pull request; such a review is posted as a comment instead.
     review(pullRequest: number, review: NewReview): Effect.Effect<void, GitHubError>;
@@ -259,9 +318,13 @@ export class GitHub extends Context.Service<
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;
     merge(pullRequest: number, merge: MergeRequest): Effect.Effect<MergeOutcome, GitHubError>;
     // Any other call, for what the service does not cover.
-    request(method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, body: Option.Option<Json>): Effect.Effect<Json, GitHubError>;
+    request(
+      method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+      path: string,
+      body: Option.Option<Json>,
+    ): Effect.Effect<Json, GitHubError>;
   }
->()('@chernabog/sdk/GitHub') {}
+>()("@chernabog/sdk/GitHub") {}
 
 export class Git extends Context.Service<
   Git,
@@ -275,7 +338,7 @@ export class Git extends Context.Service<
     // Brings the checked-out branch up to its remote, fast-forward only.
     pull(cwd: string, branch: string): Effect.Effect<void, GitError>;
   }
->()('@chernabog/sdk/Git') {}
+>()("@chernabog/sdk/Git") {}
 
 export class Worktree extends Context.Service<
   Worktree,
@@ -287,7 +350,7 @@ export class Worktree extends Context.Service<
     // A detached worktree named `name`, reset to `ref` (fetched first) every call: for reading, such as a review.
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;
   }
->()('@chernabog/sdk/Worktree') {}
+>()("@chernabog/sdk/Worktree") {}
 
 export type LaunchDecision = { readonly launch: boolean; readonly reason: string };
 
@@ -299,9 +362,13 @@ export class Usage extends Context.Service<
     // The account's logged-in identity; fails when it is not the expected one.
     readonly checkAccount: Effect.Effect<string, UsageError>;
   }
->()('@chernabog/sdk/Usage') {}
+>()("@chernabog/sdk/Usage") {}
 
-export type AgentResult = { readonly sessionId: string; readonly output: Json; readonly costUsd: Option.Option<number> };
+export type AgentResult = {
+  readonly sessionId: string;
+  readonly output: Json;
+  readonly costUsd: Option.Option<number>;
+};
 
 export type AgentRequest = {
   readonly cwd: string;
@@ -327,7 +394,7 @@ export class Agent extends Context.Service<
     run(request: AgentRequest): Effect.Effect<AgentResult, AgentError>;
     readonly adapters: ReadonlyArray<string>;
   }
->()('@chernabog/sdk/Agent') {}
+>()("@chernabog/sdk/Agent") {}
 
 // What this machine knows of a run, by id: whether it is still going, or none
 // for a run it never had, such as one on another machine. Provided by Chernabog
@@ -337,7 +404,7 @@ export class Runs extends Context.Service<
   {
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
   }
->()('@chernabog/sdk/Runs') {}
+>()("@chernabog/sdk/Runs") {}
 
 // Writes to the run's log file, which `chernabog logs <run>` prints.
 export class RunLog extends Context.Service<
@@ -347,4 +414,4 @@ export class RunLog extends Context.Service<
     step(name: string): Effect.Effect<void>;
     stepDone(name: string): Effect.Effect<void>;
   }
->()('@chernabog/sdk/RunLog') {}
+>()("@chernabog/sdk/RunLog") {}

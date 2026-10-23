@@ -3,11 +3,11 @@
 // against `output`. A step that crashes partway runs again, so it must be safe
 // to repeat: "claim unless this run already holds it".
 
-import type * as Effect from 'effect/Effect';
-import type * as Schema from 'effect/Schema';
+import type * as Effect from "effect/Effect";
+import type * as Schema from "effect/Schema";
 
-import type { Json } from './json.ts';
-import type { Agent, Git, GitHub, Repo, Run, RunLog, Usage, Worktree } from './services.ts';
+import type { Json } from "./json.ts";
+import type { Agent, Git, GitHub, Repo, Run, RunLog, Usage, Worktree } from "./services.ts";
 
 export type StageServices = Repo | Run | GitHub | Git | Worktree | Usage | Agent | RunLog;
 
