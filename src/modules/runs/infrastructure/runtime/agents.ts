@@ -10,10 +10,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { codexHomeOf, Home } from "../../../../config.ts";
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
+import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
+import { Home } from "../../../../platform/home.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
 import { claudeAdapter } from "./agents/claude.ts";
 import { claudeEnvironment } from "./agents/claude-events.ts";

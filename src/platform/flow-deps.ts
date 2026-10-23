@@ -14,13 +14,13 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import SdkPackage from "../packages/sdk/package.json" with { type: "json" };
-import { ConfigError } from "./config.ts";
+import SdkPackage from "../../packages/sdk/package.json" with { type: "json" };
+import { ConfigError } from "./config-error.ts";
 import { EFFECT_VERSION } from "./effect-modules.ts";
-import { HostEnvironment } from "./platform/environment.ts";
-import { Exec } from "./platform/exec.ts";
-import { bunExecutable } from "./platform/self.ts";
-import { VERSION } from "./platform/version.ts";
+import { HostEnvironment } from "./environment.ts";
+import { Exec } from "./exec.ts";
+import { bunExecutable } from "./self.ts";
+import { VERSION } from "./version.ts";
 
 // The packages the loader substitutes, at the versions it substitutes.
 export const BUNDLED_PACKAGES: Readonly<Record<string, string>> = {

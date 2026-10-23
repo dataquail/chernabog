@@ -8,8 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { codexHomeOf, Home } from "../../../../../config.ts";
+import { codexHomeOf } from "../../../../../platform/agent-accounts.ts";
 import { Exec } from "../../../../../platform/exec.ts";
+import { Home } from "../../../../../platform/home.ts";
 import { type Adapter, agentEnvironment, answerFrom, promptFor } from "./adapter.ts";
 import { clip, runAgentProcess } from "./process.ts";
 import { knownSession, rememberSession } from "./sessions.ts";

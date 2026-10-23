@@ -12,7 +12,6 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { ConfigError } from "./config.ts";
 import {
   Done,
   readDecoded,
@@ -21,6 +20,7 @@ import {
 } from "./modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { checkAnswer } from "./modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import { LaunchSpecJson } from "./modules/runs/infrastructure/runtime/launchers/shim.ts";
+import { ConfigError } from "./platform/config-error.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { Exec } from "./platform/exec.ts";
 

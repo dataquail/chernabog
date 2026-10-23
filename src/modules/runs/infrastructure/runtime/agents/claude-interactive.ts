@@ -22,9 +22,10 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { claudeHomeOf, Home } from "../../../../../config.ts";
+import { claudeHomeOf } from "../../../../../platform/agent-accounts.ts";
 import { type Environment } from "../../../../../platform/environment.ts";
 import { Exec } from "../../../../../platform/exec.ts";
+import { Home } from "../../../../../platform/home.ts";
 import { selfCommand } from "../../../../../platform/self.ts";
 import { type Launcher, launcherFor } from "../launchers.ts";
 import { shellCommand } from "../launchers/launcher.ts";

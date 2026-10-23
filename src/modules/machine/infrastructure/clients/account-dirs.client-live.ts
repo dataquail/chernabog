@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Order from "effect/Order";
 
-import { Home } from "../../../../config.ts";
+import { Home } from "../../../../platform/home.ts";
 import { AccountDirsClient } from "../../domain/ports/clients/account-dirs.client.ts";
 
 const FOUND_DIR = /^\.(claude|codex)(?:-[\w.-]+)?$/;

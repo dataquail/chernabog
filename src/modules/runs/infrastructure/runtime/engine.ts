@@ -30,10 +30,10 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Workflow from "effect/workflow/Workflow";
 
-import { Home, homePaths } from "../../../../config.ts";
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import type { EffectiveRepo } from "../../../../repo-config.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";

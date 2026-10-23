@@ -10,19 +10,9 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { Home } from "./config.ts";
-import {
-  decodeManifest,
-  describeDrift,
-  describeTooOld,
-  isTooOld,
-  pinDrift,
-  requiredVersion,
-} from "./flow-deps.ts";
 import { daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { asSuffix } from "./kernel/persona.value-object.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
-import { flowNames } from "./loader.ts";
 import { checkServiceUseCase } from "./modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "./modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
@@ -33,9 +23,20 @@ import {
 import { describeLauncher, launcherFor } from "./modules/runs/infrastructure/runtime/launchers.ts";
 import { checkAccount, loggedInEmail } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { configTree, snapshotConfig } from "./platform/config-snapshot.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { Exec, type ExecResult } from "./platform/exec.ts";
+import {
+  decodeManifest,
+  describeDrift,
+  describeTooOld,
+  isTooOld,
+  pinDrift,
+  requiredVersion,
+} from "./platform/flow-deps.ts";
+import { flowNames } from "./platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "./platform/github-api.ts";
+import { Home } from "./platform/home.ts";
 import { VERSION } from "./platform/version.ts";
 import {
   type EffectiveRepo,
@@ -47,7 +48,6 @@ import {
   type MachineConfig,
   repoNameOf,
 } from "./repo-config.ts";
-import { configTree, snapshotConfig } from "./snapshot.ts";
 
 export type Check = {
   readonly ok: boolean;

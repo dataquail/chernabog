@@ -1,4 +1,4 @@
-// The text of src/templates.ts: the files under templates/.chernabog/, which
+// The text of src/platform/templates.ts: the files under templates/.chernabog/, which
 // init scaffolds, and under templates/recipes/, which a recipe brings. A test
 // renders it again to check the generated file is current.
 

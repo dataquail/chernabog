@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { Home, homePaths } from "../src/config.ts";
 import { migrateMachineConfig } from "../src/migrate.ts";
 import { githubTestLayer } from "../src/platform/github-api.ts";
+import { Home, homePaths } from "../src/platform/home.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 
 // The migration asks GitHub nothing for these entries.

@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { claudeTokenVariables } from "../../../../../config.ts";
+import { claudeTokenVariables } from "../../../../../platform/agent-accounts.ts";
 import { type AdapterContext, agentEnvironment } from "./adapter.ts";
 import { clip } from "./process.ts";
 

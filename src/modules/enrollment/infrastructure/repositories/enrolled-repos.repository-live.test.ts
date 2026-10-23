@@ -4,8 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
-import { Home, homePaths } from "../../../../config.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledRepoRootOps } from "../../domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { EnrolledReposRepository } from "../../domain/ports/repositories/enrolled-repos.repository.ts";

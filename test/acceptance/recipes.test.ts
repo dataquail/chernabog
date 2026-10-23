@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import { RECIPE_FILES } from "../../src/templates.ts";
+import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
 describe("recipes", () => {

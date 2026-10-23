@@ -16,7 +16,7 @@ import YAML from "yaml";
 
 import { RECIPES } from "../../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
 import { scaffoldFiles } from "../../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
-import { RECIPE_FILES } from "../../src/templates.ts";
+import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { startFakeGitHub } from "./fake-github.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));

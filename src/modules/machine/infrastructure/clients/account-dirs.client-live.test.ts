@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
-import { Home } from "../../../../config.ts";
+import { Home } from "../../../../platform/home.ts";
 import { AccountDirsClient } from "../../domain/ports/clients/account-dirs.client.ts";
 import { AccountDirsClientLive } from "./account-dirs.client-live.ts";
 

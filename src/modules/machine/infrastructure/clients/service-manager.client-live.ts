@@ -8,9 +8,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { Home, homePaths } from "../../../../config.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { selfCommand } from "../../../../platform/self.ts";
 import { ServiceFailed } from "../../domain/machine-setup/machine-setup.errors.ts";
 import { ServiceManagerClient } from "../../domain/ports/clients/service-manager.client.ts";

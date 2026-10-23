@@ -15,10 +15,11 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
 import { asSuffix, type Persona } from "./kernel/persona.value-object.ts";
-import { flowNames } from "./loader.ts";
+import { ConfigError } from "./platform/config-error.ts";
+import { flowNames } from "./platform/flow-loader.ts";
 import { viewerLogin } from "./platform/github-api.ts";
+import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { namesRunners, readYaml, RepoConfigFile, teamOff } from "./repo-config.ts";
 
 // What .chernabog/local.yaml held, as written.

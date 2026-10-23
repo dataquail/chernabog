@@ -4,8 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
-import { Home, homePaths } from "../../../../config.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { RunLogsClient } from "../../domain/ports/clients/run-logs.client.ts";
 import { RunLogsClientLive } from "./run-logs.client-live.ts";
 

@@ -16,7 +16,7 @@ import { RECIPES } from "../src/modules/recipes/domain/recipe/recipe-catalog.val
 import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
 import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
 import { Exec } from "../src/platform/exec.ts";
-import { RECIPE_FILES } from "../src/templates.ts";
+import { RECIPE_FILES } from "../src/platform/templates.ts";
 import implement from "../templates/recipes/flows/implement.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";

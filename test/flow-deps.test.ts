@@ -5,8 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { installFlowDependencies } from "../src/flow-deps.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
+import { installFlowDependencies } from "../src/platform/flow-deps.ts";
 import { bunExecutable } from "../src/platform/self.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 

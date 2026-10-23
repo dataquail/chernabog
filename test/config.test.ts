@@ -16,7 +16,6 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from "../src/flow-deps.ts";
 import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
 import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
 import { setFlowScheduleUseCase } from "../src/modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
@@ -28,6 +27,7 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
+import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
   DEFAULT_LIMITS,

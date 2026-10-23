@@ -6,8 +6,8 @@ CHANGELOG.md
 website/
 # Vendored from functional-domain-driven-hexagon, and lint-ignored as such.
 tools/oxlint/
-# Generated: test/templates.test.ts holds src/templates.ts to what its script writes.
-src/templates.ts
-src/effect-modules.ts
+# Generated: test/templates.test.ts holds src/platform/templates.ts to what its script writes.
+src/platform/templates.ts
+src/platform/effect-modules.ts
 # Extensionless TypeScript scripts, which Prettier reads as JavaScript from their shebang.
 test/fakebin/
