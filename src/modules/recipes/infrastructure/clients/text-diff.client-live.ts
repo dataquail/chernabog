@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import { Exec } from "../../../../Exec.ts";
+import { Exec } from "../../../../platform/exec.ts";
 import { TextDiffClient } from "../../domain/ports/clients/text-diff.client.ts";
 import { RecipeFilesFailed } from "../../domain/recipe/recipe.errors.ts";
 

@@ -3,7 +3,7 @@
 
 import { fileURLToPath } from "node:url";
 
-export const SOURCE_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+export const SOURCE_ROOT = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
 
 // Homebrew runs a formula's binary from <prefix>/Cellar/<name>/<version>/,
 // which `brew upgrade` deletes, and keeps <prefix>/opt/<name> linked to the

@@ -19,10 +19,10 @@ import { opencodeAdapter } from "./agents/opencode.ts";
 import { knownLaunch, sessionFiles } from "./agents/session-files.ts";
 import { knownSession, recordRunSession, type SessionRecord } from "./agents/sessions.ts";
 import { codexHomeOf, Home } from "./config.ts";
-import { GitHubTokens } from "./github-auth.ts";
+import type { Persona } from "./kernel/persona.value-object.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
-import type { Persona } from "./persona.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
+import { GitHubTokens } from "./platform/github-auth.ts";
 
 export type AgentsConfig = Readonly<
   Record<

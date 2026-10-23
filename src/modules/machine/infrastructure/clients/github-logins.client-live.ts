@@ -5,9 +5,9 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Exec } from "../../../../Exec.ts";
-import { TOKEN_VARIABLES } from "../../../../github-auth.ts";
 import { HostEnvironment, withVariables } from "../../../../platform/environment.ts";
+import { Exec } from "../../../../platform/exec.ts";
+import { TOKEN_VARIABLES } from "../../../../platform/github-auth.ts";
 import { GitHubLoginsClient } from "../../domain/ports/clients/github-logins.client.ts";
 
 const LOGGED_IN = /Logged in to github\.com account (\S+)/g;

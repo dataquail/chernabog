@@ -17,8 +17,8 @@ import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import type { Home } from "../config.ts";
-import type { Exec } from "../Exec.ts";
 import { type Environment, withVariables } from "../platform/environment.ts";
+import type { Exec } from "../platform/exec.ts";
 
 export type AdapterServices =
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Home | Exec;

@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { codexHomeOf, Home } from "../config.ts";
-import { Exec } from "../Exec.ts";
+import { Exec } from "../platform/exec.ts";
 import { type Adapter, agentEnvironment, answerFrom, promptFor } from "./adapter.ts";
 import { clip, runAgentProcess } from "./process.ts";
 import { knownSession, rememberSession } from "./sessions.ts";

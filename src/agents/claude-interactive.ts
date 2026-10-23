@@ -23,12 +23,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { claudeHomeOf, Home } from "../config.ts";
-import { Exec } from "../Exec.ts";
 import { type Launcher, launcherFor } from "../launchers.ts";
 import { shellCommand } from "../launchers/launcher.ts";
 import { LaunchSpecJson } from "../launchers/shim.ts";
 import { type Environment } from "../platform/environment.ts";
-import { selfCommand } from "../self.ts";
+import { Exec } from "../platform/exec.ts";
+import { selfCommand } from "../platform/self.ts";
 import { type AdapterContext, promptFor, resumingOrStarting } from "./adapter.ts";
 import {
   claudeEnvironment,

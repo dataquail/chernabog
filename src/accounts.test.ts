@@ -7,7 +7,7 @@ import * as Record from "effect/Record";
 import { transcriptDirectoryFor } from "./agents/claude.ts";
 import { claudeEnvironment } from "./agents/claude-events.ts";
 import { expandHome } from "./config.ts";
-import { pickNodeVersion } from "./node-version.ts";
+import { pickNodeVersion } from "./platform/node-version.ts";
 import { accountEnv, keychainServiceFor } from "./usage-gate.ts";
 
 const work = {

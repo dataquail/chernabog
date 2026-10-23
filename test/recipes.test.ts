@@ -9,13 +9,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { Exec } from "../src/Exec.ts";
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
 import { RecipeRootOps } from "../src/modules/recipes/domain/recipe/recipe.root-ops.ts";
 import { RECIPES } from "../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
 import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
 import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
+import { Exec } from "../src/platform/exec.ts";
 import { RECIPE_FILES } from "../src/templates.ts";
 import implement from "../templates/recipes/flows/implement.ts";
 import { scripted } from "./asker.ts";

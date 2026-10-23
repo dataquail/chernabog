@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
-import { GitHubApi } from "../../../../GitHubApi.ts";
+import { GitHubApi } from "../../../../platform/github-api.ts";
 import { ViewerClient } from "../../domain/ports/clients/viewer.client.ts";
 import { ViewerClientLive } from "./viewer.client-live.ts";
 

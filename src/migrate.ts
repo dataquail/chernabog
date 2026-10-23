@@ -16,9 +16,9 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
-import { viewerLogin } from "./GitHubApi.ts";
+import { asSuffix, type Persona } from "./kernel/persona.value-object.ts";
 import { flowNames } from "./loader.ts";
-import { asSuffix, type Persona } from "./persona.ts";
+import { viewerLogin } from "./platform/github-api.ts";
 import { namesRunners, readYaml, RepoConfigFile, teamOff } from "./repo-config.ts";
 
 // What .chernabog/local.yaml held, as written.

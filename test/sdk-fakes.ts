@@ -50,9 +50,9 @@ import {
   startRun,
   StateAt,
 } from "../src/engine.ts";
+import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { type RunsLayer } from "../src/modules/runs/runs.layer.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
-import { IMPLICIT, type Persona } from "../src/persona.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
 export const PULL = 7;

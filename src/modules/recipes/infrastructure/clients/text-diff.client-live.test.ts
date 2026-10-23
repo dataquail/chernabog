@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { effectAtHomeWith } from "../../../../../test/effect-test.ts";
-import { Exec } from "../../../../Exec.ts";
+import { Exec } from "../../../../platform/exec.ts";
 import { TextDiffClient } from "../../domain/ports/clients/text-diff.client.ts";
 import { TextDiffClientLive } from "./text-diff.client-live.ts";
 

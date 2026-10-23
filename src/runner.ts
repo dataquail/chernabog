@@ -28,15 +28,15 @@ import {
   StateLive,
   unreportedItem,
 } from "./engine.ts";
-import { viewerLogin } from "./GitHubApi.ts";
+import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { loadFlows } from "./loader.ts";
-import { acquireLock } from "./lock.ts";
 import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
 import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
 import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
-import { type Persona, samePersona } from "./persona.ts";
+import { viewerLogin } from "./platform/github-api.ts";
+import { acquireLock } from "./platform/lock.ts";
 import {
   type EffectiveRepo,
   type EnrolledRepo,

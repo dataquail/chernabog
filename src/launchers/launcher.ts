@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { Exec, type ExecResult } from "../Exec.ts";
+import { Exec, type ExecResult } from "../platform/exec.ts";
 
 export class LaunchError extends Schema.TaggedError<
   LaunchError,

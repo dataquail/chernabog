@@ -15,9 +15,9 @@ import * as Schema from "effect/Schema";
 import { Done, readDecoded, SESSION_ENV, sessionFilesIn } from "./agents/session-files.ts";
 import { checkAnswer } from "./agents/stop-hook.ts";
 import { ConfigError } from "./config.ts";
-import { Exec } from "./Exec.ts";
 import { LaunchSpecJson } from "./launchers/shim.ts";
 import { HostEnvironment } from "./platform/environment.ts";
+import { Exec } from "./platform/exec.ts";
 
 export type OpenPrOptions = {
   readonly title: string;

@@ -22,9 +22,6 @@ import { Home } from "./config.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "./daemon.ts";
 import { doctor, formatCheck } from "./doctor.ts";
 import { runLogFile } from "./engine.ts";
-import { Exec } from "./Exec.ts";
-import { GitHubTokens } from "./github-auth.ts";
-import { GitHubApi } from "./GitHubApi.ts";
 import { Asker } from "./interface/cli/asker.prompt.ts";
 import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
 import { enrollCommand } from "./interface/cli/enrollment/enroll.command.ts";
@@ -45,6 +42,7 @@ import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
 import { trustCommand } from "./interface/cli/trust/trust.command.ts";
 import { daemonRun, daemonTick } from "./interface/daemon/daemon.client.ts";
 import type { TickResult } from "./interface/daemon/daemon.protocol.ts";
+import { IMPLICIT } from "./kernel/persona.value-object.ts";
 import { RunId } from "./kernel/run-id.id.ts";
 import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
 import { runLaunch } from "./launchers/shim.ts";
@@ -59,14 +57,16 @@ import { resolveRunIdUseCase } from "./modules/runs/use-cases/resolve-run-id.use
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { TrustLayer } from "./modules/trust/trust.layer.ts";
 import { openPr } from "./open-pr.ts";
-import { IMPLICIT } from "./persona.ts";
 import { HostEnvironment } from "./platform/environment.ts";
+import { Exec } from "./platform/exec.ts";
+import { GitHubApi } from "./platform/github-api.ts";
+import { GitHubTokens } from "./platform/github-auth.ts";
+import { VERSION } from "./platform/version.ts";
 import { findEnrolled, loadMachineConfig, loadRepo } from "./repo-config.ts";
 import { repoConfigDir, runInForeground } from "./runner.ts";
 import { openSession, startIssue } from "./start.ts";
 import { runStepChild, StepServicesLive } from "./steps.ts";
 import { runTui } from "./tui/app.ts";
-import { VERSION } from "./version.ts";
 
 const printLines = (lines: Iterable<string>) =>
   Effect.forEach(lines, (line) => Console.log(line), { discard: true });

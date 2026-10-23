@@ -7,8 +7,6 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { Home } from "../src/config.ts";
-import { execTestLayer } from "../src/Exec.ts";
-import { GitHubApi } from "../src/GitHubApi.ts";
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import {
   enrollCheckout,
@@ -17,6 +15,8 @@ import {
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
+import { execTestLayer } from "../src/platform/exec.ts";
+import { GitHubApi } from "../src/platform/github-api.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";

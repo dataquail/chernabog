@@ -5,10 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { effect } from "../test/effect-test.ts";
-import { Exec, execOk, type ExecOptions, execTestLayer } from "./Exec.ts";
+import { effect } from "../../test/effect-test.ts";
+import { HostEnvironment } from "./environment.ts";
+import { Exec, execOk, type ExecOptions, execTestLayer } from "./exec.ts";
 import { gitCredentialEnv, GitHubTokens } from "./github-auth.ts";
-import { HostEnvironment } from "./platform/environment.ts";
 
 type Call = { readonly args: ReadonlyArray<string>; readonly options: ExecOptions };
 

@@ -12,9 +12,9 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { Exec, execOk } from "./Exec.ts";
-import type { Persona } from "./persona.ts";
-import { type Environment, HostEnvironment, withVariables } from "./platform/environment.ts";
+import type { Persona } from "../kernel/persona.value-object.ts";
+import { type Environment, HostEnvironment, withVariables } from "./environment.ts";
+import { Exec, execOk } from "./exec.ts";
 
 // Variables gh reads a token from before any login it keeps. A persona's token
 // lookup must not see them, or gh answers with them whatever --user asks for.

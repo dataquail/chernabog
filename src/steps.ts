@@ -34,14 +34,14 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
-import { GitHubTokens } from "./github-auth.ts";
-import { GitHubApi } from "./GitHubApi.ts";
+import { IMPLICIT, type Persona } from "./kernel/persona.value-object.ts";
 import { findStage, loadStage } from "./loader.ts";
-import { IMPLICIT, type Persona } from "./persona.ts";
 import type { Environment } from "./platform/environment.ts";
+import { GitHubApi } from "./platform/github-api.ts";
+import { GitHubTokens } from "./platform/github-auth.ts";
+import { selfCommand } from "./platform/self.ts";
 import { AgentFile, UsageGateFile } from "./repo-config.ts";
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from "./sdk-live.ts";
-import { selfCommand } from "./self.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
 // What the parent hands an Effect step's process on stdin.

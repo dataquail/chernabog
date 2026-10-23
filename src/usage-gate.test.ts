@@ -16,8 +16,8 @@ import * as Option from "effect/Option";
 import { effect, effectAtHomeWith } from "../test/effect-test.ts";
 import { fixture } from "../test/fixtures.ts";
 import { Home } from "./config.ts";
-import { execTestLayer } from "./Exec.ts";
 import { HostEnvironment } from "./platform/environment.ts";
+import { execTestLayer } from "./platform/exec.ts";
 import { DEFAULT_LIMITS } from "./repo-config.ts";
 import { UsageLive } from "./sdk-live.ts";
 import {

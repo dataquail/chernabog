@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import { effectAtHomeWith } from "../../../../../test/effect-test.ts";
 import { Home } from "../../../../config.ts";
-import { execTestLayer } from "../../../../Exec.ts";
+import { execTestLayer } from "../../../../platform/exec.ts";
 import { ServiceManagerClient } from "../../domain/ports/clients/service-manager.client.ts";
 import {
   launchAgentPlist,

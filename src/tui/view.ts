@@ -11,8 +11,8 @@ import type {
   PersonaStatus,
   RepoStatus,
 } from "../interface/daemon/daemon.protocol.ts";
+import { samePersona } from "../kernel/persona.value-object.ts";
 import { ActiveRun } from "../modules/runs/use-cases/run.result.ts";
-import { samePersona } from "../persona.ts";
 import { FLOW_TURNED_OFF } from "../repo-config.ts";
 
 export type Style =

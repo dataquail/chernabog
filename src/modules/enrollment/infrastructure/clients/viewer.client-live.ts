@@ -3,7 +3,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { GitHubApi, viewerLogin } from "../../../../GitHubApi.ts";
+import { GitHubApi, viewerLogin } from "../../../../platform/github-api.ts";
 import { ViewerClient } from "../../domain/ports/clients/viewer.client.ts";
 
 export const ViewerClientLive = Layer.effect(

@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
-import { Home } from "./config.ts";
+import { Home } from "./home.ts";
 
 type Version = readonly [number, number, number];
 
