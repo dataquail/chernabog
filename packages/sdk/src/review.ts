@@ -208,7 +208,24 @@ export const recheckJsonSchema = {
   required: [...verdictJsonSchema.required, "findings"],
 } satisfies Json;
 
-const withoutMarkers = (body: string) => body.replace(/<!--.*?-->/gs, "").trim();
+// Cuts out each <!-- … --> and looks again from the start, so a marker nested
+// in another can't survive the outer one's removal. An unclosed one hides the
+// rest of the body, as it would in the rendered comment.
+const withoutMarkers = (body: string): string => {
+  const start = body.indexOf("<!--");
+
+  if (start === -1) {
+    return body.trim();
+  }
+
+  const end = body.indexOf("-->", start + "<!--".length);
+
+  if (end === -1) {
+    return body.slice(0, start).trim();
+  }
+
+  return withoutMarkers(body.slice(0, start) + body.slice(end + "-->".length));
+};
 
 const describeNote = (note: ReviewNote) =>
   Option.match(note.location, {
