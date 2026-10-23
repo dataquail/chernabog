@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.94, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.94, structure: 0.85, members: 0.5, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -223,6 +223,17 @@ defs:
     probe:
       source: 'export const zzUseCase = () => Console.log("done");'
       name: log
+
+  no-in-place-writes:
+    message: >-
+      `{name}` rewrites a file in place, truncating it first: a write cut short leaves it empty
+      or partial, and two writers at once lose one's change. A repository persists state with
+      updateFile (src/platform/file-lock.ts), which locks, checks and replaces the file whole.
+    subject: calls
+    match: [writeFileString, writeFile]
+    probe:
+      source: 'export const zz = (fs: Fs) => fs.writeFileString("state.json", "{}");'
+      name: writeFileString
 
   # What a composition root of the CLI may name: the modules' layers and
   # use-cases, the interface, the platform and the kernel, and, file by file,
@@ -623,9 +634,9 @@ tree:
                   external: [yaml]
                   allow: ["@/platform/**", "@/repo-config.ts"]
                 children:
-                  "*.repository-live.ts": {}
-                  "*.repository-fake.ts": {}
-                  "*.mapper.ts": {}
+                  "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
+                  "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
+                  "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
                   "*.test.ts": { use: module-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and

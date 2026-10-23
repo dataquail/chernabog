@@ -3,6 +3,7 @@
 // alive. A lock file next to the database keeps a second one from starting.
 
 import { describeError } from "@chernabog/sdk";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -43,6 +44,34 @@ const isAlive = (pid: number) =>
     ),
   );
 
+// Where a lock file stands: there's none, a live process holds it, or it was
+// left by a process that died (or is unreadable), with its text as read.
+export type LockState = Data.TaggedEnum<{
+  Free: Record<never, never>;
+  Held: { readonly owner: LockOwner };
+  Abandoned: { readonly text: string };
+}>;
+
+export const LockState = Data.taggedEnum<LockState>();
+
+export const lockState = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const text = yield* fs.readFileString(path).pipe(Effect.option);
+
+    if (Option.isNone(text)) {
+      return LockState.Free();
+    }
+
+    const owner = Schema.decodeOption(LockFile)(text.value);
+
+    if (Option.isSome(owner) && (yield* isAlive(owner.value.pid))) {
+      return LockState.Held({ owner: owner.value });
+    }
+
+    return LockState.Abandoned({ text: text.value });
+  });
+
 // The process holding the lock, if it is still alive.
 export const readLock = (path: string) =>
   Effect.gen(function* () {
@@ -61,12 +90,21 @@ export const readLock = (path: string) =>
     return owner;
   }).pipe(Effect.orElseSucceed(() => Option.none<LockOwner>()));
 
+// What a lock file says: this process holds it, for what, since now.
+export const lockText = (purpose: string) =>
+  Effect.gen(function* () {
+    const since = DateTime.formatIso(yield* DateTime.now);
+
+    return yield* Schema.encodeEffect(LockFile)({ pid: process.pid, purpose, since }).pipe(
+      Effect.orDie,
+    );
+  });
+
 // Creates the lock file, unless it already exists.
 const tryCreate = (path: string, purpose: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const since = DateTime.formatIso(yield* DateTime.now);
-    const text = yield* Schema.encodeEffect(LockFile)({ pid: process.pid, purpose, since });
+    const text = yield* lockText(purpose);
 
     return yield* fs.writeFileString(path, text, { flag: "wx" }).pipe(
       Effect.as(true),
@@ -101,7 +139,6 @@ export const acquireLock = (path: string, purpose: string) =>
     }).pipe(
       Effect.catchTags({
         PlatformError: (error) => Effect.fail(new LockHeld({ message: describeError(error) })),
-        SchemaError: (error) => Effect.die(error),
       }),
     ),
     () => FileSystem.FileSystem.use((fs) => fs.remove(path, { force: true })).pipe(Effect.ignore),

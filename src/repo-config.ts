@@ -21,7 +21,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import type * as PlatformError from "effect/PlatformError";
+import * as PlatformError from "effect/PlatformError";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
@@ -44,9 +44,9 @@ import {
   type LaunchersConfig,
 } from "./modules/runs/infrastructure/runtime/launchers.ts";
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
-import { writeFileAtomic } from "./platform/atomic-write.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
+import { FileBusy, updateFile } from "./platform/file-lock.ts";
 import { checkConfigVersion } from "./platform/flow-deps.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
@@ -899,33 +899,47 @@ export const editMachineConfig = <A, E, R>(
     const home = yield* Home;
     const file = homePaths(home.root).machineConfig;
 
-    const platform = <B>(effect: Effect.Effect<B, PlatformError.PlatformError>) =>
+    const platform = <B, F extends { readonly message: string }>(effect: Effect.Effect<B, F>) =>
       effect.pipe(Effect.mapError((error) => new ConfigError({ message: error.message })));
 
     yield* platform(fs.makeDirectory(home.root, { recursive: true }));
-    let document = new YAML.Document({});
 
-    if (yield* platform(fs.exists(file))) {
-      document = YAML.parseDocument(yield* platform(fs.readFileString(file)));
-    }
+    // Under machine config's lock, and again from the top if an editor saved it meanwhile.
+    return yield* updateFile(fs, file, "editing machine config", (text) =>
+      Effect.gen(function* () {
+        const document = Option.match(text, {
+          onNone: () => new YAML.Document({}),
+          onSome: (found) => YAML.parseDocument(found),
+        });
 
-    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(
-      document.toJS() ?? {},
-    ).pipe(Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })));
+        const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(
+          document.toJS() ?? {},
+        ).pipe(
+          Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })),
+        );
 
-    // Paths as the rest of chernabog sees them; the document keeps them as written.
-    const current = {
-      ...decoded,
-      repos: (decoded.repos ?? []).map((entry) => ({
-        ...entry,
-        path: expandHome(entry.path, home.user),
-      })),
-    };
+        // Paths as the rest of chernabog sees them; the document keeps them as written.
+        const current = {
+          ...decoded,
+          repos: (decoded.repos ?? []).map((entry) => ({
+            ...entry,
+            path: expandHome(entry.path, home.user),
+          })),
+        };
 
-    const result = yield* edit(document, current);
-    yield* platform(writeFileAtomic(fs, file, document.toString()));
+        const result = yield* edit(document, current);
 
-    return result;
+        return [result, Option.some(document.toString())] as const;
+      }),
+    ).pipe(
+      Effect.mapError((error) => {
+        if (error instanceof FileBusy || PlatformError.isPlatformError(error)) {
+          return new ConfigError({ message: error.message });
+        }
+
+        return error;
+      }),
+    );
   });
 
 // The entry a repo's enrolment updates, and its index; none when the repo

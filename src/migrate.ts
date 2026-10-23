@@ -16,8 +16,8 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { asSuffix, type Persona } from "./kernel/persona.value-object.ts";
-import { writeFileAtomic } from "./platform/atomic-write.ts";
 import { ConfigError } from "./platform/config-error.ts";
+import { updateFile } from "./platform/file-lock.ts";
 import { flowNames } from "./platform/flow-loader.ts";
 import { viewerLogin } from "./platform/github-api.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
@@ -232,6 +232,16 @@ const migrateChoices = (
 // are kept by its slug now, as its entry in machine config is.
 const PausedFile = Schema.fromJsonString(Schema.Array(Schema.String));
 
+// What an update of a file found, and the text to replace it with, if any.
+type Update<A> = readonly [A, Option.Option<string>];
+
+// What migrating machine config said, and the repos' entries it read (none
+// when the file doesn't parse).
+type Migrated = {
+  readonly lines: ReadonlyArray<string>;
+  readonly entries: Option.Option<ReadonlyArray<Entry>>;
+};
+
 const migratePaused = (entries: ReadonlyArray<Entry>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -241,42 +251,126 @@ const migratePaused = (entries: ReadonlyArray<Entry>) =>
       return [];
     }
 
-    const kept = Schema.decodeOption(PausedFile)(yield* fs.readFileString(file));
+    return yield* updateFile(fs, file, "migrating paused.json", (text) =>
+      Effect.gen(function* () {
+        const unchanged: Update<ReadonlyArray<string>> = [[], Option.none()];
+        const kept = Option.flatMap(text, Schema.decodeOption(PausedFile));
 
-    // A name is never owner/name.
-    const byName = Option.getOrElse(kept, (): ReadonlyArray<string> => []).filter(
-      (key) => !key.includes("/"),
+        // A name is never owner/name.
+        const byName = Option.getOrElse(kept, (): ReadonlyArray<string> => []).filter(
+          (key) => !key.includes("/"),
+        );
+
+        if (Option.isNone(kept) || byName.length === 0) {
+          return unchanged;
+        }
+
+        const slugOf = (name: string) =>
+          Option.map(
+            Arr.findFirst(
+              entries,
+              (entry) => (entry.name ?? entry.repo.split("/").at(-1)) === name,
+            ),
+            (entry) => entry.repo,
+          );
+
+        const slugs = Arr.dedupe([
+          ...kept.value.filter((key) => key.includes("/")),
+          ...byName.flatMap((name) => Option.toArray(slugOf(name))),
+        ]);
+
+        const moved = byName.map(
+          (name) => `${name} → ${Option.getOrElse(slugOf(name), () => "not enrolled, dropped")}`,
+        );
+
+        return [
+          [`paused.json now keeps paused repos by owner/name: ${moved.join(", ")}`],
+          Option.some(`${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`),
+        ] as const;
+      }),
     );
-
-    if (Option.isNone(kept) || byName.length === 0) {
-      return [];
-    }
-
-    const slugOf = (name: string) =>
-      Option.map(
-        Arr.findFirst(entries, (entry) => (entry.name ?? entry.repo.split("/").at(-1)) === name),
-        (entry) => entry.repo,
-      );
-
-    const slugs = Arr.dedupe([
-      ...kept.value.filter((key) => key.includes("/")),
-      ...byName.flatMap((name) => Option.toArray(slugOf(name))),
-    ]);
-
-    yield* writeFileAtomic(
-      fs,
-      file,
-      `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`,
-    );
-
-    const moved = byName.map(
-      (name) => `${name} → ${Option.getOrElse(slugOf(name), () => "not enrolled, dropped")}`,
-    );
-
-    return [`paused.json now keeps paused repos by owner/name: ${moved.join(", ")}`];
   });
 
-// Rewrites machine config, and returns what it changed: nothing when it's up to date.
+// What migrating machine config's text would change: the lines saying what,
+// the repos' entries (none when the file doesn't parse), and the text to
+// write, none when it's up to date.
+const migrateText = (text: Option.Option<string>, user: string) =>
+  Effect.gen(function* () {
+    const untouched: Update<Migrated> = [{ lines: [], entries: Option.none() }, Option.none()];
+
+    const document = YAML.parseDocument(Option.getOrElse(text, () => ""));
+
+    // A file that doesn't parse is loadMachineConfig's to report.
+    if (document.errors.length > 0) {
+      return untouched;
+    }
+
+    const machine = Schema.decodeUnknownOption(Machine)(document.toJS() ?? {});
+
+    if (Option.isNone(machine)) {
+      return untouched;
+    }
+
+    const github = Object.keys(machine.value.github ?? {});
+    const lines: Array<string> = [];
+
+    for (const [index, raw] of (machine.value.repos ?? []).entries()) {
+      const decoded = Schema.decodeUnknownOption(Entry)(raw);
+
+      if (Option.isNone(decoded)) {
+        continue;
+      }
+
+      const entry = decoded.value;
+
+      let logins = Option.getOrElse(
+        Option.map(Schema.decodeUnknownOption(PersonaMap)(entry.personas), Object.keys),
+        (): ReadonlyArray<string> => [],
+      );
+
+      const list = Schema.decodeUnknownOption(PersonaList)(entry.personas);
+
+      if (Option.isSome(list)) {
+        logins = Arr.dedupe(list.value);
+        document.setIn(
+          ["repos", index, "personas"],
+          document.createNode(Object.fromEntries(logins.map((login) => [login, {}]))),
+        );
+        lines.push(
+          `${entry.repo}: personas is now a map of login to that persona's own settings: ${logins.join(", ")}`,
+        );
+      }
+
+      if (listsFlows(entry)) {
+        continue;
+      }
+
+      for (const line of yield* migrateChoices(
+        document,
+        index,
+        entry,
+        expandHome(entry.path, user),
+        personasOf(logins, github),
+      )) {
+        lines.push(line);
+      }
+    }
+
+    const entries = (machine.value.repos ?? []).flatMap((raw) =>
+      Option.toArray(Schema.decodeUnknownOption(Entry)(raw)),
+    );
+
+    const update: Update<Migrated> = [
+      { lines, entries: Option.some(entries) },
+      Option.liftPredicate(document.toString(), () => lines.length > 0),
+    ];
+
+    return update;
+  });
+
+// Rewrites machine config, and returns what it changed: nothing when it's up
+// to date. It looks first without machine config's lock, since it's usually
+// up to date, and takes the lock only to change it.
 export const migrateMachineConfig = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const home = yield* Home;
@@ -286,75 +380,27 @@ export const migrateMachineConfig = Effect.gen(function* () {
     return [];
   }
 
-  const document = YAML.parseDocument(yield* fs.readFileString(file));
-
-  // A file that doesn't parse is loadMachineConfig's to report.
-  if (document.errors.length > 0) {
-    return [];
-  }
-
-  const machine = Schema.decodeUnknownOption(Machine)(document.toJS() ?? {});
-
-  if (Option.isNone(machine)) {
-    return [];
-  }
-
-  const github = Object.keys(machine.value.github ?? {});
-  const lines: Array<string> = [];
-
-  for (const [index, raw] of (machine.value.repos ?? []).entries()) {
-    const decoded = Schema.decodeUnknownOption(Entry)(raw);
-
-    if (Option.isNone(decoded)) {
-      continue;
-    }
-
-    const entry = decoded.value;
-
-    let logins = Option.getOrElse(
-      Option.map(Schema.decodeUnknownOption(PersonaMap)(entry.personas), Object.keys),
-      (): ReadonlyArray<string> => [],
-    );
-
-    const list = Schema.decodeUnknownOption(PersonaList)(entry.personas);
-
-    if (Option.isSome(list)) {
-      logins = Arr.dedupe(list.value);
-      document.setIn(
-        ["repos", index, "personas"],
-        document.createNode(Object.fromEntries(logins.map((login) => [login, {}]))),
-      );
-      lines.push(
-        `${entry.repo}: personas is now a map of login to that persona's own settings: ${logins.join(", ")}`,
-      );
-    }
-
-    if (listsFlows(entry)) {
-      continue;
-    }
-
-    for (const line of yield* migrateChoices(
-      document,
-      index,
-      entry,
-      expandHome(entry.path, home.user),
-      personasOf(logins, github),
-    )) {
-      lines.push(line);
-    }
-  }
-
-  if (lines.length > 0) {
-    yield* writeFileAtomic(fs, file, document.toString());
-  }
-
-  const entries = (machine.value.repos ?? []).flatMap((raw) =>
-    Option.toArray(Schema.decodeUnknownOption(Entry)(raw)),
+  const [looked, change] = yield* migrateText(
+    Option.some(yield* fs.readFileString(file)),
+    home.user,
   );
 
-  return [...lines, ...(yield* migratePaused(entries))];
+  const migrated = yield* Option.match(change, {
+    onNone: () => Effect.succeed(looked),
+    onSome: () =>
+      updateFile(fs, file, "migrating machine config", (text) => migrateText(text, home.user)),
+  });
+
+  return [
+    ...migrated.lines,
+    ...(yield* Option.match(migrated.entries, {
+      onNone: () => Effect.succeed([]),
+      onSome: migratePaused,
+    })),
+  ];
 }).pipe(
-  Effect.catchTag("PlatformError", (error) =>
-    Effect.fail(new ConfigError({ message: error.message })),
-  ),
+  Effect.catchTags({
+    PlatformError: (error) => Effect.fail(new ConfigError({ message: error.message })),
+    FileBusy: (error) => Effect.fail(new ConfigError({ message: error.message })),
+  }),
 );
