@@ -152,4 +152,7 @@ const pause = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, pause
 
 const resume = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, paused: false });
 
-export const EnrolledRepoRootOps = { nameOf, choicesOf, entryFor, reenroll, ownFlows, setFlow, setFlowSchedule, setAccount, answersTo, named, pause, resume } as const;
+// The branch the repo's .chernabog/ is trusted and run from.
+const baseBranchOf = (repo: EnrolledRepoRoot) => repo.baseBranch ?? 'main';
+
+export const EnrolledRepoRootOps = { baseBranchOf, nameOf, choicesOf, entryFor, reenroll, ownFlows, setFlow, setFlowSchedule, setAccount, answersTo, named, pause, resume } as const;

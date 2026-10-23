@@ -16,15 +16,16 @@ import { Home } from './config.ts';
 import { Exec, type ExecResult } from './Exec.ts';
 import { decodeManifest, describeDrift, describeTooOld, isTooOld, pinDrift, requiredVersion } from './flow-deps.ts';
 import { canMerge, githubGetAllPages, viewerLoginAs } from './GitHubApi.ts';
+import { RepoSlug } from './kernel/repo-slug.id.ts';
 import { desiredLabels, Label, planLabelSync } from './labels.ts';
 import { describeLauncher, launcherFor } from './launchers.ts';
 import { flowNames } from './loader.ts';
+import { findTrustedTreeUseCase } from './modules/trust/use-cases/find-trusted-tree.use-case.ts';
 import { asSuffix } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
 import { type EffectiveRepo, type EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineAccount, type MachineConfig, repoNameOf } from './repo-config.ts';
 import { isInstalled } from './service.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
-import { trustedTree } from './trust.ts';
 import { checkAccount, loggedInEmail } from './usage-gate.ts';
 import { VERSION } from './version.ts';
 
@@ -279,7 +280,7 @@ export const doctor = Effect.gen(function* () {
       continue;
     }
 
-    check(Option.contains(yield* trustedTree(repo.repo), tree.success), `${name}: .chernabog/ (${tree.success.slice(0, 8)}) is trusted`, `chernabog trust ${name}`);
+    check(Option.contains((yield* findTrustedTreeUseCase(RepoSlug.make(repo.repo))).tree, tree.success), `${name}: .chernabog/ (${tree.success.slice(0, 8)}) is trusted`, `chernabog trust ${name}`);
 
     yield* checkLauncher(repo, name, baseBranch);
     yield* checkPins(repo, name, baseBranch);

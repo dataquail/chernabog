@@ -35,11 +35,15 @@ import { movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
 import { pauseCommand } from './interface/cli/enrollment/pause.command.ts';
 import { resumeCommand } from './interface/cli/enrollment/resume.command.ts';
 import { optionalRepo, repoArgument, repoFlag } from './interface/cli/repo.arguments.ts';
+import { trustCommand } from './interface/cli/trust/trust.command.ts';
+import { RepoSlug } from './kernel/repo-slug.id.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { flowNames, loadFlows } from './loader.ts';
 import { migrateMachineConfig } from './migrate.ts';
 import { EnrollmentLayer } from './modules/enrollment/enrollment.layer.ts';
+import { TrustLayer } from './modules/trust/trust.layer.ts';
+import { findTrustedTreeUseCase } from './modules/trust/use-cases/find-trusted-tree.use-case.ts';
 import { openPr } from './open-pr.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
@@ -53,7 +57,6 @@ import { configTree } from './snapshot.ts';
 import { openSession, startIssue } from './start.ts';
 import { runLabel, type RunRow, shortRunId } from './state.ts';
 import { runStepChild, StepServicesLive } from './steps.ts';
-import { recordTrust, trustDiff, trustedTree } from './trust.ts';
 import { runTui } from './tui/app.ts';
 import { VERSION } from './version.ts';
 
@@ -146,7 +149,7 @@ const statusHandler = Effect.gen(function* () {
 
   for (const repo of machine.repos) {
     const tree = yield* Effect.result(configTree(repo.path, repo.baseBranch ?? 'main', false));
-    yield* Console.log(`${repoNameOf(repo)} (${repo.repo}): ${trustLine(tree, yield* trustedTree(repo.repo))}`);
+    yield* Console.log(`${repoNameOf(repo)} (${repo.repo}): ${trustLine(tree, (yield* findTrustedTreeUseCase(RepoSlug.make(repo.repo))).tree)}`);
   }
 });
 
@@ -317,31 +320,6 @@ const targetsOf = (repo: Option.Option<string>) =>
 
     return { machine, targets: machine.repos };
   });
-
-const trust = Command.make('trust', { repo: optionalRepo }, ({ repo }) =>
-  Effect.gen(function* () {
-    const { targets } = yield* targetsOf(repo);
-    let changed = false;
-
-    for (const enrolled of targets) {
-      const name = repoNameOf(enrolled);
-      const tree = yield* configTree(enrolled.path, enrolled.baseBranch ?? 'main');
-      const previous = yield* trustedTree(enrolled.repo);
-
-      if (Option.contains(previous, tree)) {
-        yield* Console.log(`${name}: already trusted (${tree.slice(0, 8)})`);
-        continue;
-      }
-
-      yield* Console.log(`${name}: ${yield* trustDiff(enrolled.path, previous, tree)}`);
-      yield* recordTrust(enrolled.repo, tree);
-      yield* Console.log(`${name}: trusted ${tree.slice(0, 8)}`);
-      changed = true;
-    }
-
-    if (changed) yield* daemonReload.pipe(Effect.ignore);
-  }),
-).pipe(Command.withDescription(".chernabog/ on a repo's base branch: show what changed since it was last trusted, and trust it"));
 
 const doctorCommand = Command.make('doctor', {}, () =>
   Effect.gen(function* () {
@@ -592,7 +570,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     logs,
     pauseCommand,
     resumeCommand,
-    trust,
+    trustCommand,
     labels,
     doctorCommand,
     setupCommand,
@@ -614,7 +592,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once.
-const AppLive = Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, EnrollmentLayer).pipe(
+const AppLive = Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, EnrollmentLayer, TrustLayer).pipe(
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

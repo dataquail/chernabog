@@ -29,6 +29,7 @@ import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
 import { listPausedReposUseCase } from './modules/enrollment/use-cases/list-paused-repos.use-case.ts';
+import { findTrustedTreeUseCase } from './modules/trust/use-cases/find-trusted-tree.use-case.ts';
 import { type Persona, samePersona } from './persona.ts';
 import { DaemonStatus, type PersonaStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, type PersonaRepo, repoNameOf, type Routing, routingOf } from './repo-config.ts';
@@ -37,7 +38,6 @@ import { adoptRuns, buildPersonaContexts, type PersonaContext, type RepoContext,
 import { decideTick, describeElsewhere, freeSlots, nextTick, routeItems, scheduleFor } from './schedule.ts';
 import { configTree, snapshotConfig } from './snapshot.ts';
 import { everyRun, runLabel, State } from './state.ts';
-import { trustedTree } from './trust.ts';
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -93,7 +93,7 @@ export const loadRepoState = (machine: MachineConfig, enrolled: EnrolledRepo, in
     if (Result.isFailure(snapshot)) return failed(describeError(snapshot.failure), Option.none());
 
     const { configDir, tree } = snapshot.success;
-    const trusted = yield* trustedTree(enrolled.repo);
+    const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(enrolled.repo))).tree;
 
     if (!Option.contains(trusted, tree)) {
       const message = Option.match(trusted, {
@@ -446,14 +446,14 @@ export const runDaemon = Effect.gen(function* () {
           if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) continue;
 
           repo.latestTree = Option.some(tree.success);
-          const trusted = Option.contains(yield* trustedTree(repo.enrolled.repo), tree.success);
+          const trusted = Option.contains((yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree, tree.success);
           yield* log(`${repo.name}: .chernabog/ changed (${tree.success.slice(0, 8)}); ${changedAction(trusted)}`);
 
           if (trusted) yield* Ref.set(reloadPending, true);
         }
 
         for (const repo of repos) {
-          const trusted = yield* trustedTree(repo.enrolled.repo);
+          const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
 
           if (repo.status !== 'ready' && Option.isSome(repo.latestTree) && sameTree(trusted, repo.latestTree)) yield* Ref.set(reloadPending, true);
         }
