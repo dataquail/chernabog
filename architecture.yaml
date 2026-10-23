@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.94, structure: 0.85, members: 0.51, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.94, structure: 0.85, members: 0.52, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.

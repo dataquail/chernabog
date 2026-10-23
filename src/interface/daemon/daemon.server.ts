@@ -51,6 +51,7 @@ import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-
 import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
+import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -233,6 +234,12 @@ export type TickOptions = { readonly gates: boolean; readonly item: Option.Optio
 const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTime.formatIso);
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
+
+// Running on an older tree than its base branch's, which isn't trusted yet.
+const stale = (repo: RepoState) => repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
+
+// Waiting on trust: never loaded for it, or running on a tree since replaced.
+const untrusted = (repo: RepoState) => repo.status === "untrusted" || stale(repo);
 
 // What the daemon schedules from the enrolled repos: one added, removed or
 // moved, or any of its settings changed, such as a flow turned on for a
@@ -616,6 +623,16 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
+      // Restarts the daemon on a repo's trusted tree, only the first time it does.
+      const reloadOn = (repo: RepoState, tree: string) =>
+        Effect.gen(function* () {
+          const claim = yield* claimReloadUseCase(RepoSlug.make(repo.enrolled.repo), tree);
+
+          if (claim.first) {
+            yield* Ref.set(reloadPending, true);
+          }
+        });
+
       // Notices a new .chernabog/ on a base branch: trusted, it restarts the
       // daemon on it once nothing is executing; untrusted, the repo starts no new runs.
       const checkConfig = Effect.gen(function* () {
@@ -640,19 +657,21 @@ export const runDaemon = Effect.gen(function* () {
           );
 
           if (trusted) {
-            yield* Ref.set(reloadPending, true);
+            yield* reloadOn(repo, tree.success);
           }
         }
 
+        // A repo trusted since: restart so it loads. One that failed to load
+        // on a trusted tree doesn't; restarting on the same tree won't help.
         for (const repo of repos) {
+          if (!untrusted(repo) || Option.isNone(repo.latestTree)) {
+            continue;
+          }
+
           const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
 
-          if (
-            repo.status !== "ready" &&
-            Option.isSome(repo.latestTree) &&
-            sameTree(trusted, repo.latestTree)
-          ) {
-            yield* Ref.set(reloadPending, true);
+          if (sameTree(trusted, repo.latestTree)) {
+            yield* reloadOn(repo, repo.latestTree.value);
           }
         }
       });
@@ -723,7 +742,6 @@ export const runDaemon = Effect.gen(function* () {
       );
 
       const repoStatus = (paused: ReadonlyArray<RepoSlug>) => (repo: RepoState) => {
-        const stale = repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
         const offReason = (schedule: FlowSchedule) => flowOff(schedule.own, schedule.handle.name);
 
         const status: RepoStatus = {
@@ -766,7 +784,7 @@ export const runDaemon = Effect.gen(function* () {
           }),
         };
 
-        if (!stale) {
+        if (!stale(repo)) {
           return status;
         }
 
