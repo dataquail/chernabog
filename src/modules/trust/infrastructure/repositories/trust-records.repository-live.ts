@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
-import { writeFileAtomic } from "../../../../platform/atomic-write.ts";
+import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { type TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
@@ -25,14 +25,17 @@ export const TrustRecordsRepositoryLive = Layer.effect(
     const file = homePaths(home.root).trust;
 
     // A trust.json that's missing or doesn't parse trusts nothing.
+    const recordsIn = (text: Option.Option<string>) =>
+      Option.getOrElse(Option.flatMap(text, Schema.decodeOption(TrustFile)), () =>
+        Record.empty<string, TrustFile[string]>(),
+      );
+
     const readAll = Effect.gen(function* () {
       if (!(yield* fs.exists(file))) {
         return Record.empty<string, TrustFile[string]>();
       }
 
-      return Option.getOrElse(Schema.decodeOption(TrustFile)(yield* fs.readFileString(file)), () =>
-        Record.empty<string, TrustFile[string]>(),
-      );
+      return recordsIn(Option.some(yield* fs.readFileString(file)));
     }).pipe(Effect.orElseSucceed(() => Record.empty<string, TrustFile[string]>()));
 
     const findOne = (repo: RepoSlug) =>
@@ -42,11 +45,20 @@ export const TrustRecordsRepositoryLive = Layer.effect(
         ),
       );
 
+    // Under trust.json's lock, so two repos trusted at once both stay trusted.
     const save = (record: TrustRecordRoot) =>
       Effect.gen(function* () {
-        const records = { ...(yield* readAll), [record.repo]: toEntry(record) };
         yield* fs.makeDirectory(home.root, { recursive: true });
-        yield* writeFileAtomic(fs, file, `${yield* Schema.encodeEffect(TrustFile)(records)}\n`);
+        yield* updateFile(fs, file, "trusting a repo", (text) =>
+          Effect.gen(function* () {
+            const records = { ...recordsIn(text), [record.repo]: toEntry(record) };
+
+            return [
+              record.repo,
+              Option.some(`${yield* Schema.encodeEffect(TrustFile)(records)}\n`),
+            ] as const;
+          }),
+        );
       }).pipe(
         Effect.mapError(
           (error) => new PersistenceFailed({ message: `trust.json: ${error.message}` }),

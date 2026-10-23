@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
-import { writeFileAtomic } from "../../../../platform/atomic-write.ts";
+import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
@@ -39,25 +39,43 @@ export const EnrolledReposRepositoryLive = Layer.effect(
     const pausedPath = homePaths(home.root).paused;
 
     // A paused.json that's missing or doesn't parse pauses nothing.
+    const pausedIn = (text: Option.Option<string>) =>
+      Option.getOrElse(
+        Option.flatMap(text, Schema.decodeOption(PausedFile)),
+        (): ReadonlyArray<RepoSlug> => [],
+      );
+
     const readPaused = Effect.gen(function* () {
       if (!(yield* fs.exists(pausedPath))) {
         return [];
       }
 
-      return Option.getOrElse(
-        Schema.decodeOption(PausedFile)(yield* fs.readFileString(pausedPath)),
-        () => [],
-      );
+      return pausedIn(Option.some(yield* fs.readFileString(pausedPath)));
     }).pipe(Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => []));
 
-    const writePaused = (slugs: ReadonlyArray<RepoSlug>) =>
-      Effect.gen(function* () {
-        yield* writeFileAtomic(
-          fs,
-          pausedPath,
-          `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`,
-        );
-      }).pipe(Effect.mapError(failed));
+    // Pauses or resumes the repo, under paused.json's lock.
+    const savePaused = (repo: EnrolledRepoRoot) =>
+      updateFile(fs, pausedPath, "pausing repos", (text) =>
+        Effect.gen(function* () {
+          const paused = pausedIn(text);
+
+          if (paused.includes(repo.repo) === repo.paused) {
+            return [repo.repo, Option.none<string>()] as const;
+          }
+
+          const slugs = Arr.appendAll(
+            paused.filter((slug) => slug !== repo.repo),
+            Option.toArray(Option.liftPredicate(repo.repo, () => repo.paused)),
+          );
+
+          return [
+            repo.repo,
+            Option.some(
+              `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`,
+            ),
+          ] as const;
+        }),
+      ).pipe(Effect.mapError(failed));
 
     const findAll = Effect.gen(function* () {
       const machine = yield* loadMachineConfig;
@@ -105,18 +123,7 @@ export const EnrolledReposRepositoryLive = Layer.effect(
     const save = (repo: EnrolledRepoRoot) =>
       Effect.gen(function* () {
         yield* saveEntry(repo);
-        const paused = yield* readPaused;
-
-        if (paused.includes(repo.repo) === repo.paused) {
-          return;
-        }
-
-        yield* writePaused(
-          Arr.appendAll(
-            paused.filter((slug) => slug !== repo.repo),
-            Option.toArray(Option.liftPredicate(repo.repo, () => repo.paused)),
-          ),
-        );
+        yield* savePaused(repo);
       });
 
     return EnrolledReposRepository.of({ findAll, save, remove });

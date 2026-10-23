@@ -217,10 +217,13 @@ transitive reach), the coverage floors and the baseline.
   Ctrl-C exits at once. Keep finalizers to bookkeeping (the socket, the lock,
   a log line). Never make correctness wait on a clean stop; recover at
   startup instead.
-- **State files are replaced, never rewritten in place.** Machine config,
-  `paused.json`, `trust.json` and the service unit go through
-  `writeFileAtomic` (`src/platform/atomic-write.ts`). Use it for any new file
-  chernabog keeps state in.
+- **State files are changed under a lock and replaced whole.** Machine
+  config, `paused.json` and `trust.json` are changed with `updateFile`
+  (`src/platform/file-lock.ts`). It holds `<file>.lock`, re-runs the change if
+  an editor saved the file meanwhile, and replaces the file atomically with
+  `writeFileAtomic` (`src/platform/atomic-write.ts`). Use `updateFile` for any
+  new state file; a repository adapter may not call `writeFileString`. An
+  update isn't reentrant: never call one inside another on the same file.
   Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows

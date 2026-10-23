@@ -113,6 +113,21 @@ point, and a person who pressed Ctrl-C won't wait long for it to finish.
   - `chernabog install` stops the service, writes the unit, then starts it. If
     it is killed in between, the daemon stays stopped until `chernabog install`
     or `chernabog start` runs again; both are safe to repeat.
-- **Out of scope here: concurrent writers.** Machine config is
-  read-modified-written without a lock, so two processes editing it at once
-  can lose one edit.
+- **Concurrent writers.** Machine config, `paused.json` and `trust.json` are
+  each read, changed and written back by the CLI, the TUI, and the migration
+  that runs at every CLI start. Two of those at once lost one change: two
+  processes adding 40 lines each kept 40 of the 80. `updateFile`
+  (`src/platform/file-lock.ts`) makes them take turns.
+  - **Lock.** It holds `<file>.lock` while it reads, changes and replaces the
+    file, waiting up to 2 seconds for another holder. The lock is written in
+    full and linked into place, so no process ever reads half a lock. A lock
+    whose process died is moved aside atomically before it is removed, so a
+    lock that someone took in the meantime is never the one deleted. My
+    first version simply deleted any lock that looked abandoned, which let
+    two writers through.
+  - **Editor check.** Just before replacing the file it checks the file is
+    unchanged since it was read. If not (an editor saved it), it re-runs the
+    change on the new text, so the editor's edit survives. An editor saving
+    between that check and the rename still loses to chernabog's write.
+  - **Rule.** A members rule now forbids `writeFileString` in a repository
+    adapter.
