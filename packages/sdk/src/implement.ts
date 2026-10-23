@@ -596,10 +596,15 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
     }
   });
 
-// Checks the branch has commits, touches no human-only paths, and pushes it.
-// Fails with NothingCommitted when there's nothing to push, and PushRejected
-// when the remote refuses it, such as for a token without the workflow scope.
-export const push = (name: string, worktree: string, branch: string) =>
+// withPerson: a person is in the session that wrote the change, so it may
+// touch humanOnlyPaths; a person still merges it (PullRequest.merge checks them again).
+export type PushOptions = { readonly withPerson?: boolean };
+
+// Checks the branch has commits and, unless a person is in the session,
+// touches no human-only paths, and pushes it. Fails with NothingCommitted when
+// there's nothing to push, and PushRejected when the remote refuses it, such
+// as for a token without the workflow scope.
+export const push = (name: string, worktree: string, branch: string, options: PushOptions = {}) =>
   activity(
     name,
     Effect.gen(function* () {
@@ -610,15 +615,17 @@ export const push = (name: string, worktree: string, branch: string) =>
         return yield* new NothingCommitted({ branch });
       }
 
-      const touched = pathsMatching(
-        yield* git.changedFiles(worktree, repo.baseBranch),
-        repo.humanOnlyPaths,
-      );
+      if (options.withPerson !== true) {
+        const touched = pathsMatching(
+          yield* git.changedFiles(worktree, repo.baseBranch),
+          repo.humanOnlyPaths,
+        );
 
-      if (touched.length > 0) {
-        return yield* new NeedsHuman({
-          reason: `the change touches paths a person must handle: ${touched.map((path) => `\`${path}\``).join(", ")}`,
-        });
+        if (touched.length > 0) {
+          return yield* new NeedsHuman({
+            reason: `the change touches paths a person must handle: ${touched.map((path) => `\`${path}\``).join(", ")}`,
+          });
+        }
       }
 
       yield* git.push(worktree, branch);
@@ -762,7 +769,9 @@ export const waitForCi = (
         ].join("\n"),
         target,
       );
-      yield* push(named(options, `push-ci-${round}`), worktree, target.branch);
+      yield* push(named(options, `push-ci-${round}`), worktree, target.branch, {
+        withPerson: target.withPerson === true,
+      });
     }
   });
 

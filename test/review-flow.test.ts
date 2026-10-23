@@ -302,6 +302,27 @@ describe("address-review", () => {
   );
 
   effect(
+    "hands a fix that touches humanOnlyPaths to a person, on a pull request nobody worked on",
+    () =>
+      Effect.gen(function* () {
+        const fake = changesAsked();
+        fake.comment(
+          'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
+        );
+        fake.git.pushes = 1;
+        fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+        const finished = yield* runToEnd(addressing, fake, addressWork);
+        expect(finished.status).toBe("needs-human");
+        expect(summaryOf(finished)).toContain(
+          "the change touches paths a person must handle: `.github/workflows/ci.yml`",
+        );
+        expect(fake.git.pushes).toBe(1);
+        expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+        expect(fake.people.requested).toEqual([]);
+      }),
+  );
+
+  effect(
     "disagrees: replies with its reasons and hands the pull request to a person, without pushing or asking again",
     () =>
       Effect.gen(function* () {
