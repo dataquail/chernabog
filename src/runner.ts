@@ -1,7 +1,7 @@
 // Opens an enrolled repo (its config layers and flows) and runs one flow in
 // the foreground: `chernabog run <flow> --repo <name>`.
 
-import { type Flow, RunLog, Runs, type WorkItem } from "@chernabog/sdk";
+import { type Flow, RunLog, type WorkItem } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -14,28 +14,27 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { ConfigError, Home, homePaths } from "./config.ts";
 import {
-  capturing,
   defaultPersona,
-  deliverSignals,
   type FlowHandle,
   flowHandle,
   flowLayer,
-  pollRun,
   repoServices,
   runLogFile,
   type ServicesFor,
-  startRun,
-  StateLive,
-  unreportedItem,
 } from "./engine.ts";
 import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
-import { RunId, runLabel } from "./kernel/run-id.id.ts";
+import { runLabel } from "./kernel/run-id.id.ts";
 import { loadFlows } from "./loader.ts";
 import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
+import { withRepo } from "./modules/runs/infrastructure/clients/flows.client-live.ts";
+import { RuntimeLayer, StateLive } from "./modules/runs/runs.layer.ts";
 import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
-import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
+import { deliverSignalsUseCase } from "./modules/runs/use-cases/deliver-signals.use-case.ts";
 import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
+import { pollRunUseCase } from "./modules/runs/use-cases/poll-run.use-case.ts";
+import { resumeRunUseCase } from "./modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
+import { startFlowRunUseCase } from "./modules/runs/use-cases/start-flow-run.use-case.ts";
 import { viewerLogin } from "./platform/github-api.ts";
 import { acquireLock } from "./platform/lock.ts";
 import {
@@ -163,23 +162,6 @@ export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
     },
   });
 
-// Whether a run is still running, none for a run this machine doesn't know.
-const capturingRuns = capturing((runId: string) =>
-  findRunUseCase(RunId.make(runId)).pipe(
-    Effect.map((found) => Option.map(found.run, (run) => run.status === "running")),
-  ),
-);
-
-// Runs a flow's trigger (or gate) with the repo's services, and Runs: what
-// this machine's runs say of a run, for triggers that leave alone a pull
-// request a run owns.
-export const withRepo = <A, E, R>(context: Context.Context<R>, effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const isActive = yield* capturingRuns;
-
-    return yield* Effect.provideContext(effect, Context.add(context, Runs, Runs.of({ isActive })));
-  });
-
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
   let offset = 0;
@@ -205,6 +187,31 @@ export const tailer = (path: string) => {
 
 const SIGNAL_EVERY_MS = 60_000;
 
+// A flow as a persona runs it, as the runs module names it.
+const refOf = (handle: FlowHandle, persona: Persona) => ({
+  repo: handle.repo.settings.name,
+  flow: handle.name,
+  persona,
+});
+
+// The item a person named that the trigger didn't report, when the flow can
+// find it by its key, as `start` finds the issue `chernabog start` names.
+export const unreportedItem = (
+  flow: Flow,
+  named: Option.Option<string>,
+  items: ReadonlyArray<WorkItem>,
+) =>
+  Option.match(
+    Option.filter(
+      Option.product(named, Option.fromUndefinedOr(flow.item)),
+      ([key]) => !items.some((found) => found.key === key),
+    ),
+    {
+      onNone: () => Effect.succeed<ReadonlyArray<WorkItem>>([]),
+      onSome: ([key, find]) => Effect.map(find(key), Option.toArray),
+    },
+  );
+
 const followRun = (
   handle: FlowHandle,
   persona: Persona,
@@ -219,7 +226,7 @@ const followRun = (
     while (current.status === "running") {
       yield* tail;
       yield* Effect.sleep("1 second");
-      current = yield* pollRun(handle, current);
+      current = Option.getOrElse((yield* pollRunUseCase(current.id)).run, () => current);
       const now = yield* Clock.currentTimeMillis;
 
       if (now - lastSignalCheck > SIGNAL_EVERY_MS) {
@@ -229,7 +236,7 @@ const followRun = (
           Effect.orElseSucceed(() => []),
         );
 
-        yield* deliverSignals(handle, persona, items);
+        yield* deliverSignalsUseCase(refOf(handle, persona), items);
       }
     }
 
@@ -297,9 +304,7 @@ const resume = (
       `resuming ${unfinished.id} (${runLabel(unfinished)}), log: ${yield* runLogFile(unfinished.id)}`,
     );
 
-    if (Option.isSome(unfinished.executionId)) {
-      yield* handle.workflow.resume(unfinished.executionId.value);
-    }
+    yield* resumeRunUseCase(unfinished.id);
 
     return Option.some(yield* followRun(handle, persona, unfinished, context));
   });
@@ -351,7 +356,7 @@ const startFirst = (
       return Option.none<RunView>();
     }
 
-    const { run } = yield* startRun(handle, persona, found.value);
+    const { run } = yield* startFlowRunUseCase(refOf(handle, persona), found.value);
 
     if (Option.isNone(run)) {
       return Option.none<RunView>();
@@ -413,7 +418,14 @@ export const runInForeground = (options: RunOptions) =>
     });
 
     const engine = yield* Layer.build(
-      flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provideMerge(StateLive)),
+      RuntimeLayer({
+        handles: [handle],
+        services: (_repo, one) => servicesFrom(contexts)(one),
+      }).pipe(
+        Layer.provideMerge(
+          flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provideMerge(StateLive)),
+        ),
+      ),
     );
 
     return yield* Effect.provideContext(program, engine);

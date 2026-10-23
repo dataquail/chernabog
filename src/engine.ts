@@ -11,7 +11,6 @@ import {
   type RepoSettings,
   Run,
   RunLog,
-  signalDeferred,
   Signals,
   Skip,
   WorkItem,
@@ -22,33 +21,23 @@ import * as Cause from "effect/Cause";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import type * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as DurableDeferred from "effect/workflow/DurableDeferred";
 import * as Workflow from "effect/workflow/Workflow";
 
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { Home, homePaths } from "./config.ts";
 import { IMPLICIT, type Persona } from "./kernel/persona.value-object.ts";
 import { RunId } from "./kernel/run-id.id.ts";
-import { RunsLayer } from "./modules/runs/runs.layer.ts";
-import { attachExecutionUseCase } from "./modules/runs/use-cases/attach-execution.use-case.ts";
 import { enterStepUseCase } from "./modules/runs/use-cases/enter-step.use-case.ts";
-import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
 import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
-import { finishRunUseCase, type RunOutcome } from "./modules/runs/use-cases/finish-run.use-case.ts";
-import { listRunWaitsUseCase } from "./modules/runs/use-cases/list-run-waits.use-case.ts";
+import { type RunOutcome } from "./modules/runs/use-cases/finish-run.use-case.ts";
 import { parkRunUseCase } from "./modules/runs/use-cases/park-run.use-case.ts";
-import { releaseRunWaitUseCase } from "./modules/runs/use-cases/release-run-wait.use-case.ts";
-import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
-import { startRunUseCase } from "./modules/runs/use-cases/start-run.use-case.ts";
 import { GitHubApi } from "./platform/github-api.ts";
 import type { EffectiveRepo } from "./repo-config.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
@@ -83,14 +72,6 @@ export const EngineAt = (database: string) =>
       );
     }).pipe(Effect.orDie),
   );
-
-// The engine, and the runs module's stores beside its journal, in `database`.
-export const StateAt = (database: string) => RunsLayer.pipe(Layer.provideMerge(EngineAt(database)));
-
-// The engine and the runs in this machine's state.db.
-export const StateLive = Layer.unwrap(
-  Home.use((home) => Effect.succeed(StateAt(homePaths(home.root).state))),
-);
 
 // The repo's settings as a persona sees them: Repo.persona names it.
 export const personaSettings = (settings: RepoSettings, persona: Persona): RepoSettings =>
@@ -290,65 +271,6 @@ export const flowLayer = <R>(
     }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
   );
 
-// A run's id says nothing about it: its row records what it runs, and as whom.
-// Random rather than time-ordered, so a few characters of it name a run.
-const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
-  Effect.map(RunId.make),
-  Effect.orDie,
-);
-
-export type Started = { readonly run: Option.Option<RunView>; readonly started: boolean };
-
-// Starts one run of a flow, as a persona, for one work item, unless the
-// persona already has one for the item: then that one is the run.
-export const startRun = (handle: FlowHandle, persona: Persona, item: WorkItem) =>
-  Effect.gen(function* () {
-    const repo = handle.repo.settings.name;
-
-    // An item reported only to wake a run starts none.
-    if (item.wakeOnly === true) {
-      const { run } = yield* findActiveRunUseCase({
-        repo,
-        persona,
-        flow: handle.name,
-        itemKey: item.key,
-      });
-
-      return { run, started: false } satisfies Started;
-    }
-
-    const runId = yield* newRunId;
-
-    const recorded = yield* Effect.result(
-      startRunUseCase({
-        id: runId,
-        repo,
-        persona,
-        flow: handle.name,
-        itemKey: item.key,
-        itemTitle: Option.fromUndefinedOr(item.title),
-        itemUrl: Option.fromUndefinedOr(item.url),
-      }),
-    );
-
-    if (Result.isFailure(recorded)) {
-      const { run } = yield* findRunUseCase(recorded.failure.runId);
-
-      return { run, started: false } satisfies Started;
-    }
-
-    const payload = Option.match(persona, {
-      onNone: () => ({ runId, item }),
-      onSome: (login) => ({ runId, item, persona: login }),
-    });
-
-    const executionId = yield* handle.workflow.execute(payload, { discard: true });
-    // The run can't have ended yet: nothing polls it before it has an execution.
-    const run = yield* attachExecutionUseCase(runId, executionId).pipe(Effect.orDie);
-
-    return { run: Option.some(run), started: true } satisfies Started;
-  });
-
 export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): RunOutcome => {
   if (Exit.isSuccess(exit)) {
     return exit.value;
@@ -362,85 +284,3 @@ export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): RunOutcome 
     onSome: (failure) => ({ status: "failed", summary: failure.message }),
   });
 };
-
-// Records the run as finished once its workflow completes. Returns the run
-// as it is now: if another poll recorded its ending first, as that one did.
-export const pollRun = (handle: FlowHandle, run: RunView | ActiveRun) =>
-  Effect.gen(function* () {
-    if (run.status !== "running" || Option.isNone(run.executionId)) {
-      return run;
-    }
-
-    const result = yield* handle.workflow.poll(run.executionId.value);
-
-    if (Option.isNone(result) || !Predicate.isTagged(result.value, "Complete")) {
-      return run;
-    }
-
-    return yield* finishRunUseCase(run.id, statusOfExit(result.value.exit)).pipe(
-      Effect.catchTags({
-        RunAlreadyFinished: () =>
-          findRunUseCase(run.id).pipe(
-            Effect.map((found): RunView | ActiveRun => Option.getOrElse(found.run, () => run)),
-          ),
-        RunNotFound: () => Effect.succeed<RunView | ActiveRun>(run),
-      }),
-    );
-  });
-
-const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
-
-// The item a person named that the trigger didn't report, when the flow can
-// find it by its key, as `start` finds the issue `chernabog start` names.
-export const unreportedItem = (
-  flow: Flow,
-  named: Option.Option<string>,
-  items: ReadonlyArray<WorkItem>,
-) =>
-  Option.match(
-    Option.filter(
-      Option.product(named, Option.fromUndefinedOr(flow.item)),
-      ([key]) => !items.some((found) => found.key === key),
-    ),
-    {
-      onNone: () => Effect.succeed<ReadonlyArray<WorkItem>>([]),
-      onSome: ([key, find]) => Effect.map(find(key), Option.toArray),
-    },
-  );
-
-// Wakes the persona's runs waiting on a signal its trigger reported for their item.
-export const deliverSignals = (
-  handle: FlowHandle,
-  persona: Persona,
-  items: ReadonlyArray<WorkItem>,
-) =>
-  Effect.gen(function* () {
-    let delivered = 0;
-
-    for (const item of items) {
-      const { run } = yield* findActiveRunUseCase({
-        repo: handle.repo.settings.name,
-        persona,
-        flow: handle.name,
-        itemKey: item.key,
-      });
-
-      if (Option.isNone(run)) {
-        continue;
-      }
-
-      for (const signal of item.signals ?? []) {
-        for (const wait of (yield* listRunWaitsUseCase(run.value.id, signal)).waits) {
-          yield* DurableDeferred.succeed(signalDeferred(wait.deferred), {
-            token: yield* decodeToken(wait.token),
-            value: true,
-          });
-          yield* releaseRunWaitUseCase(wait);
-          yield* (yield* runLogFor(wait.runId)).log(`signal: ${signal}`);
-          delivered += 1;
-        }
-      }
-    }
-
-    return delivered;
-  }).pipe(Effect.orDie);

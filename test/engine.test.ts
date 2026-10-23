@@ -30,24 +30,24 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { Home, homePaths } from "../src/config.ts";
-import {
-  deliverSignals,
-  flowHandle,
-  flowLayer,
-  forEveryPersona,
-  pollRun,
-  startRun,
-  StateAt,
-} from "../src/engine.ts";
+import { flowHandle, flowLayer, forEveryPersona } from "../src/engine.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
-import { type EngineRun, repoAs } from "./sdk-fakes.ts";
+import {
+  deliverSignals,
+  type EngineRun,
+  pollRun,
+  repoAs,
+  runtimeFor,
+  startRun,
+} from "./sdk-fakes.ts";
 
 const settings: RepoSettings = {
   name: "demo",
@@ -186,8 +186,11 @@ const withEngine = <A, E, R>(
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-engine-" });
     const homeLayer = Home.at(home, home);
 
+    const servicesFor = yield* personas;
+
     const engine = yield* Layer.build(
-      flowLayer(flowsOf, yield* personas).pipe(
+      runtimeFor(flowsOf).pipe(
+        Layer.provideMerge(flowLayer(flowsOf, servicesFor)),
         Layer.provideMerge(StateAt(homePaths(home).state)),
         Layer.provideMerge(homeLayer),
       ),
@@ -206,7 +209,7 @@ const isRunning = (run: EngineRun) => run.status === "running";
 
 // Polls the run until its workflow finishes.
 const toEnd = (run: EngineRun) =>
-  pollRun(handle, run).pipe(
+  pollRun(run).pipe(
     Effect.repeat({ schedule: Schedule.spaced("25 millis"), while: isRunning, times: POLLS }),
     Effect.filterOrElse(
       (polled) => !isRunning(polled),
@@ -399,10 +402,7 @@ describe("personas", () => {
             ),
           );
 
-          return yield* pollRun(
-            asPersonas,
-            Option.getOrThrow((yield* findRunUseCase(OLD)).run),
-          ).pipe(
+          return yield* pollRun(Option.getOrThrow((yield* findRunUseCase(OLD)).run)).pipe(
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
               while: isRunning,
