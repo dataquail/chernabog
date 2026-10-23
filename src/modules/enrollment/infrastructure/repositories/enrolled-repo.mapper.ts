@@ -96,6 +96,19 @@ const encodeEntry = (root: EnrolledRepoRoot) =>
 export const sameEntry = (left: EnrolledRepoRoot, right: EnrolledRepoRoot) =>
   Equal.equals(encodeEntry(left), encodeEntry(right));
 
+// Adds a repo's entry to the end of machine config's repos.
+export const addEntry = (document: YAML.Document, repo: EnrolledRepoRoot) => {
+  const node = document.createNode(encodeEntry(repo));
+
+  if (document.has("repos")) {
+    document.addIn(["repos"], node);
+
+    return;
+  }
+
+  document.set("repos", document.createNode([node]));
+};
+
 // Writes what changed between two roots onto the entry at `index` in machine
 // config's document.
 export const applyEntry = (

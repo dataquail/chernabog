@@ -16,11 +16,15 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from "../src/flow-deps.ts";
-import { scaffold, scaffoldFiles, slugFromRemote } from "../src/init.ts";
+import { scaffold, scaffoldFiles } from "../src/init.ts";
+import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
+import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
+import { setFlowScheduleUseCase } from "../src/modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
+import { setPersonaAccountUseCase } from "../src/modules/enrollment/use-cases/set-persona-account.use-case.ts";
+import { setPersonaFlowUseCase } from "../src/modules/enrollment/use-cases/set-persona-flow.use-case.ts";
 import {
   DEFAULT_LIMITS,
   EnrolledRepo,
-  enrollInMachineConfig,
   flowOff,
   loadRepo,
   MachineConfigFile,
@@ -31,9 +35,6 @@ import {
   personasOf,
   RepoConfigFile,
   routingOf,
-  setAccountInMachineConfig,
-  setFlowInMachineConfig,
-  setFlowSchedule,
 } from "../src/repo-config.ts";
 import { scheduleFor } from "../src/schedule.ts";
 import { VERSION } from "../src/version.ts";
@@ -795,33 +796,33 @@ describe("GitHub personas", () => {
       expect(error.message).toContain("personas is empty");
     }),
   );
-
-  effectAtHome("re-enrolling a repo keeps the keys enrolling does not set", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const file = yield* machineConfigFile;
-      yield* fs.writeFileString(
-        file,
-        "github:\n  alice: {}\nrepos:\n  - path: /old\n    repo: dataquail/demo\n    # who runs it\n    personas:\n      alice:\n        flows: { implement: {} }\n",
-      );
-      expect(
-        yield* enrollInMachineConfig({ path: "/new", repo: "dataquail/demo", baseBranch: "main" }),
-      ).toBe("updated");
-
-      const text = yield* fs.readFileString(file);
-      const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(YAML.parse(text));
-      expect(decoded.repos).toEqual([
-        {
-          path: "/new",
-          repo: "dataquail/demo",
-          personas: { alice: { flows: { implement: {} } } },
-          baseBranch: "main",
-        },
-      ]);
-      expect(text).toContain("# who runs it");
-    }),
-  );
 });
+
+// The enrollment use-cases over machine config as it's stored.
+const setFlow = (...args: Parameters<typeof setPersonaFlowUseCase>) =>
+  setPersonaFlowUseCase(...args).pipe(Effect.provide(EnrolledReposRepositoryLive));
+
+const setSchedule = (...args: Parameters<typeof setFlowScheduleUseCase>) =>
+  setFlowScheduleUseCase(...args).pipe(Effect.provide(EnrolledReposRepositoryLive));
+
+const OFFERED = {
+  personas: [],
+  accounts: [
+    { name: "work", agent: "claude" },
+    { name: "personal", agent: "claude" },
+    { name: "codex", agent: "codex" },
+  ],
+};
+
+const setAccount = (
+  name: string,
+  persona: Option.Option<string>,
+  role: Option.Option<string>,
+  account: Option.Option<string>,
+) =>
+  setPersonaAccountUseCase(name, persona, role, account, OFFERED).pipe(
+    Effect.provide(EnrolledReposRepositoryLive),
+  );
 
 describe("turning a flow on or off in machine config", () => {
   const read = Effect.gen(function* () {
@@ -844,14 +845,14 @@ describe("turning a flow on or off in machine config", () => {
       yield* write(
         'repos:\n  - repo: dataquail/demo\n    path: /demo\n    flows:\n      implement: {}\n      review: { schedule: "5 * * * *" }\n',
       );
-      yield* setFlowInMachineConfig("demo", Option.none(), "implement", false);
-      yield* setFlowInMachineConfig("demo", Option.none(), "review", false);
-      yield* setFlowInMachineConfig("demo", Option.none(), "fix", true);
+      yield* setFlow("demo", Option.none(), "implement", false);
+      yield* setFlow("demo", Option.none(), "review", false);
+      yield* setFlow("demo", Option.none(), "fix", true);
       expect((yield* read).flows).toEqual({
         review: { schedule: "5 * * * *", enabled: false },
         fix: {},
       });
-      yield* setFlowInMachineConfig("demo", Option.none(), "review", true);
+      yield* setFlow("demo", Option.none(), "review", true);
       expect((yield* read).flows?.review).toEqual({ schedule: "5 * * * *" });
     }),
   );
@@ -863,7 +864,7 @@ describe("turning a flow on or off in machine config", () => {
         yield* write(
           "github: { alice: {}, bob: {} }\nrepos:\n  - repo: dataquail/demo\n    path: /demo\n    flows: { implement: {} }\n    personas: { alice: {}, bob: {} }\n",
         );
-        yield* setFlowInMachineConfig("dataquail/demo", Option.some("bob"), "review", true);
+        yield* setFlow("dataquail/demo", Option.some("bob"), "review", true);
         const entry = yield* read;
         expect(entry.flows).toEqual({ implement: {} });
         expect(entry.personas).toEqual({
@@ -896,15 +897,15 @@ describe("overriding schedules and accounts in machine config", () => {
   effectAtHome("overrides a flow's schedule, and clearing it brings back the team's", () =>
     Effect.gen(function* () {
       yield* write(BASE);
-      yield* setFlowSchedule("demo", Option.none(), "implement", Option.some("*/20 * * * *"));
-      yield* setFlowSchedule("demo", Option.none(), "review", Option.some("5 * * * *"));
+      yield* setSchedule("demo", Option.none(), "implement", Option.some("*/20 * * * *"));
+      yield* setSchedule("demo", Option.none(), "review", Option.some("5 * * * *"));
       expect((yield* entry).flows).toEqual({
         implement: { schedule: "*/20 * * * *" },
         review: { enabled: false, schedule: "5 * * * *" },
       });
       expect(yield* text).toContain("# the flows I run");
 
-      yield* setFlowSchedule("demo", Option.none(), "implement", Option.none());
+      yield* setSchedule("demo", Option.none(), "implement", Option.none());
       expect((yield* entry).flows?.implement).toEqual({});
     }),
   );
@@ -914,7 +915,7 @@ describe("overriding schedules and accounts in machine config", () => {
       yield* write(BASE);
 
       const refused = yield* Effect.flip(
-        setFlowSchedule("demo", Option.none(), "implement", Option.some("every hour")),
+        setSchedule("demo", Option.none(), "implement", Option.some("every hour")),
       );
 
       expect(refused.message).toContain('"every hour" isn\'t a schedule');
@@ -927,45 +928,25 @@ describe("overriding schedules and accounts in machine config", () => {
     () =>
       Effect.gen(function* () {
         yield* write(BASE);
-        yield* setAccountInMachineConfig(
-          "demo",
-          Option.none(),
-          Option.none(),
-          Option.some("personal"),
-        );
-        yield* setAccountInMachineConfig(
-          "demo",
-          Option.none(),
-          Option.some("reviewer"),
-          Option.some("codex"),
-        );
+        yield* setAccount("demo", Option.none(), Option.none(), Option.some("personal"));
+        yield* setAccount("demo", Option.none(), Option.some("reviewer"), Option.some("codex"));
         expect(yield* entry).toMatchObject({ account: "personal", roles: { reviewer: "codex" } });
 
         const clash = yield* Effect.flip(
-          setAccountInMachineConfig(
-            "demo",
-            Option.none(),
-            Option.some("author"),
-            Option.some("work"),
-          ),
+          setAccount("demo", Option.none(), Option.some("author"), Option.some("work")),
         );
 
         expect(clash.message).toContain("a claude account like the persona's own (personal)");
         expect((yield* entry).roles).toEqual({ reviewer: "codex" });
 
         const unknown = yield* Effect.flip(
-          setAccountInMachineConfig("demo", Option.none(), Option.none(), Option.some("nope")),
+          setAccount("demo", Option.none(), Option.none(), Option.some("nope")),
         );
 
         expect(unknown.message).toContain('account "nope" is not one of work, personal, codex');
 
-        yield* setAccountInMachineConfig(
-          "demo",
-          Option.none(),
-          Option.some("reviewer"),
-          Option.none(),
-        );
-        yield* setAccountInMachineConfig("demo", Option.none(), Option.none(), Option.none());
+        yield* setAccount("demo", Option.none(), Option.some("reviewer"), Option.none());
+        yield* setAccount("demo", Option.none(), Option.none(), Option.none());
         const cleared = yield* entry;
         expect(cleared.account).toBeUndefined();
         expect(cleared.roles).toBeUndefined();

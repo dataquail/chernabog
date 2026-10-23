@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.74, structure: 0.74, members: 0.37, surface: 0.92, graph: 1 }
+  coverage: { imports: 0.76, structure: 0.76, members: 0.41, surface: 0.93, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -282,6 +282,8 @@ tree:
                 - "@/interface/cli/**"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
+                # Where chernabog keeps its files, which a command may say.
+                - "@/platform/home.ts"
             children:
               "*.arguments.ts": {}
               "*.output.ts": {}
@@ -516,18 +518,21 @@ tree:
                   message: >-
                     A client adapts a third-party system (gh, git, launchd, an agent CLI, the
                     files the engine writes) to the module's client port. It reaches the machine
-                    through the platform adapters, and, until each moves into its module, runs
-                    commands through the legacy Exec service, reuses the legacy git helpers in
-                    snapshot.ts, finds the chernabog home through config.ts, strips ambient
-                    tokens with github-auth.ts and names this program with self.ts, and nothing
-                    else of the legacy tier.
+                    through the platform adapters, and, until each moves into its module, the
+                    legacy machinery it wraps: Exec for commands, snapshot.ts's git helpers,
+                    config.ts for the chernabog home, github-auth.ts and GitHubApi.ts for
+                    GitHub, self.ts to name this program, loader.ts for a checkout's flows and
+                    repo-config.ts for the team's config. Nothing else of the legacy tier.
                   allow:
                     - "@/platform/**"
                     - "@/Exec.ts"
                     - "@/snapshot.ts"
                     - "@/config.ts"
                     - "@/github-auth.ts"
+                    - "@/GitHubApi.ts"
                     - "@/self.ts"
+                    - "@/loader.ts"
+                    - "@/repo-config.ts"
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
@@ -545,6 +550,7 @@ tree:
                           "@/kernel/**",
                           "@/modules/{module}/**",
                           "@/Exec.ts",
+                          "@/GitHubApi.ts",
                           "@/config.ts",
                           "test/*.ts",
                         ]

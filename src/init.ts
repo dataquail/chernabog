@@ -1,6 +1,7 @@
 // `chernabog init` scaffolds .chernabog/ in a repo: its config, schema and
 // pins, and no flows, which come from the recipes a person picks
-// (src/recipes.ts); `chernabog enroll` adds the repo to this machine's config.
+// (src/recipes.ts); enrolling the repo on this machine is the enrollment
+// module's.
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,15 +9,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ConfigError } from "./config.ts";
-import { execOk } from "./Exec.ts";
 import { checkConfigVersion, flowPackageText, withBundledPins } from "./flow-deps.ts";
-import {
-  type EnrolledRepo,
-  enrollInMachineConfig,
-  type MachineConfig,
-  MachineConfigFile,
-  RepoConfigFile,
-} from "./repo-config.ts";
+import { MachineConfigFile, RepoConfigFile } from "./repo-config.ts";
 import { TEMPLATES } from "./templates.ts";
 
 const JsonText = Schema.fromJsonString(Schema.Json, { space: 2 });
@@ -132,93 +126,3 @@ export const scaffold = (repoPath: string) =>
       Effect.fail(new ConfigError({ message: error.message })),
     ),
   );
-
-// owner/name of the repo's origin remote, from an https or ssh URL.
-export const slugFromRemote = (url: string) =>
-  Option.map(
-    Option.fromNullishOr(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url.trim())),
-    (match) => match[1],
-  );
-
-export const repoRoot = (path: string) =>
-  execOk("git", ["-C", path, "rev-parse", "--show-toplevel"]).pipe(
-    Effect.map((root) => root.trim()),
-  );
-
-export type Enrolment = {
-  readonly account: Option.Option<string>;
-  readonly name: Option.Option<string>;
-};
-
-// owner/name of the checkout's origin.
-export const slugOf = (root: string) =>
-  Effect.gen(function* () {
-    const remote = yield* execOk("git", ["-C", root, "remote", "get-url", "origin"]);
-
-    return yield* Effect.fromOption(slugFromRemote(remote)).pipe(
-      Effect.mapError(
-        () =>
-          new ConfigError({ message: `${root}: origin (${remote.trim()}) is not a GitHub repo` }),
-      ),
-    );
-  });
-
-// The machine config entry for the repo a checkout is in, before it's written.
-export const enrolmentOf = (path: string, enrolment: Enrolment) =>
-  Effect.gen(function* () {
-    const root = yield* repoRoot(path);
-    const slug = yield* slugOf(root);
-
-    const head = yield* execOk("git", [
-      "-C",
-      root,
-      "symbolic-ref",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]).pipe(Effect.orElseSucceed(() => "origin/main"));
-
-    let repo: EnrolledRepo = {
-      path: root,
-      repo: slug,
-      baseBranch: head.trim().replace(/^origin\//, ""),
-    };
-
-    if (Option.isSome(enrolment.name)) {
-      repo = { ...repo, name: enrolment.name.value };
-    }
-
-    if (Option.isSome(enrolment.account)) {
-      repo = { ...repo, account: enrolment.account.value };
-    }
-
-    return repo;
-  });
-
-// Entries for a repo whose checkout is gone: what chernabog init at its new
-// place offers to point there.
-export const movedEntries = (machine: MachineConfig, slug: string, root: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const moved: Array<EnrolledRepo> = [];
-
-    for (const entry of machine.repos.filter(
-      (candidate) => candidate.repo === slug && candidate.path !== root,
-    )) {
-      if (!(yield* fs.exists(entry.path).pipe(Effect.orElseSucceed(() => true)))) {
-        moved.push(entry);
-      }
-    }
-
-    return moved;
-  });
-
-// Points an entry at its checkout's new place, keeping every setting.
-export const repoint = (entry: EnrolledRepo, root: string) =>
-  enrollInMachineConfig({
-    repo: entry.repo,
-    path: root,
-    ...Option.match(Option.fromUndefinedOr(entry.name), {
-      onNone: () => ({}),
-      onSome: (name) => ({ name }),
-    }),
-  });

@@ -35,14 +35,12 @@ import { runLogFile } from "../engine.ts";
 import { daemonReload, daemonStatus, daemonTick } from "../interface/daemon/daemon.client.ts";
 import { pauseRepoUseCase } from "../modules/enrollment/use-cases/pause-repo.use-case.ts";
 import { resumeRepoUseCase } from "../modules/enrollment/use-cases/resume-repo.use-case.ts";
+import { setFlowScheduleUseCase } from "../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
+import { setPersonaAccountUseCase } from "../modules/enrollment/use-cases/set-persona-account.use-case.ts";
+import { setPersonaFlowUseCase } from "../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
+import { readMachineSetupUseCase } from "../modules/machine/use-cases/read-machine-setup.use-case.ts";
 import { asSuffix, type Persona } from "../persona.ts";
-import {
-  DEFAULT_GATE,
-  loadMachineConfig,
-  setAccountInMachineConfig,
-  setFlowInMachineConfig,
-  setFlowSchedule,
-} from "../repo-config.ts";
+import { DEFAULT_GATE, loadMachineConfig } from "../repo-config.ts";
 import { readUsageLogLine } from "../usage-gate.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
@@ -167,7 +165,7 @@ const tickMessage = (
 // Records the choice for the persona in machine config; the daemon restarts on it once idle.
 const setFlowEnabled = (repo: string, flow: string, persona: Persona, enabled: boolean) =>
   Effect.gen(function* () {
-    yield* setFlowInMachineConfig(repo, persona, flow, enabled);
+    yield* setPersonaFlowUseCase(repo, persona, flow, enabled);
     yield* daemonReload.pipe(Effect.ignore);
   });
 
@@ -404,7 +402,7 @@ export const runTui = Effect.gen(function* () {
         case "set-schedule": {
           const written = yield* Effect.result(
             Effect.andThen(
-              setFlowSchedule(action.repo, action.persona, action.flow, action.schedule),
+              setFlowScheduleUseCase(action.repo, action.persona, action.flow, action.schedule),
               daemonReload.pipe(Effect.ignore),
             ),
           );
@@ -421,7 +419,15 @@ export const runTui = Effect.gen(function* () {
         case "set-account": {
           const written = yield* Effect.result(
             Effect.andThen(
-              setAccountInMachineConfig(action.repo, action.persona, action.role, action.account),
+              Effect.flatMap(readMachineSetupUseCase(), (offered) =>
+                setPersonaAccountUseCase(
+                  action.repo,
+                  action.persona,
+                  action.role,
+                  action.account,
+                  offered,
+                ),
+              ),
               daemonReload.pipe(Effect.ignore),
             ),
           );

@@ -59,20 +59,22 @@ Each person's choices live in machine config, not the checkout. `local.yaml` is
 no longer read.
 
 - **A repo entry is keyed by `repo:` (owner/name)**; `path:` is only where the
-  checkout is now. Find one with `entryFor` (slug, then `name`, then path, for
-  two clones); `enrollInMachineConfig` sets only the keys it's given, so
-  settings survive a re-enroll or a moved checkout.
+  checkout is now. `EnrolledRepoRootOps.entryFor` finds one (slug, then
+  `name`, then path, for two clones); `enroll` updates only the keys a
+  checkout gives, so settings survive a re-enroll or a moved checkout.
 - **`personas:` is a map of login → `PersonaEntry`** (`src/repo-config.ts`). The
   repo entry's `PersonaChoices` (`account`, `agent`, `roles`, `flows`,
   `schedule`, `activeHours`, `launcher`, `enabled`) are defaults; a persona's
-  keys replace them whole (`choicesOf`), so its `flows` replaces the repo
+  keys replace them whole (`EnrolledRepoRootOps.choicesOf`), so its `flows` replaces the repo
   entry's. Without `github:`, the repo entry's settings run the implicit persona.
 - **A flow runs only if listed** in the persona's (possibly inherited) `flows`
   and not `enabled: false` (`flowOff`). The team's `flows.<flow>.enabled` and
-  `runners` are only the defaults `enroll` offers (`teamOff`), never runtime gates.
+  `runners` are only the defaults `enroll` offers (`EnrolledRepoRootOps.teamOff`),
+  never runtime gates.
 - **Missing checkout:** the daemon shows the repo as `missing` and keeps its
   settings; `init` offers to re-point an entry whose path is gone
-  (`movedEntries`, `repoint`); `unenroll` removes one.
+  (`listMovedReposUseCase`, `repointRepoUseCase`); `unenroll` removes one
+  (`unenrollRepoUseCase`).
 - **Migration** (`src/migrate.ts`) runs before any command reads machine
   config: persona lists become maps, and an entry that lists no flows gets the
   ones that ran before plus `local.yaml`'s settings. It prints what it
@@ -83,8 +85,12 @@ no longer read.
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
 (the machine module: `planSetupUseCase`, then `applySetupUseCase`, with
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
-`enroll` run the enrollment wizard (`src/enrollment.ts`): personas, then flows
-per persona, then accounts.
+`enroll` run the enrollment wizard: `planEnrollmentUseCase`, the questions in
+`src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
+persona its flows and then its accounts), then `applyEnrollmentUseCase`, which
+resolves what wasn't answered and writes the entry once. The machine's
+personas and accounts come in from the machine module's
+`readMachineSetupUseCase`.
 
 - **Every question goes through `Asker`**
   (`src/interface/cli/asker.prompt.ts`): `pick`, `choose`, `text`. Only an
