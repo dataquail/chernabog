@@ -15,8 +15,8 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
+import { IMPLICIT, type Persona } from "../kernel/persona.value-object.ts";
 import { GitHubTokens } from "./github-auth.ts";
-import { IMPLICIT, type Persona } from "./persona.ts";
 
 export { GitHubError };
 

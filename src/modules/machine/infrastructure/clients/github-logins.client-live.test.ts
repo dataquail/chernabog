@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effectAtHomeWith } from "../../../../../test/effect-test.ts";
-import { execTestLayer } from "../../../../Exec.ts";
+import { execTestLayer } from "../../../../platform/exec.ts";
 import { GitHubLoginsClient } from "../../domain/ports/clients/github-logins.client.ts";
 import { GitHubLoginsClientLive } from "./github-logins.client-live.ts";
 

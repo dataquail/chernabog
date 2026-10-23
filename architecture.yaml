@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.77, structure: 0.78, members: 0.43, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.81, structure: 0.78, members: 0.43, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -253,8 +253,30 @@ tree:
       "*.ts": {}
       "agents/": { layout: open }
       "launchers/": { layout: open }
-      "platform/": { layout: open }
       "tui/": { layout: open }
+
+      "platform/":
+        message: >-
+          platform/ holds the technical adapters every module and adapter shares: running
+          commands (exec.ts), the host environment, chernabog's home, GitHub's API and the
+          personas' tokens, this program's name and version, and the engine's lock.
+        name: kebab-case
+        imports:
+          reset: true
+          message: >-
+            A platform adapter wraps the machine. It names effect, node, the SDK (for its error
+            descriptions and types), the kernel and its siblings, and chernabog's package.json for
+            its version; nothing of the modules, the interface or the legacy tier.
+          external: [effect]
+          allow: ["node:**", "~/sdk/src/**", "@/kernel/**", "@/platform/**", "package.json"]
+        children:
+          "*.test.ts":
+            surface: [{ use: test-exports-nothing }]
+            imports:
+              message: >-
+                A platform test drives its adapter, over the shared test harness.
+              allow: ["test/*.ts"]
+          "*.ts": {}
 
       "interface/":
         message: >-
@@ -285,7 +307,7 @@ tree:
                 # Where chernabog keeps its files, and which chernabog this is,
                 # which a command may say.
                 - "@/platform/home.ts"
-                - "@/version.ts"
+                - "@/platform/version.ts"
             children:
               "*.arguments.ts": {}
               "*.output.ts": {}
@@ -520,20 +542,15 @@ tree:
                   message: >-
                     A client adapts a third-party system (gh, git, launchd, an agent CLI, the
                     files the engine writes) to the module's client port. It reaches the machine
-                    through the platform adapters, and, until each moves into its module, the
-                    legacy machinery it wraps: Exec for commands, snapshot.ts's git helpers,
-                    config.ts for the chernabog home, github-auth.ts and GitHubApi.ts for
-                    GitHub, self.ts to name this program, loader.ts for a checkout's flows,
+                    through the platform adapters (commands, GitHub, the home, this program),
+                    and, until each moves into its module, the legacy machinery it wraps:
+                    snapshot.ts's git helpers, config.ts, loader.ts for a checkout's flows,
                     repo-config.ts for the team's config, and templates.ts and flow-deps.ts for
                     what this binary bundles. Nothing else of the legacy tier.
                   allow:
                     - "@/platform/**"
-                    - "@/Exec.ts"
                     - "@/snapshot.ts"
                     - "@/config.ts"
-                    - "@/github-auth.ts"
-                    - "@/GitHubApi.ts"
-                    - "@/self.ts"
                     - "@/loader.ts"
                     - "@/repo-config.ts"
                     - "@/templates.ts"
@@ -547,15 +564,15 @@ tree:
                       reset: true
                       message: >-
                         A client's live test drives the real system the client wraps (git in a
-                        scratch repo, say), so it names Exec and Bun's platform services beside
-                        what a module test may.
+                        scratch repo, say), so it names the platform's exec and GitHub API and
+                        Bun's platform services beside what a module test may.
                       external: [effect, "@effect/platform-bun"]
                       allow:
                         [
                           "@/kernel/**",
                           "@/modules/{module}/**",
-                          "@/Exec.ts",
-                          "@/GitHubApi.ts",
+                          "@/platform/exec.ts",
+                          "@/platform/github-api.ts",
                           "@/config.ts",
                           "test/*.ts",
                         ]

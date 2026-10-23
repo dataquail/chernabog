@@ -36,7 +36,7 @@ import * as Workflow from "effect/workflow/Workflow";
 
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { Home, homePaths } from "./config.ts";
-import { GitHubApi } from "./GitHubApi.ts";
+import { IMPLICIT, type Persona } from "./kernel/persona.value-object.ts";
 import { RunId } from "./kernel/run-id.id.ts";
 import { RunsLayer } from "./modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "./modules/runs/use-cases/attach-execution.use-case.ts";
@@ -49,7 +49,7 @@ import { parkRunUseCase } from "./modules/runs/use-cases/park-run.use-case.ts";
 import { releaseRunWaitUseCase } from "./modules/runs/use-cases/release-run-wait.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { startRunUseCase } from "./modules/runs/use-cases/start-run.use-case.ts";
-import { IMPLICIT, type Persona } from "./persona.ts";
+import { GitHubApi } from "./platform/github-api.ts";
 import type { EffectiveRepo } from "./repo-config.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from "./sdk-live.ts";

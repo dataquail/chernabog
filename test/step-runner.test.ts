@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { GitHubTokens } from "../src/github-auth.ts";
+import { GitHubTokens } from "../src/platform/github-auth.ts";
 import { StepRunnerLive } from "../src/steps.ts";
 import { effect } from "./effect-test.ts";
 import { settings } from "./sdk-fakes.ts";

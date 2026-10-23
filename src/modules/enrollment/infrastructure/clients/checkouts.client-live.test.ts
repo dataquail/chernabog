@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effectAtHomeWith } from "../../../../../test/effect-test.ts";
-import { Exec, execOk } from "../../../../Exec.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
 import { CheckoutsClient } from "../../domain/ports/clients/checkouts.client.ts";
 import { CheckoutsClientLive, slugFromRemote } from "./checkouts.client-live.ts";
 

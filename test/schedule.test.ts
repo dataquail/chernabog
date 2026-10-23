@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
+import { stableExecutable } from "../src/platform/self.ts";
 import {
   decideTick,
   describeElsewhere,
@@ -11,7 +12,6 @@ import {
   spreadMinute,
   withinHours,
 } from "../src/schedule.ts";
-import { stableExecutable } from "../src/self.ts";
 
 const local = DateTime.zoneMakeLocal();
 

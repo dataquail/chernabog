@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { Exec, execOk } from "../src/Exec.ts";
 import { installFlowDependencies } from "../src/flow-deps.ts";
-import { bunExecutable } from "../src/self.ts";
+import { Exec, execOk } from "../src/platform/exec.ts";
+import { bunExecutable } from "../src/platform/self.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 
 const effect = effectAtHomeWith(Exec.layer.pipe(Layer.provide(BunServices.layer)));

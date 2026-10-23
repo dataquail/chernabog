@@ -39,12 +39,12 @@ import {
   startRun,
   StateAt,
 } from "../src/engine.ts";
+import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
-import { IMPLICIT } from "../src/persona.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
 import { type EngineRun, repoAs } from "./sdk-fakes.ts";

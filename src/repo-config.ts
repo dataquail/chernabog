@@ -28,6 +28,7 @@ import YAML from "yaml";
 import type { AgentsConfig } from "./agents.ts";
 import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
 import { checkConfigVersion } from "./flow-deps.ts";
+import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from "./launchers.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
@@ -38,9 +39,8 @@ import {
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { nodeBinFor } from "./node-version.ts";
-import { asSuffix, IMPLICIT, type Persona, samePersona } from "./persona.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
+import { nodeBinFor } from "./platform/node-version.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
 export { FLOW_TURNED_OFF };

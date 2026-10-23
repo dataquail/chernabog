@@ -13,7 +13,7 @@ import {
   type RecipesAdded,
   type RecipesDiff,
 } from "../../../modules/recipes/use-cases/recipe.result.ts";
-import { VERSION } from "../../../version.ts";
+import { VERSION } from "../../../platform/version.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { rootOf } from "../enrollment/enroll.command.ts";

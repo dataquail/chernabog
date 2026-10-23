@@ -24,11 +24,11 @@ import {
   Home,
   homePaths,
 } from "./config.ts";
-import { execOk } from "./Exec.ts";
 import { type Launcher, launcherFor } from "./launchers.ts";
 import { LaunchSpecJson } from "./launchers/shim.ts";
 import { type Environment, HostEnvironment, withVariables } from "./platform/environment.ts";
-import { selfCommand } from "./self.ts";
+import { execOk } from "./platform/exec.ts";
+import { selfCommand } from "./platform/self.ts";
 
 export type GateConfig = {
   readonly targetEndUsage: number;

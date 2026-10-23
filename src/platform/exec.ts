@@ -11,7 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import type { Environment } from "./platform/environment.ts";
+import type { Environment } from "./environment.ts";
 
 export type ExecOptions = {
   readonly cwd?: string;

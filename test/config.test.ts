@@ -28,6 +28,7 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
+import { VERSION } from "../src/platform/version.ts";
 import {
   DEFAULT_LIMITS,
   EnrolledRepo,
@@ -43,7 +44,6 @@ import {
   routingOf,
 } from "../src/repo-config.ts";
 import { scheduleFor } from "../src/schedule.ts";
-import { VERSION } from "../src/version.ts";
 import { effect, effectAtHome } from "./effect-test.ts";
 
 const machine = normalizeMachineConfig(

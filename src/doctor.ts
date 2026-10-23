@@ -12,7 +12,6 @@ import * as Schema from "effect/Schema";
 
 import { checkCodexAccount } from "./codex-usage.ts";
 import { Home } from "./config.ts";
-import { Exec, type ExecResult } from "./Exec.ts";
 import {
   decodeManifest,
   describeDrift,
@@ -21,16 +20,18 @@ import {
   pinDrift,
   requiredVersion,
 } from "./flow-deps.ts";
-import { canMerge, githubGetAllPages, viewerLoginAs } from "./GitHubApi.ts";
 import { daemonStatus } from "./interface/daemon/daemon.client.ts";
+import { asSuffix } from "./kernel/persona.value-object.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
 import { desiredLabels, Label, planLabelSync } from "./labels.ts";
 import { describeLauncher, launcherFor } from "./launchers.ts";
 import { flowNames } from "./loader.ts";
 import { checkServiceUseCase } from "./modules/machine/use-cases/check-service.use-case.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
-import { asSuffix } from "./persona.ts";
 import { HostEnvironment } from "./platform/environment.ts";
+import { Exec, type ExecResult } from "./platform/exec.ts";
+import { canMerge, githubGetAllPages, viewerLoginAs } from "./platform/github-api.ts";
+import { VERSION } from "./platform/version.ts";
 import {
   type EffectiveRepo,
   type EnrolledRepo,
@@ -43,7 +44,6 @@ import {
 } from "./repo-config.ts";
 import { configTree, snapshotConfig } from "./snapshot.ts";
 import { checkAccount, loggedInEmail } from "./usage-gate.ts";
-import { VERSION } from "./version.ts";
 
 export type Check = {
   readonly ok: boolean;

@@ -27,10 +27,10 @@ edit fails spuriously.
 One daemon acts as several GitHub logins. Everything that touches GitHub must
 act as the right one.
 
-- `Persona = Option<string>` (`src/persona.ts`). `none` is the _implicit_
+- `Persona = Option<string>` (`src/kernel/persona.value-object.ts`). `none` is the _implicit_
   persona: whoever `GH_TOKEN`, `GITHUB_TOKEN` or gh's active account is. Machine
   config without `github:` behaves exactly as before personas.
-- **Tokens only via `GitHubTokens`** (`src/github-auth.ts`), which runs
+- **Tokens only via `GitHubTokens`** (`src/platform/github-auth.ts`), which runs
   `gh auth token --user <login>` with the ambient `GH_TOKEN` stripped. Never read
   `GH_TOKEN` directly. Child processes get the persona's environment from
   `childEnvironment(persona)` / `execOptionsFor(persona, { cwd })`; git pushes
@@ -202,7 +202,11 @@ transitive reach), the coverage floors and the baseline.
 - **Modules don't reach into each other.** An adapter composes them: the
   `trust` command lists its targets with enrollment's
   `listEnrolledReposUseCase`, then trusts each.
-- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`, `platform/`,
+- **The platform** (`src/platform/`) holds the technical adapters everything
+  shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
+  `github-auth.ts`, `self.ts`, `version.ts` and the engine's `lock.ts`. It
+  names effect, node, the SDK, the kernel and itself, nothing else.
+- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`,
   `tui/`) is one `unrestricted` node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
   ceiling when the numbers move (`bun run architecture:coverage`,

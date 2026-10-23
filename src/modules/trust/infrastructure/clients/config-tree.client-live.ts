@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { Exec, execOk } from "../../../../Exec.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
 import { configTree } from "../../../../snapshot.ts";
 import { ConfigTreeClient } from "../../domain/ports/clients/config-tree.client.ts";
 import { ConfigTreeUnavailable } from "../../domain/trust-record/trust-record.errors.ts";

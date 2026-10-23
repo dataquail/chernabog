@@ -32,7 +32,6 @@ import {
   StateLive,
   unreportedItem,
 } from "./engine.ts";
-import { viewerLogin } from "./GitHubApi.ts";
 import {
   DaemonStatus,
   type PersonaStatus,
@@ -43,11 +42,11 @@ import {
   RunRequest,
   TickResult,
 } from "./interface/daemon/daemon.protocol.ts";
+import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { describeLauncher } from "./launchers.ts";
 import { loadFlows } from "./loader.ts";
-import { acquireLock } from "./lock.ts";
 import { listPausedReposUseCase } from "./modules/enrollment/use-cases/list-paused-repos.use-case.ts";
 import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
 import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
@@ -56,7 +55,8 @@ import { listRecentRunsUseCase } from "./modules/runs/use-cases/list-recent-runs
 import { listRecentSkipsUseCase } from "./modules/runs/use-cases/list-recent-skips.use-case.ts";
 import { recordSkipUseCase } from "./modules/runs/use-cases/record-skip.use-case.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
-import { type Persona, samePersona } from "./persona.ts";
+import { viewerLogin } from "./platform/github-api.ts";
+import { acquireLock } from "./platform/lock.ts";
 import {
   type EffectiveRepo,
   EnrolledRepo,

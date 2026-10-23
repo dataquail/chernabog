@@ -9,8 +9,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import { ConfigError, Home, homePaths } from "./config.ts";
-import { Exec, execOk } from "./Exec.ts";
 import { checkConfigVersion, installFlowDependencies } from "./flow-deps.ts";
+import { Exec, execOk } from "./platform/exec.ts";
 
 export type Snapshot = { readonly tree: string; readonly configDir: string };
 

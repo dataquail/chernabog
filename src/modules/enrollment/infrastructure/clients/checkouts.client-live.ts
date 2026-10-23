@@ -7,9 +7,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { Exec, execOk } from "../../../../Exec.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { flowNames } from "../../../../loader.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
 import { readYaml, RepoConfigFile } from "../../../../repo-config.ts";
 import { Checkout } from "../../domain/enrolled-repo/checkout.value-object.ts";
 import { CheckoutUnreadable } from "../../domain/enrolled-repo/enrolled-repo.errors.ts";

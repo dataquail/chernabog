@@ -9,9 +9,9 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
 import { Home, homePaths } from "../../../../config.ts";
-import { Exec, execOk } from "../../../../Exec.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
-import { selfCommand } from "../../../../self.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
+import { selfCommand } from "../../../../platform/self.ts";
 import { ServiceFailed } from "../../domain/machine-setup/machine-setup.errors.ts";
 import { ServiceManagerClient } from "../../domain/ports/clients/service-manager.client.ts";
 
