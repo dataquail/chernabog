@@ -9,8 +9,8 @@ import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { Asker } from "../src/ask.ts";
 import { Exec } from "../src/Exec.ts";
+import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import {
   chooseRecipes,
   diffRecipes,

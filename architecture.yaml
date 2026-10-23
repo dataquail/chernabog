@@ -51,10 +51,8 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.7, structure: 0.69, members: 0.32, surface: 0.91, graph: 1 }
-  # vacant: the tiers declared ahead of their first file (kernel/ and the
-  # module tiers); it falls as the migration fills them.
-  conformance: { residue: 0, vacant: 1, slack: 0, concentration: 0 }
+  coverage: { imports: 0.74, structure: 0.74, members: 0.37, surface: 0.92, graph: 1 }
+  conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
 deny:
@@ -287,6 +285,8 @@ tree:
             children:
               "*.arguments.ts": {}
               "*.output.ts": {}
+              # The questions the wizards ask between a plan and its apply.
+              "*.prompt.ts": {}
               "{module}/":
                 children:
                   "*.command.ts": {}
@@ -515,11 +515,19 @@ tree:
                 imports:
                   message: >-
                     A client adapts a third-party system (gh, git, launchd, an agent CLI, the
-                    files the engine writes) to the module's client port. Until each moves into
-                    its module, it runs commands through the legacy Exec service, reuses the
-                    legacy git helpers in snapshot.ts and finds the chernabog home through
-                    config.ts, and nothing else of the legacy tier.
-                  allow: ["@/Exec.ts", "@/snapshot.ts", "@/config.ts"]
+                    files the engine writes) to the module's client port. It reaches the machine
+                    through the platform adapters, and, until each moves into its module, runs
+                    commands through the legacy Exec service, reuses the legacy git helpers in
+                    snapshot.ts, finds the chernabog home through config.ts, strips ambient
+                    tokens with github-auth.ts and names this program with self.ts, and nothing
+                    else of the legacy tier.
+                  allow:
+                    - "@/platform/**"
+                    - "@/Exec.ts"
+                    - "@/snapshot.ts"
+                    - "@/config.ts"
+                    - "@/github-auth.ts"
+                    - "@/self.ts"
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
