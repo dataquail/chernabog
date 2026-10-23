@@ -11,11 +11,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { writeFileAtomic } from "./atomic-write.ts";
-import { LockState, lockState, lockText } from "./lock.ts";
+import { createLock, LockState, lockState, takeOverLock } from "./lock.ts";
 
 export class FileBusy extends Schema.TaggedError<FileBusy, { readonly brand: "FileBusy" }>()(
   "FileBusy",
@@ -42,54 +41,15 @@ const targetOf = (fs: FileSystem.FileSystem, path: string) =>
     return path;
   });
 
-// Creates the lock, unless it exists. It's written whole beside it and
-// linked into place, so no process ever reads a lock half written.
-const tryLock = (fs: FileSystem.FileSystem, lock: string, purpose: string) =>
-  Effect.gen(function* () {
-    const staging = `${lock}.${process.pid}.tmp`;
-    yield* fs.writeFileString(staging, yield* lockText(purpose));
-
-    return yield* fs.link(staging, lock).pipe(
-      Effect.as(true),
-      Effect.catchIf(
-        (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
-        () => Effect.succeed(false),
-      ),
-      Effect.ensuring(fs.remove(staging, { force: true }).pipe(Effect.ignore)),
-    );
-  });
-
-// Takes an abandoned lock away, only if it's still the one read: it's moved
-// aside first, atomically, so a lock another process took meanwhile is never
-// the one removed. One moved aside by mistake is put back.
-const takeOver = (fs: FileSystem.FileSystem, lock: string, abandoned: string) =>
-  Effect.gen(function* () {
-    const aside = `${lock}.${process.pid}.abandoned`;
-
-    if (
-      !(yield* fs.rename(lock, aside).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      ))
-    ) {
-      return;
-    }
-
-    if ((yield* fs.readFileString(aside)) !== abandoned) {
-      yield* fs.link(aside, lock).pipe(Effect.ignore);
-    }
-
-    yield* fs.remove(aside, { force: true });
-  });
-
 const acquire = (fs: FileSystem.FileSystem, path: string, lock: string, purpose: string) =>
   Effect.gen(function* () {
-    const stateOf = lockState(lock).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+    const withFs = Effect.provideService(FileSystem.FileSystem, fs);
+    const stateOf = lockState(lock).pipe(withFs);
     const until = (yield* Clock.currentTimeMillis) + Duration.toMillis(PATIENCE);
     let owner = "another process";
 
     while ((yield* Clock.currentTimeMillis) < until) {
-      if (yield* tryLock(fs, lock, purpose)) {
+      if (yield* createLock(lock, purpose).pipe(withFs)) {
         return;
       }
 
@@ -97,7 +57,7 @@ const acquire = (fs: FileSystem.FileSystem, path: string, lock: string, purpose:
       // a dead one's lock is taken over.
       yield* LockState.$match(yield* stateOf, {
         Free: () => Effect.void,
-        Abandoned: ({ text }) => takeOver(fs, lock, text),
+        Abandoned: ({ text }) => takeOverLock(lock, text).pipe(withFs),
         Held: (held) =>
           Effect.sync(() => {
             owner = `pid ${held.owner.pid} (${held.owner.purpose})`;

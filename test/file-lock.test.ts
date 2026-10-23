@@ -39,6 +39,46 @@ await Effect.runPromise(
 const writer = (root: string, file: string, tag: string) =>
   Exec.use((exec) => exec.run(bunExecutable(), ["-e", writerSource(file, tag)], { cwd: root }));
 
+// A process trying for the engine's lock, holding it long enough that every
+// other contender has tried while it does: it prints whether it got it.
+const contenderSource = (lock: string) => `
+import { BunServices } from "@effect/platform-bun";
+import * as Effect from "effect/Effect";
+import { acquireLock } from "./src/platform/lock.ts";
+
+await Effect.runPromise(
+  Effect.scoped(acquireLock("${lock}", "contender").pipe(Effect.andThen(Effect.sleep("3 seconds")))).pipe(
+    Effect.match({ onSuccess: () => "got", onFailure: () => "refused" }),
+    Effect.tap((said) => Effect.sync(() => process.stdout.write(said))),
+    Effect.provide(BunServices.layer),
+  ),
+);
+`;
+
+const contender = (root: string, lock: string) =>
+  Exec.use((exec) => exec.run(bunExecutable(), ["-e", contenderSource(lock)], { cwd: root }));
+
+describe("the engine's lock across processes", () => {
+  effect("of processes starting at once, exactly one gets it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-lock-" });
+      const root = yield* (yield* Path.Path).fromFileUrl(new URL("..", import.meta.url));
+
+      const lock = `${dir}/engine.lock`;
+
+      const said = yield* Effect.forEach(
+        Array.from({ length: 8 }, () => lock),
+        (one) => contender(root, one),
+        { concurrency: 8 },
+      );
+
+      expect(said.map((one) => one.stdout).filter((one) => one === "got").length).toBe(1);
+      expect(said.map((one) => one.stderr)).toEqual(Array.from({ length: 8 }, () => ""));
+    }).pipe(Effect.provide(Exec.layer)),
+  );
+});
+
 describe("updateFile across processes", () => {
   effect("three processes changing one file at once take turns, and lose nothing", () =>
     Effect.gen(function* () {
