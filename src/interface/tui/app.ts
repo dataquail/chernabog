@@ -29,19 +29,20 @@ import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 
-import { attachCommand, runSessions } from "../agents.ts";
-import { Home } from "../config.ts";
-import { runLogFile } from "../engine.ts";
-import { daemonReload, daemonStatus, daemonTick } from "../interface/daemon/daemon.client.ts";
-import { asSuffix, type Persona } from "../kernel/persona.value-object.ts";
-import { pauseRepoUseCase } from "../modules/enrollment/use-cases/pause-repo.use-case.ts";
-import { resumeRepoUseCase } from "../modules/enrollment/use-cases/resume-repo.use-case.ts";
-import { setFlowScheduleUseCase } from "../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
-import { setPersonaAccountUseCase } from "../modules/enrollment/use-cases/set-persona-account.use-case.ts";
-import { setPersonaFlowUseCase } from "../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
-import { readMachineSetupUseCase } from "../modules/machine/use-cases/read-machine-setup.use-case.ts";
-import { DEFAULT_GATE, loadMachineConfig } from "../repo-config.ts";
-import { readUsageLogLine } from "../usage-gate.ts";
+import { attachCommand, runSessions } from "../../agents.ts";
+import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
+import { RunId } from "../../kernel/run-id.id.ts";
+import { pauseRepoUseCase } from "../../modules/enrollment/use-cases/pause-repo.use-case.ts";
+import { resumeRepoUseCase } from "../../modules/enrollment/use-cases/resume-repo.use-case.ts";
+import { setFlowScheduleUseCase } from "../../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
+import { setPersonaAccountUseCase } from "../../modules/enrollment/use-cases/set-persona-account.use-case.ts";
+import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
+import { readMachineSetupUseCase } from "../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+import { readRunLogUseCase } from "../../modules/runs/use-cases/read-run-log.use-case.ts";
+import { Home } from "../../platform/home.ts";
+import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
+import { readUsageLogLine } from "../../usage-gate.ts";
+import { daemonReload, daemonStatus, daemonTick } from "../daemon/daemon.client.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
 
@@ -110,16 +111,10 @@ export const readUsage = Effect.gen(function* () {
 const LOG_LINES = 2000;
 
 const readLog = (runId: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* runLogFile(runId);
-
-    if (!(yield* fs.exists(path))) {
-      return [];
-    }
-
-    return (yield* fs.readFileString(path)).trimEnd().split("\n").slice(-LOG_LINES);
-  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  readRunLogUseCase(RunId.make(runId)).pipe(
+    Effect.map((log) => log.text.trimEnd().split("\n").slice(-LOG_LINES)),
+    Effect.orElseSucceed((): ReadonlyArray<string> => []),
+  );
 
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
   status: Option.none(),

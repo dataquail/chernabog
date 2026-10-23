@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.81, structure: 0.79, members: 0.44, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.83, structure: 0.8, members: 0.44, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -79,7 +79,7 @@ deny:
       infrastructure and the engine name the SQL client; everything else reads and writes runs
       through the Run repository.
   - match: "**/node_modules/@opentui/**"
-    except: ["@/tui/**"]
+    except: ["@/interface/tui/**"]
     message: >-
       @opentui is the TUI's renderer. Only the TUI names it, so the rest of the code stays
       runnable without a terminal.
@@ -105,8 +105,8 @@ graph:
       entry:
         # bun test loads these by glob.
         - "**/*.test.ts"
-        # The CLI binary (`bun build --compile src/main.ts`).
-        - "@/main.ts"
+        # The CLI binary (`bun build --compile src/interface/cli/main.ts`).
+        - "@/interface/cli/main.ts"
         # The published SDK's entry (packages/sdk/package.json `exports`).
         - "~/sdk/src/index.ts"
         # Run with `bun scripts/<name>.ts`.
@@ -253,7 +253,6 @@ tree:
       "*.ts": {}
       "agents/": { layout: open }
       "launchers/": { layout: open }
-      "tui/": { layout: open }
 
       "platform/":
         message: >-
@@ -309,6 +308,36 @@ tree:
                 - "@/platform/home.ts"
                 - "@/platform/version.ts"
             children:
+              # The CLI process's composition root: its commands, the modules'
+              # layers, and the commands still written over the legacy tier,
+              # each legacy file named until it moves into a module.
+              "main.ts":
+                imports:
+                  reset: true
+                  message: >-
+                    main.ts composes the CLI: it names the modules' layers and use-cases, the
+                    interface's commands, the platform and the kernel, and the legacy files its
+                    remaining commands still call, each named here until it has a use-case.
+                  external: [effect, "@effect/platform-bun"]
+                  allow:
+                    - "@/kernel/**"
+                    - "@/platform/**"
+                    - "@/interface/**"
+                    - "@/modules/*/*.layer.ts"
+                    - "@/modules/*/use-cases/**"
+                    - "~/sdk/src/**"
+                    - "@/agents.ts"
+                    - "@/agents/stop-hook.ts"
+                    - "@/doctor.ts"
+                    - "@/labels.ts"
+                    - "@/launchers/shim.ts"
+                    - "@/loader.ts"
+                    - "@/migrate.ts"
+                    - "@/open-pr.ts"
+                    - "@/repo-config.ts"
+                    - "@/runner.ts"
+                    - "@/start.ts"
+                    - "@/steps.ts"
               "*.arguments.ts": {}
               "*.output.ts": {}
               # The questions the wizards ask between a plan and its apply.
@@ -317,6 +346,32 @@ tree:
                 children:
                   "*.command.ts": {}
                   "*.output.ts": {}
+
+          "tui/":
+            message: >-
+              tui/ is the live view chernabog opens in a terminal: the daemon's status, drawn
+              with @opentui, and the settings a person changes from it.
+            imports:
+              reset: true
+              message: >-
+                The TUI asks the daemon over its client, calls the modules' use-cases, and draws
+                with @opentui. It names the kernel, the platform and the legacy files it still
+                reads, each named here until it has a use-case.
+              external: [effect, "@opentui/core"]
+              allow:
+                - "@/kernel/**"
+                - "@/platform/**"
+                - "@/interface/tui/**"
+                - "@/interface/daemon/*.client.ts"
+                - "@/interface/daemon/*.protocol.ts"
+                - "@/modules/*/use-cases/**"
+                # A schedule is checked as it's typed, before the use-case refuses it.
+                - "@/modules/runs/domain/schedule/schedule.value-object.ts"
+                - "@/agents.ts"
+                - "@/repo-config.ts"
+                - "@/usage-gate.ts"
+            children:
+              "*.ts": {}
 
           "daemon/":
             message: >-
@@ -336,6 +391,32 @@ tree:
             children:
               "*.protocol.ts": {}
               "*.client.ts": {}
+              # The daemon process: its schedules, its socket and the engine it
+              # drives, still over the legacy runtime, each file named here.
+              "*.server.ts":
+                imports:
+                  reset: true
+                  message: >-
+                    The daemon composes the modules' use-cases on a schedule and over its socket.
+                    It names effect and Bun's HTTP server, the kernel, the platform, its own
+                    protocol, the modules' use-cases and layers, and the legacy runtime it still
+                    drives, each named here until it moves into the runs module.
+                  external: [effect, "@effect/platform-bun"]
+                  allow:
+                    - "@/kernel/**"
+                    - "@/platform/**"
+                    - "@/interface/daemon/**"
+                    - "@/modules/*/use-cases/**"
+                    - "@/modules/runs/domain/schedule/*.value-object.ts"
+                    - "@/modules/runs/domain/routing/*.value-object.ts"
+                    - "~/sdk/src/**"
+                    - "@/engine.ts"
+                    - "@/launchers.ts"
+                    - "@/loader.ts"
+                    - "@/repo-config.ts"
+                    - "@/runlog.ts"
+                    - "@/runner.ts"
+                    - "@/snapshot.ts"
 
       "kernel/":
         message: >-

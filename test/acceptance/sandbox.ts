@@ -124,7 +124,7 @@ const callsIn = (file: string) => {
 // CHERNABOG_BIN tests a compiled binary instead of the source.
 const chernabogCommand = () =>
   Option.match(Option.fromUndefinedOr(process.env.CHERNABOG_BIN), {
-    onNone: () => [process.execPath, join(ROOT, "src/main.ts")],
+    onNone: () => [process.execPath, join(ROOT, "src/interface/cli/main.ts")],
     onSome: (bin) => [bin],
   });
 

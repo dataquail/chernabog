@@ -13,13 +13,13 @@ import { rememberSession } from "../src/agents/sessions.ts";
 import { Home } from "../src/config.ts";
 import { describeStatus } from "../src/interface/cli/daemon/status.command.ts";
 import type { DaemonStatus } from "../src/interface/daemon/daemon.protocol.ts";
+import { initialModel, readUsage } from "../src/interface/tui/app.ts";
+import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
+import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
-import { initialModel, readUsage } from "../src/tui/app.ts";
-import { type Key, update, type Updated } from "../src/tui/update.ts";
-import { type Model, plain, view } from "../src/tui/view.ts";
 import { effectAtHome, effectAtHomeWith } from "./effect-test.ts";
 
 const now = DateTime.makeUnsafe("2026-10-17T12:00:00Z");

@@ -7,7 +7,7 @@ Chernabog ships two things, versioned separately:
 | the `chernabog` binary | `package.json`              | `v<version>`     | GitHub release assets, per platform, and the `dataquail/homebrew-tap` formula |
 | `@chernabog/sdk`       | `packages/sdk/package.json` | `sdk-v<version>` | npm                                                                           |
 
-`src/version.ts` reads the root `package.json`, so `--version` and the `engines.chernabog` floor follow it.
+`src/platform/version.ts` reads the root `package.json`, so `--version` and the `engines.chernabog` floor follow it.
 
 The root is release-please's `simple` type, with `package.json` as an extra file, not the `node` type. A `node` root takes `chernabog` as its component from `package.json`, and release-please 17 then skips a release PR that releases only the root: the combined PR's branch has no component, the root's is `chernabog`, and the mismatch is only a warning. That is how the merge of v0.4.0's release PR first created no release.
 

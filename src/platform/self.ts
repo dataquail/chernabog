@@ -17,7 +17,7 @@ export const selfCommand = (): ReadonlyArray<string> => {
     return [stableExecutable(process.execPath)];
   }
 
-  return [process.execPath, `${SOURCE_ROOT}/src/main.ts`];
+  return [process.execPath, `${SOURCE_ROOT}/src/interface/cli/main.ts`];
 };
 
 // bun itself, for `bun install`: the compiled binary acts as bun when BUN_BE_BUN
