@@ -1,167 +1,54 @@
-// Opens an enrolled repo (its config layers and flows) and runs one flow in
-// the foreground: `chernabog run <flow> --repo <name>`.
+// One run of a flow in this process, in the foreground, as `chernabog run
+// --from-checkout` (or `run` with no daemon) does: opens the repo, builds its
+// personas' services and the engine, and resumes or starts a run, following
+// its log until it ends.
 
-import { type Flow, RunLog, type WorkItem } from "@chernabog/sdk";
+import { type WorkItem } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
-import { runLabel } from "./kernel/run-id.id.ts";
-import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
-import { withRepo } from "./modules/runs/infrastructure/clients/flows.client-live.ts";
+import { type Persona } from "../../../kernel/persona.value-object.ts";
+import { runLabel } from "../../../kernel/run-id.id.ts";
+import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   defaultPersona,
   type FlowHandle,
   flowHandle,
   flowLayer,
-  repoServices,
   runLogFile,
-  type ServicesFor,
-} from "./modules/runs/infrastructure/runtime/engine.ts";
-import { RuntimeLayer, StateLive } from "./modules/runs/runs.layer.ts";
-import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
-import { deliverSignalsUseCase } from "./modules/runs/use-cases/deliver-signals.use-case.ts";
-import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
-import { pollRunUseCase } from "./modules/runs/use-cases/poll-run.use-case.ts";
-import { resumeRunUseCase } from "./modules/runs/use-cases/resume-run.use-case.ts";
-import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "./modules/runs/use-cases/start-flow-run.use-case.ts";
-import { ConfigError } from "./platform/config-error.ts";
-import { snapshotConfig } from "./platform/config-snapshot.ts";
-import { loadFlows } from "./platform/flow-loader.ts";
-import { viewerLogin } from "./platform/github-api.ts";
-import { Home, homePaths } from "./platform/home.ts";
-import { acquireLock } from "./platform/lock.ts";
+} from "../../../modules/runs/infrastructure/runtime/engine.ts";
+import {
+  adoptRuns,
+  buildPersonaContexts,
+  loginOf,
+  openRepo,
+  type RepoContext,
+  servicesFrom,
+  unreportedItem,
+} from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
+import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
+import { listActiveRunsUseCase } from "../../../modules/runs/use-cases/list-active-runs.use-case.ts";
+import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
+import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
+import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
+import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
+import { ConfigError } from "../../../platform/config-error.ts";
+import { Home, homePaths } from "../../../platform/home.ts";
+import { acquireLock } from "../../../platform/lock.ts";
 import {
   type EffectiveRepo,
-  type EnrolledRepo,
   findEnrolled,
   loadMachineConfig,
-  loadRepo,
-  type MachineConfig,
-  needsLogin,
   personaOf,
-  type PersonaRepo,
   routingOf,
-} from "./repo-config.ts";
-
-export type OpenRepo = {
-  readonly repo: EffectiveRepo;
-  readonly flows: ReadonlyMap<string, Flow>;
-  readonly tree: Option.Option<string>;
-};
-
-// The trusted .chernabog/ comes from the base branch; `fromCheckout` reads the
-// working copy instead, for trying out a change before merging it.
-export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    let tree = Option.none<string>();
-    let configDir = `${enrolled.path}/.chernabog`;
-
-    if (!fromCheckout) {
-      const snapshot = yield* snapshotConfig(enrolled.path, enrolled.baseBranch ?? "main");
-      tree = Option.some(snapshot.tree);
-      configDir = snapshot.configDir;
-    }
-
-    if (!(yield* fs.exists(configDir))) {
-      return yield* new ConfigError({
-        message: `${enrolled.path}: no .chernabog/; run chernabog init`,
-      });
-    }
-
-    return { tree, configDir };
-  });
-
-export const openRepo = (machine: MachineConfig, enrolled: EnrolledRepo, fromCheckout: boolean) =>
-  Effect.gen(function* () {
-    const { configDir, tree } = yield* repoConfigDir(enrolled, fromCheckout);
-    const repo = yield* loadRepo(machine, enrolled, configDir);
-    const flows = yield* loadFlows(configDir);
-
-    return { repo, flows, tree } satisfies OpenRepo;
-  });
-
-// What a trigger, gate or step logs outside any run goes to stderr.
-const consoleRunLog = RunLog.of({
-  log: (line) => Console.error(line),
-  step: () => Effect.void,
-  stepDone: () => Effect.void,
-});
-
-// One repo's services as one persona, with its account, agent and launcher,
-// built once at its composition point and shared by every trigger, gate and
-// run of its flows as that persona.
-export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
-  Effect.gen(function* () {
-    const platform = yield* Effect.context<
-      FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
-    >();
-
-    const services = yield* Layer.build(
-      Layer.mergeAll(
-        repoServices(repo.settings, machine.usageGate, machine.agents, repo.persona),
-        Layer.succeed(RunLog, consoleRunLog),
-      ),
-    );
-
-    return Context.merge(platform, services);
-  });
-
-export type RepoContext = Effect.Success<ReturnType<typeof buildRepoContext>>;
-
-// The services in a repo context.
-export type RepoServices = RepoContext extends Context.Context<infer R> ? R : never;
-
-export type PersonaContext = { readonly persona: Persona; readonly context: RepoContext };
-
-// The repo's services for each of its personas.
-export const buildPersonaContexts = (repo: EffectiveRepo, machine: MachineConfig) =>
-  Effect.forEach(repo.personas, (own) =>
-    Effect.map(buildRepoContext(own, machine), (context): PersonaContext => ({
-      persona: own.persona,
-      context,
-    })),
-  );
-
-// Picks a run's services by its persona.
-export const servicesFrom =
-  (contexts: ReadonlyArray<PersonaContext>): ServicesFor<RepoServices> =>
-  (persona) =>
-    Option.map(
-      Arr.findFirst(contexts, (candidate) => samePersona(candidate.persona, persona)),
-      (found) => found.context,
-    );
-
-// Once a repo has named personas, its runs from before them become its first
-// persona's, so they keep resuming and holding that persona's slots.
-export const adoptRuns = (repo: EffectiveRepo) =>
-  Option.match(defaultPersona(repo), {
-    onNone: () => Effect.void,
-    onSome: (login) => adoptImplicitRunsUseCase(repo.settings.name, login).pipe(Effect.asVoid),
-  });
-
-// Who @me and runners mean for a persona: its own login, or, for the implicit
-// persona, whoever this machine is on GitHub, asked only when it matters.
-export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
-  Option.match(persona, {
-    onSome: (login) => Effect.succeedSome(login),
-    onNone: () => {
-      if (!needsLogin(repo)) {
-        return Effect.succeed(Option.none<string>());
-      }
-
-      return Effect.option(viewerLogin);
-    },
-  });
+} from "../../../repo-config.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -194,24 +81,6 @@ const refOf = (handle: FlowHandle, persona: Persona) => ({
   flow: handle.name,
   persona,
 });
-
-// The item a person named that the trigger didn't report, when the flow can
-// find it by its key, as `start` finds the issue `chernabog start` names.
-export const unreportedItem = (
-  flow: Flow,
-  named: Option.Option<string>,
-  items: ReadonlyArray<WorkItem>,
-) =>
-  Option.match(
-    Option.filter(
-      Option.product(named, Option.fromUndefinedOr(flow.item)),
-      ([key]) => !items.some((found) => found.key === key),
-    ),
-    {
-      onNone: () => Effect.succeed<ReadonlyArray<WorkItem>>([]),
-      onSome: ([key, find]) => Effect.map(find(key), Option.toArray),
-    },
-  );
 
 const followRun = (
   handle: FlowHandle,

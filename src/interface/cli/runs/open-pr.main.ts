@@ -17,12 +17,12 @@ import {
   readDecoded,
   SESSION_ENV,
   sessionFilesIn,
-} from "./modules/runs/infrastructure/runtime/agents/session-files.ts";
-import { checkAnswer } from "./modules/runs/infrastructure/runtime/agents/stop-hook.ts";
-import { LaunchSpecJson } from "./modules/runs/infrastructure/runtime/launchers/shim.ts";
-import { ConfigError } from "./platform/config-error.ts";
-import { HostEnvironment } from "./platform/environment.ts";
-import { Exec } from "./platform/exec.ts";
+} from "../../../modules/runs/infrastructure/runtime/agents/session-files.ts";
+import { checkAnswer } from "../../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import { LaunchSpecJson } from "../../../modules/runs/infrastructure/runtime/launchers/shim.ts";
+import { ConfigError } from "../../../platform/config-error.ts";
+import { HostEnvironment } from "../../../platform/environment.ts";
+import { Exec } from "../../../platform/exec.ts";
 
 export type OpenPrOptions = {
   readonly title: string;

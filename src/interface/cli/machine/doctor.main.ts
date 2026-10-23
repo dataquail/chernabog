@@ -3,6 +3,7 @@
 
 import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
+import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -10,22 +11,27 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { daemonStatus } from "./interface/daemon/daemon.client.ts";
-import { asSuffix } from "./kernel/persona.value-object.ts";
-import { RepoSlug } from "./kernel/repo-slug.id.ts";
-import { checkServiceUseCase } from "./modules/machine/use-cases/check-service.use-case.ts";
-import { checkCodexAccount } from "./modules/runs/infrastructure/runtime/codex-usage.ts";
+import { asSuffix } from "../../../kernel/persona.value-object.ts";
+import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
+import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
+import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
   desiredLabels,
   Label,
   planLabelSync,
-} from "./modules/runs/infrastructure/runtime/labels.ts";
-import { describeLauncher, launcherFor } from "./modules/runs/infrastructure/runtime/launchers.ts";
-import { checkAccount, loggedInEmail } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
-import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
-import { configTree, snapshotConfig } from "./platform/config-snapshot.ts";
-import { HostEnvironment } from "./platform/environment.ts";
-import { Exec, type ExecResult } from "./platform/exec.ts";
+} from "../../../modules/runs/infrastructure/runtime/labels.ts";
+import {
+  describeLauncher,
+  launcherFor,
+} from "../../../modules/runs/infrastructure/runtime/launchers.ts";
+import {
+  checkAccount,
+  loggedInEmail,
+} from "../../../modules/runs/infrastructure/runtime/usage-gate.ts";
+import { findTrustedTreeUseCase } from "../../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
+import { HostEnvironment } from "../../../platform/environment.ts";
+import { Exec, type ExecResult } from "../../../platform/exec.ts";
 import {
   decodeManifest,
   describeDrift,
@@ -33,11 +39,11 @@ import {
   isTooOld,
   pinDrift,
   requiredVersion,
-} from "./platform/flow-deps.ts";
-import { flowNames } from "./platform/flow-loader.ts";
-import { canMerge, githubGetAllPages, viewerLoginAs } from "./platform/github-api.ts";
-import { Home } from "./platform/home.ts";
-import { VERSION } from "./platform/version.ts";
+} from "../../../platform/flow-deps.ts";
+import { flowNames } from "../../../platform/flow-loader.ts";
+import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
+import { Home } from "../../../platform/home.ts";
+import { VERSION } from "../../../platform/version.ts";
 import {
   type EffectiveRepo,
   type EnrolledRepo,
@@ -47,7 +53,10 @@ import {
   type MachineAccount,
   type MachineConfig,
   repoNameOf,
-} from "./repo-config.ts";
+} from "../../../repo-config.ts";
+import { daemonStatus } from "../../daemon/daemon.client.ts";
+import { printJson, printLines } from "../cli.output.ts";
+import { jsonFlag } from "../output.arguments.ts";
 
 export type Check = {
   readonly ok: boolean;
@@ -567,3 +576,32 @@ export const doctor = Effect.gen(function* () {
 
   return checks;
 });
+
+// The checks as JSON, for a script: each one's result, and how to fix it.
+const DoctorReport = Schema.Struct({
+  ok: Schema.Boolean,
+  checks: Schema.Array(
+    Schema.Struct({
+      ok: Schema.Boolean,
+      label: Schema.String,
+      fix: Schema.OptionFromNullOr(Schema.String),
+    }),
+  ),
+});
+
+export const doctorCommand = Command.make("doctor", { json: jsonFlag }, ({ json }) =>
+  Effect.gen(function* () {
+    const checks = yield* doctor;
+    const ok = checks.every((check) => check.ok);
+
+    if (json) {
+      yield* printJson(DoctorReport, { ok, checks });
+    } else {
+      yield* printLines(checks.map(formatCheck));
+    }
+
+    if (!ok) {
+      process.exitCode = 1;
+    }
+  }),
+).pipe(Command.withDescription("Check logins, gh scopes, labels, trust and the daemon"));

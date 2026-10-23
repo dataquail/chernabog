@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.93, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.94, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -224,6 +224,30 @@ defs:
       source: 'export const zzUseCase = () => Console.log("done");'
       name: log
 
+  # What a composition root of the CLI may name: the modules' layers and
+  # use-cases, the interface, the platform and the kernel, and, file by file,
+  # the runtime and legacy it still composes directly.
+  cli-root:
+    imports:
+      reset: true
+      message: >-
+        A CLI composition root names the modules' layers and use-cases, the interface, the
+        platform and the kernel, and the runtime and legacy files it still composes directly,
+        each named here until it has a use-case.
+      external: [effect, "@effect/platform-bun"]
+      allow:
+        - "@/kernel/**"
+        - "@/platform/**"
+        - "@/interface/**"
+        - "@/modules/*/*.layer.ts"
+        - "@/modules/*/use-cases/**"
+        - "@/modules/runs/infrastructure/runtime/**"
+        - "@/modules/runs/infrastructure/clients/flows.client-live.ts"
+        - "@/modules/runs/domain/routing/routing.value-object.ts"
+        - "~/sdk/src/**"
+        - "@/migrate.ts"
+        - "@/repo-config.ts"
+
   test-exports-nothing:
     message: >-
       A test exports nothing. Nothing may import a test, so an export here has no consumer; a
@@ -318,32 +342,9 @@ tree:
               # The CLI process's composition root: its commands, the modules'
               # layers, and the commands still written over the legacy tier,
               # each legacy file named until it moves into a module.
-              "main.ts":
-                imports:
-                  reset: true
-                  message: >-
-                    main.ts composes the CLI: it names the modules' layers and use-cases, the
-                    interface's commands, the platform and the kernel, and the legacy files its
-                    remaining commands still call, each named here until it has a use-case.
-                  external: [effect, "@effect/platform-bun"]
-                  allow:
-                    - "@/kernel/**"
-                    - "@/platform/**"
-                    - "@/interface/**"
-                    - "@/modules/*/*.layer.ts"
-                    - "@/modules/*/use-cases/**"
-                    - "~/sdk/src/**"
-                    - "@/modules/runs/infrastructure/runtime/agents.ts"
-                    - "@/modules/runs/infrastructure/runtime/agents/stop-hook.ts"
-                    - "@/modules/runs/infrastructure/runtime/labels.ts"
-                    - "@/modules/runs/infrastructure/runtime/launchers/shim.ts"
-                    - "@/modules/runs/infrastructure/runtime/steps.ts"
-                    - "@/doctor.ts"
-                    - "@/migrate.ts"
-                    - "@/open-pr.ts"
-                    - "@/repo-config.ts"
-                    - "@/runner.ts"
-                    - "@/start.ts"
+              # The CLI process's composition root: its commands, the modules'
+              # layers, and the commands still written over the legacy tier.
+              "main.ts": { use: cli-root }
               "*.arguments.ts": {}
               "*.output.ts": {}
               # The questions the wizards ask between a plan and its apply.
@@ -352,6 +353,9 @@ tree:
                 children:
                   "*.command.ts": {}
                   "*.output.ts": {}
+                  # A command that composes the runtime itself: the foreground
+                  # run, the hybrid path's start and open-pr, doctor.
+                  "*.main.ts": { use: cli-root }
 
           "tui/":
             message: >-
@@ -419,8 +423,8 @@ tree:
                     - "@/modules/runs/infrastructure/runtime/engine.ts"
                     - "@/modules/runs/infrastructure/runtime/launchers.ts"
                     - "@/modules/runs/infrastructure/runtime/runlog.ts"
+                    - "@/modules/runs/infrastructure/runtime/repo-runtime.ts"
                     - "@/repo-config.ts"
-                    - "@/runner.ts"
 
       "kernel/":
         message: >-
