@@ -58,6 +58,50 @@ const unanswered = {
 };
 
 describe("applyEnrollmentUseCase", () => {
+  effect("says whose pull requests go only to reviewers this machine doesn't act as", () =>
+    Effect.gen(function* () {
+      const answers = { ...unanswered, flows: Option.some({ flows: ["implement"] }) };
+
+      const unserved = yield* applyEnrollmentUseCase(
+        "/src/demo",
+        Option.none(),
+        offered(["alice"]),
+        answers,
+      );
+
+      expect(unserved.unserved).toEqual([{ persona: Option.some("alice"), reviewers: ["bob"] }]);
+
+      // Not for a flow that opens no pull requests, nor when the reviewer is a persona here.
+      const fixing = yield* applyEnrollmentUseCase("/src/demo", Option.none(), offered(["alice"]), {
+        ...unanswered,
+        flows: Option.some({ flows: ["fix"] }),
+      });
+
+      const served = yield* applyEnrollmentUseCase(
+        "/src/demo",
+        Option.none(),
+        offered(["alice", "bob"]),
+        { ...answers, personas: Option.some(["alice"]) },
+      );
+
+      expect([fixing.unserved, served.unserved]).toEqual([[], []]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          EnrolledReposRepositoryFake([]),
+          CheckoutsClientFake([
+            Checkout.make({
+              ...here,
+              authoring: ["implement"],
+              team: TeamFlows.make({ ...team, reviewers: ["alice", "bob"] }),
+            }),
+          ]),
+          ViewerClientFake(Option.some("carol")),
+        ),
+      ),
+    ),
+  );
+
   effect("enrolls a new checkout with the defaults, on the repo's entry, in one write", () =>
     Effect.gen(function* () {
       const enrolled = yield* applyEnrollmentUseCase(

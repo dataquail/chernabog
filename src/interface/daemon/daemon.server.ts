@@ -96,7 +96,8 @@ type FlowSchedule = {
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
-  // What the last tick left for other machines, by flows.<flow>.assignee and reviewRequested.
+  // What the last tick left for other machines, by flows.<flow>.assignee and
+  // reviewRequested, and for the review flow, review requests no persona here serves.
   elsewhere: ReadonlyArray<string>;
 };
 
@@ -467,6 +468,7 @@ export const runDaemon = Effect.gen(function* () {
             },
             routing: routingOf(settings, handle.name),
             login: loginFor(persona),
+            here: machine.github,
             concurrency: {
               flow: Option.getOrElse(
                 Option.flatMap(Record.get(settings.flows, handle.name), (found) =>
@@ -478,10 +480,16 @@ export const runDaemon = Effect.gen(function* () {
             },
           });
 
+          const unserved = Option.getOrElse(plan.unserved, (): ReadonlyArray<string> => []);
+
+          if (Option.isSome(plan.unserved)) {
+            schedule.elsewhere = unserved;
+          }
+
           for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
             schedule.queued = routed.queued;
-            schedule.elsewhere = routed.elsewhere;
+            schedule.elsewhere = [...routed.elsewhere, ...unserved];
           }
 
           yield* deliverSignalsUseCase(ref, plan.signalled);

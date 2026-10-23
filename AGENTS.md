@@ -384,6 +384,19 @@ Decisions that cut across them:
   runs `Implement.addressFindings`, the local gate, push and CI, then
   re-requests the reviewer who asked. `re-review` skips `auto:needs-human`, so
   re-requesting mid-dispute doesn't restart the loop.
+- A review request for a login no persona here acts as never fails; it
+  waits (#76). The pool's rules are the kernel's
+  (`src/kernel/reviewer-pool.value-object.ts`), since enrollment, runs and
+  doctor all read them. `doctor` warns (`!`, not a failure) per persona that
+  authors (runs `implement`, `human-initiated`, or a flow whose code mentions
+  `requestReview`/`handOff`, read by `authoringFlows` in
+  `src/platform/flow-loader.ts`) when the pool less that author has no login
+  under `github:`; `applyEnrollmentUseCase` returns the same as `unserved`,
+  which `enroll` prints as a note; and `planTickUseCase`, for the `review`
+  flow, reads `FlowsClient.reviewRequests` (one `openPullRequests` call,
+  before the trigger, which it leaves alone) and returns
+  `#n waits on <login> (not on this machine)` as `TickPlan.unserved`, which
+  the daemon adds to the schedule's `elsewhere`.
 - Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
   review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
   `fixWorkflow`, `FixItem`, the `fix` prompt), and the whole workflows and
