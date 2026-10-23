@@ -39,15 +39,15 @@ await Effect.runPromise(
 const writer = (root: string, file: string, tag: string) =>
   Exec.use((exec) => exec.run(bunExecutable(), ["-e", writerSource(file, tag)], { cwd: root }));
 
-// A process trying for the engine's lock, holding it a moment if it gets it:
-// it prints whether it did.
+// A process trying for the engine's lock, holding it long enough that every
+// other contender has tried while it does: it prints whether it got it.
 const contenderSource = (lock: string) => `
 import { BunServices } from "@effect/platform-bun";
 import * as Effect from "effect/Effect";
 import { acquireLock } from "./src/platform/lock.ts";
 
 await Effect.runPromise(
-  Effect.scoped(acquireLock("${lock}", "contender").pipe(Effect.andThen(Effect.sleep("300 millis")))).pipe(
+  Effect.scoped(acquireLock("${lock}", "contender").pipe(Effect.andThen(Effect.sleep("3 seconds")))).pipe(
     Effect.match({ onSuccess: () => "got", onFailure: () => "refused" }),
     Effect.tap((said) => Effect.sync(() => process.stdout.write(said))),
     Effect.provide(BunServices.layer),
@@ -65,18 +65,16 @@ describe("the engine's lock across processes", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-lock-" });
       const root = yield* (yield* Path.Path).fromFileUrl(new URL("..", import.meta.url));
 
-      for (let round = 0; round < 5; round++) {
-        const lock = `${dir}/engine-${round}.lock`;
+      const lock = `${dir}/engine.lock`;
 
-        const said = yield* Effect.forEach(
-          Array.from({ length: 6 }, () => lock),
-          (one) => contender(root, one),
-          { concurrency: 6 },
-        );
+      const said = yield* Effect.forEach(
+        Array.from({ length: 8 }, () => lock),
+        (one) => contender(root, one),
+        { concurrency: 8 },
+      );
 
-        expect(said.map((one) => one.stdout).filter((one) => one === "got").length).toBe(1);
-        expect(said.map((one) => one.stderr)).toEqual(Array.from({ length: 6 }, () => ""));
-      }
+      expect(said.map((one) => one.stdout).filter((one) => one === "got").length).toBe(1);
+      expect(said.map((one) => one.stderr)).toEqual(Array.from({ length: 8 }, () => ""));
     }).pipe(Effect.provide(Exec.layer)),
   );
 });

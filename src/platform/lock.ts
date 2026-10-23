@@ -11,6 +11,8 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { withStaging } from "./atomic-write.ts";
+
 export class LockHeld extends Schema.TaggedError<LockHeld, { readonly brand: "LockHeld" }>()(
   "LockHeld",
   {
@@ -88,16 +90,19 @@ export const lockText = (purpose: string) =>
 export const createLock = (path: string, purpose: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const staging = `${path}.${process.pid}.tmp`;
-    yield* fs.writeFileString(staging, yield* lockText(purpose));
 
-    return yield* fs.link(staging, path).pipe(
-      Effect.as(true),
-      Effect.catchIf(
-        (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
-        () => Effect.succeed(false),
-      ),
-      Effect.ensuring(fs.remove(staging, { force: true }).pipe(Effect.ignore)),
+    return yield* withStaging(fs, path, (staging) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(staging, yield* lockText(purpose));
+
+        return yield* fs.link(staging, path).pipe(
+          Effect.as(true),
+          Effect.catchIf(
+            (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
+            () => Effect.succeed(false),
+          ),
+        );
+      }),
     );
   });
 
@@ -107,22 +112,19 @@ export const createLock = (path: string, purpose: string) =>
 export const takeOverLock = (path: string, abandoned: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const aside = `${path}.${process.pid}.abandoned`;
 
-    if (
-      !(yield* fs.rename(path, aside).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      ))
-    ) {
-      return;
-    }
+    yield* withStaging(fs, path, (aside) =>
+      Effect.gen(function* () {
+        const moved = yield* fs.rename(path, aside).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
 
-    if ((yield* fs.readFileString(aside)) !== abandoned) {
-      yield* fs.link(aside, path).pipe(Effect.ignore);
-    }
-
-    yield* fs.remove(aside, { force: true });
+        if (moved && (yield* fs.readFileString(aside)) !== abandoned) {
+          yield* fs.link(aside, path).pipe(Effect.ignore);
+        }
+      }),
+    );
   });
 
 // How many times the engine's lock is tried while other processes are taking
