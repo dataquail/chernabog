@@ -12,9 +12,11 @@ import { LaunchRecord, sessionFiles } from "../src/agents/session-files.ts";
 import { rememberSession } from "../src/agents/sessions.ts";
 import { Home } from "../src/config.ts";
 import { execTestLayer } from "../src/Exec.ts";
+import { RunId } from "../src/kernel/run-id.id.ts";
 import { describeStatus } from "../src/main.ts";
+import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
+import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import type { DaemonStatus } from "../src/protocol.ts";
-import type { RunRow, RunStatus } from "../src/state.ts";
 import { initialModel, readUsage } from "../src/tui/app.ts";
 import { type Key, update, type Updated } from "../src/tui/update.ts";
 import { type Model, plain, view } from "../src/tui/view.ts";
@@ -31,11 +33,13 @@ const finishedSummary = (status: RunStatus) => {
   return "CI still red";
 };
 
-const run = (id: string, status: RunStatus): RunRow => {
+type RunStatus = RunView["status"];
+
+const run = (id: string, status: RunStatus) => {
   const running = status === "running";
 
-  return {
-    id,
+  return RunView.make({
+    id: RunId.make(id),
     repo: "goodbones",
     persona: Option.none(),
     flow: Option.getOrElse(
@@ -63,7 +67,7 @@ const run = (id: string, status: RunStatus): RunRow => {
       Option.liftPredicate(status, () => !running),
       minutes(-5),
     ),
-  };
+  });
 };
 
 const status: DaemonStatus = {
@@ -113,22 +117,22 @@ const status: DaemonStatus = {
     },
   ],
   active: [
-    { ...run("goodbones.implement.issue-7.1", "running"), parked: false },
-    { ...run("goodbones.review.pr-8.1", "running"), parked: true },
+    ActiveRun.make({ ...run("goodbones.implement.issue-7.1", "running"), parked: false }),
+    ActiveRun.make({ ...run("goodbones.review.pr-8.1", "running"), parked: true }),
   ],
   recent: [
     run("goodbones.implement.issue-7.1", "running"),
     run("goodbones.implement.issue-5.1", "needs-human"),
   ],
   skips: [
-    {
+    SkipView.make({
       repo: "goodbones",
       persona: Option.none(),
       flow: "implement",
       itemKey: Option.none(),
       reason: "usage gate: five-hour usage 0.5 is at or over the 0.4 ceiling",
       at: minutes(-43),
-    },
+    }),
   ],
 };
 

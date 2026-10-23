@@ -8,7 +8,7 @@ import * as Result from "effect/Result";
 
 import { Home, homePaths } from "../src/config.ts";
 import { resolveRunId } from "../src/engine.ts";
-import { runLabel, shortRunId } from "../src/state.ts";
+import { runLabel, shortRunId } from "../src/kernel/run-id.id.ts";
 import { effectAtHome } from "./effect-test.ts";
 
 const FIRST = "3f2a9c1e-7b4d-4e8a-9c2f-1d5e6a7b8c9d";

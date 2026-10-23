@@ -37,11 +37,13 @@ import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
 import { optionalRepo, repoArgument, repoFlag } from "./interface/cli/repo.arguments.ts";
 import { trustCommand } from "./interface/cli/trust/trust.command.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
+import { runLabel, shortRunId } from "./kernel/run-id.id.ts";
 import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
 import { runLaunch } from "./launchers/shim.ts";
 import { flowNames, loadFlows } from "./loader.ts";
 import { migrateMachineConfig } from "./migrate.ts";
 import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
+import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { TrustLayer } from "./modules/trust/trust.layer.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { openPr } from "./open-pr.ts";
@@ -71,7 +73,6 @@ import { install, startService, stopService, uninstall } from "./service.ts";
 import { setup } from "./setup.ts";
 import { configTree } from "./snapshot.ts";
 import { openSession, startIssue } from "./start.ts";
-import { runLabel, type RunRow, shortRunId } from "./state.ts";
 import { runStepChild, StepServicesLive } from "./steps.ts";
 import { runTui } from "./tui/app.ts";
 import { VERSION } from "./version.ts";
@@ -366,7 +367,7 @@ const daemon = Command.make("daemon", {}, () =>
   ),
 );
 
-const isRunning = (row: Option.Option<RunRow>) =>
+const isRunning = (row: Option.Option<RunView>) =>
   Option.exists(row, (found) => found.status === "running");
 
 // Prints a run's log as it grows, until the run finishes.
@@ -384,7 +385,7 @@ const followRun = (runId: string) =>
     return row;
   });
 
-const reportFinished = (finished: Option.Option<RunRow>) =>
+const reportFinished = (finished: Option.Option<RunView | ActiveRun>) =>
   Effect.gen(function* () {
     if (Option.isNone(finished)) {
       return;

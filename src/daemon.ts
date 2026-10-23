@@ -34,10 +34,17 @@ import {
 } from "./engine.ts";
 import { viewerLogin } from "./GitHubApi.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
+import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { describeLauncher } from "./launchers.ts";
 import { loadFlows } from "./loader.ts";
 import { acquireLock } from "./lock.ts";
 import { listPausedReposUseCase } from "./modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
+import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
+import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
+import { listRecentRunsUseCase } from "./modules/runs/use-cases/list-recent-runs.use-case.ts";
+import { listRecentSkipsUseCase } from "./modules/runs/use-cases/list-recent-skips.use-case.ts";
+import { recordSkipUseCase } from "./modules/runs/use-cases/record-skip.use-case.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { type Persona, samePersona } from "./persona.ts";
 import {
@@ -81,7 +88,6 @@ import {
   scheduleFor,
 } from "./schedule.ts";
 import { configTree, snapshotConfig } from "./snapshot.ts";
-import { everyRun, runLabel, State } from "./state.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -240,14 +246,18 @@ const describeQueued = (item: WorkItem) =>
 // The items a persona's run may start for: not only waking one, and without its run already.
 const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    const state = yield* State;
     const waiting: Array<WorkItem> = [];
 
     for (const item of items) {
       if (
         item.wakeOnly !== true &&
         Option.isNone(
-          yield* state.activeRunFor(handle.repo.settings.name, persona, handle.name, item.key),
+          (yield* findActiveRunUseCase({
+            repo: handle.repo.settings.name,
+            persona,
+            flow: handle.name,
+            itemKey: item.key,
+          })).run,
         )
       ) {
         waiting.push(item);
@@ -338,7 +348,10 @@ const changedAction = (trusted: boolean) => {
 const SOONEST_MS = 200;
 const LATEST_MS = 15_000;
 
-const PathParams = Schema.Struct({ id: Schema.String });
+const PathParams = Schema.Struct({ id: RunId });
+
+// Every run in flight, whatever its repo, persona or flow.
+const everyRun = { repo: Option.none(), persona: Option.none(), flow: Option.none() };
 
 export const runDaemon = Effect.gen(function* () {
   const paths = homePaths((yield* Home).root);
@@ -442,8 +455,6 @@ export const runDaemon = Effect.gen(function* () {
 
   return yield* Effect.provideContext(
     Effect.gen(function* () {
-      const state = yield* State;
-
       for (const repo of repos) {
         if (Option.isSome(repo.repo)) {
           yield* adoptRuns(repo.repo.value);
@@ -459,10 +470,7 @@ export const runDaemon = Effect.gen(function* () {
           (handle) => handle.repo.settings.name === repoName && handle.name === flowName,
         );
 
-      const parked = Effect.all({
-        active: state.activeRuns(everyRun),
-        parkedIds: state.parkedRunIds,
-      });
+      const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
 
       const tick = (
         repo: RepoState,
@@ -477,9 +485,13 @@ export const runDaemon = Effect.gen(function* () {
           const self = loginFor(persona);
 
           const record = (reason: string, itemKey: Option.Option<string>) =>
-            state
-              .recordSkip({ repo: repo.name, persona, flow: handle.name, itemKey, reason })
-              .pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
+            recordSkipUseCase({
+              repo: repo.name,
+              persona,
+              flow: handle.name,
+              itemKey,
+              reason,
+            }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
 
           if (options.gates) {
             // Not knowing whether a repo is paused starts nothing in it.
@@ -550,8 +562,7 @@ export const runDaemon = Effect.gen(function* () {
           let slots = candidates.length;
 
           if (options.gates) {
-            const { active, parkedIds } = yield* parked;
-            const working = active.filter((activeRun) => !parkedIds.includes(activeRun.id));
+            const working = (yield* active).filter((activeRun) => !activeRun.parked);
 
             slots = freeSlots({
               activeForFlow: working.filter(
@@ -627,7 +638,7 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            for (const activeRun of yield* state.activeRuns(everyRun)) {
+            for (const activeRun of yield* active) {
               const handle = handleFor(activeRun.repo, activeRun.flow);
 
               if (Option.isNone(handle)) {
@@ -861,8 +872,6 @@ export const runDaemon = Effect.gen(function* () {
       };
 
       const status = Effect.gen(function* () {
-        const { active, parkedIds } = yield* parked;
-
         return {
           pid: process.pid,
           startedAt: DateTime.formatIso(startedAt),
@@ -880,12 +889,9 @@ export const runDaemon = Effect.gen(function* () {
             name: account.name,
             agent: account.agent,
           })),
-          active: active.map((activeRun) => ({
-            ...activeRun,
-            parked: parkedIds.includes(activeRun.id),
-          })),
-          recent: yield* state.recentRuns(20),
-          skips: yield* state.recentSkips(20),
+          active: yield* active,
+          recent: (yield* listRecentRunsUseCase(20)).runs,
+          skips: (yield* listRecentSkipsUseCase(20)).skips,
         } satisfies DaemonStatus;
       });
 
@@ -984,7 +990,9 @@ export const runDaemon = Effect.gen(function* () {
             Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
 
-              return yield* HttpServerResponse.schemaJson(RunReply)(yield* state.run(id));
+              return yield* HttpServerResponse.schemaJson(RunReply)(
+                (yield* findRunUseCase(id)).run,
+              );
             }),
           ),
         ),

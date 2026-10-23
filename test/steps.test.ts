@@ -18,12 +18,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { flowHandle } from "../src/engine.ts";
-import { type RunRow, State } from "../src/state.ts";
+import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import implement from "../templates/recipes/flows/implement.ts";
 import reviewFlow from "../templates/recipes/flows/review.ts";
 import { effect } from "./effect-test.ts";
 import {
+  type EngineRun,
   type Fake,
   flowTriggered,
   HEAD,
@@ -32,6 +33,7 @@ import {
   makeFake,
   PULL,
   repo,
+  type RunsServices,
   runToEnd as runFlowToEnd,
   runUntil as runFlowUntil,
   summaryOf,
@@ -122,7 +124,7 @@ const handle = flowHandle(repo, "demo", flow);
 const runUntil = (
   fake: Fake,
   key: string,
-  until: (run: RunRow) => Effect.Effect<boolean, never, State>,
+  until: (run: EngineRun) => Effect.Effect<boolean, never, RunsServices>,
 ) => runFlowUntil(handle, fake, item(key), until);
 
 const runToEnd = (fake: Fake, key: string) => runFlowToEnd(handle, fake, item(key));
@@ -257,9 +259,7 @@ describe("owning a pull request", () => {
     Effect.gen(function* () {
       const fake = makeFake("approve");
       yield* runUntil(fake, "owning-waits", (run) =>
-        State.use((state) => state.waitsFor(run.id, "pushed")).pipe(
-          Effect.map((waits) => waits.length > 0),
-        ),
+        listRunWaitsUseCase(run.id, "pushed").pipe(Effect.map(({ waits }) => waits.length > 0)),
       );
       expect(ownership(fake)).toEqual([false]);
     }),

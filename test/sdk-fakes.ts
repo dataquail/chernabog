@@ -50,9 +50,10 @@ import {
   startRun,
   StateAt,
 } from "../src/engine.ts";
+import { type RunsLayer } from "../src/modules/runs/runs.layer.ts";
+import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { IMPLICIT, type Persona } from "../src/persona.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
-import type { RunRow, State } from "../src/state.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -428,14 +429,19 @@ export type Fake = ReturnType<typeof makeFake>;
 
 export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 
-const isRunning = (run: RunRow) => run.status === "running";
+// A run as the engine reports it, and the stores a test may read it back from.
+export type EngineRun = RunView | ActiveRun;
+
+export type RunsServices = Layer.Success<typeof RunsLayer>;
+
+const isRunning = (run: EngineRun) => run.status === "running";
 
 // Starts a run of the flow on the fake, and polls until `until` says it has got far enough.
 export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
   work: WorkItem,
-  until: (run: RunRow) => Effect.Effect<boolean, never, State>,
+  until: (run: EngineRun) => Effect.Effect<boolean, never, RunsServices>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -492,4 +498,4 @@ const quietLog = Layer.succeed(
 export const flowTriggered = (fake: Fake, flow: Flow) =>
   Effect.provide(flow.trigger, Layer.mergeAll(fake.services, quietLog));
 
-export const summaryOf = (run: RunRow) => Option.getOrElse(run.summary, () => "");
+export const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");

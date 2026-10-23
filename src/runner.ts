@@ -14,6 +14,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { ConfigError, Home, homePaths } from "./config.ts";
 import {
+  capturing,
   defaultPersona,
   deliverSignals,
   type FlowHandle,
@@ -28,8 +29,13 @@ import {
   unreportedItem,
 } from "./engine.ts";
 import { viewerLogin } from "./GitHubApi.ts";
+import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { loadFlows } from "./loader.ts";
 import { acquireLock } from "./lock.ts";
+import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
+import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
+import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
+import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { type Persona, samePersona } from "./persona.ts";
 import {
   type EffectiveRepo,
@@ -45,7 +51,6 @@ import {
 } from "./repo-config.ts";
 import { routeItems } from "./schedule.ts";
 import { snapshotConfig } from "./snapshot.ts";
-import { runLabel, type RunRow, State } from "./state.ts";
 
 export type OpenRepo = {
   readonly repo: EffectiveRepo;
@@ -141,7 +146,7 @@ export const servicesFrom =
 export const adoptRuns = (repo: EffectiveRepo) =>
   Option.match(defaultPersona(repo), {
     onNone: () => Effect.void,
-    onSome: (login) => State.use((state) => state.adoptRuns(repo.settings.name, login)),
+    onSome: (login) => adoptImplicitRunsUseCase(repo.settings.name, login).pipe(Effect.asVoid),
   });
 
 // Who @me and runners mean for a persona: its own login, or, for the implicit
@@ -158,23 +163,22 @@ export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
     },
   });
 
-// What this machine's state knows of a run, for triggers that leave alone a pull request a run owns.
-const runsFrom = (state: State["Service"]) =>
-  Runs.of({
-    isActive: (runId) =>
-      state.run(runId).pipe(Effect.map(Option.map((run) => run.status === "running"))),
-  });
+// Whether a run is still running, none for a run this machine doesn't know.
+const capturingRuns = capturing((runId: string) =>
+  findRunUseCase(RunId.make(runId)).pipe(
+    Effect.map((found) => Option.map(found.run, (run) => run.status === "running")),
+  ),
+);
 
-// Runs a flow's trigger (or gate) with the repo's services, and Runs where the machine's state is open.
+// Runs a flow's trigger (or gate) with the repo's services, and Runs: what
+// this machine's runs say of a run, for triggers that leave alone a pull
+// request a run owns.
 export const withRepo = <A, E, R>(context: Context.Context<R>, effect: Effect.Effect<A, E, R>) =>
-  Effect.serviceOption(State).pipe(
-    Effect.flatMap((state) =>
-      Option.match(state, {
-        onNone: () => Effect.provideContext(effect, context),
-        onSome: (open) => Effect.provideContext(effect, Context.add(context, Runs, runsFrom(open))),
-      }),
-    ),
-  );
+  Effect.gen(function* () {
+    const isActive = yield* capturingRuns;
+
+    return yield* Effect.provideContext(effect, Context.add(context, Runs, Runs.of({ isActive })));
+  });
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -201,7 +205,12 @@ export const tailer = (path: string) => {
 
 const SIGNAL_EVERY_MS = 60_000;
 
-const followRun = (handle: FlowHandle, persona: Persona, run: RunRow, context: RepoContext) =>
+const followRun = (
+  handle: FlowHandle,
+  persona: Persona,
+  run: RunView | ActiveRun,
+  context: RepoContext,
+) =>
   Effect.gen(function* () {
     const tail = tailer(yield* runLogFile(run.id));
     let current = run;
@@ -277,7 +286,12 @@ const describeItem = (item: { readonly key: string; readonly title?: string }) =
     onSome: (title) => `${item.key} (${title})`,
   });
 
-const resume = (handle: FlowHandle, persona: Persona, unfinished: RunRow, context: RepoContext) =>
+const resume = (
+  handle: FlowHandle,
+  persona: Persona,
+  unfinished: ActiveRun,
+  context: RepoContext,
+) =>
   Effect.gen(function* () {
     yield* Console.log(
       `resuming ${unfinished.id} (${runLabel(unfinished)}), log: ${yield* runLogFile(unfinished.id)}`,
@@ -334,13 +348,13 @@ const startFirst = (
         }),
       );
 
-      return Option.none<RunRow>();
+      return Option.none<RunView>();
     }
 
     const { run } = yield* startRun(handle, persona, found.value);
 
     if (Option.isNone(run)) {
-      return Option.none<RunRow>();
+      return Option.none<RunView>();
     }
 
     yield* Console.log(
@@ -382,14 +396,13 @@ export const runInForeground = (options: RunOptions) =>
 
     const program = Effect.gen(function* () {
       yield* adoptRuns(repo);
-      const state = yield* State;
 
       const unfinished = Arr.head(
-        yield* state.activeRuns({
+        (yield* listActiveRunsUseCase({
           repo: Option.some(repo.settings.name),
           persona: Option.some(persona),
           flow: Option.some(options.flow),
-        }),
+        })).runs,
       );
 
       if (Option.isSome(unfinished)) {

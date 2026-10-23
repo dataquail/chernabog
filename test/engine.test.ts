@@ -39,11 +39,15 @@ import {
   startRun,
   StateAt,
 } from "../src/engine.ts";
+import { RunId } from "../src/kernel/run-id.id.ts";
+import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
+import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
+import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { IMPLICIT } from "../src/persona.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
-import { type RunRow, State } from "../src/state.ts";
 import { effect } from "./effect-test.ts";
-import { repoAs } from "./sdk-fakes.ts";
+import { type EngineRun, repoAs } from "./sdk-fakes.ts";
 
 const settings: RepoSettings = {
   name: "demo",
@@ -196,10 +200,12 @@ const withEngine = <A, E, R>(
 
 const POLLS = 200;
 
-const isRunning = (run: RunRow) => run.status === "running";
+const OLD = RunId.make("old");
+
+const isRunning = (run: EngineRun) => run.status === "running";
 
 // Polls the run until its workflow finishes.
-const toEnd = (run: RunRow) =>
+const toEnd = (run: EngineRun) =>
   pollRun(handle, run).pipe(
     Effect.repeat({ schedule: Schedule.spaced("25 millis"), while: isRunning, times: POLLS }),
     Effect.filterOrElse(
@@ -223,7 +229,7 @@ const runAs = (persona: Option.Option<string>, work: WorkItem) =>
     Effect.flatMap(toEnd),
   );
 
-const summaryOf = (run: RunRow) => Option.getOrElse(run.summary, () => "");
+const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");
 
 describe("the engine", () => {
   effect("runs a flow to done, giving each activity the run it belongs to", () =>
@@ -280,14 +286,13 @@ describe("the engine", () => {
   effect("a waiting run wakes when the trigger reports its signal", () =>
     Effect.gen(function* () {
       const wakes = Effect.gen(function* () {
-        const state = yield* State;
         const run = yield* started(item("wait"));
 
         // Before the run registers its wait, there is nothing to deliver.
-        yield* state.waitsFor(run.id, "pushed").pipe(
+        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
-            until: (waits) => waits.length > 0,
+            until: ({ waits }) => waits.length > 0,
             times: POLLS,
           }),
         );
@@ -345,9 +350,8 @@ describe("personas", () => {
     () =>
       Effect.gen(function* () {
         const adopted = Effect.gen(function* () {
-          const state = yield* State;
-          yield* state.insertRun({
-            id: "old",
+          yield* startRunUseCase({
+            id: OLD,
             repo: "demo",
             persona: bob,
             flow: "demo",
@@ -355,15 +359,15 @@ describe("personas", () => {
             itemTitle: Option.none(),
             itemUrl: Option.none(),
           });
-          yield* state.setExecution(
-            "old",
+          yield* attachExecutionUseCase(
+            OLD,
             yield* handle.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
           );
 
-          return yield* toEnd(Option.getOrThrow(yield* state.run("old")));
+          return yield* toEnd(Option.getOrThrow((yield* findRunUseCase(OLD)).run));
         });
 
         const { value: finished } = yield* withEngine(adopted, asAliceOrBob);
@@ -378,9 +382,8 @@ describe("personas", () => {
         const asPersonas = flowHandle(repoAs(settings, [alice, bob]), "demo", flow);
 
         const unadopted = Effect.gen(function* () {
-          const state = yield* State;
-          yield* state.insertRun({
-            id: "old",
+          yield* startRunUseCase({
+            id: OLD,
             repo: "demo",
             persona: Option.none(),
             flow: "demo",
@@ -388,15 +391,18 @@ describe("personas", () => {
             itemTitle: Option.none(),
             itemUrl: Option.none(),
           });
-          yield* state.setExecution(
-            "old",
+          yield* attachExecutionUseCase(
+            OLD,
             yield* asPersonas.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
           );
 
-          return yield* pollRun(asPersonas, Option.getOrThrow(yield* state.run("old"))).pipe(
+          return yield* pollRun(
+            asPersonas,
+            Option.getOrThrow((yield* findRunUseCase(OLD)).run),
+          ).pipe(
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
               while: isRunning,

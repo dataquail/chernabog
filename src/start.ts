@@ -15,10 +15,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { type AttachCommand, liveAttach, runSessions } from "./agents.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "./client.ts";
 import { ConfigError } from "./config.ts";
+import { shortRunId } from "./kernel/run-id.id.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { RECIPES_DOCS } from "./recipes.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "./repo-config.ts";
-import { shortRunId } from "./state.ts";
 
 export const START_FLOW = "human-initiated";
 
