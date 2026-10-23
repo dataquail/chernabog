@@ -4,8 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { Asker, type Choice } from "../src/ask.ts";
-import { ConfigError } from "../src/config.ts";
+import { Asker, type Choice, PromptFailed } from "../src/interface/cli/asker.prompt.ts";
 
 export type Asked = { readonly message: string; readonly choices: ReadonlyArray<Choice> };
 
@@ -19,7 +18,7 @@ export const scripted = (answers: ReadonlyArray<ReadonlyArray<string> | string>)
       asked.push({ message, choices });
 
       return Effect.fromOption(Option.fromUndefinedOr(queue.shift())).pipe(
-        Effect.mapError(() => new ConfigError({ message: `no answer left for: ${message}` })),
+        Effect.mapError(() => new PromptFailed({ message: `no answer left for: ${message}` })),
       );
     });
 

@@ -81,13 +81,18 @@ no longer read.
 ## Setup and enrollment (#51)
 
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
-(`src/setup.ts`); `init` and `enroll` run the enrollment wizard
-(`src/enrollment.ts`): personas, then flows per persona, then accounts.
+(the machine module: `planSetupUseCase`, then `applySetupUseCase`, with
+`src/interface/cli/machine/setup.command.ts` asking between them); `init` and
+`enroll` run the enrollment wizard (`src/enrollment.ts`): personas, then flows
+per persona, then accounts.
 
-- **Every question goes through `Asker`** (`src/ask.ts`): `pick`, `choose`,
-  `text`. `Asker.layer` prompts only when stdin and stdout are terminals;
-  `Asker.none` is no one to ask. Check `asker.interactive` before asking, and
-  fall back to the current choice, then the default, or fail naming the flag.
+- **Every question goes through `Asker`**
+  (`src/interface/cli/asker.prompt.ts`): `pick`, `choose`, `text`. Only an
+  adapter asks: a wizard is a _plan_ use-case that returns the choices and an
+  _apply_ use-case that takes the answers. `Asker.layer` prompts only when
+  stdin and stdout are terminals; `Asker.none` is no one to ask. Check
+  `asker.interactive` before asking; an answer not given is none, and the
+  apply use-case takes the current choice, then the default, or fails.
 - **Every interactive choice has a flag** (`--persona`, `--account`, `--flows`,
   `--defaults`), and a question with one possible answer isn't asked.
 - **Tests answer with `scripted(answers)`** (`test/asker.ts`), which also
@@ -175,6 +180,13 @@ transitive reach), the coverage floors and the baseline.
   `status`, `logs` and the rest print a use-case's result, and with `--json`
   print it through its schema instead (`printJson` in
   `src/interface/cli/cli.output.ts`).
+- **The machine module** owns this machine's setup: `MachineSetupRoot`
+  (`github:` personas and `accounts:`, edited in place in machine config),
+  gh's logins, the account directories in the home, and the daemon as a
+  launchd or systemd service (`ServiceManagerClient`). `applySetupUseCase`
+  refuses to drop a persona an enrolled repo runs as; the CLI passes
+  enrollment's `listPersonasInUseUseCase` in, since modules don't read each
+  other.
 - **A use-case doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `use-cases/` and `domain/`.
 - **Modules don't reach into each other.** An adapter composes them: the

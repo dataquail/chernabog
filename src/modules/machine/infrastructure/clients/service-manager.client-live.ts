@@ -1,15 +1,19 @@
-// `chernabog install` registers the daemon as a launchd agent on macOS, or a
-// systemd user service on Linux, that restarts on exit.
+// The daemon as a launchd agent on macOS, or a systemd user service on Linux,
+// that restarts on exit, running this same program's `daemon` command with
+// the installer's PATH.
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { ConfigError, Home, homePaths } from "./config.ts";
-import { Exec, execOk } from "./Exec.ts";
-import { type Environment, HostEnvironment } from "./platform/environment.ts";
-import { selfCommand } from "./self.ts";
+import { Home, homePaths } from "../../../../config.ts";
+import { Exec, execOk } from "../../../../Exec.ts";
+import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
+import { selfCommand } from "../../../../self.ts";
+import { ServiceFailed } from "../../domain/machine-setup/machine-setup.errors.ts";
+import { ServiceManagerClient } from "../../domain/ports/clients/service-manager.client.ts";
 
 export const LABEL = "com.dataquail.chernabog";
 
@@ -121,7 +125,7 @@ const writeUnit = (path: string, contents: string) =>
       .pipe(Effect.andThen(fs.writeFileString(path, contents))),
   );
 
-export const install = Effect.gen(function* () {
+const install = Effect.gen(function* () {
   const host = yield* HostEnvironment;
   const home = yield* Home;
   const paths = homePaths(home.root);
@@ -137,7 +141,7 @@ export const install = Effect.gen(function* () {
     yield* writeUnit(path, launchAgentPlist(command, env, paths.daemonLog));
     yield* execOk("launchctl", ["bootstrap", gui, path]);
 
-    return `installed and started ${path}`;
+    return path;
   }
 
   if (host.platform === "linux") {
@@ -146,15 +150,15 @@ export const install = Effect.gen(function* () {
     yield* execOk("systemctl", ["--user", "daemon-reload"]);
     yield* execOk("systemctl", ["--user", "enable", "--now", "chernabog.service"]);
 
-    return `installed and started ${path}`;
+    return path;
   }
 
-  return yield* new ConfigError({
+  return yield* new ServiceFailed({
     message: `no service manager for ${host.platform}; run chernabog daemon yourself`,
   });
 });
 
-export const uninstall = Effect.gen(function* () {
+const uninstall = Effect.gen(function* () {
   const exec = yield* Exec;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* unitPath;
@@ -167,18 +171,18 @@ export const uninstall = Effect.gen(function* () {
 
   yield* fs.remove(path, { force: true });
 
-  return `removed ${path}`;
+  return path;
 });
 
-export const isInstalled = Effect.gen(function* () {
+const installed = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
 
   return yield* fs.exists(yield* unitPath);
 }).pipe(Effect.orElseSucceed(() => false));
 
-export const startService = Effect.gen(function* () {
-  if (!(yield* isInstalled)) {
-    return yield* new ConfigError({
+const start = Effect.gen(function* () {
+  if (!(yield* installed)) {
+    return yield* new ServiceFailed({
       message: "the daemon is not installed; run chernabog install",
     });
   }
@@ -195,17 +199,35 @@ export const startService = Effect.gen(function* () {
   } else {
     yield* execOk("systemctl", ["--user", "start", "chernabog.service"]);
   }
-
-  return "started";
 });
 
 // Stops the daemon until the next start or login. Runs in flight resume when it comes back.
-export const stopService = Effect.gen(function* () {
+const stop = Effect.gen(function* () {
   if ((yield* HostEnvironment).platform === "darwin") {
     yield* (yield* Exec).run("launchctl", ["bootout", `${yield* domain}/${LABEL}`]);
   } else {
     yield* execOk("systemctl", ["--user", "stop", "chernabog.service"]);
   }
-
-  return "stopped; runs in flight resume when it starts again";
 });
+
+const failed = (error: { readonly message: string }) =>
+  new ServiceFailed({ message: error.message });
+
+export const ServiceManagerClientLive = Layer.effect(
+  ServiceManagerClient,
+  Effect.gen(function* () {
+    const services = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
+
+    const managed = <A, E extends { readonly message: string }>(
+      effect: Effect.Effect<A, E, Exec | FileSystem.FileSystem | Home | HostEnvironment>,
+    ) => effect.pipe(Effect.mapError(failed), Effect.provideContext(services));
+
+    return ServiceManagerClient.of({
+      install: managed(install),
+      uninstall: managed(uninstall),
+      installed: installed.pipe(Effect.provideContext(services)),
+      start: managed(start),
+      stop: managed(stop),
+    });
+  }),
+);

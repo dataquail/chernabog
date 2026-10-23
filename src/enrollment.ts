@@ -8,10 +8,10 @@ import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { Asker, type Choice } from "./ask.ts";
 import { ConfigError } from "./config.ts";
 import { viewerLogin } from "./GitHubApi.ts";
 import { enrolmentOf } from "./init.ts";
+import { Asker, type Choice } from "./interface/cli/asker.prompt.ts";
 import { flowNames } from "./loader.ts";
 import { IMPLICIT, type Persona } from "./persona.ts";
 import {

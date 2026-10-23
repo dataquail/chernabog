@@ -18,7 +18,6 @@ import * as Stdio from "effect/Stdio";
 
 import { attachCommand, runSessions } from "./agents.ts";
 import { stopHook } from "./agents/stop-hook.ts";
-import { Asker } from "./ask.ts";
 import { Home } from "./config.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "./daemon.ts";
 import { doctor, formatCheck } from "./doctor.ts";
@@ -28,9 +27,17 @@ import { Exec } from "./Exec.ts";
 import { GitHubTokens } from "./github-auth.ts";
 import { GitHubApi } from "./GitHubApi.ts";
 import { movedEntries, repoint, repoRoot, scaffold, slugOf } from "./init.ts";
+import { Asker } from "./interface/cli/asker.prompt.ts";
 import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
 import { pauseCommand } from "./interface/cli/enrollment/pause.command.ts";
 import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
+import { listFlag } from "./interface/cli/list.arguments.ts";
+import {
+  installCommand,
+  stopCommand,
+  uninstallCommand,
+} from "./interface/cli/machine/service.command.ts";
+import { setupCommand } from "./interface/cli/machine/setup.command.ts";
 import { optionalRepo, repoArgument, repoFlag } from "./interface/cli/repo.arguments.ts";
 import { logsCommand } from "./interface/cli/runs/logs.command.ts";
 import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
@@ -43,6 +50,8 @@ import { runLaunch } from "./launchers/shim.ts";
 import { flowNames, loadFlows } from "./loader.ts";
 import { migrateMachineConfig } from "./migrate.ts";
 import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
+import { MachineLayer } from "./modules/machine/machine.layer.ts";
+import { startServiceUseCase } from "./modules/machine/use-cases/start-service.use-case.ts";
 import { RunLogsLayer } from "./modules/runs/runs.layer.ts";
 import { resolveRunIdUseCase } from "./modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
@@ -68,8 +77,6 @@ import {
   unenrollFromMachineConfig,
 } from "./repo-config.ts";
 import { repoConfigDir, runInForeground } from "./runner.ts";
-import { install, startService, stopService, uninstall } from "./service.ts";
-import { setup } from "./setup.ts";
 import { openSession, startIssue } from "./start.ts";
 import { runStepChild, StepServicesLive } from "./steps.ts";
 import { runTui } from "./tui/app.ts";
@@ -86,55 +93,6 @@ const fail = (message: string) =>
 
 const suffix = (value: Option.Option<string>, prefix: string) =>
   Option.match(value, { onNone: () => "", onSome: (text) => `${prefix}${text}` });
-
-// A comma-separated list flag, such as --flows implement,review.
-const listFlag = (name: string, description: string) =>
-  Flag.String(name).pipe(
-    Flag.withDescription(description),
-    Flag.optional,
-    Flag.map(
-      Option.map((text) =>
-        text
-          .split(",")
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0),
-      ),
-    ),
-  );
-
-const setupFlags = {
-  persona: listFlag(
-    "persona",
-    "The GitHub logins to act as, comma-separated, from gh auth status. Asked in a terminal when gh has several; the only one otherwise",
-  ),
-  account: listFlag(
-    "account",
-    "AI account directories to add, comma-separated, each dir or dir:agent, such as ~/.claude-personal. Found ones are asked about in a terminal",
-  ),
-};
-
-const runSetup = (options: {
-  readonly persona: Option.Option<ReadonlyArray<string>>;
-  readonly account: Option.Option<ReadonlyArray<string>>;
-}) => Effect.flatMap(setup({ personas: options.persona, accounts: options.account }), printLines);
-
-const setupCommand = Command.make("setup", setupFlags, runSetup).pipe(
-  Command.withDescription(
-    "Choose the GitHub personas this machine acts as and the AI accounts its runs spend; safe to run again",
-  ),
-);
-
-const installCommand = Command.make("install", setupFlags, (options) =>
-  runSetup(options).pipe(Effect.andThen(Effect.flatMap(install, Console.log))),
-).pipe(
-  Command.withDescription(
-    "Set up personas and accounts, then register the daemon with launchd (macOS) or systemd (Linux) and start it",
-  ),
-);
-
-const uninstallCommand = Command.make("uninstall", {}, () =>
-  Effect.flatMap(uninstall, Console.log),
-).pipe(Command.withDescription("Stop the daemon and remove its service"));
 
 const start = Command.make(
   "start",
@@ -164,7 +122,8 @@ const start = Command.make(
         return yield* startIssue(issue.value, repo, as);
       }
 
-      yield* Console.log(yield* startService);
+      yield* startServiceUseCase();
+      yield* Console.log("started");
     }),
 ).pipe(
   Command.withDescription(
@@ -198,10 +157,6 @@ const openPrCommand = Command.make(
   Command.withDescription(
     "From the session chernabog start opened: hand the committed work to chernabog, which pushes it, opens the pull request, waits for CI and asks for a review",
   ),
-);
-
-const stop = Command.make("stop", {}, () => Effect.flatMap(stopService, Console.log)).pipe(
-  Command.withDescription("Stop the daemon; runs in flight resume when it starts again"),
 );
 
 const daemon = Command.make("daemon", {}, () =>
@@ -733,7 +688,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     installCommand,
     uninstallCommand,
     start,
-    stop,
+    stopCommand,
     daemon,
     Command.unlisted(stepChild),
     Command.unlisted(launchChild),
@@ -750,6 +705,7 @@ const AppLive = Layer.mergeAll(
   EnrollmentLayer,
   TrustLayer,
   RunLogsLayer,
+  MachineLayer,
 ).pipe(
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),

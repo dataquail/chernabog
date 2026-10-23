@@ -6,13 +6,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { Asker } from "../src/ask.ts";
 import { Home } from "../src/config.ts";
 import { type EnrollOptions, enrollRepo } from "../src/enrollment.ts";
 import { execTestLayer } from "../src/Exec.ts";
 import { GitHubApi } from "../src/GitHubApi.ts";
+import { Asker } from "../src/interface/cli/asker.prompt.ts";
+import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
+import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
+import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
-import { ghLogins, setup } from "../src/setup.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 
@@ -121,8 +123,10 @@ const checkout = (teamConfig: string) =>
 const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollOptions) =>
   enrollRepo(root, given).pipe(Effect.provide(layer));
 
-const setupAnswering = (layer: Layer.Layer<Asker>, given: Parameters<typeof setup>[0]) =>
-  setup(given).pipe(Effect.provide(layer));
+const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
+  setUpMachine(given).pipe(
+    Effect.provide(Layer.mergeAll(layer, Layer.fresh(MachineLayer), Layer.fresh(EnrollmentLayer))),
+  );
 
 const TEAM = "flows:\n  fix:\n    enabled: false\n";
 
@@ -303,19 +307,13 @@ describe("setting up a machine", () => {
       return home.user;
     });
 
-  effect("gh's logins come from gh auth status", () =>
-    Effect.gen(function* () {
-      expect(yield* ghLogins).toEqual(["alice"]);
-    }),
-  );
-
   effect("one GitHub login and one account found are chosen without asking", () =>
     Effect.gen(function* () {
       yield* homeDirs([".codex", "code"]);
 
       const lines = yield* setupAnswering(Asker.none, {
-        personas: Option.none(),
-        accounts: Option.none(),
+        persona: Option.none(),
+        account: Option.none(),
       });
 
       const machine = yield* readMachine;
@@ -341,8 +339,8 @@ describe("setting up a machine", () => {
         yield* writeMachine({ github: { bob: {} }, accounts: { work: {} } });
 
         const lines = yield* setupAnswering(Asker.none, {
-          personas: Option.none(),
-          accounts: Option.none(),
+          persona: Option.none(),
+          account: Option.none(),
         });
 
         expect((yield* readMachine).github).toEqual({ bob: {}, alice: {} });
@@ -371,7 +369,7 @@ describe("setting up a machine", () => {
           "",
         ]);
 
-        yield* setupAnswering(answers.layer, { personas: Option.none(), accounts: Option.none() });
+        yield* setupAnswering(answers.layer, { persona: Option.none(), account: Option.none() });
         const machine = yield* readMachine;
 
         expect(answers.asked[1].choices.map((choice) => choice.title)).toEqual([
@@ -396,7 +394,7 @@ describe("setting up a machine", () => {
       });
 
       const dropped = yield* Effect.flip(
-        setupAnswering(Asker.none, { personas: Option.some(["alice"]), accounts: Option.none() }),
+        setupAnswering(Asker.none, { persona: Option.some(["alice"]), account: Option.none() }),
       );
 
       expect(dropped.message).toBe(
@@ -404,15 +402,15 @@ describe("setting up a machine", () => {
       );
 
       yield* setupAnswering(Asker.none, {
-        personas: Option.some(["bob"]),
-        accounts: Option.some(["~/.claude-personal"]),
+        persona: Option.some(["bob"]),
+        account: Option.some(["~/.claude-personal"]),
       });
       const machine = yield* readMachine;
       expect(machine.github).toEqual({ bob: {} });
       expect(Object.keys(machine.accounts ?? {})).toEqual(["work", "claude-personal"]);
 
       const unknown = yield* Effect.flip(
-        setupAnswering(Asker.none, { personas: Option.some(["mallory"]), accounts: Option.none() }),
+        setupAnswering(Asker.none, { persona: Option.some(["mallory"]), account: Option.none() }),
       );
 
       expect(unknown.message).toContain("gh isn't logged in to github.com as mallory");

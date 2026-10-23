@@ -27,6 +27,7 @@ import { RepoSlug } from "./kernel/repo-slug.id.ts";
 import { desiredLabels, Label, planLabelSync } from "./labels.ts";
 import { describeLauncher, launcherFor } from "./launchers.ts";
 import { flowNames } from "./loader.ts";
+import { checkServiceUseCase } from "./modules/machine/use-cases/check-service.use-case.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { asSuffix } from "./persona.ts";
 import { HostEnvironment } from "./platform/environment.ts";
@@ -40,7 +41,6 @@ import {
   type MachineConfig,
   repoNameOf,
 } from "./repo-config.ts";
-import { isInstalled } from "./service.ts";
 import { configTree, snapshotConfig } from "./snapshot.ts";
 import { checkAccount, loggedInEmail } from "./usage-gate.ts";
 import { VERSION } from "./version.ts";
@@ -546,7 +546,11 @@ export const doctor = Effect.gen(function* () {
     );
   }
 
-  check(yield* isInstalled, "the daemon service is installed", "chernabog install");
+  check(
+    (yield* checkServiceUseCase()).installed,
+    "the daemon service is installed",
+    "chernabog install",
+  );
 
   const status = yield* Effect.result(daemonStatus);
 

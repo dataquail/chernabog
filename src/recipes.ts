@@ -8,9 +8,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
-import { Asker, type Choice } from "./ask.ts";
 import { ConfigError } from "./config.ts";
 import { Exec } from "./Exec.ts";
+import { Asker, type Choice } from "./interface/cli/asker.prompt.ts";
 import { RECIPE_FILES } from "./templates.ts";
 
 type RecipeFile = keyof typeof RECIPE_FILES;

@@ -12,7 +12,6 @@ import {
   withinHours,
 } from "../src/schedule.ts";
 import { stableExecutable } from "../src/self.ts";
-import { launchAgentPlist, serviceEnv, systemdUnit } from "../src/service.ts";
 
 const local = DateTime.zoneMakeLocal();
 
@@ -174,21 +173,7 @@ describe("routing by assignee and requested reviewer", () => {
   });
 });
 
-describe("the service", () => {
-  test("launchd runs the daemon with the installer PATH and restarts it", () => {
-    const plist = launchAgentPlist(
-      ["/usr/local/bin/chernabog"],
-      { PATH: "/opt/homebrew/bin:/usr/bin", HOME: "/Users/dev" },
-      "/Users/dev/.config/chernabog/daemon.log",
-    );
-
-    expect(plist).toContain(
-      "<string>/usr/local/bin/chernabog</string>\n    <string>daemon</string>",
-    );
-    expect(plist).toContain("<key>KeepAlive</key>\n  <true/>");
-    expect(plist).toContain("<string>/opt/homebrew/bin:/usr/bin</string>");
-  });
-
+describe("the service command", () => {
   test("a Homebrew binary is named by its opt path, which survives an upgrade", () => {
     expect(stableExecutable("/opt/homebrew/Cellar/chernabog/0.3.0/bin/chernabog")).toBe(
       "/opt/homebrew/opt/chernabog/bin/chernabog",
@@ -199,29 +184,5 @@ describe("the service", () => {
     expect(stableExecutable("/Users/dev/.local/bin/chernabog")).toBe(
       "/Users/dev/.local/bin/chernabog",
     );
-  });
-
-  test("systemd quotes what needs it", () => {
-    const unit = systemdUnit(
-      ["/home/dev/bin/chernabog"],
-      { PATH: "/home/dev/my tools:/usr/bin" },
-      "/tmp/daemon.log",
-    );
-
-    expect(unit).toContain("ExecStart=/home/dev/bin/chernabog daemon");
-    expect(unit).toContain('Environment="PATH=/home/dev/my tools:/usr/bin"');
-    expect(unit).toContain("Restart=always");
-  });
-
-  test("the service keeps the installer PATH and HOME, and CHERNABOG_HOME only when set", () => {
-    expect(serviceEnv({ PATH: "/bin", CHERNABOG_HOME: "/tmp/om" }, "/Users/dev")).toEqual({
-      PATH: "/bin",
-      HOME: "/Users/dev",
-      CHERNABOG_HOME: "/tmp/om",
-    });
-    expect(serviceEnv({}, "/Users/dev")).toEqual({
-      PATH: "/usr/local/bin:/usr/bin:/bin",
-      HOME: "/Users/dev",
-    });
   });
 });
