@@ -9,6 +9,7 @@ import {
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
@@ -16,12 +17,17 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from "../src/flow-deps.ts";
-import { scaffold, scaffoldFiles } from "../src/init.ts";
 import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
 import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
 import { setFlowScheduleUseCase } from "../src/modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
 import { setPersonaAccountUseCase } from "../src/modules/enrollment/use-cases/set-persona-account.use-case.ts";
 import { setPersonaFlowUseCase } from "../src/modules/enrollment/use-cases/set-persona-flow.use-case.ts";
+import {
+  BundleClientLive,
+  scaffoldFiles,
+} from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
+import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
+import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
 import {
   DEFAULT_LIMITS,
   EnrolledRepo,
@@ -498,6 +504,33 @@ describe("config layers", () => {
     );
   });
 });
+
+// Scaffolding a repo, and the files it says it wrote, as init says them.
+const scaffold = (repo: string) =>
+  scaffoldRepoUseCase(repo).pipe(
+    Effect.map(({ changes }) =>
+      changes.map(({ change, entries, path }) => {
+        switch (change) {
+          case "written": {
+            return path;
+          }
+
+          case "updated": {
+            return `${path} (updated)`;
+          }
+
+          case "pinned": {
+            return `${path} (pins updated)`;
+          }
+
+          case "ignored": {
+            return `${path} (+ ${entries.join(", ")})`;
+          }
+        }
+      }),
+    ),
+    Effect.provide(Layer.mergeAll(ChernabogDirClientLive, BundleClientLive)),
+  );
 
 describe("init", () => {
   effect(

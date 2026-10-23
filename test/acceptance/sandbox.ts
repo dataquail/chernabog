@@ -14,8 +14,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { scaffoldFiles } from "../../src/init.ts";
-import { RECIPES } from "../../src/recipes.ts";
+import { RECIPES } from "../../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
+import { scaffoldFiles } from "../../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { RECIPE_FILES } from "../../src/templates.ts";
 import { startFakeGitHub } from "./fake-github.ts";
 
@@ -152,8 +152,8 @@ export const openSandbox = (
   );
 
   const baked = Object.fromEntries(
-    recipes.flatMap((recipe) =>
-      recipe.files.map((file): [string, string] => [file, RECIPE_FILES[file]]),
+    Object.entries(RECIPE_FILES).filter(([file]) =>
+      recipes.some((recipe) => recipe.files.includes(file)),
     ),
   );
 

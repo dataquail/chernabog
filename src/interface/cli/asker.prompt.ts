@@ -75,3 +75,20 @@ export class Asker extends Context.Service<
     }),
   );
 }
+
+// In a terminal, whether the person agrees; with no one to ask, no.
+export const confirm = (message: string) =>
+  Effect.gen(function* () {
+    const asker = yield* Asker;
+
+    if (!asker.interactive) {
+      return false;
+    }
+
+    return (
+      (yield* asker.choose(message, [
+        { title: "Yes", value: "yes" },
+        { title: "No", value: "no" },
+      ])) === "yes"
+    );
+  });

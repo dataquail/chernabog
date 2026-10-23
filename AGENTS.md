@@ -111,9 +111,13 @@ chooses to bake into their repo (`init --recipes`, `chernabog recipes add`);
 after that the file is theirs, and chernabog never rewrites it.
 
 - Recipe sources are `templates/recipes/` (flows and the prompts they render),
-  listed with a description in `src/recipes.ts`; the base scaffold is
-  `templates/.chernabog/`. Run `bun scripts/gen-templates.ts` after changing
-  either.
+  listed with a description in the recipes module's catalog
+  (`src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts`); the
+  base scaffold is `templates/.chernabog/`. Run `bun scripts/gen-templates.ts`
+  after changing either. `listRecipesUseCase`, `addRecipesUseCase`,
+  `diffRecipesUseCase` and `scaffoldRepoUseCase` are what `recipes` and `init`
+  run; the files they read and write go through `ChernabogDirClient`, and what
+  this binary bundles through `BundleClient`.
 - A recipe is written out from SDK **blocks**, trigger included, so its
   policy is in the repo's file. The SDK exports no whole workflows or
   review-loop triggers; add a block rather than hide a decision in one.
