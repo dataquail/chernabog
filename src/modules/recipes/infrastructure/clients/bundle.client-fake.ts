@@ -7,8 +7,8 @@ import { ScaffoldRefused } from "../../domain/recipe/recipe.errors.ts";
 import { type Scaffold } from "../../domain/scaffold/scaffold.value-object.ts";
 
 // A binary bundling each recipe file as `recipe of <file>`, this scaffold,
-// and the pin `"pinned"`: a manifest without it gets it; one saying
-// `"too new"` needs a newer chernabog.
+// and the pin `"pinned"`: a manifest without it gets it, on a line of its
+// own; one saying `"too new"` needs a newer chernabog.
 export const BundleClientFake = (scaffold: Scaffold) =>
   Layer.succeed(
     BundleClient,
@@ -25,7 +25,7 @@ export const BundleClientFake = (scaffold: Scaffold) =>
       pinned: (manifest, raise) =>
         Effect.succeed(
           Option.liftPredicate(
-            manifest.replace("}", ', "pinned" }'),
+            `${manifest.trimEnd()}\n"pinned"\n`,
             () => raise || !manifest.includes('"pinned"'),
           ),
         ),
