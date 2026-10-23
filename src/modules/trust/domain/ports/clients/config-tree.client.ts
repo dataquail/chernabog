@@ -12,6 +12,12 @@ export type ConfigTreeClientService = {
     path: string,
     baseBranch: string,
   ) => Effect.Effect<string, ConfigTreeUnavailable>;
+  // The same, as git has it now, without asking origin: quick, for showing
+  // whether a repo is trusted rather than deciding it.
+  readonly localTreeOf: (
+    path: string,
+    baseBranch: string,
+  ) => Effect.Effect<string, ConfigTreeUnavailable>;
   // What changed in .chernabog/ from `previous` to `tree`, or, with none, every
   // file it holds: the text a person reads before trusting it.
   readonly changesSince: (

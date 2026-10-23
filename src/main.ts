@@ -8,48 +8,48 @@ import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
-import * as Schedule from "effect/Schedule";
 import * as Stdio from "effect/Stdio";
 
 import { attachCommand, runSessions } from "./agents.ts";
 import { stopHook } from "./agents/stop-hook.ts";
 import { Asker } from "./ask.ts";
-import { daemonReload, daemonRun, daemonRunRow, daemonStatus, daemonTick } from "./client.ts";
 import { Home } from "./config.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "./daemon.ts";
 import { doctor, formatCheck } from "./doctor.ts";
-import { resolveRunId, runLogFile } from "./engine.ts";
+import { runLogFile } from "./engine.ts";
 import { enrollRepo } from "./enrollment.ts";
 import { Exec } from "./Exec.ts";
 import { GitHubTokens } from "./github-auth.ts";
 import { GitHubApi } from "./GitHubApi.ts";
 import { movedEntries, repoint, repoRoot, scaffold, slugOf } from "./init.ts";
+import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
 import { pauseCommand } from "./interface/cli/enrollment/pause.command.ts";
 import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
 import { optionalRepo, repoArgument, repoFlag } from "./interface/cli/repo.arguments.ts";
+import { logsCommand } from "./interface/cli/runs/logs.command.ts";
+import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
 import { trustCommand } from "./interface/cli/trust/trust.command.ts";
-import { RepoSlug } from "./kernel/repo-slug.id.ts";
-import { runLabel, shortRunId } from "./kernel/run-id.id.ts";
+import { daemonReload, daemonRun, daemonTick } from "./interface/daemon/daemon.client.ts";
+import type { TickResult } from "./interface/daemon/daemon.protocol.ts";
+import { RunId } from "./kernel/run-id.id.ts";
 import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
 import { runLaunch } from "./launchers/shim.ts";
 import { flowNames, loadFlows } from "./loader.ts";
 import { migrateMachineConfig } from "./migrate.ts";
 import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
+import { RunLogsLayer } from "./modules/runs/runs.layer.ts";
+import { resolveRunIdUseCase } from "./modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { TrustLayer } from "./modules/trust/trust.layer.ts";
-import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { openPr } from "./open-pr.ts";
-import { asSuffix, IMPLICIT } from "./persona.ts";
+import { IMPLICIT } from "./persona.ts";
 import { HostEnvironment } from "./platform/environment.ts";
-import type { DaemonStatus, TickResult } from "./protocol.ts";
 import {
   chooseRecipes,
   diffRecipes,
@@ -61,17 +61,15 @@ import {
 } from "./recipes.ts";
 import {
   findEnrolled,
-  FLOW_TURNED_OFF,
   loadMachineConfig,
   loadRepo,
   machineConfigFile,
   repoNameOf,
   unenrollFromMachineConfig,
 } from "./repo-config.ts";
-import { repoConfigDir, runInForeground, tailer } from "./runner.ts";
+import { repoConfigDir, runInForeground } from "./runner.ts";
 import { install, startService, stopService, uninstall } from "./service.ts";
 import { setup } from "./setup.ts";
-import { configTree } from "./snapshot.ts";
 import { openSession, startIssue } from "./start.ts";
 import { runStepChild, StepServicesLive } from "./steps.ts";
 import { runTui } from "./tui/app.ts";
@@ -86,155 +84,8 @@ const fail = (message: string) =>
     process.exitCode = 1;
   });
 
-const MINUTE_MS = 60_000;
-
-const relative = (iso: Option.Option<string>, now: DateTime.Utc) =>
-  Option.match(
-    Option.flatMap(iso, (text) => DateTime.make(text)),
-    {
-      onNone: () => "never",
-      onSome: (at) => {
-        const minutes = Math.round(
-          (DateTime.toEpochMillis(at) - DateTime.toEpochMillis(now)) / MINUTE_MS,
-        );
-
-        if (Math.abs(minutes) < 1) {
-          return "now";
-        }
-
-        if (minutes > 0) {
-          return `in ${minutes}m`;
-        }
-
-        return `${-minutes}m ago`;
-      },
-    },
-  );
-
 const suffix = (value: Option.Option<string>, prefix: string) =>
   Option.match(value, { onNone: () => "", onSome: (text) => `${prefix}${text}` });
-
-const when = (condition: boolean, text: string) =>
-  Option.getOrElse(
-    Option.liftPredicate(text, () => condition),
-    () => "",
-  );
-
-const repoLine = (repo: DaemonStatus["repos"][number]) => {
-  if (repo.paused) {
-    return "paused";
-  }
-
-  if (!repo.enabled) {
-    return "disabled";
-  }
-
-  return repo.status;
-};
-
-const runLine = (run: DaemonStatus["active"][number]) => {
-  if (run.parked) {
-    return "waiting";
-  }
-
-  return Option.getOrElse(run.currentStep, () => "starting");
-};
-
-export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
-  const finished = status.recent.filter((run) => run.status !== "running");
-
-  const upSince = Option.match(DateTime.make(status.startedAt), {
-    onNone: () => status.startedAt,
-    onSome: (at) => DateTime.formatLocal(at, { dateStyle: "short", timeStyle: "medium" }),
-  });
-
-  const flowLine = (flow: DaemonStatus["repos"][number]["flows"][number]) => {
-    const name = `${flow.name}${asSuffix(Option.fromUndefinedOr(flow.persona))}`;
-
-    if (!flow.enabled) {
-      return `  ${name}: off${suffix(
-        Option.filter(
-          Option.fromUndefinedOr(flow.offReason),
-          (reason) => reason !== FLOW_TURNED_OFF,
-        ),
-        ", ",
-      )}`;
-    }
-
-    const elsewhere = flow.assignedElsewhere ?? [];
-
-    return `  ${name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;
-  };
-
-  return [
-    `daemon ${status.pid}, up since ${upSince}${when(status.reloadPending, ", restarting on new config when idle")}`,
-    "",
-    ...status.repos.flatMap((repo) => [
-      `${repo.name} (${repo.slug}): ${repoLine(repo)}${suffix(repo.launcher, ", launcher ")}${suffix(repo.message, " — ")}`,
-      ...repo.flows.map(flowLine),
-    ]),
-    "",
-    Option.match(Arr.head(status.active), {
-      onNone: () => "nothing in flight",
-      onSome: () => "in flight:",
-    }),
-    ...status.active.map(
-      (run) =>
-        `  ${shortRunId(run.id)}  ${runLabel(run)}  ${runLine(run)}${suffix(run.itemTitle, "  ")}`,
-    ),
-    ...Option.toArray(Option.map(Arr.head(finished), () => "\nrecent:")),
-    ...finished
-      .slice(0, 8)
-      .map(
-        (run) =>
-          `  ${run.status.padEnd(11)} ${shortRunId(run.id)}  ${runLabel(run)}  ${Option.getOrElse(run.summary, () => "")}`,
-      ),
-    ...Option.toArray(Option.map(Arr.head(status.skips), () => "\nrecent skips:")),
-    ...status.skips.slice(0, 5).map(
-      (skip) =>
-        `  ${skip.repo}/${skip.flow}${suffix(
-          Option.map(skip.persona, (login) => `@${login}`),
-          "",
-        )}${suffix(skip.itemKey, " ")}: ${skip.reason} (${relative(Option.some(skip.at), now)})`,
-    ),
-  ];
-};
-
-const trustLine = (tree: Result.Result<string, unknown>, trusted: Option.Option<string>) => {
-  if (Result.isFailure(tree)) {
-    return "no .chernabog/ on its base branch";
-  }
-
-  if (Option.contains(trusted, tree.success)) {
-    return "trusted";
-  }
-
-  return "not trusted";
-};
-
-const statusHandler = Effect.gen(function* () {
-  const live = yield* Effect.result(daemonStatus);
-
-  if (Result.isSuccess(live)) {
-    return yield* printLines(describeStatus(live.success, yield* DateTime.now));
-  }
-
-  yield* Console.log(live.failure.message);
-  const machine = yield* loadMachineConfig;
-
-  for (const repo of machine.repos) {
-    const tree = yield* Effect.result(configTree(repo.path, repo.baseBranch ?? "main", false));
-    yield* Console.log(
-      `${repoNameOf(repo)} (${repo.repo}): ${trustLine(tree, (yield* findTrustedTreeUseCase(RepoSlug.make(repo.repo))).tree)}`,
-    );
-  }
-});
-
-const status = Command.make("status", {}, () => statusHandler).pipe(
-  Command.withDescription(
-    "What the daemon is doing: repos, schedules, runs in flight, recent runs and skips",
-  ),
-);
 
 // A comma-separated list flag, such as --flows implement,review.
 const listFlag = (name: string, description: string) =>
@@ -367,24 +218,6 @@ const daemon = Command.make("daemon", {}, () =>
   ),
 );
 
-const isRunning = (row: Option.Option<RunView>) =>
-  Option.exists(row, (found) => found.status === "running");
-
-// Prints a run's log as it grows, until the run finishes.
-const followRun = (runId: string) =>
-  Effect.gen(function* () {
-    const tail = tailer(yield* runLogFile(runId));
-    const poll = tail.pipe(Effect.andThen(daemonRunRow(runId)));
-
-    const row = yield* poll.pipe(
-      Effect.repeat({ schedule: Schedule.spaced("2 seconds"), while: isRunning }),
-    );
-
-    yield* tail;
-
-    return row;
-  });
-
 const reportFinished = (finished: Option.Option<RunView | ActiveRun>) =>
   Effect.gen(function* () {
     if (Option.isNone(finished)) {
@@ -419,7 +252,7 @@ const followStarted = (result: TickResult, detach: boolean) =>
       return;
     }
 
-    yield* reportFinished(yield* followRun(runId.value));
+    yield* reportFinished(yield* followRunLog(RunId.make(runId.value)));
   });
 
 const asFlag = Flag.String("as").pipe(
@@ -495,30 +328,6 @@ const trigger = Command.make(
 ).pipe(
   Command.withDescription("Run a flow's tick now, with its gates, as if its schedule came due"),
 );
-
-const logs = Command.make(
-  "logs",
-  {
-    run: Argument.String("run"),
-    follow: Flag.Boolean("follow").pipe(Flag.withAlias("f"), Flag.withDefault(false)),
-  },
-  ({ follow, run: named }) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const runId = yield* resolveRunId(named);
-      const path = yield* runLogFile(runId);
-
-      if (!(yield* fs.exists(path))) {
-        return yield* fail(`no log for ${runId} at ${path}`);
-      }
-
-      if (follow) {
-        return yield* followRun(runId).pipe(Effect.asVoid);
-      }
-
-      yield* Console.log((yield* fs.readFileString(path)).trimEnd());
-    }),
-).pipe(Command.withDescription("Print a run's log"));
 
 const targetsOf = (repo: Option.Option<string>) =>
   Effect.gen(function* () {
@@ -850,7 +659,7 @@ const unenroll = Command.make("unenroll", { repo: repoArgument }, ({ repo }) =>
 
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {
-    const runId = yield* resolveRunId(named);
+    const { runId } = yield* resolveRunIdUseCase(named);
     const session = Arr.last(yield* runSessions(runId));
 
     if (Option.isNone(session)) {
@@ -899,18 +708,18 @@ const live = Effect.gen(function* () {
     return yield* runTui;
   }
 
-  return yield* statusHandler;
+  return yield* showStatus(false);
 });
 
 export const chernabog = Command.make("chernabog", {}, () => live).pipe(
   Command.withDescription("Spends spare coding-agent capacity on queued work across your repos"),
   Command.withSubcommands([
-    status,
+    statusCommand,
     attach,
     run,
     trigger,
     openPrCommand,
-    logs,
+    logsCommand,
     pauseCommand,
     resumeCommand,
     trustCommand,
@@ -940,6 +749,7 @@ const AppLive = Layer.mergeAll(
   Asker.layer,
   EnrollmentLayer,
   TrustLayer,
+  RunLogsLayer,
 ).pipe(
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),

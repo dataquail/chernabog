@@ -39,11 +39,14 @@ import {
   EnrolledRepoEntry as EnrolledRepoSchema,
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
+import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { nodeBinFor } from "./node-version.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./persona.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { cronProblem } from "./schedule.ts";
 import type { GateConfig } from "./usage-gate.ts";
+
+export { FLOW_TURNED_OFF };
 
 const Strings = Schema.Array(Schema.String);
 
@@ -282,8 +285,6 @@ export type EffectiveRepo = {
 
 export const personaOf = (repo: EffectiveRepo, persona: Persona) =>
   Arr.findFirst(repo.personas, (candidate) => samePersona(candidate.persona, persona));
-
-export const FLOW_TURNED_OFF = "flow turned off";
 
 // Whether a login is one of a flow's runners. Logins are case-insensitive, as on GitHub.
 export const isRunner = (runners: ReadonlyArray<string>, login: string) =>

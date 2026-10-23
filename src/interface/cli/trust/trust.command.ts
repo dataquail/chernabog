@@ -3,10 +3,10 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { daemonReload } from "../../../client.ts";
 import { listEnrolledReposUseCase } from "../../../modules/enrollment/use-cases/list-enrolled-repos.use-case.ts";
 import { type TrustOutcome } from "../../../modules/trust/use-cases/trust-outcome.result.ts";
 import { trustRepoUseCase } from "../../../modules/trust/use-cases/trust-repo.use-case.ts";
+import { daemonReload } from "../../daemon/daemon.client.ts";
 import { optionalRepo } from "../repo.arguments.ts";
 
 // What trusting one repo says: what changed, then that it's trusted; or that

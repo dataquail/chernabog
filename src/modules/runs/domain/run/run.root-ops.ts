@@ -5,11 +5,17 @@
 
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { RunAlreadyActive, RunAlreadyFinished } from "./run.errors.ts";
+import {
+  AmbiguousRunPrefix,
+  RunAlreadyActive,
+  RunAlreadyFinished,
+  RunNotNamed,
+} from "./run.errors.ts";
 import { type RunEnding, RunRoot } from "./run.root.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";
@@ -94,7 +100,37 @@ const adopt = (run: RunRoot, login: string) =>
     (implicit) => RunRoot.make({ ...implicit, persona: Option.some(login) }),
   );
 
+// The run a person names by its id or, since ids are random, by enough of its
+// start to tell it from every other, among `ids`. The ones a prefix matches
+// are sorted, so an ambiguous one lists the same runs in the same order.
+const named = (
+  ids: ReadonlyArray<RunId>,
+  asked: string,
+): Result.Result<RunId, RunNotNamed | AmbiguousRunPrefix> => {
+  const exact = Arr.findFirst(ids, (id) => id === asked);
+
+  if (Option.isSome(exact)) {
+    return Result.succeed(exact.value);
+  }
+
+  const matching = Arr.sort(
+    ids.filter((id) => id.startsWith(asked)),
+    Order.String,
+  );
+
+  if (matching.length === 1) {
+    return Result.succeed(matching[0]);
+  }
+
+  if (matching.length === 0) {
+    return Result.fail(new RunNotNamed({ asked }));
+  }
+
+  return Result.fail(new AmbiguousRunPrefix({ asked, matching }));
+};
+
 export const RunRootOps = {
+  named,
   isRunning,
   activeFor,
   start,

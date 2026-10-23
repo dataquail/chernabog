@@ -1,5 +1,6 @@
 import * as Layer from "effect/Layer";
 
+import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "./infrastructure/repositories/skips.repository-live.ts";
@@ -11,3 +12,7 @@ export const RunsLayer = Layer.mergeAll(
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,
 );
+
+// Run logs, which any process may read: the CLI reads them while the daemon,
+// which holds state.db, writes them.
+export const RunLogsLayer = RunLogsClientLive;

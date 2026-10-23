@@ -1,7 +1,6 @@
 // The CLI and TUI talk to the daemon over a local socket and never open the
 // workflow engine themselves.
 
-import { describeError } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -11,8 +10,15 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "./config.ts";
-import { DaemonStatus, Refusal, Reloaded, RunReply, RunRequest, TickResult } from "./protocol.ts";
+import { Home, homePaths } from "../../config.ts";
+import {
+  DaemonStatus,
+  Refusal,
+  Reloaded,
+  RunReply,
+  RunRequest,
+  TickResult,
+} from "./daemon.protocol.ts";
 
 export class DaemonUnavailable extends Schema.TaggedError<
   DaemonUnavailable,
@@ -74,14 +80,14 @@ const reply =
       Effect.mapError(
         (error) =>
           new DaemonRefused({
-            message: `unexpected reply from the daemon: ${describeError(error)}`,
+            message: `unexpected reply from the daemon: ${error.message}`,
           }),
       ),
     );
 
 const withRequest = (request: HttpClientRequest.HttpClientRequest, body: RunRequest) =>
   HttpClientRequest.schemaBodyJson(RunRequest)(request, body).pipe(
-    Effect.mapError((error) => new DaemonRefused({ message: describeError(error) })),
+    Effect.mapError((error) => new DaemonRefused({ message: error.message })),
   );
 
 export const daemonStatus = send(HttpClientRequest.get("/status")).pipe(

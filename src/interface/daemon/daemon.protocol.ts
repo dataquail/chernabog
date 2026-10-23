@@ -3,8 +3,8 @@
 
 import * as Schema from "effect/Schema";
 
-import { ActiveRun, RunView } from "./modules/runs/use-cases/run.result.ts";
-import { SkipView } from "./modules/runs/use-cases/skip.result.ts";
+import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 

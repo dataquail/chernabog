@@ -28,7 +28,6 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -297,46 +296,6 @@ const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
   Effect.map(RunId.make),
   Effect.orDie,
 );
-
-// The ids a prefix names, among the runs with a log, as `logs` and `attach` take them.
-export const resolveRunId = (prefix: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const dir = homePaths((yield* Home).root).runs;
-
-    const ids = (yield* fs
-      .readDirectory(dir)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])))
-      .filter((name) => name.endsWith(".log"))
-      .map((name) => name.slice(0, -".log".length));
-
-    if (ids.includes(prefix)) {
-      return prefix;
-    }
-
-    // Sorted, so an ambiguous prefix lists the same runs in the same order everywhere.
-    const matching = Arr.sort(
-      ids.filter((id) => id.startsWith(prefix)),
-      Order.String,
-    );
-
-    if (matching.length === 1) {
-      return matching[0];
-    }
-
-    if (matching.length === 0) {
-      return yield* new RunFailed({ message: `no run ${prefix}` });
-    }
-
-    const shown = [
-      ...matching.slice(0, 5),
-      ...Option.toArray(Option.liftPredicate("…", () => matching.length > 5)),
-    ];
-
-    return yield* new RunFailed({
-      message: `${prefix} names ${matching.length} runs (${shown.join(", ")}); give more of the id`,
-    });
-  });
 
 export type Started = { readonly run: Option.Option<RunView>; readonly started: boolean };
 

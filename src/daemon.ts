@@ -33,6 +33,16 @@ import {
   unreportedItem,
 } from "./engine.ts";
 import { viewerLogin } from "./GitHubApi.ts";
+import {
+  DaemonStatus,
+  type PersonaStatus,
+  Refusal,
+  Reloaded,
+  type RepoStatus,
+  RunReply,
+  RunRequest,
+  TickResult,
+} from "./interface/daemon/daemon.protocol.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { describeLauncher } from "./launchers.ts";
@@ -47,16 +57,6 @@ import { listRecentSkipsUseCase } from "./modules/runs/use-cases/list-recent-ski
 import { recordSkipUseCase } from "./modules/runs/use-cases/record-skip.use-case.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { type Persona, samePersona } from "./persona.ts";
-import {
-  DaemonStatus,
-  type PersonaStatus,
-  Refusal,
-  Reloaded,
-  type RepoStatus,
-  RunReply,
-  RunRequest,
-  TickResult,
-} from "./protocol.ts";
 import {
   type EffectiveRepo,
   EnrolledRepo,

@@ -1,5 +1,5 @@
 // A checkout's .chernabog/ through git: its tree on the base branch (fetched
-// first), and a diff since the tree trusted before.
+// first, or as git has it), and a diff since the tree trusted before.
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -55,6 +55,11 @@ export const ConfigTreeClientLive = Layer.effect(
     return ConfigTreeClient.of({
       treeOf: (path, baseBranch) =>
         configTree(path, baseBranch).pipe(
+          Effect.mapError(unavailable),
+          Effect.provideContext(services),
+        ),
+      localTreeOf: (path, baseBranch) =>
+        configTree(path, baseBranch, false).pipe(
           Effect.mapError(unavailable),
           Effect.provideContext(services),
         ),
