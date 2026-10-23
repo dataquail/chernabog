@@ -40,6 +40,7 @@ import { StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -313,6 +314,54 @@ describe("the engine", () => {
       expect(summaryOf(finished)).toBe("woke by pushed");
     }),
   );
+  effect(
+    "a start a crash interrupted runs once on recovery, whether or not its workflow had started",
+    () =>
+      Effect.gen(function* () {
+        const recorded = (key: string) =>
+          startRunUseCase({
+            id: RunId.make(key),
+            repo: "demo",
+            persona: IMPLICIT,
+            flow: "demo",
+            itemKey: key,
+            itemTitle: Option.none(),
+            itemUrl: Option.none(),
+            item: Option.some(item(key)),
+          });
+
+        const recovers = Effect.gen(function* () {
+          // Killed after the run was recorded, before its workflow executed.
+          yield* recorded("before");
+
+          // Killed after its workflow executed, before the execution was attached.
+          yield* recorded("after");
+
+          const execution = yield* handle.workflow.execute(
+            { runId: "after", item: item("after") },
+            { discard: true },
+          );
+
+          const recovered = yield* recoverRunsUseCase();
+          const ended = yield* Effect.forEach(recovered.executed, toEnd);
+
+          return { execution, recovered, ended };
+        });
+
+        const { value } = yield* withEngine(recovers);
+
+        expect(value.recovered.executed.map((run) => String(run.id)).toSorted()).toEqual([
+          "after",
+          "before",
+        ]);
+        expect(
+          value.recovered.executed.find((run) => run.id === RunId.make("after"))?.executionId,
+        ).toEqual(Option.some(value.execution));
+        expect(value.ended.map((run) => run.status)).toEqual(["done", "done"]);
+        expect(executed.filter((line) => line.startsWith("after:"))).toEqual(["after:after"]);
+        expect(executed.filter((line) => line.startsWith("before:"))).toEqual(["before:before"]);
+      }),
+  );
 });
 
 describe("personas", () => {
@@ -365,6 +414,7 @@ describe("personas", () => {
             itemKey: "whoami",
             itemTitle: Option.none(),
             itemUrl: Option.none(),
+            item: Option.none(),
           });
           yield* attachExecutionUseCase(
             OLD,
@@ -397,6 +447,7 @@ describe("personas", () => {
             itemKey: "whoami",
             itemTitle: Option.none(),
             itemUrl: Option.none(),
+            item: Option.none(),
           });
           yield* attachExecutionUseCase(
             OLD,

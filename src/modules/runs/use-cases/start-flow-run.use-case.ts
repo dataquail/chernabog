@@ -56,6 +56,7 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
       id: yield* newRunId,
       itemTitle: Option.fromUndefinedOr(item.title),
       itemUrl: Option.fromUndefinedOr(item.url),
+      item: Option.some(item),
     },
     DateTime.formatIso(yield* DateTime.now),
   );

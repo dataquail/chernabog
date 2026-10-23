@@ -18,6 +18,7 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     itemKey: "pr-1",
     itemTitle: Option.none(),
     itemUrl: Option.none(),
+    item: Option.none(),
     executionId: Option.none(),
     status: "running",
     currentStep: Option.none(),
@@ -35,6 +36,7 @@ const starting = {
   itemKey: "pr-1",
   itemTitle: Option.some("Fix it"),
   itemUrl: Option.none(),
+  item: Option.none(),
 };
 
 describe("startRunUseCase", () => {

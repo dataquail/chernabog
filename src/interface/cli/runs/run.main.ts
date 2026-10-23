@@ -36,6 +36,7 @@ import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { listActiveRunsUseCase } from "../../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
+import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
@@ -168,13 +169,17 @@ const resume = (
   persona: Persona,
   unfinished: ActiveRun,
   context: RepoContext,
+  // Whether its workflow just started, as a start a crash interrupted.
+  recovered: boolean,
 ) =>
   Effect.gen(function* () {
     yield* Console.log(
       `resuming ${unfinished.id} (${runLabel(unfinished)}), log: ${yield* runLogFile(unfinished.id)}`,
     );
 
-    yield* resumeRunUseCase(unfinished.id);
+    if (!recovered) {
+      yield* resumeRunUseCase(unfinished.id);
+    }
 
     return Option.some(yield* followRun(handle, persona, unfinished, context));
   });
@@ -272,6 +277,14 @@ export const runInForeground = (options: RunOptions) =>
     const program = Effect.gen(function* () {
       yield* adoptRuns(repo);
 
+      const recovered = yield* recoverRunsUseCase();
+
+      for (const run of recovered.abandoned) {
+        yield* Console.log(
+          `ended ${run.id} (${runLabel(run)}): a crash interrupted its start, and it kept no work item to start it from`,
+        );
+      }
+
       const unfinished = Arr.head(
         (yield* listActiveRunsUseCase({
           repo: Option.some(repo.settings.name),
@@ -281,7 +294,13 @@ export const runInForeground = (options: RunOptions) =>
       );
 
       if (Option.isSome(unfinished)) {
-        return yield* resume(handle, persona, unfinished.value, context);
+        return yield* resume(
+          handle,
+          persona,
+          unfinished.value,
+          context,
+          recovered.executed.some((run) => run.id === unfinished.value.id),
+        );
       }
 
       return yield* startFirst(handle, persona, options, context);

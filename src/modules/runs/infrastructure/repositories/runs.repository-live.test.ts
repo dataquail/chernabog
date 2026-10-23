@@ -23,6 +23,7 @@ const run = (id: string, startedAt: string, persona: Option.Option<string>) =>
     itemKey: "pr-1",
     itemTitle: Option.some("Fix it"),
     itemUrl: Option.none(),
+    item: Option.none(),
     executionId: Option.none(),
     status: "running",
     currentStep: Option.none(),
@@ -31,7 +32,12 @@ const run = (id: string, startedAt: string, persona: Option.Option<string>) =>
     finishedAt: Option.none(),
   });
 
-const first = run("a", "2026-10-20T00:00:00Z", Option.some("bob"));
+// It keeps its work item, as its trigger reported it.
+const first = RunRoot.make({
+  ...run("a", "2026-10-20T00:00:00Z", Option.some("bob")),
+  item: Option.some({ key: "pr-1", title: "Fix it", data: { number: 1 }, signals: ["ci"] }),
+});
+
 const second = run("b", "2026-10-21T00:00:00Z", Option.none());
 
 const finished = RunRoot.make({
@@ -83,16 +89,17 @@ describe("RunsRepositoryLive", () => {
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
-  effect("a database from before personas gains the column, its runs the implicit persona", () =>
+  effect("a database from before personas and work items gains the columns, its runs neither", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
 
       expect(
-        Option.map(yield* runs.findOne(RunId.make("old")), (found) => [
-          found.persona,
-          found.status,
-        ]),
-      ).toEqual(Option.some([Option.none(), "running"]));
+        Option.map(yield* runs.findOne(RunId.make("old")), (found) => ({
+          persona: found.persona,
+          item: found.item,
+          status: found.status,
+        })),
+      ).toEqual(Option.some({ persona: Option.none(), item: Option.none(), status: "running" }));
     }).pipe(
       Effect.provide(
         runsAfter(

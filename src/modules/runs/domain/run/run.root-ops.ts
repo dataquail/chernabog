@@ -17,6 +17,7 @@ import {
   RunNotNamed,
 } from "./run.errors.ts";
 import { type RunEnding, RunRoot } from "./run.root.ts";
+import { type WorkItem } from "./work-item.value-object.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";
 
@@ -42,6 +43,7 @@ export type NewRun = RunFor & {
   readonly id: RunId;
   readonly itemTitle: Option.Option<string>;
   readonly itemUrl: Option.Option<string>;
+  readonly item: Option.Option<WorkItem>;
 };
 
 // A run starting at `at`, unless the persona already has one in flight for the
@@ -74,6 +76,11 @@ const whileRunning = (run: RunRoot, change: () => RunRoot) => {
 // The workflow execution the engine started for the run.
 const attachExecution = (run: RunRoot, executionId: string) =>
   whileRunning(run, () => RunRoot.make({ ...run, executionId: Option.some(executionId) }));
+
+// A run a crash interrupted between being recorded and its workflow starting:
+// still running, with no execution. None for any other run.
+const unexecuted = (run: RunRoot) =>
+  Option.liftPredicate(run, (found) => isRunning(found) && Option.isNone(found.executionId));
 
 // The run entering a step.
 const enterStep = (run: RunRoot, step: string) =>
@@ -135,6 +142,7 @@ export const RunRootOps = {
   activeFor,
   start,
   attachExecution,
+  unexecuted,
   enterStep,
   finish,
   adopt,

@@ -48,6 +48,7 @@ import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
+import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
@@ -404,6 +405,23 @@ export const runDaemon = Effect.gen(function* () {
         if (Option.isSome(repo.repo)) {
           yield* adoptRuns(repo.repo.value);
         }
+      }
+
+      // Starts that a crash interrupted, finished before anything ticks.
+      const recovered = yield* recoverRunsUseCase();
+
+      for (const run of recovered.executed) {
+        yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
+      }
+
+      for (const run of recovered.abandoned) {
+        yield* log(
+          `ended ${run.id} (${runLabel(run)}): a crash interrupted its start, and it kept no work item to start it from`,
+        );
+      }
+
+      for (const run of recovered.left) {
+        yield* log(`left ${run.id} (${runLabel(run)}) unstarted: its flow isn't loaded`);
       }
 
       const reloadPending = yield* Ref.make(false);

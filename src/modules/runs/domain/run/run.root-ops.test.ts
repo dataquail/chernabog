@@ -17,6 +17,7 @@ const asBob = {
   itemKey: "pr-1",
   itemTitle: Option.none(),
   itemUrl: Option.none(),
+  item: Option.none(),
 };
 
 const running = Result.getOrThrow(RunRootOps.start([], asBob, at));
@@ -71,6 +72,14 @@ describe("RunRootOps lifecycle", () => {
       Option.some("x"),
       Option.some("implement"),
     ]);
+  });
+
+  test("a running run with no execution is one a crash interrupted before it started", () => {
+    const attached = Result.getOrThrow(RunRootOps.attachExecution(running, "x"));
+
+    expect(RunRootOps.unexecuted(running)).toEqual(Option.some(running));
+    expect(RunRootOps.unexecuted(attached)).toEqual(Option.none());
+    expect(RunRootOps.unexecuted(finished)).toEqual(Option.none());
   });
 
   test("finishing records how and when it ended, and leaves it in no step", () => {
