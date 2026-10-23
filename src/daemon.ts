@@ -48,6 +48,12 @@ import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { describeLauncher } from "./launchers.ts";
 import { loadFlows } from "./loader.ts";
 import { listPausedReposUseCase } from "./modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import {
+  describeElsewhere,
+  routeItems,
+} from "./modules/runs/domain/routing/routing.value-object.ts";
+import { nextTick } from "./modules/runs/domain/schedule/schedule.value-object.ts";
+import { decideTick, freeSlots } from "./modules/runs/domain/schedule/tick.value-object.ts";
 import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
 import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
 import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
@@ -69,6 +75,7 @@ import {
   repoNameOf,
   type Routing,
   routingOf,
+  scheduleFor,
 } from "./repo-config.ts";
 import { runLogWriting } from "./runlog.ts";
 import {
@@ -79,14 +86,6 @@ import {
   servicesFrom,
   withRepo,
 } from "./runner.ts";
-import {
-  decideTick,
-  describeElsewhere,
-  freeSlots,
-  nextTick,
-  routeItems,
-  scheduleFor,
-} from "./schedule.ts";
 import { configTree, snapshotConfig } from "./snapshot.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -267,7 +266,10 @@ const unstarted = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<Wo
     return waiting;
   });
 
-type Routed = ReturnType<typeof routeItems>;
+type Routed = {
+  readonly mine: ReadonlyArray<WorkItem>;
+  readonly elsewhere: ReadonlyArray<WorkItem>;
+};
 
 // What a tick may start: the items this machine may start, or the one a
 // person named, whoever it is assigned to.

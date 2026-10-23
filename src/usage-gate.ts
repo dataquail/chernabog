@@ -26,27 +26,19 @@ import {
 } from "./config.ts";
 import { type Launcher, launcherFor } from "./launchers.ts";
 import { LaunchSpecJson } from "./launchers/shim.ts";
+import {
+  decideLaunch,
+  type GateConfig,
+  type LaunchDecision,
+  type UsageReading,
+} from "./modules/runs/domain/usage/usage.value-object.ts";
 import { type Environment, HostEnvironment, withVariables } from "./platform/environment.ts";
 import { execOk } from "./platform/exec.ts";
 import { selfCommand } from "./platform/self.ts";
 
-export type GateConfig = {
-  readonly targetEndUsage: number;
-  readonly taskCostEstimate: number;
-  readonly fiveHourCeiling: number;
-  readonly humanRatePerHour: number;
-};
-
-type UsageWindow = { readonly used: number; readonly resetsAt: DateTime.Utc };
-
-export type UsageReading = { readonly fiveHour: UsageWindow; readonly sevenDay: UsageWindow };
-
-export type LaunchDecision = { readonly launch: boolean; readonly reason: string };
+export { decideLaunch, type GateConfig, type LaunchDecision, type UsageReading };
 
 export { UsageError };
-
-const HOUR_MS = 60 * 60 * 1000;
-const FLOAT_TOLERANCE = 1e-9;
 
 // Claude Code keeps each CLAUDE_CONFIG_DIR's login in its own keychain item,
 // named after a hash of the directory, so the work and personal logins never mix.
@@ -112,38 +104,6 @@ export const parseUsageReading = (response: UsageResponse, now: DateTime.Utc) =>
     fiveHour: toWindow(response.five_hour, "five_hour", { hours: 5 }, now),
     sevenDay: toWindow(response.seven_day, "seven_day", { days: 7 }, now),
   });
-
-export const decideLaunch = (
-  reading: UsageReading,
-  config: GateConfig,
-  now: DateTime.Utc,
-): LaunchDecision => {
-  if (reading.fiveHour.used >= config.fiveHourCeiling) {
-    return {
-      launch: false,
-      reason: `five-hour usage ${reading.fiveHour.used} is at or over the ${config.fiveHourCeiling} ceiling`,
-    };
-  }
-
-  const hoursUntilWeeklyReset = Math.max(
-    0,
-    (DateTime.toEpochMillis(reading.sevenDay.resetsAt) - DateTime.toEpochMillis(now)) / HOUR_MS,
-  );
-
-  const remainingBudget = config.targetEndUsage - reading.sevenDay.used;
-  const expectedHumanUse = config.humanRatePerHour * hoursUntilWeeklyReset;
-  const headroom = remainingBudget - expectedHumanUse;
-  const summary = `weekly headroom ${headroom.toFixed(3)} (budget ${remainingBudget.toFixed(3)} − human ${expectedHumanUse.toFixed(3)} over ${hoursUntilWeeklyReset.toFixed(1)}h)`;
-
-  if (headroom + FLOAT_TOLERANCE < config.taskCostEstimate) {
-    return {
-      launch: false,
-      reason: `${summary} is below the ${config.taskCostEstimate} task estimate`,
-    };
-  }
-
-  return { launch: true, reason: `${summary} covers the ${config.taskCostEstimate} task estimate` };
-};
 
 const StoredOAuth = Schema.Struct({
   accessToken: Schema.String,
