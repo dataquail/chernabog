@@ -171,6 +171,10 @@ transitive reach), the coverage floors and the baseline.
   `ConfigTreeClient`. `trustRepoUseCase` is a security gate, so only the CLI
   offers it; never expose it to an agent-facing adapter such as MCP. The
   daemon, `doctor` and `status` read trust through `findTrustedTreeUseCase`.
+  `ReloadRoot` (`reloaded.json`, by slug, behind `ReloadsRepository`) is the
+  tree each repo last restarted the daemon on: the daemon restarts on a
+  trusted tree only when `claimReloadUseCase` says it's the first time, so a
+  trusted tree that fails to load restarts it once, not on every check.
 - **Runs are the runs module's.** `RunRoot` (`om_runs` in `state.db`) keeps
   its lifecycle in `RunRootOps`: it starts running, takes steps while it runs
   and ends exactly once, and a persona has one run in flight per flow and item.

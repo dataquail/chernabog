@@ -45,6 +45,7 @@ export const homePaths = (root: string) => ({
   socket: `${root}/daemon.sock`,
   daemonLog: `${root}/daemon.log`,
   paused: `${root}/paused.json`,
+  reloaded: `${root}/reloaded.json`,
   trust: `${root}/trust.json`,
   runs: `${root}/runs`,
   runLog: (runId: string) => `${root}/runs/${runId}.log`,
