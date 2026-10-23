@@ -69,6 +69,14 @@ describe("ConfigTreeClientLive", () => {
     }),
   );
 
+  effect("reads the same tree as git has it, without a remote to fetch from", () =>
+    Effect.gen(function* () {
+      const { client, path } = yield* checkout;
+
+      expect(yield* client.localTreeOf(path, "main")).toBe(yield* client.treeOf(path, "main"));
+    }),
+  );
+
   effect("fails saying what to do when the base branch has no .chernabog/", () =>
     Effect.gen(function* () {
       const { client, path } = yield* checkout;

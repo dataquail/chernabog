@@ -118,3 +118,26 @@ describe("RunRootOps.activeFor", () => {
     );
   });
 });
+
+describe("RunRootOps.named", () => {
+  const FIRST = RunId.make("3f2a9c1e-7b4d-4e8a-9c2f-1d5e6a7b8c9d");
+  const SECOND = RunId.make("3f2b0000-0000-4000-8000-000000000000");
+  const OLD = RunId.make("demo.implement.issue-7.20261021-120000");
+  const ids = [SECOND, OLD, FIRST];
+
+  test("a prefix that names one run is enough, as is the whole id", () => {
+    expect(RunRootOps.named(ids, "3f2a")).toEqual(Result.succeed(FIRST));
+    expect(RunRootOps.named(ids, FIRST)).toEqual(Result.succeed(FIRST));
+    expect(RunRootOps.named(ids, "demo.implement")).toEqual(Result.succeed(OLD));
+  });
+
+  test("a prefix that names several runs, or none, is refused", () => {
+    const several = RunRootOps.named(ids, "3f2");
+    const none = RunRootOps.named(ids, "ffff");
+
+    expect(Result.isFailure(several) && several.failure.message).toBe(
+      `3f2 names 2 runs (${FIRST}, ${SECOND}); give more of the id`,
+    );
+    expect(Result.isFailure(none) && none.failure.message).toBe("no run ffff");
+  });
+});

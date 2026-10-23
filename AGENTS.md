@@ -165,6 +165,18 @@ transitive reach), the coverage floors and the baseline.
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
   run that ended with another ending, so a stale copy can't revive it.
   `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
+  Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
+  a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
+  gains, ended by an effect the caller passes, since only the caller knows
+  who to ask whether the run finished (the CLI asks the daemon).
+- **The daemon is an adapter too.** `src/interface/daemon/` holds its
+  socket protocol (`daemon.protocol.ts`, made of the modules' results) and
+  the client the CLI and TUI ask it with (`daemon.client.ts`). The CLI's
+  `status`, `logs` and the rest print a use-case's result, and with `--json`
+  print it through its schema instead (`printJson` in
+  `src/interface/cli/cli.output.ts`).
+- **A use-case doesn't talk.** The `no-talking` members rule reports a call to
+  `log`, `warn`, `exit`, `pick` or `choose` in `use-cases/` and `domain/`.
 - **Modules don't reach into each other.** An adapter composes them: the
   `trust` command lists its targets with enrollment's
   `listEnrolledReposUseCase`, then trusts each.

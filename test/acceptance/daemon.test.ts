@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { DaemonStatus } from "../../src/protocol.ts";
+import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 describe("the daemon", () => {

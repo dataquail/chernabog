@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.67, structure: 0.66, members: 0.02, surface: 0.9, graph: 1 }
+  coverage: { imports: 0.7, structure: 0.69, members: 0.32, surface: 0.91, graph: 1 }
   # vacant: the tiers declared ahead of their first file (kernel/ and the
   # module tiers); it falls as the migration fills them.
   conformance: { residue: 0, vacant: 1, slack: 0, concentration: 0 }
@@ -213,6 +213,20 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/config.ts", "test/*.ts"]
 
+  # A use-case answers with its result; saying it, asking a person or ending
+  # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
+  # decisions 4 and 5).
+  no-talking:
+    message: >-
+      `{name}` talks to a person or ends the process. A use-case and the domain return a result
+      and fail with tagged errors; the adapter that called them prints, prompts and sets the exit
+      code.
+    subject: calls
+    match: [log, warn, exit, pick, choose]
+    probe:
+      source: 'export const zzUseCase = () => Console.log("done");'
+      name: log
+
   test-exports-nothing:
     message: >-
       A test exports nothing. Nothing may import a test, so an export here has no consumer; a
@@ -252,25 +266,50 @@ tree:
         children:
           "cli/":
             message: >-
-              cli/ holds the shared arguments (*.arguments.ts) and, per module, one
-              <command>.command.ts per CLI command: its flags, the use-case it calls, and how its
-              result reads.
+              cli/ holds the shared arguments (*.arguments.ts) and output (*.output.ts) and, per
+              module, one <command>.command.ts per CLI command: its flags, the use-case it calls,
+              and how its result reads, beside the output its commands share.
             imports:
               reset: true
               message: >-
                 A CLI command parses its arguments, calls a use-case and prints what the
                 use-case's result says. It names effect (its CLI and console), the kernel, the
-                modules' use-cases and their results, and the shared arguments. Never a
+                modules' use-cases and their results, the shared arguments and output, and the
+                daemon's client and protocol, to ask the daemon what it alone knows. Never a
                 repository, a domain op or an adapter: the composition root provides those.
               external: [effect]
-              # client.ts is the daemon's socket client, the CLI's way to ask the daemon
-              # to reload, until the daemon is an adapter of its own in interface/.
-              allow: ["@/modules/*/use-cases/**", "@/interface/cli/*.arguments.ts", "@/client.ts"]
+              allow:
+                - "@/kernel/**"
+                - "@/modules/*/use-cases/**"
+                - "@/interface/cli/**"
+                - "@/interface/daemon/*.client.ts"
+                - "@/interface/daemon/*.protocol.ts"
             children:
               "*.arguments.ts": {}
+              "*.output.ts": {}
               "{module}/":
                 children:
                   "*.command.ts": {}
+                  "*.output.ts": {}
+
+          "daemon/":
+            message: >-
+              daemon/ is the daemon's adapter: the protocol it speaks over its local socket
+              (*.protocol.ts), and the client the CLI and TUI ask it with (*.client.ts).
+            imports:
+              reset: true
+              message: >-
+                The daemon's protocol is made of the modules' results, and its client reaches the
+                socket in the chernabog home. They name effect, the kernel, the modules' use-case
+                results, and config.ts for the home's paths.
+              external: [effect]
+              allow:
+                - "@/modules/*/use-cases/*.result.ts"
+                - "@/interface/daemon/**"
+                - "@/config.ts"
+            children:
+              "*.protocol.ts": {}
+              "*.client.ts": {}
 
       "kernel/":
         message: >-
@@ -318,6 +357,7 @@ tree:
               domain/ is a container: one folder per aggregate (named for it), and ports/ for the
               repositories and clients the use-cases depend on. No files live directly in
               domain/.
+            members: [{ use: no-talking }]
             imports:
               reset: true
               message: >-
@@ -418,6 +458,7 @@ tree:
               to do, the <verb-noun>.result.ts schema it answers with when that isn't inline, and
               their tests. A shared helper here is an aggregate op or a port that hasn't been
               written yet.
+            members: [{ use: no-talking }]
             imports:
               reset: true
               message: >-
@@ -473,11 +514,12 @@ tree:
               "clients/":
                 imports:
                   message: >-
-                    A client adapts a third-party system (gh, git, launchd, an agent CLI) to the
-                    module's client port. Until each moves into its module, it runs commands
-                    through the legacy Exec service and reuses the legacy git helpers in
-                    snapshot.ts, and nothing else of the legacy tier.
-                  allow: ["@/Exec.ts", "@/snapshot.ts"]
+                    A client adapts a third-party system (gh, git, launchd, an agent CLI, the
+                    files the engine writes) to the module's client port. Until each moves into
+                    its module, it runs commands through the legacy Exec service, reuses the
+                    legacy git helpers in snapshot.ts and finds the chernabog home through
+                    config.ts, and nothing else of the legacy tier.
+                  allow: ["@/Exec.ts", "@/snapshot.ts", "@/config.ts"]
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
@@ -490,7 +532,14 @@ tree:
                         scratch repo, say), so it names Exec and Bun's platform services beside
                         what a module test may.
                       external: [effect, "@effect/platform-bun"]
-                      allow: ["@/modules/{module}/**", "@/Exec.ts", "test/*.ts"]
+                      allow:
+                        [
+                          "@/kernel/**",
+                          "@/modules/{module}/**",
+                          "@/Exec.ts",
+                          "@/config.ts",
+                          "test/*.ts",
+                        ]
       "*.test.ts":
         surface: [{ use: test-exports-nothing }]
 

@@ -30,9 +30,9 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 
 import { attachCommand, runSessions } from "../agents.ts";
-import { daemonReload, daemonStatus, daemonTick } from "../client.ts";
 import { Home } from "../config.ts";
 import { runLogFile } from "../engine.ts";
+import { daemonReload, daemonStatus, daemonTick } from "../interface/daemon/daemon.client.ts";
 import { pauseRepoUseCase } from "../modules/enrollment/use-cases/pause-repo.use-case.ts";
 import { resumeRepoUseCase } from "../modules/enrollment/use-cases/resume-repo.use-case.ts";
 import { asSuffix, type Persona } from "../persona.ts";

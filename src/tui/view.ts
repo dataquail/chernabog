@@ -6,9 +6,13 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
+import type {
+  DaemonStatus,
+  PersonaStatus,
+  RepoStatus,
+} from "../interface/daemon/daemon.protocol.ts";
 import { ActiveRun } from "../modules/runs/use-cases/run.result.ts";
 import { samePersona } from "../persona.ts";
-import type { DaemonStatus, PersonaStatus, RepoStatus } from "../protocol.ts";
 import { FLOW_TURNED_OFF } from "../repo-config.ts";
 
 export type Style =

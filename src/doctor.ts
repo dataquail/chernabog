@@ -10,7 +10,6 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { daemonStatus } from "./client.ts";
 import { checkCodexAccount } from "./codex-usage.ts";
 import { Home } from "./config.ts";
 import { Exec, type ExecResult } from "./Exec.ts";
@@ -23,6 +22,7 @@ import {
   requiredVersion,
 } from "./flow-deps.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "./GitHubApi.ts";
+import { daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
 import { desiredLabels, Label, planLabelSync } from "./labels.ts";
 import { describeLauncher, launcherFor } from "./launchers.ts";

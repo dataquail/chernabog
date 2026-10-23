@@ -11,6 +11,10 @@ import { HostEnvironment } from "../src/platform/environment.ts";
 
 export const effect = it.scopedLive.layer(BunServices.layer);
 
+// On a virtual clock instead, which a test moves with TestClock.adjust, for
+// what waits or repeats on a schedule.
+export const effectOnTestClock = it.scoped;
+
 // Chernabog's home, and the person's, in a fresh directory removed after the test.
 const TemporaryHome = Layer.effect(
   Home,
