@@ -51,10 +51,10 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.44, structure: 0.40, members: 0, surface: 0.84, graph: 1 }
+  coverage: { imports: 0.45, structure: 0.43, members: 0, surface: 0.85, graph: 1 }
   # vacant: the tiers declared ahead of their first file (kernel/ and the
   # module tiers); it falls as the migration fills them.
-  conformance: { residue: 0, vacant: 12, slack: 0, concentration: 0 }
+  conformance: { residue: 0, vacant: 8, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
 deny:
@@ -197,8 +197,8 @@ defs:
     imports:
       reset: true
       message: >-
-        A domain test names its subject, the kernel and effect's test runner. It runs no adapter.
-      external: [effect, effect-bun-test]
+        A domain test names its subject, the kernel and effect. It runs no adapter.
+      external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
 
   # A use-case or adapter test runs its subject over the module's fakes, or
@@ -253,9 +253,9 @@ tree:
         imports:
           reset: true
           message: >-
-            The kernel is the bottom of the domain: it names effect and itself, nothing else.
+            The kernel is the bottom of the domain: it names effect, nothing else.
           external: [effect]
-          allow: ["@/kernel/**"]
+          allow: []
         children:
           "*.id.ts": {}
           "*.value-object.ts": {}
@@ -264,8 +264,8 @@ tree:
             surface: [{ use: test-exports-nothing }]
             imports:
               message: >-
-                A kernel test names the kernel and effect's test runner.
-              external: [effect, effect-bun-test]
+                A kernel test names the kernel and effect.
+              external: [effect]
               allow: []
 
       "modules/{module}/":
