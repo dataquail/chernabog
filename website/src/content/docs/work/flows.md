@@ -24,6 +24,8 @@ reviewers: [alice, data-quail]
 
 Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The choice is made once, so a resumed run asks the same person. Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person to review. Every login in `reviewers:` needs write access to the repo, since the reviewer merges on the automated path; [`chernabog doctor`](/chernabog/work/commands/) checks it for each reviewer this machine acts as.
 
+A machine reviews only as a persona in the pool: a login under `github:` in its machine config that `reviewers:` lists. The `review` and `re-review` recipes require that seat, and run as the implicit account, or as a login outside the pool, they start nothing; the daemon records `NotInReviewerPool` as the tick's reason, with the fix, and `chernabog status` shows it.
+
 ## The automated path
 
 An issue labelled `auto:ship` instead of `auto:eligible` is implemented the same way, and its pull request carries `auto:ship` too. Chernabog merges a pull request only when it carries `auto:ship`: the reviewer that approves it calls `PullRequest.merge`, which merges only when that is safe and otherwise hands it to a person. Any other pull request, including one whose label is missing or misspelt, is left for a person to merge.

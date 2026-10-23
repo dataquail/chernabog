@@ -14,6 +14,7 @@ description: The services @chernabog/sdk provides to flows and Effect steps.
 | `Git`      | commits ahead, changed files, pushes                                        |
 | `Worktree` | one worktree per branch                                                     |
 | `Usage`    | the account check and the [usage gate](/chernabog/agents/usage-gate/)        |
+| `ReviewerSeat` | the persona's seat in the reviewer pool, which every block that reviews requires; checked before a flow runs (see [Errors](/chernabog/flows/flows/#errors)) |
 | `RunLog`   | the run's log                                                               |
 | `Runs`     | whether a run this machine knows is still going; given to triggers, read with `Effect.serviceOption` |
 

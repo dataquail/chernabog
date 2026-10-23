@@ -1,5 +1,8 @@
 // One daemon as two GitHub personas: each tick acts as its persona, and the
 // run that takes the work acts on GitHub, and in its agent session, as it.
+// Setup errors stop a persona's flows before they do any work, and say how to
+// fix them: a persona gh has no login for, and a reviewer without a seat in
+// the team's pool. A flow that doesn't review runs whatever the seat.
 
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -117,4 +120,140 @@ describe("personas", () => {
     expect(refused.code).not.toBe(0);
     expect(refused.output).toContain("demo runs review as alice, bob; name one with --as");
   });
+});
+
+const often = { schedule: "*/2 * * * * *" };
+
+// Only by `chernabog trigger`.
+const never = { schedule: "0 0 1 1 *" };
+
+describe("setup errors, as personas", () => {
+  let sandbox: Sandbox;
+  let daemon: ChildProcess;
+
+  beforeAll(async () => {
+    // alice reviews; carol is logged in but has no seat; dave isn't logged in at all.
+    sandbox = openSandbox(
+      { reviewers: ["alice"] },
+      {
+        github: ["alice", "carol", "dave"],
+        loggedOut: ["dave"],
+        personas: ["alice", "carol", "dave"],
+        personaFlows: {
+          alice: { review: never },
+          carol: { review: never, implement: never },
+          dave: { implement: often },
+        },
+      },
+    );
+    await sandbox.runCli(["trust", "demo"]);
+    daemon = sandbox.cli(["daemon"]);
+    await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
+  });
+
+  afterAll(async () => {
+    if ("DEBUG_DAEMON" in process.env) {
+      process.stdout.write(`${sandbox.daemonLog()}\n`);
+    }
+
+    daemon.kill("SIGTERM");
+    await closed(daemon);
+    await sandbox.github.stop();
+  });
+
+  test("a persona gh has no login for never starts its flow's work; the tick records why, with the fix, and status shows it", async () => {
+    await waitFor(
+      () => sandbox.daemonLog().includes("demo/implement@dave: skipped: dave is unavailable"),
+      "dave's tick to skip",
+    );
+
+    expect(sandbox.daemonLog()).toContain("Fix: run `gh auth login --hostname github.com` as dave");
+    expect(sandbox.daemonLog()).not.toMatch(/started .* as dave\)/);
+    // Its trigger never ran: nothing on GitHub was asked as dave.
+    expect(sandbox.github.requestsBy.some((request) => request.startsWith("dave "))).toBe(false);
+
+    const status = (await sandbox.runCli(["status"])).output;
+    expect(status).toContain(
+      "demo/implement@dave: dave is unavailable: gh auth token --hostname github.com --user dave",
+    );
+    expect(status).toContain("Fix: run `gh auth login --hostname github.com` as dave");
+
+    const triggered = await sandbox.runCli([
+      "trigger",
+      "implement",
+      "--repo",
+      "demo",
+      "--as",
+      "dave",
+    ]);
+
+    expect(triggered.output).toContain("dave is unavailable");
+  }, 30_000);
+
+  test("a review flow as a login outside reviewers records NotInReviewerPool; a flow that does not review runs", async () => {
+    const reviewing = await sandbox.runCli([
+      "trigger",
+      "review",
+      "--repo",
+      "demo",
+      "--as",
+      "carol",
+    ]);
+
+    expect(reviewing.output).toContain(
+      "carol has no seat in the reviewer pool (reviewers: alice). Fix: add carol to reviewers",
+    );
+
+    const implementing = await sandbox.runCli([
+      "trigger",
+      "implement",
+      "--repo",
+      "demo",
+      "--as",
+      "carol",
+    ]);
+
+    expect(implementing.output).not.toContain("seat");
+    expect(implementing.output).toContain("nothing to start");
+
+    const seated = await sandbox.runCli(["trigger", "review", "--repo", "demo", "--as", "alice"]);
+    expect(seated.output).toContain("nothing to start");
+  }, 30_000);
+});
+
+describe("setup errors, as the implicit account", () => {
+  let sandbox: Sandbox;
+  let daemon: ChildProcess;
+
+  beforeAll(async () => {
+    sandbox = openSandbox(
+      { reviewers: ["alice"], flows: { review: never, implement: never } },
+      { flows: { review: never, implement: never } },
+    );
+    await sandbox.runCli(["trust", "demo"]);
+    daemon = sandbox.cli(["daemon"]);
+    await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
+  });
+
+  afterAll(async () => {
+    daemon.kill("SIGTERM");
+    await closed(daemon);
+    await sandbox.github.stop();
+  });
+
+  test("a review flow records NotInReviewerPool, with the fix; implement does not", async () => {
+    const reviewing = await sandbox.runCli(["trigger", "review", "--repo", "demo"]);
+    expect(reviewing.output).toContain(
+      "a flow that reviews runs as the implicit account, which has no seat in the reviewer pool (reviewers: alice)",
+    );
+    expect(reviewing.output).toContain(
+      "Fix: run it as a persona under github: that the repo's reviewers list",
+    );
+
+    const status = (await sandbox.runCli(["status"])).output;
+    expect(status).toContain("demo/review: a flow that reviews runs as the implicit account");
+
+    const implementing = await sandbox.runCli(["trigger", "implement", "--repo", "demo"]);
+    expect(implementing.output).toContain("nothing to start");
+  }, 30_000);
 });

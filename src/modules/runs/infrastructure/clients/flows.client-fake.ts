@@ -1,10 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
-import { FlowFailed } from "../../domain/run/run.errors.ts";
+import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
 
 // A flow as a test has it: the work its trigger reports (or why it fails),
@@ -13,6 +14,8 @@ export type FakeFlow = {
   readonly items: ReadonlyArray<WorkItem>;
   // Why its trigger fails, when it does.
   readonly fails?: string;
+  // Why its persona can't run it here, when it can't.
+  readonly notReady?: string;
   readonly findable?: ReadonlyArray<WorkItem>;
   readonly gate?: string;
 };
@@ -30,11 +33,18 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
     FlowsClient,
     FlowsClient.of({
       trigger: (flow) =>
-        Effect.flatMap(flowOf(flow), (found) =>
-          Option.match(Option.fromUndefinedOr(found.fails), {
-            onNone: () => Effect.succeed(found.items),
-            onSome: (message) => Effect.fail(new FlowFailed({ message })),
-          }),
+        Effect.flatMap(
+          flowOf(flow),
+          (found): Effect.Effect<ReadonlyArray<WorkItem>, FlowFailed | PersonaNotReady> => {
+            if (Predicate.isNotUndefined(found.notReady)) {
+              return Effect.fail(new PersonaNotReady({ message: found.notReady }));
+            }
+
+            return Option.match(Option.fromUndefinedOr(found.fails), {
+              onNone: () => Effect.succeed(found.items),
+              onSome: (message) => Effect.fail(new FlowFailed({ message })),
+            });
+          },
         ),
       find: (flow, key) =>
         Effect.map(flowOf(flow), (found) =>

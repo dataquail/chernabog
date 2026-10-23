@@ -10,7 +10,15 @@
 // version. The names of its steps ("find-review", "review-2") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, PullRequest, Repo, Review, type WorkItem } from "@chernabog/sdk";
+import {
+  defineFlow,
+  PullRequest,
+  Repo,
+  reportAs,
+  Review,
+  Skip,
+  type WorkItem,
+} from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -28,7 +36,7 @@ const trigger = Effect.gen(function* () {
       ),
     ),
   );
-});
+}).pipe(reportAs("trigger"));
 
 // Chernabog merges only pull requests on the automated path (auto:ship), and
 // only when that's safe; a person merges any other.
@@ -39,8 +47,8 @@ const mergeIfShipping = (pullRequest: number) =>
     }
 
     return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
-      Effect.catchTag("NeedsHuman", (refused) =>
-        PullRequest.handToPerson(pullRequest, refused.reason),
+      Effect.catchTag("MergeRefused", (refused) =>
+        PullRequest.handToPerson(pullRequest, refused.message),
       ),
     );
   });
@@ -117,7 +125,13 @@ const workflow = (item: WorkItem) =>
       pullRequest,
       `review ${rechecked.round ?? 2} still requests changes after a round of fixes`,
     );
-  });
+  }).pipe(
+    // A pull request closed, or gone, while the review ran leaves nothing to do.
+    Effect.catchTags({
+      PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
+      NotFound: (gone) => Effect.fail(new Skip({ reason: gone.message })),
+    }),
+  );
 
 export default defineFlow({
   trigger,

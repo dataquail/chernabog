@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 
 import { HUMAN_INITIATED } from "./default-prompts.ts";
 import { Skip, StepFailed } from "./errors.ts";
-import { activity } from "./flow.ts";
+import { activity, reportAs } from "./flow.ts";
 import {
   type AuthorSession,
   branchFor,
@@ -35,13 +35,15 @@ export const trigger = Effect.succeed<ReadonlyArray<WorkItem>>([]);
 
 const ISSUE_KEY = /^issue-(\d+)$/;
 
-// The issue a person names, as `issue-<number>`, whatever its labels.
+// The issue a person names, as `issue-<number>`, whatever its labels; none for one GitHub doesn't have.
 export const itemFor = (key: string) =>
   Option.match(Option.fromNullishOr(ISSUE_KEY.exec(key)), {
     onNone: () => Effect.succeedNone,
     onSome: (match) =>
       GitHub.use((github) => github.issue(Number(match[1]))).pipe(
         Effect.map((issue) => Option.some(issueItem(issue))),
+        Effect.catchTag("NotFound", () => Effect.succeedNone),
+        reportAs("item"),
       ),
   });
 

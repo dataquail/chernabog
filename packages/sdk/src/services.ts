@@ -6,7 +6,16 @@ import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { AgentError, GitError, GitHubError, UsageError } from "./errors.ts";
+import type {
+  AgentError,
+  GitError,
+  GitHubError,
+  MergeRefused,
+  NotFound,
+  PullRequestClosed,
+  PushRejected,
+  UsageError,
+} from "./errors.ts";
 import type { Json } from "./json.ts";
 
 export const Labels = Schema.Struct({
@@ -256,10 +265,8 @@ export type MergeMethod = "merge" | "squash" | "rebase";
 // The merge of exactly `sha`: GitHub refuses one whose head has moved since.
 export type MergeRequest = { readonly method: MergeMethod; readonly sha: string };
 
-// Merged, or refused by GitHub (branch protection, a conflict, a moved head), with its reason.
-export type MergeOutcome =
-  | { readonly status: "merged"; readonly sha: string }
-  | { readonly status: "refused"; readonly reason: string };
+// The merge commit.
+export type Merged = { readonly sha: string };
 
 export type CiState =
   | { state: "pending"; waitingOn: Array<string> }
@@ -274,7 +281,7 @@ export class GitHub extends Context.Service<
     // Open issues with this label (and ready on the board, when the repo has one), oldest first.
     queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
-    issue(number: number): Effect.Effect<Issue, GitHubError>;
+    issue(number: number): Effect.Effect<Issue, NotFound | GitHubError>;
     // Comments by the repo's owners, members and collaborators only; anyone can comment on a public repo.
     trustedComments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;
     comments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;
@@ -292,7 +299,7 @@ export class GitHub extends Context.Service<
       sha: string,
     ): Effect.Effect<"created" | "already-exists", GitHubError>;
     deleteBranch(branch: string): Effect.Effect<void, GitHubError>;
-    pullRequest(number: number): Effect.Effect<PullRequest, GitHubError>;
+    pullRequest(number: number): Effect.Effect<PullRequest, NotFound | GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     readonly openPullRequests: Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
@@ -300,7 +307,7 @@ export class GitHub extends Context.Service<
     requestReviewers(
       pullRequest: number,
       logins: ReadonlyArray<string>,
-    ): Effect.Effect<void, GitHubError>;
+    ): Effect.Effect<void, PullRequestClosed | GitHubError>;
     // The reviews submitted on a pull request, oldest first.
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
@@ -313,10 +320,17 @@ export class GitHub extends Context.Service<
     ): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     // Posts a review. GitHub won't let an account approve or request changes on
     // its own pull request; such a review is posted as a comment instead.
-    review(pullRequest: number, review: NewReview): Effect.Effect<void, GitHubError>;
+    review(
+      pullRequest: number,
+      review: NewReview,
+    ): Effect.Effect<void, PullRequestClosed | GitHubError>;
     // Review summaries and line comments on a pull request.
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;
-    merge(pullRequest: number, merge: MergeRequest): Effect.Effect<MergeOutcome, GitHubError>;
+    // Refused by GitHub (branch protection, a conflict, a moved head) with its reason.
+    merge(
+      pullRequest: number,
+      merge: MergeRequest,
+    ): Effect.Effect<Merged, MergeRefused | PullRequestClosed | GitHubError>;
     // Any other call, for what the service does not cover.
     request(
       method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
@@ -334,7 +348,7 @@ export class Git extends Context.Service<
     // Commits on HEAD that origin/<base> does not have.
     commitsAhead(cwd: string, base: string): Effect.Effect<number, GitError>;
     changedFiles(cwd: string, base: string): Effect.Effect<ReadonlyArray<string>, GitError>;
-    push(cwd: string, branch: string): Effect.Effect<void, GitError>;
+    push(cwd: string, branch: string): Effect.Effect<void, PushRejected | GitError>;
     // Brings the checked-out branch up to its remote, fast-forward only.
     pull(cwd: string, branch: string): Effect.Effect<void, GitError>;
   }
@@ -395,6 +409,20 @@ export class Agent extends Context.Service<
     readonly adapters: ReadonlyArray<string>;
   }
 >()("@chernabog/sdk/Agent") {}
+
+// The persona's seat in the team's reviewer pool: a login under github:, not
+// the implicit account, that the repo's reviewers list. Every block that
+// reviews requires it, so a flow that reviews does too. Chernabog checks it
+// when it builds the persona's services; a flow that asks for a seat the
+// persona doesn't hold stops there, before its work, and the engine reports
+// why (NotInReviewerPool, PersonaUnavailable). No flow handles that.
+export class ReviewerSeat extends Context.Service<
+  ReviewerSeat,
+  {
+    // The reviewer's login.
+    readonly login: Effect.Effect<string>;
+  }
+>()("@chernabog/sdk/ReviewerSeat") {}
 
 // What this machine knows of a run, by id: whether it is still going, or none
 // for a run it never had, such as one on another machine. Provided by Chernabog

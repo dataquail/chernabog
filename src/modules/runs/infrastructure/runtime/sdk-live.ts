@@ -8,18 +8,26 @@ import {
   GitHubError,
   type Issue,
   type Json,
-  type MergeOutcome,
+  type Merged,
+  MergeRefused,
   type NewReview,
+  NotFound,
+  NotInReviewerPool,
   type PullRequest,
+  PullRequestClosed,
+  PushRejected,
   Repo,
   type RepoSettings,
+  ReviewerSeat,
   type ReviewNote,
+  type SetupError,
   type SubmittedReview,
   Usage,
   Worktree,
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,7 +45,11 @@ import {
   githubRequest,
   githubSend,
 } from "../../../../platform/github-api.ts";
-import { execOptionsFor, type GitHubTokens } from "../../../../platform/github-auth.ts";
+import {
+  checkPersona,
+  execOptionsFor,
+  type GitHubTokens,
+} from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { readCiState } from "./ci.ts";
 import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
@@ -208,7 +220,7 @@ const isIssueNode = Schema.is(LabelledIssueNode);
 
 const Comments = Schema.Array(RestComment);
 
-const Merged = Schema.Struct({ sha: Schema.String });
+const MergedCommit = Schema.Struct({ sha: Schema.String });
 
 const ErrorMessage = Schema.Struct({ message: Schema.String });
 
@@ -221,6 +233,16 @@ const refusalOf = (status: number, body: Option.Option<Json>) =>
 
 const PullRequests = Schema.Array(RestPullRequest);
 const identity = <A>(page: A) => page;
+
+// A pull request's state, for telling a refusal on a closed one from any other.
+const PullState = Schema.Struct({ state: Schema.String, merged_at: Text });
+
+const closedState = (raw: typeof PullState.Type) =>
+  Option.match(raw.merged_at, {
+    onSome: () => Option.some<PullRequestClosed["state"]>("merged"),
+    onNone: () =>
+      Option.liftPredicate<PullRequestClosed["state"]>("closed", () => raw.state === "closed"),
+  });
 
 export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, GitHubApi> =>
   Layer.effect(
@@ -282,6 +304,49 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
       const self = provide(
         githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login)),
       );
+
+      // One issue or pull request, which GitHub may not have.
+      const readOrNotFound = <A>(what: string, rest: string, schema: Schema.Codec<A, Json>) =>
+        provide(
+          Effect.gen(function* () {
+            const response = yield* githubRequest("GET", path(rest));
+
+            if (response.status === 404 || response.status === 410) {
+              return yield* new NotFound({ what });
+            }
+
+            if (response.status >= 300) {
+              return yield* new GitHubError({
+                message: `reading ${what} returned HTTP ${response.status}`,
+              });
+            }
+
+            return yield* decodeBody(schema, `reading ${what}`)(response.body);
+          }),
+        );
+
+      // A call on a pull request that failed because it was closed or merged
+      // fails with PullRequestClosed; any other failure, or a state GitHub
+      // won't say, is left as it was.
+      const closedOr = <E>(
+        pullRequest: number,
+        error: E,
+      ): Effect.Effect<never, E | PullRequestClosed> =>
+        provide(githubJson("GET", path(`/pulls/${pullRequest}`), PullState)).pipe(
+          Effect.option,
+          Effect.flatMap((state) =>
+            Option.match(Option.flatMap(state, closedState), {
+              onNone: (): Effect.Effect<never, E | PullRequestClosed> => Effect.fail(error),
+              onSome: (closed) =>
+                Effect.fail(new PullRequestClosed({ pullRequest, state: closed })),
+            }),
+          ),
+        );
+
+      const unlessClosed =
+        (pullRequest: number) =>
+        <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E | PullRequestClosed> =>
+          Effect.catch(effect, (error) => closedOr(pullRequest, error));
 
       const branchSha = (branch: string) =>
         provide(
@@ -376,56 +441,58 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
         );
 
       const review = (pullRequest: number, posted: NewReview) =>
-        provide(
-          Effect.gen(function* () {
-            const event = posted.event ?? "COMMENT";
+        unlessClosed(pullRequest)(
+          provide(
+            Effect.gen(function* () {
+              const event = posted.event ?? "COMMENT";
 
-            const inline = posted.comments.map((comment) => ({
-              path: comment.path,
-              line: comment.line,
-              side: "RIGHT",
-              body: comment.body,
-            }));
+              const inline = posted.comments.map((comment) => ({
+                path: comment.path,
+                line: comment.line,
+                side: "RIGHT",
+                body: comment.body,
+              }));
 
-            const response = yield* githubRequest(
-              "POST",
-              path(`/pulls/${pullRequest}/reviews`),
-              Option.some({
-                event,
-                body: posted.body,
-                commit_id: posted.commitSha,
-                comments: inline,
-              }),
-            );
+              const response = yield* githubRequest(
+                "POST",
+                path(`/pulls/${pullRequest}/reviews`),
+                Option.some({
+                  event,
+                  body: posted.body,
+                  commit_id: posted.commitSha,
+                  comments: inline,
+                }),
+              );
 
-            if (response.status < 300) {
-              return;
-            }
+              if (response.status < 300) {
+                return;
+              }
 
-            // A comment on a line outside the diff fails the whole review; fold them into the body instead.
-            let folded = posted.body;
+              // A comment on a line outside the diff fails the whole review; fold them into the body instead.
+              let folded = posted.body;
 
-            if (posted.comments.length > 0) {
-              folded = `${posted.body}\n\n${posted.comments.map((comment) => `- \`${comment.path}:${comment.line}\`: ${comment.body}`).join("\n")}`;
-            }
+              if (posted.comments.length > 0) {
+                folded = `${posted.body}\n\n${posted.comments.map((comment) => `- \`${comment.path}:${comment.line}\`: ${comment.body}`).join("\n")}`;
+              }
 
-            const again = yield* githubRequest(
-              "POST",
-              path(`/pulls/${pullRequest}/reviews`),
-              Option.some({ event, body: folded, commit_id: posted.commitSha }),
-            );
+              const again = yield* githubRequest(
+                "POST",
+                path(`/pulls/${pullRequest}/reviews`),
+                Option.some({ event, body: folded, commit_id: posted.commitSha }),
+              );
 
-            if (again.status < 300) {
-              return;
-            }
+              if (again.status < 300) {
+                return;
+              }
 
-            // GitHub won't let an account approve or request changes on its own pull request.
-            yield* githubSend(
-              "POST",
-              path(`/pulls/${pullRequest}/reviews`),
-              Option.some({ event: "COMMENT", body: folded, commit_id: posted.commitSha }),
-            );
-          }),
+              // GitHub won't let an account approve or request changes on its own pull request.
+              yield* githubSend(
+                "POST",
+                path(`/pulls/${pullRequest}/reviews`),
+                Option.some({ event: "COMMENT", body: folded, commit_id: posted.commitSha }),
+              );
+            }),
+          ),
         );
 
       const openPullRequests = provide(
@@ -463,8 +530,8 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           ),
         ),
         issue: (number) =>
-          provide(
-            githubJson("GET", path(`/issues/${number}`), RestIssue).pipe(Effect.map(toIssue)),
+          readOrNotFound(`issue #${number}`, `/issues/${number}`, RestIssue).pipe(
+            Effect.map(toIssue),
           ),
         comments,
         trustedComments: (number) =>
@@ -507,10 +574,8 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
         createBranch,
         deleteBranch,
         pullRequest: (number) =>
-          provide(
-            githubJson("GET", path(`/pulls/${number}`), RestPullRequest).pipe(
-              Effect.map(toPullRequest),
-            ),
+          readOrNotFound(`pull request #${number}`, `/pulls/${number}`, RestPullRequest).pipe(
+            Effect.map(toPullRequest),
           ),
         pullRequestForBranch: (branch) =>
           provide(
@@ -528,12 +593,14 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           ),
         openPullRequests,
         requestReviewers: (pullRequest, reviewers) =>
-          provide(
-            githubSend(
-              "POST",
-              path(`/pulls/${pullRequest}/requested_reviewers`),
-              Option.some({ reviewers: [...reviewers] }),
-            ).pipe(Effect.asVoid),
+          unlessClosed(pullRequest)(
+            provide(
+              githubSend(
+                "POST",
+                path(`/pulls/${pullRequest}/requested_reviewers`),
+                Option.some({ reviewers: [...reviewers] }),
+              ).pipe(Effect.asVoid),
+            ),
           ),
         reviews,
         openPullRequest: (pullRequest) =>
@@ -584,17 +651,20 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
 
               if (response.status < 300) {
                 return {
-                  status: "merged",
-                  sha: (yield* decodeBody(Merged, "merging")(response.body)).sha,
-                } satisfies MergeOutcome;
+                  sha: (yield* decodeBody(MergedCommit, "merging")(response.body)).sha,
+                } satisfies Merged;
               }
 
               // 405: not mergeable under the repo's rules; 409: the head moved; 422: the request itself.
               if ([405, 409, 422].includes(response.status)) {
-                return {
-                  status: "refused",
-                  reason: refusalOf(response.status, response.body),
-                } satisfies MergeOutcome;
+                return yield* unlessClosed(pullRequest)(
+                  Effect.fail(
+                    new MergeRefused({
+                      pullRequest,
+                      reason: refusalOf(response.status, response.body),
+                    }),
+                  ),
+                );
               }
 
               return yield* new GitHubError({
@@ -609,6 +679,33 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
   );
 
 const gitError = (error: { readonly message: string }) => new GitError({ message: error.message });
+
+// GitHub's refusal of a change to a workflow file, by a token without the
+// scope or permission it needs: "refusing to allow an OAuth App to create or
+// update workflow `.github/workflows/ci.yml` without `workflow` scope".
+const MISSING_SCOPE = /refusing to allow .*without `?(\w+)`? (?:scope|permission)/;
+
+// What git said when a push failed, read as the remote refusing it: a token
+// missing a scope, or a branch that moved since (a stale lease, a non-fast-forward).
+export const pushRejection = (branch: string, said: string) => {
+  const lines = said.split("\n").map((line) => line.replace(/^remote:\s*/, "").trim());
+  const scope = Arr.findFirst(lines, (line) => MISSING_SCOPE.test(line));
+
+  if (Option.isSome(scope)) {
+    return Option.some(
+      new PushRejected({
+        branch,
+        reason: scope.value,
+        missingScope: MISSING_SCOPE.exec(scope.value)?.[1] ?? "workflow",
+      }),
+    );
+  }
+
+  return Option.map(
+    Arr.findFirst(lines, (line) => /\[(?:remote )?rejected\]/.test(line)),
+    (rejected) => new PushRejected({ branch, reason: rejected }),
+  );
+};
 
 // Git as one persona: a push authenticates with its token.
 export const GitLive = (
@@ -646,6 +743,14 @@ export const GitLive = (
         push: (cwd, branch) =>
           run(["push", "--force-with-lease", "origin", `HEAD:refs/heads/${branch}`], cwd).pipe(
             Effect.asVoid,
+            Effect.catchTag("GitError", (error): Effect.Effect<never, GitError | PushRejected> =>
+              Effect.fail(
+                Option.getOrElse(
+                  pushRejection(branch, error.message),
+                  (): GitError | PushRejected => error,
+                ),
+              ),
+            ),
           ),
         pull: (cwd, branch) =>
           run(["pull", "--ff-only", "--quiet", "origin", branch], cwd).pipe(Effect.asVoid),
@@ -838,3 +943,44 @@ export const UsageLive = (settings: RepoSettings, gate: GateConfig) =>
   );
 
 export const RepoLive = (settings: RepoSettings) => Layer.succeed(Repo, settings);
+
+const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+
+// Whether the persona holds a seat in the repo's reviewer pool: a login under
+// github:, not the implicit account, that reviewers lists, and that gh has a token for.
+export const checkReviewerSeat = (
+  settings: RepoSettings,
+  persona: Persona,
+): Effect.Effect<string, SetupError, GitHubTokens> => {
+  const reviewers = settings.reviewers ?? [];
+
+  return Option.match(persona, {
+    onNone: () => Effect.fail(new NotInReviewerPool({ reviewers })),
+    onSome: (own) => {
+      if (!reviewers.some((seated) => sameLogin(seated, own))) {
+        return Effect.fail(new NotInReviewerPool({ login: own, reviewers }));
+      }
+
+      return checkPersona(persona).pipe(Effect.as(own));
+    },
+  });
+};
+
+// The persona's reviewer seat, checked once as its services are built. Most
+// flows never review, so a persona without a seat still runs them: the check's
+// failure is raised only when a flow asks for the seat, before its work, as a
+// defect carrying the setup error, which the engine reports. No flow handles it.
+export const ReviewerSeatLive = (settings: RepoSettings, persona: Persona) =>
+  Layer.effect(
+    ReviewerSeat,
+    Effect.exit(checkReviewerSeat(settings, persona)).pipe(
+      Effect.map((checked) =>
+        ReviewerSeat.of({
+          login: Exit.match(checked, {
+            onSuccess: Effect.succeed,
+            onFailure: (cause) => Effect.orDie(Effect.failCause(cause)),
+          }),
+        }),
+      ),
+    ),
+  );

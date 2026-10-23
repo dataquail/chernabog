@@ -11,6 +11,8 @@ Bakes `.chernabog/flows/review.ts` and its prompt, `.chernabog/prompts/review.md
 
 **Picks up** an open pull request whose review is requested of the persona this runs as, which it hasn't reviewed yet, unless another flow's run owns it. Its trigger checks the persona's own login, so it needs no `reviewRequested` setting.
 
+**Runs as** a persona with a seat in the [reviewer pool](/chernabog/work/flows/#the-reviewer-pool): a login under `github:` in machine config that the repo's `reviewers:` list. Run as the implicit account, or as a login outside the pool, it starts nothing, and `chernabog status` shows `NotInReviewerPool` with the fix.
+
 **Ends with** an approval, which merges an `auto:ship` pull request when that's safe, or changes requested, which the author's [`address-review`](/chernabog/recipes/address-review/) answers.
 
 ## Its steps

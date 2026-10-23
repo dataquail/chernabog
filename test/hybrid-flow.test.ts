@@ -7,6 +7,7 @@ import {
   DEFAULT_LABELS,
   Hybrid,
   Implement,
+  PushRejected,
   reviewMarker,
   sessionMarker,
 } from "@chernabog/sdk";
@@ -141,6 +142,32 @@ describe("human-initiated", () => {
       expect(summaryOf(skipped)).toContain("already claimed by an unattended run");
       expect(unattended.requests).toEqual([]);
     }),
+  );
+
+  effect(
+    "hands the issue to a person, with the fix, when the token can't push a workflow change",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve", POOL);
+
+        const reason =
+          "! [remote rejected] HEAD -> auto/issue-3 (refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope)";
+
+        fake.git.rejects = Option.some(
+          new PushRejected({ branch: `auto/issue-${ISSUE}`, reason, missingScope: "workflow" }),
+        );
+        const finished = yield* runToEnd(starting, fake, work);
+        expect(finished.status).toBe("needs-human");
+        expect(summaryOf(finished)).toContain(`pushing auto/issue-${ISSUE} was rejected`);
+        expect(summaryOf(finished)).toContain(
+          "Fix: give the token it pushes with the `workflow` scope (`gh auth refresh --hostname github.com --scopes workflow`",
+        );
+        expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+        expect(fake.comments.some((comment) => comment.body.includes("--scopes workflow"))).toBe(
+          true,
+        );
+        expect(fake.git.opened).toBe(false);
+      }),
   );
 
   effect(

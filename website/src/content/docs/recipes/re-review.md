@@ -11,6 +11,8 @@ Bakes `.chernabog/flows/re-review.ts`, and `.chernabog/prompts/review.md` for a 
 
 **Picks up** an open pull request that asks the persona to review it again after it already reviewed it, one run per request. It leaves alone a pull request labelled `auto:needs-human`, so asking again during a dispute doesn't restart the loop; a person removes the label to hand it back.
 
+**Runs as** a persona with a seat in the [reviewer pool](/chernabog/work/flows/#the-reviewer-pool): a login under `github:` in machine config that the repo's `reviewers:` list. Run as the implicit account, or as a login outside the pool, it starts nothing, and `chernabog status` shows `NotInReviewerPool` with the fix.
+
 **Ends with** an approval, which merges an `auto:ship` pull request the way [`review`](/chernabog/recipes/review/) does, or the pull request handed to a person with `auto:needs-human`.
 
 ## Its steps

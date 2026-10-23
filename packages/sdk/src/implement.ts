@@ -16,8 +16,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
-import { NeedsHuman, Skip, StepFailed } from "./errors.ts";
-import { activity, sleep } from "./flow.ts";
+import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "./errors.ts";
+import { activity, reportAs, sleep } from "./flow.ts";
 import type { Json } from "./json.ts";
 import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from "./markers.ts";
 import { pathsMatching } from "./paths.ts";
@@ -87,6 +87,7 @@ export const sessionIdFor = (runId: string, purpose: string) => {
 export const triggerFor = (label: string) =>
   GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(
     Effect.map((issues) => issues.map((issue) => issueItem(issue, Option.some(label)))),
+    reportAs("trigger"),
   );
 
 // Which label queued the issue: eligible unless the flow is keyed by its own.
@@ -123,7 +124,7 @@ export const gate = Effect.gen(function* () {
   if (!decision.launch) {
     return yield* new Skip({ reason: `usage gate: ${decision.reason}` });
   }
-});
+}).pipe(reportAs("gate"));
 
 // Issues are often public, so the comment says nothing about the machine: no
 // hostname, and no worktree path with the user's home in it.
@@ -596,6 +597,8 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
   });
 
 // Checks the branch has commits, touches no human-only paths, and pushes it.
+// Fails with NothingCommitted when there's nothing to push, and PushRejected
+// when the remote refuses it, such as for a token without the workflow scope.
 export const push = (name: string, worktree: string, branch: string) =>
   activity(
     name,
@@ -604,9 +607,7 @@ export const push = (name: string, worktree: string, branch: string) =>
       const repo = yield* Repo;
 
       if ((yield* git.commitsAhead(worktree, repo.baseBranch)) === 0) {
-        return yield* new NeedsHuman({
-          reason: `the agent finished without committing anything on ${branch}`,
-        });
+        return yield* new NothingCommitted({ branch });
       }
 
       const touched = pathsMatching(
@@ -687,7 +688,7 @@ const CiReading = Schema.Union([
 
 type CiReading = typeof CiReading.Type;
 
-// Polls the pull request's checks durably until they stop pending, or a person is needed.
+// Polls the pull request's checks durably until they stop pending, or limits.ciTimeout passes.
 const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions) =>
   Effect.gen(function* () {
     const repo = yield* Repo;
@@ -701,8 +702,9 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
 
     for (let poll = 1; reading.state === "pending"; poll++) {
       if (poll > maxPolls) {
-        return yield* new NeedsHuman({
-          reason: `CI on #${pullRequest} is still pending after ${Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout))}`,
+        return yield* new CiTimedOut({
+          pullRequest,
+          after: Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout)),
         });
       }
 
@@ -724,7 +726,8 @@ export type CiBranch = AuthorSession & { readonly branch: string };
 
 // Waits durably for the pull request's checks. On red, the agent reads the
 // failure, fixes, commits, and the branch is pushed again, up to
-// limits.ciRounds times.
+// limits.ciRounds times. Fails with CiTimedOut when the checks stay pending
+// past limits.ciTimeout, and as push does for a fix it can't push.
 export const waitForCi = (
   pullRequest: number,
   worktree: string,

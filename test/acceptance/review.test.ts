@@ -107,8 +107,10 @@ describe("a pull request a person opened", () => {
   let daemon: ChildProcess;
 
   beforeAll(() => {
+    // A reviewer is a persona with a seat in the pool: erin.
     sandbox = openSandbox(
       {
+        reviewers: ["alice", "erin"],
         flows: {
           review: { ...often, agent: "codex" },
           implement: { enabled: false },
@@ -116,7 +118,7 @@ describe("a pull request a person opened", () => {
           "re-review": { enabled: false },
         },
       },
-      { flows: { review: often } },
+      { github: ["erin"], personas: ["erin"], flows: { review: often } },
     );
   });
 
@@ -132,7 +134,7 @@ describe("a pull request a person opened", () => {
     sandbox.git(sandbox.checkout, "commit", "-q", "--allow-empty", "-m", "feat: by a person");
     sandbox.git(sandbox.checkout, "push", "-q", "origin", "feature");
 
-    // Opened by a person, carol, so the machine (the sandbox's bot) can review it.
+    // Opened by a person, carol, so the machine's persona, erin, can review it.
     const response = await fetch(`${sandbox.github.url}/repos/dataquail/demo/pulls`, {
       method: "POST",
       headers: { authorization: "Bearer token-carol" },
@@ -147,7 +149,7 @@ describe("a pull request a person opened", () => {
     await Bun.sleep(5000);
     expect(sandbox.github.reviewsOf(number)).toEqual([]);
 
-    sandbox.github.pull(number).reviewers.push("chernabog-bot");
+    sandbox.github.pull(number).reviewers.push("erin");
     await waitFor(
       () => sandbox.github.reviewsOf(number).length > 0,
       "the review once this machine is asked",
@@ -155,7 +157,7 @@ describe("a pull request a person opened", () => {
     );
     expect(
       sandbox.github.reviewsOf(number).map((review) => `${review.author} ${review.state}`),
-    ).toEqual(["chernabog-bot CHANGES_REQUESTED"]);
+    ).toEqual(["erin CHANGES_REQUESTED"]);
     expect(sandbox.github.merges).toEqual([]);
     expect(sandbox.github.pull(number).reviewers).toEqual(["alice"]);
   }, 60_000);

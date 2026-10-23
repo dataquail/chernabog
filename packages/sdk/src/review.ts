@@ -32,6 +32,7 @@ import {
   GitHub,
   type PullRequest,
   Repo,
+  ReviewerSeat,
   type ReviewEvent,
   type ReviewNote,
   Run,
@@ -92,12 +93,16 @@ export const ownedByARun = (pull: PullRequest) =>
 
 const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 
+// The login this persona reviews as, from its seat in the reviewer pool. A
+// flow that uses it, or any block that reviews, requires ReviewerSeat.
+export const reviewerLogin = ReviewerSeat.use((seat) => seat.login);
+
 // Open pull requests that ask this persona for a review, each with how many
 // reviews it has submitted on it so far. One a run of another flow owns is
-// left out.
+// left out. It requires the persona's seat in the reviewer pool.
 export const reviewRequests = Effect.gen(function* () {
   const github = yield* GitHub;
-  const me = yield* github.login;
+  const me = yield* reviewerLogin;
   const found: Array<{ readonly pull: PullRequest; readonly reviewed: number }> = [];
 
   for (const pull of yield* github.openPullRequests) {
@@ -312,20 +317,13 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
       ),
     );
 
-    const reviewer = Option.getOrElse(adapter, () => repo.agent);
-    const me = yield* github.login;
+    const by = Option.getOrElse(adapter, () => repo.agent);
+    const me = yield* reviewerLogin;
     yield* postReview(
       pull,
-      {
-        sha: pull.headSha,
-        round,
-        verdict: verdict.verdict,
-        reviewer: me,
-        sessionId,
-        adapter: reviewer,
-      },
+      { sha: pull.headSha, round, verdict: verdict.verdict, reviewer: me, sessionId, adapter: by },
       verdict,
-      headingFor(verdict.verdict, reviewer),
+      headingFor(verdict.verdict, by),
     );
 
     return {
@@ -335,7 +333,7 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
       summary: verdict.summary,
       comments: verdict.comments,
       sessionId,
-      adapter: reviewer,
+      adapter: by,
     };
   });
 
@@ -410,8 +408,8 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
         ),
       );
 
-      const reviewer = Option.getOrElse(adapter, () => repo.agent);
-      const me = yield* github.login;
+      const by = Option.getOrElse(adapter, () => repo.agent);
+      const me = yield* reviewerLogin;
       yield* postReview(
         pull,
         {
@@ -420,10 +418,10 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
           verdict: verdict.verdict,
           reviewer: me,
           sessionId: sessionId.value,
-          adapter: reviewer,
+          adapter: by,
         },
         verdict,
-        headingFor(verdict.verdict, reviewer),
+        headingFor(verdict.verdict, by),
       );
 
       return {
@@ -433,7 +431,7 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
         summary: verdict.summary,
         comments: verdict.comments,
         sessionId: sessionId.value,
-        adapter: reviewer,
+        adapter: by,
         findings: verdict.findings,
       };
     }),
@@ -458,7 +456,7 @@ export const latestOwnReview = (pullRequest: number) =>
     "find-review",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const me = yield* github.login;
+      const me = yield* reviewerLogin;
       const bodies = (yield* github.comments(pullRequest)).map((comment) => comment.body);
 
       const mine = latestMarker(

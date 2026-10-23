@@ -75,3 +75,10 @@ export class FlowFailed extends Schema.TaggedError<FlowFailed, { readonly brand:
   "FlowFailed",
   { message: Schema.String },
 ) {}
+
+// The persona can't run its flows here at all, such as a login gh has no
+// token for or a reviewer seat it doesn't hold; the message names the fix.
+export class PersonaNotReady extends Schema.TaggedError<
+  PersonaNotReady,
+  { readonly brand: "PersonaNotReady" }
+>()("PersonaNotReady", { message: Schema.String }) {}
