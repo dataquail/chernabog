@@ -18,6 +18,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run lint
+      - run: bun run lint:architecture
       - run: bun test
       - run: bun run build
       - run: CHERNABOG_BIN=$PWD/dist/chernabog bun test test/acceptance/e2e.test.ts test/acceptance/daemon.test.ts

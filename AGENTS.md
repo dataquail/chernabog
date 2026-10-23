@@ -5,8 +5,9 @@ requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect
 
 ## Before you finish
 
-`bun run check`, `bun run lint` and `bun test` must all pass. Run the full suite
-with no edits in flight; one that overlaps an edit fails spuriously.
+`bun run check`, `bun run lint`, `bun run lint:architecture` and `bun test`
+must all pass. Run the full suite with no edits in flight; one that overlaps an
+edit fails spuriously.
 
 ## Hard rules
 
@@ -112,6 +113,48 @@ after that the file is theirs, and chernabog never rewrites it.
   matching each flow to the recipe it's named for.
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
   which its description links to.
+
+## Architecture (goodbones)
+
+`src/` is moving to use-cases over a domain of aggregates, invoked by inbound
+adapters, with persistence and external systems behind ports (the plan's
+settled decisions are recorded in `docs/adr/`). `architecture.yaml` is the
+policy, and [goodbones](https://dataquail.github.io/goodbones) enforces it: the
+`architecture/*` oxlint rules run in `bun run lint`, one file at a time, and
+`bun run lint:architecture` adds the whole-graph rules (cycles, orphans,
+transitive reach), the coverage floors and the baseline.
+
+- **The layout.** `src/modules/<module>/` holds `domain/<aggregate>/`
+  (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
+  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`),
+  `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
+  values), `use-cases/` (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`,
+  its result schema in `.result.ts`), `infrastructure/{repositories,clients}/`
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`) and `<module>.layer.ts`. Shared
+  primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
+  Filenames are dot-delimited stereotypes, kebab-case in front.
+- **What reaches what.** The domain names effect, the kernel and its own
+  module's domain. A use-case adds its ports; it never names infrastructure or
+  interface, never prints, prompts or sets an exit code, and returns a typed
+  result an adapter renders. Only repository adapters (and the legacy tier)
+  name `yaml`; only the runs module's infrastructure and the engine name SQL.
+- **Obligations.** A `.root-ops.ts` and a `.use-case.ts` each owe a sibling
+  `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
+  `-live.test.ts`. The lint names what is missing.
+- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`, `platform/`,
+  `tui/`) is one `unrestricted` node. A migration moves files out of it and
+  ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
+  ceiling when the numbers move (`bun run architecture:coverage`,
+  `architecture:conformance`), never the other way to make a run green.
+- **The baseline** (`.architecture-baseline.json`) is debt, not a suppression
+  list: a fixed violation fails until its line is gone
+  (`bun run architecture:baseline`). Prefer fixing, or a reason written into
+  the manifest, to adding a line.
+- **Every rule carries a probe**, and the plugin refuses to load a rule that
+  can't fire. To change the policy, edit `architecture.yaml` (the
+  `yaml-language-server` schema completes and checks it), plant the violation
+  you mean to catch, and see it reported. `bun run architecture:explain <file>`
+  shows every rule that governs a file.
 
 ## Effect and lint
 

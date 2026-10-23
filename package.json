@@ -14,6 +14,12 @@
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
     "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",
     "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",
+    "lint:architecture": "architecture check src packages test scripts templates",
+    "architecture:baseline": "architecture baseline src packages test scripts templates",
+    "architecture:coverage": "architecture coverage src packages test scripts templates",
+    "architecture:conformance": "architecture conformance src packages test scripts templates",
+    "architecture:explain": "architecture explain",
+    "architecture:facts": "architecture facts",
     "prepare": "effect-tsgo patch --oxlint",
     "gen:templates": "bun scripts/gen-templates.ts"
   },
@@ -27,6 +33,10 @@
   },
   "devDependencies": {
     "@effect/tsgo": "0.53.0",
+    "@goodbones/cli": "0.1.0-beta.22",
+    "@goodbones/core": "0.1.0-beta.18",
+    "@goodbones/oxlint": "0.1.0-beta.22",
+    "@goodbones/typescript": "0.1.0-beta.20",
     "@oxlint/plugins": "1.88.0",
     "@types/bun": "^1.3.0",
     "@typescript/native": "npm:typescript@7.0.2",
