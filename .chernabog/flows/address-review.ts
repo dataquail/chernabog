@@ -16,7 +16,9 @@ import {
   NeedsHuman,
   PullRequest,
   Repo,
+  reportAs,
   Review,
+  Skip,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
@@ -58,7 +60,7 @@ const trigger = Effect.gen(function* () {
   }
 
   return items;
-});
+}).pipe(reportAs("trigger"));
 
 const answerReview = (address: Review.AddressItem) =>
   Effect.gen(function* () {
@@ -98,7 +100,10 @@ const answerReview = (address: Review.AddressItem) =>
 
     yield* Review.checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
     yield* Implement.localGate(worktree, { id: `review-${round}`, session });
-    yield* Implement.push(`push-review-${round}`, worktree, address.headRef);
+    // Only a fix made in front of a person may touch humanOnlyPaths.
+    yield* Implement.push(`push-review-${round}`, worktree, address.headRef, {
+      withPerson: session.withPerson,
+    });
     yield* Implement.waitForCi(
       address.pullRequest,
       worktree,
@@ -114,14 +119,21 @@ const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
     const address = yield* Review.addressItemOf(item);
 
-    // Anything that stops it hands the pull request to a person.
+    const toPerson = (reason: string) => PullRequest.handToPerson(address.pullRequest, reason);
+
+    // Anything that stops it hands the pull request to a person, unless it closed meanwhile.
     return yield* answerReview(address).pipe(
-      Effect.catchTag("NeedsHuman", (needsHuman) =>
-        PullRequest.handToPerson(address.pullRequest, needsHuman.reason),
-      ),
-      Effect.catchTag("StepFailed", (failed) =>
-        PullRequest.handToPerson(address.pullRequest, `${failed.step}: ${failed.message}`),
-      ),
+      Effect.catchTags({
+        NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
+        StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
+        NothingCommitted: (nothing) =>
+          toPerson(`the author agent committed nothing on ${nothing.branch}`),
+        // Its message says how to fix the token, such as one without the workflow scope.
+        PushRejected: (rejected) => toPerson(rejected.message),
+        CiTimedOut: (timedOut) => toPerson(timedOut.message),
+        PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
+        NotFound: (gone) => Effect.fail(new Skip({ reason: gone.message })),
+      }),
     );
   });
 

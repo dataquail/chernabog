@@ -25,6 +25,7 @@ import {
   printJson,
   renderPrompt,
   Repo,
+  reportAs,
   Run,
   RunLog,
   StepFailed,
@@ -159,6 +160,7 @@ const trigger = untriagedAlerts.pipe(
       },
     ];
   }),
+  reportAs("trigger"),
 );
 
 const Decision = Schema.Literals(["fix", "person", "dismiss"]);
