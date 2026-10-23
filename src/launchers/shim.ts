@@ -4,12 +4,12 @@
 // never passes through a shell or tmux's quoting, and every launcher gives the
 // agent the same environment.
 
-import * as Effect from 'effect/Effect';
-import * as FileSystem from 'effect/FileSystem';
-import * as Option from 'effect/Option';
-import * as ChildProcess from 'effect/process/ChildProcess';
-import * as ChildProcessSpawner from 'effect/process/ChildProcessSpawner';
-import * as Schema from 'effect/Schema';
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 
 export const LaunchSpecFile = Schema.Struct({
   command: Schema.String,
@@ -31,12 +31,18 @@ export const runLaunch = (specFile: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const spec = yield* Schema.decodeEffect(LaunchSpecJson)(yield* fs.readFileString(specFile));
-    const prompt = yield* Effect.forEach(Option.toArray(Option.fromUndefinedOr(spec.promptFile)), (file) => fs.readFileString(file));
+
+    const prompt = yield* Effect.forEach(
+      Option.toArray(Option.fromUndefinedOr(spec.promptFile)),
+      (file) => fs.readFileString(file),
+    );
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const pidFile = Option.fromUndefinedOr(spec.pidFile);
 
-    yield* Effect.forEach(Option.toArray(pidFile), (file) => fs.writeFileString(file, String(process.pid)));
+    yield* Effect.forEach(Option.toArray(pidFile), (file) =>
+      fs.writeFileString(file, String(process.pid)),
+    );
 
     // Not detached: the agent keeps this terminal as its controlling one, so it
     // gets resizes, and closing the terminal hangs it up.
@@ -45,16 +51,20 @@ export const runLaunch = (specFile: string) =>
       env: spec.env,
       extendEnv: false,
       detached: false,
-      stdin: 'inherit',
-      stdout: 'inherit',
-      stderr: 'inherit',
-      forceKillAfter: '5 seconds',
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+      forceKillAfter: "5 seconds",
     });
 
     const exitCode = yield* spawner.spawn(agent).pipe(
       Effect.flatMap((handle) => handle.exitCode),
       Effect.scoped,
-      Effect.ensuring(Effect.forEach(Option.toArray(pidFile), (file) => fs.remove(file, { force: true }).pipe(Effect.ignore))),
+      Effect.ensuring(
+        Effect.forEach(Option.toArray(pidFile), (file) =>
+          fs.remove(file, { force: true }).pipe(Effect.ignore),
+        ),
+      ),
     );
 
     return Number(exitCode);

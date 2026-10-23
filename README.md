@@ -79,15 +79,15 @@ A recipe is a complete flow, its trigger, steps and endings written out from the
 
 Four recipes make the review loop: `implement`, `review`, `re-review` and `address-review`. They hand pull requests to each other through GitHub's own review requests and reviews; labels are the public record people see, and a few flows trigger on them.
 
-| Label | Set by | Means |
-| --- | --- | --- |
-| `auto:eligible` | a person | Queued; `implement` claims the oldest |
-| `auto:ship` | a person, `implement` | Queued on the automated path; on a pull request, chernabog merges it once approved |
-| `auto:in-progress` | `implement`, `Hybrid.claim` | A run owns the issue |
-| `auto:needs-review` | `implement` | Open and green, with no reviewer in the pool; a person reviews |
-| `auto:needs-human` | any flow | A loop cap or a rule stopped it; no flow picks it up again |
-| `auto:needs-clarification` | `implement` | Questions are on the issue; answer them and requeue |
-| `hybrid` | `Hybrid.openPullRequest` | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
+| Label                      | Set by                      | Means                                                                                     |
+| -------------------------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| `auto:eligible`            | a person                    | Queued; `implement` claims the oldest                                                     |
+| `auto:ship`                | a person, `implement`       | Queued on the automated path; on a pull request, chernabog merges it once approved        |
+| `auto:in-progress`         | `implement`, `Hybrid.claim` | A run owns the issue                                                                      |
+| `auto:needs-review`        | `implement`                 | Open and green, with no reviewer in the pool; a person reviews                            |
+| `auto:needs-human`         | any flow                    | A loop cap or a rule stopped it; no flow picks it up again                                |
+| `auto:needs-clarification` | `implement`                 | Questions are on the issue; answer them and requeue                                       |
+| `hybrid`                   | `Hybrid.openPullRequest`    | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
 
 `auto:approved`, `auto:stale` and `auto:changes-requested` are still created, for flows of your own; the recipes don't set them.
 
@@ -108,15 +108,15 @@ For work that needs a person through planning and implementation, a repo bakes t
 
 `chernabog` with no arguments opens a live view of the daemon: each repo and its flows with their next tick and what the last tick found queued, account usage against the usage gate's thresholds, runs in flight with their current step, recent runs, and why recent ticks were skipped.
 
-| Key | Does |
-| --- | --- |
-| `tab`, `↑` `↓` | Switch between the flows and the runs, and select |
-| `enter` | On a run: follow its log; `↑` `↓` scroll it, `end` follows again, `esc` comes back. On a flow: its persona's settings for the repo (below) |
-| `a` | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
-| `t` | Trigger the selected flow now, with its gates |
-| `e` | Turn the selected flow off or on for the persona it runs as, in machine config; it shows as pending until the daemon restarts on it, once idle |
-| `p` | Pause or resume the repo |
-| `q` | Quit |
+| Key            | Does                                                                                                                                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tab`, `↑` `↓` | Switch between the flows and the runs, and select                                                                                                                                                                                                                                           |
+| `enter`        | On a run: follow its log; `↑` `↓` scroll it, `end` follows again, `esc` comes back. On a flow: its persona's settings for the repo (below)                                                                                                                                                  |
+| `a`            | Attach: bring up the run's agent session, to watch or step in. A session still running under a launcher comes up there (its Orca tab, `tmux attach`); otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back |
+| `t`            | Trigger the selected flow now, with its gates                                                                                                                                                                                                                                               |
+| `e`            | Turn the selected flow off or on for the persona it runs as, in machine config; it shows as pending until the daemon restarts on it, once idle                                                                                                                                              |
+| `p`            | Pause or resume the repo                                                                                                                                                                                                                                                                    |
+| `q`            | Quit                                                                                                                                                                                                                                                                                        |
 
 **Settings.** `enter` on a flow opens that persona's settings for the repo: each of its flows with its schedule next to the team's, then its account and each role's. There, `e` turns a flow on or off; `s` types a schedule (cron) for it, checked before it's saved; `enter` on the account or a role chooses one from machine config's accounts; and `c` clears an override, back to the team's schedule or the default account. Each change goes to the repo's entry in machine config (the persona's own, where it has one), keeping its comments, and the daemon picks it up when idle. An account that would clash with the persona's others, such as a second account on one agent, is refused and nothing is written.
 
@@ -124,23 +124,23 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `status` | Repos, their schedules and trust, runs in flight, recent runs and why ticks were skipped |
-| `run <flow> --repo <name>` | One run now, skipping gates, through the daemon; follows its log. `--detach` returns at once |
-| `trigger <flow> --repo <name>` | A tick now, with its gates, as if the schedule came due |
-| `start <issue> [--repo <name>] [--as <login>]` | The hybrid path: runs the repo's `human-initiated` flow on the issue through the daemon, which must be running, and brings its session up here (the Orca tab, `tmux attach`). `--repo` defaults to the enrolled repo this directory is in, else the only one. On an issue whose run is in flight, it brings up that session |
-| `open-pr --title <t> [--body <b> \| --body-file <f>] [--summary <s>]` | From inside the session `chernabog start` opened: checks the worktree is clean and hands the work back; chernabog runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
-| `logs <run> [-f]` | A run's log |
-| `pause <repo>`, `resume <repo>` | Start no new runs in a repo; runs in flight continue |
-| `trust [repo]` | Shows what changed in `.chernabog/` since it was last trusted, and trusts it |
-| `labels [repo]` | Creates or corrects the repo's labels |
-| `doctor` | Checks logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon |
-| `setup` | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again |
-| `recipes list`, `recipes add [names…]`, `recipes diff [names…]` | Lists the recipes, with a check by each the repo has; bakes recipes into the repo's `.chernabog/flows/`, asking which when none is named, and never overwriting a flow it has; shows how the repo's flows differ from the current recipes they came from |
-| `init`, `enroll` | `init` scaffolds `.chernabog/`, bakes the recipes chosen (`--recipes a,b` without asking; none piped) and enrolls the repo once it has a flow; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
-| `unenroll <repo>` | Removes a repo, and its settings, from this machine's config |
-| `install`, `uninstall`, `start`, `stop`, `daemon` | The daemon and its service; `install` runs `setup` first, and takes its flags. `start` with no issue starts the daemon |
+| Command                                                               | What it does                                                                                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `status`                                                              | Repos, their schedules and trust, runs in flight, recent runs and why ticks were skipped                                                                                                                                                                                                                                       |
+| `run <flow> --repo <name>`                                            | One run now, skipping gates, through the daemon; follows its log. `--detach` returns at once                                                                                                                                                                                                                                   |
+| `trigger <flow> --repo <name>`                                        | A tick now, with its gates, as if the schedule came due                                                                                                                                                                                                                                                                        |
+| `start <issue> [--repo <name>] [--as <login>]`                        | The hybrid path: runs the repo's `human-initiated` flow on the issue through the daemon, which must be running, and brings its session up here (the Orca tab, `tmux attach`). `--repo` defaults to the enrolled repo this directory is in, else the only one. On an issue whose run is in flight, it brings up that session    |
+| `open-pr --title <t> [--body <b> \| --body-file <f>] [--summary <s>]` | From inside the session `chernabog start` opened: checks the worktree is clean and hands the work back; chernabog runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close                                                                               |
+| `logs <run> [-f]`                                                     | A run's log                                                                                                                                                                                                                                                                                                                    |
+| `pause <repo>`, `resume <repo>`                                       | Start no new runs in a repo; runs in flight continue                                                                                                                                                                                                                                                                           |
+| `trust [repo]`                                                        | Shows what changed in `.chernabog/` since it was last trusted, and trusts it                                                                                                                                                                                                                                                   |
+| `labels [repo]`                                                       | Creates or corrects the repo's labels                                                                                                                                                                                                                                                                                          |
+| `doctor`                                                              | Checks logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon                                                                                                                                                                                               |
+| `setup`                                                               | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again                                                                                                                                                                           |
+| `recipes list`, `recipes add [names…]`, `recipes diff [names…]`       | Lists the recipes, with a check by each the repo has; bakes recipes into the repo's `.chernabog/flows/`, asking which when none is named, and never overwriting a flow it has; shows how the repo's flows differ from the current recipes they came from                                                                       |
+| `init`, `enroll`                                                      | `init` scaffolds `.chernabog/`, bakes the recipes chosen (`--recipes a,b` without asking; none piped) and enrolls the repo once it has a flow; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking) |
+| `unenroll <repo>`                                                     | Removes a repo, and its settings, from this machine's config                                                                                                                                                                                                                                                                   |
+| `install`, `uninstall`, `start`, `stop`, `daemon`                     | The daemon and its service; `install` runs `setup` first, and takes its flags. `start` with no issue starts the daemon                                                                                                                                                                                                         |
 
 `run --from-checkout` runs in the foreground with the working copy's `.chernabog/`, to try a change to a flow before merging it; it needs the daemon stopped, since only one process may run the workflow engine. `labels --from-checkout` likewise creates the labels from the working copy, so issues can be queued while the setup is still in review.
 
@@ -148,12 +148,12 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 
 No flow depends on a specific agent. The SDK's `Agent` service calls an adapter, which starts or resumes a session in the worktree and returns the agent's final answer, checked against a JSON Schema.
 
-| Adapter | Start | Resume | Answer |
-| --- | --- | --- | --- |
-| `claude` | Under a [launcher](#launchers): an interactive `claude --session-id <id> --permission-mode auto`. Headless: `claude -p --session-id <id> --permission-mode auto --output-format stream-json` | `--resume <id>` | Under a launcher: a JSON file the agent writes, checked by a Stop hook. Headless: `--json-schema` |
-| `codex` | `codex exec --json --approve-for-me`, sandboxed to the workspace (with network, and the repo's `.git` writable for commits) | `codex exec resume <thread>` | `--output-schema`, `-o` |
-| `opencode` | `opencode run --format json` | `--session <id>` | the last JSON object in its final message |
-| your own | `agents.<name>.start` in machine config, with `{prompt}`, `{promptFile}`, `{sessionId}`, `{cwd}` | `agents.<name>.resume` | the last JSON object it prints |
+| Adapter    | Start                                                                                                                                                                                        | Resume                       | Answer                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `claude`   | Under a [launcher](#launchers): an interactive `claude --session-id <id> --permission-mode auto`. Headless: `claude -p --session-id <id> --permission-mode auto --output-format stream-json` | `--resume <id>`              | Under a launcher: a JSON file the agent writes, checked by a Stop hook. Headless: `--json-schema` |
+| `codex`    | `codex exec --json --approve-for-me`, sandboxed to the workspace (with network, and the repo's `.git` writable for commits)                                                                  | `codex exec resume <thread>` | `--output-schema`, `-o`                                                                           |
+| `opencode` | `opencode run --format json`                                                                                                                                                                 | `--session <id>`             | the last JSON object in its final message                                                         |
+| your own   | `agents.<name>.start` in machine config, with `{prompt}`, `{promptFile}`, `{sessionId}`, `{cwd}`                                                                                             | `agents.<name>.resume`       | the last JSON object it prints                                                                    |
 
 Each piece of work has a stable session id, so a run that crashes mid-agent resumes the same session. Claude takes the id as given; Codex and opencode pick their own, which Chernabog records the moment they report it.
 
@@ -177,12 +177,12 @@ agents:
 
 A launcher decides where an interactive Claude session runs. Nothing runs `claude -p` unless the launcher is `headless`.
 
-| Launcher | A session is | Attach |
-| --- | --- | --- |
-| `orca` | A terminal tab in Orca, on the worktree (`orca terminal create`) | `orca terminal switch` brings the tab up |
-| `tmux` | A detached tmux session, `chernabog-<session>` | `tmux attach-session` |
-| `headless` | `claude -p`, a child process of the run | `claude --resume` |
-| your own | `launchers.<name>` in machine config | its `attach`, if it has one |
+| Launcher   | A session is                                                     | Attach                                   |
+| ---------- | ---------------------------------------------------------------- | ---------------------------------------- |
+| `orca`     | A terminal tab in Orca, on the worktree (`orca terminal create`) | `orca terminal switch` brings the tab up |
+| `tmux`     | A detached tmux session, `chernabog-<session>`                   | `tmux attach-session`                    |
+| `headless` | `claude -p`, a child process of the run                          | `claude --resume`                        |
+| your own   | `launchers.<name>` in machine config                             | its `attach`, if it has one              |
 
 Under a launcher, the prompt asks the agent to write its final answer as JSON to a file and stop. A Stop hook checks that file against the answer's schema: until it is valid, the hook sends the agent back to write it, three times at most, and then the run fails. So whether the session is done is decided the same way under every launcher, and an answer can't be lost to a later turn. When the session is done, Chernabog closes it. If it ends without an answer, Chernabog resumes it twice before failing. A session still running when the daemon restarts is waited on again, never started twice. The run log follows the session's transcript.
 
@@ -245,10 +245,10 @@ Agents keep running with the permissions their own CLI config grants; Chernabog 
 
 Config has two layers: the team's, committed in the repo, and each person's, in machine config. Later layers override earlier ones key by key, except that a repo can never raise machine limits, and the launcher, where a person's choice wins within the repo's `allowedLaunchers` (see [Launchers](#launchers)).
 
-| Layer             | Lives in                                 | Owns                                                                                              |
-| ----------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Repo              | `.chernabog/`, committed                | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `reviewers`, `assignee`, `reviewRequested` |
-| Machine           | `~/.config/chernabog/config.yaml`       | Agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own, GitHub personas, and the enrolled repos: for each, keyed by its `owner/name`, the flows that run and their settings, account, agent, roles, schedule, active hours, launcher and whether it's enabled, per persona |
+| Layer   | Lives in                          | Owns                                                                                                                                                                                                                                                                                                                                  |
+| ------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repo    | `.chernabog/`, committed          | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `reviewers`, `assignee`, `reviewRequested`                                                                                                               |
+| Machine | `~/.config/chernabog/config.yaml` | Agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own, GitHub personas, and the enrolled repos: for each, keyed by its `owner/name`, the flows that run and their settings, account, agent, roles, schedule, active hours, launcher and whether it's enabled, per persona |
 
 `init` writes `config.schema.json` next to the YAML, so editors autocomplete it. It's generated, so `init` rewrites it whenever it's out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
 
@@ -272,11 +272,11 @@ usageGate:
   humanRatePerHour: 0.005
 concurrency: 1
 repos:
-  - repo: you/my-app        # the key: settings follow the repo, not the folder
-    path: ~/code/my-app     # where its checkout is now
+  - repo: you/my-app # the key: settings follow the repo, not the folder
+    path: ~/code/my-app # where its checkout is now
     account: personal
     baseBranch: main
-    flows:                  # the flows that run here, and no others
+    flows: # the flows that run here, and no others
       implement: {}
       review: { schedule: "*/20 * * * *" }
 ```

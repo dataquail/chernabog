@@ -1,17 +1,17 @@
 // Runs and the waits they are suspended on, in state.db next to the workflow
 // journal. The workflow engine owns its own tables; these are Chernabog's.
 
-import * as Context from 'effect/Context';
-import * as DateTime from 'effect/DateTime';
-import * as Effect from 'effect/Effect';
-import * as Layer from 'effect/Layer';
-import * as Option from 'effect/Option';
-import * as Schema from 'effect/Schema';
-import * as SqlClient from 'effect/sql/SqlClient';
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 
-import { asSuffix, type Persona } from './persona.ts';
+import { asSuffix, type Persona } from "./persona.ts";
 
-export const RunStatus = Schema.Literals(['running', 'done', 'skipped', 'needs-human', 'failed']);
+export const RunStatus = Schema.Literals(["running", "done", "skipped", "needs-human", "failed"]);
 
 export type RunStatus = typeof RunStatus.Type;
 
@@ -42,20 +42,38 @@ const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
 // Enough of a run's id to name it, as `logs` and `attach` take it. A run from
 // before ids were random keeps its whole, readable id.
 export const shortRunId = (id: string) => {
-  if (UUID.test(id)) return id.slice(0, 8);
+  if (UUID.test(id)) {
+    return id.slice(0, 8);
+  }
 
   return id;
 };
 
 // What a run is, for people, since its id doesn't say: demo/review pr-12 as bob.
-export const runLabel = (run: { readonly repo: string; readonly flow: string; readonly itemKey: string; readonly persona: Option.Option<string> }) =>
-  `${run.repo}/${run.flow} ${run.itemKey}${asSuffix(run.persona)}`;
+export const runLabel = (run: {
+  readonly repo: string;
+  readonly flow: string;
+  readonly itemKey: string;
+  readonly persona: Option.Option<string>;
+}) => `${run.repo}/${run.flow} ${run.itemKey}${asSuffix(run.persona)}`;
 
-export const WaitRow = Schema.Struct({ runId: Schema.String, signal: Schema.String, deferred: Schema.String, token: Schema.String });
+export const WaitRow = Schema.Struct({
+  runId: Schema.String,
+  signal: Schema.String,
+  deferred: Schema.String,
+  token: Schema.String,
+});
 
 export type WaitRow = typeof WaitRow.Type;
 
-export const SkipRow = Schema.Struct({ repo: Schema.String, persona: Maybe, flow: Schema.String, itemKey: Maybe, reason: Schema.String, at: Schema.String });
+export const SkipRow = Schema.Struct({
+  repo: Schema.String,
+  persona: Maybe,
+  flow: Schema.String,
+  itemKey: Maybe,
+  reason: Schema.String,
+  at: Schema.String,
+});
 
 export type SkipRow = typeof SkipRow.Type;
 
@@ -76,9 +94,21 @@ const RunColumns = Schema.Struct({
   finished_at: Maybe,
 });
 
-const WaitColumns = Schema.Struct({ run_id: Schema.String, signal: Schema.String, deferred: Schema.String, token: Schema.String });
+const WaitColumns = Schema.Struct({
+  run_id: Schema.String,
+  signal: Schema.String,
+  deferred: Schema.String,
+  token: Schema.String,
+});
 
-const SkipColumns = Schema.Struct({ repo: Schema.String, persona: Maybe, flow: Schema.String, item_key: Maybe, reason: Schema.String, at: Schema.String });
+const SkipColumns = Schema.Struct({
+  repo: Schema.String,
+  persona: Maybe,
+  flow: Schema.String,
+  item_key: Maybe,
+  reason: Schema.String,
+  at: Schema.String,
+});
 
 const ColumnName = Schema.Struct({ name: Schema.String });
 
@@ -110,15 +140,34 @@ export type NewRun = {
   readonly itemUrl: Option.Option<string>;
 };
 
-export type NewSkip = { readonly repo: string; readonly persona: Persona; readonly flow: string; readonly itemKey: Option.Option<string>; readonly reason: string };
+export type NewSkip = {
+  readonly repo: string;
+  readonly persona: Persona;
+  readonly flow: string;
+  readonly itemKey: Option.Option<string>;
+  readonly reason: string;
+};
 
-export type RunFilter = { readonly repo: Option.Option<string>; readonly persona: Option.Option<Persona>; readonly flow: Option.Option<string> };
+export type RunFilter = {
+  readonly repo: Option.Option<string>;
+  readonly persona: Option.Option<Persona>;
+  readonly flow: Option.Option<string>;
+};
 
-export const everyRun: RunFilter = { repo: Option.none(), persona: Option.none(), flow: Option.none() };
+export const everyRun: RunFilter = {
+  repo: Option.none(),
+  persona: Option.none(),
+  flow: Option.none(),
+};
 
-const matches = (filter: Option.Option<string>, value: string) => Option.match(filter, { onNone: () => true, onSome: (wanted) => wanted === value });
+const matches = (filter: Option.Option<string>, value: string) =>
+  Option.match(filter, { onNone: () => true, onSome: (wanted) => wanted === value });
 
-const matchesPersona = (filter: Option.Option<Persona>, value: Persona) => Option.match(filter, { onNone: () => true, onSome: (wanted) => Option.getOrNull(wanted) === Option.getOrNull(value) });
+const matchesPersona = (filter: Option.Option<Persona>, value: Persona) =>
+  Option.match(filter, {
+    onNone: () => true,
+    onSome: (wanted) => Option.getOrNull(wanted) === Option.getOrNull(value),
+  });
 
 export class State extends Context.Service<
   State,
@@ -129,7 +178,12 @@ export class State extends Context.Service<
     finishRun(runId: string, status: RunStatus, summary: string): Effect.Effect<void>;
     run(runId: string): Effect.Effect<Option.Option<RunRow>>;
     activeRuns(filter: RunFilter): Effect.Effect<ReadonlyArray<RunRow>>;
-    activeRunFor(repo: string, persona: Persona, flow: string, itemKey: string): Effect.Effect<Option.Option<RunRow>>;
+    activeRunFor(
+      repo: string,
+      persona: Persona,
+      flow: string,
+      itemKey: string,
+    ): Effect.Effect<Option.Option<RunRow>>;
     // Gives the repo's runs and skips from before personas a persona, so they resume as it.
     adoptRuns(repo: string, login: string): Effect.Effect<void>;
     recentRuns(limit: number): Effect.Effect<ReadonlyArray<RunRow>>;
@@ -141,7 +195,7 @@ export class State extends Context.Service<
     recordSkip(skip: NewSkip): Effect.Effect<void>;
     recentSkips(limit: number): Effect.Effect<ReadonlyArray<SkipRow>>;
   }
->()('chernabog/State') {
+>()("chernabog/State") {
   public static readonly layer: Layer.Layer<State, never, SqlClient.SqlClient> = Layer.effect(
     State,
     Effect.gen(function* () {
@@ -177,10 +231,14 @@ export class State extends Context.Service<
       )`;
 
       // Databases from before personas gain the column; their rows read as the implicit persona.
-      for (const table of ['om_runs', 'om_skips']) {
-        const columns = yield* sql`SELECT name FROM pragma_table_info(${table})`.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ColumnName))));
+      for (const table of ["om_runs", "om_skips"]) {
+        const columns = yield* sql`SELECT name FROM pragma_table_info(${table})`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ColumnName))),
+        );
 
-        if (!columns.some((column) => column.name === 'persona')) yield* sql.unsafe(`ALTER TABLE ${table} ADD COLUMN persona TEXT`);
+        if (!columns.some((column) => column.name === "persona")) {
+          yield* sql.unsafe(`ALTER TABLE ${table} ADD COLUMN persona TEXT`);
+        }
       }
 
       yield* sql`DROP INDEX IF EXISTS om_runs_active`;
@@ -194,7 +252,10 @@ export class State extends Context.Service<
       const rows =
         <A, I>(columns: Schema.Codec<A, I>) =>
         <E>(query: Effect.Effect<ReadonlyArray<object>, E>) =>
-          query.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(columns))), Effect.orDie);
+          query.pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(columns))),
+            Effect.orDie,
+          );
 
       const runs = rows(RunColumns);
 
@@ -204,40 +265,91 @@ export class State extends Context.Service<
             write(sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, status, started_at)
               VALUES (${run.id}, ${run.repo}, ${nullable(run.persona)}, ${run.flow}, ${run.itemKey}, ${nullable(run.itemTitle)}, ${nullable(run.itemUrl)}, 'running', ${at})`),
           ),
-        setExecution: (runId, executionId) => write(sql`UPDATE om_runs SET execution_id = ${executionId} WHERE id = ${runId}`),
-        setStep: (runId, step) => write(sql`UPDATE om_runs SET current_step = ${step} WHERE id = ${runId}`),
+        setExecution: (runId, executionId) =>
+          write(sql`UPDATE om_runs SET execution_id = ${executionId} WHERE id = ${runId}`),
+        setStep: (runId, step) =>
+          write(sql`UPDATE om_runs SET current_step = ${step} WHERE id = ${runId}`),
         finishRun: (runId, status, summary) =>
-          Effect.flatMap(now, (at) => write(sql`UPDATE om_runs SET status = ${status}, summary = ${summary}, finished_at = ${at}, current_step = NULL WHERE id = ${runId}`)),
-        run: (runId) => runs(sql`SELECT * FROM om_runs WHERE id = ${runId}`).pipe(Effect.map((found) => Option.map(Option.fromUndefinedOr(found[0]), toRun))),
+          Effect.flatMap(now, (at) =>
+            write(
+              sql`UPDATE om_runs SET status = ${status}, summary = ${summary}, finished_at = ${at}, current_step = NULL WHERE id = ${runId}`,
+            ),
+          ),
+        run: (runId) =>
+          runs(sql`SELECT * FROM om_runs WHERE id = ${runId}`).pipe(
+            Effect.map((found) => Option.map(Option.fromUndefinedOr(found[0]), toRun)),
+          ),
         activeRuns: (filter) =>
           runs(sql`SELECT * FROM om_runs WHERE status = 'running' ORDER BY started_at`).pipe(
-            Effect.map((found) => found.map(toRun).filter((run) => matches(filter.repo, run.repo) && matchesPersona(filter.persona, run.persona) && matches(filter.flow, run.flow))),
+            Effect.map((found) =>
+              found
+                .map(toRun)
+                .filter(
+                  (run) =>
+                    matches(filter.repo, run.repo) &&
+                    matchesPersona(filter.persona, run.persona) &&
+                    matches(filter.flow, run.flow),
+                ),
+            ),
           ),
         // IS, unlike =, matches the implicit persona's NULL.
         activeRunFor: (repo, persona, flow, itemKey) =>
-          runs(sql`SELECT * FROM om_runs WHERE status = 'running' AND repo = ${repo} AND persona IS ${nullable(persona)} AND flow = ${flow} AND item_key = ${itemKey}`).pipe(
-            Effect.map((found) => Option.map(Option.fromUndefinedOr(found[0]), toRun)),
-          ),
+          runs(
+            sql`SELECT * FROM om_runs WHERE status = 'running' AND repo = ${repo} AND persona IS ${nullable(persona)} AND flow = ${flow} AND item_key = ${itemKey}`,
+          ).pipe(Effect.map((found) => Option.map(Option.fromUndefinedOr(found[0]), toRun))),
         adoptRuns: (repo, login) =>
           Effect.andThen(
-            write(sql`UPDATE om_runs SET persona = ${login} WHERE repo = ${repo} AND persona IS NULL`),
-            write(sql`UPDATE om_skips SET persona = ${login} WHERE repo = ${repo} AND persona IS NULL`),
+            write(
+              sql`UPDATE om_runs SET persona = ${login} WHERE repo = ${repo} AND persona IS NULL`,
+            ),
+            write(
+              sql`UPDATE om_skips SET persona = ${login} WHERE repo = ${repo} AND persona IS NULL`,
+            ),
           ),
-        recentRuns: (limit) => runs(sql`SELECT * FROM om_runs ORDER BY started_at DESC LIMIT ${limit}`).pipe(Effect.map((found) => found.map(toRun))),
-        addWait: (wait) => write(sql`INSERT OR REPLACE INTO om_waits (run_id, signal, deferred, token) VALUES (${wait.runId}, ${wait.signal}, ${wait.deferred}, ${wait.token})`),
+        recentRuns: (limit) =>
+          runs(sql`SELECT * FROM om_runs ORDER BY started_at DESC LIMIT ${limit}`).pipe(
+            Effect.map((found) => found.map(toRun)),
+          ),
+        addWait: (wait) =>
+          write(
+            sql`INSERT OR REPLACE INTO om_waits (run_id, signal, deferred, token) VALUES (${wait.runId}, ${wait.signal}, ${wait.deferred}, ${wait.token})`,
+          ),
         waitsFor: (runId, signal) =>
-          rows(WaitColumns)(sql`SELECT * FROM om_waits WHERE run_id = ${runId} AND signal = ${signal}`).pipe(
-            Effect.map((found) => found.map((row) => ({ runId: row.run_id, signal: row.signal, deferred: row.deferred, token: row.token }))),
+          rows(WaitColumns)(
+            sql`SELECT * FROM om_waits WHERE run_id = ${runId} AND signal = ${signal}`,
+          ).pipe(
+            Effect.map((found) =>
+              found.map((row) => ({
+                runId: row.run_id,
+                signal: row.signal,
+                deferred: row.deferred,
+                token: row.token,
+              })),
+            ),
           ),
-        removeWait: (runId, deferred) => write(sql`DELETE FROM om_waits WHERE run_id = ${runId} AND deferred = ${deferred}`),
-        parkedRunIds: rows(RunIdColumn)(sql`SELECT DISTINCT run_id FROM om_waits`).pipe(Effect.map((found) => found.map((row) => row.run_id))),
+        removeWait: (runId, deferred) =>
+          write(sql`DELETE FROM om_waits WHERE run_id = ${runId} AND deferred = ${deferred}`),
+        parkedRunIds: rows(RunIdColumn)(sql`SELECT DISTINCT run_id FROM om_waits`).pipe(
+          Effect.map((found) => found.map((row) => row.run_id)),
+        ),
         recordSkip: (skip) =>
           Effect.flatMap(now, (at) =>
-            write(sql`INSERT INTO om_skips (repo, persona, flow, item_key, reason, at) VALUES (${skip.repo}, ${nullable(skip.persona)}, ${skip.flow}, ${nullable(skip.itemKey)}, ${skip.reason}, ${at})`),
+            write(
+              sql`INSERT INTO om_skips (repo, persona, flow, item_key, reason, at) VALUES (${skip.repo}, ${nullable(skip.persona)}, ${skip.flow}, ${nullable(skip.itemKey)}, ${skip.reason}, ${at})`,
+            ),
           ),
         recentSkips: (limit) =>
           rows(SkipColumns)(sql`SELECT * FROM om_skips ORDER BY at DESC LIMIT ${limit}`).pipe(
-            Effect.map((found) => found.map((row) => ({ repo: row.repo, persona: row.persona, flow: row.flow, itemKey: row.item_key, reason: row.reason, at: row.at }))),
+            Effect.map((found) =>
+              found.map((row) => ({
+                repo: row.repo,
+                persona: row.persona,
+                flow: row.flow,
+                itemKey: row.item_key,
+                reason: row.reason,
+                at: row.at,
+              })),
+            ),
           ),
       });
     }).pipe(Effect.orDie),

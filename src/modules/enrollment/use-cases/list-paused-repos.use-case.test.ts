@@ -1,20 +1,25 @@
-import { describe, expect } from 'bun:test';
-import * as Effect from 'effect/Effect';
+import { describe, expect } from "bun:test";
+import * as Effect from "effect/Effect";
 
-import { effect } from '../../../../test/effect-test.ts';
-import { RepoSlug } from '../../../kernel/repo-slug.id.ts';
-import { EnrolledRepoRoot } from '../domain/enrolled-repo/enrolled-repo.root.ts';
-import { EnrolledReposRepositoryFake } from '../infrastructure/repositories/enrolled-repos.repository-fake.ts';
-import { listPausedReposUseCase } from './list-paused-repos.use-case.ts';
+import { effect } from "../../../../test/effect-test.ts";
+import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
+import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
+import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
+import { listPausedReposUseCase } from "./list-paused-repos.use-case.ts";
 
-const repo = (slug: string, paused: boolean) => EnrolledRepoRoot.make({ repo: RepoSlug.make(slug), path: `/src/${slug}`, defaults: {}, paused });
+const repo = (slug: string, paused: boolean) =>
+  EnrolledRepoRoot.make({ repo: RepoSlug.make(slug), path: `/src/${slug}`, defaults: {}, paused });
 
-describe('listPausedReposUseCase', () => {
-  effect('lists the paused repos by slug', () =>
+describe("listPausedReposUseCase", () => {
+  effect("lists the paused repos by slug", () =>
     Effect.gen(function* () {
       const paused = yield* listPausedReposUseCase();
 
-      expect(paused.repos).toEqual([RepoSlug.make('dataquail/demo')]);
-    }).pipe(Effect.provide(EnrolledReposRepositoryFake([repo('dataquail/demo', true), repo('dataquail/other', false)]))),
+      expect(paused.repos).toEqual([RepoSlug.make("dataquail/demo")]);
+    }).pipe(
+      Effect.provide(
+        EnrolledReposRepositoryFake([repo("dataquail/demo", true), repo("dataquail/other", false)]),
+      ),
+    ),
   );
 });

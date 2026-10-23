@@ -2,35 +2,89 @@
 // labels, comments, branches (kept in a real bare repo, so git push works),
 // pull requests and check runs.
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from "node:child_process";
 
-import { type Json, parseJson, printJson } from '@chernabog/sdk';
-import * as Arr from 'effect/Array';
-import * as Option from 'effect/Option';
-import * as Schema from 'effect/Schema';
+import { type Json, parseJson, printJson } from "@chernabog/sdk";
+import * as Arr from "effect/Array";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
-export type FakeIssue = { number: number; title: string; body: string; labels: Array<string>; createdAt: string; assignees: Array<string> };
+export type FakeIssue = {
+  number: number;
+  title: string;
+  body: string;
+  labels: Array<string>;
+  createdAt: string;
+  assignees: Array<string>;
+};
 
-export type FakeComment = { id: number; body: string; user: { login: string }; author_association: string; created_at: string };
+export type FakeComment = {
+  id: number;
+  body: string;
+  user: { login: string };
+  author_association: string;
+  created_at: string;
+};
 
-export type FakePull = { number: number; title: string; body: string; head: string; base: string; state: 'open' | 'closed'; merged: boolean; labels: Array<string>; reviewers: Array<string>; author: string };
+export type FakePull = {
+  number: number;
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  state: "open" | "closed";
+  merged: boolean;
+  labels: Array<string>;
+  reviewers: Array<string>;
+  author: string;
+};
 
-const ReviewComment = Schema.Struct({ path: Schema.String, line: Schema.Finite, side: Schema.optionalKey(Schema.String), body: Schema.String });
+const ReviewComment = Schema.Struct({
+  path: Schema.String,
+  line: Schema.Finite,
+  side: Schema.optionalKey(Schema.String),
+  body: Schema.String,
+});
 
-export type FakeReview = { id: number; body: string; commit_id: string; comments: ReadonlyArray<typeof ReviewComment.Type>; author: string; state: string };
+export type FakeReview = {
+  id: number;
+  body: string;
+  commit_id: string;
+  comments: ReadonlyArray<typeof ReviewComment.Type>;
+  author: string;
+  state: string;
+};
 
 // A review's state once submitted with its event, as GitHub reports it.
-const STATES = { APPROVE: 'APPROVED', REQUEST_CHANGES: 'CHANGES_REQUESTED', COMMENT: 'COMMENTED' } satisfies Readonly<Record<string, string>>;
+const STATES = {
+  APPROVE: "APPROVED",
+  REQUEST_CHANGES: "CHANGES_REQUESTED",
+  COMMENT: "COMMENTED",
+} satisfies Readonly<Record<string, string>>;
 
-const stateOf = (event: string) => Option.getOrElse(Option.map(Arr.findFirst(Object.entries(STATES), ([name]) => name === event), ([, state]) => state), () => 'COMMENTED');
+const stateOf = (event: string) =>
+  Option.getOrElse(
+    Option.map(
+      Arr.findFirst(Object.entries(STATES), ([name]) => name === event),
+      ([, state]) => state,
+    ),
+    () => "COMMENTED",
+  );
 
 // Who a request comes from: token-<login> is that login, as fakebin/gh hands
 // out for a persona; any other token, such as the sandbox's GH_TOKEN, is the bot.
-export const BOT = 'chernabog-bot';
+export const BOT = "chernabog-bot";
 
-const loginOf = (request: Request) => Option.getOrElse(Option.flatMap(Option.fromNullishOr(/^Bearer token-(.+)$/.exec(request.headers.get('authorization') ?? '')), (match) => Option.fromUndefinedOr(match[1])), () => BOT);
+const loginOf = (request: Request) =>
+  Option.getOrElse(
+    Option.flatMap(
+      Option.fromNullishOr(/^Bearer token-(.+)$/.exec(request.headers.get("authorization") ?? "")),
+      (match) => Option.fromUndefinedOr(match[1]),
+    ),
+    () => BOT,
+  );
 
-export type Checks = 'green' | 'red' | 'pending';
+export type Checks = "green" | "red" | "pending";
 
 // What the fake answers with, where GitHub's own JSON carries nulls.
 const PullJson = Schema.Struct({
@@ -61,46 +115,78 @@ const CheckRunsJson = Schema.Struct({
 });
 
 // What the app sends.
-const GraphqlBody = Schema.Struct({ variables: Schema.Struct({ search: Schema.optionalKey(Schema.String) }) });
+const GraphqlBody = Schema.Struct({
+  variables: Schema.Struct({ search: Schema.optionalKey(Schema.String) }),
+});
+
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
 const CommentBody = Schema.Struct({ body: Schema.String });
 const LabelsBody = Schema.Struct({ labels: Schema.Array(Schema.String) });
 const AssigneesBody = Schema.Struct({ assignees: Schema.Array(Schema.String) });
-const NewPullBody = Schema.Struct({ title: Schema.String, body: Schema.String, head: Schema.String, base: Schema.String });
-const ReviewBody = Schema.Struct({ body: Schema.String, commit_id: Schema.String, event: Schema.optionalKey(Schema.String), comments: Schema.optionalKey(Schema.Array(ReviewComment)) });
+
+const NewPullBody = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+  head: Schema.String,
+  base: Schema.String,
+});
+
+const ReviewBody = Schema.Struct({
+  body: Schema.String,
+  commit_id: Schema.String,
+  event: Schema.optionalKey(Schema.String),
+  comments: Schema.optionalKey(Schema.Array(ReviewComment)),
+});
+
 const ReviewersBody = Schema.Struct({ reviewers: Schema.Array(Schema.String) });
 const MergeBody = Schema.Struct({ merge_method: Schema.String, sha: Schema.String });
 
-type Args = { readonly params: ReadonlyArray<string>; readonly body: Option.Option<Json>; readonly url: URL; readonly login: string };
+type Args = {
+  readonly params: ReadonlyArray<string>;
+  readonly body: Option.Option<Json>;
+  readonly url: URL;
+  readonly login: string;
+};
 
-type Route = { readonly method: string; readonly pattern: RegExp; readonly handle: (args: Args) => Response };
+type Route = {
+  readonly method: string;
+  readonly pattern: RegExp;
+  readonly handle: (args: Args) => Response;
+};
 
-const json = (body: Json, status = 200) => new Response(printJson(body), { status, headers: { 'content-type': 'application/json' } });
+const json = (body: Json, status = 200) =>
+  new Response(printJson(body), { status, headers: { "content-type": "application/json" } });
 
 const encoded = <A, I>(schema: Schema.Codec<A, I>, value: A, status = 200) =>
-  new Response(Schema.encodeSync(Schema.fromJsonString(schema))(value), { status, headers: { 'content-type': 'application/json' } });
+  new Response(Schema.encodeSync(Schema.fromJsonString(schema))(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 
-const notFound = () => json({ message: 'Not Found' }, 404);
+const notFound = () => json({ message: "Not Found" }, 404);
 
 // A route whose request body must decode with the schema.
 const withBody =
   <A, I>(schema: Schema.Codec<A, I>, handle: (body: A, args: Args) => Response) =>
   (args: Args) =>
     Option.match(Option.flatMap(args.body, Schema.decodeUnknownOption(schema)), {
-      onNone: () => json({ message: 'Problems parsing JSON' }, 400),
+      onNone: () => json({ message: "Problems parsing JSON" }, 400),
       onSome: (body) => handle(body, args),
     });
 
 const now = () => new Date().toISOString();
 
-const numberParam = (args: Args) => Number(args.params[0] ?? '0');
+const numberParam = (args: Args) => Number(args.params[0] ?? "0");
 
 export const startFakeGitHub = (options: { slug: string; bare: string; checks?: Checks }) => {
   const issues = new Map<number, FakeIssue>();
   const comments = new Map<number, Array<FakeComment>>();
   const pulls = new Map<number, FakePull>();
   const reviews = new Map<number, Array<FakeReview>>();
-  const merges: Array<{ readonly number: number; readonly method: string; readonly by: string }> = [];
+
+  const merges: Array<{ readonly number: number; readonly method: string; readonly by: string }> =
+    [];
+
   // Logins that can only read the repo; anyone else can write.
   const readOnly = new Set<string>();
   const requests: Array<string> = [];
@@ -108,11 +194,18 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const requestsBy: Array<string> = [];
   let nextNumber = 1;
   let nextComment = 1;
-  let checks: Checks = options.checks ?? 'green';
+  let checks: Checks = options.checks ?? "green";
   const inAWhile = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
-  const usageOf = (fiveHour: number, sevenDay: number) => ({ five_hour: { utilization: fiveHour, resets_at: inAWhile(3) }, seven_day: { utilization: sevenDay, resets_at: inAWhile(24) } });
+
+  const usageOf = (fiveHour: number, sevenDay: number) => ({
+    five_hour: { utilization: fiveHour, resets_at: inAWhile(3) },
+    seven_day: { utilization: sevenDay, resets_at: inAWhile(24) },
+  });
+
   let usage = usageOf(5, 10);
-  const git = (...args: Array<string>) => execFileSync('git', ['--git-dir', options.bare, ...args], { encoding: 'utf8' }).trim();
+
+  const git = (...args: Array<string>) =>
+    execFileSync("git", ["--git-dir", options.bare, ...args], { encoding: "utf8" }).trim();
 
   const takeNumber = () => {
     const number = nextNumber;
@@ -129,18 +222,23 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   };
 
   const refSha = (branch: string) => {
-    const result = spawnSync('git', ['--git-dir', options.bare, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { encoding: 'utf8' });
+    const result = spawnSync(
+      "git",
+      ["--git-dir", options.bare, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+      { encoding: "utf8" },
+    );
 
     return Option.liftPredicate(result.stdout.trim(), () => result.status === 0);
   };
 
-  const html = (kind: string, number: number) => `https://github.com/${options.slug}/${kind}/${number}`;
+  const html = (kind: string, number: number) =>
+    `https://github.com/${options.slug}/${kind}/${number}`;
 
   const issueJson = (issue: FakeIssue) => ({
     number: issue.number,
     title: issue.title,
     body: issue.body,
-    html_url: html('issues', issue.number),
+    html_url: html("issues", issue.number),
     created_at: issue.createdAt,
     labels: issue.labels.map((name) => ({ name })),
     assignees: issue.assignees.map((login) => ({ login })),
@@ -150,10 +248,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     number: pull.number,
     title: pull.title,
     body: pull.body,
-    html_url: html('pull', pull.number),
+    html_url: html("pull", pull.number),
     state: pull.state,
     merged_at: Option.liftPredicate(now(), () => pull.merged),
-    head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => '') },
+    head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => "") },
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),
     user: { login: pull.author },
@@ -161,41 +259,74 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   });
 
   const labelsOf = (number: number) =>
-    Option.getOrElse(Option.orElse(Option.map(Option.fromUndefinedOr(issues.get(number)), (issue) => issue.labels), () => Option.map(Option.fromUndefinedOr(pulls.get(number)), (pull) => pull.labels)), (): Array<string> => []);
+    Option.getOrElse(
+      Option.orElse(
+        Option.map(Option.fromUndefinedOr(issues.get(number)), (issue) => issue.labels),
+        () => Option.map(Option.fromUndefinedOr(pulls.get(number)), (pull) => pull.labels),
+      ),
+      (): Array<string> => [],
+    );
 
   const searchIssues = withBody(GraphqlBody, (body) => {
-    const label = Option.flatMap(Option.fromUndefinedOr(body.variables.search), (search) => Option.flatMap(Option.fromNullishOr(/label:"([^"]+)"/.exec(search)), (match) => Option.fromUndefinedOr(match[1])));
+    const label = Option.flatMap(Option.fromUndefinedOr(body.variables.search), (search) =>
+      Option.flatMap(Option.fromNullishOr(/label:"([^"]+)"/.exec(search)), (match) =>
+        Option.fromUndefinedOr(match[1]),
+      ),
+    );
 
     const nodes = [...issues.values()].flatMap((issue) => {
-      if (Option.isSome(label) && !issue.labels.includes(label.value)) return [];
+      if (Option.isSome(label) && !issue.labels.includes(label.value)) {
+        return [];
+      }
 
-      return [{ ...issueJson(issue), url: html('issues', issue.number), createdAt: issue.createdAt, labels: { nodes: issue.labels.map((name) => ({ name })) }, assignees: { nodes: issue.assignees.map((login) => ({ login })) }, projectItems: { nodes: [] } }];
+      return [
+        {
+          ...issueJson(issue),
+          url: html("issues", issue.number),
+          createdAt: issue.createdAt,
+          labels: { nodes: issue.labels.map((name) => ({ name })) },
+          assignees: { nodes: issue.assignees.map((login) => ({ login })) },
+          projectItems: { nodes: [] },
+        },
+      ];
     });
 
     return json({ data: { search: { nodes } } });
   });
 
   const createRef = withBody(CreateRefBody, (body) => {
-    if (Option.isSome(refSha(body.ref.replace('refs/heads/', '')))) return json({ message: 'Reference already exists' }, 422);
+    if (Option.isSome(refSha(body.ref.replace("refs/heads/", "")))) {
+      return json({ message: "Reference already exists" }, 422);
+    }
 
-    git('update-ref', body.ref, body.sha);
+    git("update-ref", body.ref, body.sha);
 
     return json({ ref: body.ref }, 201);
   });
 
   const deleteRef = (args: Args) => {
-    const branch = args.params[0] ?? '';
+    const branch = args.params[0] ?? "";
 
-    if (Option.isNone(refSha(branch))) return json({ message: 'Reference does not exist' }, 422);
+    if (Option.isNone(refSha(branch))) {
+      return json({ message: "Reference does not exist" }, 422);
+    }
 
-    git('update-ref', '-d', `refs/heads/${branch}`);
+    git("update-ref", "-d", `refs/heads/${branch}`);
 
-    return new Response('', { status: 204 });
+    return new Response("", { status: 204 });
   };
 
   const addComment = withBody(CommentBody, (body, args) => {
     const number = numberParam(args);
-    const comment = { id: takeCommentId(), body: body.body, user: { login: args.login }, author_association: 'OWNER', created_at: now() };
+
+    const comment = {
+      id: takeCommentId(),
+      body: body.body,
+      user: { login: args.login },
+      author_association: "OWNER",
+      created_at: now(),
+    };
+
     comments.set(number, [...(comments.get(number) ?? []), comment]);
 
     return json(comment, 201);
@@ -204,16 +335,22 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const addLabels = withBody(LabelsBody, (body, args) => {
     const labels = labelsOf(numberParam(args));
 
-    for (const label of body.labels) if (!labels.includes(label)) labels.push(label);
+    for (const label of body.labels) {
+      if (!labels.includes(label)) {
+        labels.push(label);
+      }
+    }
 
     return json(labels.map((name) => ({ name })));
   });
 
   const removeLabel = (args: Args) => {
     const labels = labelsOf(numberParam(args));
-    const index = labels.indexOf(decodeURIComponent(args.params[1] ?? ''));
+    const index = labels.indexOf(decodeURIComponent(args.params[1] ?? ""));
 
-    if (index < 0) return json({ message: 'Label does not exist' }, 404);
+    if (index < 0) {
+      return json({ message: "Label does not exist" }, 404);
+    }
 
     labels.splice(index, 1);
 
@@ -223,26 +360,54 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const addAssignees = withBody(AssigneesBody, (body, args) => {
     const issue = Option.fromUndefinedOr(issues.get(numberParam(args)));
 
-    if (Option.isSome(issue)) issue.value.assignees = [...issue.value.assignees, ...body.assignees];
+    if (Option.isSome(issue)) {
+      issue.value.assignees = [...issue.value.assignees, ...body.assignees];
+    }
 
     return json({}, 201);
   });
 
   const createPull = withBody(NewPullBody, (body, args) => {
-    if (Option.isNone(refSha(body.head))) return json({ message: `no branch ${body.head}` }, 422);
+    if (Option.isNone(refSha(body.head))) {
+      return json({ message: `no branch ${body.head}` }, 422);
+    }
 
-    const pull: FakePull = { number: takeNumber(), title: body.title, body: body.body, head: body.head, base: body.base, state: 'open', merged: false, labels: [], reviewers: [], author: args.login };
+    const pull: FakePull = {
+      number: takeNumber(),
+      title: body.title,
+      body: body.body,
+      head: body.head,
+      base: body.base,
+      state: "open",
+      merged: false,
+      labels: [],
+      reviewers: [],
+      author: args.login,
+    };
+
     pulls.set(pull.number, pull);
 
     return encoded(PullJson, pullJson(pull), 201);
   });
 
   const listPulls = ({ url }: Args) => {
-    const head = Option.flatMap(Option.fromNullishOr(url.searchParams.get('head')), (spec) => Option.fromUndefinedOr(spec.split(':')[1]));
-    const state = url.searchParams.get('state') ?? 'open';
-    const found = [...pulls.values()].filter((pull) => Option.match(head, { onNone: () => true, onSome: (wanted) => pull.head === wanted }) && (state === 'all' || pull.state === state)).reverse();
+    const head = Option.flatMap(Option.fromNullishOr(url.searchParams.get("head")), (spec) =>
+      Option.fromUndefinedOr(spec.split(":")[1]),
+    );
 
-    if (url.searchParams.get('sort') === 'updated') found.sort((a, b) => b.number - a.number);
+    const state = url.searchParams.get("state") ?? "open";
+
+    const found = [...pulls.values()]
+      .filter(
+        (pull) =>
+          Option.match(head, { onNone: () => true, onSome: (wanted) => pull.head === wanted }) &&
+          (state === "all" || pull.state === state),
+      )
+      .reverse();
+
+    if (url.searchParams.get("sort") === "updated") {
+      found.sort((a, b) => b.number - a.number);
+    }
 
     return encoded(Schema.Array(PullJson), found.map(pullJson));
   };
@@ -252,14 +417,26 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const addReview = withBody(ReviewBody, (body, args) => {
     const number = numberParam(args);
     const pull = Option.fromUndefinedOr(pulls.get(number));
-    const event = body.event ?? 'COMMENT';
+    const event = body.event ?? "COMMENT";
 
-    if (event !== 'COMMENT' && Option.exists(pull, (found) => found.author === args.login)) return json({ message: 'Can not approve your own pull request' }, 422);
+    if (event !== "COMMENT" && Option.exists(pull, (found) => found.author === args.login)) {
+      return json({ message: "Can not approve your own pull request" }, 422);
+    }
 
-    const review: FakeReview = { id: takeCommentId(), body: body.body, commit_id: body.commit_id, comments: body.comments ?? [], author: args.login, state: stateOf(event) };
+    const review: FakeReview = {
+      id: takeCommentId(),
+      body: body.body,
+      commit_id: body.commit_id,
+      comments: body.comments ?? [],
+      author: args.login,
+      state: stateOf(event),
+    };
+
     reviews.set(number, [...(reviews.get(number) ?? []), review]);
 
-    for (const found of Option.toArray(pull)) found.reviewers = found.reviewers.filter((login) => login !== args.login);
+    for (const found of Option.toArray(pull)) {
+      found.reviewers = found.reviewers.filter((login) => login !== args.login);
+    }
 
     return json(review);
   });
@@ -268,7 +445,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
       onSome: (pull) => {
-        pull.reviewers = [...pull.reviewers.filter((login) => !body.reviewers.includes(login)), ...body.reviewers];
+        pull.reviewers = [
+          ...pull.reviewers.filter((login) => !body.reviewers.includes(login)),
+          ...body.reviewers,
+        ];
 
         return encoded(PullJson, pullJson(pull), 201);
       },
@@ -280,10 +460,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
       onSome: (pull) => {
-        if (Option.getOrElse(refSha(pull.head), () => '') !== body.sha) return json({ message: 'Head branch was modified' }, 409);
+        if (Option.getOrElse(refSha(pull.head), () => "") !== body.sha) {
+          return json({ message: "Head branch was modified" }, 409);
+        }
 
-        git('update-ref', `refs/heads/${pull.base}`, body.sha);
-        pull.state = 'closed';
+        git("update-ref", `refs/heads/${pull.base}`, body.sha);
+        pull.state = "closed";
         pull.merged = true;
         merges.push({ number: pull.number, method: body.merge_method, by: args.login });
 
@@ -293,12 +475,26 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   );
 
   const listReviews = (args: Args) =>
-    json((reviews.get(numberParam(args)) ?? []).map(({ author, ...review }) => ({ ...review, user: { login: author }, author_association: 'OWNER', submitted_at: now() })));
+    json(
+      (reviews.get(numberParam(args)) ?? []).map(({ author, ...review }) => ({
+        ...review,
+        user: { login: author },
+        author_association: "OWNER",
+        submitted_at: now(),
+      })),
+    );
 
   const listReviewComments = (args: Args) =>
     json(
       (reviews.get(numberParam(args)) ?? []).flatMap((review) =>
-        review.comments.map((comment, index) => ({ id: review.id * 100 + index, ...comment, original_line: comment.line, user: { login: review.author }, author_association: 'OWNER', created_at: now() })),
+        review.comments.map((comment, index) => ({
+          id: review.id * 100 + index,
+          ...comment,
+          original_line: comment.line,
+          user: { login: review.author },
+          author_association: "OWNER",
+          created_at: now(),
+        })),
       ),
     );
 
@@ -307,55 +503,132 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       onNone: notFound,
       onSome: (pull) =>
         json(
-          git('diff', '--name-only', `${pull.base}...${pull.head}`)
-            .split('\n')
-            .flatMap((filename) => Option.toArray(Option.map(Option.liftPredicate(filename, (name) => name.length > 0), (name) => ({ filename: name })))),
+          git("diff", "--name-only", `${pull.base}...${pull.head}`)
+            .split("\n")
+            .flatMap((filename) =>
+              Option.toArray(
+                Option.map(
+                  Option.liftPredicate(filename, (name) => name.length > 0),
+                  (name) => ({ filename: name }),
+                ),
+              ),
+            ),
         ),
     });
 
   const checkRuns = () => {
-    const run = { id: 1, name: 'test', started_at: Option.none<string>(), completed_at: Option.none<string>() };
+    const run = {
+      id: 1,
+      name: "test",
+      started_at: Option.none<string>(),
+      completed_at: Option.none<string>(),
+    };
 
-    if (checks === 'pending') return encoded(CheckRunsJson, { check_runs: [{ ...run, status: 'in_progress', conclusion: Option.none() }] });
+    if (checks === "pending") {
+      return encoded(CheckRunsJson, {
+        check_runs: [{ ...run, status: "in_progress", conclusion: Option.none() }],
+      });
+    }
 
-    const conclusion = Option.some(Option.getOrElse(Option.liftPredicate('success', () => checks === 'green'), () => 'failure'));
+    const conclusion = Option.some(
+      Option.getOrElse(
+        Option.liftPredicate("success", () => checks === "green"),
+        () => "failure",
+      ),
+    );
 
-    return encoded(CheckRunsJson, { check_runs: [{ ...run, status: 'completed', conclusion }] });
+    return encoded(CheckRunsJson, { check_runs: [{ ...run, status: "completed", conclusion }] });
   };
 
-  const permissionOf = (login: string) => Option.getOrElse(Option.liftPredicate('read', () => readOnly.has(login)), () => 'write');
+  const permissionOf = (login: string) =>
+    Option.getOrElse(
+      Option.liftPredicate("read", () => readOnly.has(login)),
+      () => "write",
+    );
 
   const repo = `/repos/${options.slug}`;
 
   const routes: ReadonlyArray<Route> = [
-    { method: 'GET', pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
-    { method: 'GET', pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
-    { method: 'POST', pattern: /^\/graphql$/, handle: searchIssues },
-    { method: 'GET', pattern: new RegExp(`^${repo}/git/ref/heads/(.+)$`), handle: (args) => Option.match(refSha(args.params[0] ?? ''), { onNone: notFound, onSome: (sha) => json({ object: { sha } }) }) },
-    { method: 'POST', pattern: new RegExp(`^${repo}/git/refs$`), handle: createRef },
-    { method: 'DELETE', pattern: new RegExp(`^${repo}/git/refs/heads/(.+)$`), handle: deleteRef },
-    { method: 'POST', pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
-    { method: 'GET', pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: (args) => json(comments.get(numberParam(args)) ?? []) },
-    { method: 'POST', pattern: new RegExp(`^${repo}/issues/(\\d+)/labels$`), handle: addLabels },
-    { method: 'DELETE', pattern: new RegExp(`^${repo}/issues/(\\d+)/labels/(.+)$`), handle: removeLabel },
-    { method: 'POST', pattern: new RegExp(`^${repo}/issues/(\\d+)/assignees$`), handle: addAssignees },
-    { method: 'GET', pattern: new RegExp(`^${repo}/issues/(\\d+)$`), handle: (args) => Option.match(Option.fromUndefinedOr(issues.get(numberParam(args))), { onNone: notFound, onSome: (issue) => json(issueJson(issue)) }) },
-    { method: 'POST', pattern: new RegExp(`^${repo}/pulls$`), handle: createPull },
-    { method: 'GET', pattern: new RegExp(`^${repo}/pulls$`), handle: listPulls },
-    { method: 'POST', pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: addReview },
-    { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: listReviews },
-    { method: 'POST', pattern: new RegExp(`^${repo}/pulls/(\\d+)/requested_reviewers$`), handle: requestReviewers },
-    { method: 'PUT', pattern: new RegExp(`^${repo}/pulls/(\\d+)/merge$`), handle: mergePull },
-    { method: 'GET', pattern: new RegExp(`^${repo}/collaborators/([^/]+)/permission$`), handle: (args) => json({ permission: permissionOf(args.params[0] ?? ''), role_name: permissionOf(args.params[0] ?? '') }) },
-    { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/comments$`), handle: listReviewComments },
-    { method: 'GET', pattern: new RegExp(`^${repo}/pulls/(\\d+)/files$`), handle: pullFiles },
+    { method: "GET", pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
+    { method: "GET", pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
+    { method: "POST", pattern: /^\/graphql$/, handle: searchIssues },
     {
-      method: 'GET',
-      pattern: new RegExp(`^${repo}/pulls/(\\d+)$`),
-      handle: (args) => Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), { onNone: notFound, onSome: (pull) => encoded(PullJson, pullJson(pull)) }),
+      method: "GET",
+      pattern: new RegExp(`^${repo}/git/ref/heads/(.+)$`),
+      handle: (args) =>
+        Option.match(refSha(args.params[0] ?? ""), {
+          onNone: notFound,
+          onSome: (sha) => json({ object: { sha } }),
+        }),
     },
-    { method: 'GET', pattern: new RegExp(`^${repo}/rules/branches/`), handle: () => json([]) },
-    { method: 'GET', pattern: new RegExp(`^${repo}/commits/([^/]+)/check-runs$`), handle: checkRuns },
+    { method: "POST", pattern: new RegExp(`^${repo}/git/refs$`), handle: createRef },
+    { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/heads/(.+)$`), handle: deleteRef },
+    { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`),
+      handle: (args) => json(comments.get(numberParam(args)) ?? []),
+    },
+    { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/labels$`), handle: addLabels },
+    {
+      method: "DELETE",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/labels/(.+)$`),
+      handle: removeLabel,
+    },
+    {
+      method: "POST",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/assignees$`),
+      handle: addAssignees,
+    },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)$`),
+      handle: (args) =>
+        Option.match(Option.fromUndefinedOr(issues.get(numberParam(args))), {
+          onNone: notFound,
+          onSome: (issue) => json(issueJson(issue)),
+        }),
+    },
+    { method: "POST", pattern: new RegExp(`^${repo}/pulls$`), handle: createPull },
+    { method: "GET", pattern: new RegExp(`^${repo}/pulls$`), handle: listPulls },
+    { method: "POST", pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: addReview },
+    { method: "GET", pattern: new RegExp(`^${repo}/pulls/(\\d+)/reviews$`), handle: listReviews },
+    {
+      method: "POST",
+      pattern: new RegExp(`^${repo}/pulls/(\\d+)/requested_reviewers$`),
+      handle: requestReviewers,
+    },
+    { method: "PUT", pattern: new RegExp(`^${repo}/pulls/(\\d+)/merge$`), handle: mergePull },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/collaborators/([^/]+)/permission$`),
+      handle: (args) =>
+        json({
+          permission: permissionOf(args.params[0] ?? ""),
+          role_name: permissionOf(args.params[0] ?? ""),
+        }),
+    },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/pulls/(\\d+)/comments$`),
+      handle: listReviewComments,
+    },
+    { method: "GET", pattern: new RegExp(`^${repo}/pulls/(\\d+)/files$`), handle: pullFiles },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/pulls/(\\d+)$`),
+      handle: (args) =>
+        Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
+          onNone: notFound,
+          onSome: (pull) => encoded(PullJson, pullJson(pull)),
+        }),
+    },
+    { method: "GET", pattern: new RegExp(`^${repo}/rules/branches/`), handle: () => json([]) },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/commits/([^/]+)/check-runs$`),
+      handle: checkRuns,
+    },
   ];
 
   const handle = async (request: Request) => {
@@ -367,19 +640,26 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
     const answered = Arr.findFirst(routes, (route) =>
       Option.map(
-        Option.filter(Option.fromNullishOr(route.pattern.exec(url.pathname)), () => route.method === request.method),
+        Option.filter(
+          Option.fromNullishOr(route.pattern.exec(url.pathname)),
+          () => route.method === request.method,
+        ),
         (match) => route.handle({ params: match.slice(1), body, url, login }),
       ),
     );
 
-    return Option.getOrElse(answered, () => json({ message: `fake GitHub has no ${request.method} ${url.pathname}` }, 404));
+    return Option.getOrElse(answered, () =>
+      json({ message: `fake GitHub has no ${request.method} ${url.pathname}` }, 404),
+    );
   };
 
   const server = Bun.serve({ port: 0, fetch: handle });
 
   // Test helpers fail loudly when a test asks for what isn't there.
   const required = <A>(value: Option.Option<A>, what: string): A => {
-    if (Option.isNone(value)) throw new Error(`fake GitHub has no ${what}`);
+    if (Option.isNone(value)) {
+      throw new Error(`fake GitHub has no ${what}`);
+    }
 
     return value.value;
   };
@@ -390,8 +670,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     comments,
     pulls,
     reviews,
-    issue: (number: number) => required(Option.fromUndefinedOr(issues.get(number)), `issue #${number}`),
-    pull: (number: number) => required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`),
+    issue: (number: number) =>
+      required(Option.fromUndefinedOr(issues.get(number)), `issue #${number}`),
+    pull: (number: number) =>
+      required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`),
     firstPull: () => Arr.head([...pulls.values()]),
     commentsOn: (number: number) => comments.get(number) ?? [],
     reviewsOf: (number: number) => reviews.get(number) ?? [],
@@ -399,7 +681,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     readOnly,
     closePull: (number: number, merged = true) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
-      pull.state = 'closed';
+      pull.state = "closed";
       pull.merged = merged;
     },
     requests,
@@ -410,9 +692,21 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     setUsage: (fiveHour: number, sevenDay: number) => {
       usage = usageOf(fiveHour, sevenDay);
     },
-    addIssue: (title: string, labels: ReadonlyArray<string>, body = 'Do the thing.', assignees: ReadonlyArray<string> = []) => {
+    addIssue: (
+      title: string,
+      labels: ReadonlyArray<string>,
+      body = "Do the thing.",
+      assignees: ReadonlyArray<string> = [],
+    ) => {
       const number = takeNumber();
-      issues.set(number, { number, title, body, labels: [...labels], createdAt: new Date(Date.now() - 1000 * (100 - number)).toISOString(), assignees: [...assignees] });
+      issues.set(number, {
+        number,
+        title,
+        body,
+        labels: [...labels],
+        createdAt: new Date(Date.now() - 1000 * (100 - number)).toISOString(),
+        assignees: [...assignees],
+      });
 
       return number;
     },

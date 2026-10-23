@@ -10,9 +10,9 @@
 // version. The names of its steps ("claim", "work-with-person") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, Hybrid, Implement, type WorkItem } from '@chernabog/sdk';
-import * as Effect from 'effect/Effect';
-import * as Option from 'effect/Option';
+import { defineFlow, Hybrid, Implement, type WorkItem } from "@chernabog/sdk";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
@@ -23,21 +23,25 @@ const workflow = (item: WorkItem) =>
     // claim, so chernabog start on the issue again picks the session back up.
     const finished = yield* Hybrid.workWithPerson(issue, worktree);
     let pullRequest = Option.none<number>();
-    const toPerson = (reason: string) => Implement.handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(Implement.endForPerson));
+
+    const toPerson = (reason: string) =>
+      Implement.handToHuman(issue, reason, pullRequest).pipe(
+        Effect.flatMap(Implement.endForPerson),
+      );
 
     return yield* Effect.gen(function* () {
       // Fixes for the gate and for red CI go back to the person's session.
       const session = yield* Hybrid.personSession(issue);
       yield* Implement.localGate(worktree, { session });
-      yield* Implement.push('push', worktree, branch);
+      yield* Implement.push("push", worktree, branch);
       const opened = yield* Hybrid.openPullRequest(issue, finished);
       pullRequest = Option.some(opened.number);
       yield* Implement.waitForCi(opened.number, worktree, { ...session, branch });
 
       return yield* Hybrid.handOff(issue, opened, finished);
     }).pipe(
-      Effect.catchTag('NeedsHuman', (needsHuman) => toPerson(needsHuman.reason)),
-      Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)),
+      Effect.catchTag("NeedsHuman", (needsHuman) => toPerson(needsHuman.reason)),
+      Effect.catchTag("StepFailed", (failed) => toPerson(`${failed.step}: ${failed.message}`)),
     );
   });
 

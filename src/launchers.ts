@@ -1,18 +1,18 @@
 // The launchers an interactive agent session can run under. `headless` is the
 // name for none: the agent runs as a child process, as `claude -p`.
 
-import type { LauncherCommands, RepoSettings, ResolvedLauncher } from '@chernabog/sdk';
-import * as Arr from 'effect/Array';
-import * as Option from 'effect/Option';
+import type { LauncherCommands, RepoSettings, ResolvedLauncher } from "@chernabog/sdk";
+import * as Arr from "effect/Array";
+import * as Option from "effect/Option";
 
-import { customLauncher } from './launchers/custom.ts';
-import type { Launcher } from './launchers/launcher.ts';
-import { orcaLauncher } from './launchers/orca.ts';
-import { tmuxLauncher } from './launchers/tmux.ts';
+import { customLauncher } from "./launchers/custom.ts";
+import type { Launcher } from "./launchers/launcher.ts";
+import { orcaLauncher } from "./launchers/orca.ts";
+import { tmuxLauncher } from "./launchers/tmux.ts";
 
 export type LaunchersConfig = Readonly<Record<string, LauncherCommands>>;
 
-export const BUILT_IN_LAUNCHERS: ReadonlyArray<string> = ['headless', 'orca', 'tmux'];
+export const BUILT_IN_LAUNCHERS: ReadonlyArray<string> = ["headless", "orca", "tmux"];
 
 const BUILT_IN = [orcaLauncher, tmuxLauncher];
 
@@ -29,9 +29,11 @@ export const isInteractive = (resolved: ResolvedLauncher) => Option.isSome(launc
 export const describeLauncher = (settings: RepoSettings) => {
   const chosen = `${settings.launcher.name} (${settings.launcher.from})`;
 
-  if (isInteractive(settings.launcher) && settings.agent !== 'claude') return `${chosen}; ${settings.agent} runs headless regardless`;
+  if (isInteractive(settings.launcher) && settings.agent !== "claude") {
+    return `${chosen}; ${settings.agent} runs headless regardless`;
+  }
 
   return chosen;
 };
 
-export type { Handle, Launcher,LaunchSpec } from './launchers/launcher.ts';
+export type { Handle, Launcher, LaunchSpec } from "./launchers/launcher.ts";

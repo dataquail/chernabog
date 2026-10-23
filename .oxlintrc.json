@@ -28,7 +28,13 @@
     "builtin": true,
     "es2018": true
   },
-  "ignorePatterns": ["dist/**", "node_modules/**", "website/**", "tools/oxlint/**", "src/effect-modules.ts"],
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "website/**",
+    "tools/oxlint/**",
+    "src/effect-modules.ts"
+  ],
   "rules": {
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",
@@ -151,6 +157,8 @@
     "prefer-const": "error",
     "no-var": "error",
     "no-else-return": "error",
+    // Every if, else and loop body is a braced block, which Prettier then puts on lines of its own.
+    "curly": ["error", "all"],
     "eqeqeq": "error",
     "no-lonely-if": "error",
     "no-unneeded-ternary": "error",

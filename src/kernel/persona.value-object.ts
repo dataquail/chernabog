@@ -4,10 +4,11 @@
 // the daemon is (GH_TOKEN, then GITHUB_TOKEN, then gh's active account), as
 // before personas existed.
 
-import * as Option from 'effect/Option';
+import * as Option from "effect/Option";
 
 export type Persona = Option.Option<string>;
 
 export const IMPLICIT: Persona = Option.none();
 
-export const samePersona = (left: Persona, right: Persona) => Option.getOrNull(left) === Option.getOrNull(right);
+export const samePersona = (left: Persona, right: Persona) =>
+  Option.getOrNull(left) === Option.getOrNull(right);

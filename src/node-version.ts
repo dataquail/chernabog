@@ -1,25 +1,28 @@
 // Each repo pins its Node in .nvmrc (functional-domain-driven-hexagon needs 24,
 // the libraries 22). launchd starts with no nvm, so pick the installed version here.
 
-import * as Arr from 'effect/Array';
-import * as Effect from 'effect/Effect';
-import * as FileSystem from 'effect/FileSystem';
-import * as Option from 'effect/Option';
-import * as Order from 'effect/Order';
+import * as Arr from "effect/Array";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 
-import { Home } from './config.ts';
+import { Home } from "./config.ts";
 
 type Version = readonly [number, number, number];
 
-const part = (parts: ReadonlyArray<string>, index: number) => Number(Option.getOrElse(Arr.get(parts, index), () => '0'));
+const part = (parts: ReadonlyArray<string>, index: number) =>
+  Number(Option.getOrElse(Arr.get(parts, index), () => "0"));
 
 // "v22.14.0", "22.13", "24": a release; anything else (lts/*, a codename) is none.
 const parse = (text: string): Option.Option<Version> => {
   const trimmed = text.trim();
 
-  if (!/^v?\d+(?:\.\d+){0,2}$/.test(trimmed)) return Option.none();
+  if (!/^v?\d+(?:\.\d+){0,2}$/.test(trimmed)) {
+    return Option.none();
+  }
 
-  const parts = trimmed.replace(/^v/, '').split('.');
+  const parts = trimmed.replace(/^v/, "").split(".");
 
   return Option.some([part(parts, 0), part(parts, 1), part(parts, 2)] as const);
 };
@@ -34,10 +37,20 @@ const newestFirst = Order.mapInput(Order.flip(byVersion), (entry: Installed) => 
 
 // An exact match first, then the newest installed release of the same major that
 // is at least the pinned one, then the newest of that major at all.
-export const pickNodeVersion = (requested: string, installed: ReadonlyArray<string>): Option.Option<string> =>
+export const pickNodeVersion = (
+  requested: string,
+  installed: ReadonlyArray<string>,
+): Option.Option<string> =>
   Option.flatMap(parse(requested), (wanted) => {
     const sameMajor = Arr.sort(
-      installed.flatMap((name) => Option.toArray(Option.map(Option.filter(parse(name), (version) => version[0] === wanted[0]), (version) => ({ name, version })))),
+      installed.flatMap((name) =>
+        Option.toArray(
+          Option.map(
+            Option.filter(parse(name), (version) => version[0] === wanted[0]),
+            (version) => ({ name, version }),
+          ),
+        ),
+      ),
       newestFirst,
     );
 
@@ -55,9 +68,14 @@ export const nodeBinFor = (checkout: string) =>
     const versions = `${(yield* Home).user}/.nvm/versions/node`;
     const nvmrc = `${checkout}/.nvmrc`;
 
-    if (!(yield* fs.exists(nvmrc)) || !(yield* fs.exists(versions))) return Option.none<string>();
+    if (!(yield* fs.exists(nvmrc)) || !(yield* fs.exists(versions))) {
+      return Option.none<string>();
+    }
 
-    const picked = pickNodeVersion(yield* fs.readFileString(nvmrc), yield* fs.readDirectory(versions));
+    const picked = pickNodeVersion(
+      yield* fs.readFileString(nvmrc),
+      yield* fs.readDirectory(versions),
+    );
 
     return Option.map(picked, (name) => `${versions}/${name}/bin`);
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));

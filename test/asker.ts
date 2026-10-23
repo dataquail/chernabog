@@ -1,11 +1,11 @@
 // An Asker with a person's answers given in advance, recording what it was asked.
 
-import * as Effect from 'effect/Effect';
-import * as Layer from 'effect/Layer';
-import * as Option from 'effect/Option';
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
-import { Asker, type Choice } from '../src/ask.ts';
-import { ConfigError } from '../src/config.ts';
+import { Asker, type Choice } from "../src/ask.ts";
+import { ConfigError } from "../src/config.ts";
 
 export type Asked = { readonly message: string; readonly choices: ReadonlyArray<Choice> };
 
@@ -18,10 +18,13 @@ export const scripted = (answers: ReadonlyArray<ReadonlyArray<string> | string>)
     Effect.suspend(() => {
       asked.push({ message, choices });
 
-      return Effect.fromOption(Option.fromUndefinedOr(queue.shift())).pipe(Effect.mapError(() => new ConfigError({ message: `no answer left for: ${message}` })));
+      return Effect.fromOption(Option.fromUndefinedOr(queue.shift())).pipe(
+        Effect.mapError(() => new ConfigError({ message: `no answer left for: ${message}` })),
+      );
     });
 
-  const one = (message: string, choices: ReadonlyArray<Choice>) => Effect.map(next(message, choices), (answer) => [answer].flat()[0] ?? '');
+  const one = (message: string, choices: ReadonlyArray<Choice>) =>
+    Effect.map(next(message, choices), (answer) => [answer].flat()[0] ?? "");
 
   return {
     asked,

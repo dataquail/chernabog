@@ -1,17 +1,18 @@
 // What the TUI shows, as plain lines of styled segments: the view is a pure
 // function of the model, so it can be tested without a terminal.
 
-import * as Arr from 'effect/Array';
-import * as DateTime from 'effect/DateTime';
-import * as Option from 'effect/Option';
-import * as Record from 'effect/Record';
+import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 
-import { samePersona } from '../persona.ts';
-import type { ActiveRun, DaemonStatus, PersonaStatus, RepoStatus } from '../protocol.ts';
-import { FLOW_TURNED_OFF } from '../repo-config.ts';
-import type { RunStatus } from '../state.ts';
+import { samePersona } from "../persona.ts";
+import type { ActiveRun, DaemonStatus, PersonaStatus, RepoStatus } from "../protocol.ts";
+import { FLOW_TURNED_OFF } from "../repo-config.ts";
+import type { RunStatus } from "../state.ts";
 
-export type Style = 'plain' | 'bold' | 'dim' | 'green' | 'red' | 'yellow' | 'cyan' | 'magenta' | 'selected';
+export type Style =
+  "plain" | "bold" | "dim" | "green" | "red" | "yellow" | "cyan" | "magenta" | "selected";
 
 export type Segment = { readonly text: string; readonly style: Style };
 
@@ -27,32 +28,49 @@ export type UsageRow = {
 };
 
 // A flow as one persona runs it; none for the implicit persona.
-export type FlowRow = { readonly repo: string; readonly flow: string; readonly persona: Option.Option<string> };
+export type FlowRow = {
+  readonly repo: string;
+  readonly flow: string;
+  readonly persona: Option.Option<string>;
+};
 
 export type RunEntry = typeof ActiveRun.Type;
 
 // A line of a persona's settings: one of its flows, its account, or a role's.
-export type SettingsRow = { readonly kind: 'flow'; readonly flow: string } | { readonly kind: 'account' } | { readonly kind: 'role'; readonly role: string };
+export type SettingsRow =
+  | { readonly kind: "flow"; readonly flow: string }
+  | { readonly kind: "account" }
+  | { readonly kind: "role"; readonly role: string };
 
 // What the settings view is doing: browsing its rows, typing a flow's
 // schedule, or choosing an account for the persona or one of its roles.
 export type Editing =
-  | { readonly kind: 'browse' }
-  | { readonly kind: 'cron'; readonly flow: string; readonly text: string }
-  | { readonly kind: 'pick'; readonly role: Option.Option<string>; readonly choices: ReadonlyArray<string>; readonly index: number };
+  | { readonly kind: "browse" }
+  | { readonly kind: "cron"; readonly flow: string; readonly text: string }
+  | {
+      readonly kind: "pick";
+      readonly role: Option.Option<string>;
+      readonly choices: ReadonlyArray<string>;
+      readonly index: number;
+    };
 
 // The settings of one persona of one repo, as the settings view shows them.
-export type Settings = { readonly repo: string; readonly persona: Option.Option<string>; readonly index: number; readonly editing: Editing };
+export type Settings = {
+  readonly repo: string;
+  readonly persona: Option.Option<string>;
+  readonly index: number;
+  readonly editing: Editing;
+};
 
 export type Model = {
   readonly status: Option.Option<DaemonStatus>;
   readonly error: Option.Option<string>;
   readonly usage: ReadonlyArray<UsageRow>;
   readonly thresholds: { readonly fiveHourCeiling: number; readonly targetEndUsage: number };
-  readonly focus: 'flows' | 'runs';
+  readonly focus: "flows" | "runs";
   readonly flowIndex: number;
   readonly runIndex: number;
-  readonly view: 'main' | 'log' | 'settings';
+  readonly view: "main" | "log" | "settings";
   readonly settings: Option.Option<Settings>;
   readonly logRun: Option.Option<string>;
   readonly logLines: ReadonlyArray<string>;
@@ -66,31 +84,50 @@ export type Model = {
   readonly now: DateTime.Utc;
 };
 
-const segment = (text: string, style: Style = 'plain'): Segment => ({ text, style });
+const segment = (text: string, style: Style = "plain"): Segment => ({ text, style });
 
-export const flowKey = (repo: string, flow: string, persona: Option.Option<string>) => `${repo}/${flow}${Option.match(persona, { onNone: () => '', onSome: (login) => `@${login}` })}`;
+export const flowKey = (repo: string, flow: string, persona: Option.Option<string>) =>
+  `${repo}/${flow}${Option.match(persona, { onNone: () => "", onSome: (login) => `@${login}` })}`;
 
 // Whether a persona runs a flow: as turned from here, else as the daemon has
 // it. Each persona turns its flows on and off for itself.
-export const flowEnabled = (model: Model, repo: string, flow: { readonly name: string; readonly enabled: boolean; readonly persona?: string }) =>
-  Option.getOrElse(Record.get(model.pendingFlows, flowKey(repo, flow.name, Option.fromUndefinedOr(flow.persona))), () => flow.enabled);
+export const flowEnabled = (
+  model: Model,
+  repo: string,
+  flow: { readonly name: string; readonly enabled: boolean; readonly persona?: string },
+) =>
+  Option.getOrElse(
+    Record.get(model.pendingFlows, flowKey(repo, flow.name, Option.fromUndefinedOr(flow.persona))),
+    () => flow.enabled,
+  );
 
 const onlyIf = <A>(condition: boolean, items: ReadonlyArray<A>): ReadonlyArray<A> => {
-  if (condition) return items;
+  if (condition) {
+    return items;
+  }
 
   return [];
 };
 
 const styleIf = (condition: boolean, style: Style): Style => {
-  if (condition) return style;
+  if (condition) {
+    return style;
+  }
 
-  return 'plain';
+  return "plain";
 };
 
 export const flowRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<FlowRow> =>
   Option.match(status, {
     onNone: () => [],
-    onSome: (found) => found.repos.flatMap((repo) => repo.flows.map((flow): FlowRow => ({ repo: repo.name, flow: flow.name, persona: Option.fromUndefinedOr(flow.persona) }))),
+    onSome: (found) =>
+      found.repos.flatMap((repo) =>
+        repo.flows.map((flow): FlowRow => ({
+          repo: repo.name,
+          flow: flow.name,
+          persona: Option.fromUndefinedOr(flow.persona),
+        })),
+      ),
   });
 
 const MAX_RUNS = 15;
@@ -99,16 +136,26 @@ const MAX_RUNS = 15;
 export const runRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunEntry> =>
   Option.match(status, {
     onNone: () => [],
-    onSome: (found) => [...found.active, ...found.recent.filter((run) => run.status !== 'running').map((run) => ({ ...run, parked: false }))].slice(0, MAX_RUNS),
+    onSome: (found) =>
+      [
+        ...found.active,
+        ...found.recent
+          .filter((run) => run.status !== "running")
+          .map((run) => ({ ...run, parked: false })),
+      ].slice(0, MAX_RUNS),
   });
 
 const MINUTE = 60;
 const HOUR = 3600;
 
 const spanText = (span: number) => {
-  if (span < MINUTE) return `${span}s`;
+  if (span < MINUTE) {
+    return `${span}s`;
+  }
 
-  if (span < HOUR) return `${Math.round(span / MINUTE)}m`;
+  if (span < HOUR) {
+    return `${Math.round(span / MINUTE)}m`;
+  }
 
   return `${Math.round(span / HOUR)}h`;
 };
@@ -117,14 +164,21 @@ const ago = (at: Option.Option<string>, now: DateTime.Utc) =>
   Option.match(
     Option.flatMap(at, (iso) => DateTime.make(iso)),
     {
-      onNone: () => '—',
+      onNone: () => "—",
       onSome: (then) => {
-        const seconds = Math.round((DateTime.toEpochMillis(then) - DateTime.toEpochMillis(now)) / 1000);
+        const seconds = Math.round(
+          (DateTime.toEpochMillis(then) - DateTime.toEpochMillis(now)) / 1000,
+        );
+
         const span = Math.abs(seconds);
 
-        if (span < 1) return 'now';
+        if (span < 1) {
+          return "now";
+        }
 
-        if (seconds > 0) return `in ${spanText(span)}`;
+        if (seconds > 0) {
+          return `in ${spanText(span)}`;
+        }
 
         return `${spanText(span)} ago`;
       },
@@ -132,97 +186,145 @@ const ago = (at: Option.Option<string>, now: DateTime.Utc) =>
   );
 
 const pad = (text: string, width: number) => {
-  if (text.length >= width) return `${text.slice(0, Math.max(0, width - 1))}…`;
+  if (text.length >= width) {
+    return `${text.slice(0, Math.max(0, width - 1))}…`;
+  }
 
   return text.padEnd(width);
 };
 
 const percent = (value: number) => `${Math.round(value * 100)}%`.padStart(4);
 
-const firstLine = (text: string) => text.split('\n')[0] ?? '';
+const firstLine = (text: string) => text.split("\n")[0] ?? "";
 
-const STATUS_STYLE: Readonly<Record<RunStatus, Style>> = { done: 'green', running: 'cyan', skipped: 'dim', 'needs-human': 'yellow', failed: 'red' };
-
-const heading = (text: string): Line => [segment(text, 'bold')];
-
-const select = (line: Line, selected: boolean): Line => {
-  if (!selected) return line;
-
-  return line.map((part) => ({ ...part, style: 'selected' }));
+const STATUS_STYLE: Readonly<Record<RunStatus, Style>> = {
+  done: "green",
+  running: "cyan",
+  skipped: "dim",
+  "needs-human": "yellow",
+  failed: "red",
 };
 
-export const KEYS_MAIN = 'tab switch pane · ↑↓ select · enter log or settings · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit';
-export const KEYS_LOG = '↑↓ scroll · end follow · a attach · esc back · q quit';
-export const KEYS_SETTINGS = '↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit';
-export const KEYS_CRON = 'type a cron, such as */20 * * * * · enter save · esc cancel';
-export const KEYS_PICK = '↑↓ select · enter save · esc cancel';
+const heading = (text: string): Line => [segment(text, "bold")];
+
+const select = (line: Line, selected: boolean): Line => {
+  if (!selected) {
+    return line;
+  }
+
+  return line.map((part) => ({ ...part, style: "selected" }));
+};
+
+export const KEYS_MAIN =
+  "tab switch pane · ↑↓ select · enter log or settings · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
+
+export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
+
+export const KEYS_SETTINGS =
+  "↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit";
+
+export const KEYS_CRON = "type a cron, such as */20 * * * * · enter save · esc cancel";
+export const KEYS_PICK = "↑↓ select · enter save · esc cancel";
 
 const repoState = (repo: RepoStatus) => {
-  if (repo.paused) return 'paused';
+  if (repo.paused) {
+    return "paused";
+  }
 
-  if (!repo.enabled) return 'disabled';
+  if (!repo.enabled) {
+    return "disabled";
+  }
 
   return repo.status;
 };
 
 const stateStyle = (state: string): Style => {
-  if (state === 'ready') return 'green';
+  if (state === "ready") {
+    return "green";
+  }
 
-  if (state === 'paused' || state === 'disabled') return 'yellow';
+  if (state === "paused" || state === "disabled") {
+    return "yellow";
+  }
 
-  return 'red';
+  return "red";
 };
 
 const QUEUE_SHOWN = 3;
 
 const queuedText = (queued: ReadonlyArray<string>) => {
-  if (queued.length === 0) return 'queue empty';
+  if (queued.length === 0) {
+    return "queue empty";
+  }
 
-  const more = onlyIf(queued.length > QUEUE_SHOWN, ['…']);
+  const more = onlyIf(queued.length > QUEUE_SHOWN, ["…"]);
 
-  return `${queued.length} queued: ${[...queued.slice(0, QUEUE_SHOWN), ...more].join(', ')}`;
+  return `${queued.length} queued: ${[...queued.slice(0, QUEUE_SHOWN), ...more].join(", ")}`;
 };
 
 const queueText = (queued: ReadonlyArray<string>, elsewhere: ReadonlyArray<string>) => {
-  if (elsewhere.length === 0) return queuedText(queued);
+  if (elsewhere.length === 0) {
+    return queuedText(queued);
+  }
 
   return `${queuedText(queued)} · ${elsewhere.length} assigned elsewhere`;
 };
 
 const plural = (count: number) => {
-  if (count === 1) return '';
+  if (count === 1) {
+    return "";
+  }
 
-  return 's';
+  return "s";
 };
 
 const runDetail = (run: RunEntry) => {
-  if (run.status !== 'running') return Option.getOrElse(run.summary, () => '');
+  if (run.status !== "running") {
+    return Option.getOrElse(run.summary, () => "");
+  }
 
-  if (run.parked) return 'waiting for a signal';
+  if (run.parked) {
+    return "waiting for a signal";
+  }
 
-  return Option.getOrElse(run.currentStep, () => 'starting');
+  return Option.getOrElse(run.currentStep, () => "starting");
 };
 
-const flowTiming = (enabled: boolean, pending: boolean, next: Option.Option<string>, now: DateTime.Utc) => {
-  if (pending && enabled) return segment(pad('on, pending', 14), 'yellow');
+const flowTiming = (
+  enabled: boolean,
+  pending: boolean,
+  next: Option.Option<string>,
+  now: DateTime.Utc,
+) => {
+  if (pending && enabled) {
+    return segment(pad("on, pending", 14), "yellow");
+  }
 
-  if (pending) return segment(pad('off, pending', 14), 'yellow');
+  if (pending) {
+    return segment(pad("off, pending", 14), "yellow");
+  }
 
-  if (enabled) return segment(`next ${pad(ago(next, now), 9)}`);
+  if (enabled) {
+    return segment(`next ${pad(ago(next, now), 9)}`);
+  }
 
-  return segment(pad('off', 14), 'dim');
+  return segment(pad("off", 14), "dim");
 };
 
 const launchSegment = (launch: boolean, when: string) => {
-  if (launch) return segment(`  room for a task (${when})`, 'dim');
+  if (launch) {
+    return segment(`  room for a task (${when})`, "dim");
+  }
 
-  return segment(`  holding back (${when})`, 'yellow');
+  return segment(`  holding back (${when})`, "yellow");
 };
 
 const detailStyle = (status: RunStatus): Style => {
-  if (status === 'running') return 'cyan';
+  if (status === "running") {
+    return "cyan";
+  }
 
-  return 'dim';
+  return "dim";
 };
 
 const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
@@ -230,157 +332,298 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   const lines: Array<Line> = [];
 
   lines.push([
-    segment('chernabog', 'bold'),
-    segment(`  daemon ${status.pid}, up ${ago(Option.some(status.startedAt), now).replace(' ago', '')}`, 'dim'),
-    ...onlyIf(status.busy > 0, [segment(`  ${status.busy} step${plural(status.busy)} executing`, 'cyan')]),
-    ...onlyIf(status.reloadPending, [segment('  restarting on new config when idle', 'yellow')]),
+    segment("chernabog", "bold"),
+    segment(
+      `  daemon ${status.pid}, up ${ago(Option.some(status.startedAt), now).replace(" ago", "")}`,
+      "dim",
+    ),
+    ...onlyIf(status.busy > 0, [
+      segment(`  ${status.busy} step${plural(status.busy)} executing`, "cyan"),
+    ]),
+    ...onlyIf(status.reloadPending, [segment("  restarting on new config when idle", "yellow")]),
   ]);
   lines.push([]);
 
-  lines.push(heading('Repos and flows'));
+  lines.push(heading("Repos and flows"));
   const selectedFlow = Arr.get(flowRows(Option.some(status)), model.flowIndex);
-  const labelOf = (flow: { readonly name: string; readonly persona?: string }) => `${flow.name}${Option.match(Option.fromUndefinedOr(flow.persona), { onNone: () => '', onSome: (login) => ` @${login}` })}`;
+
+  const labelOf = (flow: { readonly name: string; readonly persona?: string }) =>
+    `${flow.name}${Option.match(Option.fromUndefinedOr(flow.persona), { onNone: () => "", onSome: (login) => ` @${login}` })}`;
+
   // Wide enough for a persona's name too, within reason.
-  const flowColumn = Math.min(24, Math.max(12, ...status.repos.flatMap((repo) => repo.flows.map((flow) => labelOf(flow).length + 1))));
+  const flowColumn = Math.min(
+    24,
+    Math.max(
+      12,
+      ...status.repos.flatMap((repo) => repo.flows.map((flow) => labelOf(flow).length + 1)),
+    ),
+  );
 
   for (const repo of status.repos) {
     const state = repoState(repo);
     lines.push([
-      segment(`  ${repo.name}`, 'bold'),
+      segment(`  ${repo.name}`, "bold"),
       segment(`  ${state}`, stateStyle(state)),
-      ...Option.toArray(Option.map(repo.launcher, (launcher) => segment(`  launcher ${launcher}`, 'dim'))),
-      ...Option.toArray(Option.map(repo.message, (message) => segment(`  ${message}`, 'dim'))),
+      ...Option.toArray(
+        Option.map(repo.launcher, (launcher) => segment(`  launcher ${launcher}`, "dim")),
+      ),
+      ...Option.toArray(Option.map(repo.message, (message) => segment(`  ${message}`, "dim"))),
     ]);
 
     for (const flow of repo.flows) {
       const persona = Option.fromUndefinedOr(flow.persona);
-      const selected = model.focus === 'flows' && Option.exists(selectedFlow, (row) => row.repo === repo.name && row.flow === flow.name && samePersona(row.persona, persona));
+
+      const selected =
+        model.focus === "flows" &&
+        Option.exists(
+          selectedFlow,
+          (row) =>
+            row.repo === repo.name && row.flow === flow.name && samePersona(row.persona, persona),
+        );
+
       const enabled = flowEnabled(model, repo.name, flow);
       const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
-      const why = Option.filter(Option.fromUndefinedOr(flow.offReason), (reason) => !enabled && reason !== FLOW_TURNED_OFF);
-      lines.push(select([segment(`    ${pad(labelOf(flow), flowColumn)}`), timing, segment(`  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`, 'dim')], selected));
+
+      const why = Option.filter(
+        Option.fromUndefinedOr(flow.offReason),
+        (reason) => !enabled && reason !== FLOW_TURNED_OFF,
+      );
+
+      lines.push(
+        select(
+          [
+            segment(`    ${pad(labelOf(flow), flowColumn)}`),
+            timing,
+            segment(
+              `  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`,
+              "dim",
+            ),
+          ],
+          selected,
+        ),
+      );
     }
   }
 
   lines.push([]);
 
-  lines.push(heading('Usage'));
+  lines.push(heading("Usage"));
 
-  if (model.usage.length === 0) lines.push([segment('  no readings yet', 'dim')]);
+  if (model.usage.length === 0) {
+    lines.push([segment("  no readings yet", "dim")]);
+  }
 
   for (const row of model.usage) {
-    const over = row.fiveHour >= model.thresholds.fiveHourCeiling || row.sevenDay >= model.thresholds.targetEndUsage;
+    const over =
+      row.fiveHour >= model.thresholds.fiveHourCeiling ||
+      row.sevenDay >= model.thresholds.targetEndUsage;
+
     const limits = `5h ${percent(row.fiveHour)} of ${Math.round(model.thresholds.fiveHourCeiling * 100)}%  week ${percent(row.sevenDay)} of ${Math.round(model.thresholds.targetEndUsage * 100)}%`;
-    lines.push([segment(`  ${pad(row.account, 12)}`), segment(limits, styleIf(over, 'yellow')), launchSegment(row.launch, ago(Option.some(row.at), now))]);
+    lines.push([
+      segment(`  ${pad(row.account, 12)}`),
+      segment(limits, styleIf(over, "yellow")),
+      launchSegment(row.launch, ago(Option.some(row.at), now)),
+    ]);
   }
 
   lines.push([]);
 
-  lines.push(heading('Runs'));
+  lines.push(heading("Runs"));
   const runs = runRows(Option.some(status));
 
-  if (runs.length === 0) lines.push([segment('  none yet', 'dim')]);
+  if (runs.length === 0) {
+    lines.push([segment("  none yet", "dim")]);
+  }
 
   runs.forEach((run, runIndex) => {
     const title = Option.getOrElse(run.itemTitle, () => run.itemKey);
-    const when = ago(Option.orElse(run.finishedAt, () => Option.some(run.startedAt)), now);
+
+    const when = ago(
+      Option.orElse(run.finishedAt, () => Option.some(run.startedAt)),
+      now,
+    );
 
     lines.push(
       select(
         [
           segment(`  ${pad(run.status, 12)}`, STATUS_STYLE[run.status]),
-          segment(`${pad(`${run.repo}/${run.flow}${Option.match(run.persona, { onNone: () => '', onSome: (login) => `@${login}` })}`, 22)} ${pad(title, 28)}`),
-          segment(` ${pad(when, 8)} `, 'dim'),
+          segment(
+            `${pad(`${run.repo}/${run.flow}${Option.match(run.persona, { onNone: () => "", onSome: (login) => `@${login}` })}`, 22)} ${pad(title, 28)}`,
+          ),
+          segment(` ${pad(when, 8)} `, "dim"),
           segment(firstLine(runDetail(run)), detailStyle(run.status)),
         ],
-        model.focus === 'runs' && model.runIndex === runIndex,
+        model.focus === "runs" && model.runIndex === runIndex,
       ),
     );
   });
 
   if (status.skips.length > 0) {
     lines.push([]);
-    lines.push(heading('Recent skips'));
+    lines.push(heading("Recent skips"));
 
     for (const skip of status.skips.slice(0, 4)) {
-      lines.push([segment(`  ${pad(`${skip.repo}/${skip.flow}`, 22)} ${firstLine(skip.reason)}`, 'dim'), segment(`  ${ago(Option.some(skip.at), now)}`, 'dim')]);
+      lines.push([
+        segment(`  ${pad(`${skip.repo}/${skip.flow}`, 22)} ${firstLine(skip.reason)}`, "dim"),
+        segment(`  ${ago(Option.some(skip.at), now)}`, "dim"),
+      ]);
     }
   }
 
   return lines;
 };
 
-const repoNamed = (model: Model, name: string) => Option.flatMap(model.status, (status) => Arr.findFirst(status.repos, (repo) => repo.name === name));
+const repoNamed = (model: Model, name: string) =>
+  Option.flatMap(model.status, (status) =>
+    Arr.findFirst(status.repos, (repo) => repo.name === name),
+  );
 
 // The persona's flows in a repo, as the daemon has them.
 export const personaFlows = (model: Model, settings: Settings) =>
-  Option.match(repoNamed(model, settings.repo), { onNone: () => [], onSome: (repo) => repo.flows.filter((flow) => samePersona(Option.fromUndefinedOr(flow.persona), settings.persona)) });
+  Option.match(repoNamed(model, settings.repo), {
+    onNone: () => [],
+    onSome: (repo) =>
+      repo.flows.filter((flow) =>
+        samePersona(Option.fromUndefinedOr(flow.persona), settings.persona),
+      ),
+  });
 
 export const personaAccounts = (model: Model, settings: Settings): Option.Option<PersonaStatus> =>
-  Option.flatMap(repoNamed(model, settings.repo), (repo) => Arr.findFirst(repo.personas ?? [], (found) => samePersona(Option.fromUndefinedOr(found.persona), settings.persona)));
+  Option.flatMap(repoNamed(model, settings.repo), (repo) =>
+    Arr.findFirst(repo.personas ?? [], (found) =>
+      samePersona(Option.fromUndefinedOr(found.persona), settings.persona),
+    ),
+  );
 
-const ACCOUNT_ROW: SettingsRow = { kind: 'account' };
+const ACCOUNT_ROW: SettingsRow = { kind: "account" };
 
 export const sameRow = (left: SettingsRow, right: SettingsRow) => {
-  if (left.kind === 'flow' && right.kind === 'flow') return left.flow === right.flow;
+  if (left.kind === "flow" && right.kind === "flow") {
+    return left.flow === right.flow;
+  }
 
-  if (left.kind === 'role' && right.kind === 'role') return left.role === right.role;
+  if (left.kind === "role" && right.kind === "role") {
+    return left.role === right.role;
+  }
 
   return left.kind === right.kind;
 };
 
 const onOff = (enabled: boolean) => {
-  if (enabled) return 'on';
+  if (enabled) {
+    return "on";
+  }
 
-  return 'off';
+  return "off";
 };
 
 // The settings view's rows: the persona's flows, then its account and each role's.
 export const settingsRows = (model: Model, settings: Settings): ReadonlyArray<SettingsRow> => [
-  ...personaFlows(model, settings).map((flow): SettingsRow => ({ kind: 'flow', flow: flow.name })),
+  ...personaFlows(model, settings).map((flow): SettingsRow => ({ kind: "flow", flow: flow.name })),
   ...Option.match(personaAccounts(model, settings), {
     onNone: (): ReadonlyArray<SettingsRow> => [],
-    onSome: (found) => [ACCOUNT_ROW, ...found.roles.map((role): SettingsRow => ({ kind: 'role', role: role.role }))],
+    onSome: (found) => [
+      ACCOUNT_ROW,
+      ...found.roles.map((role): SettingsRow => ({ kind: "role", role: role.role })),
+    ],
   }),
 ];
 
-const whose = (pick: Option.Option<string>, fallback: string) => Option.match(pick, { onNone: () => `${fallback} (default)`, onSome: (name) => `${name} (yours)` });
+const whose = (pick: Option.Option<string>, fallback: string) =>
+  Option.match(pick, {
+    onNone: () => `${fallback} (default)`,
+    onSome: (name) => `${name} (yours)`,
+  });
 
 const editingLines = (editing: Editing): ReadonlyArray<Line> => {
-  if (editing.kind === 'cron') return [[], [segment(`  schedule for ${editing.flow}: `, 'bold'), segment(`${editing.text}▏`, 'cyan')]];
+  if (editing.kind === "cron") {
+    return [
+      [],
+      [segment(`  schedule for ${editing.flow}: `, "bold"), segment(`${editing.text}▏`, "cyan")],
+    ];
+  }
 
-  if (editing.kind === 'pick') {
-    const title = Option.match(editing.role, { onNone: () => 'account', onSome: (role) => `account for ${role}` });
+  if (editing.kind === "pick") {
+    const title = Option.match(editing.role, {
+      onNone: () => "account",
+      onSome: (role) => `account for ${role}`,
+    });
 
-    return [[], heading(`  Choose the ${title}`), ...editing.choices.map((choice, index) => select([segment(`    ${choice}`)], index === editing.index))];
+    return [
+      [],
+      heading(`  Choose the ${title}`),
+      ...editing.choices.map((choice, index) =>
+        select([segment(`    ${choice}`)], index === editing.index),
+      ),
+    ];
   }
 
   return [];
 };
 
 const settingsView = (model: Model, settings: Settings): ReadonlyArray<Line> => {
-  const who = Option.match(settings.persona, { onNone: () => '', onSome: (login) => ` as ${login}` });
+  const who = Option.match(settings.persona, {
+    onNone: () => "",
+    onSome: (login) => ` as ${login}`,
+  });
+
   const rows = settingsRows(model, settings);
-  const browsing = settings.editing.kind === 'browse';
-  const isSelected = (row: SettingsRow) => browsing && Option.exists(Arr.get(rows, settings.index), (found) => sameRow(found, row));
-  const lines: Array<Line> = [[segment(`${settings.repo}${who}`, 'bold'), segment('  saved to machine config; the daemon picks changes up when idle', 'dim')], [], heading('Flows')];
+  const browsing = settings.editing.kind === "browse";
+
+  const isSelected = (row: SettingsRow) =>
+    browsing && Option.exists(Arr.get(rows, settings.index), (found) => sameRow(found, row));
+
+  const lines: Array<Line> = [
+    [
+      segment(`${settings.repo}${who}`, "bold"),
+      segment("  saved to machine config; the daemon picks changes up when idle", "dim"),
+    ],
+    [],
+    heading("Flows"),
+  ];
 
   for (const flow of personaFlows(model, settings)) {
     const enabled = flowEnabled(model, settings.repo, flow);
 
     const schedule = Option.match(Option.fromUndefinedOr(flow.ownSchedule), {
-      onNone: () => segment(`${pad(flow.schedule, 16)} team's`, 'plain'),
-      onSome: (own) => segment(`${pad(own, 16)} yours; team's ${flow.teamSchedule ?? flow.schedule}`, 'cyan'),
+      onNone: () => segment(`${pad(flow.schedule, 16)} team's`, "plain"),
+      onSome: (own) =>
+        segment(`${pad(own, 16)} yours; team's ${flow.teamSchedule ?? flow.schedule}`, "cyan"),
     });
 
-    lines.push(select([segment(`  ${pad(flow.name, 14)}`), segment(pad(onOff(enabled), 5), styleIf(!enabled, 'dim')), schedule, segment(`  next ${ago(flow.next, model.now)}`, 'dim')], isSelected({ kind: 'flow', flow: flow.name })));
+    lines.push(
+      select(
+        [
+          segment(`  ${pad(flow.name, 14)}`),
+          segment(pad(onOff(enabled), 5), styleIf(!enabled, "dim")),
+          schedule,
+          segment(`  next ${ago(flow.next, model.now)}`, "dim"),
+        ],
+        isSelected({ kind: "flow", flow: flow.name }),
+      ),
+    );
   }
 
   for (const found of Option.toArray(personaAccounts(model, settings))) {
-    lines.push([], heading('Accounts'));
-    lines.push(select([segment(`  ${pad('account', 20)}`), segment(whose(found.ownAccount, found.account))], isSelected(ACCOUNT_ROW)));
+    lines.push([], heading("Accounts"));
+    lines.push(
+      select(
+        [segment(`  ${pad("account", 20)}`), segment(whose(found.ownAccount, found.account))],
+        isSelected(ACCOUNT_ROW),
+      ),
+    );
 
-    for (const role of found.roles) lines.push(select([segment(`  ${pad(`role ${role.role}`, 20)}`), segment(whose(role.account, 'its agent\'s account'))], isSelected({ kind: 'role', role: role.role })));
+    for (const role of found.roles) {
+      lines.push(
+        select(
+          [
+            segment(`  ${pad(`role ${role.role}`, 20)}`),
+            segment(whose(role.account, "its agent's account")),
+          ],
+          isSelected({ kind: "role", role: role.role }),
+        ),
+      );
+    }
   }
 
   return [...lines, ...editingLines(settings.editing)];
@@ -388,18 +631,35 @@ const settingsView = (model: Model, settings: Settings): ReadonlyArray<Line> => 
 
 const mainView = (model: Model): ReadonlyArray<Line> =>
   Option.match(model.status, {
-    onNone: () => [[segment(Option.getOrElse(model.error, () => 'connecting to the daemon…'), 'yellow')]],
+    onNone: () => [
+      [
+        segment(
+          Option.getOrElse(model.error, () => "connecting to the daemon…"),
+          "yellow",
+        ),
+      ],
+    ],
     onSome: (status) => statusView(model, status),
   });
 
 const logView = (model: Model): ReadonlyArray<Line> => {
-  const run = Arr.findFirst(runRows(model.status), (candidate) => Option.contains(model.logRun, candidate.id));
+  const run = Arr.findFirst(runRows(model.status), (candidate) =>
+    Option.contains(model.logRun, candidate.id),
+  );
 
   const header: ReadonlyArray<Line> = [
     [
-      segment(Option.getOrElse(model.logRun, () => ''), 'bold'),
+      segment(
+        Option.getOrElse(model.logRun, () => ""),
+        "bold",
+      ),
       ...Option.toArray(
-        Option.map(run, (found) => segment(`  ${found.status}${Option.match(found.currentStep, { onNone: () => '', onSome: (step) => `: ${step}` })}`, STATUS_STYLE[found.status])),
+        Option.map(run, (found) =>
+          segment(
+            `  ${found.status}${Option.match(found.currentStep, { onNone: () => "", onSome: (step) => `: ${step}` })}`,
+            STATUS_STYLE[found.status],
+          ),
+        ),
       ),
     ],
     [],
@@ -407,7 +667,12 @@ const logView = (model: Model): ReadonlyArray<Line> => {
 
   const room = Math.max(1, model.height - header.length - 2);
   const end = Math.max(0, model.logLines.length - model.logScroll);
-  const shown = model.logLines.slice(Math.max(0, end - room), end).map((line): Line => [segment(line, styleIf(/error|failed|needs a person/i.test(line), 'red'))]);
+
+  const shown = model.logLines
+    .slice(Math.max(0, end - room), end)
+    .map((line): Line => [
+      segment(line, styleIf(/error|failed|needs a person/i.test(line), "red")),
+    ]);
 
   return [...header, ...shown];
 };
@@ -417,7 +682,9 @@ const clipLine = (line: Line, width: number): Line => {
   let used = 0;
 
   for (const part of line) {
-    if (used >= width) break;
+    if (used >= width) {
+      break;
+    }
 
     const text = part.text.slice(0, width - used);
     out.push({ ...part, text });
@@ -428,22 +695,42 @@ const clipLine = (line: Line, width: number): Line => {
 };
 
 const bodyOf = (model: Model) => {
-  if (model.view === 'log') return logView(model);
+  if (model.view === "log") {
+    return logView(model);
+  }
 
-  return Option.match(Option.filter(model.settings, () => model.view === 'settings'), { onNone: () => mainView(model), onSome: (settings) => settingsView(model, settings) });
+  return Option.match(
+    Option.filter(model.settings, () => model.view === "settings"),
+    { onNone: () => mainView(model), onSome: (settings) => settingsView(model, settings) },
+  );
 };
 
-const SETTINGS_KEYS: Readonly<Record<Editing['kind'], string>> = { browse: KEYS_SETTINGS, cron: KEYS_CRON, pick: KEYS_PICK };
+const SETTINGS_KEYS: Readonly<Record<Editing["kind"], string>> = {
+  browse: KEYS_SETTINGS,
+  cron: KEYS_CRON,
+  pick: KEYS_PICK,
+};
 
 const keysOf = (model: Model) => {
-  if (model.view === 'log') return KEYS_LOG;
+  if (model.view === "log") {
+    return KEYS_LOG;
+  }
 
-  return Option.match(Option.filter(model.settings, () => model.view === 'settings'), { onNone: () => KEYS_MAIN, onSome: (settings) => SETTINGS_KEYS[settings.editing.kind] });
+  return Option.match(
+    Option.filter(model.settings, () => model.view === "settings"),
+    { onNone: () => KEYS_MAIN, onSome: (settings) => SETTINGS_KEYS[settings.editing.kind] },
+  );
 };
 
 // The whole screen: the view, then the message and the keys on the last lines.
 export const view = (model: Model): ReadonlyArray<Line> => {
-  const footer: ReadonlyArray<Line> = [Option.match(model.message, { onNone: () => [], onSome: (message) => [segment(message, 'yellow')] }), [segment(keysOf(model), 'dim')]];
+  const footer: ReadonlyArray<Line> = [
+    Option.match(model.message, {
+      onNone: () => [],
+      onSome: (message) => [segment(message, "yellow")],
+    }),
+    [segment(keysOf(model), "dim")],
+  ];
 
   const room = Math.max(0, model.height - footer.length);
 
@@ -451,7 +738,19 @@ export const view = (model: Model): ReadonlyArray<Line> => {
     .slice(0, room)
     .map((line) => clipLine(line, model.width));
 
-  return [...clipped, ...Array.from({ length: room - clipped.length }, (): Line => []), ...footer.map((line) => clipLine(line, model.width))];
+  return [
+    ...clipped,
+    ...Array.from({ length: room - clipped.length }, (): Line => []),
+    ...footer.map((line) => clipLine(line, model.width)),
+  ];
 };
 
-export const plain = (lines: ReadonlyArray<Line>) => lines.map((line) => line.map((part) => part.text).join('').trimEnd()).join('\n');
+export const plain = (lines: ReadonlyArray<Line>) =>
+  lines
+    .map((line) =>
+      line
+        .map((part) => part.text)
+        .join("")
+        .trimEnd(),
+    )
+    .join("\n");

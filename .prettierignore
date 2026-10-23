@@ -1,0 +1,13 @@
+node_modules/
+dist/
+bun.lock
+CHANGELOG.md
+# Its own project, with its own toolchain.
+website/
+# Vendored from functional-domain-driven-hexagon, and lint-ignored as such.
+tools/oxlint/
+# Generated: test/templates.test.ts holds src/templates.ts to what its script writes.
+src/templates.ts
+src/effect-modules.ts
+# Extensionless TypeScript scripts, which Prettier reads as JavaScript from their shebang.
+test/fakebin/

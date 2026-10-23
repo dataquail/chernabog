@@ -3,15 +3,18 @@
 // beside its slug and path, where the root keeps them as its `defaults`; it
 // doesn't keep whether the repo is paused, which is runtime state.
 
-import * as Equal from 'effect/Equal';
-import * as Option from 'effect/Option';
-import * as Schema from 'effect/Schema';
-import * as Struct from 'effect/Struct';
-import type YAML from 'yaml';
+import * as Equal from "effect/Equal";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
+import type YAML from "yaml";
 
-import { RepoSlug } from '../../../../kernel/repo-slug.id.ts';
-import { EnrolledRepoRoot } from '../../domain/enrolled-repo/enrolled-repo.root.ts';
-import { PersonaChoices, PersonaEntry } from '../../domain/enrolled-repo/persona-choices.value-object.ts';
+import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
+import {
+  PersonaChoices,
+  PersonaEntry,
+} from "../../domain/enrolled-repo/persona-choices.value-object.ts";
 
 export const EnrolledRepoEntry = Schema.Struct({
   // owner/name on GitHub: the key the entry's settings follow.
@@ -32,20 +35,35 @@ export const EnrolledRepoEntry = Schema.Struct({
 export type EnrolledRepoEntry = typeof EnrolledRepoEntry.Type;
 
 // The keys of an entry that aren't the repo entry's own choices.
-const IDENTITY = ['repo', 'path', 'name', 'baseBranch', 'personas'] as const;
+const IDENTITY = ["repo", "path", "name", "baseBranch", "personas"] as const;
 
 export const toRoot = (entry: EnrolledRepoEntry, paused: boolean) =>
-  EnrolledRepoRoot.make({ ...Struct.pick(entry, IDENTITY), repo: RepoSlug.make(entry.repo), defaults: Struct.omit(entry, IDENTITY), paused });
+  EnrolledRepoRoot.make({
+    ...Struct.pick(entry, IDENTITY),
+    repo: RepoSlug.make(entry.repo),
+    defaults: Struct.omit(entry, IDENTITY),
+    paused,
+  });
 
-export const toEntry = (root: EnrolledRepoRoot): EnrolledRepoEntry => ({ ...Struct.omit(root, ['defaults', 'paused']), ...root.defaults });
+export const toEntry = (root: EnrolledRepoRoot): EnrolledRepoEntry => ({
+  ...Struct.omit(root, ["defaults", "paused"]),
+  ...root.defaults,
+});
 
 const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
 // Writes `after` onto the document at `path`, where it held `before`: only
 // what changed, so the rest, comments included, stays as it was.
-const applyChanges = (document: YAML.Document, path: ReadonlyArray<string | number>, before: Option.Option<Schema.Json>, after: Option.Option<Schema.Json>) => {
+const applyChanges = (
+  document: YAML.Document,
+  path: ReadonlyArray<string | number>,
+  before: Option.Option<Schema.Json>,
+  after: Option.Option<Schema.Json>,
+) => {
   if (Option.isNone(after)) {
-    if (Option.isSome(before)) document.deleteIn(path);
+    if (Option.isSome(before)) {
+      document.deleteIn(path);
+    }
 
     return;
   }
@@ -54,24 +72,42 @@ const applyChanges = (document: YAML.Document, path: ReadonlyArray<string | numb
     const was = before.value;
     const now = after.value;
 
-    for (const key of Object.keys(was).filter((known) => !(known in now))) document.deleteIn([...path, key]);
+    for (const key of Object.keys(was).filter((known) => !(known in now))) {
+      document.deleteIn([...path, key]);
+    }
 
-    for (const [key, value] of Object.entries(now)) applyChanges(document, [...path, key], Option.fromUndefinedOr(was[key]), Option.some(value));
+    for (const [key, value] of Object.entries(now)) {
+      applyChanges(document, [...path, key], Option.fromUndefinedOr(was[key]), Option.some(value));
+    }
 
     return;
   }
 
   // A scalar or a list is written whole when it changed.
-  if (!Option.exists(before, (found) => Equal.equals(found, after.value))) document.setIn(path, document.createNode(after.value));
+  if (!Option.exists(before, (found) => Equal.equals(found, after.value))) {
+    document.setIn(path, document.createNode(after.value));
+  }
 };
 
-const encodeEntry = (root: EnrolledRepoRoot) => Schema.decodeUnknownSync(Schema.Json)(Schema.encodeSync(EnrolledRepoEntry)(toEntry(root)));
+const encodeEntry = (root: EnrolledRepoRoot) =>
+  Schema.decodeUnknownSync(Schema.Json)(Schema.encodeSync(EnrolledRepoEntry)(toEntry(root)));
 
 // Whether two roots store the same entry: whatever else differs is runtime state.
-export const sameEntry = (left: EnrolledRepoRoot, right: EnrolledRepoRoot) => Equal.equals(encodeEntry(left), encodeEntry(right));
+export const sameEntry = (left: EnrolledRepoRoot, right: EnrolledRepoRoot) =>
+  Equal.equals(encodeEntry(left), encodeEntry(right));
 
 // Writes what changed between two roots onto the entry at `index` in machine
 // config's document.
-export const applyEntry = (document: YAML.Document, index: number, before: EnrolledRepoRoot, after: EnrolledRepoRoot) => {
-  applyChanges(document, ['repos', index], Option.some(encodeEntry(before)), Option.some(encodeEntry(after)));
+export const applyEntry = (
+  document: YAML.Document,
+  index: number,
+  before: EnrolledRepoRoot,
+  after: EnrolledRepoRoot,
+) => {
+  applyChanges(
+    document,
+    ["repos", index],
+    Option.some(encodeEntry(before)),
+    Option.some(encodeEntry(after)),
+  );
 };

@@ -1,9 +1,9 @@
 // What the daemon and its clients (the CLI, the TUI) say over the local
 // socket. Both sides decode with these schemas.
 
-import * as Schema from 'effect/Schema';
+import * as Schema from "effect/Schema";
 
-import { RunRow, SkipRow } from './state.ts';
+import { RunRow, SkipRow } from "./state.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
@@ -40,7 +40,7 @@ export type PersonaStatus = typeof PersonaStatus.Type;
 export const RepoStatus = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
-  status: Schema.Literals(['ready', 'untrusted', 'error', 'missing']),
+  status: Schema.Literals(["ready", "untrusted", "error", "missing"]),
   message: Maybe,
   paused: Schema.Boolean,
   enabled: Schema.Boolean,
@@ -62,7 +62,9 @@ export const DaemonStatus = Schema.Struct({
   reloadPending: Schema.Boolean,
   repos: Schema.Array(RepoStatus),
   // The accounts in machine config, for choosing one.
-  accounts: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String, agent: Schema.String }))),
+  accounts: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ name: Schema.String, agent: Schema.String })),
+  ),
   active: Schema.Array(ActiveRun),
   recent: Schema.Array(RunRow),
   skips: Schema.Array(SkipRow),
@@ -71,7 +73,12 @@ export const DaemonStatus = Schema.Struct({
 export type DaemonStatus = typeof DaemonStatus.Type;
 
 // `persona` picks one, for a flow that runs as several.
-export const RunRequest = Schema.Struct({ repo: Schema.String, flow: Schema.String, item: Schema.OptionFromNullOr(Schema.String), persona: Schema.optionalKey(Schema.String) });
+export const RunRequest = Schema.Struct({
+  repo: Schema.String,
+  flow: Schema.String,
+  item: Schema.OptionFromNullOr(Schema.String),
+  persona: Schema.optionalKey(Schema.String),
+});
 
 export type RunRequest = typeof RunRequest.Type;
 

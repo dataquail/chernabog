@@ -7,55 +7,90 @@
 // earlier ones key by key, except that a repo can never raise machine limits,
 // and a person's launcher must be one the repo allows.
 
-import { type Account, DEFAULT_LABELS, type LauncherCommands, type Limits, type RepoSettings, type ResolvedLauncher } from '@chernabog/sdk';
-import * as Arr from 'effect/Array';
-import * as Duration from 'effect/Duration';
-import * as Effect from 'effect/Effect';
-import * as FileSystem from 'effect/FileSystem';
-import * as Option from 'effect/Option';
-import type * as PlatformError from 'effect/PlatformError';
-import * as Record from 'effect/Record';
-import * as Schema from 'effect/Schema';
-import YAML from 'yaml';
+import {
+  type Account,
+  DEFAULT_LABELS,
+  type LauncherCommands,
+  type Limits,
+  type RepoSettings,
+  type ResolvedLauncher,
+} from "@chernabog/sdk";
+import * as Arr from "effect/Array";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import type * as PlatformError from "effect/PlatformError";
+import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
+import YAML from "yaml";
 
-import type { AgentsConfig } from './agents.ts';
-import { ConfigError, expandHome, Home, homePaths } from './config.ts';
-import { checkConfigVersion } from './flow-deps.ts';
-import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
-import { type EnrolledRepoRoot } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root.ts';
-import { EnrolledRepoRootOps } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts';
-import { FlowSettings } from './modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts';
-import { type PersonaEntry } from './modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts';
-import { applyEntry, type EnrolledRepoEntry, EnrolledRepoEntry as EnrolledRepoSchema, toRoot as entryToRoot } from './modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts';
-import { nodeBinFor } from './node-version.ts';
-import { asSuffix, IMPLICIT, type Persona, samePersona } from './persona.ts';
-import { type Environment, HostEnvironment } from './platform/environment.ts';
-import { cronProblem } from './schedule.ts';
-import type { GateConfig } from './usage-gate.ts';
+import type { AgentsConfig } from "./agents.ts";
+import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
+import { checkConfigVersion } from "./flow-deps.ts";
+import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from "./launchers.ts";
+import { type EnrolledRepoRoot } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root.ts";
+import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
+import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts";
+import {
+  applyEntry,
+  type EnrolledRepoEntry,
+  EnrolledRepoEntry as EnrolledRepoSchema,
+  toRoot as entryToRoot,
+} from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
+import { nodeBinFor } from "./node-version.ts";
+import { asSuffix, IMPLICIT, type Persona, samePersona } from "./persona.ts";
+import { type Environment, HostEnvironment } from "./platform/environment.ts";
+import { cronProblem } from "./schedule.ts";
+import type { GateConfig } from "./usage-gate.ts";
 
 const Strings = Schema.Array(Schema.String);
 
 const DURATION = /^(\d+(?:\.\d+)?)\s*(millis?|seconds?|minutes?|hours?|days?|weeks?)$/;
 
-const UNIT_MILLIS: Readonly<Record<string, number>> = { milli: 1, second: 1000, minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000 };
+const UNIT_MILLIS: Readonly<Record<string, number>> = {
+  milli: 1,
+  second: 1000,
+  minute: 60_000,
+  hour: 3_600_000,
+  day: 86_400_000,
+  week: 604_800_000,
+};
 
 // "6 hours", "90 minutes": the durations config may name.
 export const parseDuration = (text: string) =>
   Option.fromNullishOr(DURATION.exec(text.trim())).pipe(
-    Option.flatMap((match) => Option.map(Record.get(UNIT_MILLIS, match[2].replace(/s$/, '')), (millis) => Duration.millis(Number(match[1]) * millis))),
+    Option.flatMap((match) =>
+      Option.map(Record.get(UNIT_MILLIS, match[2].replace(/s$/, "")), (millis) =>
+        Duration.millis(Number(match[1]) * millis),
+      ),
+    ),
   );
 
-const DurationText = Schema.String.pipe(Schema.check(Schema.makeFilter((text: string) => Option.isSome(parseDuration(text)) || `"${text}" is not a duration, such as "6 hours"`)));
+const DurationText = Schema.String.pipe(
+  Schema.check(
+    Schema.makeFilter(
+      (text: string) =>
+        Option.isSome(parseDuration(text)) || `"${text}" is not a duration, such as "6 hours"`,
+    ),
+  ),
+);
 
 // A YAML null turns the setting off.
-const Nullable = <S extends Schema.Constraint>(schema: S) => Schema.optionalKey(Schema.OptionFromNullOr(schema));
+const Nullable = <S extends Schema.Constraint>(schema: S) =>
+  Schema.optionalKey(Schema.OptionFromNullOr(schema));
 
 // GitHub logins whose machines run a flow by default; anyone's, when left out.
 const Runners = Schema.Array(Schema.String).annotate({
-  description: "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config.",
+  description:
+    "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config.",
 });
 
-const RepoFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: Schema.optionalKey(Runners) });
+const RepoFlowSettings = Schema.Struct({
+  ...FlowSettings.fields,
+  runners: Schema.optionalKey(Runners),
+});
 
 const LimitsFile = Schema.Struct({
   localGateRounds: Schema.optionalKey(Schema.Int),
@@ -65,7 +100,11 @@ const LimitsFile = Schema.Struct({
   ciTimeout: Schema.optionalKey(DurationText),
 });
 
-const Board = Schema.Struct({ projectNumber: Schema.Int, readyStatus: Schema.String, inProgressStatus: Schema.String });
+const Board = Schema.Struct({
+  projectNumber: Schema.Int,
+  readyStatus: Schema.String,
+  inProgressStatus: Schema.String,
+});
 
 const LabelsFile = Schema.Struct({
   eligible: Schema.optionalKey(Schema.String),
@@ -81,10 +120,13 @@ const LabelsFile = Schema.Struct({
 });
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.
-const MACHINE_ONLY = 'launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)';
+const MACHINE_ONLY =
+  "launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)";
 
 // No value is allowed, so editors flag the key too.
-const MachineOnly = Schema.optionalKey(Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }));
+const MachineOnly = Schema.optionalKey(
+  Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }),
+);
 
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
@@ -107,7 +149,8 @@ export const RepoConfigFile = Schema.Struct({
   runners: Schema.optionalKey(Runners),
   reviewers: Schema.optionalKey(
     Strings.annotate({
-      description: 'The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path (auto:ship).',
+      description:
+        "The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path (auto:ship).",
     }),
   ),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
@@ -119,7 +162,7 @@ const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
   expectedEmail: Nullable(Schema.String),
   oauthTokenEnv: Nullable(Schema.String),
-  usageGate: Schema.optionalKey(Schema.Literal('none')),
+  usageGate: Schema.optionalKey(Schema.Literal("none")),
   agent: Schema.optionalKey(Schema.String),
 });
 
@@ -178,9 +221,20 @@ export const MachineConfigFile = Schema.Struct({
 
 export type MachineConfigFile = typeof MachineConfigFile.Type;
 
-export const DEFAULT_GATE: GateConfig = { targetEndUsage: 0.95, taskCostEstimate: 0.04, fiveHourCeiling: 0.4, humanRatePerHour: 0.005 };
+export const DEFAULT_GATE: GateConfig = {
+  targetEndUsage: 0.95,
+  taskCostEstimate: 0.04,
+  fiveHourCeiling: 0.4,
+  humanRatePerHour: 0.005,
+};
 
-export const DEFAULT_LIMITS: Limits = { localGateRounds: 2, ciRounds: 3, reviewRounds: 1, staleAfter: Duration.hours(6), ciTimeout: Duration.hours(2) };
+export const DEFAULT_LIMITS: Limits = {
+  localGateRounds: 2,
+  ciRounds: 3,
+  reviewRounds: 1,
+  staleAfter: Duration.hours(6),
+  ciTimeout: Duration.hours(2),
+};
 
 // Each account belongs to one agent: claude unless it says otherwise.
 export type MachineAccount = Account & { readonly agent: string };
@@ -226,46 +280,71 @@ export type EffectiveRepo = {
   readonly personas: Arr.NonEmptyReadonlyArray<PersonaRepo>;
 };
 
-export const personaOf = (repo: EffectiveRepo, persona: Persona) => Arr.findFirst(repo.personas, (candidate) => samePersona(candidate.persona, persona));
+export const personaOf = (repo: EffectiveRepo, persona: Persona) =>
+  Arr.findFirst(repo.personas, (candidate) => samePersona(candidate.persona, persona));
 
-export const FLOW_TURNED_OFF = 'flow turned off';
+export const FLOW_TURNED_OFF = "flow turned off";
 
 // Whether a login is one of a flow's runners. Logins are case-insensitive, as on GitHub.
-export const isRunner = (runners: ReadonlyArray<string>, login: string) => runners.some((runner) => runner.toLowerCase() === login.toLowerCase());
+export const isRunner = (runners: ReadonlyArray<string>, login: string) =>
+  runners.some((runner) => runner.toLowerCase() === login.toLowerCase());
 
 // Why the team doesn't have these logins run a flow with these runners, if it doesn't.
 export const notARunner = (runners: ReadonlyArray<string>, logins: ReadonlyArray<string>) => {
-  const who = Option.match(Option.liftPredicate(logins, Arr.isReadonlyArrayNonEmpty), { onNone: () => "this machine's GitHub login is unknown", onSome: (found) => `this machine is ${found.join(', ')}` });
+  const who = Option.match(Option.liftPredicate(logins, Arr.isReadonlyArrayNonEmpty), {
+    onNone: () => "this machine's GitHub login is unknown",
+    onSome: (found) => `this machine is ${found.join(", ")}`,
+  });
 
-  return Option.liftPredicate(`not a runner (runners: ${runners.join(', ')}; ${who})`, () => !logins.some((login) => isRunner(runners, login)));
+  return Option.liftPredicate(
+    `not a runner (runners: ${runners.join(", ")}; ${who})`,
+    () => !logins.some((login) => isRunner(runners, login)),
+  );
 };
 
 // Why the team has a flow off for these logins, if it does: its
 // flows.<flow>.enabled, else its runners. What enrolling offers by default.
 export const teamOff = (repo: RepoConfigFile, flow: string, logins: ReadonlyArray<string>) =>
-  Option.orElse(Option.liftPredicate(FLOW_TURNED_OFF, () => repo.flows?.[flow]?.enabled === false), () =>
-    Option.flatMap(Option.orElse(Option.fromUndefinedOr(repo.flows?.[flow]?.runners), () => Option.fromUndefinedOr(repo.runners)), (runners) => notARunner(runners, logins)),
+  Option.orElse(
+    Option.liftPredicate(FLOW_TURNED_OFF, () => repo.flows?.[flow]?.enabled === false),
+    () =>
+      Option.flatMap(
+        Option.orElse(Option.fromUndefinedOr(repo.flows?.[flow]?.runners), () =>
+          Option.fromUndefinedOr(repo.runners),
+        ),
+        (runners) => notARunner(runners, logins),
+      ),
   );
 
 // Whether the team names runners for any of these flows, so the defaults need this machine's login.
 export const namesRunners = (repo: RepoConfigFile, flows: ReadonlyArray<string>) =>
-  Option.isSome(Option.fromUndefinedOr(repo.runners)) || flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
+  Option.isSome(Option.fromUndefinedOr(repo.runners)) ||
+  flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
 
-export type Routing = { readonly assignee: Option.Option<ReadonlyArray<string>>; readonly reviewRequested: Option.Option<ReadonlyArray<string>> };
+export type Routing = {
+  readonly assignee: Option.Option<ReadonlyArray<string>>;
+  readonly reviewRequested: Option.Option<ReadonlyArray<string>>;
+};
 
-const listOf = (who: Option.Option<string | ReadonlyArray<string>>) => Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
+const listOf = (who: Option.Option<string | ReadonlyArray<string>>) =>
+  Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
 
 // Whose work items a flow starts as this persona; anyone's without a filter.
 export const routingOf = (repo: PersonaRepo, flow: string): Routing => {
   const settings = Record.get(repo.flows, flow);
 
   return {
-    assignee: Option.flatMap(settings, (found) => listOf(Option.flatten(Option.fromUndefinedOr(found.assignee)))),
-    reviewRequested: Option.flatMap(settings, (found) => listOf(Option.flatten(Option.fromUndefinedOr(found.reviewRequested)))),
+    assignee: Option.flatMap(settings, (found) =>
+      listOf(Option.flatten(Option.fromUndefinedOr(found.assignee))),
+    ),
+    reviewRequested: Option.flatMap(settings, (found) =>
+      listOf(Option.flatten(Option.fromUndefinedOr(found.reviewRequested))),
+    ),
   };
 };
 
-const namesMe = (filter: Option.Option<ReadonlyArray<string>>) => Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === '@me'));
+const namesMe = (filter: Option.Option<ReadonlyArray<string>>) =>
+  Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === "@me"));
 
 // Whether the daemon must know this machine's GitHub login for the repo: for
 // a flow the implicit persona runs that starts only work for @me. A named
@@ -283,7 +362,8 @@ export const needsLogin = (repo: EffectiveRepo) =>
 
 // Why a persona doesn't run a flow, if it doesn't: machine config doesn't list
 // it for the persona.
-export const flowOff = (repo: PersonaRepo, flow: string): Option.Option<string> => Option.liftPredicate(FLOW_TURNED_OFF, () => !repo.chosen.includes(flow));
+export const flowOff = (repo: PersonaRepo, flow: string): Option.Option<string> =>
+  Option.liftPredicate(FLOW_TURNED_OFF, () => !repo.chosen.includes(flow));
 
 // A YAML file decoded into a schema's type; an absent file is an empty one.
 // `strict` refuses keys the schema doesn't name, rather than dropping them.
@@ -292,37 +372,57 @@ export const readYaml = <A, I>(schema: Schema.Codec<A, I>, file: string, strict 
     const fs = yield* FileSystem.FileSystem;
     const failed = (message: string) => new ConfigError({ message: `${file}: ${message}` });
     // An absent or empty file sets nothing.
-    let text = '{}';
+    let text = "{}";
 
-    if (yield* fs.exists(file)) text = yield* fs.readFileString(file);
+    if (yield* fs.exists(file)) {
+      text = yield* fs.readFileString(file);
+    }
 
-    if (text.trim().length === 0) text = '{}';
+    if (text.trim().length === 0) {
+      text = "{}";
+    }
 
     const document = YAML.parseDocument(text);
 
-    if (document.errors.length > 0) return yield* failed(document.errors.map((error) => error.message).join('; '));
+    if (document.errors.length > 0) {
+      return yield* failed(document.errors.map((error) => error.message).join("; "));
+    }
 
-    let onExcessProperty: 'error' | 'ignore' = 'ignore';
+    let onExcessProperty: "error" | "ignore" = "ignore";
 
-    if (strict) onExcessProperty = 'error';
+    if (strict) {
+      onExcessProperty = "error";
+    }
 
-    return yield* Schema.decodeUnknownEffect(schema)(document.toJS(), { onExcessProperty }).pipe(Effect.mapError((issue) => failed(issue.message)));
-  }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: `${file}: ${error.message}` }))));
+    return yield* Schema.decodeUnknownEffect(schema)(document.toJS(), { onExcessProperty }).pipe(
+      Effect.mapError((issue) => failed(issue.message)),
+    );
+  }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(new ConfigError({ message: `${file}: ${error.message}` })),
+    ),
+  );
 
-export const machineConfigFile = Home.use((home) => Effect.succeed(homePaths(home.root).machineConfig));
+export const machineConfigFile = Home.use((home) =>
+  Effect.succeed(homePaths(home.root).machineConfig),
+);
 
-const fromAccountFile = (home: string) => (entry: readonly [string, typeof AccountFile.Type]): MachineAccount => {
-  const [name, account] = entry;
+const fromAccountFile =
+  (home: string) =>
+  (entry: readonly [string, typeof AccountFile.Type]): MachineAccount => {
+    const [name, account] = entry;
 
-  return {
-    name,
-    configDir: Option.map(Option.flatten(Option.fromUndefinedOr(account.configDir)), (dir) => expandHome(dir, home)),
-    expectedEmail: Option.flatten(Option.fromUndefinedOr(account.expectedEmail)),
-    oauthTokenEnv: Option.flatten(Option.fromUndefinedOr(account.oauthTokenEnv)),
-    usageGate: account.usageGate ?? 'usage',
-    agent: account.agent ?? 'claude',
+    return {
+      name,
+      configDir: Option.map(Option.flatten(Option.fromUndefinedOr(account.configDir)), (dir) =>
+        expandHome(dir, home),
+      ),
+      expectedEmail: Option.flatten(Option.fromUndefinedOr(account.expectedEmail)),
+      oauthTokenEnv: Option.flatten(Option.fromUndefinedOr(account.oauthTokenEnv)),
+      usageGate: account.usageGate ?? "usage",
+      agent: account.agent ?? "claude",
+    };
   };
-};
 
 const launcherCommandsOf = (file: typeof LauncherFile.Type): LauncherCommands => ({
   start: file.start,
@@ -354,19 +454,31 @@ export const loadMachineConfig = Effect.gen(function* () {
 export const repoNameOf = (repo: EnrolledRepo) => EnrolledRepoRootOps.nameOf(toRoot(repo));
 
 export const findEnrolled = (machine: MachineConfig, name: string) =>
-  Effect.fromOption(Arr.findFirst(machine.repos, (repo) => repoNameOf(repo) === name || repo.repo === name || repo.path === name)).pipe(
+  Effect.fromOption(
+    Arr.findFirst(
+      machine.repos,
+      (repo) => repoNameOf(repo) === name || repo.repo === name || repo.path === name,
+    ),
+  ).pipe(
     Effect.mapError(() => {
-      const enrolled = machine.repos.map(repoNameOf).join(', ');
+      const enrolled = machine.repos.map(repoNameOf).join(", ");
 
-      let known = 'none';
+      let known = "none";
 
-      if (enrolled.length > 0) known = enrolled;
+      if (enrolled.length > 0) {
+        known = enrolled;
+      }
 
-      return new ConfigError({ message: `no enrolled repo named ${name} (enrolled: ${known}); run chernabog enroll in it` });
+      return new ConfigError({
+        message: `no enrolled repo named ${name} (enrolled: ${known}); run chernabog enroll in it`,
+      });
     }),
   );
 
-const mergeFlows = (layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>>, machineConcurrency: number) => {
+const mergeFlows = (
+  layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>>,
+  machineConcurrency: number,
+) => {
   const merged: Record<string, FlowSettings> = {};
 
   // Roles merge one by one, so a person can swap one role's adapter and keep the team's others.
@@ -376,7 +488,9 @@ const mergeFlows = (layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>
       const later = Option.fromUndefinedOr(settings.agents);
       merged[name] = { ...merged[name], ...settings };
 
-      if (Option.isSome(earlier) && Option.isSome(later)) merged[name] = { ...merged[name], agents: { ...earlier.value, ...later.value } };
+      if (Option.isSome(earlier) && Option.isSome(later)) {
+        merged[name] = { ...merged[name], agents: { ...earlier.value, ...later.value } };
+      }
     }
   }
 
@@ -384,30 +498,49 @@ const mergeFlows = (layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>
   return Record.map(merged, (settings) =>
     Option.match(Option.fromUndefinedOr(settings.concurrency), {
       onNone: () => settings,
-      onSome: (concurrency) => ({ ...settings, concurrency: Math.min(concurrency, machineConcurrency) }),
+      onSome: (concurrency) => ({
+        ...settings,
+        concurrency: Math.min(concurrency, machineConcurrency),
+      }),
     }),
   );
 };
 
-const ownAccount = (account: MachineAccount): Account => ({ name: account.name, configDir: account.configDir, expectedEmail: account.expectedEmail, oauthTokenEnv: account.oauthTokenEnv, usageGate: account.usageGate });
+const ownAccount = (account: MachineAccount): Account => ({
+  name: account.name,
+  configDir: account.configDir,
+  expectedEmail: account.expectedEmail,
+  oauthTokenEnv: account.oauthTokenEnv,
+  usageGate: account.usageGate,
+});
 
 // The repo's own account for its agent; for any other agent, that agent's first account.
 const accountsByAgent = (machine: MachineConfig, own: MachineAccount) => {
   const byAgent: Record<string, Account> = {};
 
-  for (const candidate of machine.accounts) if (!(candidate.agent in byAgent)) byAgent[candidate.agent] = ownAccount(candidate);
+  for (const candidate of machine.accounts) {
+    if (!(candidate.agent in byAgent)) {
+      byAgent[candidate.agent] = ownAccount(candidate);
+    }
+  }
 
   byAgent[own.agent] = ownAccount(own);
 
   return byAgent;
 };
 
-const limitsFrom = (file: RepoConfigFile['limits']): Limits => ({
+const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
   localGateRounds: file?.localGateRounds ?? DEFAULT_LIMITS.localGateRounds,
   ciRounds: file?.ciRounds ?? DEFAULT_LIMITS.ciRounds,
   reviewRounds: file?.reviewRounds ?? DEFAULT_LIMITS.reviewRounds,
-  staleAfter: Option.getOrElse(Option.flatMap(Option.fromUndefinedOr(file?.staleAfter), parseDuration), () => DEFAULT_LIMITS.staleAfter),
-  ciTimeout: Option.getOrElse(Option.flatMap(Option.fromUndefinedOr(file?.ciTimeout), parseDuration), () => DEFAULT_LIMITS.ciTimeout),
+  staleAfter: Option.getOrElse(
+    Option.flatMap(Option.fromUndefinedOr(file?.staleAfter), parseDuration),
+    () => DEFAULT_LIMITS.staleAfter,
+  ),
+  ciTimeout: Option.getOrElse(
+    Option.flatMap(Option.fromUndefinedOr(file?.ciTimeout), parseDuration),
+    () => DEFAULT_LIMITS.ciTimeout,
+  ),
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their
@@ -415,35 +548,51 @@ const limitsFrom = (file: RepoConfigFile['limits']): Limits => ({
 // persona's), then machine config's own, then the repo. The team limits it
 // with allowedLaunchers, and a launcher outside that list fails the repo
 // instead of quietly running under another one.
-export const resolveLauncher = (machine: MachineConfig, repoName: string, files: { readonly repo: RepoConfigFile; readonly own: PersonaEntry }) =>
+export const resolveLauncher = (
+  machine: MachineConfig,
+  repoName: string,
+  files: { readonly repo: RepoConfigFile; readonly own: PersonaEntry },
+) =>
   Effect.gen(function* () {
     const chosen = Arr.findFirst(
       [
-        { from: 'repo entry', name: Option.fromUndefinedOr(files.own.launcher) },
-        { from: 'machine config', name: machine.launcher },
-        { from: 'repo config', name: Option.fromUndefinedOr(files.repo.launcher) },
+        { from: "repo entry", name: Option.fromUndefinedOr(files.own.launcher) },
+        { from: "machine config", name: machine.launcher },
+        { from: "repo config", name: Option.fromUndefinedOr(files.repo.launcher) },
       ],
       (layer) => Option.isSome(layer.name),
     );
 
     const { from, name } = Option.getOrElse(
-      Option.flatMap(chosen, (layer) => Option.map(layer.name, (found) => ({ from: layer.from, name: found }))),
-      () => ({ from: 'default', name: 'headless' }),
+      Option.flatMap(chosen, (layer) =>
+        Option.map(layer.name, (found) => ({ from: layer.from, name: found })),
+      ),
+      () => ({ from: "default", name: "headless" }),
     );
 
     // A custom launcher can't take a built-in's name.
-    const custom = Option.filter(Record.get(machine.launchers, name), () => !BUILT_IN_LAUNCHERS.includes(name));
+    const custom = Option.filter(
+      Record.get(machine.launchers, name),
+      () => !BUILT_IN_LAUNCHERS.includes(name),
+    );
 
     if (!BUILT_IN_LAUNCHERS.includes(name) && Option.isNone(custom)) {
-      const known = [...BUILT_IN_LAUNCHERS, ...Object.keys(machine.launchers).filter((own) => !BUILT_IN_LAUNCHERS.includes(own))];
+      const known = [
+        ...BUILT_IN_LAUNCHERS,
+        ...Object.keys(machine.launchers).filter((own) => !BUILT_IN_LAUNCHERS.includes(own)),
+      ];
 
-      return yield* new ConfigError({ message: `unknown launcher "${name}" (from ${from}); known launchers: ${known.join(', ')}` });
+      return yield* new ConfigError({
+        message: `unknown launcher "${name}" (from ${from}); known launchers: ${known.join(", ")}`,
+      });
     }
 
     const allowed = Option.fromUndefinedOr(files.repo.allowedLaunchers);
 
     if (Option.isSome(allowed) && !allowed.value.includes(name)) {
-      return yield* new ConfigError({ message: `launcher "${name}" (from ${from}) isn't allowed by ${repoName}'s config: allowedLaunchers is ${allowed.value.join(', ')}` });
+      return yield* new ConfigError({
+        message: `launcher "${name}" (from ${from}) isn't allowed by ${repoName}'s config: allowedLaunchers is ${allowed.value.join(", ")}`,
+      });
     }
 
     return { name, from, custom } satisfies ResolvedLauncher;
@@ -455,41 +604,71 @@ export const resolveLauncher = (machine: MachineConfig, repoName: string, files:
 export const personasOf = (machine: MachineConfig, enrolled: EnrolledRepo) =>
   Effect.gen(function* () {
     const chosen = Option.map(Option.fromUndefinedOr(enrolled.personas), Object.keys);
-    const failed = (message: string) => new ConfigError({ message: `${enrolled.repo}: ${message}` });
+
+    const failed = (message: string) =>
+      new ConfigError({ message: `${enrolled.repo}: ${message}` });
 
     if (machine.github.length === 0) {
-      if (Option.isSome(chosen)) return yield* failed('personas names GitHub logins, but machine config has no github: to list them');
+      if (Option.isSome(chosen)) {
+        return yield* failed(
+          "personas names GitHub logins, but machine config has no github: to list them",
+        );
+      }
 
       return Arr.of(IMPLICIT);
     }
 
     if (Option.isNone(chosen)) {
-      if (machine.github.length === 1) return Arr.of(Option.some(machine.github[0]));
+      if (machine.github.length === 1) {
+        return Arr.of(Option.some(machine.github[0]));
+      }
 
-      return yield* failed(`machine config lists several GitHub personas (${machine.github.join(', ')}); choose this repo's with personas:`);
+      return yield* failed(
+        `machine config lists several GitHub personas (${machine.github.join(", ")}); choose this repo's with personas:`,
+      );
     }
 
     const unknown = chosen.value.filter((login) => !machine.github.includes(login));
 
-    if (unknown.length > 0) return yield* failed(`personas ${unknown.join(', ')} not listed under github: (it has: ${machine.github.join(', ')})`);
+    if (unknown.length > 0) {
+      return yield* failed(
+        `personas ${unknown.join(", ")} not listed under github: (it has: ${machine.github.join(", ")})`,
+      );
+    }
 
-    if (!Arr.isReadonlyArrayNonEmpty(chosen.value)) return yield* failed('personas is empty; leave the repo out of machine config instead');
+    if (!Arr.isReadonlyArrayNonEmpty(chosen.value)) {
+      return yield* failed("personas is empty; leave the repo out of machine config instead");
+    }
 
     return Arr.map(chosen.value, (login): Persona => Option.some(login));
   });
 
 // A persona's choices for a repo: its own entry's keys over the repo entry's.
-export const choicesOf = (enrolled: EnrolledRepo, persona: Persona): PersonaEntry => EnrolledRepoRootOps.choicesOf(toRoot(enrolled), persona);
+export const choicesOf = (enrolled: EnrolledRepo, persona: Persona): PersonaEntry =>
+  EnrolledRepoRootOps.choicesOf(toRoot(enrolled), persona);
 
-const findAccount = (machine: MachineConfig, name: string, failed: (message: string) => ConfigError) =>
+const findAccount = (
+  machine: MachineConfig,
+  name: string,
+  failed: (message: string) => ConfigError,
+) =>
   Effect.fromOption(Arr.findFirst(machine.accounts, (candidate) => candidate.name === name)).pipe(
-    Effect.mapError(() => failed(`account "${name}" is not one of ${machine.accounts.map((known) => known.name).join(', ')}`)),
+    Effect.mapError(() =>
+      failed(
+        `account "${name}" is not one of ${machine.accounts.map((known) => known.name).join(", ")}`,
+      ),
+    ),
   );
 
 // The persona's other accounts, and each role's, by the agent they run, and
 // each role's adapter. Accounts are chosen by agent, so each must run another
 // agent than the persona's own account, and no two the same one.
-const otherAccounts = (machine: MachineConfig, own: PersonaEntry, account: MachineAccount, failed: (message: string) => ConfigError) =>
+const otherAccounts = (
+  machine: MachineConfig,
+  own: PersonaEntry,
+  account: MachineAccount,
+  failed: (message: string) => ConfigError,
+) =>
   Effect.gen(function* () {
     const accounts: Record<string, Account> = {};
     const agents: Record<string, string> = {};
@@ -497,9 +676,15 @@ const otherAccounts = (machine: MachineConfig, own: PersonaEntry, account: Machi
     for (const name of own.accounts ?? []) {
       const picked = yield* findAccount(machine, name, failed);
 
-      if (picked.agent === account.agent) return yield* failed(`accounts names ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); list only accounts of other agents`);
+      if (picked.agent === account.agent) {
+        return yield* failed(
+          `accounts names ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); list only accounts of other agents`,
+        );
+      }
 
-      if (picked.agent in accounts) return yield* failed(`accounts names two ${picked.agent} accounts; list one per agent`);
+      if (picked.agent in accounts) {
+        return yield* failed(`accounts names two ${picked.agent} accounts; list one per agent`);
+      }
 
       accounts[picked.agent] = ownAccount(picked);
     }
@@ -508,7 +693,9 @@ const otherAccounts = (machine: MachineConfig, own: PersonaEntry, account: Machi
       const picked = yield* findAccount(machine, name, failed);
 
       if (picked.agent === account.agent && picked.name !== account.name) {
-        return yield* failed(`roles.${role} is ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); a role's account must run another agent`);
+        return yield* failed(
+          `roles.${role} is ${picked.name}, a ${picked.agent} account like the persona's own (${account.name}); a role's account must run another agent`,
+        );
       }
 
       accounts[picked.agent] = ownAccount(picked);
@@ -520,23 +707,46 @@ const otherAccounts = (machine: MachineConfig, own: PersonaEntry, account: Machi
 
 // Merges the layers for one persona of a repo. `configDir` is where its
 // .chernabog/ was read from; `env` is the extra environment its commands run with.
-const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: RepoConfigFile, persona: Persona, configDir: string, env: Environment) =>
+const mergePersona = (
+  machine: MachineConfig,
+  enrolled: EnrolledRepo,
+  repo: RepoConfigFile,
+  persona: Persona,
+  configDir: string,
+  env: Environment,
+) =>
   Effect.gen(function* () {
-    const failed = (message: string) => new ConfigError({ message: `${enrolled.repo}${asSuffix(persona)}: ${message}` });
+    const failed = (message: string) =>
+      new ConfigError({ message: `${enrolled.repo}${asSuffix(persona)}: ${message}` });
+
     const own = choicesOf(enrolled, persona);
-    const accountName = Option.getOrElse(Option.orElse(Option.fromUndefinedOr(own.account), () => Option.map(Arr.head(machine.accounts), (first) => first.name)), () => 'work');
+
+    const accountName = Option.getOrElse(
+      Option.orElse(Option.fromUndefinedOr(own.account), () =>
+        Option.map(Arr.head(machine.accounts), (first) => first.name),
+      ),
+      () => "work",
+    );
+
     const account = yield* findAccount(machine, accountName, failed);
 
     // A persona with its own default schedule chooses when every flow runs
     // for it, so the team's per-flow schedules give way to it.
-    const teamFlows = Record.map(repo.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
+    const teamFlows = Record.map(
+      repo.flows ?? {},
+      ({ runners: _runners, ...settings }): FlowSettings => settings,
+    );
 
     const repoFlows = Option.match(Option.fromUndefinedOr(own.schedule), {
       onNone: () => teamFlows,
       onSome: () => Record.map(teamFlows, ({ schedule: _schedule, ...settings }) => settings),
     });
 
-    const ownFlows = Record.map(own.flows ?? {}, ({ runners: _runners, ...settings }): FlowSettings => settings);
+    const ownFlows = Record.map(
+      own.flows ?? {},
+      ({ runners: _runners, ...settings }): FlowSettings => settings,
+    );
+
     const flows = mergeFlows([repoFlows, ownFlows], machine.concurrency);
     const agent = own.agent ?? repo.agent ?? account.agent;
     const roles = yield* otherAccounts(machine, own, account, failed);
@@ -547,23 +757,38 @@ const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: Repo
       name: repoNameOf(enrolled),
       slug: enrolled.repo,
       path: enrolled.path,
-      baseBranch: repo.baseBranch ?? enrolled.baseBranch ?? 'main',
+      baseBranch: repo.baseBranch ?? enrolled.baseBranch ?? "main",
       account: agentAccounts[agent] ?? ownAccount(account),
       agent,
       agentAccounts,
       launcher,
-      flowAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agent), (adapter) => [flow, adapter] as const)))),
-      flowRoleAgents: Object.fromEntries(Object.entries(flows).flatMap(([flow, chosen]) => Option.toArray(Option.map(Option.fromUndefinedOr(chosen.agents), (byRole) => [flow, byRole] as const)))),
+      flowAgents: Object.fromEntries(
+        Object.entries(flows).flatMap(([flow, chosen]) =>
+          Option.toArray(
+            Option.map(Option.fromUndefinedOr(chosen.agent), (adapter) => [flow, adapter] as const),
+          ),
+        ),
+      ),
+      flowRoleAgents: Object.fromEntries(
+        Object.entries(flows).flatMap(([flow, chosen]) =>
+          Option.toArray(
+            Option.map(Option.fromUndefinedOr(chosen.agents), (byRole) => [flow, byRole] as const),
+          ),
+        ),
+      ),
       roleAgents: roles.agents,
       labels: { ...DEFAULT_LABELS, ...repo.labels },
       install: Option.flatten(Option.fromUndefinedOr(repo.install)),
       localGate: repo.localGate ?? [],
       humanOnly: [...machine.humanOnly, ...(repo.humanOnly ?? [])],
-      humanOnlyPaths: repo.humanOnlyPaths ?? ['.github/**'],
+      humanOnlyPaths: repo.humanOnlyPaths ?? [".github/**"],
       notes: repo.notes ?? [],
       board: Option.flatten(Option.fromUndefinedOr(repo.board)),
       reviewTrigger: Option.flatten(Option.fromUndefinedOr(repo.reviewTrigger)),
-      ...Option.match(Option.fromUndefinedOr(repo.reviewers), { onNone: () => ({}), onSome: (reviewers) => ({ reviewers }) }),
+      ...Option.match(Option.fromUndefinedOr(repo.reviewers), {
+        onNone: () => ({}),
+        onSome: (reviewers) => ({ reviewers }),
+      }),
       limits: limitsFrom(repo.limits),
       env,
       configDir,
@@ -573,20 +798,34 @@ const mergePersona = (machine: MachineConfig, enrolled: EnrolledRepo, repo: Repo
       persona,
       settings,
       enabled: own.enabled ?? true,
-      schedule: { own: Option.fromUndefinedOr(own.schedule), repo: Option.fromUndefinedOr(repo.schedule) },
+      schedule: {
+        own: Option.fromUndefinedOr(own.schedule),
+        repo: Option.fromUndefinedOr(repo.schedule),
+      },
       activeHours: Option.fromUndefinedOr(own.activeHours),
       flows,
-      chosen: Object.entries(ownFlows).flatMap(([flow, chosen]) => Option.toArray(Option.liftPredicate(flow, () => chosen.enabled !== false))),
+      chosen: Object.entries(ownFlows).flatMap(([flow, chosen]) =>
+        Option.toArray(Option.liftPredicate(flow, () => chosen.enabled !== false)),
+      ),
       own,
       teamFlows,
     } satisfies PersonaRepo;
   });
 
 // Merges the layers for each persona of a repo.
-export const mergeRepoConfig = (machine: MachineConfig, enrolled: EnrolledRepo, repo: RepoConfigFile, configDir: string, env: Environment) =>
+export const mergeRepoConfig = (
+  machine: MachineConfig,
+  enrolled: EnrolledRepo,
+  repo: RepoConfigFile,
+  configDir: string,
+  env: Environment,
+) =>
   Effect.gen(function* () {
     const [first, ...rest] = yield* personasOf(machine, enrolled);
-    const merge = (persona: Persona) => mergePersona(machine, enrolled, repo, persona, configDir, env);
+
+    const merge = (persona: Persona) =>
+      mergePersona(machine, enrolled, repo, persona, configDir, env);
+
     const head = yield* merge(first);
     const tail = yield* Effect.forEach(rest, merge);
 
@@ -601,7 +840,9 @@ export const repoEnvironment = (checkout: string) =>
 
     return Option.match(bin, {
       onNone: () => ({}),
-      onSome: (dir) => ({ PATH: `${dir}:${Option.getOrElse(Record.get(host.variables, 'PATH'), () => '/usr/bin:/bin')}` }),
+      onSome: (dir) => ({
+        PATH: `${dir}:${Option.getOrElse(Record.get(host.variables, "PATH"), () => "/usr/bin:/bin")}`,
+      }),
     });
   });
 
@@ -615,25 +856,48 @@ export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configD
     yield* checkConfigVersion(configDir);
     const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
 
-    return yield* mergeRepoConfig(machine, enrolled, repo, configDir, yield* repoEnvironment(enrolled.path));
+    return yield* mergeRepoConfig(
+      machine,
+      enrolled,
+      repo,
+      configDir,
+      yield* repoEnvironment(enrolled.path),
+    );
   });
 
 // Edits machine config in place, keeping the file's comments. `edit` changes
 // the document, given the file as it decodes now, and says what it did.
-export const editMachineConfig = <A, E, R>(edit: (document: YAML.Document, current: MachineConfigFile) => Effect.Effect<A, E, R>) =>
+export const editMachineConfig = <A, E, R>(
+  edit: (document: YAML.Document, current: MachineConfigFile) => Effect.Effect<A, E, R>,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
     const file = homePaths(home.root).machineConfig;
-    const platform = <B>(effect: Effect.Effect<B, PlatformError.PlatformError>) => effect.pipe(Effect.mapError((error) => new ConfigError({ message: error.message })));
+
+    const platform = <B>(effect: Effect.Effect<B, PlatformError.PlatformError>) =>
+      effect.pipe(Effect.mapError((error) => new ConfigError({ message: error.message })));
+
     yield* platform(fs.makeDirectory(home.root, { recursive: true }));
     let document = new YAML.Document({});
 
-    if (yield* platform(fs.exists(file))) document = YAML.parseDocument(yield* platform(fs.readFileString(file)));
+    if (yield* platform(fs.exists(file))) {
+      document = YAML.parseDocument(yield* platform(fs.readFileString(file)));
+    }
 
-    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })));
+    const decoded = yield* Schema.decodeUnknownEffect(MachineConfigFile)(
+      document.toJS() ?? {},
+    ).pipe(Effect.mapError((issue) => new ConfigError({ message: `${file}: ${issue.message}` })));
+
     // Paths as the rest of chernabog sees them; the document keeps them as written.
-    const current = { ...decoded, repos: (decoded.repos ?? []).map((entry) => ({ ...entry, path: expandHome(entry.path, home.user) })) };
+    const current = {
+      ...decoded,
+      repos: (decoded.repos ?? []).map((entry) => ({
+        ...entry,
+        path: expandHome(entry.path, home.user),
+      })),
+    };
+
     const result = yield* edit(document, current);
     yield* platform(fs.writeFileString(file, document.toString()));
 
@@ -643,7 +907,13 @@ export const editMachineConfig = <A, E, R>(edit: (document: YAML.Document, curre
 // The entry a repo's enrolment updates, and its index; none when the repo
 // isn't enrolled yet.
 export const entryFor = (repos: ReadonlyArray<EnrolledRepo>, repo: EnrolledRepo) =>
-  Effect.fromResult(EnrolledRepoRootOps.entryFor(repos.map(toRoot), { repo: repo.repo, name: Option.fromUndefinedOr(repo.name), path: repo.path })).pipe(
+  Effect.fromResult(
+    EnrolledRepoRootOps.entryFor(repos.map(toRoot), {
+      repo: repo.repo,
+      name: Option.fromUndefinedOr(repo.name),
+      path: repo.path,
+    }),
+  ).pipe(
     Effect.map(Option.map((index) => ({ entry: repos[index], index }))),
     Effect.mapError((ambiguous) => new ConfigError({ message: ambiguous.message })),
   );
@@ -659,15 +929,23 @@ export const enrollInMachineConfig = (repo: EnrolledRepo) =>
 
       if (Option.isSome(found)) {
         const before = toRoot(found.value.entry);
-        applyEntry(document, found.value.index, before, EnrolledRepoRootOps.reenroll(before, toRoot(repo)));
+        applyEntry(
+          document,
+          found.value.index,
+          before,
+          EnrolledRepoRootOps.reenroll(before, toRoot(repo)),
+        );
 
-        return 'updated' as const;
+        return "updated" as const;
       }
 
-      if (document.has('repos')) document.addIn(['repos'], document.createNode(repo));
-      else document.set('repos', document.createNode([repo]));
+      if (document.has("repos")) {
+        document.addIn(["repos"], document.createNode(repo));
+      } else {
+        document.set("repos", document.createNode([repo]));
+      }
 
-      return 'added' as const;
+      return "added" as const;
     }),
   );
 
@@ -675,9 +953,14 @@ export const enrollInMachineConfig = (repo: EnrolledRepo) =>
 const indexOf = (current: MachineConfigFile, name: string) => {
   const repos = current.repos ?? [];
 
-  return Effect.fromOption(Arr.findFirstIndex(repos, (entry) => repoNameOf(entry) === name || entry.repo === name)).pipe(
+  return Effect.fromOption(
+    Arr.findFirstIndex(repos, (entry) => repoNameOf(entry) === name || entry.repo === name),
+  ).pipe(
     Effect.mapError(() => {
-      const enrolled = Option.getOrElse(Option.liftPredicate(repos.map(repoNameOf).join(', '), (names) => names.length > 0), () => 'none');
+      const enrolled = Option.getOrElse(
+        Option.liftPredicate(repos.map(repoNameOf).join(", "), (names) => names.length > 0),
+        () => "none",
+      );
 
       return new ConfigError({ message: `no enrolled repo named ${name} (enrolled: ${enrolled})` });
     }),
@@ -690,7 +973,7 @@ export const unenrollFromMachineConfig = (name: string) =>
     Effect.gen(function* () {
       const index = yield* indexOf(current, name);
       const entry = (current.repos ?? [])[index];
-      document.deleteIn(['repos', index]);
+      document.deleteIn(["repos", index]);
 
       return entry;
     }),
@@ -698,7 +981,12 @@ export const unenrollFromMachineConfig = (name: string) =>
 
 // Changes one enrolled repo's entry, by name or owner/name, keeping the file's
 // comments; `after` runs on the edited document before it's written.
-const editEntry = <E>(name: string, change: (entry: EnrolledRepoRoot) => Effect.Effect<EnrolledRepoRoot, E>, after: (document: YAML.Document, index: number) => Effect.Effect<void, ConfigError, Home> = () => Effect.void) =>
+const editEntry = <E>(
+  name: string,
+  change: (entry: EnrolledRepoRoot) => Effect.Effect<EnrolledRepoRoot, E>,
+  after: (document: YAML.Document, index: number) => Effect.Effect<void, ConfigError, Home> = () =>
+    Effect.void,
+) =>
   editMachineConfig((document, current) =>
     Effect.gen(function* () {
       const index = yield* indexOf(current, name);
@@ -710,15 +998,29 @@ const editEntry = <E>(name: string, change: (entry: EnrolledRepoRoot) => Effect.
 
 // Turns one flow on or off for a persona of a repo. Turning a flow off keeps
 // its settings, as enabled: false, when it has any.
-export const setFlowInMachineConfig = (name: string, persona: Persona, flow: string, enabled: boolean) =>
-  editEntry(name, (entry) => Effect.succeed(EnrolledRepoRootOps.setFlow(entry, persona, flow, enabled)));
+export const setFlowInMachineConfig = (
+  name: string,
+  persona: Persona,
+  flow: string,
+  enabled: boolean,
+) =>
+  editEntry(name, (entry) =>
+    Effect.succeed(EnrolledRepoRootOps.setFlow(entry, persona, flow, enabled)),
+  );
 
 // Overrides a flow's schedule for a persona, or clears the override so the
 // team's applies again. A flow the persona doesn't run keeps the override, off.
-export const setFlowSchedule = (name: string, persona: Persona, flow: string, schedule: Option.Option<string>) =>
+export const setFlowSchedule = (
+  name: string,
+  persona: Persona,
+  flow: string,
+  schedule: Option.Option<string>,
+) =>
   editEntry(name, (entry) =>
     Effect.gen(function* () {
-      for (const reason of Option.toArray(Option.flatMap(schedule, cronProblem))) return yield* new ConfigError({ message: reason });
+      for (const reason of Option.toArray(Option.flatMap(schedule, cronProblem))) {
+        return yield* new ConfigError({ message: reason });
+      }
 
       return EnrolledRepoRootOps.setFlowSchedule(entry, persona, flow, schedule);
     }),
@@ -729,19 +1031,37 @@ export const setFlowSchedule = (name: string, persona: Persona, flow: string, sc
 const checkAccounts = (document: YAML.Document, index: number, persona: Persona) =>
   Effect.gen(function* () {
     const home = yield* Home;
-    const file = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(Effect.mapError((issue) => new ConfigError({ message: issue.message })));
+
+    const file = yield* Schema.decodeUnknownEffect(MachineConfigFile)(document.toJS() ?? {}).pipe(
+      Effect.mapError((issue) => new ConfigError({ message: issue.message })),
+    );
+
     const machine = normalizeMachineConfig(file, home.user);
     const entry = machine.repos[index];
     const own = choicesOf(entry, persona);
-    const failed = (message: string) => new ConfigError({ message: `${entry.repo}${asSuffix(persona)}: ${message}` });
-    const accountName = Option.getOrElse(Option.orElse(Option.fromUndefinedOr(own.account), () => Option.map(Arr.head(machine.accounts), (first) => first.name)), () => 'work');
+
+    const failed = (message: string) =>
+      new ConfigError({ message: `${entry.repo}${asSuffix(persona)}: ${message}` });
+
+    const accountName = Option.getOrElse(
+      Option.orElse(Option.fromUndefinedOr(own.account), () =>
+        Option.map(Arr.head(machine.accounts), (first) => first.name),
+      ),
+      () => "work",
+    );
+
     yield* otherAccounts(machine, own, yield* findAccount(machine, accountName, failed), failed);
   });
 
 // Picks the account a persona spends, or one of its roles does, or clears
 // the pick so the default applies again. Refused, with nothing written,
 // when the accounts would clash.
-export const setAccountInMachineConfig = (name: string, persona: Persona, role: Option.Option<string>, account: Option.Option<string>) =>
+export const setAccountInMachineConfig = (
+  name: string,
+  persona: Persona,
+  role: Option.Option<string>,
+  account: Option.Option<string>,
+) =>
   editEntry(
     name,
     (entry) => Effect.succeed(EnrolledRepoRootOps.setAccount(entry, persona, role, account)),
@@ -750,14 +1070,26 @@ export const setAccountInMachineConfig = (name: string, persona: Persona, role: 
 
 // Lists exactly these flows at `path`, keeping the settings of the ones it
 // already lists there.
-const setFlowsAt = (document: YAML.Document, path: ReadonlyArray<string | number>, listed: ReadonlyArray<string>, flows: ReadonlyArray<string>) => {
-  for (const flow of listed.filter((known) => !flows.includes(known))) document.deleteIn([...path, flow]);
+const setFlowsAt = (
+  document: YAML.Document,
+  path: ReadonlyArray<string | number>,
+  listed: ReadonlyArray<string>,
+  flows: ReadonlyArray<string>,
+) => {
+  for (const flow of listed.filter((known) => !flows.includes(known))) {
+    document.deleteIn([...path, flow]);
+  }
 
-  if (!document.hasIn(path)) document.setIn(path, document.createNode({}));
+  if (!document.hasIn(path)) {
+    document.setIn(path, document.createNode({}));
+  }
 
   for (const flow of flows) {
-    if (listed.includes(flow)) document.deleteIn([...path, flow, 'enabled']);
-    else document.setIn([...path, flow], document.createNode({}));
+    if (listed.includes(flow)) {
+      document.deleteIn([...path, flow, "enabled"]);
+    } else {
+      document.setIn([...path, flow], document.createNode({}));
+    }
   }
 };
 
@@ -774,31 +1106,62 @@ export type PersonaEnrolment = {
 // Writes what enrolling chose: on the repo's entry, which every persona
 // inherits, or, with `perPersona`, on each persona's own entry, dropping
 // personas no longer chosen. Flows already listed keep their settings.
-export const writeEnrolment = (repo: EnrolledRepo, chosen: ReadonlyArray<PersonaEnrolment>, perPersona: boolean) =>
+export const writeEnrolment = (
+  repo: EnrolledRepo,
+  chosen: ReadonlyArray<PersonaEnrolment>,
+  perPersona: boolean,
+) =>
   editMachineConfig((document, current) =>
     Effect.gen(function* () {
       const found = yield* entryFor(current.repos ?? [], repo);
 
-      if (Option.isNone(found)) return yield* new ConfigError({ message: `${repo.repo} isn't enrolled; run chernabog enroll in it` });
+      if (Option.isNone(found)) {
+        return yield* new ConfigError({
+          message: `${repo.repo} isn't enrolled; run chernabog enroll in it`,
+        });
+      }
 
       const { entry, index } = found.value;
       const logins = chosen.flatMap((one) => Option.toArray(one.persona));
 
-      if (perPersona) for (const login of Object.keys(entry.personas ?? {}).filter((known) => !logins.includes(known))) document.deleteIn(['repos', index, 'personas', login]);
+      if (perPersona) {
+        for (const login of Object.keys(entry.personas ?? {}).filter(
+          (known) => !logins.includes(known),
+        )) {
+          document.deleteIn(["repos", index, "personas", login]);
+        }
+      }
 
       for (const one of chosen) {
         const own = Option.filter(one.persona, () => perPersona);
-        const base = Option.match(own, { onNone: () => ['repos', index], onSome: (login) => ['repos', index, 'personas', login] });
-        const listed = Object.keys(Option.match(own, { onNone: () => entry, onSome: (login) => entry.personas?.[login] ?? {} }).flows ?? {});
 
-        if (!document.hasIn(base)) document.setIn(base, document.createNode({}));
+        const base = Option.match(own, {
+          onNone: () => ["repos", index],
+          onSome: (login) => ["repos", index, "personas", login],
+        });
 
-        setFlowsAt(document, [...base, 'flows'], listed, one.flows);
+        const listed = Object.keys(
+          Option.match(own, {
+            onNone: () => entry,
+            onSome: (login) => entry.personas?.[login] ?? {},
+          }).flows ?? {},
+        );
 
-        for (const account of Option.toArray(one.account)) document.setIn([...base, 'account'], account);
+        if (!document.hasIn(base)) {
+          document.setIn(base, document.createNode({}));
+        }
 
-        if (one.accounts.length > 0) document.setIn([...base, 'accounts'], document.createNode(one.accounts));
-        else document.deleteIn([...base, 'accounts']);
+        setFlowsAt(document, [...base, "flows"], listed, one.flows);
+
+        for (const account of Option.toArray(one.account)) {
+          document.setIn([...base, "account"], account);
+        }
+
+        if (one.accounts.length > 0) {
+          document.setIn([...base, "accounts"], document.createNode(one.accounts));
+        } else {
+          document.deleteIn([...base, "accounts"]);
+        }
       }
     }),
   );
