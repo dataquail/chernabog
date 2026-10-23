@@ -4,7 +4,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 
 import { samePersona } from "../kernel/persona.value-object.ts";
-import { cronProblem } from "../schedule.ts";
+import { cronProblem } from "../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
   flowEnabled,
   type FlowRow,

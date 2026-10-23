@@ -180,6 +180,12 @@ transitive reach), the coverage floors and the baseline.
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
   run that ended with another ending, so a stale copy can't revive it.
   `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
+  The flow rules the daemon decides by are the runs module's domain too, as
+  value objects with their tests: `schedule/` (which cron expression a
+  persona's flow ticks on, next ticks, active and quiet hours, and
+  `decideTick`/`freeSlots` in `tick.value-object.ts`), `routing/` (whose work
+  items a persona's flow starts here) and `usage/` (`decideLaunch`, the usage
+  gate's decision).
   Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows

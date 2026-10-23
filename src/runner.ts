@@ -31,6 +31,7 @@ import {
 import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { RunId, runLabel } from "./kernel/run-id.id.ts";
 import { loadFlows } from "./loader.ts";
+import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
 import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
 import { listActiveRunsUseCase } from "./modules/runs/use-cases/list-active-runs.use-case.ts";
@@ -49,7 +50,6 @@ import {
   type PersonaRepo,
   routingOf,
 } from "./repo-config.ts";
-import { routeItems } from "./schedule.ts";
 import { snapshotConfig } from "./snapshot.ts";
 
 export type OpenRepo = {

@@ -42,8 +42,8 @@ import {
   personasOf,
   RepoConfigFile,
   routingOf,
+  scheduleFor,
 } from "../src/repo-config.ts";
-import { scheduleFor } from "../src/schedule.ts";
 import { effect, effectAtHome } from "./effect-test.ts";
 
 const machine = normalizeMachineConfig(

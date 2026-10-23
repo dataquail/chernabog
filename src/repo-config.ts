@@ -10,6 +10,7 @@
 import {
   type Account,
   DEFAULT_LABELS,
+  type Flow,
   type LauncherCommands,
   type Limits,
   type RepoSettings,
@@ -39,9 +40,13 @@ import {
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
+import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
+import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 import type { GateConfig } from "./usage-gate.ts";
+
+export type { Routing };
 
 export { FLOW_TURNED_OFF };
 
@@ -319,11 +324,6 @@ export const namesRunners = (repo: RepoConfigFile, flows: ReadonlyArray<string>)
   Option.isSome(Option.fromUndefinedOr(repo.runners)) ||
   flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
 
-export type Routing = {
-  readonly assignee: Option.Option<ReadonlyArray<string>>;
-  readonly reviewRequested: Option.Option<ReadonlyArray<string>>;
-};
-
 const listOf = (who: Option.Option<string | ReadonlyArray<string>>) =>
   Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
 
@@ -341,9 +341,6 @@ export const routingOf = (repo: PersonaRepo, flow: string): Routing => {
   };
 };
 
-const namesMe = (filter: Option.Option<ReadonlyArray<string>>) =>
-  Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === "@me"));
-
 // Whether the daemon must know this machine's GitHub login for the repo: for
 // a flow the implicit persona runs that starts only work for @me. A named
 // persona's login is its own.
@@ -356,6 +353,30 @@ export const needsLogin = (repo: EffectiveRepo) =>
 
         return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
       }),
+  );
+
+// When a persona's flow ticks: the flow's own setting for the persona in
+// machine config, then the persona's default, then the team's: the flow's
+// setting in config.yaml, the flow module's, the repo's. `index` of `count`
+// spreads the repos without one across the hour.
+export const scheduleFor = (
+  repo: PersonaRepo,
+  flowName: string,
+  flow: Flow,
+  index: number,
+  count: number,
+) =>
+  chooseSchedule(
+    {
+      flow: Option.flatMap(Record.get(repo.flows, flowName), (settings) =>
+        Option.fromUndefinedOr(settings.schedule),
+      ),
+      persona: repo.schedule.own,
+      module: Option.fromUndefinedOr(flow.schedule),
+      repo: repo.schedule.repo,
+    },
+    index,
+    count,
   );
 
 // Why a persona doesn't run a flow, if it doesn't: machine config doesn't list
