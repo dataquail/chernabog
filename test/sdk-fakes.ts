@@ -42,8 +42,12 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { Home, homePaths } from "../src/config.ts";
-import { type FlowHandle, flowLayer, forEveryPersona } from "../src/engine.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
+import {
+  type FlowHandle,
+  flowLayer,
+  forEveryPersona,
+} from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-signals.use-case.ts";
 import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";

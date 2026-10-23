@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { EngineAt } from "../../engine.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { type FlowRegistry, FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
@@ -9,6 +8,7 @@ import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-l
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "./infrastructure/repositories/skips.repository-live.ts";
+import { EngineAt } from "./infrastructure/runtime/engine.ts";
 
 // The runs module's live adapters over state.db, for a composition root to
 // provide with the SQL client the workflow engine journals to.

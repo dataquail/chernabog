@@ -12,13 +12,13 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
-import { capturing, type FlowHandle } from "../../../../engine.ts";
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
 import { FlowFailed } from "../../domain/run/run.errors.ts";
 import { type FlowRef } from "../../domain/run/work-item.value-object.ts";
+import { capturing, type FlowHandle } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
 const capturingRuns = capturing((runId: string) =>

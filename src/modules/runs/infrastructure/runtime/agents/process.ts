@@ -7,7 +7,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Stream from "effect/Stream";
 
-import type { Environment } from "../platform/environment.ts";
+import type { Environment } from "../../../../../platform/environment.ts";
 
 export type AgentProcess = {
   readonly command: string;

@@ -15,9 +15,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { sessionFilesIn } from "../src/agents/session-files.ts";
-import { stopHook } from "../src/agents/stop-hook.ts";
-import { flowHandle } from "../src/engine.ts";
+import { sessionFilesIn } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
+import { stopHook } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import humanInitiated from "../templates/recipes/flows/human-initiated.ts";
 import review from "../templates/recipes/flows/review.ts";

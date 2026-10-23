@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
-import { githubGetAllPages, githubJson } from "./platform/github-api.ts";
+import { githubGetAllPages, githubJson } from "../../../../platform/github-api.ts";
 
 export const CheckRun = Schema.Struct({
   id: Schema.Finite,

@@ -7,9 +7,6 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import { attachCommand } from "../src/agents.ts";
-import { LaunchRecord, sessionFiles } from "../src/agents/session-files.ts";
-import { rememberSession } from "../src/agents/sessions.ts";
 import { Home } from "../src/config.ts";
 import { describeStatus } from "../src/interface/cli/daemon/status.command.ts";
 import type { DaemonStatus } from "../src/interface/daemon/daemon.protocol.ts";
@@ -17,6 +14,12 @@ import { initialModel, readUsage } from "../src/interface/tui/app.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { attachCommand } from "../src/modules/runs/infrastructure/runtime/agents.ts";
+import {
+  LaunchRecord,
+  sessionFiles,
+} from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
+import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agents/sessions.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";

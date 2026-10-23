@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.83, structure: 0.81, members: 0.46, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.91, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -72,7 +72,6 @@ deny:
   - match: "**/node_modules/@effect/sql*/**"
     except:
       - "@/modules/runs/infrastructure/**"
-      - "@/engine.ts"
       - "test/**"
     message: >-
       SQLite is where runs and the workflow journal are stored. Only the runs module's
@@ -251,8 +250,6 @@ tree:
       # The legacy tier: flat files and the folders beside them, not yet
       # sorted into modules. A migration deletes from here.
       "*.ts": {}
-      "agents/": { layout: open }
-      "launchers/": { layout: open }
 
       "platform/":
         message: >-
@@ -326,18 +323,18 @@ tree:
                     - "@/modules/*/*.layer.ts"
                     - "@/modules/*/use-cases/**"
                     - "~/sdk/src/**"
-                    - "@/agents.ts"
-                    - "@/agents/stop-hook.ts"
+                    - "@/modules/runs/infrastructure/runtime/agents.ts"
+                    - "@/modules/runs/infrastructure/runtime/agents/stop-hook.ts"
+                    - "@/modules/runs/infrastructure/runtime/labels.ts"
+                    - "@/modules/runs/infrastructure/runtime/launchers/shim.ts"
+                    - "@/modules/runs/infrastructure/runtime/steps.ts"
                     - "@/doctor.ts"
-                    - "@/labels.ts"
-                    - "@/launchers/shim.ts"
                     - "@/loader.ts"
                     - "@/migrate.ts"
                     - "@/open-pr.ts"
                     - "@/repo-config.ts"
                     - "@/runner.ts"
                     - "@/start.ts"
-                    - "@/steps.ts"
               "*.arguments.ts": {}
               "*.output.ts": {}
               # The questions the wizards ask between a plan and its apply.
@@ -367,9 +364,9 @@ tree:
                 - "@/modules/*/use-cases/**"
                 # A schedule is checked as it's typed, before the use-case refuses it.
                 - "@/modules/runs/domain/schedule/schedule.value-object.ts"
-                - "@/agents.ts"
+                - "@/modules/runs/infrastructure/runtime/agents.ts"
+                - "@/modules/runs/infrastructure/runtime/usage-gate.ts"
                 - "@/repo-config.ts"
-                - "@/usage-gate.ts"
             children:
               "*.ts": {}
 
@@ -410,11 +407,11 @@ tree:
                     - "@/modules/*/*.layer.ts"
                     - "@/modules/runs/domain/schedule/*.value-object.ts"
                     - "~/sdk/src/**"
-                    - "@/engine.ts"
-                    - "@/launchers.ts"
+                    - "@/modules/runs/infrastructure/runtime/engine.ts"
+                    - "@/modules/runs/infrastructure/runtime/launchers.ts"
+                    - "@/modules/runs/infrastructure/runtime/runlog.ts"
                     - "@/loader.ts"
                     - "@/repo-config.ts"
-                    - "@/runlog.ts"
                     - "@/runner.ts"
                     - "@/snapshot.ts"
 
@@ -455,10 +452,9 @@ tree:
               reset: true
               message: >-
                 A module's layer assembles its live adapters: it names its own module, effect
-                to merge them, the platform, and, for the runs module, the legacy engine its
-                stores sit beside until the engine moves in.
+                to merge them, and the platform.
               external: [effect]
-              allow: ["@/modules/{module}/**", "@/platform/**", "@/engine.ts"]
+              allow: ["@/modules/{module}/**", "@/platform/**"]
 
           "domain/":
             message: >-
@@ -620,6 +616,36 @@ tree:
                   "*.repository-fake.ts": {}
                   "*.mapper.ts": {}
                   "*.test.ts": { use: module-test-file }
+              # The runtime a run's flow executes in: the workflow engine and the
+              # step runner, the SDK's services over GitHub, git, worktrees and
+              # usage, and the agents and launchers sessions run in. Adapters
+              # of the SDK's ports, being split into the module's own.
+              "runtime/":
+                imports:
+                  message: >-
+                    The runtime adapts the published SDK's services to the machine and reports a
+                    run's steps and waits back through its module's use-cases, as an inbound
+                    adapter would. It names the SDK, the platform, its module, and the legacy
+                    files that load a repo's config and flows (config.ts, repo-config.ts,
+                    loader.ts), until those move. Nothing of the interface or another module.
+                  external: ["@effect/sql-sqlite-bun"]
+                  allow:
+                    - "node:**"
+                    - "~/sdk/src/**"
+                    - "@/platform/**"
+                    - "@/modules/{module}/use-cases/**"
+                    - "@/config.ts"
+                    - "@/repo-config.ts"
+                    - "@/loader.ts"
+                    - "test/*.ts"
+                children:
+                  "*.ts": {}
+                  "agents/":
+                    children:
+                      "*.ts": {}
+                  "launchers/":
+                    children:
+                      "*.ts": {}
               "clients/":
                 imports:
                   message: >-
@@ -628,10 +654,9 @@ tree:
                     through the platform adapters (commands, GitHub, the home, this program),
                     and, until each moves into its module, the legacy machinery it wraps:
                     snapshot.ts's git helpers, config.ts, loader.ts for a checkout's flows,
-                    repo-config.ts for the team's config, templates.ts and flow-deps.ts for
-                    what this binary bundles, and engine.ts for the workflow engine and the flow
-                    handles it runs. It names the published SDK whose flows it runs. Nothing
-                    else of the legacy tier.
+                    repo-config.ts for the team's config, and templates.ts and flow-deps.ts for
+                    what this binary bundles. It names the published SDK whose flows it runs.
+                    Nothing else of the legacy tier.
                   allow:
                     - "@/platform/**"
                     - "@/snapshot.ts"
@@ -640,7 +665,6 @@ tree:
                     - "@/repo-config.ts"
                     - "@/templates.ts"
                     - "@/flow-deps.ts"
-                    - "@/engine.ts"
                     - "~/sdk/src/**"
                 children:
                   "*.client-live.ts": {}
@@ -661,7 +685,6 @@ tree:
                           "@/platform/exec.ts",
                           "@/platform/github-api.ts",
                           "@/config.ts",
-                          "@/engine.ts",
                           "~/sdk/src/**",
                           "test/*.ts",
                         ]

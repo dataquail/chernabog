@@ -16,19 +16,24 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stdio from "effect/Stdio";
 
-import { attachCommand, runSessions } from "../../agents.ts";
-import { stopHook } from "../../agents/stop-hook.ts";
 import { doctor, formatCheck } from "../../doctor.ts";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
-import { desiredLabels, syncLabels, withFlowLabels } from "../../labels.ts";
-import { runLaunch } from "../../launchers/shim.ts";
 import { loadFlows } from "../../loader.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
+import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
+import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import {
+  desiredLabels,
+  syncLabels,
+  withFlowLabels,
+} from "../../modules/runs/infrastructure/runtime/labels.ts";
+import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/shim.ts";
+import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
 import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
@@ -43,7 +48,6 @@ import { VERSION } from "../../platform/version.ts";
 import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { repoConfigDir, runInForeground } from "../../runner.ts";
 import { openSession, startIssue } from "../../start.ts";
-import { runStepChild, StepServicesLive } from "../../steps.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";

@@ -39,7 +39,8 @@ act as the right one.
 - **API:** `GitHubApi.layerFor(persona)`; `GitHubApi.layer` is the implicit one.
 - **One workflow per (repo, flow), shared by every persona.** The persona rides
   in the workflow payload (`FlowPayload.persona`); a resumed run without one uses
-  its run row's persona (`flowLayer` in `src/engine.ts`). Per-persona services
+  its run row's persona (`flowLayer` in
+  `src/modules/runs/infrastructure/runtime/engine.ts`). Per-persona services
   are built by `repoServices(…, persona)` / `buildRepoContext(…, persona)`.
 - **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
   A flow several personas run should filter with `assignee` or
@@ -227,8 +228,14 @@ transitive reach), the coverage floors and the baseline.
   and the live view in `src/interface/tui/`. Each has its own allowlist in
   `architecture.yaml`, which names, file by file, the legacy runtime it still
   drives; moving a file into a module takes it off those lists.
-- **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`) is one
-  `unrestricted` node. A migration moves files out of it and
+- **The runtime** a run's flow executes in is the runs module's
+  `infrastructure/runtime/`: the workflow engine and step runner, the SDK's
+  services over GitHub, git, worktrees and usage, and the agents and
+  launchers. They adapt the published SDK's ports, report a run's steps and
+  waits back through the module's use-cases, and name no interface or other
+  module.
+- **The legacy tier** (the flat `src/*.ts` still left) is one `unrestricted`
+  node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
   ceiling when the numbers move (`bun run architecture:coverage`,
   `architecture:conformance`), never the other way to make a run green.
@@ -337,7 +344,7 @@ Decisions that cut across them:
   (`src/start.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
   `issue-<n>` (failing with a link to the docs' `#the-hybrid-path` when the
   repo has no such flow). The optional `Flow.item(key)` finds an item the
-  trigger doesn't report (`unreportedItem` in `src/engine.ts`, for the daemon
+  trigger doesn't report (`FlowsClient.find`, for the daemon
   and `run --item`). It then attaches to the session (`liveAttach`).
 - `Hybrid.claim` takes over an earlier start's claim (`ClaimMarker.withPerson`)
   but skips a branch an unattended run claimed. One Claude session per

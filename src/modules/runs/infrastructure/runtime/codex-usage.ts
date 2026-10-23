@@ -12,9 +12,9 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
-import { codexHomeOf, Home } from "./config.ts";
-import { HostEnvironment, withVariables } from "./platform/environment.ts";
-import { execOk } from "./platform/exec.ts";
+import { codexHomeOf, Home } from "../../../../config.ts";
+import { HostEnvironment, withVariables } from "../../../../platform/environment.ts";
+import { execOk } from "../../../../platform/exec.ts";
 import {
   decideLaunch,
   type GateConfig,

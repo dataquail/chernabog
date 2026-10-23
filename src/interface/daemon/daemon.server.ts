@@ -20,14 +20,19 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { type FlowHandle, flowHandle, flowLayer } from "../../engine.ts";
 import { type Persona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
-import { describeLauncher } from "../../launchers.ts";
 import { loadFlows } from "../../loader.ts";
 import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
+import {
+  type FlowHandle,
+  flowHandle,
+  flowLayer,
+} from "../../modules/runs/infrastructure/runtime/engine.ts";
+import { describeLauncher } from "../../modules/runs/infrastructure/runtime/launchers.ts";
+import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
 import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
@@ -53,7 +58,6 @@ import {
   routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
-import { runLogWriting } from "../../runlog.ts";
 import {
   adoptRuns,
   buildPersonaContexts,

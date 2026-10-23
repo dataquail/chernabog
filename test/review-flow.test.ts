@@ -7,7 +7,7 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { flowHandle } from "../src/engine.ts";
+import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import reReview from "../templates/recipes/flows/re-review.ts";
 import review from "../templates/recipes/flows/review.ts";
