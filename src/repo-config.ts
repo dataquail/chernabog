@@ -11,17 +11,24 @@ import { type Account, DEFAULT_LABELS, type LauncherCommands, type Limits, type 
 import * as Arr from 'effect/Array';
 import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
+import * as Equal from 'effect/Equal';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 import type * as PlatformError from 'effect/PlatformError';
 import * as Record from 'effect/Record';
 import * as Schema from 'effect/Schema';
+import * as Struct from 'effect/Struct';
 import YAML from 'yaml';
 
 import type { AgentsConfig } from './agents.ts';
 import { ConfigError, expandHome, Home, homePaths } from './config.ts';
 import { checkConfigVersion } from './flow-deps.ts';
+import { RepoSlug } from './kernel/repo-slug.id.ts';
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
+import { EnrolledRepoRoot } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root.ts';
+import { EnrolledRepoRootOps } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts';
+import { FlowSettings } from './modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts';
+import { PersonaChoices, PersonaEntry } from './modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts';
 import { nodeBinFor } from './node-version.ts';
 import { asSuffix, IMPLICIT, type Persona, samePersona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
@@ -44,33 +51,6 @@ const DurationText = Schema.String.pipe(Schema.check(Schema.makeFilter((text: st
 
 // A YAML null turns the setting off.
 const Nullable = <S extends Schema.Constraint>(schema: S) => Schema.optionalKey(Schema.OptionFromNullOr(schema));
-
-// Who a work item must be for, as in GitHub's assignee: and review-requested:
-// qualifiers: @me (this machine's GitHub login), a login, or none.
-const Who = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
-
-const whoFor = (qualifier: string) =>
-  Nullable(
-    Who.annotate({
-      description: `Start only work items whose ${qualifier} include one of these: @me for this machine's GitHub login, a login, or none for nobody. null clears the team's.`,
-    }),
-  );
-
-const FlowSettings = Schema.Struct({
-  enabled: Schema.optionalKey(Schema.Boolean),
-  schedule: Schema.optionalKey(Schema.String),
-  concurrency: Schema.optionalKey(Schema.Int),
-  agent: Schema.optionalKey(Schema.String.annotate({ description: "The adapter this flow's agent steps run with, over the repo's agent." })),
-  agents: Schema.optionalKey(
-    Schema.Record(Schema.String, Schema.String).annotate({
-      description: "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's.",
-    }),
-  ),
-  assignee: whoFor('assignees'),
-  reviewRequested: whoFor('requested reviewers'),
-});
-
-export type FlowSettings = typeof FlowSettings.Type;
 
 // GitHub logins whose machines run a flow by default; anyone's, when left out.
 const Runners = Schema.Array(Schema.String).annotate({
@@ -104,15 +84,9 @@ const LabelsFile = Schema.Struct({
 
 // Launcher commands run in a person's own terminal setup, so a repo can name launchers but never define one.
 const MACHINE_ONLY = 'launcher commands can only be defined in machine config (~/.config/chernabog/config.yaml)';
-const TEAM_ONLY = 'runners is the team\'s choice, in .chernabog/config.yaml; to run a flow here anyway, list it under the repo\'s flows in machine config';
 
 // No value is allowed, so editors flag the key too.
 const MachineOnly = Schema.optionalKey(Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }));
-const TeamOnly = Schema.optionalKey(Schema.Never.annotate({ description: TEAM_ONLY, message: TEAM_ONLY }));
-
-// A flow as a persona runs it. Listing it turns it on; enabled: false turns
-// off one it would inherit from the repo's entry.
-const PersonaFlowSettings = Schema.Struct({ ...FlowSettings.fields, runners: TeamOnly });
 
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
@@ -167,35 +141,6 @@ export const LauncherFile = Schema.Struct({
   attach: Schema.optionalKey(Strings),
 });
 
-// What a persona chooses for a repo. On the repo's entry these are the
-// defaults every persona inherits; on a persona's entry, its own, each key
-// replacing the repo entry's.
-const PersonaChoices = {
-  // The account from accounts: whose budget the persona's runs spend.
-  account: Schema.optionalKey(Schema.String),
-  accounts: Schema.optionalKey(
-    Schema.Array(Schema.String).annotate({
-      description: "Other accounts from accounts: the persona's runs use, at most one per agent, for steps on another agent than its account's, such as a codex reviewer. Unset, each agent uses its first account.",
-    }),
-  ),
-  agent: Schema.optionalKey(Schema.String.annotate({ description: "The adapter its agent steps run with, over the repo's agent and the account's." })),
-  roles: Schema.optionalKey(
-    Schema.Record(Schema.String, Schema.String).annotate({
-      description: 'An account by role, such as { reviewer: codex-work }, where a role needs another account than the persona\'s own: a step given { role } runs with that account\'s agent.',
-    }),
-  ),
-  // The flows that run: the ones listed, and no others.
-  flows: Schema.optionalKey(Schema.Record(Schema.String, PersonaFlowSettings)),
-  schedule: Schema.optionalKey(Schema.String),
-  activeHours: Schema.optionalKey(Schema.String),
-  launcher: Schema.optionalKey(Schema.String),
-  enabled: Schema.optionalKey(Schema.Boolean),
-};
-
-const PersonaEntry = Schema.Struct(PersonaChoices);
-
-export type PersonaEntry = typeof PersonaEntry.Type;
-
 export const EnrolledRepo = Schema.Struct({
   // owner/name on GitHub: the key the entry's settings follow.
   repo: Schema.String,
@@ -213,6 +158,16 @@ export const EnrolledRepo = Schema.Struct({
 });
 
 export type EnrolledRepo = typeof EnrolledRepo.Type;
+
+// The keys of an entry that aren't the repo entry's own choices.
+const IDENTITY = ['repo', 'path', 'name', 'baseBranch', 'personas'] as const;
+
+// An entry as the enrollment domain sees it, and back: machine config writes
+// the repo entry's own choices beside its slug and path, the root keeps them
+// as its defaults.
+export const toRoot = (entry: EnrolledRepo) => EnrolledRepoRoot.make({ ...Struct.pick(entry, IDENTITY), repo: RepoSlug.make(entry.repo), defaults: Struct.omit(entry, IDENTITY) });
+
+export const fromRoot = (root: EnrolledRepoRoot): EnrolledRepo => ({ ...Struct.omit(root, ['defaults']), ...root.defaults });
 
 export const UsageGateFile = Schema.Struct({
   targetEndUsage: Schema.Finite,
@@ -417,7 +372,7 @@ export const loadMachineConfig = Effect.gen(function* () {
   return normalizeMachineConfig(file, home.user);
 });
 
-export const repoNameOf = (repo: EnrolledRepo) => repo.name ?? repo.repo.split('/').at(-1) ?? repo.repo;
+export const repoNameOf = (repo: EnrolledRepo) => EnrolledRepoRootOps.nameOf(toRoot(repo));
 
 export const findEnrolled = (machine: MachineConfig, name: string) =>
   Effect.fromOption(Arr.findFirst(machine.repos, (repo) => repoNameOf(repo) === name || repo.repo === name || repo.path === name)).pipe(
@@ -545,12 +500,7 @@ export const personasOf = (machine: MachineConfig, enrolled: EnrolledRepo) =>
   });
 
 // A persona's choices for a repo: its own entry's keys over the repo entry's.
-export const choicesOf = (enrolled: EnrolledRepo, persona: Persona): PersonaEntry => {
-  const { baseBranch: _baseBranch, name: _name, path: _path, personas, repo: _repo, ...defaults } = enrolled;
-  const own = Option.flatMap(persona, (login) => Record.get(personas ?? {}, login));
-
-  return { ...defaults, ...Option.getOrElse(own, () => ({})) };
-};
+export const choicesOf = (enrolled: EnrolledRepo, persona: Persona): PersonaEntry => EnrolledRepoRootOps.choicesOf(toRoot(enrolled), persona);
 
 const findAccount = (machine: MachineConfig, name: string, failed: (message: string) => ConfigError) =>
   Effect.fromOption(Arr.findFirst(machine.accounts, (candidate) => candidate.name === name)).pipe(
@@ -711,25 +661,46 @@ export const editMachineConfig = <A, E, R>(edit: (document: YAML.Document, curre
     return result;
   });
 
-// The entry a repo's enrolment updates: the one with its slug, and its name
-// when one is given. Of several clones with no name given, the one at `path`.
-// None when the repo isn't enrolled yet.
+// The entry a repo's enrolment updates, and its index; none when the repo
+// isn't enrolled yet.
 export const entryFor = (repos: ReadonlyArray<EnrolledRepo>, repo: EnrolledRepo) =>
-  Effect.gen(function* () {
-    const clones = Arr.filter(Arr.map(repos, (entry, index) => ({ entry, index })), ({ entry }) => entry.repo === repo.repo);
+  Effect.fromResult(EnrolledRepoRootOps.entryFor(repos.map(toRoot), { repo: repo.repo, name: Option.fromUndefinedOr(repo.name), path: repo.path })).pipe(
+    Effect.map(Option.map((index) => ({ entry: repos[index], index }))),
+    Effect.mapError((ambiguous) => new ConfigError({ message: ambiguous.message })),
+  );
 
-    const named = Option.fromUndefinedOr(repo.name);
+const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
 
-    if (Option.isSome(named)) return Arr.findFirst(clones, ({ entry }) => repoNameOf(entry) === named.value);
+// Writes `after` onto the document at `path`, where it held `before`: only
+// what changed, so the rest, comments included, stays as it was.
+const applyChanges = (document: YAML.Document, path: ReadonlyArray<string | number>, before: Option.Option<Schema.Json>, after: Option.Option<Schema.Json>) => {
+  if (Option.isNone(after)) {
+    if (Option.isSome(before)) document.deleteIn(path);
 
-    if (clones.length < 2) return Arr.head(clones);
+    return;
+  }
 
-    const here = Arr.findFirst(clones, ({ entry }) => entry.path === repo.path);
+  if (Option.isSome(before) && isJsonObject(before.value) && isJsonObject(after.value)) {
+    const was = before.value;
+    const now = after.value;
 
-    if (Option.isSome(here)) return here;
+    for (const key of Object.keys(was).filter((known) => !(known in now))) document.deleteIn([...path, key]);
 
-    return yield* new ConfigError({ message: `${repo.repo} is enrolled as ${clones.map(({ entry }) => repoNameOf(entry)).join(', ')}; name the one this is with --name` });
-  });
+    for (const [key, value] of Object.entries(now)) applyChanges(document, [...path, key], Option.fromUndefinedOr(was[key]), Option.some(value));
+
+    return;
+  }
+
+  // A scalar or a list is written whole when it changed.
+  if (!Option.exists(before, (found) => Equal.equals(found, after.value))) document.setIn(path, document.createNode(after.value));
+};
+
+const encodeEntry = (root: EnrolledRepoRoot) => Schema.decodeUnknownSync(Schema.Json)(Schema.encodeSync(EnrolledRepo)(fromRoot(root)));
+
+// Writes what an op made of a repo entry onto the document.
+const applyEntry = (document: YAML.Document, index: number, before: EnrolledRepoRoot, after: EnrolledRepoRoot) => {
+  applyChanges(document, ['repos', index], Option.some(encodeEntry(before)), Option.some(encodeEntry(after)));
+};
 
 // Adds or updates a repo in machine config, keeping the file's comments. An
 // update sets only the keys given, so the rest of the entry, such as its
@@ -741,7 +712,8 @@ export const enrollInMachineConfig = (repo: EnrolledRepo) =>
       const found = yield* entryFor(current.repos ?? [], repo);
 
       if (Option.isSome(found)) {
-        for (const [key, value] of Object.entries(repo)) document.setIn(['repos', found.value.index, key], document.createNode(value));
+        const before = toRoot(found.value.entry);
+        applyEntry(document, found.value.index, before, EnrolledRepoRootOps.reenroll(before, toRoot(repo)));
 
         return 'updated' as const;
       }
@@ -778,68 +750,31 @@ export const unenrollFromMachineConfig = (name: string) =>
     }),
   );
 
-// Where a persona's flows are kept in machine config: its own entry's flows
-// when it has them, else the repo entry's, which every persona inherits. A
-// change for one of several personas that inherits them gives it its own
-// copy first, so the others keep theirs.
-const flowsPath = (document: YAML.Document, entry: EnrolledRepo, index: number, persona: Persona) =>
-  Option.match(persona, {
-    onNone: () => ['repos', index, 'flows'],
-    onSome: (login) => {
-      const own = ['repos', index, 'personas', login, 'flows'];
-
-      if (Record.get(entry.personas ?? {}, login).pipe(Option.exists((found) => Option.isSome(Option.fromUndefinedOr(found.flows))))) return own;
-
-      if (Object.keys(entry.personas ?? {}).length < 2) return ['repos', index, 'flows'];
-
-      document.setIn(own, document.createNode(entry.flows ?? {}));
-
-      return own;
-    },
-  });
+// Changes one enrolled repo's entry, by name or owner/name, keeping the file's
+// comments; `after` runs on the edited document before it's written.
+const editEntry = <E>(name: string, change: (entry: EnrolledRepoRoot) => Effect.Effect<EnrolledRepoRoot, E>, after: (document: YAML.Document, index: number) => Effect.Effect<void, ConfigError, Home> = () => Effect.void) =>
+  editMachineConfig((document, current) =>
+    Effect.gen(function* () {
+      const index = yield* indexOf(current, name);
+      const before = toRoot((current.repos ?? [])[index]);
+      applyEntry(document, index, before, yield* change(before));
+      yield* after(document, index);
+    }),
+  );
 
 // Turns one flow on or off for a persona of a repo. Turning a flow off keeps
 // its settings, as enabled: false, when it has any.
 export const setFlowInMachineConfig = (name: string, persona: Persona, flow: string, enabled: boolean) =>
-  editMachineConfig((document, current) =>
-    Effect.gen(function* () {
-      const index = yield* indexOf(current, name);
-      const path = [...flowsPath(document, (current.repos ?? [])[index], index, persona), flow];
-      const node = document.getIn(path);
-      const others = YAML.isMap(node) && node.items.some((pair) => YAML.isScalar(pair.key) && pair.key.value !== 'enabled');
-
-      if (enabled && YAML.isMap(node)) document.deleteIn([...path, 'enabled']);
-      else if (enabled) document.setIn(path, document.createNode({}));
-      else if (others) document.setIn([...path, 'enabled'], false);
-      else document.deleteIn(path);
-
-      if (!document.hasIn(path.slice(0, -1))) document.setIn(path.slice(0, -1), document.createNode({}));
-    }),
-  );
-
-// Where a persona's own choices are kept: its entry under personas when it
-// has one, else the repo entry's, which it runs from.
-const choicesPath = (entry: EnrolledRepo, index: number, persona: Persona) =>
-  Option.match(Option.filter(persona, (login) => Record.has(entry.personas ?? {}, login)), {
-    onNone: () => ['repos', index],
-    onSome: (login) => ['repos', index, 'personas', login],
-  });
+  editEntry(name, (entry) => Effect.succeed(EnrolledRepoRootOps.setFlow(entry, persona, flow, enabled)));
 
 // Overrides a flow's schedule for a persona, or clears the override so the
 // team's applies again. A flow the persona doesn't run keeps the override, off.
 export const setFlowSchedule = (name: string, persona: Persona, flow: string, schedule: Option.Option<string>) =>
-  editMachineConfig((document, current) =>
+  editEntry(name, (entry) =>
     Effect.gen(function* () {
       for (const reason of Option.toArray(Option.flatMap(schedule, cronProblem))) return yield* new ConfigError({ message: reason });
 
-      const index = yield* indexOf(current, name);
-      const path = [...flowsPath(document, (current.repos ?? [])[index], index, persona), flow];
-
-      if (Option.isSome(schedule) && !document.hasIn(path)) document.setIn(path, document.createNode({ enabled: false }));
-
-      for (const cron of Option.toArray(schedule)) document.setIn([...path, 'schedule'], cron);
-
-      if (Option.isNone(schedule) && document.hasIn(path)) document.deleteIn([...path, 'schedule']);
+      return EnrolledRepoRootOps.setFlowSchedule(entry, persona, flow, schedule);
     }),
   );
 
@@ -861,23 +796,10 @@ const checkAccounts = (document: YAML.Document, index: number, persona: Persona)
 // the pick so the default applies again. Refused, with nothing written,
 // when the accounts would clash.
 export const setAccountInMachineConfig = (name: string, persona: Persona, role: Option.Option<string>, account: Option.Option<string>) =>
-  editMachineConfig((document, current) =>
-    Effect.gen(function* () {
-      const index = yield* indexOf(current, name);
-      const base = choicesPath((current.repos ?? [])[index], index, persona);
-      const path = Option.match(role, { onNone: () => [...base, 'account'], onSome: (named) => [...base, 'roles', named] });
-
-      for (const chosen of Option.toArray(account)) document.setIn(path, chosen);
-
-      if (Option.isNone(account)) {
-        document.deleteIn(path);
-        const roles = document.getIn([...base, 'roles']);
-
-        if (YAML.isMap(roles) && roles.items.length === 0) document.deleteIn([...base, 'roles']);
-      }
-
-      yield* checkAccounts(document, index, persona);
-    }),
+  editEntry(
+    name,
+    (entry) => Effect.succeed(EnrolledRepoRootOps.setAccount(entry, persona, role, account)),
+    (document, index) => checkAccounts(document, index, persona),
   );
 
 // Lists exactly these flows at `path`, keeping the settings of the ones it
