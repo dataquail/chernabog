@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.56, structure: 0.56, members: 0.01, surface: 0.88, graph: 1 }
+  coverage: { imports: 0.67, structure: 0.66, members: 0.02, surface: 0.9, graph: 1 }
   # vacant: the tiers declared ahead of their first file (kernel/ and the
   # module tiers); it falls as the migration fills them.
   conformance: { residue: 0, vacant: 1, slack: 0, concentration: 0 }
@@ -281,9 +281,9 @@ tree:
         imports:
           reset: true
           message: >-
-            The kernel is the bottom of the domain: it names effect, nothing else.
+            The kernel is the bottom of the domain: it names effect and itself, nothing else.
           external: [effect]
-          allow: []
+          allow: ["@/kernel/**"]
         children:
           "*.id.ts": {}
           "*.value-object.ts": {}

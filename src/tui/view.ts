@@ -6,10 +6,10 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
+import { ActiveRun } from "../modules/runs/use-cases/run.result.ts";
 import { samePersona } from "../persona.ts";
-import type { ActiveRun, DaemonStatus, PersonaStatus, RepoStatus } from "../protocol.ts";
+import type { DaemonStatus, PersonaStatus, RepoStatus } from "../protocol.ts";
 import { FLOW_TURNED_OFF } from "../repo-config.ts";
-import type { RunStatus } from "../state.ts";
 
 export type Style =
   "plain" | "bold" | "dim" | "green" | "red" | "yellow" | "cyan" | "magenta" | "selected";
@@ -34,7 +34,9 @@ export type FlowRow = {
   readonly persona: Option.Option<string>;
 };
 
-export type RunEntry = typeof ActiveRun.Type;
+export type RunEntry = ActiveRun;
+
+type RunStatus = ActiveRun["status"];
 
 // A line of a persona's settings: one of its flows, its account, or a role's.
 export type SettingsRow =
@@ -141,7 +143,7 @@ export const runRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunE
         ...found.active,
         ...found.recent
           .filter((run) => run.status !== "running")
-          .map((run) => ({ ...run, parked: false })),
+          .map((run) => ActiveRun.make({ ...run, parked: false })),
       ].slice(0, MAX_RUNS),
   });
 

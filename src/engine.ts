@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 import * as Workflow from "effect/workflow/Workflow";
@@ -37,11 +38,22 @@ import * as Workflow from "effect/workflow/Workflow";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { Home, homePaths } from "./config.ts";
 import { GitHubApi } from "./GitHubApi.ts";
+import { RunId } from "./kernel/run-id.id.ts";
+import { RunsLayer } from "./modules/runs/runs.layer.ts";
+import { attachExecutionUseCase } from "./modules/runs/use-cases/attach-execution.use-case.ts";
+import { enterStepUseCase } from "./modules/runs/use-cases/enter-step.use-case.ts";
+import { findActiveRunUseCase } from "./modules/runs/use-cases/find-active-run.use-case.ts";
+import { findRunUseCase } from "./modules/runs/use-cases/find-run.use-case.ts";
+import { finishRunUseCase, type RunOutcome } from "./modules/runs/use-cases/finish-run.use-case.ts";
+import { listRunWaitsUseCase } from "./modules/runs/use-cases/list-run-waits.use-case.ts";
+import { parkRunUseCase } from "./modules/runs/use-cases/park-run.use-case.ts";
+import { releaseRunWaitUseCase } from "./modules/runs/use-cases/release-run-wait.use-case.ts";
+import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
+import { startRunUseCase } from "./modules/runs/use-cases/start-run.use-case.ts";
 import { IMPLICIT, type Persona } from "./persona.ts";
 import type { EffectiveRepo } from "./repo-config.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from "./sdk-live.ts";
-import { type RunRow, type RunStatus, State } from "./state.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
@@ -73,10 +85,10 @@ export const EngineAt = (database: string) =>
     }).pipe(Effect.orDie),
   );
 
-export const StateAt = (database: string) =>
-  State.layer.pipe(Layer.provideMerge(EngineAt(database)));
+// The engine, and the runs module's stores beside its journal, in `database`.
+export const StateAt = (database: string) => RunsLayer.pipe(Layer.provideMerge(EngineAt(database)));
 
-// The engine and state in this machine's state.db.
+// The engine and the runs in this machine's state.db.
 export const StateLive = Layer.unwrap(
   Home.use((home) => Effect.succeed(StateAt(homePaths(home.root).state))),
 );
@@ -182,6 +194,18 @@ const outcomeOf = <E>(error: E) => {
   return Effect.fail(new RunFailed({ message: describeError(error) }));
 };
 
+// `use`, with the services it needs captured now, for a caller that runs it
+// where they aren't provided, such as a step hook.
+export const capturing = <Args extends ReadonlyArray<unknown>, A, E, R>(
+  use: (...args: Args) => Effect.Effect<A, E, R>,
+) =>
+  Effect.map(
+    Effect.context<R>(),
+    (context) =>
+      (...args: Args) =>
+        Effect.provideContext(use(...args), context),
+  );
+
 // Registers a flow's workflow with the engine. The services each run uses
 // (repoServices, or fakes in tests) are built once per persona of the repo,
 // chosen by the run's persona, then given the run's own Run and RunLog. One
@@ -194,8 +218,8 @@ export const flowLayer = <R>(
 ) =>
   handle.workflow.toLayer((payload, executionId) =>
     Effect.gen(function* () {
-      const state = yield* State;
-      const row = yield* state.run(payload.runId);
+      const runId = RunId.make(payload.runId);
+      const row = (yield* findRunUseCase(runId)).run;
 
       const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
         Option.flatMap(row, (found) => found.persona),
@@ -225,15 +249,26 @@ export const flowLayer = <R>(
         });
       }
 
+      // A step reported after its run ended changes nothing.
+      const enterStep = yield* capturing((step: string) =>
+        enterStepUseCase(runId, step).pipe(
+          Effect.catchTags({
+            RunAlreadyFinished: () => Effect.void,
+            RunNotFound: () => Effect.void,
+          }),
+        ),
+      );
+
+      const park = yield* capturing(parkRunUseCase);
+
       const runLog = yield* runLogFor(payload.runId, {
-        onStep: (step) =>
-          state.setStep(payload.runId, step).pipe(Effect.andThen(hooks.onStep(step))),
+        onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
         onStepDone: hooks.onStepDone,
       });
 
       const signals = Signals.of({
         register: (signal, deferred, token) =>
-          state.addWait({ runId: payload.runId, signal, deferred, token }),
+          park({ runId, signal, deferred, token }).pipe(Effect.asVoid),
       });
 
       const outcome = yield* handle.flow.workflow(payload.item).pipe(
@@ -258,7 +293,10 @@ export const flowLayer = <R>(
 
 // A run's id says nothing about it: its row records what it runs, and as whom.
 // Random rather than time-ordered, so a few characters of it name a run.
-const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
+const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
+  Effect.map(RunId.make),
+  Effect.orDie,
+);
 
 // The ids a prefix names, among the runs with a log, as `logs` and `attach` take them.
 export const resolveRunId = (prefix: string) =>
@@ -300,34 +338,45 @@ export const resolveRunId = (prefix: string) =>
     });
   });
 
-export type Started = { readonly run: Option.Option<RunRow>; readonly started: boolean };
+export type Started = { readonly run: Option.Option<RunView>; readonly started: boolean };
 
 // Starts one run of a flow, as a persona, for one work item, unless the
-// persona already has one for the item.
+// persona already has one for the item: then that one is the run.
 export const startRun = (handle: FlowHandle, persona: Persona, item: WorkItem) =>
   Effect.gen(function* () {
-    const state = yield* State;
     const repo = handle.repo.settings.name;
-    const active = yield* state.activeRunFor(repo, persona, handle.name, item.key);
 
-    if (Option.isSome(active)) {
-      return { run: active, started: false } satisfies Started;
-    }
-
+    // An item reported only to wake a run starts none.
     if (item.wakeOnly === true) {
-      return { run: Option.none(), started: false } satisfies Started;
+      const { run } = yield* findActiveRunUseCase({
+        repo,
+        persona,
+        flow: handle.name,
+        itemKey: item.key,
+      });
+
+      return { run, started: false } satisfies Started;
     }
 
     const runId = yield* newRunId;
-    yield* state.insertRun({
-      id: runId,
-      repo,
-      persona,
-      flow: handle.name,
-      itemKey: item.key,
-      itemTitle: Option.fromUndefinedOr(item.title),
-      itemUrl: Option.fromUndefinedOr(item.url),
-    });
+
+    const recorded = yield* Effect.result(
+      startRunUseCase({
+        id: runId,
+        repo,
+        persona,
+        flow: handle.name,
+        itemKey: item.key,
+        itemTitle: Option.fromUndefinedOr(item.title),
+        itemUrl: Option.fromUndefinedOr(item.url),
+      }),
+    );
+
+    if (Result.isFailure(recorded)) {
+      const { run } = yield* findRunUseCase(recorded.failure.runId);
+
+      return { run, started: false } satisfies Started;
+    }
 
     const payload = Option.match(persona, {
       onNone: () => ({ runId, item }),
@@ -335,14 +384,13 @@ export const startRun = (handle: FlowHandle, persona: Persona, item: WorkItem) =
     });
 
     const executionId = yield* handle.workflow.execute(payload, { discard: true });
-    yield* state.setExecution(runId, executionId);
+    // The run can't have ended yet: nothing polls it before it has an execution.
+    const run = yield* attachExecutionUseCase(runId, executionId).pipe(Effect.orDie);
 
-    return { run: yield* state.run(runId), started: true } satisfies Started;
+    return { run: Option.some(run), started: true } satisfies Started;
   });
 
-export const statusOfExit = (
-  exit: Exit.Exit<RunResult, RunFailed>,
-): { readonly status: RunStatus; readonly summary: string } => {
+export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): RunOutcome => {
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }
@@ -356,11 +404,10 @@ export const statusOfExit = (
   });
 };
 
-// Records the run as finished once its workflow completes. Returns the run's row.
-export const pollRun = (handle: FlowHandle, run: RunRow) =>
+// Records the run as finished once its workflow completes. Returns the run
+// as it is now: if another poll recorded its ending first, as that one did.
+export const pollRun = (handle: FlowHandle, run: RunView | ActiveRun) =>
   Effect.gen(function* () {
-    const state = yield* State;
-
     if (run.status !== "running" || Option.isNone(run.executionId)) {
       return run;
     }
@@ -371,10 +418,15 @@ export const pollRun = (handle: FlowHandle, run: RunRow) =>
       return run;
     }
 
-    const { status, summary } = statusOfExit(result.value.exit);
-    yield* state.finishRun(run.id, status, summary);
-
-    return Option.getOrElse(yield* state.run(run.id), () => run);
+    return yield* finishRunUseCase(run.id, statusOfExit(result.value.exit)).pipe(
+      Effect.catchTags({
+        RunAlreadyFinished: () =>
+          findRunUseCase(run.id).pipe(
+            Effect.map((found): RunView | ActiveRun => Option.getOrElse(found.run, () => run)),
+          ),
+        RunNotFound: () => Effect.succeed<RunView | ActiveRun>(run),
+      }),
+    );
   });
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
@@ -404,28 +456,27 @@ export const deliverSignals = (
   items: ReadonlyArray<WorkItem>,
 ) =>
   Effect.gen(function* () {
-    const state = yield* State;
     let delivered = 0;
 
     for (const item of items) {
-      const run = yield* state.activeRunFor(
-        handle.repo.settings.name,
+      const { run } = yield* findActiveRunUseCase({
+        repo: handle.repo.settings.name,
         persona,
-        handle.name,
-        item.key,
-      );
+        flow: handle.name,
+        itemKey: item.key,
+      });
 
       if (Option.isNone(run)) {
         continue;
       }
 
       for (const signal of item.signals ?? []) {
-        for (const wait of yield* state.waitsFor(run.value.id, signal)) {
+        for (const wait of (yield* listRunWaitsUseCase(run.value.id, signal)).waits) {
           yield* DurableDeferred.succeed(signalDeferred(wait.deferred), {
             token: yield* decodeToken(wait.token),
             value: true,
           });
-          yield* state.removeWait(wait.runId, wait.deferred);
+          yield* releaseRunWaitUseCase(wait);
           yield* (yield* runLogFor(wait.runId)).log(`signal: ${signal}`);
           delivered += 1;
         }

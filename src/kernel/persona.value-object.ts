@@ -12,3 +12,8 @@ export const IMPLICIT: Persona = Option.none();
 
 export const samePersona = (left: Persona, right: Persona) =>
   Option.getOrNull(left) === Option.getOrNull(right);
+
+// " as alice" for a persona, nothing for the implicit one, so output without
+// personas reads as it always has.
+export const asSuffix = (persona: Persona) =>
+  Option.match(persona, { onNone: () => "", onSome: (login) => ` as ${login}` });

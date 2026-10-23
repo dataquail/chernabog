@@ -3,7 +3,8 @@
 
 import * as Schema from "effect/Schema";
 
-import { RunRow, SkipRow } from "./state.ts";
+import { ActiveRun, RunView } from "./modules/runs/use-cases/run.result.ts";
+import { SkipView } from "./modules/runs/use-cases/skip.result.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
@@ -53,8 +54,6 @@ export const RepoStatus = Schema.Struct({
 
 export type RepoStatus = typeof RepoStatus.Type;
 
-export const ActiveRun = Schema.Struct({ ...RunRow.fields, parked: Schema.Boolean });
-
 export const DaemonStatus = Schema.Struct({
   pid: Schema.Finite,
   startedAt: Schema.String,
@@ -66,8 +65,8 @@ export const DaemonStatus = Schema.Struct({
     Schema.Array(Schema.Struct({ name: Schema.String, agent: Schema.String })),
   ),
   active: Schema.Array(ActiveRun),
-  recent: Schema.Array(RunRow),
-  skips: Schema.Array(SkipRow),
+  recent: Schema.Array(RunView),
+  skips: Schema.Array(SkipView),
 });
 
 export type DaemonStatus = typeof DaemonStatus.Type;
@@ -90,4 +89,4 @@ export const Reloaded = Schema.Struct({ reloadPending: Schema.Boolean });
 
 export const Refusal = Schema.Struct({ error: Schema.String });
 
-export const RunReply = Schema.OptionFromNullOr(RunRow);
+export const RunReply = Schema.OptionFromNullOr(RunView);

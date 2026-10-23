@@ -155,6 +155,16 @@ transitive reach), the coverage floors and the baseline.
   `ConfigTreeClient`. `trustRepoUseCase` is a security gate, so only the CLI
   offers it; never expose it to an agent-facing adapter such as MCP. The
   daemon, `doctor` and `status` read trust through `findTrustedTreeUseCase`.
+- **Runs are the runs module's.** `RunRoot` (`om_runs` in `state.db`) keeps
+  its lifecycle in `RunRootOps`: it starts running, takes steps while it runs
+  and ends exactly once, and a persona has one run in flight per flow and item.
+  `RunWaitRoot` (`om_waits`) parks a run on a signal; `SkipRoot` (`om_skips`)
+  logs why a tick started nothing. The engine, the daemon and `chernabog run`
+  record and read them only through the module's use-cases
+  (`startRunUseCase`, `enterStepUseCase`, `finishRunUseCase`, …); a run's
+  `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
+  run that ended with another ending, so a stale copy can't revive it.
+  `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
 - **Modules don't reach into each other.** An adapter composes them: the
   `trust` command lists its targets with enrollment's
   `listEnrolledReposUseCase`, then trusts each.
