@@ -93,31 +93,61 @@ export type FlowLabel = {
   readonly description?: string;
 };
 
-export type Flow = {
-  // The work items in the state this flow acts on, such as issues labelled auto:eligible.
-  readonly trigger: Effect.Effect<ReadonlyArray<WorkItem>, FlowError, TriggerServices>;
+// The work item for a key a person names: the issue `chernabog start` hands
+// over, say. None when there is no such item.
+export type ItemLookup = (
+  key: string,
+) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
+
+// What every flow has, whether a trigger finds its work or a person names it.
+type FlowCommon = {
   // Checked before each run starts; fail with Skip to hold the run back, such as on usage.
   readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
   // Runs of this flow in one repo at once. Defaults to 1; machine limits still apply.
   readonly concurrency?: number;
-  // A cron schedule for the trigger, overriding the repo's default.
-  readonly schedule?: string;
   // Labels of the flow's own, for `chernabog labels` to create.
   readonly labels?: ReadonlyArray<FlowLabel>;
   // Whether the trigger finds only the work of the persona it runs as, as
   // review's does by its review requests, so several personas can run the
   // flow without assignee or reviewRequested to tell them apart.
   readonly ownWork?: boolean;
-  // The work item for a key a person names, when the trigger doesn't report
-  // it: the issue `chernabog start` hands over, say. None when there is no such item.
-  readonly item?: (
-    key: string,
-  ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };
 
+// A flow whose trigger finds its work, on a schedule.
+export type TriggeredFlow = FlowCommon & {
+  // The work items in the state this flow acts on, such as issues labelled auto:eligible.
+  readonly trigger: Effect.Effect<ReadonlyArray<WorkItem>, FlowError, TriggerServices>;
+  // A cron schedule for the trigger, overriding the repo's default.
+  readonly schedule?: string;
+  // The work item for a key a person names, when the trigger doesn't report it.
+  readonly item?: ItemLookup;
+};
+
+// A flow with no trigger: nothing finds its work, and it runs only when a
+// person names an item, as `chernabog start <issue>` does. It has no schedule.
+export type ManualFlow = FlowCommon & {
+  readonly trigger?: never;
+  readonly schedule?: never;
+  readonly item: ItemLookup;
+};
+
+export type Flow = TriggeredFlow | ManualFlow;
+
 export const defineFlow = (flow: Flow): Flow => flow;
+
+// Whether a person starts each of the flow's runs, by naming its work.
+export const isManual = (flow: Flow): flow is ManualFlow => !Effect.isEffect(flow.trigger);
+
+// What the flow's trigger reports; nothing, for a manual flow.
+export const triggerOf = (flow: Flow): TriggeredFlow["trigger"] => {
+  if (isManual(flow)) {
+    return Effect.succeed([]);
+  }
+
+  return flow.trigger;
+};
 
 const FlowErrorSchema = Schema.Union([Skip, NeedsHuman, StepFailed]);
 

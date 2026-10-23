@@ -25,6 +25,9 @@ export class LoadError extends Schema.TaggedError<LoadError, { readonly brand: "
   },
 ) {}
 
+// A flow that a trigger finds work for, or a manual one a person names its work for.
+const FLOW_EXPORT = "defineFlow({ trigger, workflow }) or defineFlow({ item, workflow })";
+
 // Registered once, when this module is first imported, before any flow is.
 Bun.plugin({
   name: "chernabog-bundled-modules",
@@ -39,14 +42,18 @@ Bun.plugin({
   },
 });
 
-// What a flow module must export; its effects and functions are checked by shape, as code can only be.
+// What a flow module must export: a workflow, and a trigger that finds its
+// work, an item lookup a person names it by, or both. Its effects and
+// functions are checked by shape, as code can only be.
 const FlowDefinition = Schema.declare(
   (module): module is Sdk.Flow =>
-    Predicate.hasProperty(module, "trigger") &&
     Predicate.hasProperty(module, "workflow") &&
-    Effect.isEffect(module.trigger) &&
-    Predicate.isFunction(module.workflow),
-  { title: "defineFlow({ trigger, workflow })" },
+    Predicate.isFunction(module.workflow) &&
+    ((Predicate.hasProperty(module, "trigger") && Effect.isEffect(module.trigger)) ||
+      (!Predicate.hasProperty(module, "trigger") &&
+        Predicate.hasProperty(module, "item") &&
+        Predicate.isFunction(module.item))),
+  { title: FLOW_EXPORT },
 );
 
 const StageDefinition = Schema.declare(
@@ -143,10 +150,7 @@ export const loadFlows = (configDir: string) =>
     const flows = new Map<string, Sdk.Flow>();
 
     for (const [name, path] of yield* flowFiles(configDir)) {
-      flows.set(
-        name,
-        yield* importDefault(path, FlowDefinition, "defineFlow({ trigger, workflow })"),
-      );
+      flows.set(name, yield* importDefault(path, FlowDefinition, FLOW_EXPORT));
     }
 
     return flows;

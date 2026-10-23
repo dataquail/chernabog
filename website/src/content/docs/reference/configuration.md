@@ -25,13 +25,13 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
 | `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus` |
 | `reviewTrigger`    | none                       | comment posted on each new pull request, e.g. to summon a review bot      |
-| `schedule`         | spread across the hour     | cron for every flow                                                       |
+| `schedule`         | spread across the hour     | cron for every flow but [manual ones](/chernabog/flows/flows/#manual-flows) |
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
 | `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers)          |
-| `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule`, `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
@@ -170,7 +170,7 @@ Each entry in `repos` is one repo this machine runs, with each person's choices 
 | `accounts`     | each agent's first account | other accounts its runs use, at most one per agent, each on another agent than `account`'s; see [Roles](#roles) |
 | `roles.<role>` | —               | an account for one role; see [Roles](#roles)                   |
 | `flows.<flow>` | —               | the flows that run, and no others; see [Which flows run](#which-flows-run) |
-| `schedule`     | —               | cron for every flow, over every schedule the repo sets         |
+| `schedule`     | —               | cron for every flow but manual ones, over every schedule the repo sets |
 | `activeHours`  | —               | start runs only within these hours                             |
 | `launcher`     | —               | your launcher for this repo; wins over every other layer       |
 | `enabled`      | `true`          | `false` stops every flow in this repo                          |
@@ -186,7 +186,7 @@ A flow runs for a persona only when its `flows` lists it, its own or the repo en
 
 `chernabog init` and `enroll` write the list for each chosen persona, asking in a terminal or taking `--flows implement,review` or `--defaults`; piped, a persona keeps what it lists, and one with nothing listed gets the team's defaults, from `flows.<flow>.enabled` and [runners](#runners). A flow whose agent has no account in machine config can't be chosen. Re-enrolling keeps the settings of each flow still listed. `e` in the [live view](/chernabog/work/live-view/) turns one flow off or on for a persona.
 
-A flow's settings take the keys of the repo's `flows.<flow>`, except `runners`: `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` and `enabled`. Each overrides the team's for that flow.
+A flow's settings take the keys of the repo's `flows.<flow>`, except `runners`: `schedule`, `concurrency`, `agent`, `agents`, `assignee`, `reviewRequested` and `enabled`. Each overrides the team's for that flow. A `schedule` for a manual flow is an error, here as in `config.yaml`.
 
 ### Roles
 

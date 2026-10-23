@@ -12,7 +12,10 @@ export const FlowStatus = Schema.Struct({
   name: Schema.String,
   // The GitHub persona it runs as; absent for the implicit one.
   persona: Schema.optionalKey(Schema.String),
+  // Its cron expression; for a manual flow, how a person starts it.
   schedule: Schema.String,
+  // Whether it has no trigger, so it runs only when a person names its work.
+  manual: Schema.optionalKey(Schema.Boolean),
   // The schedule the team gives it, and the persona's own over it, if any.
   teamSchedule: Schema.optionalKey(Schema.String),
   ownSchedule: Schema.optionalKey(Schema.String),

@@ -11,7 +11,9 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 const often = { schedule: "*/2 * * * * *" };
@@ -33,7 +35,7 @@ describe("the hybrid path", () => {
         personas: ["alice", "bob"],
         launcher: "tmux",
         personaFlows: {
-          alice: { "address-review": often },
+          alice: { "address-review": often, "human-initiated": {} },
           bob: { review: often, "re-review": often },
         },
         recipes: ["implement", "review", "re-review", "address-review", "human-initiated"],
@@ -63,6 +65,27 @@ describe("the hybrid path", () => {
 
     await sandbox.github.stop();
   });
+
+  test("human-initiated is manual: no schedule, and run without --item points to chernabog start", async () => {
+    const response = await fetch("http://daemon/status", {
+      unix: join(sandbox.home, "daemon.sock"),
+    });
+
+    const status = DaemonStatus.pipe(Schema.decodeUnknownSync)(await response.json());
+    const flow = status.repos[0]?.flows.find((found) => found.name === "human-initiated");
+    expect(flow?.manual).toBe(true);
+    expect(flow?.next).toEqual(Option.none());
+    expect(flow?.schedule).toBe("manual (chernabog start <issue>)");
+
+    const shown = await sandbox.runCli(["status"]);
+    expect(shown.output).toContain("human-initiated as alice: manual (chernabog start <issue>)");
+
+    const run = await sandbox.runCli(["run", "human-initiated", "--repo", "demo", "--as", "alice"]);
+    expect(run.code).not.toBe(0);
+    expect(run.output).toContain(
+      "human-initiated is a manual flow: it runs only when someone names the work, so use chernabog start <issue>",
+    );
+  }, 30_000);
 
   test("alice starts an issue, opens its pull request from her session, answers a review in it, and bob approves without merging", async () => {
     sandbox.github.addIssue("Work it out together", []);

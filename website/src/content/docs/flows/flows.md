@@ -7,13 +7,13 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 
 | Field         | Is                                                                     |
 | ------------- | ---------------------------------------------------------------------- |
-| `trigger`     | an Effect returning the work items in the state the flow acts on       |
+| `trigger`     | an Effect returning the work items in the state the flow acts on; leave it out for a [manual flow](#manual-flows) |
 | `gate`        | optional; checked before each run starts — fail with `Skip` to hold it back |
 | `concurrency` | runs of this flow at once                                              |
-| `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it |
+| `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it. Not on a manual flow |
 | `labels`      | optional; labels of the flow's own, such as `{ name: "auto:docs" }`, which `chernabog labels` creates |
 | `ownWork`     | optional; `true` when the trigger finds only the work of the persona it runs as, as `review`'s does by its review requests, so the daemon doesn't warn that several personas each take any of it |
-| `item`        | optional; `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it |
+| `item`        | `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it. Optional, except on a manual flow |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 `trigger`, `gate`, `item` and `workflow` may fail only with the flow's own outcomes, `Skip`, `NeedsHuman` and `StepFailed`. Any other error has to be handled before the flow compiles: see [Errors](#errors).
@@ -41,6 +41,23 @@ export default defineFlow({
 :::caution[Replay]
 The workflow body runs again on every replay. Side effects belong inside activities or steps, never in the body.
 :::
+
+## Manual flows
+
+A flow with `item` and no `trigger` is manual: nothing finds its work, and it runs only when a person names an item, with `chernabog start <issue>` for [`human-initiated`](/chernabog/recipes/human-initiated/), or `chernabog run <flow> --item <key>` for any other. The daemon never ticks it on a schedule, and `status` shows it as `manual` in place of a schedule and its next tick.
+
+```ts
+import { defineFlow, Hybrid } from "@chernabog/sdk";
+
+export default defineFlow({
+  item: Hybrid.itemFor,
+  workflow: (item) => /* … */,
+});
+```
+
+A manual flow must have `item`, since nothing else could start it, and can't have `schedule`. A `schedule` for it under `flows.<flow>`, in `config.yaml` or machine config, fails the repo's config with the flow's name; the repo's and the persona's default `schedule` don't apply to it. `run` and `trigger` without `--item` fail and say how to start it.
+
+`Hybrid.trigger`, which finds nothing, is deprecated: a flow that still uses it loads and works as before, ticking on a schedule to no effect, until `chernabog recipes diff` shows the recipe without it.
 
 ## Helpers
 
@@ -114,7 +131,7 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `Implement.issueItem(issue, label)` is an issue as a work item, with the label that queued it; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
 - `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
 - `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
-- `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), as the [`human-initiated` recipe](/chernabog/recipes/human-initiated/) composes them. `Hybrid.trigger` finds nothing and `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
+- `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), as the [`human-initiated` recipe](/chernabog/recipes/human-initiated/) composes them. `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels, as a [manual flow](#manual-flows)'s `item`; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
 - `Review.reviewRequests` lists the open pull requests that ask this persona for a review, each with how many reviews it has posted; `Review.reviewItem(pull, key)` makes one a work item. `Review.latestOwnReview(pr)` finds this persona's latest review to resume with `Review.recheck`.
 - `Review.authoredByMe`, `Review.decisiveReviews(pr)` and `Review.addressItem` find the reviews that ask for changes on this persona's pull requests; `Review.changesAsked`, `authorSession`, `prepareAuthorWorktree`, `checkChanged` and `askAgain` are `address-review`'s steps around `Implement.considerFindings` and `addressFindings`. `Review.ownedByARun(pull)` says whether another flow's run owns a pull request.
 - The SDK has no whole workflows and no triggers of the review loop: those are written out in each recipe, where a repo can read and change them.

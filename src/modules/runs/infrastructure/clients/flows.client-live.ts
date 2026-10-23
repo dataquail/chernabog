@@ -9,6 +9,7 @@ import {
   isSetupError,
   Runs,
   type SetupError,
+  triggerOf,
   type TriggerServices,
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
@@ -124,7 +125,7 @@ export const FlowsClientLive = (registry: FlowRegistry) =>
           Effect.gen(function* () {
             const { handle, services } = yield* loaded(flow);
 
-            return yield* withRepo(services, handle.flow.trigger).pipe(Effect.mapError(failed));
+            return yield* withRepo(services, triggerOf(handle.flow)).pipe(Effect.mapError(failed));
           }).pipe(Effect.provideContext(runs)),
         find: (flow, key) =>
           Effect.gen(function* () {

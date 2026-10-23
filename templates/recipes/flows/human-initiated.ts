@@ -3,7 +3,8 @@
 // `chernabog open-pr`, run from that session, ends it; then this flow runs the
 // local gate, pushes, opens the pull request (labelled hybrid), waits for CI
 // and asks a reviewer from the pool. review, address-review and re-review take
-// it from there, and a person merges. Nothing starts it on a schedule.
+// it from there, and a person merges. It has no trigger, so nothing starts it on
+// a schedule.
 //
 // This file is chernabog's human-initiated recipe, and this repo's to change:
 // `chernabog recipes diff` shows how it differs from the recipe's current
@@ -59,7 +60,6 @@ const workflow = (item: WorkItem) =>
   );
 
 export default defineFlow({
-  trigger: Hybrid.trigger,
   item: Hybrid.itemFor,
   // No trigger finds work for several personas to share: each run is a person's.
   ownWork: true,

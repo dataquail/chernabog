@@ -588,7 +588,13 @@ const settingsView = (model: Model, settings: Settings): ReadonlyArray<Line> => 
     const enabled = flowEnabled(model, settings.repo, flow);
 
     const schedule = Option.match(Option.fromUndefinedOr(flow.ownSchedule), {
-      onNone: () => segment(`${pad(flow.schedule, 16)} team's`, "plain"),
+      onNone: () => {
+        if (flow.manual === true) {
+          return segment(flow.schedule, "dim");
+        }
+
+        return segment(`${pad(flow.schedule, 16)} team's`, "plain");
+      },
       onSome: (own) =>
         segment(`${pad(own, 16)} yours; team's ${flow.teamSchedule ?? flow.schedule}`, "cyan"),
     });

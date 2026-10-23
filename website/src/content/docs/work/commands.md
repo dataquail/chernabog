@@ -8,9 +8,9 @@ description: Every chernabog command and flag.
 | Command                           | What it does                                                                     |
 | --------------------------------- | -------------------------------------------------------------------------------- |
 | `chernabog`                       | The [live view](/chernabog/work/live-view/)                                       |
-| `status`                          | Repos, schedules and trust, runs in flight, recent runs, why ticks were skipped |
+| `status`                          | Repos, schedules and trust, runs in flight, recent runs, why ticks were skipped. A [manual flow](/chernabog/flows/flows/#manual-flows) shows as `manual`, with how to start it |
 | `run <flow> --repo <repo>`        | One run now, skipping gates, through the daemon; follows its log                |
-| `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due                         |
+| `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due. A manual flow has no schedule, so this fails and says how to start it |
 | `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
 | `attach <run>`                    | Open the run's agent session                                                     |
 | `start <issue>`                   | Run the repo's [`human-initiated` flow](/chernabog/recipes/human-initiated/) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
@@ -33,7 +33,7 @@ description: Every chernabog command and flag.
 
 | Flag                     | On       | Meaning                                                                 |
 | ------------------------ | -------- | ----------------------------------------------------------------------- |
-| `--item <key>`           | `run`    | Run on one work item, such as `issue-12`: one the trigger reports, or one the flow's `item` finds |
+| `--item <key>`           | `run`    | Run on one work item, such as `issue-12`: one the trigger reports, or one the flow's `item` finds. A manual flow runs only with one |
 | `--detach`               | `run`    | Start the run and return without following its log                      |
 | `--from-checkout`        | `run`    | Run in this process with the working copy's `.chernabog/`; daemon stopped |
 | `--from-checkout`        | `labels` | Read labels from the working copy, before `.chernabog/` is merged       |

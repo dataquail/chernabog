@@ -30,7 +30,8 @@ import { renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import { Agent, GitHub, Repo, Run, type WorkItem } from "./services.ts";
 
-// Nothing on a schedule: a person starts each run, with `chernabog start <issue>`.
+// Finds nothing, on whatever schedule it is given.
+/** @deprecated Leave `trigger` out instead: a flow with `item` and no trigger is manual, and runs only when a person names its work. */
 export const trigger = Effect.succeed<ReadonlyArray<WorkItem>>([]);
 
 const ISSUE_KEY = /^issue-(\d+)$/;

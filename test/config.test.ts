@@ -30,6 +30,7 @@ import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-r
 import { BUNDLED_PACKAGES, decodeManifest, requiredVersion } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
+  checkManualSchedules,
   DEFAULT_LIMITS,
   EnrolledRepo,
   flowOff,
@@ -180,24 +181,76 @@ describe("config layers", () => {
       const scheduleOf = (own: Own, name: string, flow = unscheduled) =>
         merge(team, own).pipe(Effect.map((merged) => scheduleFor(merged, name, flow, 0, 1)));
 
-      expect(yield* scheduleOf({}, "review")).toBe("30 * * * *");
-      expect(yield* scheduleOf({}, "implement", scheduled)).toBe("45 * * * *");
-      expect(yield* scheduleOf({}, "implement")).toBe("0 * * * *");
-      expect(yield* scheduleOf({ schedule: "15 * * * *" }, "review")).toBe("15 * * * *");
-      expect(yield* scheduleOf({ schedule: "15 * * * *" }, "implement", scheduled)).toBe(
-        "15 * * * *",
+      expect(yield* scheduleOf({}, "review")).toEqual(Option.some("30 * * * *"));
+      expect(yield* scheduleOf({}, "implement", scheduled)).toEqual(Option.some("45 * * * *"));
+      expect(yield* scheduleOf({}, "implement")).toEqual(Option.some("0 * * * *"));
+      expect(yield* scheduleOf({ schedule: "15 * * * *" }, "review")).toEqual(
+        Option.some("15 * * * *"),
+      );
+      expect(yield* scheduleOf({ schedule: "15 * * * *" }, "implement", scheduled)).toEqual(
+        Option.some("15 * * * *"),
       );
       expect(
         yield* scheduleOf(
           { schedule: "15 * * * *", flows: { review: { schedule: "5 * * * *" } } },
           "review",
         ),
-      ).toBe("5 * * * *");
+      ).toEqual(Option.some("5 * * * *"));
       expect(
         yield* merge({}, {}).pipe(
           Effect.map((merged) => scheduleFor(merged, "implement", unscheduled, 1, 3)),
         ),
-      ).toBe("20 * * * *");
+      ).toEqual(Option.some("20 * * * *"));
+
+      const manual = defineFlow({
+        item: () => Effect.succeedNone,
+        workflow: () => Effect.void,
+      });
+
+      // A manual flow has no schedule, whatever the repo's and the persona's defaults say.
+      expect(yield* scheduleOf({}, "human-initiated", manual)).toEqual(Option.none());
+      expect(yield* scheduleOf({ schedule: "15 * * * *" }, "human-initiated", manual)).toEqual(
+        Option.none(),
+      );
+    }),
+  );
+
+  effect("a schedule of a manual flow's own is a config error; the repo's default isn't", () =>
+    Effect.gen(function* () {
+      const flows = new Map([
+        [
+          "human-initiated",
+          defineFlow({ item: () => Effect.succeedNone, workflow: () => Effect.void }),
+        ],
+        ["implement", defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void })],
+      ]);
+
+      const problem = (repo: typeof RepoConfigFile.Encoded, own: Own) =>
+        mergeAll(repo, own).pipe(
+          Effect.flatMap((merged) => Effect.flip(checkManualSchedules(merged, flows))),
+          Effect.map((error) => Option.some(error.message)),
+          Effect.orElseSucceed(() => Option.none<string>()),
+        );
+
+      expect(yield* problem({ schedule: "0 * * * *" }, { schedule: "15 * * * *" })).toEqual(
+        Option.none(),
+      );
+      expect(yield* problem({ flows: { implement: { schedule: "5 * * * *" } } }, {})).toEqual(
+        Option.none(),
+      );
+      expect(
+        yield* problem({ flows: { "human-initiated": { schedule: "5 * * * *" } } }, {}),
+      ).toEqual(
+        Option.some(
+          "demo: config.yaml gives flows.human-initiated a schedule, but human-initiated is a manual flow, started only with chernabog start <issue>; remove the schedule",
+        ),
+      );
+      expect(
+        Option.map(
+          yield* problem({}, { flows: { "human-initiated": { schedule: "5 * * * *" } } }),
+          (message) => message.includes("machine config gives flows.human-initiated a schedule"),
+        ),
+      ).toEqual(Option.some(true));
     }),
   );
 
