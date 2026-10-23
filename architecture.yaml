@@ -51,10 +51,10 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.45, structure: 0.43, members: 0, surface: 0.85, graph: 1 }
+  coverage: { imports: 0.51, structure: 0.50, members: 0, surface: 0.87, graph: 1 }
   # vacant: the tiers declared ahead of their first file (kernel/ and the
   # module tiers); it falls as the migration fills them.
-  conformance: { residue: 0, vacant: 8, slack: 0, concentration: 0 }
+  conformance: { residue: 0, vacant: 2, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
 deny:
@@ -210,8 +210,8 @@ defs:
       message: >-
         A use-case or adapter test names its module, the kernel, the platform adapters and the
         shared test harness (test/*.ts) — the scratch home, scripted askers and fixtures.
-      external: [effect, effect-bun-test, yaml]
-      allow: ["node:**", "@/kernel/**", "@/modules/{module}/**", "@/platform/**", "test/*.ts"]
+      external: [effect]
+      allow: ["@/kernel/**", "@/modules/{module}/**", "@/config.ts", "test/*.ts"]
 
   test-exports-nothing:
     message: >-
@@ -243,6 +243,32 @@ tree:
       "launchers/": { layout: open }
       "platform/": { layout: open }
       "tui/": { layout: open }
+
+      "interface/":
+        message: >-
+          interface/ holds the inbound adapters, one folder per protocol: cli/ today, the daemon's
+          scheduler and socket and an MCP server later.
+        name: kebab-case
+        children:
+          "cli/":
+            message: >-
+              cli/ holds the shared arguments (*.arguments.ts) and, per module, one
+              <command>.command.ts per CLI command: its flags, the use-case it calls, and how its
+              result reads.
+            imports:
+              reset: true
+              message: >-
+                A CLI command parses its arguments, calls a use-case and prints what the
+                use-case's result says. It names effect (its CLI and console), the kernel, the
+                modules' use-cases and their results, and the shared arguments. Never a
+                repository, a domain op or an adapter: the composition root provides those.
+              external: [effect]
+              allow: ["@/modules/*/use-cases/**", "@/interface/cli/*.arguments.ts"]
+            children:
+              "*.arguments.ts": {}
+              "{module}/":
+                children:
+                  "*.command.ts": {}
 
       "kernel/":
         message: >-
@@ -280,10 +306,9 @@ tree:
             imports:
               reset: true
               message: >-
-                A module's layer assembles its live adapters: it names its own infrastructure, the
-                kernel and the platform adapters they need.
-              external: [effect]
-              allow: ["@/modules/{module}/**", "@/kernel/**", "@/platform/**"]
+                A module's layer assembles its live adapters, so it names its own module.
+              external: []
+              allow: ["@/modules/{module}/**"]
 
           "domain/":
             message: >-
@@ -311,6 +336,22 @@ tree:
                           A repository port needs its live adapter, its fake and the live
                           adapter's test in ../../../infrastructure/repositories/.
                         surface: [{ use: port-declares-no-value }]
+                        # A repository stores aggregates and reads them back; what they mean
+                        # is the domain's. A finder that answers a question, or a verb, is a
+                        # rule that belongs on the aggregate's ops.
+                        members:
+                          - message: >-
+                              Repository port method "{name}" is not in the persistence
+                              vocabulary: findAll, findOne, save and remove. Read the aggregates
+                              and let an op answer the question, or put the verb on the
+                              aggregate and have the use-case save the result.
+                            subject: members
+                            declares: [type, interface]
+                            in: "*Repository*"
+                            allow: [findAll, findOne, save, remove]
+                            probe:
+                              source: "export type ZzRepositoryService = ZzBase & { readonly pausedSlugs: () => void };"
+                              name: pausedSlugs
                         requires:
                           - "../../../infrastructure/repositories/{base}-live.ts"
                           - "../../../infrastructure/repositories/{base}-fake.ts"
@@ -403,23 +444,24 @@ tree:
               reset: true
               message: >-
                 An adapter implements one of its module's ports. It names its module's domain,
-                the kernel, the platform adapters and its sibling adapters; each bucket below adds
-                the third-party packages it adapts.
+                the kernel and its sibling adapters; each bucket below adds the third-party
+                packages it adapts.
               external: [effect]
               allow:
-                - "node:**"
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/infrastructure/**"
-                - "@/platform/**"
             children:
               "repositories/":
                 imports:
                   message: >-
                     A repository adapts the module's aggregates to their storage: YAML for
-                    machine config, JSON for runtime state, SQLite for runs.
-                  external: [yaml, "@effect/sql-sqlite-bun"]
-                  allow: []
+                    machine config, JSON for runtime state. Until the machine
+                    module owns machine config, a repository reads and edits it through the
+                    legacy machinery in config.ts and repo-config.ts, and nothing else of the
+                    legacy tier.
+                  external: [yaml]
+                  allow: ["@/config.ts", "@/repo-config.ts"]
                 children:
                   "*.repository-live.ts": {}
                   "*.repository-fake.ts": {}

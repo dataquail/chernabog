@@ -8,7 +8,7 @@ import * as Record from 'effect/Record';
 import * as Result from 'effect/Result';
 
 import { type Persona } from '../../../../kernel/persona.value-object.ts';
-import { AmbiguousClone } from './enrolled-repo.errors.ts';
+import { AmbiguousClone, RepoNotEnrolled } from './enrolled-repo.errors.ts';
 import { EnrolledRepoRoot } from './enrolled-repo.root.ts';
 import { type PersonaFlowSettings } from './flow-settings.value-object.ts';
 import { type PersonaEntry } from './persona-choices.value-object.ts';
@@ -139,4 +139,17 @@ const setAccount = (repo: EnrolledRepoRoot, persona: Persona, role: Option.Optio
   return withChoicesAt(repo, owner, pickAccount(choicesAt(repo, owner), role, account));
 };
 
-export const EnrolledRepoRootOps = { nameOf, choicesOf, entryFor, reenroll, ownFlows, setFlow, setFlowSchedule, setAccount } as const;
+// Whether a person naming a repo means this one: by its name, its slug or its
+// checkout's path.
+const answersTo = (repo: EnrolledRepoRoot, named: string) => nameOf(repo) === named || repo.repo === named || repo.path === named;
+
+// The repo a person names, of those enrolled.
+const named = (repos: ReadonlyArray<EnrolledRepoRoot>, name: string) =>
+  Result.fromOption(Arr.findFirst(repos, (repo) => answersTo(repo, name)), () => new RepoNotEnrolled({ asked: name, enrolled: repos.map(nameOf) }));
+
+// A paused repo starts no new runs; pausing one that is changes nothing.
+const pause = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, paused: true });
+
+const resume = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, paused: false });
+
+export const EnrolledRepoRootOps = { nameOf, choicesOf, entryFor, reenroll, ownFlows, setFlow, setFlowSchedule, setAccount, answersTo, named, pause, resume } as const;

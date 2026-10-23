@@ -18,8 +18,9 @@ import * as Schedule from 'effect/Schedule';
 import { attachCommand, runSessions } from '../agents.ts';
 import { daemonReload, daemonStatus, daemonTick } from '../client.ts';
 import { Home } from '../config.ts';
-import { setPaused } from '../daemon.ts';
 import { runLogFile } from '../engine.ts';
+import { pauseRepoUseCase } from '../modules/enrollment/use-cases/pause-repo.use-case.ts';
+import { resumeRepoUseCase } from '../modules/enrollment/use-cases/resume-repo.use-case.ts';
 import { asSuffix, type Persona } from '../persona.ts';
 import { DEFAULT_GATE, loadMachineConfig, setAccountInMachineConfig, setFlowInMachineConfig, setFlowSchedule } from '../repo-config.ts';
 import { readUsageLogLine } from '../usage-gate.ts';
@@ -282,7 +283,11 @@ export const runTui = Effect.gen(function* () {
         }
 
         case 'pause': {
-          const paused = yield* Effect.result(setPaused(action.repo, action.paused));
+          let toggle = resumeRepoUseCase(action.repo);
+
+          if (action.paused) toggle = pauseRepoUseCase(action.repo);
+
+          const paused = yield* Effect.result(toggle);
 
           return yield* say(
             Result.match(paused, {

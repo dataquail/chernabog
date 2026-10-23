@@ -11,24 +11,22 @@ import { type Account, DEFAULT_LABELS, type LauncherCommands, type Limits, type 
 import * as Arr from 'effect/Array';
 import * as Duration from 'effect/Duration';
 import * as Effect from 'effect/Effect';
-import * as Equal from 'effect/Equal';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
 import type * as PlatformError from 'effect/PlatformError';
 import * as Record from 'effect/Record';
 import * as Schema from 'effect/Schema';
-import * as Struct from 'effect/Struct';
 import YAML from 'yaml';
 
 import type { AgentsConfig } from './agents.ts';
 import { ConfigError, expandHome, Home, homePaths } from './config.ts';
 import { checkConfigVersion } from './flow-deps.ts';
-import { RepoSlug } from './kernel/repo-slug.id.ts';
 import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from './launchers.ts';
-import { EnrolledRepoRoot } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root.ts';
+import { type EnrolledRepoRoot } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root.ts';
 import { EnrolledRepoRootOps } from './modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts';
 import { FlowSettings } from './modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts';
-import { PersonaChoices, PersonaEntry } from './modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts';
+import { type PersonaEntry } from './modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts';
+import { applyEntry, type EnrolledRepoEntry, EnrolledRepoEntry as EnrolledRepoSchema, toRoot as entryToRoot } from './modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts';
 import { nodeBinFor } from './node-version.ts';
 import { asSuffix, IMPLICIT, type Persona, samePersona } from './persona.ts';
 import { type Environment, HostEnvironment } from './platform/environment.ts';
@@ -141,33 +139,14 @@ export const LauncherFile = Schema.Struct({
   attach: Schema.optionalKey(Strings),
 });
 
-export const EnrolledRepo = Schema.Struct({
-  // owner/name on GitHub: the key the entry's settings follow.
-  repo: Schema.String,
-  // Where its checkout is now.
-  path: Schema.String,
-  // A short name, which keeps two clones of one repo apart.
-  name: Schema.optionalKey(Schema.String),
-  // The branch .chernabog/ is trusted from. Defaults to main.
-  baseBranch: Schema.optionalKey(Schema.String),
-  ...PersonaChoices,
-  // The GitHub personas, by login from machine config's github:, that run
-  // this repo's flows, each with its own choices. Defaults to the only one;
-  // required when there are several.
-  personas: Schema.optionalKey(Schema.Record(Schema.String, PersonaEntry)),
-});
+// A repo's entry in machine config, as stored.
+export const EnrolledRepo = EnrolledRepoSchema;
 
-export type EnrolledRepo = typeof EnrolledRepo.Type;
+export type EnrolledRepo = EnrolledRepoEntry;
 
-// The keys of an entry that aren't the repo entry's own choices.
-const IDENTITY = ['repo', 'path', 'name', 'baseBranch', 'personas'] as const;
-
-// An entry as the enrollment domain sees it, and back: machine config writes
-// the repo entry's own choices beside its slug and path, the root keeps them
-// as its defaults.
-export const toRoot = (entry: EnrolledRepo) => EnrolledRepoRoot.make({ ...Struct.pick(entry, IDENTITY), repo: RepoSlug.make(entry.repo), defaults: Struct.omit(entry, IDENTITY) });
-
-export const fromRoot = (root: EnrolledRepoRoot): EnrolledRepo => ({ ...Struct.omit(root, ['defaults']), ...root.defaults });
+// An entry as the enrollment domain sees it. These edits never touch whether
+// the repo is paused, which machine config doesn't keep.
+const toRoot = (entry: EnrolledRepo) => entryToRoot(entry, false);
 
 export const UsageGateFile = Schema.Struct({
   targetEndUsage: Schema.Finite,
@@ -194,7 +173,7 @@ export const MachineConfigFile = Schema.Struct({
   // Your launcher for every repo, and launchers of your own. Only here, never in a repo.
   launcher: Schema.optionalKey(Schema.String),
   launchers: Schema.optionalKey(Schema.Record(Schema.String, LauncherFile)),
-  repos: Schema.optionalKey(Schema.Array(EnrolledRepo)),
+  repos: Schema.optionalKey(Schema.Array(EnrolledRepoSchema)),
 });
 
 export type MachineConfigFile = typeof MachineConfigFile.Type;
@@ -668,39 +647,6 @@ export const entryFor = (repos: ReadonlyArray<EnrolledRepo>, repo: EnrolledRepo)
     Effect.map(Option.map((index) => ({ entry: repos[index], index }))),
     Effect.mapError((ambiguous) => new ConfigError({ message: ambiguous.message })),
   );
-
-const isJsonObject = Schema.is(Schema.Record(Schema.String, Schema.Json));
-
-// Writes `after` onto the document at `path`, where it held `before`: only
-// what changed, so the rest, comments included, stays as it was.
-const applyChanges = (document: YAML.Document, path: ReadonlyArray<string | number>, before: Option.Option<Schema.Json>, after: Option.Option<Schema.Json>) => {
-  if (Option.isNone(after)) {
-    if (Option.isSome(before)) document.deleteIn(path);
-
-    return;
-  }
-
-  if (Option.isSome(before) && isJsonObject(before.value) && isJsonObject(after.value)) {
-    const was = before.value;
-    const now = after.value;
-
-    for (const key of Object.keys(was).filter((known) => !(known in now))) document.deleteIn([...path, key]);
-
-    for (const [key, value] of Object.entries(now)) applyChanges(document, [...path, key], Option.fromUndefinedOr(was[key]), Option.some(value));
-
-    return;
-  }
-
-  // A scalar or a list is written whole when it changed.
-  if (!Option.exists(before, (found) => Equal.equals(found, after.value))) document.setIn(path, document.createNode(after.value));
-};
-
-const encodeEntry = (root: EnrolledRepoRoot) => Schema.decodeUnknownSync(Schema.Json)(Schema.encodeSync(EnrolledRepo)(fromRoot(root)));
-
-// Writes what an op made of a repo entry onto the document.
-const applyEntry = (document: YAML.Document, index: number, before: EnrolledRepoRoot, after: EnrolledRepoRoot) => {
-  applyChanges(document, ['repos', index], Option.some(encodeEntry(before)), Option.some(encodeEntry(after)));
-};
 
 // Adds or updates a repo in machine config, keeping the file's comments. An
 // update sets only the keys given, so the rest of the entry, such as its

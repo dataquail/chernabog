@@ -141,6 +141,12 @@ transitive reach), the coverage floors and the baseline.
 - **Obligations.** A `.root-ops.ts` and a `.use-case.ts` each owe a sibling
   `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
   `-live.test.ts`. The lint names what is missing.
+- **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
+  an `EnrolledRepoRoot`: its machine-config entry (edited in place, comments
+  kept, and written only when the entry changed) and whether it's paused
+  (`paused.json`, by slug, so clones of one repo pause together). `pause` and
+  `resume` are use-cases the CLI (`src/interface/cli/enrollment/`), the TUI
+  and the daemon's gate all go through.
 - **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`, `platform/`,
   `tui/`) is one `unrestricted` node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
