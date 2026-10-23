@@ -33,7 +33,8 @@ const workflow = (item: WorkItem) =>
       // Fixes for the gate and for red CI go back to the person's session.
       const session = yield* Hybrid.personSession(issue);
       yield* Implement.localGate(worktree, { session });
-      yield* Implement.push("push", worktree, branch);
+      // The person watched the change written, so it may touch humanOnlyPaths; a person merges it.
+      yield* Implement.push("push", worktree, branch, { withPerson: true });
       const opened = yield* Hybrid.openPullRequest(issue, finished);
       pullRequest = Option.some(opened.number);
       yield* Implement.waitForCi(opened.number, worktree, { ...session, branch });

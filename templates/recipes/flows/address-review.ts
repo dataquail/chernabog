@@ -100,7 +100,10 @@ const answerReview = (address: Review.AddressItem) =>
 
     yield* Review.checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
     yield* Implement.localGate(worktree, { id: `review-${round}`, session });
-    yield* Implement.push(`push-review-${round}`, worktree, address.headRef);
+    // Only a fix made in front of a person may touch humanOnlyPaths.
+    yield* Implement.push(`push-review-${round}`, worktree, address.headRef, {
+      withPerson: session.withPerson,
+    });
     yield* Implement.waitForCi(
       address.pullRequest,
       worktree,

@@ -237,7 +237,7 @@ The daemon runs committed flows and steps unattended, so anyone who can change `
 - Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 - The packages they import are the ones `.chernabog/package.json` and its lockfile name, installed without install scripts into the base branch's snapshot, so trusting the tree trusts their versions too. Nothing resolves from the checkout's own `node_modules`.
 - `chernabog trust` records the tree hash of the base branch's `.chernabog/`. When it changes after a pull, that repo starts no new runs until you review the change and trust it again, as with `direnv allow`. Trusting restarts the daemon on the new config once nothing is executing.
-- Decisions that belong to a person stay with a person: `humanOnly` goes into every agent prompt, and a change touching `humanOnlyPaths` goes to `auto:needs-human` instead of a pull request.
+- Decisions that belong to a person stay with a person: `humanOnly` goes into every agent prompt, and an unattended run whose change touches `humanOnlyPaths` goes to `auto:needs-human` instead of a pull request. A person's session on the hybrid path (`chernabog start`, and `address-review` on its pull request) may push such a change, since the person watched it written; chernabog never merges one, whichever path opened it. A push that changes `.github/workflows/` needs a token with the `workflow` scope, which `gh auth login` grants; without it the run goes to `auto:needs-human` and says so.
 
 Agents keep running with the permissions their own CLI config grants; Chernabog runs Claude Code in auto mode and doesn't widen them.
 

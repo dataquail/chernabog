@@ -21,6 +21,7 @@ import { stopHook } from "../src/modules/runs/infrastructure/runtime/agents/stop
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import humanInitiated from "../templates/recipes/flows/human-initiated.ts";
+import implement from "../templates/recipes/flows/implement.ts";
 import review from "../templates/recipes/flows/review.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -39,6 +40,7 @@ import {
 const starting = flowHandle(repo, "human-initiated", humanInitiated);
 const reviewing = flowHandle(repo, "review", review);
 const addressing = flowHandle(repo, "address-review", addressReview);
+const implementing = flowHandle(repo, "implement", implement);
 const work = item(`issue-${ISSUE}`, { issue: ISSUE });
 const POOL = { reviewers: ["zach", "data-quail"] };
 const PERSON_SESSION = Implement.sessionIdFor(`dataquail/demo#${ISSUE}`, "human-initiated");
@@ -145,6 +147,42 @@ describe("human-initiated", () => {
   );
 
   effect(
+    "pushes a change to humanOnlyPaths made in front of the person, where an unattended run hands it to a person",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve", POOL);
+        fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+        const finished = yield* runToEnd(starting, fake, work);
+        expect(finished.status).toBe("done");
+        expect(fake.git.pushes).toBe(1);
+        expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.hybrid);
+
+        const unattended = makeFake("approve", POOL);
+        unattended.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+        unattended.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+        const handed = yield* runToEnd(implementing, unattended, work);
+        expect(handed.status).toBe("needs-human");
+        expect(summaryOf(handed)).toContain(
+          "the change touches paths a person must handle: `.github/workflows/ci.yml`",
+        );
+        expect(unattended.git.pushes).toBe(0);
+        expect(unattended.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+      }),
+  );
+
+  effect("pushes the person's fixes for red CI to humanOnlyPaths too", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve", POOL);
+      fake.merge.files = [".github/workflows/ci.yml"];
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+      const finished = yield* runToEnd(starting, fake, work);
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain("CI is still red after 3 fix attempts");
+      expect(fake.git.pushes).toBe(4);
+    }),
+  );
+
+  effect(
     "hands the issue to a person, with the fix, when the token can't push a workflow change",
     () =>
       Effect.gen(function* () {
@@ -238,6 +276,9 @@ describe("a hybrid pull request", () => {
       );
       fake.git.pushes = 1;
 
+      // A fix to a human-only path pushes, since the person is in the session.
+      fake.merge.files = [".github/workflows/ci.yml"];
+
       const answered = item(`pr-${PULL}-changes-1`, {
         pullRequest: PULL,
         headRef: `auto/issue-${ISSUE}`,
@@ -248,6 +289,7 @@ describe("a hybrid pull request", () => {
 
       const finished = yield* runToEnd(addressing, fake, answered);
       expect(finished.status).toBe("done");
+      expect(fake.git.pushes).toBe(2);
       expect(fake.requests.map((request) => [request.sessionId, request.withPerson])).toEqual([
         [PERSON_SESSION, true],
         [PERSON_SESSION, true],

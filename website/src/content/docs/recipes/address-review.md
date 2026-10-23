@@ -23,6 +23,6 @@ Bakes `.chernabog/flows/address-review.ts`. Its prompts, `consider` and `address
 4. `Review.checkChanged`, `Implement.localGate`, `Implement.push` and `Implement.waitForCi` — checks something was committed, runs the local gate, pushes, and waits for CI, fixing red up to `limits.ciRounds`.
 5. `Review.askAgain` — comments "Addressed review N:" with what changed and asks the reviewer who requested the changes to review again.
 
-On a pull request from the [hybrid path](/chernabog/recipes/human-initiated/), the session marker says a person worked in the session, so `address-review` reopens it in front of them: the person and the agent weigh the review, make the changes, and fix the local gate and CI there, together.
+On a pull request from the [hybrid path](/chernabog/recipes/human-initiated/), the session marker says a person worked in the session, so `address-review` reopens it in front of them: the person and the agent weigh the review, make the changes, and fix the local gate and CI there, together. Its push passes `{ withPerson: session.withPerson }`, so a fix that touches `humanOnlyPaths` pushes on that pull request, and goes to a person on one an unattended run opened. See [Trust](/chernabog/operate/trust/).
 
 Anything else that stops it, such as CI still red, a failing local gate, the agent needing an answer, or a failed step, hands the pull request to a person with `auto:needs-human`. A person settles a dispute, removes the label, and asks the reviewer again if it should look again.

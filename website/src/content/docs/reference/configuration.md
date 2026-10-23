@@ -20,7 +20,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `install`          | none                       | command run in each fresh worktree; `null` for none                       |
 | `localGate`        | `[]`                       | commands a change must pass before its pull request opens                |
 | `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt                        |
-| `humanOnlyPaths`   | `[]`                       | globs a change must not touch; one that does goes to `auto:needs-human`   |
+| `humanOnlyPaths`   | `[]`                       | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
 | `notes`            | `[]`                       | repo facts the agent should know                                          |
 | `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
 | `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus` |
