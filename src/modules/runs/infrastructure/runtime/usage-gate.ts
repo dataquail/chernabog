@@ -20,15 +20,14 @@ import {
   claudeHomeOf,
   claudeTokenOf,
   claudeTokenVariables,
-  Home,
-  homePaths,
-} from "../../../../config.ts";
+} from "../../../../platform/agent-accounts.ts";
 import {
   type Environment,
   HostEnvironment,
   withVariables,
 } from "../../../../platform/environment.ts";
 import { execOk } from "../../../../platform/exec.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { selfCommand } from "../../../../platform/self.ts";
 import {
   decideLaunch,

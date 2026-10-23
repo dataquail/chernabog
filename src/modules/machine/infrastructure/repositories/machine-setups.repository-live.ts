@@ -6,8 +6,8 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import { Home, homePaths } from "../../../../config.ts";
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, MachineConfigFile, readYaml } from "../../../../repo-config.ts";
 import { type MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
 import { MachineSetupsRepository } from "../../domain/ports/repositories/machine-setups.repository.ts";

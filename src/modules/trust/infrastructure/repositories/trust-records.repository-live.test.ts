@@ -4,8 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
-import { Home, homePaths } from "../../../../config.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
 import { TrustRecordsRepositoryLive } from "./trust-records.repository-live.ts";

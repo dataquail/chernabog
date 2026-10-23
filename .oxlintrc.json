@@ -33,7 +33,7 @@
     "node_modules/**",
     "website/**",
     "tools/oxlint/**",
-    "src/effect-modules.ts"
+    "src/platform/effect-modules.ts"
   ],
   "rules": {
     "oxc/no-accumulating-spread": "error",

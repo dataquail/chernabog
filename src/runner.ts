@@ -12,10 +12,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { ConfigError, Home, homePaths } from "./config.ts";
 import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { runLabel } from "./kernel/run-id.id.ts";
-import { loadFlows } from "./loader.ts";
 import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { withRepo } from "./modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
@@ -35,7 +33,11 @@ import { pollRunUseCase } from "./modules/runs/use-cases/poll-run.use-case.ts";
 import { resumeRunUseCase } from "./modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "./modules/runs/use-cases/start-flow-run.use-case.ts";
+import { ConfigError } from "./platform/config-error.ts";
+import { snapshotConfig } from "./platform/config-snapshot.ts";
+import { loadFlows } from "./platform/flow-loader.ts";
 import { viewerLogin } from "./platform/github-api.ts";
+import { Home, homePaths } from "./platform/home.ts";
 import { acquireLock } from "./platform/lock.ts";
 import {
   type EffectiveRepo,
@@ -49,7 +51,6 @@ import {
   type PersonaRepo,
   routingOf,
 } from "./repo-config.ts";
-import { snapshotConfig } from "./snapshot.ts";
 
 export type OpenRepo = {
   readonly repo: EffectiveRepo;

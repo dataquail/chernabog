@@ -1,17 +1,10 @@
+// Where the agents keep an account's login on this machine, and how a login
+// token reaches `claude`.
+
 import type { Account } from "@chernabog/sdk";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
-import type { Environment } from "./platform/environment.ts";
-
-export { expandHome, Home, homePaths } from "./platform/home.ts";
-
-export class ConfigError extends Schema.TaggedError<
-  ConfigError,
-  { readonly brand: "ConfigError" }
->()("ConfigError", {
-  message: Schema.String,
-}) {}
+import type { Environment } from "./environment.ts";
 
 // Where an account keeps its settings, skills and session transcripts.
 export const claudeHomeOf = (account: Account, home: string) =>

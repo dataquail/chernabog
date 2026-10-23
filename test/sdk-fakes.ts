@@ -41,7 +41,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
-import { Home, homePaths } from "../src/config.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import {
   type FlowHandle,
@@ -53,6 +52,7 @@ import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-sig
 import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../src/modules/runs/use-cases/start-flow-run.use-case.ts";
+import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
 export const PULL = 7;

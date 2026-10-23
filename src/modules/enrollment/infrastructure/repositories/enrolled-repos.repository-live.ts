@@ -16,9 +16,9 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "../../../../config.ts";
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepository } from "../../domain/ports/repositories/enrolled-repos.repository.ts";

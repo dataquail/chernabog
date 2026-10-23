@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { expandHome } from "../../../../config.ts";
+import { expandHome } from "../../../../platform/home.ts";
 import { pickNodeVersion } from "../../../../platform/node-version.ts";
 import { transcriptDirectoryFor } from "./agents/claude.ts";
 import { claudeEnvironment } from "./agents/claude-events.ts";

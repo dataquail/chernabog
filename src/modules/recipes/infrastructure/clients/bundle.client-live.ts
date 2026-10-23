@@ -13,9 +13,9 @@ import {
   decodeManifest,
   flowPackageText,
   withBundledPins,
-} from "../../../../flow-deps.ts";
+} from "../../../../platform/flow-deps.ts";
+import { RECIPE_FILES, TEMPLATES } from "../../../../platform/templates.ts";
 import { RepoConfigFile } from "../../../../repo-config.ts";
-import { RECIPE_FILES, TEMPLATES } from "../../../../templates.ts";
 import { BundleClient } from "../../domain/ports/clients/bundle.client.ts";
 import { ScaffoldRefused } from "../../domain/recipe/recipe.errors.ts";
 

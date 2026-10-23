@@ -25,7 +25,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "../../../../config.ts";
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
 import type { HostEnvironment } from "../../../../platform/environment.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
@@ -39,6 +38,7 @@ import {
   githubSend,
 } from "../../../../platform/github-api.ts";
 import { execOptionsFor, type GitHubTokens } from "../../../../platform/github-auth.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { readCiState } from "./ci.ts";
 import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
 import {

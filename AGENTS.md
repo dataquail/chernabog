@@ -221,8 +221,11 @@ transitive reach), the coverage floors and the baseline.
   `listEnrolledReposUseCase`, then trusts each.
 - **The platform** (`src/platform/`) holds the technical adapters everything
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
-  `github-auth.ts`, `self.ts`, `version.ts` and the engine's `lock.ts`. It
-  names effect, node, the SDK, the kernel and itself, nothing else.
+  `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the
+  engine's `lock.ts`, `config-error.ts`, and a repo's `.chernabog/` as code:
+  `flow-loader.ts`, `config-snapshot.ts`, `flow-deps.ts` and the generated
+  `templates.ts` and `effect-modules.ts`. It names effect, node, the SDK, the
+  kernel and itself, nothing else.
 - **The composition roots are adapters too**: the CLI's
   `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
   and the live view in `src/interface/tui/`. Each has its own allowlist in

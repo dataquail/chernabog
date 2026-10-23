@@ -34,8 +34,8 @@ import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
-import { findStage, loadStage } from "../../../../loader.ts";
 import type { Environment } from "../../../../platform/environment.ts";
+import { findStage, loadStage } from "../../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { selfCommand } from "../../../../platform/self.ts";

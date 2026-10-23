@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
-import { Home, homePaths } from "../../../../config.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { MachineAccount } from "../../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
 import { MachineSetupsRepository } from "../../domain/ports/repositories/machine-setups.repository.ts";

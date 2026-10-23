@@ -29,7 +29,6 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "../src/config.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import {
@@ -42,6 +41,7 @@ import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-exe
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
+import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
 import {

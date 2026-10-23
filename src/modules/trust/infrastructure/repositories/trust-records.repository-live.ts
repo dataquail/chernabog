@@ -9,9 +9,9 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "../../../../config.ts";
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { Home, homePaths } from "../../../../platform/home.ts";
 import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { type TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
 import { toEntry, toRoot, TrustFile } from "./trust-record.mapper.ts";

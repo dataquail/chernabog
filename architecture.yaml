@@ -51,7 +51,7 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.91, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
+  coverage: { imports: 0.93, structure: 0.85, members: 0.46, surface: 0.94, graph: 1 }
   conformance: { residue: 0, vacant: 0, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
@@ -208,7 +208,7 @@ defs:
         A use-case or adapter test names its module, the kernel, the platform adapters and the
         shared test harness (test/*.ts) — the scratch home, scripted askers and fixtures.
       external: [effect]
-      allow: ["@/kernel/**", "@/modules/{module}/**", "@/config.ts", "test/*.ts"]
+      allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
 
   # A use-case answers with its result; saying it, asking a person or ending
   # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
@@ -244,7 +244,7 @@ tree:
     surface:
       - use: no-default-exports
         # Bun imports the generated templates with `with { type: 'file' }`.
-        except: ["@/templates.ts"]
+        except: ["@/platform/templates.ts"]
       - use: no-star-exports
     children:
       # The legacy tier: flat files and the folders beside them, not yet
@@ -255,7 +255,10 @@ tree:
         message: >-
           platform/ holds the technical adapters every module and adapter shares: running
           commands (exec.ts), the host environment, chernabog's home, GitHub's API and the
-          personas' tokens, this program's name and version, and the engine's lock.
+          personas' tokens, where the agents keep their logins, this program's name and
+          version, the engine's lock, and a repo's .chernabog/ as code: its flows loaded
+          (flow-loader.ts), its tree on the base branch (config-snapshot.ts), its pins
+          (flow-deps.ts), and the scaffold and recipes this binary bundles (templates.ts).
         name: kebab-case
         imports:
           reset: true
@@ -264,7 +267,14 @@ tree:
             descriptions and types), the kernel and its siblings, and chernabog's package.json for
             its version; nothing of the modules, the interface or the legacy tier.
           external: [effect]
-          allow: ["node:**", "~/sdk/src/**", "@/kernel/**", "@/platform/**", "package.json"]
+          allow:
+            - "node:**"
+            - "~/sdk/src/**"
+            # The pins a repo's .chernabog/ gets are the bundled SDK's version.
+            - "~/sdk/package.json"
+            - "@/kernel/**"
+            - "@/platform/**"
+            - "package.json"
         children:
           "*.test.ts":
             surface: [{ use: test-exports-nothing }]
@@ -329,7 +339,6 @@ tree:
                     - "@/modules/runs/infrastructure/runtime/launchers/shim.ts"
                     - "@/modules/runs/infrastructure/runtime/steps.ts"
                     - "@/doctor.ts"
-                    - "@/loader.ts"
                     - "@/migrate.ts"
                     - "@/open-pr.ts"
                     - "@/repo-config.ts"
@@ -384,7 +393,7 @@ tree:
               allow:
                 - "@/modules/*/use-cases/*.result.ts"
                 - "@/interface/daemon/**"
-                - "@/config.ts"
+                - "@/platform/home.ts"
             children:
               "*.protocol.ts": {}
               "*.client.ts": {}
@@ -410,10 +419,8 @@ tree:
                     - "@/modules/runs/infrastructure/runtime/engine.ts"
                     - "@/modules/runs/infrastructure/runtime/launchers.ts"
                     - "@/modules/runs/infrastructure/runtime/runlog.ts"
-                    - "@/loader.ts"
                     - "@/repo-config.ts"
                     - "@/runner.ts"
-                    - "@/snapshot.ts"
 
       "kernel/":
         message: >-
@@ -610,7 +617,7 @@ tree:
                     legacy machinery in config.ts and repo-config.ts, and nothing else of the
                     legacy tier.
                   external: [yaml]
-                  allow: ["@/config.ts", "@/repo-config.ts"]
+                  allow: ["@/platform/**", "@/repo-config.ts"]
                 children:
                   "*.repository-live.ts": {}
                   "*.repository-fake.ts": {}
@@ -634,9 +641,7 @@ tree:
                     - "~/sdk/src/**"
                     - "@/platform/**"
                     - "@/modules/{module}/use-cases/**"
-                    - "@/config.ts"
                     - "@/repo-config.ts"
-                    - "@/loader.ts"
                     - "test/*.ts"
                 children:
                   "*.ts": {}
@@ -659,12 +664,7 @@ tree:
                     Nothing else of the legacy tier.
                   allow:
                     - "@/platform/**"
-                    - "@/snapshot.ts"
-                    - "@/config.ts"
-                    - "@/loader.ts"
                     - "@/repo-config.ts"
-                    - "@/templates.ts"
-                    - "@/flow-deps.ts"
                     - "~/sdk/src/**"
                 children:
                   "*.client-live.ts": {}
@@ -684,7 +684,7 @@ tree:
                           "@/modules/{module}/**",
                           "@/platform/exec.ts",
                           "@/platform/github-api.ts",
-                          "@/config.ts",
+                          "@/platform/home.ts",
                           "~/sdk/src/**",
                           "test/*.ts",
                         ]

@@ -7,7 +7,6 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import { Home } from "../src/config.ts";
 import { describeStatus } from "../src/interface/cli/daemon/status.command.ts";
 import type { DaemonStatus } from "../src/interface/daemon/daemon.protocol.ts";
 import { initialModel, readUsage } from "../src/interface/tui/app.ts";
@@ -23,6 +22,7 @@ import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agen
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
+import { Home } from "../src/platform/home.ts";
 import { effectAtHome, effectAtHomeWith } from "./effect-test.ts";
 
 const now = DateTime.makeUnsafe("2026-10-17T12:00:00Z");

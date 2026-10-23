@@ -23,7 +23,6 @@ import * as Schema from "effect/Schema";
 import { type Persona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
-import { loadFlows } from "../../loader.ts";
 import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
@@ -42,6 +41,8 @@ import { pollRunsUseCase } from "../../modules/runs/use-cases/poll-runs.use-case
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { tickFlowUseCase } from "../../modules/runs/use-cases/tick-flow.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
+import { loadFlows } from "../../platform/flow-loader.ts";
 import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
@@ -64,7 +65,6 @@ import {
   type PersonaContext,
   servicesFrom,
 } from "../../runner.ts";
-import { configTree, snapshotConfig } from "../../snapshot.ts";
 import {
   DaemonStatus,
   type PersonaStatus,

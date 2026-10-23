@@ -8,7 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { homePaths } from "../../../../../config.ts";
+import { homePaths } from "../../../../../platform/home.ts";
 
 export const sessionFilesIn = (dir: string) => ({
   dir,

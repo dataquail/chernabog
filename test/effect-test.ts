@@ -6,8 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { it } from "effect-bun-test";
 
-import { Home } from "../src/config.ts";
 import { HostEnvironment } from "../src/platform/environment.ts";
+import { Home } from "../src/platform/home.ts";
 
 export const effect = it.scopedLive.layer(BunServices.layer);
 

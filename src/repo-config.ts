@@ -26,8 +26,6 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
-import { checkConfigVersion } from "./flow-deps.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
@@ -46,7 +44,10 @@ import {
   type LaunchersConfig,
 } from "./modules/runs/infrastructure/runtime/launchers.ts";
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
+import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
+import { checkConfigVersion } from "./platform/flow-deps.ts";
+import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 
 export type { Routing };

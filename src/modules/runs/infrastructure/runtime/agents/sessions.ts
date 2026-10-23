@@ -9,7 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { Home, homePaths } from "../../../../../config.ts";
+import { Home, homePaths } from "../../../../../platform/home.ts";
 
 const SessionLink = Schema.fromJsonString(
   Schema.Struct({ session: Schema.String, at: Schema.String }),

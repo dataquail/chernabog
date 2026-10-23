@@ -1,4 +1,4 @@
-// Writes src/effect-modules.ts: every public `effect` entry point, so a flow or
+// Writes src/platform/effect-modules.ts: every public `effect` entry point, so a flow or
 // step loaded from a repo gets the binary's copy of each. Compiled binaries
 // cannot resolve packages with wildcard `exports`, and `effect` has them.
 // Run after changing the effect version: bun scripts/gen-effect-modules.ts
@@ -16,7 +16,7 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
 const root = fileURLToPath(new URL("../node_modules/effect/", import.meta.url));
-const output = fileURLToPath(new URL("../src/effect-modules.ts", import.meta.url));
+const output = fileURLToPath(new URL("../src/platform/effect-modules.ts", import.meta.url));
 
 // A disabled export maps to null.
 const Manifest = Schema.fromJsonString(

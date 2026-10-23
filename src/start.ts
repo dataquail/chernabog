@@ -12,7 +12,6 @@ import * as Predicate from "effect/Predicate";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { ConfigError } from "./config.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { shortRunId } from "./kernel/run-id.id.ts";
 import { RECIPES_DOCS } from "./modules/recipes/use-cases/recipe.result.ts";
@@ -21,6 +20,7 @@ import {
   liveAttach,
   runSessions,
 } from "./modules/runs/infrastructure/runtime/agents.ts";
+import { ConfigError } from "./platform/config-error.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "./repo-config.ts";
 

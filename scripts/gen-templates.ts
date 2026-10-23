@@ -1,4 +1,4 @@
-// Writes src/templates.ts: every file under templates/.chernabog/, as the text
+// Writes src/platform/templates.ts: every file under templates/.chernabog/, as the text
 // `chernabog init` scaffolds, and under templates/recipes/, as the recipes
 // bake. The templates stay real files, so the flows among them are
 // type-checked against the SDK.
@@ -13,7 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import { renderTemplates, templatesRoot } from "./templates.ts";
 
-const output = fileURLToPath(new URL("../src/templates.ts", import.meta.url));
+const output = fileURLToPath(new URL("../src/platform/templates.ts", import.meta.url));
 
 const program = Effect.gen(function* () {
   const { count, text } = yield* renderTemplates(templatesRoot);
