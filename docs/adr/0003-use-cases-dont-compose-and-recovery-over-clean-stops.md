@@ -131,3 +131,13 @@ point, and a person who pressed Ctrl-C won't wait long for it to finish.
     between that check and the rename still loses to chernabog's write.
   - **Rule.** A members rule now forbids `writeFileString` in a repository
     adapter.
+- **The engine's lock.** `acquireLock`, which keeps a second workflow engine
+  from starting, had the same flaw. It created its lock file empty and then
+  wrote it, and it deleted any lock it couldn't read or whose owner had died.
+  A process starting at the same moment could therefore delete the lock
+  another had just created, and both would run an engine. It now uses the same
+  link-into-place creation and move-aside takeover as `updateFile`. A test
+  starts six processes at once, five times over, and checks exactly one gets
+  the lock each time. Neither the old code nor the new let two in over 30
+  rounds of that, so the old race was never seen; it is fixed from reading
+  the code.

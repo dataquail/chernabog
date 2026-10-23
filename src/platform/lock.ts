@@ -72,24 +72,6 @@ export const lockState = (path: string) =>
     return LockState.Abandoned({ text: text.value });
   });
 
-// The process holding the lock, if it is still alive.
-export const readLock = (path: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-
-    if (!(yield* fs.exists(path))) {
-      return Option.none<LockOwner>();
-    }
-
-    const owner = Schema.decodeOption(LockFile)(yield* fs.readFileString(path));
-
-    if (Option.isNone(owner) || !(yield* isAlive(owner.value.pid))) {
-      return Option.none<LockOwner>();
-    }
-
-    return owner;
-  }).pipe(Effect.orElseSucceed(() => Option.none<LockOwner>()));
-
 // What a lock file says: this process holds it, for what, since now.
 export const lockText = (purpose: string) =>
   Effect.gen(function* () {
@@ -100,39 +82,68 @@ export const lockText = (purpose: string) =>
     );
   });
 
-// Creates the lock file, unless it already exists.
-const tryCreate = (path: string, purpose: string) =>
+// Creates the lock, unless it exists. It's written whole beside it and
+// linked into place, so no process ever reads a lock half written, and takes
+// a lock it can't read for one its holder abandoned.
+export const createLock = (path: string, purpose: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const text = yield* lockText(purpose);
+    const staging = `${path}.${process.pid}.tmp`;
+    yield* fs.writeFileString(staging, yield* lockText(purpose));
 
-    return yield* fs.writeFileString(path, text, { flag: "wx" }).pipe(
+    return yield* fs.link(staging, path).pipe(
       Effect.as(true),
       Effect.catchIf(
         (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
         () => Effect.succeed(false),
       ),
+      Effect.ensuring(fs.remove(staging, { force: true }).pipe(Effect.ignore)),
     );
   });
 
-// Holds the lock for the scope's lifetime. A lock left by a process that died is taken over.
+// Takes an abandoned lock away, only if it's still the one read: it's moved
+// aside first, atomically, so a lock another process took meanwhile is never
+// the one removed. One moved aside by mistake is put back.
+export const takeOverLock = (path: string, abandoned: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const aside = `${path}.${process.pid}.abandoned`;
+
+    if (
+      !(yield* fs.rename(path, aside).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ))
+    ) {
+      return;
+    }
+
+    if ((yield* fs.readFileString(aside)) !== abandoned) {
+      yield* fs.link(aside, path).pipe(Effect.ignore);
+    }
+
+    yield* fs.remove(aside, { force: true });
+  });
+
+// How many times the engine's lock is tried while other processes are taking
+// and releasing it, before it's reported held.
+const TRIES = 5;
+
+// Holds the lock for the scope's lifetime, failing at once while a live
+// process holds it. A lock left by a process that died is taken over.
 export const acquireLock = (path: string, purpose: string) =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (yield* tryCreate(path, purpose)) {
+      for (let attempt = 0; attempt < TRIES; attempt++) {
+        if (yield* createLock(path, purpose)) {
           return;
         }
 
-        const owner = yield* readLock(path);
-
-        if (Option.isSome(owner)) {
-          return yield* held(path, owner);
-        }
-
-        yield* fs.remove(path, { force: true });
+        yield* LockState.$match(yield* lockState(path), {
+          Free: () => Effect.void,
+          Abandoned: ({ text }) => takeOverLock(path, text),
+          Held: ({ owner }) => Effect.fail(held(path, Option.some(owner))),
+        });
       }
 
       return yield* held(path, Option.none());
