@@ -3,25 +3,19 @@
 
 import { DEFAULT_LABELS } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import type * as Layer from "effect/Layer";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 
 import { Exec } from "../src/Exec.ts";
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
-import {
-  chooseRecipes,
-  diffRecipes,
-  docsOf,
-  flowFileOf,
-  installedRecipes,
-  installRecipes,
-  type Recipe,
-  recipeNamed,
-  RECIPES,
-} from "../src/recipes.ts";
+import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
+import { RecipeRootOps } from "../src/modules/recipes/domain/recipe/recipe.root-ops.ts";
+import { RECIPES } from "../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
+import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
+import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
 import { RECIPE_FILES } from "../src/templates.ts";
 import implement from "../templates/recipes/flows/implement.ts";
 import { scripted } from "./asker.ts";
@@ -32,21 +26,43 @@ const checkout = FileSystem.FileSystem.use((fs) =>
   fs.makeTempDirectoryScoped({ prefix: "chernabog-recipes-" }),
 );
 
-// Choosing with these answers: a script of them, or no one to ask.
-const choosing = (
-  layer: Layer.Layer<Asker>,
-  given: Option.Option<ReadonlyArray<string>>,
-  installed: ReadonlyArray<Recipe>,
-) => chooseRecipes(given, installed).pipe(Effect.provide(layer));
+// A recipe file as this binary bundles it.
+const recipeText = (file: string) =>
+  Option.getOrElse(
+    Option.map(
+      Arr.findFirst(Object.entries(RECIPE_FILES), ([name]) => name === file),
+      ([, text]) => text,
+    ),
+    () => "",
+  );
 
-const named = (...names: ReadonlyArray<string>) => Effect.forEach(names, recipeNamed);
+const recipes = (layer: Layer.Layer<Asker>) =>
+  Layer.mergeAll(layer, RecipesLayer).pipe(Layer.provideMerge(Exec.layer));
+
+// Baking the ones named, or, without names, the ones a person picks.
+const baking = (
+  layer: Layer.Layer<Asker>,
+  repo: string,
+  named: Option.Option<ReadonlyArray<string>>,
+) => bakeRecipes(repo, named).pipe(Effect.provide(recipes(layer)));
+
+const bake = (repo: string, ...names: ReadonlyArray<string>) =>
+  baking(Asker.none, repo, Option.some(names));
+
+const installed = (repo: string) =>
+  listRecipesUseCase(repo).pipe(
+    Effect.map(({ recipes: listed }) =>
+      listed.filter((recipe) => recipe.installed).map((recipe) => recipe.name),
+    ),
+    Effect.provide(recipes(Asker.none)),
+  );
 
 describe("the recipes", () => {
   effect("each brings its own flow, named for it, and a docs page", () =>
     Effect.sync(() => {
       for (const recipe of RECIPES) {
-        expect<string>(flowFileOf(recipe)).toBe(`flows/${recipe.name}.ts`);
-        expect(docsOf(recipe)).toBe(
+        expect(RecipeRootOps.flowFileOf(recipe)).toBe(`flows/${recipe.name}.ts`);
+        expect(RecipeRootOps.docsOf(recipe)).toBe(
           `https://dataquail.github.io/chernabog/recipes/${recipe.name}/`,
         );
       }
@@ -63,7 +79,7 @@ describe("the recipes", () => {
   effect("none calls a whole workflow of the SDK", () =>
     Effect.sync(() => {
       for (const recipe of RECIPES) {
-        expect(RECIPE_FILES[flowFileOf(recipe)]).not.toMatch(
+        expect(recipeText(RecipeRootOps.flowFileOf(recipe))).not.toMatch(
           /\b(Implement|Review)\.(workflow|reReviewWorkflow|addressWorkflow)\b/,
         );
       }
@@ -73,7 +89,7 @@ describe("the recipes", () => {
   effect("nor an SDK trigger, whose filters would hide its policy", () =>
     Effect.sync(() => {
       for (const recipe of RECIPES) {
-        expect(RECIPE_FILES[flowFileOf(recipe)]).not.toMatch(
+        expect(recipeText(RecipeRootOps.flowFileOf(recipe))).not.toMatch(
           /\b(Implement\.trigger|Review\.(trigger|reReviewTrigger|addressTrigger))\b/,
         );
       }
@@ -86,15 +102,15 @@ describe("installing recipes", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* checkout;
-      const lines = yield* installRecipes(repo, yield* named("implement"));
+      const lines = yield* bake(repo, "implement");
       expect(lines).toEqual([
         "wrote .chernabog/flows/implement.ts (implement recipe)",
         "wrote .chernabog/prompts/implement.md (implement recipe)",
       ]);
       expect(yield* fs.readFileString(`${repo}/.chernabog/flows/implement.ts`)).toBe(
-        RECIPE_FILES["flows/implement.ts"],
+        recipeText("flows/implement.ts"),
       );
-      expect((yield* installedRecipes(repo)).map((recipe) => recipe.name)).toEqual(["implement"]);
+      expect(yield* installed(repo)).toEqual(["implement"]);
     }),
   );
 
@@ -104,7 +120,7 @@ describe("installing recipes", () => {
       const repo = yield* checkout;
       yield* fs.makeDirectory(`${repo}/.chernabog/flows`, { recursive: true });
       yield* fs.writeFileString(`${repo}/.chernabog/flows/review.ts`, "// ours\n");
-      const lines = yield* installRecipes(repo, yield* named("review", "re-review"));
+      const lines = yield* bake(repo, "review", "re-review");
       expect(lines).toEqual([
         "kept .chernabog/flows/review.ts, which is already there",
         "wrote .chernabog/prompts/review.md (review recipe)",
@@ -116,8 +132,8 @@ describe("installing recipes", () => {
 
   effect("refuses a recipe that does not exist, naming the ones that do", () =>
     Effect.gen(function* () {
-      const found = yield* Effect.result(recipeNamed("ship"));
-      expect(Result.isFailure(found) && found.failure.message).toBe(
+      const found = yield* Effect.flip(bake(yield* checkout, "implement", "ship"));
+      expect(found.message).toBe(
         "no recipe named ship (there are: implement, review, re-review, address-review, human-initiated)",
       );
     }),
@@ -125,24 +141,27 @@ describe("installing recipes", () => {
 });
 
 describe("choosing recipes", () => {
-  effect("takes the ones named, without asking", () =>
+  effect("bakes the ones named, each once, without asking", () =>
     Effect.gen(function* () {
       const answers = scripted([]);
 
-      const chosen = yield* choosing(
+      const lines = yield* baking(
         answers.layer,
+        yield* checkout,
         Option.some(["review", "implement", "review"]),
-        [],
       );
 
-      expect(chosen.map((recipe) => recipe.name)).toEqual(["review", "implement"]);
+      expect(lines.filter((line) => line.includes("/flows/"))).toEqual([
+        "wrote .chernabog/flows/review.ts (review recipe)",
+        "wrote .chernabog/flows/implement.ts (implement recipe)",
+      ]);
       expect(answers.asked).toEqual([]);
     }),
   );
 
-  effect("chooses none with no one to ask", () =>
+  effect("bakes none with no one to ask", () =>
     Effect.gen(function* () {
-      expect(yield* choosing(Asker.none, Option.none(), [])).toEqual([]);
+      expect(yield* baking(Asker.none, yield* checkout, Option.none())).toEqual([]);
     }),
   );
 
@@ -150,9 +169,12 @@ describe("choosing recipes", () => {
     "in a terminal, offers the ones the repo lacks, each with its description and docs, none picked",
     () =>
       Effect.gen(function* () {
+        const repo = yield* checkout;
+        yield* bake(repo, "implement");
         const answers = scripted([["human-initiated"]]);
-        const chosen = yield* choosing(answers.layer, Option.none(), yield* named("implement"));
-        expect(chosen.map((recipe) => recipe.name)).toEqual(["human-initiated"]);
+        yield* baking(answers.layer, repo, Option.none());
+
+        expect(yield* installed(repo)).toEqual(["implement", "human-initiated"]);
         const offered = answers.asked[0]?.choices ?? [];
         expect(offered.map((choice) => choice.value)).toEqual([
           "review",
@@ -169,8 +191,11 @@ describe("choosing recipes", () => {
 
   effect("asks nothing once the repo has every recipe", () =>
     Effect.gen(function* () {
+      const repo = yield* checkout;
+      yield* bake(repo, ...RECIPES.map((recipe) => recipe.name));
       const answers = scripted([]);
-      expect(yield* choosing(answers.layer, Option.none(), RECIPES)).toEqual([]);
+
+      expect(yield* baking(answers.layer, repo, Option.none())).toEqual([]);
       expect(answers.asked).toEqual([]);
     }),
   );
@@ -201,17 +226,17 @@ describe("the implement recipe's trigger", () => {
 });
 
 const diffing = (repo: string, names: ReadonlyArray<string>) =>
-  diffRecipes(repo, names).pipe(Effect.provide(Exec.layer));
+  diffLines(repo, names).pipe(Effect.provide(recipes(Asker.none)));
 
 describe("diffing against the recipes", () => {
   // A repo that baked review and re-review, edited review's flow, and has a flow of its own.
   const baked = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const repo = yield* checkout;
-    yield* installRecipes(repo, yield* named("review", "re-review"));
+    yield* bake(repo, "review", "re-review");
     yield* fs.writeFileString(
       `${repo}/.chernabog/flows/review.ts`,
-      RECIPE_FILES["flows/review.ts"].replace("concurrency: 1,", "concurrency: 2,"),
+      recipeText("flows/review.ts").replace("concurrency: 1,", "concurrency: 2,"),
     );
     yield* fs.writeFileString(`${repo}/.chernabog/flows/security.ts`, "export default {};\n");
 

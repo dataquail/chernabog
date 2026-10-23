@@ -16,8 +16,8 @@ import { type AttachCommand, liveAttach, runSessions } from "./agents.ts";
 import { ConfigError } from "./config.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { shortRunId } from "./kernel/run-id.id.ts";
+import { RECIPES_DOCS } from "./modules/recipes/use-cases/recipe.result.ts";
 import { HostEnvironment } from "./platform/environment.ts";
-import { RECIPES_DOCS } from "./recipes.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "./repo-config.ts";
 
 export const START_FLOW = "human-initiated";

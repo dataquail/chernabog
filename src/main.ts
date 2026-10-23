@@ -25,30 +25,25 @@ import { runLogFile } from "./engine.ts";
 import { Exec } from "./Exec.ts";
 import { GitHubTokens } from "./github-auth.ts";
 import { GitHubApi } from "./GitHubApi.ts";
-import { scaffold } from "./init.ts";
 import { Asker } from "./interface/cli/asker.prompt.ts";
 import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
-import {
-  enrollCommand,
-  enrollFlags,
-  enrollHere,
-  rootOf,
-} from "./interface/cli/enrollment/enroll.command.ts";
+import { enrollCommand } from "./interface/cli/enrollment/enroll.command.ts";
 import { pauseCommand } from "./interface/cli/enrollment/pause.command.ts";
 import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
 import { unenrollCommand } from "./interface/cli/enrollment/unenroll.command.ts";
-import { listFlag } from "./interface/cli/list.arguments.ts";
 import {
   installCommand,
   stopCommand,
   uninstallCommand,
 } from "./interface/cli/machine/service.command.ts";
 import { setupCommand } from "./interface/cli/machine/setup.command.ts";
+import { initCommand } from "./interface/cli/recipes/init.command.ts";
+import { recipesCommand } from "./interface/cli/recipes/recipes.command.ts";
 import { optionalRepo, repoFlag } from "./interface/cli/repo.arguments.ts";
 import { logsCommand } from "./interface/cli/runs/logs.command.ts";
 import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
 import { trustCommand } from "./interface/cli/trust/trust.command.ts";
-import { daemonReload, daemonRun, daemonTick } from "./interface/daemon/daemon.client.ts";
+import { daemonRun, daemonTick } from "./interface/daemon/daemon.client.ts";
 import type { TickResult } from "./interface/daemon/daemon.protocol.ts";
 import { RunId } from "./kernel/run-id.id.ts";
 import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
@@ -56,10 +51,9 @@ import { runLaunch } from "./launchers/shim.ts";
 import { loadFlows } from "./loader.ts";
 import { migrateMachineConfig } from "./migrate.ts";
 import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
-import { listMovedReposUseCase } from "./modules/enrollment/use-cases/list-moved-repos.use-case.ts";
-import { repointRepoUseCase } from "./modules/enrollment/use-cases/repoint-repo.use-case.ts";
 import { MachineLayer } from "./modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "./modules/machine/use-cases/start-service.use-case.ts";
+import { RecipesLayer } from "./modules/recipes/recipes.layer.ts";
 import { RunLogsLayer } from "./modules/runs/runs.layer.ts";
 import { resolveRunIdUseCase } from "./modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "./modules/runs/use-cases/run.result.ts";
@@ -67,15 +61,6 @@ import { TrustLayer } from "./modules/trust/trust.layer.ts";
 import { openPr } from "./open-pr.ts";
 import { IMPLICIT } from "./persona.ts";
 import { HostEnvironment } from "./platform/environment.ts";
-import {
-  chooseRecipes,
-  diffRecipes,
-  docsOf,
-  installedRecipes,
-  installRecipes,
-  recipeNamed,
-  RECIPES,
-} from "./recipes.ts";
 import { findEnrolled, loadMachineConfig, loadRepo } from "./repo-config.ts";
 import { repoConfigDir, runInForeground } from "./runner.ts";
 import { openSession, startIssue } from "./start.ts";
@@ -91,9 +76,6 @@ const fail = (message: string) =>
     yield* Console.error(message);
     process.exitCode = 1;
   });
-
-const suffix = (value: Option.Option<string>, prefix: string) =>
-  Option.match(value, { onNone: () => "", onSome: (text) => `${prefix}${text}` });
 
 const start = Command.make(
   "start",
@@ -338,196 +320,6 @@ const labels = Command.make(
   Command.withDescription("Create or correct each repo's labels, and those its flows declare"),
 );
 
-// In a terminal, whether the person agrees; elsewhere, no.
-const confirmed = (message: string) =>
-  Effect.gen(function* () {
-    const asker = yield* Asker;
-
-    if (!asker.interactive) {
-      return false;
-    }
-
-    return (
-      (yield* asker.choose(message, [
-        { title: "Yes", value: "yes" },
-        { title: "No", value: "no" },
-      ])) === "yes"
-    );
-  });
-
-// A checkout that moved: its entry in machine config still names where it
-// was. Offers to point the entry here, settings and all, and says whether any
-// such entry was left where it was.
-const offerRepoint = (root: string) =>
-  Effect.gen(function* () {
-    let declined = false;
-
-    for (const entry of (yield* listMovedReposUseCase(root)).repos) {
-      if (
-        !(yield* confirmed(
-          `${entry.name} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`,
-        ))
-      ) {
-        yield* Console.log(
-          `${entry.name} is enrolled at ${entry.path}, which is gone; chernabog enroll${suffix(entry.named, " --name ")} here points it here, keeping its settings`,
-        );
-        declined = true;
-        continue;
-      }
-
-      yield* repointRepoUseCase(entry.path, root);
-      yield* Console.log(`pointed ${entry.name} at ${root}`);
-      yield* daemonReload.pipe(Effect.ignore);
-    }
-
-    return declined;
-  });
-
-const RECIPES_LIST = RECIPES.map((recipe) => recipe.name).join(", ");
-
-const recipesFlag = listFlag(
-  "recipes",
-  `Recipes to bake into .chernabog/flows/, comma-separated: ${RECIPES_LIST}. Asked in a terminal; none otherwise`,
-);
-
-// Bakes the chosen recipes into the repo at `root`, and says what it wrote.
-const bakeRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>) =>
-  Effect.gen(function* () {
-    const recipes = yield* chooseRecipes(named, yield* installedRecipes(root));
-    yield* printLines(yield* installRecipes(root, recipes));
-  });
-
-const init = Command.make(
-  "init",
-  { path: Argument.String("path").pipe(Argument.optional), recipes: recipesFlag, ...enrollFlags },
-  ({ path, recipes, ...flags }) =>
-    Effect.gen(function* () {
-      const root = yield* rootOf(path);
-      const written = yield* scaffold(root);
-
-      yield* printLines(
-        Option.match(Option.liftPredicate(written, Arr.isReadonlyArrayNonEmpty), {
-          onNone: () => [".chernabog/ is already set up; nothing written"],
-          onSome: (files) => files.map((file) => `wrote ${file}`),
-        }),
-      );
-
-      yield* bakeRecipes(root, recipes);
-
-      // Enrolling would point a moved entry here after all, so a checkout that
-      // isn't the moved one enrolls only under a name of its own.
-      if ((yield* offerRepoint(root)) && Option.isNone(flags.name)) {
-        yield* Console.log(
-          "Not enrolled: to run this checkout alongside the one that moved, chernabog enroll --name <another name> here",
-        );
-
-        return;
-      }
-
-      // Enrolling chooses among the repo's flows, so a repo with none waits for one.
-      yield* enrollHere(root, flags).pipe(
-        Effect.flatMap((repo) =>
-          Console.log(
-            `Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repo.name}.`,
-          ),
-        ),
-        Effect.catchTag("NoFlows", () =>
-          Console.log(
-            `Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (${RECIPES_LIST}), or write a flow, then chernabog enroll here.`,
-          ),
-        ),
-      );
-    }),
-).pipe(
-  Command.withDescription(
-    "Scaffold .chernabog/ in a repo, bake the recipes you choose into its flows, enroll it on this machine, and point a moved checkout's settings at it",
-  ),
-);
-
-const recipesList = Command.make(
-  "list",
-  { path: Argument.String("path").pipe(Argument.optional) },
-  ({ path }) =>
-    Effect.gen(function* () {
-      const installed = yield* installedRecipes(yield* rootOf(path));
-
-      for (const recipe of RECIPES) {
-        let mark = " ";
-
-        if (installed.includes(recipe)) {
-          mark = "✓";
-        }
-
-        yield* printLines([
-          `${mark} ${recipe.name}: ${recipe.description}`,
-          `    ${docsOf(recipe)}`,
-        ]);
-      }
-    }),
-).pipe(Command.withDescription("List the recipes, with a check by each one the repo has"));
-
-const recipesAdd = Command.make(
-  "add",
-  {
-    names: Argument.String("recipe").pipe(
-      Argument.withDescription(
-        `Recipes to bake: ${RECIPES_LIST}. Asked in a terminal when none is named`,
-      ),
-      Argument.variadic(),
-    ),
-  },
-  ({ names }) =>
-    Effect.gen(function* () {
-      const root = yield* rootOf(Option.none());
-      const named = Option.liftPredicate(names, Arr.isReadonlyArrayNonEmpty);
-
-      // Checked first, so a typo is said before anything is asked.
-      for (const name of Option.getOrElse(named, (): ReadonlyArray<string> => [])) {
-        yield* recipeNamed(name);
-      }
-
-      const recipes = yield* chooseRecipes(named, yield* installedRecipes(root));
-      const lines = yield* installRecipes(root, recipes);
-
-      if (lines.length === 0) {
-        return yield* Console.log("Nothing added");
-      }
-
-      yield* printLines(lines);
-      yield* Console.log(
-        "Next: commit and merge them to the base branch, chernabog trust the repo, and chernabog enroll here to choose which personas run them.",
-      );
-    }),
-).pipe(
-  Command.withDescription(
-    "Bake recipes into this repo's .chernabog/flows/, never overwriting a flow it has",
-  ),
-);
-
-const recipesDiff = Command.make(
-  "diff",
-  {
-    names: Argument.String("recipe").pipe(
-      Argument.withDescription("Recipes to compare; every one the repo has when none is named"),
-      Argument.variadic(),
-    ),
-  },
-  ({ names }) =>
-    Effect.gen(function* () {
-      yield* Console.log(`Against the recipes of chernabog ${VERSION}:`);
-      yield* printLines(yield* diffRecipes(yield* rootOf(Option.none()), names));
-    }),
-).pipe(
-  Command.withDescription(
-    "Show how this repo's flows differ from the current versions of the recipes they came from",
-  ),
-);
-
-const recipesCommand = Command.make("recipes", {}, () => Effect.void).pipe(
-  Command.withDescription("Complete flows to bake into a repo, as code it then owns"),
-  Command.withSubcommands([recipesList, recipesAdd, recipesDiff]),
-);
-
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {
     const { runId } = yield* resolveRunIdUseCase(named);
@@ -597,7 +389,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     labels,
     doctorCommand,
     setupCommand,
-    init,
+    initCommand,
     recipesCommand,
     enrollCommand,
     unenrollCommand,
@@ -615,7 +407,13 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once.
-const AppLive = Layer.mergeAll(EnrollmentLayer, TrustLayer, RunLogsLayer, MachineLayer).pipe(
+const AppLive = Layer.mergeAll(
+  EnrollmentLayer,
+  TrustLayer,
+  RunLogsLayer,
+  MachineLayer,
+  RecipesLayer,
+).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
