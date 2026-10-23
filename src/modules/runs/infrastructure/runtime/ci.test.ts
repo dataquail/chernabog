@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { effect } from "../test/effect-test.ts";
-import { fixture } from "../test/fixtures.ts";
+import { effect } from "../../../../../test/effect-test.ts";
+import { fixture } from "../../../../../test/fixtures.ts";
 import { BranchRule, CheckRun, classifyChecks, describe, requiredChecksFrom } from "./ci.ts";
 
 const Rules = Schema.Array(BranchRule);

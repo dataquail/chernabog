@@ -10,9 +10,9 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
-import { type FlowHandle, runLogFor, statusOfExit } from "../../../../engine.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
+import { type FlowHandle, runLogFor, statusOfExit } from "../runtime/engine.ts";
 import { handleOf } from "./flows.client-live.ts";
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);

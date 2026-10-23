@@ -17,7 +17,7 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { flowHandle } from "../src/engine.ts";
+import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import implement from "../templates/recipes/flows/implement.ts";

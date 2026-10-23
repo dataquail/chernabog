@@ -12,9 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { effect } from "../test/effect-test.ts";
-import { GitHubApi } from "./platform/github-api.ts";
-import { DEFAULT_LIMITS } from "./repo-config.ts";
+import { effect } from "../../../../../test/effect-test.ts";
+import { GitHubApi } from "../../../../platform/github-api.ts";
+import { DEFAULT_LIMITS } from "../../../../repo-config.ts";
 import { GitHubLive } from "./sdk-live.ts";
 
 const settings: RepoSettings = {

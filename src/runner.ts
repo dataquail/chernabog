@@ -13,6 +13,11 @@ import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { ConfigError, Home, homePaths } from "./config.ts";
+import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
+import { runLabel } from "./kernel/run-id.id.ts";
+import { loadFlows } from "./loader.ts";
+import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
+import { withRepo } from "./modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   defaultPersona,
   type FlowHandle,
@@ -21,12 +26,7 @@ import {
   repoServices,
   runLogFile,
   type ServicesFor,
-} from "./engine.ts";
-import { type Persona, samePersona } from "./kernel/persona.value-object.ts";
-import { runLabel } from "./kernel/run-id.id.ts";
-import { loadFlows } from "./loader.ts";
-import { routeItems } from "./modules/runs/domain/routing/routing.value-object.ts";
-import { withRepo } from "./modules/runs/infrastructure/clients/flows.client-live.ts";
+} from "./modules/runs/infrastructure/runtime/engine.ts";
 import { RuntimeLayer, StateLive } from "./modules/runs/runs.layer.ts";
 import { adoptImplicitRunsUseCase } from "./modules/runs/use-cases/adopt-implicit-runs.use-case.ts";
 import { deliverSignalsUseCase } from "./modules/runs/use-cases/deliver-signals.use-case.ts";

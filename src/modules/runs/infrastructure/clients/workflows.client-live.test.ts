@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { item, makeFake, repo, runToEnd } from "../../../../../test/sdk-fakes.ts";
-import { flowHandle } from "../../../../engine.ts";
+import { flowHandle } from "../runtime/engine.ts";
 
 // A flow whose workflow logs a line and ends with what its item says.
 const flow = defineFlow({

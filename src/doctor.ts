@@ -10,7 +10,6 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { checkCodexAccount } from "./codex-usage.ts";
 import { Home } from "./config.ts";
 import {
   decodeManifest,
@@ -23,10 +22,16 @@ import {
 import { daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { asSuffix } from "./kernel/persona.value-object.ts";
 import { RepoSlug } from "./kernel/repo-slug.id.ts";
-import { desiredLabels, Label, planLabelSync } from "./labels.ts";
-import { describeLauncher, launcherFor } from "./launchers.ts";
 import { flowNames } from "./loader.ts";
 import { checkServiceUseCase } from "./modules/machine/use-cases/check-service.use-case.ts";
+import { checkCodexAccount } from "./modules/runs/infrastructure/runtime/codex-usage.ts";
+import {
+  desiredLabels,
+  Label,
+  planLabelSync,
+} from "./modules/runs/infrastructure/runtime/labels.ts";
+import { describeLauncher, launcherFor } from "./modules/runs/infrastructure/runtime/launchers.ts";
+import { checkAccount, loggedInEmail } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
 import { findTrustedTreeUseCase } from "./modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { Exec, type ExecResult } from "./platform/exec.ts";
@@ -43,7 +48,6 @@ import {
   repoNameOf,
 } from "./repo-config.ts";
 import { configTree, snapshotConfig } from "./snapshot.ts";
-import { checkAccount, loggedInEmail } from "./usage-gate.ts";
 
 export type Check = {
   readonly ok: boolean;

@@ -12,10 +12,15 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { Done, readDecoded, SESSION_ENV, sessionFilesIn } from "./agents/session-files.ts";
-import { checkAnswer } from "./agents/stop-hook.ts";
 import { ConfigError } from "./config.ts";
-import { LaunchSpecJson } from "./launchers/shim.ts";
+import {
+  Done,
+  readDecoded,
+  SESSION_ENV,
+  sessionFilesIn,
+} from "./modules/runs/infrastructure/runtime/agents/session-files.ts";
+import { checkAnswer } from "./modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import { LaunchSpecJson } from "./modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { Exec } from "./platform/exec.ts";
 

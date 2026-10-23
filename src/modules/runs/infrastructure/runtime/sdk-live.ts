@@ -25,19 +25,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { readCiState } from "./ci.ts";
-import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
-import { Home, homePaths } from "./config.ts";
-import {
-  eligibleIssuesFrom,
-  interpretCreateRefResponse,
-  LabelledIssueNode,
-  moveIssueToStatus,
-  orderClaimCandidates,
-} from "./issues.ts";
-import type { Persona } from "./kernel/persona.value-object.ts";
-import type { HostEnvironment } from "./platform/environment.ts";
-import { Exec, execOk } from "./platform/exec.ts";
+import { Home, homePaths } from "../../../../config.ts";
+import type { Persona } from "../../../../kernel/persona.value-object.ts";
+import type { HostEnvironment } from "../../../../platform/environment.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
 import {
   decodeBody,
   GitHubApi,
@@ -46,8 +37,17 @@ import {
   githubJson,
   githubRequest,
   githubSend,
-} from "./platform/github-api.ts";
-import { execOptionsFor, type GitHubTokens } from "./platform/github-auth.ts";
+} from "../../../../platform/github-api.ts";
+import { execOptionsFor, type GitHubTokens } from "../../../../platform/github-auth.ts";
+import { readCiState } from "./ci.ts";
+import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
+import {
+  eligibleIssuesFrom,
+  interpretCreateRefResponse,
+  LabelledIssueNode,
+  moveIssueToStatus,
+  orderClaimCandidates,
+} from "./issues.ts";
 import { checkAccount, type GateConfig, runUsageGate, ungated } from "./usage-gate.ts";
 
 const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);

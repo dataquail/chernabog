@@ -9,7 +9,7 @@ import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { GitHubError, githubGraphql } from "./platform/github-api.ts";
+import { GitHubError, githubGraphql } from "../../../../platform/github-api.ts";
 
 const ProjectItem = Schema.Struct({
   project: Schema.Struct({ number: Schema.Finite }),

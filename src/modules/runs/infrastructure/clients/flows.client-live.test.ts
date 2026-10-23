@@ -7,9 +7,9 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { item, makeFake, repo } from "../../../../../test/sdk-fakes.ts";
-import { flowHandle } from "../../../../engine.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepositoryFake } from "../repositories/runs.repository-fake.ts";
+import { flowHandle } from "../runtime/engine.ts";
 import { FlowsClientLive } from "./flows.client-live.ts";
 
 const finding = defineFlow({

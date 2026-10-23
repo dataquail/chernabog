@@ -12,11 +12,15 @@ import * as Predicate from "effect/Predicate";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { type AttachCommand, liveAttach, runSessions } from "./agents.ts";
 import { ConfigError } from "./config.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "./interface/daemon/daemon.client.ts";
 import { shortRunId } from "./kernel/run-id.id.ts";
 import { RECIPES_DOCS } from "./modules/recipes/use-cases/recipe.result.ts";
+import {
+  type AttachCommand,
+  liveAttach,
+  runSessions,
+} from "./modules/runs/infrastructure/runtime/agents.ts";
 import { HostEnvironment } from "./platform/environment.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "./repo-config.ts";
 

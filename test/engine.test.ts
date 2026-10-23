@@ -30,9 +30,13 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { Home, homePaths } from "../src/config.ts";
-import { flowHandle, flowLayer, forEveryPersona } from "../src/engine.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import {
+  flowHandle,
+  flowLayer,
+  forEveryPersona,
+} from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";

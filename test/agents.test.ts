@@ -4,9 +4,12 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { lastJsonObject, withAnswerFormat } from "../src/agents/adapter.ts";
-import { checkAnswer } from "../src/agents/stop-hook.ts";
-import { latestRateLimits } from "../src/codex-usage.ts";
+import {
+  lastJsonObject,
+  withAnswerFormat,
+} from "../src/modules/runs/infrastructure/runtime/agents/adapter.ts";
+import { checkAnswer } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
+import { latestRateLimits } from "../src/modules/runs/infrastructure/runtime/codex-usage.ts";
 
 describe("agent output", () => {
   test("the last JSON object in a message is the answer", () => {

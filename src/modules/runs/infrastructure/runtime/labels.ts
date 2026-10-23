@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
-import { githubGetAllPages, githubSend } from "./platform/github-api.ts";
+import { githubGetAllPages, githubSend } from "../../../../platform/github-api.ts";
 
 export const Label = Schema.Struct({
   name: Schema.String,

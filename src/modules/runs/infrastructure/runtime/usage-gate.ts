@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { API_KEYS } from "./agents/adapter.ts";
 import {
   CLAUDE_OAUTH_TOKEN,
   claudeHomeOf,
@@ -23,18 +22,23 @@ import {
   claudeTokenVariables,
   Home,
   homePaths,
-} from "./config.ts";
-import { type Launcher, launcherFor } from "./launchers.ts";
-import { LaunchSpecJson } from "./launchers/shim.ts";
+} from "../../../../config.ts";
+import {
+  type Environment,
+  HostEnvironment,
+  withVariables,
+} from "../../../../platform/environment.ts";
+import { execOk } from "../../../../platform/exec.ts";
+import { selfCommand } from "../../../../platform/self.ts";
 import {
   decideLaunch,
   type GateConfig,
   type LaunchDecision,
   type UsageReading,
-} from "./modules/runs/domain/usage/usage.value-object.ts";
-import { type Environment, HostEnvironment, withVariables } from "./platform/environment.ts";
-import { execOk } from "./platform/exec.ts";
-import { selfCommand } from "./platform/self.ts";
+} from "../../domain/usage/usage.value-object.ts";
+import { API_KEYS } from "./agents/adapter.ts";
+import { type Launcher, launcherFor } from "./launchers.ts";
+import { LaunchSpecJson } from "./launchers/shim.ts";
 
 export { decideLaunch, type GateConfig, type LaunchDecision, type UsageReading };
 

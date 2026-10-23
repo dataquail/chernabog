@@ -26,11 +26,9 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import type { AgentsConfig } from "./agents.ts";
 import { ConfigError, expandHome, Home, homePaths } from "./config.ts";
 import { checkConfigVersion } from "./flow-deps.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
-import { BUILT_IN_LAUNCHERS, type LaunchersConfig } from "./launchers.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
 import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts";
@@ -42,9 +40,14 @@ import {
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
+import type { AgentsConfig } from "./modules/runs/infrastructure/runtime/agents.ts";
+import {
+  BUILT_IN_LAUNCHERS,
+  type LaunchersConfig,
+} from "./modules/runs/infrastructure/runtime/launchers.ts";
+import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
-import type { GateConfig } from "./usage-gate.ts";
 
 export type { Routing };
 

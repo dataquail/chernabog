@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { claudeHomeOf, Home } from "../config.ts";
+import { claudeHomeOf, Home } from "../../../../../config.ts";
 import { launcherFor } from "../launchers.ts";
 import { type Adapter, type AdapterContext, promptFor, resumingOrStarting } from "./adapter.ts";
 import {

@@ -29,7 +29,6 @@ import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 
-import { attachCommand, runSessions } from "../../agents.ts";
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { pauseRepoUseCase } from "../../modules/enrollment/use-cases/pause-repo.use-case.ts";
@@ -38,10 +37,11 @@ import { setFlowScheduleUseCase } from "../../modules/enrollment/use-cases/set-f
 import { setPersonaAccountUseCase } from "../../modules/enrollment/use-cases/set-persona-account.use-case.ts";
 import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
 import { readMachineSetupUseCase } from "../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
+import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
 import { readRunLogUseCase } from "../../modules/runs/use-cases/read-run-log.use-case.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
-import { readUsageLogLine } from "../../usage-gate.ts";
 import { daemonReload, daemonStatus, daemonTick } from "../daemon/daemon.client.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
