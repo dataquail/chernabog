@@ -578,15 +578,15 @@ tree:
               reset: true
               message: >-
                 A use-case names effect, the kernel, its own module's domain (aggregates and
-                ports), its sibling results, and its sibling use-cases, which it may compose.
-                Never infrastructure (adapters are provided at a composition root), never
+                ports) and its sibling results. Never another use-case: what two use-cases do
+                together, the composition root that calls them composes (ADR 3). Never
+                infrastructure (adapters are provided at a composition root), never
                 interface/ (it doesn't know who called it), never another module's internals.
               external: [effect]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/use-cases/*.result.ts"
-                - "@/modules/{module}/use-cases/*.use-case.ts"
             children:
               "*.use-case.ts":
                 message: >-
