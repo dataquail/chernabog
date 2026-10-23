@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
@@ -13,6 +14,7 @@ import {
   routeItems,
   type Routing,
 } from "../domain/routing/routing.value-object.ts";
+import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { type FlowRef, type WorkItem } from "../domain/run/work-item.value-object.ts";
 import {
@@ -85,10 +87,19 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
     }
   }
 
+  // A persona that can't run its flows says why itself, fix included.
+  const failedReason = (what: string, failure: FlowFailed | PersonaNotReady) => {
+    if (Predicate.isTagged(failure, "PersonaNotReady")) {
+      return failure.message;
+    }
+
+    return `${what}: ${failure.message}`;
+  };
+
   const triggered = yield* Effect.result(flows.trigger(flow));
 
   if (Result.isFailure(triggered)) {
-    return yield* skip(`trigger failed: ${triggered.failure.message}`, nothing);
+    return yield* skip(failedReason("trigger failed", triggered.failure), nothing);
   }
 
   const unreported = Option.filter(
@@ -105,7 +116,10 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
 
   if (Result.isFailure(lookedUp)) {
     return yield* skip(
-      `could not find ${Option.getOrElse(input.item, () => "the item")}: ${lookedUp.failure.message}`,
+      failedReason(
+        `could not find ${Option.getOrElse(input.item, () => "the item")}`,
+        lookedUp.failure,
+      ),
       nothing,
     );
   }

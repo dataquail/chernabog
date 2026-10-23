@@ -7,10 +7,12 @@
 import {
   describeError,
   type Flow,
+  isSetupError,
   NeedsHuman,
   type RepoSettings,
   Run,
   RunLog,
+  type SetupError,
   Signals,
   Skip,
   WorkItem,
@@ -33,6 +35,7 @@ import * as Workflow from "effect/workflow/Workflow";
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
+import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import type { EffectiveRepo } from "../../../../repo-config.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
@@ -41,7 +44,14 @@ import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
-import { GitHubLive, GitLive, RepoLive, UsageLive, WorktreeLive } from "./sdk-live.ts";
+import {
+  GitHubLive,
+  GitLive,
+  RepoLive,
+  ReviewerSeatLive,
+  UsageLive,
+  WorktreeLive,
+} from "./sdk-live.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
@@ -81,6 +91,9 @@ export const personaSettings = (settings: RepoSettings, persona: Persona): RepoS
   });
 
 // The services every flow, trigger and step of one repo uses, as one persona.
+// Building them checks the persona has a token, so a persona that can't act
+// fails here with its setup error (PersonaUnavailable, NotAuthenticated),
+// before any of its flows runs, rather than partway through one.
 export const repoServices = (
   repoSettings: RepoSettings,
   gate: GateConfig,
@@ -90,7 +103,9 @@ export const repoServices = (
   const settings = personaSettings(repoSettings, persona);
 
   return Layer.mergeAll(
+    Layer.effectDiscard(checkPersona(persona)),
     RepoLive(settings),
+    ReviewerSeatLive(settings, persona),
     GitHubLive(settings).pipe(Layer.provide(GitHubApi.layerFor(persona))),
     GitLive(persona),
     WorktreeLive(settings, persona),
@@ -107,14 +122,31 @@ const FlowPayload = Schema.Struct({
   persona: Schema.optionalKey(Schema.String),
 });
 
-// The services for a persona's runs; none for a persona the repo no longer has.
-export type ServicesFor<R> = (persona: Persona) => Option.Option<Context.Context<R>>;
+// The services for a persona's runs, which fail with the setup error that
+// stops the persona acting; none for a persona the repo no longer has.
+export type ServicesFor<R> = (
+  persona: Persona,
+) => Option.Option<Effect.Effect<Context.Context<R>, SetupError>>;
 
 // The same services whatever the persona, as in tests.
 export const forEveryPersona =
   <R>(services: Context.Context<R>): ServicesFor<R> =>
   () =>
-    Option.some(services);
+    Option.some(Effect.succeed(services));
+
+// A setup error raised when a flow asks for a service it can't have, such as
+// a reviewer seat the persona doesn't hold, as a failure the engine reports;
+// any other defect stays one.
+export const surfaceSetup = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | SetupError, R> =>
+  Effect.catchDefect(effect, (defect): Effect.Effect<never, SetupError> => {
+    if (isSetupError(defect)) {
+      return Effect.fail(defect);
+    }
+
+    return Effect.die(defect);
+  });
 
 // Who a repo's runs act as when nothing says otherwise: its first persona.
 export const defaultPersona = (repo: EffectiveRepo): Persona =>
@@ -229,6 +261,10 @@ export const flowLayer = <R>(
         });
       }
 
+      const context = yield* services.value.pipe(
+        Effect.mapError((error) => new RunFailed({ message: error.message })),
+      );
+
       // A step reported after its run ended changes nothing.
       const enterStep = yield* capturing((step: string) =>
         enterStepUseCase(runId, step).pipe(
@@ -253,6 +289,7 @@ export const flowLayer = <R>(
 
       const outcome = yield* handle.flow.workflow(payload.item).pipe(
         Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
+        surfaceSetup,
         Effect.catch(outcomeOf),
         Effect.provideService(Run, {
           flow: handle.name,
@@ -262,7 +299,7 @@ export const flowLayer = <R>(
         }),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
-        Effect.provideContext(services.value),
+        Effect.provideContext(context),
       );
 
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);

@@ -7,11 +7,18 @@ import {
   Git,
   GitHub,
   HEADLESS,
+  Implement,
   NeedsHuman,
+  NotInReviewerPool,
+  PersonaUnavailable,
   Repo,
+  reportAs,
   type RepoSettings,
+  Review,
+  ReviewerSeat,
   Run,
   RunLog,
+  type SetupError,
   Skip,
   StepFailed,
   StepRunner,
@@ -20,7 +27,7 @@ import {
   Worktree,
 } from "@chernabog/sdk";
 import type { BunServices } from "@effect/platform-bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -141,6 +148,10 @@ const flow = defineFlow({
         return `woke by ${yield* awaitSignal(["pushed"], { id: "round-1", timeout: "1 hour" })}`;
       }
 
+      if (key === "seat") {
+        return `reviews as ${yield* Review.reviewerLogin}`;
+      }
+
       return `did ${key}`;
     }),
 });
@@ -157,6 +168,10 @@ const servicesWith = (own: RepoSettings) =>
     Layer.mock(Usage)({}),
     Layer.mock(Agent)({ adapters: [] }),
     Layer.mock(StepRunner)({}),
+    Layer.succeed(
+      ReviewerSeat,
+      ReviewerSeat.of({ login: Effect.die(new NotInReviewerPool({ reviewers: [] })) }),
+    ),
   );
 
 const repoServices = servicesWith(settings);
@@ -167,13 +182,25 @@ const asAliceOrBob = Effect.gen(function* () {
   const bob = yield* Layer.build(servicesWith({ ...settings, persona: "bob" }));
 
   return (persona: Option.Option<string>) =>
-    Option.flatMap(persona, (login) => {
+    Option.flatMap(persona, (login): Option.Option<Effect.Effect<typeof alice, SetupError>> => {
       if (login === "alice") {
-        return Option.some(alice);
+        return Option.some(Effect.succeed(alice));
       }
 
       if (login === "bob") {
-        return Option.some(bob);
+        return Option.some(Effect.succeed(bob));
+      }
+
+      // dave isn't logged in to gh.
+      if (login === "dave") {
+        return Option.some(
+          Effect.fail(
+            new PersonaUnavailable({
+              login,
+              reason: "no oauth token found for github.com account dave",
+            }),
+          ),
+        );
       }
 
       return Option.none();
@@ -472,6 +499,40 @@ describe("personas", () => {
   );
 
   effect(
+    "a run as a persona that fails setup fails with the setup error, naming its fix, and does none of its work",
+    () =>
+      Effect.gen(function* () {
+        executed.length = 0;
+
+        const { value: failed } = yield* withEngine(
+          runAs(Option.some("dave"), item("whoami")),
+          asAliceOrBob,
+        );
+
+        expect(failed.status).toBe("failed");
+        expect(summaryOf(failed)).toContain(
+          "dave is unavailable: no oauth token found for github.com account dave",
+        );
+        expect(summaryOf(failed)).toContain(
+          "Fix: run `gh auth login --hostname github.com` as dave",
+        );
+        expect(executed).toEqual([]);
+      }),
+  );
+
+  effect(
+    "a run that asks for a reviewer seat its persona doesn't hold fails with NotInReviewerPool, which no flow handles",
+    () =>
+      Effect.gen(function* () {
+        const { value: failed } = yield* withEngine(runAs(IMPLICIT, item("seat")));
+        expect(failed.status).toBe("failed");
+        expect(summaryOf(failed)).toContain(
+          "runs as the implicit account, which has no seat in the reviewer pool",
+        );
+      }),
+  );
+
+  effect(
     "a run as a persona the repo no longer has fails, rather than acting as someone else",
     () =>
       Effect.gen(function* () {
@@ -484,4 +545,50 @@ describe("personas", () => {
         expect(summaryOf(failed)).toContain("carol no longer runs demo");
       }),
   );
+});
+
+// A flow's errors, checked by the compiler: `bun run check` fails if a flow
+// that lets a work error or a GitHubError through compiles. The expected
+// errors below are the test; the runtime test only says they're here.
+
+const pushes = Implement.push("push", "/tmp/worktree", "auto/issue-1");
+
+const leaksWorkError = defineFlow({
+  trigger: Effect.succeed([]),
+  // @ts-expect-error -- the test: a push can fail with PushRejected and NothingCommitted, which the flow must handle.
+  workflow: () => pushes,
+});
+
+const handlesWorkErrors = defineFlow({
+  trigger: Effect.succeed([]),
+  workflow: () =>
+    pushes.pipe(
+      Effect.catchTags({
+        PushRejected: (rejected) => Effect.fail(new NeedsHuman({ reason: rejected.message })),
+        NothingCommitted: (nothing) => Effect.fail(new NeedsHuman({ reason: nothing.message })),
+      }),
+    ),
+});
+
+const queued = GitHub.use((github) => github.queuedIssues).pipe(
+  Effect.map((issues) => issues.map((issue) => Implement.issueItem(issue))),
+);
+
+const leaksGitHubError = defineFlow({
+  // @ts-expect-error -- the test: a trigger that reads GitHub can fail with GitHubError, which only reportAs may let through.
+  trigger: queued,
+  workflow: () => Effect.void,
+});
+
+const reportsGitHubError = defineFlow({
+  trigger: queued.pipe(reportAs("trigger")),
+  workflow: () => Effect.void,
+});
+
+describe("a flow's errors", () => {
+  test("flows that let errors through are compile errors", () => {
+    expect([leaksWorkError, handlesWorkErrors, leaksGitHubError, reportsGitHubError]).toHaveLength(
+      4,
+    );
+  });
 });

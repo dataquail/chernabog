@@ -14,7 +14,7 @@
 // version. The names of its steps ("claim", "local-gate-1") are the keys a run
 // in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, GitHub, Implement, Repo } from "@chernabog/sdk";
+import { defineFlow, GitHub, Implement, Repo, reportAs, Skip } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -34,7 +34,7 @@ const trigger = Effect.gen(function* () {
     ...eligible.map((issue) => Implement.issueItem(issue)),
     ...shipping.map((issue) => Implement.issueItem(issue, Option.some(repo.labels.ship))),
   ];
-});
+}).pipe(reportAs("trigger"));
 
 export default defineFlow({
   trigger,
@@ -73,11 +73,26 @@ export default defineFlow({
           });
 
           return yield* Implement.handOff(issue, opened, outcome);
-        }).pipe(Effect.catchTag("NeedsHuman", (needsHuman) => toPerson(needsHuman.reason)));
+        }).pipe(
+          Effect.catchTags({
+            NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
+            // Nothing to push, a push the token may not make (its message
+            // says the fix), CI that never finishes, or a pull request closed
+            // under the run: each is a person's to look into.
+            NothingCommitted: (nothing) =>
+              toPerson(`the agent finished without committing anything on ${nothing.branch}`),
+            PushRejected: (rejected) => toPerson(rejected.message),
+            CiTimedOut: (timedOut) => toPerson(timedOut.message),
+            PullRequestClosed: (closed) => toPerson(closed.message),
+          }),
+        );
       }).pipe(
         // Any other failure once the issue is claimed hands it to a person, rather
         // than leaving it claimed with nobody working on it.
         Effect.catchTag("StepFailed", (failed) => toPerson(`${failed.step}: ${failed.message}`)),
       );
-    }),
+    }).pipe(
+      // An issue deleted or transferred under the run leaves nothing to do.
+      Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
+    ),
 });

@@ -3,7 +3,7 @@
 // change), and each persona's services, built once and shared by every
 // trigger, gate and run of its flows as that persona.
 
-import { type Flow, RunLog, type WorkItem } from "@chernabog/sdk";
+import { type Flow, RunLog, type SetupError, type WorkItem } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -12,6 +12,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
@@ -76,7 +78,8 @@ const consoleRunLog = RunLog.of({
 
 // One repo's services as one persona, with its account, agent and launcher,
 // built once at its composition point and shared by every trigger, gate and
-// run of its flows as that persona.
+// run of its flows as that persona. Fails with the setup error that stops the
+// persona acting, such as a login gh doesn't have.
 export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<
@@ -98,14 +101,42 @@ export type RepoContext = Effect.Success<ReturnType<typeof buildRepoContext>>;
 // The services in a repo context.
 export type RepoServices = RepoContext extends Context.Context<infer R> ? R : never;
 
-export type PersonaContext = { readonly persona: Persona; readonly context: RepoContext };
+// A persona's services, or the setup error that stops it acting.
+export type PersonaContext = {
+  readonly persona: Persona;
+  readonly services: Effect.Effect<RepoContext, SetupError>;
+};
+
+// One persona's services, built now, and built again each time they're asked
+// for while setup fails, so a persona logged in after the daemon started acts
+// without a restart.
+const personaServices = (own: PersonaRepo, machine: MachineConfig) =>
+  Effect.gen(function* () {
+    const build = Effect.provideContext(
+      buildRepoContext(own, machine),
+      yield* Effect.context<Effect.Services<ReturnType<typeof buildRepoContext>>>(),
+    );
+
+    return { build, built: yield* Ref.make(yield* Effect.result(build)) };
+  }).pipe(
+    Effect.map(({ build, built }) => {
+      const again = Effect.result(build).pipe(
+        Effect.tap((result) => Ref.set(built, result)),
+        Effect.flatMap(Effect.fromResult),
+      );
+
+      return Ref.get(built).pipe(
+        Effect.flatMap(Result.match({ onSuccess: Effect.succeed, onFailure: () => again })),
+      );
+    }),
+  );
 
 // The repo's services for each of its personas.
 export const buildPersonaContexts = (repo: EffectiveRepo, machine: MachineConfig) =>
   Effect.forEach(repo.personas, (own) =>
-    Effect.map(buildRepoContext(own, machine), (context): PersonaContext => ({
+    Effect.map(personaServices(own, machine), (services): PersonaContext => ({
       persona: own.persona,
-      context,
+      services,
     })),
   );
 
@@ -115,7 +146,7 @@ export const servicesFrom =
   (persona) =>
     Option.map(
       Arr.findFirst(contexts, (candidate) => samePersona(candidate.persona, persona)),
-      (found) => found.context,
+      (found) => found.services,
     );
 
 // Once a repo has named personas, its runs from before them become its first

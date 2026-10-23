@@ -11,7 +11,7 @@ import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import { commentStep } from "./comment.ts";
-import { NeedsHuman } from "./errors.ts";
+import { MergeRefused, NeedsHuman, PullRequestClosed } from "./errors.ts";
 import { activity } from "./flow.ts";
 import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from "./markers.ts";
 import { pathsMatching } from "./paths.ts";
@@ -102,14 +102,13 @@ export const ownerOf = (bodies: ReadonlyArray<string>) =>
 
 export type MergeOptions = { readonly method: MergeMethod };
 
-const refuse = (pullRequest: number, reason: string) =>
-  new NeedsHuman({ reason: `#${pullRequest} not merged: ${reason}` });
+const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
 // Merges the pull request, only when that is safe: it is open, its required
 // checks are green on the current head, the latest review approved that very
 // head, it touches no humanOnlyPaths, and GitHub's rules for the repo allow it.
-// Otherwise it fails with NeedsHuman, saying why. Nothing merges unless a flow
-// calls this.
+// Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
+// one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
   activity(
     `merge-pr-${pullRequest}`,
@@ -123,8 +122,8 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return `#${pullRequest} merged`;
       }
 
-      if (pull.state !== "open") {
-        return yield* refuse(pullRequest, "it is closed");
+      if (pull.state === "closed") {
+        return yield* new PullRequestClosed({ pullRequest, state: "closed" });
       }
 
       const ci = yield* github.ciState(pullRequest);
@@ -173,10 +172,6 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         method: options.method,
         sha: pull.headSha,
       });
-
-      if (merged.status === "refused") {
-        return yield* refuse(pullRequest, merged.reason);
-      }
 
       return `#${pullRequest} merged (${options.method}) as \`${merged.sha.slice(0, 7)}\``;
     }),
@@ -245,7 +240,7 @@ export const shipping = (pullRequest: number) =>
 
 // After an approval: on the automated path, merges the pull request when that
 // is safe, and otherwise hands it to a person; any other pull request is left
-// for a person to merge.
+// for a person to merge, and one closed meanwhile is left alone.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* shipping(pullRequest))) {
@@ -253,6 +248,9 @@ export const mergeOrLeave = (pullRequest: number) =>
     }
 
     return yield* merge(pullRequest, { method: "squash" }).pipe(
-      Effect.catchTag("NeedsHuman", (refused) => handToPerson(pullRequest, refused.reason)),
+      Effect.catchTags({
+        MergeRefused: (refused) => handToPerson(pullRequest, refused.message),
+        PullRequestClosed: (closed) => Effect.succeed(`${closed.message}; nothing to merge`),
+      }),
     );
   });

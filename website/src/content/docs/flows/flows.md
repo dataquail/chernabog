@@ -16,6 +16,8 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `item`        | optional; `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
+`trigger`, `gate`, `item` and `workflow` may fail only with the flow's own outcomes, `Skip`, `NeedsHuman` and `StepFailed`. Any other error has to be handled before the flow compiles: see [Errors](#errors).
+
 Each step in a workflow is an **activity** whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
 
 ```ts
@@ -50,10 +52,60 @@ The workflow body runs again on every replay. Side effects belong inside activit
 | `awaitSignal(signals, { id, timeout })` | Waits for one of the signals or the timeout, and says which              |
 | `renderPrompt(name, values)`            | Fills `.chernabog/prompts/<name>.md`                                     |
 | `Skip`, `NeedsHuman`                    | End a run cleanly, or hand its item to a person                          |
+| `reportAs(step)`                        | Turns the errors a flow can only report into `StepFailed`, for a trigger or work outside an activity |
 
 Activity names are unique within a run, so one in a loop carries its round: `fix-ci-2`.
 
 **Signals.** A trigger reports signals in `WorkItem.signals`; a waiting run's `awaitSignal` wakes on them. Report an item with `wakeOnly` to wake a waiting run without starting a new one.
+
+## Errors
+
+Errors are split by who has to act on them.
+
+**The flow's outcomes.** A run ends done, or fails with `Skip` (nothing to do, or a gate said not now), `NeedsHuman` (a person takes over) or `StepFailed` (a step failed, named so the run log says which). These are the only errors a flow's `trigger`, `gate`, `item` and `workflow` may fail with.
+
+**The work's errors** are typed at the call that raises them, and the flow decides what each one means for its work. The compiler names any it leaves unhandled, so a flow that lets one through doesn't compile.
+
+| Error               | Raised by                                                       | Carries |
+| ------------------- | --------------------------------------------------------------- | ------- |
+| `NotFound`          | `GitHub.issue`, `GitHub.pullRequest`, and the blocks that read them | what's missing |
+| `PullRequestClosed` | `GitHub.review`, `requestReviewers` and `merge`, `PullRequest.merge` | the pull request, and whether it's `closed` or `merged` |
+| `MergeRefused`      | `GitHub.merge`, `PullRequest.merge`                              | the reason |
+| `PushRejected`      | `Git.push`, `Implement.push`, `waitForCi`                        | the reason, and `missingScope` when the token lacks one, such as `workflow` for a change to `.github/workflows/`; its message says how to fix the token |
+| `NothingCommitted`  | `Implement.push`                                                 | the branch |
+| `CiTimedOut`        | `Implement.waitForCi`, when CI stays pending past `limits.ciTimeout` | the pull request, and how long |
+
+Handle them with `Effect.catchTag` or `Effect.catchTags`, usually by handing the work to a person:
+
+```ts
+yield* Implement.push("push", worktree, branch).pipe(
+  Effect.catchTags({
+    PushRejected: (rejected) => Implement.handToHuman(issue, rejected.message, Option.none()).pipe(Effect.flatMap(Implement.endForPerson)),
+    NothingCommitted: (nothing) => Effect.fail(new NeedsHuman({ reason: nothing.message })),
+  }),
+);
+```
+
+**Errors a flow can only report**, such as `GitHubError`, `GitError`, `AgentError` and `UsageError`, carry a message and nothing to decide on. An activity turns any of them into `StepFailed`, named for the activity. Outside an activity, as in a trigger, pipe the effect through `reportAs(step)` to do the same:
+
+```ts
+const trigger = GitHub.use((github) => github.queuedIssues).pipe(
+  Effect.map((issues) => issues.map((issue) => Implement.issueItem(issue))),
+  reportAs("trigger"),
+);
+```
+
+**Setup errors** are a person's to fix in their configuration or logins. They're raised while a persona's services are built, before any flow runs, and the engine reports them; no flow sees one. Each names its fix:
+
+| Error                | When |
+| -------------------- | ---- |
+| `PersonaUnavailable` | `gh auth token --user <login>` fails for a persona under `github:`: it isn't logged in, or has been logged out since |
+| `NotAuthenticated`   | the implicit account has no token: no `GH_TOKEN`, `GITHUB_TOKEN` or gh login |
+| `NotInReviewerPool`  | a flow that reviews runs as the implicit account, or as a login the repo's `reviewers` leave out |
+
+The daemon records a setup error as that tick's skip reason, and starts nothing; `chernabog status`, `run` and `trigger` show it. Services are built again on the next tick while setup fails, so a persona logged in later is picked up without a restart. An error that only appears partway through, such as a token that loses a scope, stays typed at the call (`PushRejected`) and is the flow's to handle.
+
+**A capability's setup is a service.** What a flow needs to have set up before it runs is a service it requires, which the engine checks when it builds the persona's services. Reviewing is one: every block that reviews (`Review.reviewRequests`, `round`, `recheck`, `latestOwnReview`) requires `ReviewerSeat`, so any flow that calls one requires it too. The seat holds when the persona is a login under `github:`, not the implicit account, that the repo's `reviewers` list. A flow that never reviews runs whatever the seat; one that does stops before its work, with `NotInReviewerPool` or `PersonaUnavailable` as the tick's reason. `Review.reviewerLogin` is the seat's login.
 
 ## Building blocks
 
@@ -106,7 +158,7 @@ Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybr
 - it touches no `humanOnlyPaths`;
 - GitHub's rules for the repo allow it. The merge is of exactly the reviewed head, so GitHub refuses it if the head moves in between.
 
-Otherwise it fails with `NeedsHuman`, giving the reason, and merges nothing. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
+Otherwise it fails with `MergeRefused`, giving the reason, or `PullRequestClosed` when the pull request was closed without merging, and merges nothing. A pull request merged already, as by a rerun, counts as merged. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
 
 ## Dependencies
 

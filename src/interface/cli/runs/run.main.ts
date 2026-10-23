@@ -272,7 +272,10 @@ export const runInForeground = (options: RunOptions) =>
     );
     const persona = yield* choosePersona(repo, options.persona);
     const contexts = yield* buildPersonaContexts(repo, machine);
-    const context = yield* Effect.fromOption(servicesFrom(contexts)(persona)).pipe(Effect.orDie);
+
+    const context = yield* yield* Effect.fromOption(servicesFrom(contexts)(persona)).pipe(
+      Effect.orDie,
+    );
 
     const program = Effect.gen(function* () {
       yield* adoptRuns(repo);

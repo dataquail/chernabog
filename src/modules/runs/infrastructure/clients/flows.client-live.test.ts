@@ -34,7 +34,7 @@ const flows = Layer.unwrap(
     return FlowsClientLive({
       handles: [flowHandle(repo, "finding", finding)],
       services: (_repo, persona) =>
-        Option.liftPredicate(services, () => Option.contains(persona, "bob")),
+        Option.liftPredicate(Effect.succeed(services), () => Option.contains(persona, "bob")),
     });
   }),
 ).pipe(Layer.provide(RunsRepositoryFake([])));

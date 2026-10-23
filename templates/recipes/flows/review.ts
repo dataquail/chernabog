@@ -11,18 +11,20 @@
 // version. The names of its steps ("review-1", "ships-pr-7") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, PullRequest, Review, type WorkItem } from "@chernabog/sdk";
+import { defineFlow, PullRequest, reportAs, Review, Skip, type WorkItem } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-// Pull requests that ask this persona for a review, which it hasn't reviewed yet.
+// Pull requests that ask this persona for a review, which it hasn't reviewed
+// yet. Reading review requests needs the persona's seat in the reviewer pool,
+// which chernabog checks before the flow runs.
 const trigger = Effect.map(Review.reviewRequests, (found) =>
   found.flatMap(({ pull, reviewed }) =>
     Option.toArray(
       Option.liftPredicate(Review.reviewItem(pull, `pr-${pull.number}`), () => reviewed === 0),
     ),
   ),
-);
+).pipe(reportAs("trigger"));
 
 // Chernabog merges only pull requests on the automated path (auto:ship), and
 // only when that's safe; a person merges any other.
@@ -33,8 +35,8 @@ const mergeIfShipping = (pullRequest: number) =>
     }
 
     return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
-      Effect.catchTag("NeedsHuman", (refused) =>
-        PullRequest.handToPerson(pullRequest, refused.reason),
+      Effect.catchTag("MergeRefused", (refused) =>
+        PullRequest.handToPerson(pullRequest, refused.message),
       ),
     );
   });
@@ -51,7 +53,13 @@ const workflow = (item: WorkItem) =>
 
     // The author's address-review picks the pull request up from the review itself.
     return `#${pullRequest}: review 1 requested changes`;
-  });
+  }).pipe(
+    // A pull request closed, or gone, while the review ran leaves nothing to do.
+    Effect.catchTags({
+      PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
+      NotFound: (gone) => Effect.fail(new Skip({ reason: gone.message })),
+    }),
+  );
 
 export default defineFlow({
   trigger,

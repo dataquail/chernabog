@@ -103,35 +103,40 @@ describe("planTickUseCase", () => {
     ),
   );
 
-  effect("records why it starts nothing: the machine's gates, a failing trigger, the limit", () =>
-    Effect.gen(function* () {
-      const paused = yield* planTickUseCase(review, {
-        ...open,
-        conditions: { ...open.conditions, paused: true },
-      });
+  effect(
+    "records why it starts nothing: the machine's gates, a failing trigger, a persona not ready, the limit",
+    () =>
+      Effect.gen(function* () {
+        const paused = yield* planTickUseCase(review, {
+          ...open,
+          conditions: { ...open.conditions, paused: true },
+        });
 
-      yield* planTickUseCase({ ...review, flow: "broken" }, open);
-      const limited = yield* planTickUseCase(review, open);
+        yield* planTickUseCase({ ...review, flow: "broken" }, open);
+        yield* planTickUseCase({ ...review, flow: "logged-out" }, open);
+        const limited = yield* planTickUseCase(review, open);
 
-      expect(paused.signalled).toEqual([]);
-      expect(limited.start).toEqual([]);
-      expect(keys(limited.signalled)).toEqual(["pr-1"]);
-      expect(yield* reasons).toContain("paused");
-      expect(yield* reasons).toContain("trigger failed: rate limited");
-      expect((yield* reasons).some((reason) => reason.startsWith("at the concurrency limit"))).toBe(
-        true,
-      );
-    }).pipe(
-      Effect.provide(
-        runtime(fakeEngine(), {
-          runs: [run("busy", { itemKey: "pr-9" })],
-          flows: {
-            "demo/review": { items: [item("pr-1")] },
-            "demo/broken": { items: [], fails: "rate limited" },
-          },
-        }),
+        expect(paused.signalled).toEqual([]);
+        expect(limited.start).toEqual([]);
+        expect(keys(limited.signalled)).toEqual(["pr-1"]);
+        expect(yield* reasons).toContain("paused");
+        expect(yield* reasons).toContain("trigger failed: rate limited");
+        expect(yield* reasons).toContain("bob is unavailable; run gh auth login");
+        expect(
+          (yield* reasons).some((reason) => reason.startsWith("at the concurrency limit")),
+        ).toBe(true);
+      }).pipe(
+        Effect.provide(
+          runtime(fakeEngine(), {
+            runs: [run("busy", { itemKey: "pr-9" })],
+            flows: {
+              "demo/review": { items: [item("pr-1")] },
+              "demo/broken": { items: [], fails: "rate limited" },
+              "demo/logged-out": { items: [], notReady: "bob is unavailable; run gh auth login" },
+            },
+          }),
+        ),
       ),
-    ),
   );
 
   effect("doesn't count a run parked on a signal against the limits", () =>

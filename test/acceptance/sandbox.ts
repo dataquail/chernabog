@@ -28,6 +28,8 @@ const NO_INSTALL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))(Opt
 export type MachineOptions = {
   // GitHub personas, and which of them run the repo.
   readonly github?: ReadonlyArray<string>;
+  // Personas under github: that gh has no login for.
+  readonly loggedOut?: ReadonlyArray<string>;
   readonly personas?: ReadonlyArray<string>;
   // A persona's own flows, over the repo entry's.
   readonly personaFlows?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
@@ -192,7 +194,9 @@ export const openSandbox = (
     GH_TOKEN: "test-token",
     PATH: `${join(ROOT, "test/fakebin")}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`,
     FAKE_CLAUDE_LOG: claudeLog,
-    FAKE_GH_USERS: (machine.github ?? []).join(","),
+    FAKE_GH_USERS: (machine.github ?? [])
+      .filter((login) => !(machine.loggedOut ?? []).includes(login))
+      .join(","),
     FAKE_GH_LOG: ghLog,
     FAKE_AGENT_TOKEN_LOG: agentTokenLog,
     FAKE_CODEX_LOG: join(root, "codex.log"),

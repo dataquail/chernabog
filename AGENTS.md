@@ -284,6 +284,31 @@ transitive reach), the coverage floors and the baseline.
   you mean to catch, and see it reported. `bun run architecture:explain <file>`
   shows every rule that governs a file.
 
+## Errors (#75)
+
+Errors split by who acts on them (`packages/sdk/src/errors.ts`).
+
+- **A flow fails only with its outcomes**, `Skip | NeedsHuman | StepFailed`
+  (`FlowError`), in `trigger`, `gate`, `item` and `workflow` alike. Anything
+  else must be handled first, and the compiler says so.
+- **Work errors** (`NotFound`, `PullRequestClosed`, `MergeRefused`,
+  `PushRejected`, `NothingCommitted`, `CiTimedOut`) are typed on the service
+  method or block that raises them, survive `activity` (they're journaled), and
+  the recipes decide what each means. Add one only for something a flow can
+  decide on; a failure it can only report stays `GitHubError` and the like,
+  which `activity` and `reportAs(step)` turn into `StepFailed`.
+- **Setup errors** (`PersonaUnavailable`, `NotAuthenticated`,
+  `NotInReviewerPool`) come from building a persona's services
+  (`repoServices` in the runs module's runtime, `checkPersona` in
+  `src/platform/github-auth.ts`), never from a flow. Each persona's build
+  result is kept (`buildPersonaContexts`) and a failed one is rebuilt when next
+  asked for. `FlowsClient` reports one as `PersonaNotReady`, which
+  `planTickUseCase` records as the tick's skip reason as it stands, fix
+  included.
+- **A capability's setup is a service.** `ReviewerSeat` is checked at build
+  but raised only when a flow asks for it (as a defect `surfaceSetup` turns
+  back into the setup error), so flows that never review run regardless.
+
 ## Effect and lint
 
 `bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the

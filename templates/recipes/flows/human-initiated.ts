@@ -10,7 +10,7 @@
 // version. The names of its steps ("claim", "work-with-person") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, Hybrid, Implement, type WorkItem } from "@chernabog/sdk";
+import { defineFlow, Hybrid, Implement, Skip, type WorkItem } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -40,10 +40,22 @@ const workflow = (item: WorkItem) =>
 
       return yield* Hybrid.handOff(issue, opened, finished);
     }).pipe(
-      Effect.catchTag("NeedsHuman", (needsHuman) => toPerson(needsHuman.reason)),
-      Effect.catchTag("StepFailed", (failed) => toPerson(`${failed.step}: ${failed.message}`)),
+      Effect.catchTags({
+        NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
+        StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
+        NothingCommitted: (nothing) =>
+          toPerson(`nothing was committed on ${nothing.branch} before open-pr`),
+        // Such as a change to .github/workflows/ with a token that lacks the
+        // workflow scope: its message says how to fix the token.
+        PushRejected: (rejected) => toPerson(rejected.message),
+        CiTimedOut: (timedOut) => toPerson(timedOut.message),
+        PullRequestClosed: (closed) => toPerson(closed.message),
+      }),
     );
-  });
+  }).pipe(
+    // An issue deleted or transferred under the run leaves nothing to do.
+    Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
+  );
 
 export default defineFlow({
   trigger: Hybrid.trigger,

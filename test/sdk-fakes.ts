@@ -17,12 +17,14 @@ import {
   HEADLESS,
   type Issue,
   type Json,
-  type MergeOutcome,
+  MergeRefused,
   type MergeRequest,
   printJson,
   type PullRequest,
+  type PushRejected,
   Repo,
   type RepoSettings,
+  ReviewerSeat,
   type ReviewEvent,
   RunLog,
   Runs,
@@ -161,8 +163,15 @@ export const makeFake = (
     requests: [],
   };
 
-  // The pushed head, pushes so far, whether the pull request is open, and the commits the agent made since the last push.
-  const git = { head: HEAD, pushes: 0, opened: false, commits: 0 };
+  // The pushed head, pushes so far, whether the pull request is open, the
+  // commits the agent made since the last push, and what the remote says to a push.
+  const git = {
+    head: HEAD,
+    pushes: 0,
+    opened: false,
+    commits: 0,
+    rejects: Option.none<PushRejected>(),
+  };
 
   // The worktree's head: the pushed one, or a commit of the agent's on top.
   const localHead = () => {
@@ -320,13 +329,13 @@ export const makeFake = (
       pullRequest: () => Effect.sync(pull),
       ciState: () => Effect.sync(() => merge.ci),
       pullRequestFiles: () => Effect.sync(() => merge.files),
-      merge: (_, request) =>
-        Effect.sync((): MergeOutcome => {
+      merge: (pullRequest, request) =>
+        Effect.suspend(() => {
           merge.requests.push(request);
 
           return Option.match(merge.refusal, {
-            onNone: () => ({ status: "merged", sha: "merged9876" }),
-            onSome: (reason) => ({ status: "refused", reason }),
+            onNone: () => Effect.succeed({ sha: "merged9876" }),
+            onSome: (reason) => Effect.fail(new MergeRefused({ pullRequest, reason })),
           });
         }),
       comments: () => Effect.sync(() => [...comments]),
@@ -364,13 +373,19 @@ export const makeFake = (
       headSha: () => Effect.sync(localHead),
       changedFiles: () => Effect.sync(() => merge.files),
       push: () =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
+          if (Option.isSome(git.rejects)) {
+            return Effect.fail(git.rejects.value);
+          }
+
           git.pushes += 1;
           git.commits = 0;
 
           if (git.pushes > 1) {
             git.head = `fix${git.pushes}0000000`;
           }
+
+          return Effect.void;
         }),
     }),
     Layer.mock(Worktree)({
@@ -403,6 +418,7 @@ export const makeFake = (
         }),
     }),
     Layer.mock(StepRunner)({}),
+    Layer.succeed(ReviewerSeat, ReviewerSeat.of({ login: Effect.sync(() => people.me) })),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 

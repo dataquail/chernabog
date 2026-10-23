@@ -12,6 +12,7 @@ import {
   PullRequest,
   Review,
   reviewMarker,
+  StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -109,14 +110,25 @@ const flow = defineFlow({
         yield* PullRequest.comment(PULL, "On the pull request.");
       }
 
+      // A refused merge is the flow's to decide on; this one hands it to a person.
       if (work.key === "merge") {
-        return yield* PullRequest.merge(PULL, { method: "squash" });
+        return yield* PullRequest.merge(PULL, { method: "squash" }).pipe(
+          Effect.catchTag("MergeRefused", (refused) =>
+            Effect.fail(new NeedsHuman({ reason: refused.message })),
+          ),
+        );
       }
 
       if (work.key === "hand-off-unlabelled") {
         return yield* Implement.handOff(ISSUE, opened, outcome, { needsReview: false });
       }
-    }),
+    }).pipe(
+      Effect.catchTags({
+        NotFound: (gone) => Effect.fail(new StepFailed({ step: work.key, message: gone.message })),
+        PullRequestClosed: (closed) =>
+          Effect.fail(new StepFailed({ step: work.key, message: closed.message })),
+      }),
+    ),
 });
 
 const handle = flowHandle(repo, "demo", flow);

@@ -3,7 +3,7 @@
 // credential helper that reads it. The token only ever lives in memory and in
 // a child's environment, never on a command line or in a file.
 
-import { GitHubError } from "@chernabog/sdk";
+import { GitHubError, NotAuthenticated, PersonaUnavailable } from "@chernabog/sdk";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -146,6 +146,21 @@ export class GitHubTokens extends Context.Service<
       }),
     );
 }
+
+// What every one of a persona's services needs before any flow runs: a token
+// for it. A persona gh has no login for is PersonaUnavailable, and the
+// implicit account without any token NotAuthenticated, each naming its fix.
+export const checkPersona = (persona: Persona) =>
+  GitHubTokens.use((tokens) => tokens.token(persona)).pipe(
+    Effect.asVoid,
+    Effect.mapError((error) =>
+      Option.match(persona, {
+        onNone: (): PersonaUnavailable | NotAuthenticated =>
+          new NotAuthenticated({ reason: error.message }),
+        onSome: (login) => new PersonaUnavailable({ login, reason: error.message }),
+      }),
+    ),
+  );
 
 // The whole environment a child process runs with to act as the persona; none
 // for the implicit persona, whose children inherit this process's, as before.
