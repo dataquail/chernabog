@@ -9,6 +9,7 @@ import * as Arr from 'effect/Array';
 import * as Effect from 'effect/Effect';
 import * as FileSystem from 'effect/FileSystem';
 import * as Option from 'effect/Option';
+import * as Order from 'effect/Order';
 import * as Predicate from 'effect/Predicate';
 import * as Record from 'effect/Record';
 import * as Schema from 'effect/Schema';
@@ -39,6 +40,7 @@ const MOVED = ['enabled', 'schedule', 'activeHours', 'agent', 'launcher'] as con
 const Entry = Schema.Struct({
   repo: Schema.String,
   path: Schema.String,
+  name: Schema.optionalKey(Schema.String),
   flows: Schema.optionalKey(Schema.Unknown),
   personas: Schema.optionalKey(Schema.Unknown),
 });
@@ -149,6 +151,31 @@ const migrateChoices = (document: YAML.Document, index: number, entry: Entry, pa
     return lines;
   });
 
+// paused.json from before kept a paused repo by its name; a repo's records
+// are kept by its slug now, as its entry in machine config is.
+const PausedFile = Schema.fromJsonString(Schema.Array(Schema.String));
+
+const migratePaused = (entries: ReadonlyArray<Entry>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const file = homePaths((yield* Home).root).paused;
+
+    if (!(yield* fs.exists(file))) return [];
+
+    const kept = Schema.decodeOption(PausedFile)(yield* fs.readFileString(file));
+    // A name is never owner/name.
+    const byName = Option.getOrElse(kept, (): ReadonlyArray<string> => []).filter((key) => !key.includes('/'));
+
+    if (Option.isNone(kept) || byName.length === 0) return [];
+
+    const slugOf = (name: string) => Option.map(Arr.findFirst(entries, (entry) => (entry.name ?? entry.repo.split('/').at(-1)) === name), (entry) => entry.repo);
+    const slugs = Arr.dedupe([...kept.value.filter((key) => key.includes('/')), ...byName.flatMap((name) => Option.toArray(slugOf(name)))]);
+    yield* fs.writeFileString(file, `${yield* Schema.encodeEffect(PausedFile)(Arr.sort(slugs, Order.String))}\n`);
+    const moved = byName.map((name) => `${name} → ${Option.getOrElse(slugOf(name), () => 'not enrolled, dropped')}`);
+
+    return [`paused.json now keeps paused repos by owner/name: ${moved.join(', ')}`];
+  });
+
 // Rewrites machine config, and returns what it changed: nothing when it's up to date.
 export const migrateMachineConfig = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -191,5 +218,7 @@ export const migrateMachineConfig = Effect.gen(function* () {
 
   if (lines.length > 0) yield* fs.writeFileString(file, document.toString());
 
-  return lines;
+  const entries = (machine.value.repos ?? []).flatMap((raw) => Option.toArray(Schema.decodeUnknownOption(Entry)(raw)));
+
+  return [...lines, ...(yield* migratePaused(entries))];
 }).pipe(Effect.catchTag('PlatformError', (error) => Effect.fail(new ConfigError({ message: error.message }))));

@@ -15,7 +15,6 @@ import * as HttpServerRequest from 'effect/http/HttpServerRequest';
 import * as HttpServerResponse from 'effect/http/HttpServerResponse';
 import * as Layer from 'effect/Layer';
 import * as Option from 'effect/Option';
-import * as Order from 'effect/Order';
 import * as Predicate from 'effect/Predicate';
 import * as Record from 'effect/Record';
 import * as Ref from 'effect/Ref';
@@ -25,9 +24,11 @@ import * as Schema from 'effect/Schema';
 import { Home, homePaths } from './config.ts';
 import { deliverSignals, type FlowHandle, flowHandle, flowLayer, pollRun, startRun, StateLive, unreportedItem } from './engine.ts';
 import { viewerLogin } from './GitHubApi.ts';
+import { RepoSlug } from './kernel/repo-slug.id.ts';
 import { describeLauncher } from './launchers.ts';
 import { loadFlows } from './loader.ts';
 import { acquireLock } from './lock.ts';
+import { listPausedReposUseCase } from './modules/enrollment/use-cases/list-paused-repos.use-case.ts';
 import { type Persona, samePersona } from './persona.ts';
 import { DaemonStatus, type PersonaStatus, Refusal, Reloaded, type RepoStatus, RunReply, RunRequest, TickResult } from './protocol.ts';
 import { type EffectiveRepo, EnrolledRepo, flowOff, loadMachineConfig, loadRepo, type MachineConfig, needsLogin, type PersonaRepo, repoNameOf, type Routing, routingOf } from './repo-config.ts';
@@ -40,27 +41,6 @@ import { trustedTree } from './trust.ts';
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
-
-const PausedFile = Schema.fromJsonString(Schema.Array(Schema.String));
-
-const pausedFile = Home.use((home) => Effect.succeed(homePaths(home.root).paused));
-
-export const readPaused = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* pausedFile;
-
-  if (!(yield* fs.exists(path))) return [];
-
-  return Option.getOrElse(Schema.decodeOption(PausedFile)(yield* fs.readFileString(path)), () => []);
-}).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-export const setPaused = (name: string, paused: boolean) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const others = (yield* readPaused).filter((known) => known !== name);
-    const names = Arr.sort(Arr.appendAll(others, Option.toArray(Option.liftPredicate(name, () => paused))), Order.String);
-    yield* fs.writeFileString(yield* pausedFile, `${yield* Schema.encodeEffect(PausedFile)(names)}\n`);
-  });
 
 // One persona's schedule of one flow. The flow's handle, and so its workflow,
 // is shared by its personas; `own` is the repo as this persona runs it.
@@ -311,10 +291,15 @@ export const runDaemon = Effect.gen(function* () {
             state.recordSkip({ repo: repo.name, persona, flow: handle.name, itemKey, reason }).pipe(Effect.as({ started: [], skipped: Option.some(reason) } satisfies TickResult));
 
           if (options.gates) {
+            // Not knowing whether a repo is paused starts nothing in it.
+            const paused = yield* Effect.result(listPausedReposUseCase());
+
+            if (Result.isFailure(paused)) return yield* record(`could not tell whether it is paused: ${paused.failure.message}`, Option.none());
+
             const decision = decideTick({
               enabled: settings.enabled,
               flowOff: flowOff(settings, handle.name),
-              paused: (yield* readPaused).includes(repo.name),
+              paused: paused.success.repos.includes(RepoSlug.make(repo.enrolled.repo)),
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
               now: yield* DateTime.now,
@@ -517,7 +502,7 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
-      const repoStatus = (paused: ReadonlyArray<string>) => (repo: RepoState) => {
+      const repoStatus = (paused: ReadonlyArray<RepoSlug>) => (repo: RepoState) => {
         const stale = repo.status === 'ready' && !sameTree(repo.latestTree, repo.tree);
         const offReason = (schedule: FlowSchedule) => flowOff(schedule.own, schedule.handle.name);
 
@@ -526,7 +511,7 @@ export const runDaemon = Effect.gen(function* () {
           slug: repo.enrolled.repo,
           status: repo.status,
           message: repo.message,
-          paused: paused.includes(repo.name),
+          paused: paused.includes(RepoSlug.make(repo.enrolled.repo)),
           enabled: Option.match(repo.repo, { onNone: () => true, onSome: (settings) => settings.personas.some((own) => own.enabled) }),
           tree: repo.tree,
           launcher: Option.map(repo.repo, (loaded) => describeLauncher(loaded.settings)),
@@ -559,7 +544,7 @@ export const runDaemon = Effect.gen(function* () {
           startedAt: DateTime.formatIso(startedAt),
           busy: yield* Ref.get(busy),
           reloadPending: yield* Ref.get(reloadPending),
-          repos: repos.map(repoStatus(yield* readPaused)),
+          repos: repos.map(repoStatus(yield* listPausedReposUseCase().pipe(Effect.map((found) => found.repos), Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => [])))),
           accounts: machine.accounts.map((account) => ({ name: account.name, agent: account.agent })),
           active: active.map((activeRun) => ({ ...activeRun, parked: parkedIds.includes(activeRun.id) })),
           recent: yield* state.recentRuns(20),

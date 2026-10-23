@@ -23,4 +23,7 @@ export class EnrolledRepoRoot extends Schema.Class<EnrolledRepoRoot, { readonly 
   // this repo's flows, each with its own choices. Defaults to the only one;
   // required when there are several.
   personas: Schema.optionalKey(Schema.Record(Schema.String, PersonaEntry)),
+  // A paused repo starts no new runs; the runs in flight continue. Kept apart
+  // from machine config, which a person edits, since it's runtime state.
+  paused: Schema.Boolean,
 }) {}

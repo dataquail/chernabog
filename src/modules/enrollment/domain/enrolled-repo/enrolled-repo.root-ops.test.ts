@@ -12,7 +12,7 @@ const slug = RepoSlug.make('acme/widgets');
 const alice = Option.some('alice');
 const bob = Option.some('bob');
 
-const enrolled = (fields: Partial<ConstructorParameters<typeof EnrolledRepoRoot>[0]> = {}) => EnrolledRepoRoot.make({ repo: slug, path: '/src/widgets', defaults: {}, ...fields });
+const enrolled = (fields: Partial<ConstructorParameters<typeof EnrolledRepoRoot>[0]> = {}) => EnrolledRepoRoot.make({ repo: slug, path: '/src/widgets', defaults: {}, paused: false, ...fields });
 
 // Two personas that both inherit the repo entry's flows.
 const shared = () => enrolled({ defaults: { flows: { implement: {}, review: { schedule: '0 * * * *' } } }, personas: { alice: {}, bob: {} } });
@@ -163,5 +163,30 @@ describe('EnrolledRepoRootOps.setAccount', () => {
     const repo = enrolled({ defaults: { account: 'work', roles: { reviewer: 'codex-work' } } });
 
     expect(EnrolledRepoRootOps.setAccount(repo, IMPLICIT, Option.none(), Option.none()).defaults).toEqual({ roles: { reviewer: 'codex-work' } });
+  });
+});
+
+describe('EnrolledRepoRootOps.named', () => {
+  test('finds the repo a person names by its name, its slug or its path', () => {
+    const repos = [enrolled({ repo: RepoSlug.make('acme/other'), path: '/src/other' }), enrolled()];
+
+    for (const name of ['widgets', 'acme/widgets', '/src/widgets']) expect(EnrolledRepoRootOps.named(repos, name)).toEqual(Result.succeed(repos[1]));
+  });
+
+  test('fails naming the enrolled repos when none answers', () => {
+    const missing = EnrolledRepoRootOps.named([enrolled()], 'gadgets');
+
+    expect(Result.isFailure(missing) && missing.failure.message).toBe('no enrolled repo named gadgets (enrolled: widgets); run chernabog enroll in it');
+    expect(Result.isFailure(EnrolledRepoRootOps.named([], 'gadgets')) && 'failed').toBe('failed');
+  });
+});
+
+describe('EnrolledRepoRootOps.pause and resume', () => {
+  test('pause and resume change nothing but whether the repo is paused', () => {
+    const paused = EnrolledRepoRootOps.pause(shared());
+
+    expect(paused).toEqual(EnrolledRepoRoot.make({ ...shared(), paused: true }));
+    expect(EnrolledRepoRootOps.pause(paused)).toEqual(paused);
+    expect(EnrolledRepoRootOps.resume(paused)).toEqual(shared());
   });
 });

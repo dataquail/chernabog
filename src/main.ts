@@ -24,7 +24,7 @@ import { stopHook } from './agents/stop-hook.ts';
 import { Asker } from './ask.ts';
 import { daemonReload, daemonRun, daemonRunRow, daemonStatus, daemonTick } from './client.ts';
 import { Home } from './config.ts';
-import { RELOAD_EXIT_CODE, runDaemon, setPaused } from './daemon.ts';
+import { RELOAD_EXIT_CODE, runDaemon } from './daemon.ts';
 import { doctor, formatCheck } from './doctor.ts';
 import { resolveRunId, runLogFile } from './engine.ts';
 import { enrollRepo } from './enrollment.ts';
@@ -32,10 +32,14 @@ import { Exec } from './Exec.ts';
 import { GitHubTokens } from './github-auth.ts';
 import { GitHubApi } from './GitHubApi.ts';
 import { movedEntries, repoint, repoRoot, scaffold, slugOf } from './init.ts';
+import { pauseCommand } from './interface/cli/enrollment/pause.command.ts';
+import { resumeCommand } from './interface/cli/enrollment/resume.command.ts';
+import { optionalRepo, repoArgument, repoFlag } from './interface/cli/repo.arguments.ts';
 import { desiredLabels, syncLabels, withFlowLabels } from './labels.ts';
 import { runLaunch } from './launchers/shim.ts';
 import { flowNames, loadFlows } from './loader.ts';
 import { migrateMachineConfig } from './migrate.ts';
+import { EnrollmentLayer } from './modules/enrollment/enrollment.layer.ts';
 import { openPr } from './open-pr.ts';
 import { asSuffix, IMPLICIT } from './persona.ts';
 import { HostEnvironment } from './platform/environment.ts';
@@ -61,9 +65,6 @@ const fail = (message: string) =>
     process.exitCode = 1;
   });
 
-const repoFlag = Flag.String('repo').pipe(Flag.withDescription('An enrolled repo, by name or owner/name'));
-const repoArgument = Argument.String('repo').pipe(Argument.withDescription('An enrolled repo, by name or owner/name'));
-const optionalRepo = Argument.String('repo').pipe(Argument.withDescription('An enrolled repo; all of them when left out'), Argument.optional);
 
 const MINUTE_MS = 60_000;
 
@@ -290,22 +291,6 @@ const trigger = Command.make('trigger', { flow: Argument.String('flow'), repo: r
     yield* Console.log(said);
   }),
 ).pipe(Command.withDescription("Run a flow's tick now, with its gates, as if its schedule came due"));
-
-const pause = Command.make('pause', { repo: repoArgument }, ({ repo }) =>
-  Effect.gen(function* () {
-    const enrolled = yield* findEnrolled(yield* loadMachineConfig, repo);
-    yield* setPaused(repoNameOf(enrolled), true);
-    yield* Console.log(`paused ${repoNameOf(enrolled)}: no new runs start; runs in flight continue`);
-  }),
-).pipe(Command.withDescription('Start no new runs in a repo'));
-
-const resume = Command.make('resume', { repo: repoArgument }, ({ repo }) =>
-  Effect.gen(function* () {
-    const enrolled = yield* findEnrolled(yield* loadMachineConfig, repo);
-    yield* setPaused(repoNameOf(enrolled), false);
-    yield* Console.log(`resumed ${repoNameOf(enrolled)}`);
-  }),
-).pipe(Command.withDescription('Let a paused repo start runs again'));
 
 const logs = Command.make(
   'logs',
@@ -605,8 +590,8 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
     trigger,
     openPrCommand,
     logs,
-    pause,
-    resume,
+    pauseCommand,
+    resumeCommand,
     trust,
     labels,
     doctorCommand,
@@ -629,7 +614,7 @@ export const chernabog = Command.make('chernabog', {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once.
-const AppLive = Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer).pipe(
+const AppLive = Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, EnrollmentLayer).pipe(
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),
