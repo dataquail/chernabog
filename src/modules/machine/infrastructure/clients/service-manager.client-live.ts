@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
+import { writeFileAtomic } from "../../../../platform/atomic-write.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
@@ -122,7 +123,7 @@ const writeUnit = (path: string, contents: string) =>
   FileSystem.FileSystem.use((fs) =>
     fs
       .makeDirectory(directoryOf(path), { recursive: true })
-      .pipe(Effect.andThen(fs.writeFileString(path, contents))),
+      .pipe(Effect.andThen(writeFileAtomic(fs, path, contents))),
   );
 
 const install = Effect.gen(function* () {

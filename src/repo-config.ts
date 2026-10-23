@@ -44,6 +44,7 @@ import {
   type LaunchersConfig,
 } from "./modules/runs/infrastructure/runtime/launchers.ts";
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
+import { writeFileAtomic } from "./platform/atomic-write.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { checkConfigVersion } from "./platform/flow-deps.ts";
@@ -922,7 +923,7 @@ export const editMachineConfig = <A, E, R>(
     };
 
     const result = yield* edit(document, current);
-    yield* platform(fs.writeFileString(file, document.toString()));
+    yield* platform(writeFileAtomic(fs, file, document.toString()));
 
     return result;
   });
