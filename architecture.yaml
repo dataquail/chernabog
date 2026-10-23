@@ -51,10 +51,10 @@ aliases:
 limits:
   unrestricted: 1
   partial: 0
-  coverage: { imports: 0.51, structure: 0.50, members: 0, surface: 0.87, graph: 1 }
+  coverage: { imports: 0.56, structure: 0.56, members: 0.01, surface: 0.88, graph: 1 }
   # vacant: the tiers declared ahead of their first file (kernel/ and the
   # module tiers); it falls as the migration fills them.
-  conformance: { residue: 0, vacant: 2, slack: 0, concentration: 0 }
+  conformance: { residue: 0, vacant: 1, slack: 0, concentration: 0 }
 
 # Prohibitions that hold for every file in the repo.
 deny:
@@ -263,7 +263,9 @@ tree:
                 modules' use-cases and their results, and the shared arguments. Never a
                 repository, a domain op or an adapter: the composition root provides those.
               external: [effect]
-              allow: ["@/modules/*/use-cases/**", "@/interface/cli/*.arguments.ts"]
+              # client.ts is the daemon's socket client, the CLI's way to ask the daemon
+              # to reload, until the daemon is an adapter of its own in interface/.
+              allow: ["@/modules/*/use-cases/**", "@/interface/cli/*.arguments.ts", "@/client.ts"]
             children:
               "*.arguments.ts": {}
               "{module}/":
@@ -306,8 +308,9 @@ tree:
             imports:
               reset: true
               message: >-
-                A module's layer assembles its live adapters, so it names its own module.
-              external: []
+                A module's layer assembles its live adapters: it names its own module, and
+                effect to merge them.
+              external: [effect]
               allow: ["@/modules/{module}/**"]
 
           "domain/":
@@ -471,12 +474,23 @@ tree:
                 imports:
                   message: >-
                     A client adapts a third-party system (gh, git, launchd, an agent CLI) to the
-                    module's client port.
-                  allow: []
+                    module's client port. Until each moves into its module, it runs commands
+                    through the legacy Exec service and reuses the legacy git helpers in
+                    snapshot.ts, and nothing else of the legacy tier.
+                  allow: ["@/Exec.ts", "@/snapshot.ts"]
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
-                  "*.test.ts": { use: module-test-file }
+                  "*.test.ts":
+                    surface: [{ use: test-exports-nothing }]
+                    imports:
+                      reset: true
+                      message: >-
+                        A client's live test drives the real system the client wraps (git in a
+                        scratch repo, say), so it names Exec and Bun's platform services beside
+                        what a module test may.
+                      external: [effect, "@effect/platform-bun"]
+                      allow: ["@/modules/{module}/**", "@/Exec.ts", "test/*.ts"]
       "*.test.ts":
         surface: [{ use: test-exports-nothing }]
 

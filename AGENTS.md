@@ -147,6 +147,15 @@ transitive reach), the coverage floors and the baseline.
   (`paused.json`, by slug, so clones of one repo pause together). `pause` and
   `resume` are use-cases the CLI (`src/interface/cli/enrollment/`), the TUI
   and the daemon's gate all go through.
+- **Trust is its own module**, apart from the config a person edits:
+  `TrustRecordRoot` (the tree of `.chernabog/` a person approved, in
+  `trust.json` by slug) behind `TrustRecordsRepository`, and git behind
+  `ConfigTreeClient`. `trustRepoUseCase` is a security gate, so only the CLI
+  offers it; never expose it to an agent-facing adapter such as MCP. The
+  daemon, `doctor` and `status` read trust through `findTrustedTreeUseCase`.
+- **Modules don't reach into each other.** An adapter composes them: the
+  `trust` command lists its targets with enrollment's
+  `listEnrolledReposUseCase`, then trusts each.
 - **The legacy tier** (flat `src/*.ts`, `agents/`, `launchers/`, `platform/`,
   `tui/`) is one `unrestricted` node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
