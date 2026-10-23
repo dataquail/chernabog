@@ -16,7 +16,6 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stdio from "effect/Stdio";
 
-import { doctor, formatCheck } from "../../doctor.ts";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
@@ -32,12 +31,12 @@ import {
   withFlowLabels,
 } from "../../modules/runs/infrastructure/runtime/labels.ts";
 import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/shim.ts";
+import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
 import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { TrustLayer } from "../../modules/trust/trust.layer.ts";
-import { openPr } from "../../open-pr.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -46,8 +45,6 @@ import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { VERSION } from "../../platform/version.ts";
 import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
-import { repoConfigDir, runInForeground } from "../../runner.ts";
-import { openSession, startIssue } from "../../start.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
@@ -58,13 +55,17 @@ import { enrollCommand } from "./enrollment/enroll.command.ts";
 import { pauseCommand } from "./enrollment/pause.command.ts";
 import { resumeCommand } from "./enrollment/resume.command.ts";
 import { unenrollCommand } from "./enrollment/unenroll.command.ts";
+import { doctorCommand } from "./machine/doctor.main.ts";
 import { installCommand, stopCommand, uninstallCommand } from "./machine/service.command.ts";
 import { setupCommand } from "./machine/setup.command.ts";
 import { initCommand } from "./recipes/init.command.ts";
 import { recipesCommand } from "./recipes/recipes.command.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { logsCommand } from "./runs/logs.command.ts";
+import { openPr } from "./runs/open-pr.main.ts";
+import { runInForeground } from "./runs/run.main.ts";
 import { followRunLog } from "./runs/run-log.output.ts";
+import { openSession, startIssue } from "./runs/start.main.ts";
 import { trustCommand } from "./trust/trust.command.ts";
 
 const printLines = (lines: Iterable<string>) =>
@@ -278,17 +279,6 @@ const targetsOf = (repo: Option.Option<string>) =>
 
     return { machine, targets: machine.repos };
   });
-
-const doctorCommand = Command.make("doctor", {}, () =>
-  Effect.gen(function* () {
-    const checks = yield* doctor;
-    yield* printLines(checks.map(formatCheck));
-
-    if (checks.some((check) => !check.ok)) {
-      process.exitCode = 1;
-    }
-  }),
-).pipe(Command.withDescription("Check logins, gh scopes, labels, trust and the daemon"));
 
 const labels = Command.make(
   "labels",

@@ -31,6 +31,12 @@ import {
   flowLayer,
 } from "../../modules/runs/infrastructure/runtime/engine.ts";
 import { describeLauncher } from "../../modules/runs/infrastructure/runtime/launchers.ts";
+import {
+  adoptRuns,
+  buildPersonaContexts,
+  type PersonaContext,
+  servicesFrom,
+} from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
 import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
@@ -59,12 +65,6 @@ import {
   routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
-import {
-  adoptRuns,
-  buildPersonaContexts,
-  type PersonaContext,
-  servicesFrom,
-} from "../../runner.ts";
 import {
   DaemonStatus,
   type PersonaStatus,

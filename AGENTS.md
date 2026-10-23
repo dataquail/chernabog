@@ -237,8 +237,12 @@ transitive reach), the coverage floors and the baseline.
   launchers. They adapt the published SDK's ports, report a run's steps and
   waits back through the module's use-cases, and name no interface or other
   module.
-- **The legacy tier** (the flat `src/*.ts` still left) is one `unrestricted`
-  node. A migration moves files out of it and
+- **A command that composes the runtime itself** is a `*.main.ts` beside the
+  commands (the foreground `run`, `start`, `open-pr`, `doctor`), a
+  composition root of its own under the `cli-root` allowlist, as `main.ts` is.
+- **The legacy tier** (the flat `src/*.ts` still left: machine config and its
+  migration, and the effective repo settings in `repo-config.ts`) is one
+  `unrestricted` node. A migration moves files out of it and
   ratchets `limits` in `architecture.yaml`: raise a coverage floor or lower a
   ceiling when the numbers move (`bun run architecture:coverage`,
   `architecture:conformance`), never the other way to make a run green.
@@ -344,7 +348,7 @@ Decisions that cut across them:
   repo writes its own `human-initiated` flow from them, as this repo's
   `.chernabog/flows/human-initiated.ts` does (`ownWork: true`, no gate). Its
   trigger finds nothing on a schedule; `chernabog start <issue>`
-  (`src/start.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
+  (`src/interface/cli/runs/start.main.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
   `issue-<n>` (failing with a link to the docs' `#the-hybrid-path` when the
   repo has no such flow). The optional `Flow.item(key)` finds an item the
   trigger doesn't report (`FlowsClient.find`, for the daemon
@@ -355,7 +359,7 @@ Decisions that cut across them:
 - `AgentRequest.withPerson`: only claude under an interactive launcher; the
   Stop hook gets `--person` and never blocks; the session stays open after
   answering; a session the person closes fails the call. The session's env
-  carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/open-pr.ts`)
+  carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/interface/cli/runs/open-pr.main.ts`)
   uses to write the answer and `done` once the worktree is clean.
 - `Hybrid.handOff` posts a `SessionMarker` with `withPerson: true`, so
   `address-review` reopens the person's session (consider, address, local
