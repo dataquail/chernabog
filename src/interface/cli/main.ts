@@ -43,6 +43,7 @@ import { loadFlows } from "../../platform/flow-loader.ts";
 import { GitHubApi } from "../../platform/github-api.ts";
 import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
+import { withShutdownDeadline } from "../../platform/shutdown.ts";
 import { VERSION } from "../../platform/version.ts";
 import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
@@ -430,6 +431,8 @@ if (import.meta.main) {
     Effect.andThen(Command.run(chernabog, { version: VERSION })),
     Effect.catch((error) => fail(`chernabog: ${describeError(error)}`)),
     Effect.provide(AppLive),
+    // Stopping is bookkeeping; whatever it cuts short resumes at the next start.
+    withShutdownDeadline("3 seconds"),
     BunRuntime.runMain({ disableErrorReporting: true }),
   );
 }
