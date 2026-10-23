@@ -7,10 +7,13 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { Home } from "../src/config.ts";
-import { type EnrollOptions, enrollRepo } from "../src/enrollment.ts";
 import { execTestLayer } from "../src/Exec.ts";
 import { GitHubApi } from "../src/GitHubApi.ts";
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
+import {
+  enrollCheckout,
+  type EnrollFlags,
+} from "../src/interface/cli/enrollment/enroll.command.ts";
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
@@ -65,14 +68,27 @@ const fakes = (logins: ReadonlyArray<string>) =>
 const effect = effectAtHomeWith(fakes(["alice"]));
 const effectWithLogins = effectAtHomeWith(fakes(["alice", "bob"]));
 
-const options = (given: Partial<EnrollOptions> = {}): EnrollOptions => ({
-  account: Option.none(),
-  name: Option.none(),
-  personas: Option.none(),
-  flows: Option.none(),
-  defaults: false,
-  ...given,
-});
+type EnrollOptions = {
+  readonly account: Option.Option<ReadonlyArray<string>>;
+  readonly name: Option.Option<string>;
+  readonly personas: Option.Option<ReadonlyArray<string>>;
+  readonly flows: Option.Option<ReadonlyArray<string>>;
+  readonly defaults: boolean;
+};
+
+// enroll's flags, by what they choose.
+const options = (given: Partial<EnrollOptions> = {}): EnrollFlags => {
+  const { personas, ...rest } = {
+    account: Option.none(),
+    name: Option.none(),
+    personas: Option.none(),
+    flows: Option.none(),
+    defaults: false,
+    ...given,
+  };
+
+  return { ...rest, persona: personas };
+};
 
 const writeMachine = (config: typeof MachineConfigFile.Encoded) =>
   Effect.flatMap(machineConfigFile, (file) =>
@@ -120,8 +136,10 @@ const checkout = (teamConfig: string) =>
   });
 
 // Enrolling, or setting up, with these answers: a script of them, or no one to ask.
-const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollOptions) =>
-  enrollRepo(root, given).pipe(Effect.provide(layer));
+const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollFlags) =>
+  enrollCheckout(root, given).pipe(
+    Effect.provide(Layer.mergeAll(layer, Layer.fresh(EnrollmentLayer), Layer.fresh(MachineLayer))),
+  );
 
 const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
   setUpMachine(given).pipe(

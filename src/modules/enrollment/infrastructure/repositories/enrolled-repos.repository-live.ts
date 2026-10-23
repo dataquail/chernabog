@@ -22,7 +22,7 @@ import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepository } from "../../domain/ports/repositories/enrolled-repos.repository.ts";
-import { applyEntry, sameEntry, toEntry, toRoot } from "./enrolled-repo.mapper.ts";
+import { addEntry, applyEntry, sameEntry, toEntry, toRoot } from "./enrolled-repo.mapper.ts";
 
 const PausedFile = Schema.fromJsonString(Schema.Array(RepoSlug));
 
@@ -70,26 +70,35 @@ export const EnrolledReposRepositoryLive = Layer.effect(
       Effect.gen(function* () {
         const found = yield* entryFor((yield* loadMachineConfig).repos, toEntry(repo));
 
-        if (Option.isNone(found)) {
-          return yield* new PersistenceFailed({
-            message: `${repo.repo} isn't enrolled; run chernabog enroll in it`,
-          });
-        }
-
-        if (sameEntry(toRoot(found.value.entry, repo.paused), repo)) {
+        if (Option.exists(found, ({ entry }) => sameEntry(toRoot(entry, repo.paused), repo))) {
           return;
         }
 
         yield* editMachineConfig((document, current) =>
           Effect.gen(function* () {
-            for (const { entry, index } of Option.toArray(
-              yield* entryFor(current.repos ?? [], toEntry(repo)),
-            )) {
-              applyEntry(document, index, toRoot(entry, repo.paused), repo);
+            const now = yield* entryFor(current.repos ?? [], toEntry(repo));
+
+            if (Option.isNone(now)) {
+              addEntry(document, repo);
+
+              return;
             }
+
+            applyEntry(document, now.value.index, toRoot(now.value.entry, repo.paused), repo);
           }),
         );
       }).pipe(Effect.mapError(failed), Effect.provideContext(services));
+
+    const remove = (repo: EnrolledRepoRoot) =>
+      editMachineConfig((document, current) =>
+        Effect.gen(function* () {
+          for (const { index } of Option.toArray(
+            yield* entryFor(current.repos ?? [], toEntry(repo)),
+          )) {
+            document.deleteIn(["repos", index]);
+          }
+        }),
+      ).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
     const save = (repo: EnrolledRepoRoot) =>
       Effect.gen(function* () {
@@ -108,6 +117,6 @@ export const EnrolledReposRepositoryLive = Layer.effect(
         );
       });
 
-    return EnrolledReposRepository.of({ findAll, save });
+    return EnrolledReposRepository.of({ findAll, save, remove });
   }),
 );

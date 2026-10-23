@@ -4,9 +4,13 @@ import * as Result from "effect/Result";
 
 import { IMPLICIT } from "../../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { Checkout } from "./checkout.value-object.ts";
 import { AmbiguousClone } from "./enrolled-repo.errors.ts";
 import { EnrolledRepoRoot } from "./enrolled-repo.root.ts";
 import { EnrolledRepoRootOps } from "./enrolled-repo.root-ops.ts";
+import { MachineOffer } from "./machine-offer.value-object.ts";
+import { type PersonaEntry } from "./persona-choices.value-object.ts";
+import { TeamFlows } from "./team-flows.value-object.ts";
 
 const slug = RepoSlug.make("acme/widgets");
 const alice = Option.some("alice");
@@ -298,5 +302,330 @@ describe("EnrolledRepoRootOps.pause and resume", () => {
     expect(paused).toEqual(EnrolledRepoRoot.make({ ...shared(), paused: true }));
     expect(EnrolledRepoRootOps.pause(paused)).toEqual(paused);
     expect(EnrolledRepoRootOps.resume(paused)).toEqual(shared());
+  });
+});
+
+const team = (
+  fields: Partial<{
+    agent: Option.Option<string>;
+    runners: Option.Option<ReadonlyArray<string>>;
+    flows: TeamFlows["flows"];
+  }> = {},
+) => TeamFlows.make({ agent: Option.none(), runners: Option.none(), flows: {}, ...fields });
+
+const machine = (
+  personas: ReadonlyArray<string>,
+  accounts: ReadonlyArray<readonly [string, string]> = [["work", "claude"]],
+) =>
+  MachineOffer.make({
+    personas,
+    accounts: accounts.map(([name, agent]) => ({ name, agent })),
+  });
+
+const checkout = (flows: ReadonlyArray<string>, teamFlows = team()) =>
+  Checkout.make({ root: "/src/widgets", repo: slug, baseBranch: "main", flows, team: teamFlows });
+
+describe("EnrolledRepoRootOps flow offers", () => {
+  test("the team's defaults are its flows that aren't off and that this machine can run", () => {
+    const teamFlows = team({
+      flows: { fix: { enabled: false }, review: { agent: "codex" }, ship: { runners: ["bob"] } },
+    });
+
+    const offers = EnrolledRepoRootOps.flowOffers(
+      checkout(["fix", "implement", "review", "ship"], teamFlows),
+      machine(["alice"]),
+      ["alice"],
+    );
+
+    expect(offers.map((offer) => [offer.name, offer.teamDefault])).toEqual([
+      ["fix", false],
+      ["implement", true],
+      ["review", true],
+      ["ship", false],
+    ]);
+    expect(offers[2].unavailable).toEqual(
+      Option.some("needs codex; add an account for each with chernabog setup"),
+    );
+    expect(offers[3].teamOff).toEqual(
+      Option.some("not a runner (runners: bob; this machine is alice)"),
+    );
+    expect(EnrolledRepoRootOps.defaultFlows(offers)).toEqual(["implement"]);
+  });
+
+  test("a flow's agents are its own, its roles' and the repo's, each once", () => {
+    expect(
+      EnrolledRepoRootOps.agentsOf(
+        team({
+          agent: Option.some("claude"),
+          flows: { review: { agent: "codex", agents: { reviewer: "codex", fixer: "opencode" } } },
+        }),
+        "review",
+      ),
+    ).toEqual(["codex", "opencode", "claude"]);
+  });
+});
+
+describe("EnrolledRepoRootOps.choosePersonas", () => {
+  const two = machine(["alice", "bob"]);
+
+  test("the ones named, else the only one, else the ones the repo has", () => {
+    expect(EnrolledRepoRootOps.choosePersonas(two, Option.none(), Option.some(["bob"]))).toEqual(
+      Result.succeed([bob]),
+    );
+    expect(
+      EnrolledRepoRootOps.choosePersonas(machine(["alice"]), Option.none(), Option.none()),
+    ).toEqual(Result.succeed([alice]));
+    expect(EnrolledRepoRootOps.choosePersonas(two, Option.some(["bob"]), Option.none())).toEqual(
+      Result.succeed([bob]),
+    );
+    expect(EnrolledRepoRootOps.choosePersonas(machine([]), Option.none(), Option.none())).toEqual(
+      Result.succeed([IMPLICIT]),
+    );
+  });
+
+  test("refuses one the machine doesn't act as, none at all, or a choice no one made", () => {
+    const failure = (result: Result.Result<unknown, { readonly _tag: string }>) =>
+      Result.isFailure(result) && result.failure._tag;
+
+    expect(
+      failure(EnrolledRepoRootOps.choosePersonas(two, Option.none(), Option.some(["eve"]))),
+    ).toBe("UnknownPersona");
+    expect(failure(EnrolledRepoRootOps.choosePersonas(two, Option.none(), Option.some([])))).toBe(
+      "NoPersonaChosen",
+    );
+    expect(failure(EnrolledRepoRootOps.choosePersonas(two, Option.none(), Option.none()))).toBe(
+      "PersonaChoiceNeeded",
+    );
+    expect(
+      failure(EnrolledRepoRootOps.choosePersonas(machine([]), Option.none(), Option.some(["bob"]))),
+    ).toBe("NoPersonasToChoose");
+  });
+});
+
+describe("EnrolledRepoRootOps.chooseFlows", () => {
+  const offers = EnrolledRepoRootOps.flowOffers(
+    checkout(["fix", "implement", "review"], team({ flows: { review: { agent: "codex" } } })),
+    machine([]),
+    [],
+  );
+
+  test("the ones chosen, else the ones it runs, else the defaults", () => {
+    expect(
+      EnrolledRepoRootOps.chooseFlows(offers, Option.none(), Option.some(["fix", "fix"])),
+    ).toEqual(Result.succeed(["fix"]));
+    expect(EnrolledRepoRootOps.chooseFlows(offers, Option.some(["fix"]), Option.none())).toEqual(
+      Result.succeed(["fix"]),
+    );
+    expect(EnrolledRepoRootOps.chooseFlows(offers, Option.none(), Option.none())).toEqual(
+      Result.succeed(["fix", "implement"]),
+    );
+  });
+
+  test("refuses a flow the checkout doesn't have, or one this machine can't run", () => {
+    const unknown = EnrolledRepoRootOps.chooseFlows(offers, Option.none(), Option.some(["ship"]));
+
+    const unavailable = EnrolledRepoRootOps.chooseFlows(
+      offers,
+      Option.none(),
+      Option.some(["review"]),
+    );
+
+    expect(Result.isFailure(unknown) && unknown.failure.message).toBe(
+      "no flow named ship in .chernabog/flows/ (it has: fix, implement, review)",
+    );
+    expect(Result.isFailure(unavailable) && unavailable.failure.message).toBe(
+      "review can't run here: it needs codex; add an account for each with chernabog setup",
+    );
+  });
+});
+
+describe("EnrolledRepoRootOps.chooseAccounts", () => {
+  const accounts = machine(
+    [],
+    [
+      ["work", "claude"],
+      ["personal", "claude"],
+      ["codex", "codex"],
+      ["codex-work", "codex"],
+    ],
+  );
+
+  const reviewing = team({ flows: { review: { agent: "codex" } } });
+  const none = { account: Option.none(), accounts: [] };
+
+  test("the ones named, else the ones chosen before, else the first, one per other agent", () => {
+    expect(
+      EnrolledRepoRootOps.chooseAccounts(accounts, reviewing, ["review"], none, ["personal"]),
+    ).toEqual(Result.succeed({ account: Option.some("personal"), accounts: ["codex"] }));
+    expect(
+      EnrolledRepoRootOps.chooseAccounts(
+        accounts,
+        reviewing,
+        ["review"],
+        { account: Option.some("personal"), accounts: ["codex-work"] },
+        [],
+      ),
+    ).toEqual(Result.succeed({ account: Option.some("personal"), accounts: ["codex-work"] }));
+  });
+
+  test("a machine with one account records none, and no account for the repo's agent fails", () => {
+    expect(
+      EnrolledRepoRootOps.chooseAccounts(machine([]), team(), ["implement"], none, []),
+    ).toEqual(Result.succeed({ account: Option.none(), accounts: [] }));
+
+    const missing = EnrolledRepoRootOps.chooseAccounts(
+      machine([]),
+      team({ agent: Option.some("codex") }),
+      [],
+      none,
+      [],
+    );
+
+    expect(Result.isFailure(missing) && missing.failure.message).toBe(
+      "no account for codex in machine config; add one with chernabog setup",
+    );
+  });
+
+  test("an account named that machine config doesn't have is refused", () => {
+    const unknown = EnrolledRepoRootOps.chooseAccounts(accounts, team(), [], none, ["nope"]);
+
+    expect(Result.isFailure(unknown) && unknown.failure.message).toBe(
+      "no account named nope in machine config (it has: work, personal, codex, codex-work)",
+    );
+  });
+});
+
+describe("EnrolledRepoRootOps enrolling", () => {
+  test("a new checkout is a new entry; one enrolled before keeps its settings", () => {
+    const fresh = Result.getOrThrow(
+      EnrolledRepoRootOps.enroll([], checkout(["implement"]), Option.none()),
+    );
+
+    expect([fresh.added, fresh.repo.path, fresh.repo.baseBranch]).toEqual([
+      true,
+      "/src/widgets",
+      "main",
+    ]);
+
+    const before = enrolled({ path: "/old", defaults: { flows: { review: {} } }, paused: true });
+
+    const again = Result.getOrThrow(
+      EnrolledRepoRootOps.enroll([before], checkout(["implement"]), Option.none()),
+    );
+
+    expect([again.added, again.repo.path, again.repo.defaults, again.repo.paused]).toEqual([
+      false,
+      "/src/widgets",
+      { flows: { review: {} } },
+      true,
+    ]);
+  });
+
+  test("a checkout without flows has nothing to enrol", () => {
+    const empty = EnrolledRepoRootOps.entryOf([], checkout([]), Option.none());
+
+    expect(Result.isFailure(empty) && empty.failure.message).toBe(
+      "/src/widgets: no flows in .chernabog/flows/; run chernabog init here first",
+    );
+  });
+
+  test("one persona's choices go on the repo's entry, keeping a listed flow's settings", () => {
+    const repo = enrolled({
+      defaults: {
+        flows: { implement: { schedule: "5 * * * *", enabled: false }, fix: {} },
+        accounts: ["x"],
+      },
+    });
+
+    expect(
+      EnrolledRepoRootOps.enrolPersonas(
+        repo,
+        [
+          {
+            persona: IMPLICIT,
+            flows: ["implement", "review"],
+            account: Option.some("work"),
+            accounts: [],
+          },
+        ],
+        false,
+      ).defaults,
+    ).toEqual({
+      flows: { implement: { schedule: "5 * * * *" }, review: {} },
+      account: "work",
+    });
+  });
+
+  test("per persona, each chosen one gets its own, and one no longer chosen goes", () => {
+    const repo = enrolled({ personas: { alice: { flows: { fix: {} } }, carol: {} } });
+
+    const chosen = EnrolledRepoRootOps.enrolPersonas(
+      repo,
+      [
+        { persona: alice, flows: ["fix"], account: Option.none(), accounts: [] },
+        { persona: bob, flows: ["review"], account: Option.none(), accounts: ["codex"] },
+      ],
+      true,
+    );
+
+    expect(chosen.personas).toEqual({
+      alice: { flows: { fix: {} } },
+      bob: { flows: { review: {} }, accounts: ["codex"] },
+    });
+  });
+});
+
+describe("EnrolledRepoRootOps.moved", () => {
+  test("is the repo's other entries whose checkout is gone", () => {
+    const here = enrolled({ path: "/src/widgets" });
+    const gone = enrolled({ path: "/old/widgets", name: "old" });
+    const there = enrolled({ path: "/elsewhere/widgets", name: "there" });
+
+    expect(
+      EnrolledRepoRootOps.moved([here, gone, there], slug, "/src/widgets", (path) =>
+        path.startsWith("/elsewhere"),
+      ),
+    ).toEqual([gone]);
+  });
+});
+
+describe("EnrolledRepoRootOps checks", () => {
+  test("a schedule must be a cron expression", () => {
+    expect(EnrolledRepoRootOps.checkSchedule(Option.some("*/5 * * * *"))).toEqual(
+      Result.succeed(Option.some("*/5 * * * *")),
+    );
+
+    const refused = EnrolledRepoRootOps.checkSchedule(Option.some("every hour"));
+    expect(Result.isFailure(refused) && refused.failure.message).toContain(
+      '"every hour" isn\'t a schedule',
+    );
+  });
+
+  test("a persona's accounts must be known, and one per agent", () => {
+    const offer = machine(
+      [],
+      [
+        ["work", "claude"],
+        ["personal", "claude"],
+        ["codex", "codex"],
+      ],
+    );
+
+    const check = (defaults: PersonaEntry) =>
+      EnrolledRepoRootOps.checkAccounts(enrolled({ defaults }), IMPLICIT, offer);
+
+    expect(Result.isSuccess(check({ account: "personal", roles: { reviewer: "codex" } }))).toBe(
+      true,
+    );
+
+    const clash = check({ account: "personal", roles: { author: "work" } });
+    expect(Result.isFailure(clash) && clash.failure.message).toBe(
+      "acme/widgets: roles.author is work, a claude account like the persona's own (personal); a role's account must run another agent",
+    );
+
+    const unknown = check({ account: "nope" });
+    expect(Result.isFailure(unknown) && unknown.failure.message).toBe(
+      'acme/widgets: account "nope" is not one of work, personal, codex',
+    );
   });
 });

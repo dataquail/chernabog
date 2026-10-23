@@ -22,15 +22,21 @@ import { Home } from "./config.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "./daemon.ts";
 import { doctor, formatCheck } from "./doctor.ts";
 import { runLogFile } from "./engine.ts";
-import { enrollRepo } from "./enrollment.ts";
 import { Exec } from "./Exec.ts";
 import { GitHubTokens } from "./github-auth.ts";
 import { GitHubApi } from "./GitHubApi.ts";
-import { movedEntries, repoint, repoRoot, scaffold, slugOf } from "./init.ts";
+import { scaffold } from "./init.ts";
 import { Asker } from "./interface/cli/asker.prompt.ts";
 import { showStatus, statusCommand } from "./interface/cli/daemon/status.command.ts";
+import {
+  enrollCommand,
+  enrollFlags,
+  enrollHere,
+  rootOf,
+} from "./interface/cli/enrollment/enroll.command.ts";
 import { pauseCommand } from "./interface/cli/enrollment/pause.command.ts";
 import { resumeCommand } from "./interface/cli/enrollment/resume.command.ts";
+import { unenrollCommand } from "./interface/cli/enrollment/unenroll.command.ts";
 import { listFlag } from "./interface/cli/list.arguments.ts";
 import {
   installCommand,
@@ -38,7 +44,7 @@ import {
   uninstallCommand,
 } from "./interface/cli/machine/service.command.ts";
 import { setupCommand } from "./interface/cli/machine/setup.command.ts";
-import { optionalRepo, repoArgument, repoFlag } from "./interface/cli/repo.arguments.ts";
+import { optionalRepo, repoFlag } from "./interface/cli/repo.arguments.ts";
 import { logsCommand } from "./interface/cli/runs/logs.command.ts";
 import { followRunLog } from "./interface/cli/runs/run-log.output.ts";
 import { trustCommand } from "./interface/cli/trust/trust.command.ts";
@@ -47,9 +53,11 @@ import type { TickResult } from "./interface/daemon/daemon.protocol.ts";
 import { RunId } from "./kernel/run-id.id.ts";
 import { desiredLabels, syncLabels, withFlowLabels } from "./labels.ts";
 import { runLaunch } from "./launchers/shim.ts";
-import { flowNames, loadFlows } from "./loader.ts";
+import { loadFlows } from "./loader.ts";
 import { migrateMachineConfig } from "./migrate.ts";
 import { EnrollmentLayer } from "./modules/enrollment/enrollment.layer.ts";
+import { listMovedReposUseCase } from "./modules/enrollment/use-cases/list-moved-repos.use-case.ts";
+import { repointRepoUseCase } from "./modules/enrollment/use-cases/repoint-repo.use-case.ts";
 import { MachineLayer } from "./modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "./modules/machine/use-cases/start-service.use-case.ts";
 import { RunLogsLayer } from "./modules/runs/runs.layer.ts";
@@ -68,14 +76,7 @@ import {
   recipeNamed,
   RECIPES,
 } from "./recipes.ts";
-import {
-  findEnrolled,
-  loadMachineConfig,
-  loadRepo,
-  machineConfigFile,
-  repoNameOf,
-  unenrollFromMachineConfig,
-} from "./repo-config.ts";
+import { findEnrolled, loadMachineConfig, loadRepo } from "./repo-config.ts";
 import { repoConfigDir, runInForeground } from "./runner.ts";
 import { openSession, startIssue } from "./start.ts";
 import { runStepChild, StepServicesLive } from "./steps.ts";
@@ -337,9 +338,6 @@ const labels = Command.make(
   Command.withDescription("Create or correct each repo's labels, and those its flows declare"),
 );
 
-// The repo a path is in; the working directory's when none is given.
-const rootOf = (path: Option.Option<string>) => repoRoot(Option.getOrElse(path, () => "."));
-
 // In a terminal, whether the person agrees; elsewhere, no.
 const confirmed = (message: string) =>
   Effect.gen(function* () {
@@ -362,85 +360,27 @@ const confirmed = (message: string) =>
 // such entry was left where it was.
 const offerRepoint = (root: string) =>
   Effect.gen(function* () {
-    const slug = yield* Effect.option(slugOf(root));
     let declined = false;
 
-    if (Option.isNone(slug)) {
-      return declined;
-    }
-
-    for (const entry of yield* movedEntries(yield* loadMachineConfig, slug.value, root)) {
-      const named = repoNameOf(entry);
-
+    for (const entry of (yield* listMovedReposUseCase(root)).repos) {
       if (
         !(yield* confirmed(
-          `${named} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`,
+          `${entry.name} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`,
         ))
       ) {
         yield* Console.log(
-          `${named} is enrolled at ${entry.path}, which is gone; chernabog enroll${suffix(Option.fromUndefinedOr(entry.name), " --name ")} here points it here, keeping its settings`,
+          `${entry.name} is enrolled at ${entry.path}, which is gone; chernabog enroll${suffix(entry.named, " --name ")} here points it here, keeping its settings`,
         );
         declined = true;
         continue;
       }
 
-      yield* repoint(entry, root);
-      yield* Console.log(`pointed ${named} at ${root}`);
+      yield* repointRepoUseCase(entry.path, root);
+      yield* Console.log(`pointed ${entry.name} at ${root}`);
       yield* daemonReload.pipe(Effect.ignore);
     }
 
     return declined;
-  });
-
-const enrollFlags = {
-  account: listFlag(
-    "account",
-    "Accounts from machine config to spend, comma-separated: the persona's own, and one for each other agent its flows need. Asked in a terminal where there's a choice",
-  ),
-  name: Flag.String("name").pipe(
-    Flag.withDescription("A short name, when two enrolled repos share one"),
-    Flag.optional,
-  ),
-  persona: listFlag(
-    "persona",
-    "The GitHub personas that work in this repo, comma-separated. Asked in a terminal when machine config has several",
-  ),
-  flows: listFlag(
-    "flows",
-    "The flows to run, comma-separated, for every chosen persona. Asked in a terminal for each persona",
-  ),
-  defaults: Flag.Boolean("defaults").pipe(
-    Flag.withDescription("Run the team's default flows for every chosen persona, without asking"),
-    Flag.withDefault(false),
-  ),
-};
-
-type EnrollFlags = {
-  readonly account: Option.Option<ReadonlyArray<string>>;
-  readonly name: Option.Option<string>;
-  readonly persona: Option.Option<ReadonlyArray<string>>;
-  readonly flows: Option.Option<ReadonlyArray<string>>;
-  readonly defaults: boolean;
-};
-
-// Enrolls the repo at `root` and says what it chose. A running daemon restarts to schedule it; none running is fine.
-const enrollHere = (root: string, flags: EnrollFlags) =>
-  Effect.gen(function* () {
-    const { action, lines, repo } = yield* enrollRepo(root, {
-      account: flags.account,
-      name: flags.name,
-      personas: flags.persona,
-      flows: flags.flows,
-      defaults: flags.defaults,
-    });
-
-    yield* Console.log(
-      `${action} ${repo.repo} (${repo.path}, base ${repo.baseBranch ?? "main"}) in ${yield* machineConfigFile}`,
-    );
-    yield* printLines(lines);
-    yield* daemonReload.pipe(Effect.ignore);
-
-    return repo;
   });
 
 const RECIPES_LIST = RECIPES.map((recipe) => recipe.name).join(", ");
@@ -485,17 +425,17 @@ const init = Command.make(
       }
 
       // Enrolling chooses among the repo's flows, so a repo with none waits for one.
-      if ((yield* flowNames(`${root}/.chernabog`)).length === 0) {
-        yield* Console.log(
-          `Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (${RECIPES_LIST}), or write a flow, then chernabog enroll here.`,
-        );
-
-        return;
-      }
-
-      const repo = yield* enrollHere(root, flags);
-      yield* Console.log(
-        `Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repoNameOf(repo)}.`,
+      yield* enrollHere(root, flags).pipe(
+        Effect.flatMap((repo) =>
+          Console.log(
+            `Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repo.name}.`,
+          ),
+        ),
+        Effect.catchTag("NoFlows", () =>
+          Console.log(
+            `Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (${RECIPES_LIST}), or write a flow, then chernabog enroll here.`,
+          ),
+        ),
       );
     }),
 ).pipe(
@@ -588,30 +528,6 @@ const recipesCommand = Command.make("recipes", {}, () => Effect.void).pipe(
   Command.withSubcommands([recipesList, recipesAdd, recipesDiff]),
 );
 
-const enrollCommand = Command.make(
-  "enroll",
-  { path: Argument.String("path").pipe(Argument.optional), ...enrollFlags },
-  ({ path, ...flags }) =>
-    Effect.gen(function* () {
-      const repo = yield* enrollHere(yield* rootOf(path), flags);
-      yield* Console.log(`Next: chernabog trust ${repoNameOf(repo)}`);
-    }),
-).pipe(
-  Command.withDescription(
-    "Add a repo to this machine's config: which personas work in it, which flows each runs, and which accounts they spend",
-  ),
-);
-
-const unenroll = Command.make("unenroll", { repo: repoArgument }, ({ repo }) =>
-  Effect.gen(function* () {
-    const removed = yield* unenrollFromMachineConfig(repo);
-    yield* Console.log(
-      `removed ${repoNameOf(removed)} (${removed.repo}, ${removed.path}) and its settings from ${yield* machineConfigFile}`,
-    );
-    yield* daemonReload.pipe(Effect.ignore);
-  }),
-).pipe(Command.withDescription("Remove a repo, and its settings, from this machine's config"));
-
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {
     const { runId } = yield* resolveRunIdUseCase(named);
@@ -684,7 +600,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     init,
     recipesCommand,
     enrollCommand,
-    unenroll,
+    unenrollCommand,
     installCommand,
     uninstallCommand,
     start,
@@ -699,14 +615,8 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once.
-const AppLive = Layer.mergeAll(
-  GitHubApi.layerFor(IMPLICIT),
-  Asker.layer,
-  EnrollmentLayer,
-  TrustLayer,
-  RunLogsLayer,
-  MachineLayer,
-).pipe(
+const AppLive = Layer.mergeAll(EnrollmentLayer, TrustLayer, RunLogsLayer, MachineLayer).pipe(
+  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

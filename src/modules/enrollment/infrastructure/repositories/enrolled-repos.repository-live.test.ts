@@ -67,15 +67,33 @@ describe("EnrolledReposRepositoryLive", () => {
     }),
   );
 
-  effectAtHome("refuses to save a repo that isn't enrolled", () =>
+  effectAtHome("saving a repo not enrolled adds its entry at the end", () =>
     Effect.gen(function* () {
-      const { demo, repository } = yield* seeded;
-
-      const refused = yield* Effect.flip(
-        repository.save(EnrolledRepoRoot.make({ ...demo, repo: RepoSlug.make("dataquail/gone") })),
+      const { demo, fs, paths, repository } = yield* seeded;
+      yield* repository.save(
+        EnrolledRepoRoot.make({
+          ...demo,
+          repo: RepoSlug.make("dataquail/new"),
+          path: "/src/new",
+          baseBranch: "trunk",
+          defaults: { flows: { review: {} } },
+        }),
       );
 
-      expect(refused.message).toBe("dataquail/gone isn't enrolled; run chernabog enroll in it");
+      expect(yield* fs.readFileString(paths.machineConfig)).toBe(
+        `${CONFIG}  - repo: dataquail/new\n    path: /src/new\n    baseBranch: trunk\n    flows:\n      review: {}\n`,
+      );
+    }),
+  );
+
+  effectAtHome("removing a repo drops its entry, settings and all, and keeps the rest", () =>
+    Effect.gen(function* () {
+      const { fs, paths, repository } = yield* seeded;
+      yield* repository.remove((yield* repository.findAll)[1]);
+
+      expect(yield* fs.readFileString(paths.machineConfig)).toBe(
+        "repos:\n  # the one I work on\n  - repo: dataquail/demo\n    path: /src/demo\n    flows: { implement: {} }\n",
+      );
     }),
   );
 });

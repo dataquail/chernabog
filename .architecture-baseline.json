@@ -2,7 +2,6 @@
   "version": 1,
   "entries": [
     "graph|no-cycles|packages/sdk/src/implement.ts|packages/sdk/src/implement.ts ↔ packages/sdk/src/review.ts",
-    "graph|no-cycles|src/repo-config.ts|src/repo-config.ts ↔ src/schedule.ts",
     "import|/modules/{module}/domain/{aggregate}/*.root-ops.ts/imported-by|src/repo-config.ts|src/modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts"
   ]
 }
