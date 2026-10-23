@@ -5,8 +5,14 @@ import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { RunRoot, RunStatus } from "../../domain/run/run.root.ts";
+import { WorkItem } from "../../domain/run/work-item.value-object.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
+
+// The work item, as JSON text.
+const ItemColumn = Schema.OptionFromNullOr(Schema.fromJsonString(WorkItem));
+
+const encodeItem = Schema.encodeSync(ItemColumn);
 
 export const RunColumns = Schema.Struct({
   id: Schema.String,
@@ -16,6 +22,7 @@ export const RunColumns = Schema.Struct({
   item_key: Schema.String,
   item_title: Maybe,
   item_url: Maybe,
+  item: ItemColumn,
   execution_id: Maybe,
   status: RunStatus,
   current_step: Maybe,
@@ -35,6 +42,7 @@ export const toRoot = (row: RunColumns) =>
     itemKey: row.item_key,
     itemTitle: row.item_title,
     itemUrl: row.item_url,
+    item: row.item,
     executionId: row.execution_id,
     status: row.status,
     currentStep: row.current_step,
@@ -53,6 +61,7 @@ export const toParameters = (run: RunRoot) =>
     run.itemKey,
     Option.getOrNull(run.itemTitle),
     Option.getOrNull(run.itemUrl),
+    encodeItem(run.item),
     Option.getOrNull(run.executionId),
     run.status,
     Option.getOrNull(run.currentStep),

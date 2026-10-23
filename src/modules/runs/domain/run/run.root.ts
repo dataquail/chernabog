@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { WorkItem } from "./work-item.value-object.ts";
 
 // Where a run is in its life: running until its workflow completes, then one
 // of the ways it can end.
@@ -26,6 +27,9 @@ export class RunRoot extends Schema.Class<RunRoot, { readonly brand: "RunRoot" }
   itemKey: Schema.String,
   itemTitle: Schema.Option(Schema.String),
   itemUrl: Schema.Option(Schema.String),
+  // The work item as its trigger reported it, so a start a crash interrupted
+  // can execute it again; none for a run recorded before runs kept it.
+  item: Schema.Option(WorkItem),
   // The workflow execution that runs it, once the engine has started one.
   executionId: Schema.Option(Schema.String),
   status: RunStatus,

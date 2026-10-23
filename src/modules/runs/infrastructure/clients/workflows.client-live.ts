@@ -41,6 +41,7 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         });
 
       return WorkflowsClient.of({
+        runs: (flow) => Option.isSome(handleOf(handles, flow)),
         execute: (flow, runId, item) =>
           handle(flow).pipe(
             Effect.flatMap((found) =>

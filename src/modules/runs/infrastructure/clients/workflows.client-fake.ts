@@ -10,13 +10,15 @@ import {
 
 // What a test's workflow engine did and was told: the runs it executed, the
 // executions it resumed, the deferreds it woke and the lines it noted, and
-// the outcome each execution ends with, which a test sets.
+// the outcome each execution ends with, and the flows (as repo/flow) it has
+// no workflow for, which a test sets.
 export type FakeEngine = {
   readonly executed: Array<RunId>;
   readonly resumed: Array<string>;
   readonly woken: Array<string>;
   readonly notes: Array<string>;
   readonly outcomes: Record<string, WorkflowOutcome>;
+  readonly unloaded: Array<string>;
 };
 
 export const fakeEngine = (): FakeEngine => ({
@@ -25,6 +27,7 @@ export const fakeEngine = (): FakeEngine => ({
   woken: [],
   notes: [],
   outcomes: {},
+  unloaded: [],
 });
 
 // Executions named `execution-<runId>`.
@@ -32,6 +35,7 @@ export const WorkflowsClientFake = (engine: FakeEngine) =>
   Layer.succeed(
     WorkflowsClient,
     WorkflowsClient.of({
+      runs: (flow) => !engine.unloaded.includes(`${flow.repo}/${flow.flow}`),
       execute: (_flow, runId) =>
         Effect.sync(() => {
           engine.executed.push(runId);

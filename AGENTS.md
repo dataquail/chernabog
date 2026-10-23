@@ -203,6 +203,14 @@ transitive reach), the coverage floors and the baseline.
   both from the flows they loaded (`RuntimeLayer(registry)` in
   `runs.layer.ts`) and pass in what other modules know, such as whether the
   repo is paused.
+- **A start survives a crash.** A run is recorded, with the work item it is
+  for, before its workflow executes, so a process killed in between leaves a
+  run with no execution. `recoverRunsUseCase`, which the daemon and
+  `chernabog run` call at startup, executes those from the item they kept and
+  attaches the execution. An execution is keyed by its run, so one that had
+  started is the one attached, never a second (`test/engine.test.ts` covers
+  both windows). A run from before runs kept their item ends as failed, so
+  its item can start again.
   Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows

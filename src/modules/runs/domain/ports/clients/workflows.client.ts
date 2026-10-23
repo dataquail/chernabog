@@ -12,6 +12,9 @@ export type WorkflowOutcome = { readonly status: RunEnding; readonly summary: st
 // The durable workflow engine a run's flow executes in, journaled so a run in
 // flight survives a restart.
 export type WorkflowsClientService = {
+  // Whether this engine runs the flow's workflow; a process runs only the
+  // flows it loaded.
+  readonly runs: (flow: FlowRef) => boolean;
   // Starts a run's workflow; the id of its execution.
   readonly execute: (flow: FlowRef, runId: RunId, item: WorkItem) => Effect.Effect<string>;
   // How an execution ended; none while it runs, or for a flow this engine

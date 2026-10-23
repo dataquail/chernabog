@@ -44,6 +44,11 @@ export const RunsRepositoryLive = Layer.effect(
       yield* sql`ALTER TABLE om_runs ADD COLUMN persona TEXT`;
     }
 
+    // One from before runs kept their work item gains it; its rows have none.
+    if (!columns.some((column) => column.name === "item")) {
+      yield* sql`ALTER TABLE om_runs ADD COLUMN item TEXT`;
+    }
+
     yield* sql`DROP INDEX IF EXISTS om_runs_active`;
     yield* sql`CREATE INDEX IF NOT EXISTS om_runs_active_by_persona ON om_runs (status, repo, persona, flow, item_key)`;
 
@@ -83,6 +88,7 @@ export const RunsRepositoryLive = Layer.effect(
         itemKey,
         itemTitle,
         itemUrl,
+        item,
         executionId,
         status,
         currentStep,
@@ -91,8 +97,8 @@ export const RunsRepositoryLive = Layer.effect(
         finishedAt,
       ] = toParameters(run);
 
-      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, execution_id, status, current_step, summary, started_at, finished_at)
-        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${startedAt}, ${finishedAt})
+      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, started_at, finished_at)
+        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${startedAt}, ${finishedAt})
         ON CONFLICT (id) DO UPDATE SET
           persona = excluded.persona,
           execution_id = excluded.execution_id,
