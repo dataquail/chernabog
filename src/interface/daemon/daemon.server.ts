@@ -39,13 +39,17 @@ import {
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
 import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
+import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
+import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
-import { pollRunsUseCase } from "../../modules/runs/use-cases/poll-runs.use-case.ts";
+import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
+import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
-import { tickFlowUseCase } from "../../modules/runs/use-cases/tick-flow.use-case.ts";
+import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -433,7 +437,7 @@ export const runDaemon = Effect.gen(function* () {
             return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
 
-          const outcome = yield* tickFlowUseCase(ref, {
+          const plan = yield* planTickUseCase(ref, {
             gates: options.gates,
             item: options.item,
             conditions: {
@@ -456,19 +460,44 @@ export const runDaemon = Effect.gen(function* () {
             },
           });
 
-          for (const routed of Option.toArray(outcome.routed)) {
+          for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
             schedule.queued = routed.queued;
             schedule.elsewhere = routed.elsewhere;
           }
 
-          for (const run of outcome.started) {
-            yield* log(`started ${run.id} (${runLabel(run)})`);
+          yield* deliverSignalsUseCase(ref, plan.signalled);
+
+          const started: Array<RunView> = [];
+          let skipped = plan.skipped;
+
+          for (const item of plan.start) {
+            // The flow's own gate holds back every item left this tick, not only this one.
+            const gated = yield* Option.match(
+              Option.liftPredicate(options, () => options.gates),
+              {
+                onNone: () => Effect.succeedNone,
+                onSome: () =>
+                  gateFlowUseCase(ref, item.key).pipe(Effect.map((found) => found.held)),
+              },
+            );
+
+            if (Option.isSome(gated)) {
+              skipped = gated;
+              break;
+            }
+
+            const outcome = yield* startFlowRunUseCase(ref, item);
+
+            for (const run of Option.toArray(Option.filter(outcome.run, () => outcome.started))) {
+              yield* log(`started ${run.id} (${runLabel(run)})`);
+              started.push(run);
+            }
           }
 
           return {
-            started: outcome.started.map((run) => run.id),
-            skipped: outcome.skipped,
+            started: started.map((run) => run.id),
+            skipped,
           } satisfies TickResult;
         }).pipe(
           Effect.catchCause((cause) =>
@@ -496,10 +525,15 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            for (const finished of (yield* pollRunsUseCase()).runs) {
-              yield* log(
-                `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
-              );
+            for (const running of yield* active) {
+              const polled = yield* pollRunUseCase(running.id);
+              const ended = Option.filter(polled.run, (run) => run.status !== "running");
+
+              for (const finished of Option.toArray(ended)) {
+                yield* log(
+                  `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
+                );
+              }
             }
 
             yield* Effect.sleep("3 seconds");

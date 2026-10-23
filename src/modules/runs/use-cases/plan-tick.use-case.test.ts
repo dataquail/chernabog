@@ -7,7 +7,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
-import { type RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import {
   type FakeEngine,
@@ -18,7 +18,7 @@ import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
 import { listRecentSkipsUseCase } from "./list-recent-skips.use-case.ts";
-import { tickFlowUseCase, type TickInput } from "./tick-flow.use-case.ts";
+import { planTickUseCase, type TickInput } from "./plan-tick.use-case.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
 
@@ -82,19 +82,20 @@ const reasons = listRecentSkipsUseCase(5).pipe(
   Effect.map(({ skips }) => skips.map((skip) => skip.reason)),
 );
 
-describe("tickFlowUseCase", () => {
-  const engine = fakeEngine();
+const keys = (items: ReadonlyArray<WorkItem>) => items.map((found) => found.key);
 
-  effect("starts a run for the work its trigger finds, up to the flow's limit", () =>
+describe("planTickUseCase", () => {
+  effect("starts runs for the work its trigger finds, up to the flow's limit", () =>
     Effect.gen(function* () {
-      const outcome = yield* tickFlowUseCase(review, open);
+      const plan = yield* planTickUseCase(review, open);
 
-      expect(outcome.started.map((found) => found.itemKey)).toEqual(["pr-1"]);
-      expect(outcome.routed).toEqual(Option.some({ queued: ["pr-1 One", "pr-2"], elsewhere: [] }));
-      expect(outcome.skipped).toEqual(Option.none());
+      expect(keys(plan.start)).toEqual(["pr-1"]);
+      expect(keys(plan.signalled)).toEqual(["pr-1", "pr-2"]);
+      expect(plan.routed).toEqual(Option.some({ queued: ["pr-1 One", "pr-2"], elsewhere: [] }));
+      expect(plan.skipped).toEqual(Option.none());
     }).pipe(
       Effect.provide(
-        runtime(engine, {
+        runtime(fakeEngine(), {
           flows: { "demo/review": { items: [item("pr-1", { title: "One" }), item("pr-2")] } },
         }),
       ),
@@ -103,10 +104,17 @@ describe("tickFlowUseCase", () => {
 
   effect("records why it starts nothing: the machine's gates, a failing trigger, the limit", () =>
     Effect.gen(function* () {
-      yield* tickFlowUseCase(review, { ...open, conditions: { ...open.conditions, paused: true } });
-      yield* tickFlowUseCase({ ...review, flow: "broken" }, open);
-      yield* tickFlowUseCase(review, open);
+      const paused = yield* planTickUseCase(review, {
+        ...open,
+        conditions: { ...open.conditions, paused: true },
+      });
 
+      yield* planTickUseCase({ ...review, flow: "broken" }, open);
+      const limited = yield* planTickUseCase(review, open);
+
+      expect(paused.signalled).toEqual([]);
+      expect(limited.start).toEqual([]);
+      expect(keys(limited.signalled)).toEqual(["pr-1"]);
       expect(yield* reasons).toContain("paused");
       expect(yield* reasons).toContain("trigger failed: rate limited");
       expect((yield* reasons).some((reason) => reason.startsWith("at the concurrency limit"))).toBe(
@@ -125,24 +133,46 @@ describe("tickFlowUseCase", () => {
     ),
   );
 
-  effect("leaves work for others to them, and its gate holds every run back", () =>
+  effect("doesn't count a run parked on a signal against the limits", () =>
     Effect.gen(function* () {
-      const routed = yield* tickFlowUseCase(review, {
+      const plan = yield* planTickUseCase(review, open);
+
+      expect(keys(plan.start)).toEqual(["pr-1"]);
+    }).pipe(
+      Effect.provide(
+        runtime(fakeEngine(), {
+          runs: [run("parked", { itemKey: "pr-9" })],
+          waits: [
+            RunWaitRoot.make({
+              runId: RunId.make("parked"),
+              signal: "ci",
+              deferred: "deferred",
+              token: "token",
+            }),
+          ],
+          flows: { "demo/review": { items: [item("pr-1")] } },
+        }),
+      ),
+    ),
+  );
+
+  effect("leaves work for others to them, and no work already running", () =>
+    Effect.gen(function* () {
+      const plan = yield* planTickUseCase(review, {
         ...open,
         routing: { assignee: Option.some(["@me"]), reviewRequested: Option.none() },
       });
 
-      const gated = yield* tickFlowUseCase({ ...review, flow: "gated" }, open);
-
-      expect(routed.skipped).toEqual(Option.some("only work for others: pr-1 (assignee: alice)"));
-      expect(gated.skipped).toEqual(Option.some("usage gate: over the ceiling"));
-      expect(gated.started).toEqual([]);
+      expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (assignee: alice)"));
+      expect(plan.start).toEqual([]);
+      expect(keys((yield* planTickUseCase({ ...review, flow: "busy" }, open)).start)).toEqual([]);
     }).pipe(
       Effect.provide(
         runtime(fakeEngine(), {
+          runs: [run("busy", { flow: "busy" })],
           flows: {
             "demo/review": { items: [item("pr-1", { assignees: ["alice"] })] },
-            "demo/gated": { items: [item("pr-1")], gate: "usage gate: over the ceiling" },
+            "demo/busy": { items: [item("pr-1")] },
           },
         }),
       ),
@@ -151,14 +181,14 @@ describe("tickFlowUseCase", () => {
 
   effect("a person running the flow now skips the gates, and finds the item they name", () =>
     Effect.gen(function* () {
-      const outcome = yield* tickFlowUseCase(review, {
+      const plan = yield* planTickUseCase(review, {
         ...open,
         gates: false,
         item: Option.some("issue-7"),
         conditions: { ...open.conditions, paused: true },
       });
 
-      expect(outcome.started.map((found) => found.itemKey)).toEqual(["issue-7"]);
+      expect(keys(plan.start)).toEqual(["issue-7"]);
     }).pipe(
       Effect.provide(
         runtime(fakeEngine(), {
