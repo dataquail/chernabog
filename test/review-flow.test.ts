@@ -156,6 +156,8 @@ describe("re-review", () => {
 
         const [first, again] = fake.requests;
         expect(again.sessionId).toBe(first.sessionId);
+        // The agent knows each call's step, which a rehearsal's stand-ins are keyed by.
+        expect(fake.steps).toEqual([Option.some("review-1"), Option.some("review-2")]);
         expect(Option.isSome(again.resumePrompt)).toBe(true);
         expect(fake.submitted.map((submitted) => submitted.state)).toEqual([
           "CHANGES_REQUESTED",

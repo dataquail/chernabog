@@ -400,6 +400,9 @@ export type AgentRequest = {
   // to answer, and it is done once its answer is written. Only Claude under
   // a launcher can.
   readonly withPerson?: boolean;
+  // The step that asks, such as `implement` or `fix-ci-2`. The Agent service
+  // fills it in from the activity it runs in, when the caller leaves it out.
+  readonly step?: string;
 };
 
 export class Agent extends Context.Service<

@@ -35,6 +35,8 @@ export type AdapterContext = {
 
 export type Adapter = {
   readonly name: string;
+  // Answers every call, whatever adapter it asks for: a rehearsal's.
+  readonly exclusive?: boolean;
   run(
     request: AgentRequest,
     context: AdapterContext,
