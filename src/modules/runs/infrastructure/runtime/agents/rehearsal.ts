@@ -69,6 +69,10 @@ const runScript = (
     return output;
   });
 
+// Who placeholder commits are by: they stand for no one's work, and a host
+// with no git identity of its own, such as CI, can still make them.
+const PLACEHOLDER_AUTHOR = { name: "Chernabog rehearsal", email: "rehearsal@chernabog.invalid" };
+
 // One commit per message, each adding a file under .rehearsal/, so a step's
 // work is something to push.
 const commitPlaceholders = (
@@ -88,7 +92,15 @@ const commitPlaceholders = (
 
       for (const args of [
         ["add", file],
-        ["commit", "-m", message],
+        [
+          "-c",
+          `user.name=${PLACEHOLDER_AUTHOR.name}`,
+          "-c",
+          `user.email=${PLACEHOLDER_AUTHOR.email}`,
+          "commit",
+          "-m",
+          message,
+        ],
       ]) {
         const result = yield* exec.run("git", args, { cwd, env });
 
