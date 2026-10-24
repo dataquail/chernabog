@@ -13,6 +13,12 @@ const AUTHORING_RECIPES = ["implement", "human-initiated"];
 // A flow's code that asks for a review: PullRequest.requestReview, or a hand-off that calls it.
 const ASKS_FOR_REVIEW = /\b(requestReview|handOff)\b/;
 
+// The recipe that reviews a pull request when its review is requested.
+const REVIEWING_RECIPES = ["review"];
+
+// A flow's code that reviews: a round of review, or the requests it answers.
+const REVIEWS = /\bReview\.(round|reviewRequests)\b/;
+
 // Logins compare as GitHub compares them, ignoring case.
 export const sameLogin = (left: string, right: string) =>
   left.toLowerCase() === right.toLowerCase();
@@ -24,6 +30,10 @@ export const actsAs = (here: ReadonlyArray<string>) => (login: string) =>
 // name or its code.
 export const authorsPullRequests = (name: string, source: string) =>
   AUTHORING_RECIPES.includes(name) || ASKS_FOR_REVIEW.test(source);
+
+// Whether a flow reviews the pull requests asked of its persona, by its name or its code.
+export const reviewsPullRequests = (name: string, source: string) =>
+  REVIEWING_RECIPES.includes(name) || REVIEWS.test(source);
 
 // The logins a pull request authored as `author` may ask, when none of them is
 // a persona here (`here`). None when one is, or when the pool is empty, which

@@ -41,7 +41,7 @@ import {
   pinDrift,
   requiredVersion,
 } from "../../../platform/flow-deps.ts";
-import { authoringFlows, flowNames } from "../../../platform/flow-loader.ts";
+import { authoringFlows, flowNames, reviewingFlows } from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
 import { Home } from "../../../platform/home.ts";
 import { VERSION } from "../../../platform/version.ts";
@@ -356,7 +356,13 @@ export const doctor = Effect.gen(function* () {
   const checkReviewCoverage = (effective: EffectiveRepo, name: string, configDir: string) =>
     Effect.gen(function* () {
       const authoring = yield* authoringFlows(configDir);
+      const reviewing = yield* reviewingFlows(configDir);
       const reviewers = effective.settings.reviewers ?? [];
+
+      // The logins of this repo's personas that run a flow that reviews.
+      const reviewingHere = effective.personas
+        .filter((candidate) => reviewing.some((flow) => Option.isNone(flowOff(candidate, flow))))
+        .flatMap((candidate) => Option.toArray(candidate.persona));
 
       for (const own of effective.personas.filter((candidate) =>
         authoring.some((flow) => Option.isNone(flowOff(candidate, flow))),
@@ -366,12 +372,25 @@ export const doctor = Effect.gen(function* () {
           onNone: () => Effect.option(viewerLoginAs(Option.none())),
         });
 
-        for (const unserved of Option.toArray(
-          unservedReviewers(reviewers, author, machine.github),
-        )) {
+        const unserved = unservedReviewers(reviewers, author, machine.github);
+
+        for (const logins of Option.toArray(unserved)) {
           warn(
-            `${name}${asSuffix(own.persona)}: ${describeUnserved(own.persona, unserved)}`,
-            `run review as one of ${unserved.join(", ")} on this machine (chernabog setup, then chernabog enroll), or make sure another machine does`,
+            `${name}${asSuffix(own.persona)}: ${describeUnserved(own.persona, logins)}`,
+            `run review as one of ${logins.join(", ")} on this machine (chernabog setup, then chernabog enroll), or make sure another machine does`,
+          );
+        }
+
+        // A reviewer this machine acts as still serves nothing unless its persona runs review here.
+        const notReviewing = Option.filter(
+          unservedReviewers(reviewers, author, reviewingHere),
+          () => Option.isNone(unserved),
+        );
+
+        for (const logins of Option.toArray(notReviewing)) {
+          warn(
+            `${name}${asSuffix(own.persona)}: pull requests authored as ${Option.getOrElse(author, () => "the implicit account")} go to ${logins.join(", ")}, which no persona here reviews as: none of them runs a flow that reviews (such as review) on ${name}`,
+            `turn review on for one of ${logins.join(", ")} (chernabog enroll --persona <login> --flows ...), or make sure another machine reviews as them`,
           );
         }
       }
