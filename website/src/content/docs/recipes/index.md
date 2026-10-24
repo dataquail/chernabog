@@ -11,16 +11,17 @@ A recipe is a complete flow: its trigger, its steps in order and its endings, wr
 | [`review`](/chernabog/recipes/review/) | Reviews a pull request whose review is requested of the persona; an approval merges an `auto:ship` pull request |
 | [`re-review`](/chernabog/recipes/re-review/) | Reviews again when asked, in its own review session; approves, or hands the pull request to a person |
 | [`address-review`](/chernabog/recipes/address-review/) | Answers a review that requests changes on the persona's own pull request, in the session that wrote it |
+| [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) | Merges the base into the persona's own pull request when it conflicts, resolves the conflicts, and asks an approving reviewer to look again |
 | [`human-initiated`](/chernabog/recipes/human-initiated/) | The hybrid path: `chernabog start <issue>` opens a session with a person, then opens the pull request and asks for a review |
 
-The first four are the [review loop](/chernabog/work/flows/): together, they take an issue to a reviewed pull request through GitHub's own review requests.
+The first five are the [review loop](/chernabog/work/flows/): together, they take an issue to a reviewed pull request through GitHub's own review requests.
 
 ## Choosing recipes
 
 None is installed unless you choose it. `chernabog init` lists the recipes, each with its description and a link to its page here, and bakes the ones you pick. Piped, it bakes only the ones `--recipes` names:
 
 ```bash
-chernabog init --recipes implement,review,re-review,address-review
+chernabog init --recipes implement,review,re-review,address-review,resolve-conflicts
 ```
 
 Later, in a repo that's already set up:
@@ -31,13 +32,13 @@ chernabog recipes add human-initiated       # bake one more; with none named, as
 chernabog recipes diff                      # how the repo's flows differ from the current recipes
 ```
 
-Baking writes the recipe's flow, `.chernabog/flows/<name>.ts`, and the prompts it renders (`.chernabog/prompts/implement.md`, `review.md`) when the repo doesn't have them. It never overwrites a file: a flow already there under the recipe's name is kept and said so. Commit the new files, merge them, and `chernabog trust` the repo. Then `chernabog enroll` chooses which personas run them.
+Baking writes the recipe's flow, `.chernabog/flows/<name>.ts`, and the prompts it renders (`.chernabog/prompts/implement.md`, `review.md`, `resolve-conflicts.md`) when the repo doesn't have them. It never overwrites a file: a flow already there under the recipe's name is kept and said so. Commit the new files, merge them, and `chernabog trust` the repo. Then `chernabog enroll` chooses which personas run them.
 
 A repo with no flows isn't enrolled: `init` says so, and enrolls it once a recipe or a flow of your own is there.
 
 ## Keeping up with a recipe
 
-A baked recipe doesn't get later fixes on its own: upgrading chernabog changes the recipes it offers, not the files a repo baked. `chernabog recipes diff` shows how each of the repo's flows differs from the current version of the recipe it came from, as a unified diff with the recipe's side first, along with the prompts each recipe renders. Bring over what you want by hand. A flow came from the recipe it's named for; one named for no recipe is listed as from none. Name recipes, `chernabog recipes diff review re-review`, to compare only those.
+A baked recipe doesn't get later fixes on its own: upgrading chernabog changes the recipes it offers, not the files a repo baked. `chernabog recipes diff` shows how each of the repo's flows differs from the current version of the recipe it came from, as a unified diff with the recipe's side first, along with the prompts each recipe renders. Bring over what you want by hand. A flow came from the recipe it's named for; one named for no recipe is listed as from none. Name recipes, `chernabog recipes diff review re-review`, to compare only those. For example, a repo that baked `review` or `re-review` before [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) existed keeps handing an approved pull request that conflicts with its base to a person until it brings that change over.
 
 ## Changing a baked recipe
 
