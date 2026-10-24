@@ -25,7 +25,7 @@ import { type Environment, HostEnvironment } from "../../../../platform/environm
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
-import { commitsSince, headOf, recordAnswer } from "./agents/answers.ts";
+import { commitsSince, headOf, recordAnswer, recordUnanswered } from "./agents/answers.ts";
 import { claudeAdapter } from "./agents/claude.ts";
 import { claudeEnvironment } from "./agents/claude-events.ts";
 import { codexAdapter } from "./agents/codex.ts";
@@ -188,13 +188,31 @@ export const AgentLive = (
 
             const before = yield* headOf(request.cwd);
 
-            const result = yield* found.value.run(asked, {
-              account,
-              host: host.variables,
-              env,
-              launcher: settings.launcher,
-              log: yield* logOf,
-            });
+            const result = yield* found.value
+              .run(asked, {
+                account,
+                host: host.variables,
+                env,
+                launcher: settings.launcher,
+                log: yield* logOf,
+              })
+              .pipe(
+                // A rehearsal fails on a step it couldn't answer, whatever the flow does about it.
+                Effect.tapError((error) =>
+                  Option.match(
+                    Option.filter(run, () => found.value.exclusive === true),
+                    {
+                      onNone: () => Effect.void,
+                      onSome: (info) =>
+                        recordUnanswered(
+                          info.runId,
+                          Option.getOrElse(step, () => "(outside any step)"),
+                          error.message,
+                        ),
+                    },
+                  ),
+                ),
+              );
 
             // What a replay stands in with: the answer, and the commits the step made.
             if (Option.isSome(run) && Option.isSome(step)) {

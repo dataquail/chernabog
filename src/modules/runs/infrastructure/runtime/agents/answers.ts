@@ -56,6 +56,40 @@ export const commitsSince = (cwd: string, since: Option.Option<string>) =>
       }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => [])),
   });
 
+const UnansweredLine = Schema.fromJsonString(
+  Schema.Struct({ step: Schema.String, message: Schema.String }),
+);
+
+const unansweredFile = (root: string, runId: string) =>
+  `${homePaths(root).sessions}/runs/${runId}.unanswered.jsonl`;
+
+// A step a rehearsal's stand-ins couldn't answer, whatever the flow then did about it.
+export const recordUnanswered = (runId: string, step: string, message: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = (yield* Home).root;
+    yield* fs.makeDirectory(`${homePaths(root).sessions}/runs`, { recursive: true });
+    const line = yield* Schema.encodeEffect(UnansweredLine)({ step, message });
+    yield* fs.writeFileString(unansweredFile(root, runId), `${line}\n`, { flag: "a" });
+  }).pipe(Effect.orDie);
+
+// The steps a rehearsal couldn't answer, and why.
+export const runUnanswered = (runId: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const file = unansweredFile((yield* Home).root, runId);
+
+    if (!(yield* fs.exists(file))) {
+      return [];
+    }
+
+    return decodeJsonLines(UnansweredLine, yield* fs.readFileString(file));
+  }).pipe(
+    Effect.orElseSucceed(
+      (): ReadonlyArray<{ readonly step: string; readonly message: string }> => [],
+    ),
+  );
+
 export const recordAnswer = (runId: string, record: Omit<AnswerRecord, "at">) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

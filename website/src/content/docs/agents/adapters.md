@@ -41,3 +41,7 @@ agents:
 ```
 
 Agents of your own, Codex and opencode run headless under any launcher; `status` says so.
+
+## The rehearsal agent
+
+`rehearsal` never starts an agent: each step is answered by a stand-in you give it, a script or a fixed answer, by step name. It's what [`chernabog rehearse`](/chernabog/flows/rehearsing/) runs a flow with, and you can choose it as a repo's agent to run a flow through its wiring with no tokens spent.

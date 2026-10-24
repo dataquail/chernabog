@@ -51,6 +51,7 @@ export const homePaths = (root: string) => ({
   runLog: (runId: string) => `${root}/runs/${runId}.log`,
   sessions: `${root}/sessions`,
   snapshots: `${root}/snapshots`,
+  rehearsals: `${root}/rehearsals`,
   worktrees: (repo: string) => `${root}/worktrees/${repo}`,
   usageLog: (account: string) => `${root}/usage-${account}.jsonl`,
 });

@@ -8,7 +8,7 @@ description: Every key in the repo and machine config layers.
 | Repo     | `.chernabog/config.yaml`          | yes       | what work gets done, and how               |
 | Machine  | `~/.config/chernabog/config.yaml` | —         | accounts, budget, limits, and for each enrolled repo which flows run as each persona, when, and with which account |
 
-Later layers override earlier ones key by key, with two exceptions: a repo can never raise machine limits, and the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`. `init` writes `config.schema.json` beside the YAML for editor autocomplete. Unknown keys fail the repo.
+Later layers override earlier ones key by key, with two exceptions: a repo can never raise machine limits, and the [launcher](/chernabog/agents/launchers/#who-chooses) is a person's choice within the repo's `allowedLaunchers`. `init` writes `config.schema.json` beside the YAML for editor autocomplete, and `rehearsal.schema.json` for [scenarios](/chernabog/flows/rehearsing/). Unknown keys fail the repo.
 
 Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-HH:MM`, local time, and may wrap midnight.
 
@@ -130,7 +130,7 @@ limits: { reviewRounds: 2 }
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
 | `quietHours`            | none         | start no runs within these hours                                  |
 | `humanOnly`             | `[]`         | decisions every repo's agent must stop for                        |
-| `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent) |
+| `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent); `standIns`, `dir` and `exclusive` for [`rehearsal`](/chernabog/flows/rehearsing/#stand-ins) |
 | `launcher`              | —            | your launcher for every repo                                      |
 | `launchers.<name>`      | —            | `start`, `close`, `alive`, `attach`: [your own](/chernabog/agents/launchers/#your-own-launcher) |
 | `repos[]`               | —            | the enrolled repos, written by `enroll`; see [Enrolled repos](#enrolled-repos) |

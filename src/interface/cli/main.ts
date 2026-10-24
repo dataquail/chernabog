@@ -23,6 +23,7 @@ import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
+import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import {
@@ -61,6 +62,7 @@ import { installCommand, stopCommand, uninstallCommand } from "./machine/service
 import { setupCommand } from "./machine/setup.command.ts";
 import { initCommand } from "./recipes/init.command.ts";
 import { recipesCommand } from "./recipes/recipes.command.ts";
+import { rehearseCommand } from "./rehearsals/rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { logsCommand } from "./runs/logs.command.ts";
 import { openPr } from "./runs/open-pr.main.ts";
@@ -372,6 +374,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     statusCommand,
     attach,
     run,
+    rehearseCommand,
     trigger,
     openPrCommand,
     logsCommand,
@@ -405,6 +408,7 @@ const AppLive = Layer.mergeAll(
   RunLogsLayer,
   MachineLayer,
   RecipesLayer,
+  RehearsalsLayer,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),

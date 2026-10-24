@@ -24,7 +24,10 @@ const TemporaryHome = Layer.effect(
 );
 
 // Also a home of its own, a host environment with only PATH set (on this OS, or the one given), and any other services a test fakes.
-export const effectAtHomeWith = <A>(fakes: Layer.Layer<A>, platform: string = process.platform) =>
+export const effectAtHomeWith = <A>(
+  fakes: Layer.Layer<A, never, BunServices.BunServices>,
+  platform: string = process.platform,
+) =>
   it.scopedLive.layer(
     Layer.mergeAll(
       TemporaryHome,

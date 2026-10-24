@@ -7,14 +7,15 @@ import { BundleClient } from "../../domain/ports/clients/bundle.client.ts";
 import { BundleClientLive } from "./bundle.client-live.ts";
 
 describe("BundleClientLive", () => {
-  effect("bundles each recipe file, the scaffold with its generated schema, and the pins", () =>
+  effect("bundles each recipe file, the scaffold with its generated schemas, and the pins", () =>
     Effect.gen(function* () {
       const bundle = yield* BundleClient;
       const scaffold = yield* bundle.scaffold;
 
       expect(yield* bundle.recipeFile("flows/review.ts")).toContain("defineFlow");
       expect(Object.keys(scaffold.files)).toContain("config.yaml");
-      expect(scaffold.generated).toEqual(["config.schema.json"]);
+      expect(scaffold.generated).toEqual(["config.schema.json", "rehearsal.schema.json"]);
+      expect(scaffold.files["rehearsal.schema.json"]).toContain('"localGate"');
       expect(yield* bundle.pinned(scaffold.manifest, false)).toEqual(Option.none());
     }).pipe(Effect.provide(BundleClientLive)),
   );
