@@ -203,7 +203,7 @@ describe("RunCleanupClientLive", () => {
     }),
   );
 
-  effect("keeps a worktree with commits not pushed, and removes a review's checkout", () =>
+  effect("keeps a branch with commits not pushed, and removes a detached review checkout", () =>
     Effect.gen(function* () {
       const { checkout, client, git, pathFor } = yield* opened(freshState());
       yield* git(
@@ -225,6 +225,8 @@ describe("RunCleanupClientLive", () => {
         pathFor("review-pr-9@bob"),
         "origin/main",
       );
+      // The pull request's commit, which no remote has once its branch is gone.
+      yield* git(pathFor("review-pr-9@bob"), "commit", "--quiet", "--allow-empty", "-m", "theirs");
 
       expect(yield* client.removeWorktrees(run("issue-7"))).toEqual({
         removed: [],

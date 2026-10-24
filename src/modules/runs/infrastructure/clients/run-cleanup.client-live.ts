@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
@@ -71,7 +72,8 @@ const worktreeNames = (run: RunRoot) =>
     },
   });
 
-// Why a worktree holds work a person may want, if it does.
+// Why a worktree holds work a person may want, if it does: uncommitted
+// changes, or on a branch, commits no remote has.
 const workIn = (path: string) =>
   Effect.gen(function* () {
     const git = yield* Git;
@@ -79,6 +81,14 @@ const workIn = (path: string) =>
 
     if (changes.length > 0) {
       return Option.some("it has uncommitted changes");
+    }
+
+    // A detached checkout, such as a review's, holds the pull request's
+    // commits, which may no longer be on any remote once its branch is gone.
+    const onBranch = yield* git.run(["symbolic-ref", "-q", "HEAD"], path).pipe(Effect.result);
+
+    if (Result.isFailure(onBranch)) {
+      return Option.none<string>();
     }
 
     const unpushed = Number(

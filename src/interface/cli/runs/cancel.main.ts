@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 
 import { runLabel } from "../../../kernel/run-id.id.ts";
@@ -92,7 +93,13 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
           Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
             servicesFrom(personas)(persona),
           ),
-      }).pipe(Layer.provideMerge(StateLive)),
+      }).pipe(
+        Layer.provideMerge(StateLive),
+        // The engine's storage loop warns, on every pass, of the messages it
+        // keeps for workflows this process doesn't load, such as other runs'
+        // and the interrupt just stored; the daemon delivers them.
+        Layer.provide(Layer.succeed(References.MinimumLogLevel, "Error")),
+      ),
     );
 
     return yield* cancelRunUseCase(named, { by, closeSessions }).pipe(
