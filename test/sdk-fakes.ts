@@ -127,10 +127,12 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
   COMMENT: "COMMENTED",
 };
 
-// CI on the head, the files the pull request changes, whether GitHub refuses the merge, and the merges asked for.
+// CI on the head, the files the pull request changes, its mergeable_state on
+// GitHub, whether GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
   files: Array<string>;
+  state: string;
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
 };
@@ -160,6 +162,7 @@ export const makeFake = (
   const merge: MergeFake = {
     ci: { state: "green" },
     files: ["src/a.ts"],
+    state: "clean",
     refusal: Option.none(),
     requests: [],
   };
@@ -183,8 +186,9 @@ export const makeFake = (
     return git.head;
   };
 
-  // How the author answers a review it is asked to consider, and whether the person closes a session with them before it answers.
-  const author = { consider: "address", closes: false };
+  // How the author answers a review it is asked to consider, how it answers a
+  // merge conflict, and whether the person closes a session with them before it answers.
+  const author = { consider: "address", resolve: "resolved", closes: false };
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
   let reviewed = 0;
@@ -227,6 +231,15 @@ export const makeFake = (
         comments: [],
         findings: [{ finding: "Mention the change", remediated: true }],
       };
+    }
+
+    // resolve-conflicts: a resolved merge is a commit.
+    if (schema.includes('"resolved"')) {
+      if (author.resolve === "resolved") {
+        git.commits += 1;
+      }
+
+      return { status: author.resolve, summary: "Kept both sides of README.md." };
     }
 
     if (schema.includes("decline")) {
@@ -338,6 +351,15 @@ export const makeFake = (
             onNone: () => Effect.succeed({ sha: "merged9876" }),
             onSome: (reason) => Effect.fail(new MergeRefused({ pullRequest, reason })),
           });
+        }),
+      // Only the pull request itself, as GitHub's REST API answers it.
+      request: (method, path) =>
+        Effect.sync((): Json => {
+          if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
+            return { number: PULL, mergeable_state: merge.state };
+          }
+
+          return {};
         }),
       comments: () => Effect.sync(() => [...comments]),
       reviewComments: () => Effect.succeed([]),
