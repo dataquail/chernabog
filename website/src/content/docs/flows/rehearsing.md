@@ -21,6 +21,7 @@ A scenario is a YAML file, such as `.chernabog/rehearsals/implement.yaml`. `cher
 # yaml-language-server: $schema=../rehearsal.schema.json
 repo: you/chernabog-rehearsal # the repo to seed and run on
 flow: implement
+install: null # nor install what the team's repo does
 localGate: ["true"] # this scratch repo can't pass the team's gate
 
 given:
@@ -46,7 +47,7 @@ expect:
 | `flow`      | The flow it rehearses. `chernabog rehearse <flow>` must name the same one.                                                                                                                                                                                                                                                                      |
 | `persona`   | The persona to rehearse as, for a repo that runs as several. `--as` overrides it.                                                                                                                                                                                                                                                               |
 | `enrolled`  | `true` to rehearse on a repo this machine is enrolled in. [See below](#on-your-own-repo).                                                                                                                                                                                                                                                       |
-| `localGate` | The local gate to run in place of the team's, for a repo that can't pass it.                                                                                                                                                                                                                                                                    |
+| `install`, `localGate` | The install step and local gate to run in place of the team's, for a repo that can't pass them. `install: null` runs none.                                                                                                                                                                                                                                                                    |
 | `given`     | The GitHub state to seed. `issues` take a `title`, and optionally a `body`, `labels` and `assignees`. `pullRequests` take a `branch`, a `title` and `commits`, each a `message` and its `files` by path, and optionally a `body`, a `base`, `labels` and `reviewers` to request. Every item has a `name`. `as` seeds as another persona under `github:`. |
 | `agent`     | The stand-ins, by step name. [See below](#stand-ins).                                                                                                                                                                                                                                                                                           |
 | `expect`    | Where the run should end: `ends` (`done`, `needs-human`, `skipped`, `failed`, or `running` for a run still waiting when the rehearsal stops following it), a phrase its `summary` carries, and every one of the `labels` its item should carry afterwards. Without `ends`, a rehearsal expects `done`.                                         |

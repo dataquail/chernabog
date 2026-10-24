@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { ScenariosRepository } from "../../domain/ports/repositories/scenarios.repository.ts";
@@ -8,6 +9,7 @@ import { ScenariosRepositoryLive } from "./scenarios.repository-live.ts";
 
 const SCENARIO = `repo: you/chernabog-rehearsal
 flow: implement
+install: null
 localGate: ["true"]
 given:
   issues:
@@ -33,6 +35,7 @@ describe("ScenariosRepositoryLive", () => {
 
       expect(scenario.dir).toBe(dir);
       expect(scenario.repo).toBe("you/chernabog-rehearsal");
+      expect(scenario.install).toEqual(Option.none());
       expect(scenario.given?.issues?.[0]?.labels).toEqual(["auto:eligible"]);
       expect(scenario.agent?.["fix-ci-*"]).toEqual({
         fixture: { status: "done", title: "t", body: "b", summary: "s" },

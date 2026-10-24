@@ -81,8 +81,10 @@ export const ScenarioFile = Schema.Struct({
   // Rehearse on a repo this machine is enrolled in. Chernabog pauses it here
   // meanwhile; another machine's daemon may still pick up what is seeded.
   enrolled: Schema.optionalKey(Schema.Boolean),
-  // The local gate to run in place of the team's, for a scratch repo that
-  // can't pass it, such as ["true"].
+  // The install step and local gate to run in place of the team's, for a
+  // scratch repo that can't pass them: install: null runs none, and
+  // localGate: ["true"] passes.
+  install: Schema.optionalKey(Schema.OptionFromNullOr(Schema.String)),
   localGate: Schema.optionalKey(Strings),
   given: Schema.optionalKey(Given),
   // What answers for the agent at each step, by step name or a pattern such as fix-ci-*.

@@ -130,7 +130,7 @@ type Scratch = {
 const SIGNAL_EVERY_MS = 15_000;
 
 // The repo's settings as a rehearsal runs them: on the scenario's repo and
-// its clone, with the scenario's local gate, no board (seeding puts nothing
+// its clone, with the scenario's install and local gate, no board (seeding puts nothing
 // on one), and the rehearsal agent for every agent call.
 const rehearsing = (
   settings: RepoSettings,
@@ -142,6 +142,10 @@ const rehearsing = (
   slug: loaded.scenario.repo,
   path: scratch.checkout,
   baseBranch: scratch.base,
+  install: Option.getOrElse(
+    Option.fromUndefinedOr(loaded.scenario.install),
+    () => settings.install,
+  ),
   localGate: loaded.scenario.localGate ?? settings.localGate,
   board: Option.none(),
   agent: REHEARSAL,
@@ -200,6 +204,13 @@ const cloneScratch = (url: string, persona: Persona) =>
     return { id, name: `rehearsal-${id}`, root, checkout, base } satisfies Scratch;
   });
 
+// What a pick found, and if nothing, why; `unseen` when the trigger may yet see it.
+type Picked = {
+  readonly item: Option.Option<WorkItem>;
+  readonly unseen: boolean;
+  readonly why: string;
+};
+
 // What a rehearsal runs on: the item named, or else the first seeded item
 // the trigger reports that routing leaves to this persona. Nothing else, so
 // a rehearsal on a repo with real work queued never touches that work.
@@ -252,36 +263,69 @@ const pickItem = (
     const ours = usable.filter((item) => seededKeys.includes(item.key));
 
     if (Option.isSome(named)) {
-      const item = Arr.findFirst(ours, (candidate) => candidate.key === named.value);
-
-      if (Option.isNone(item)) {
-        yield* Console.log(
-          `the trigger found no seeded item ${named.value}; a rehearsal runs only on what it seeded`,
-        );
-      }
-
-      return item;
+      return {
+        item: Arr.findFirst(ours, (candidate) => candidate.key === named.value),
+        unseen: true,
+        why: `the trigger found no seeded item ${named.value}; a rehearsal runs only on what it seeded`,
+      } satisfies Picked;
     }
 
     const login = yield* loginOf(handle.repo, persona);
     const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
     const routed = routeItems(ours, routingOf(own, handle.name), login);
 
-    if (routed.mine.length === 0) {
-      yield* Console.log(
-        Option.match(Arr.head(routed.elsewhere), {
-          onNone: () =>
-            `the trigger found nothing seeded for ${handle.name}: it reported ${listed(
-              found.map((item) => item.key),
-              "nothing",
-            )}`,
-          onSome: () =>
-            `routing leaves ${routed.elsewhere.map((item) => item.key).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
-        }),
-      );
+    return Option.match(Arr.head(routed.elsewhere), {
+      onNone: (): Picked => ({
+        item: Arr.head(routed.mine),
+        unseen: true,
+        why: `the trigger found nothing seeded for ${handle.name}: it reported ${listed(
+          found.map((item) => item.key),
+          "nothing",
+        )}`,
+      }),
+      onSome: (): Picked => ({
+        item: Arr.head(routed.mine),
+        unseen: false,
+        why: `routing leaves ${routed.elsewhere.map((item) => item.key).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
+      }),
+    });
+  });
+
+// GitHub's search, which triggers read, can take a minute to index a new
+// issue, so a rehearsal gives the trigger that long to see what was seeded.
+const SEARCH_LAG = Duration.minutes(2);
+
+const pickSeeded = (
+  handle: FlowHandle,
+  persona: Persona,
+  seeded: Seeded,
+  named: Option.Option<string>,
+  context: RepoContext,
+) =>
+  Effect.gen(function* () {
+    const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(SEARCH_LAG);
+    let picked = yield* pickItem(handle, persona, seeded, named, context);
+    let waited = false;
+
+    while (
+      Option.isNone(picked.item) &&
+      picked.unseen &&
+      (yield* Clock.currentTimeMillis) < deadline
+    ) {
+      if (!waited) {
+        yield* Console.log("waiting for the trigger to see what was seeded (GitHub's search lags)");
+        waited = true;
+      }
+
+      yield* Effect.sleep("5 seconds");
+      picked = yield* pickItem(handle, persona, seeded, named, context);
     }
 
-    return Arr.head(routed.mine);
+    if (Option.isNone(picked.item)) {
+      yield* Console.log(picked.why);
+    }
+
+    return picked.item;
   });
 
 // Follows a run's log until it ends, or `timeout` passes, delivering the
@@ -394,7 +438,7 @@ const runRehearsal = (
     );
 
     const program = Effect.gen(function* () {
-      const item = yield* pickItem(handle, persona, seeded, options.item, context);
+      const item = yield* pickSeeded(handle, persona, seeded, options.item, context);
 
       if (Option.isNone(item)) {
         return Option.none<RunView>();
