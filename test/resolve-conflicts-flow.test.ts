@@ -118,8 +118,8 @@ describe("resolve-conflicts", () => {
         );
         // Every placeholder the prompt names is filled.
         const [request] = fake.requests;
-        expect(request?.prompt).toContain("git merge --no-ff origin/main");
-        expect(request?.prompt).not.toMatch(/\{\{/);
+        expect(request.prompt).toContain("git merge --no-ff origin/main");
+        expect(request.prompt).not.toMatch(/\{\{/);
         expect(fake.git.pushes).toBe(1);
         expect(
           fake.comments.some((comment) =>
