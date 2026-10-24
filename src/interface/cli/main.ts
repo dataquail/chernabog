@@ -284,6 +284,7 @@ const cancel = Command.make(
       Effect.catchTags({
         DaemonRefused: (refused) => fail(refused.message),
         RunNotNamed: (failure) => fail(failure.message),
+        RunNotFound: (failure) => fail(failure.message),
         AmbiguousRunPrefix: (failure) => fail(failure.message),
         RunAlreadyFinished: (failure) => fail(failure.message),
         NoRunInFlight: (failure) => fail(failure.message),
