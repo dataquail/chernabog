@@ -4,6 +4,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 
 import { samePersona } from "../../kernel/persona.value-object.ts";
+import { runLabel } from "../../kernel/run-id.id.ts";
 import { cronProblem } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
   flowEnabled,
@@ -28,6 +29,7 @@ export type Action =
   | { readonly kind: "refresh" }
   | { readonly kind: "open-log"; readonly run: string }
   | { readonly kind: "attach"; readonly run: string }
+  | { readonly kind: "cancel"; readonly run: string; readonly label: string }
   | {
       readonly kind: "trigger";
       readonly repo: string;
@@ -504,7 +506,59 @@ const openSelected = (
   });
 };
 
-export const update = (model: Model, key: Key): Updated => {
+// Attaches to the selected run (a), or asks to cancel it (x), which waits on
+// the person's y.
+const onSelectedRun = (
+  cleared: Model,
+  selectedRun: Option.Option<RunEntry>,
+  key: string,
+): Updated =>
+  Option.match(selectedRun, {
+    onNone: () => {
+      let doing = "cancel";
+
+      if (key === "a") {
+        doing = "attach to";
+      }
+
+      return {
+        model: { ...cleared, message: Option.some(`select a run to ${doing} (tab to the runs)`) },
+        action: none,
+      };
+    },
+    onSome: (run): Updated => {
+      if (key === "a") {
+        return { model: cleared, action: { kind: "attach", run: run.id } };
+      }
+
+      return {
+        model: {
+          ...cleared,
+          cancelling: Option.some(run),
+          message: Option.some(
+            `cancel ${runLabel(run)}? It stops for good, and its worktrees and claim are released. y to cancel, any other key to keep it`,
+          ),
+        },
+        action: none,
+      };
+    },
+  });
+
+// y cancels the run asked about; any other key keeps it.
+const confirmCancel = (cleared: Model, run: RunEntry, key: Key): Updated => {
+  const asked = { ...cleared, cancelling: Option.none<RunEntry>() };
+
+  if (key.name === "y") {
+    return { model: asked, action: { kind: "cancel", run: run.id, label: runLabel(run) } };
+  }
+
+  return {
+    model: { ...asked, message: Option.some(`left ${runLabel(run)} running`) },
+    action: none,
+  };
+};
+
+const updateMain = (model: Model, key: Key): Updated => {
   const flows = flowRows(model.status);
   const runs = runRows(model.status);
 
@@ -565,16 +619,7 @@ export const update = (model: Model, key: Key): Updated => {
       );
 
     case "a":
-      return Option.match(selectedRun, {
-        onNone: () => ({
-          model: {
-            ...cleared,
-            message: Option.some("select a run to attach to (tab to the runs)"),
-          },
-          action: none,
-        }),
-        onSome: (run) => ({ model: cleared, action: { kind: "attach", run: run.id } }),
-      });
+      return onSelectedRun(cleared, selectedRun, key.name);
     case "t":
       return Option.match(
         Arr.get(flows, model.flowIndex).pipe(Option.filter(() => model.focus === "flows")),
@@ -650,6 +695,20 @@ export const update = (model: Model, key: Key): Updated => {
     }
 
     default:
-      return { model, action: none };
+      // x asks to cancel the selected run.
+      return Option.match(
+        Option.liftPredicate(key.name, (name) => name === "x"),
+        {
+          onNone: () => ({ model, action: none }),
+          onSome: (name) => onSelectedRun(cleared, selectedRun, name),
+        },
+      );
   }
 };
+
+// While a cancel is asked, y cancels the run and any other key keeps it.
+export const update = (model: Model, key: Key): Updated =>
+  Option.match(model.cancelling, {
+    onNone: () => updateMain(model, key),
+    onSome: (run) => confirmCancel({ ...model, message: Option.none() }, run, key),
+  });

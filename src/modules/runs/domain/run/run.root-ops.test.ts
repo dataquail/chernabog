@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { SeveralRunsInFlight } from "./run.errors.ts";
 import { RunRoot } from "./run.root.ts";
 import { RunRootOps } from "./run.root-ops.ts";
 
@@ -148,5 +149,94 @@ describe("RunRootOps.named", () => {
       `3f2 names 2 runs (${FIRST}, ${SECOND}); give more of the id`,
     );
     expect(Result.isFailure(none) && none.failure.message).toBe("no run ffff");
+  });
+});
+
+describe("RunRootOps.cancel", () => {
+  test("ends a running run as cancelled, saying who, when, and the step it interrupted", () => {
+    const stepped = Result.getOrThrow(RunRootOps.enterStep(running, "await-closed:approved"));
+    const cancelled = Result.getOrThrow(RunRootOps.cancel(stepped, "alice", later));
+
+    expect([
+      cancelled.status,
+      cancelled.summary,
+      cancelled.currentStep,
+      cancelled.finishedAt,
+    ]).toEqual([
+      "cancelled",
+      Option.some(`cancelled by alice at ${later}, interrupted in await-closed:approved`),
+      Option.none(),
+      Option.some(later),
+    ]);
+  });
+
+  test("a run in no step says only who and when", () => {
+    const cancelled = Result.getOrThrow(RunRootOps.cancel(running, "alice", later));
+
+    expect(cancelled.summary).toEqual(Option.some(`cancelled by alice at ${later}`));
+  });
+
+  test("a run that ended, cancelled or not, can't be cancelled", () => {
+    const cancelled = Result.getOrThrow(RunRootOps.cancel(running, "alice", later));
+
+    for (const ended of [finished, cancelled]) {
+      const refused = RunRootOps.cancel(ended, "alice", later);
+
+      expect(Result.isFailure(refused) && refused.failure._tag).toBe("RunAlreadyFinished");
+    }
+
+    expect(Result.isFailure(RunRootOps.finish(cancelled, "failed", "interrupted", later))).toBe(
+      true,
+    );
+  });
+});
+
+describe("RunRootOps.inFlightFor", () => {
+  const query = {
+    repo: "demo",
+    itemKey: "pr-1",
+    flow: Option.none<string>(),
+    persona: Option.none<string>(),
+  };
+
+  const asAlice = Result.getOrThrow(
+    RunRootOps.start(
+      [],
+      { ...asBob, id: RunId.make("b"), persona: Option.some("alice"), flow: "re-review" },
+      at,
+    ),
+  );
+
+  test("finds the one run in flight for the item, passing over ended ones", () => {
+    expect(RunRootOps.inFlightFor([finished, running], query)).toEqual(Result.succeed(running));
+  });
+
+  test("several in flight fail, listing them, until the flow or persona narrows them", () => {
+    const both = [running, asAlice];
+    const several = RunRootOps.inFlightFor(both, query);
+
+    expect(several).toEqual(
+      Result.fail(
+        new SeveralRunsInFlight({
+          repo: "demo",
+          itemKey: "pr-1",
+          matching: [RunId.make("a"), RunId.make("b")],
+        }),
+      ),
+    );
+    expect(RunRootOps.inFlightFor(both, { ...query, flow: Option.some("re-review") })).toEqual(
+      Result.succeed(asAlice),
+    );
+    expect(RunRootOps.inFlightFor(both, { ...query, persona: Option.some("bob") })).toEqual(
+      Result.succeed(running),
+    );
+  });
+
+  test("none in flight for the item fails", () => {
+    for (const asked of [query, { ...query, itemKey: "pr-2" }, { ...query, repo: "other" }]) {
+      const none = RunRootOps.inFlightFor([finished], asked);
+
+      expect(Result.isFailure(none) && none.failure._tag).toBe("NoRunInFlight");
+    }
   });
 });

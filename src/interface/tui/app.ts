@@ -39,10 +39,12 @@ import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-pe
 import { readMachineSetupUseCase } from "../../modules/machine/use-cases/read-machine-setup.use-case.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
+import { type CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { readRunLogUseCase } from "../../modules/runs/use-cases/read-run-log.use-case.ts";
+import { userName } from "../../platform/environment.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
-import { daemonReload, daemonStatus, daemonTick } from "../daemon/daemon.client.ts";
+import { daemonCancel, daemonReload, daemonStatus, daemonTick } from "../daemon/daemon.client.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
 
@@ -133,6 +135,7 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   logLines: [],
   logScroll: 0,
   message: Option.none(),
+  cancelling: Option.none(),
   pendingFlows: {},
   width,
   height,
@@ -143,6 +146,23 @@ type Event =
   | { readonly kind: "key"; readonly key: Key }
   | { readonly kind: "resize" }
   | { readonly kind: "tick" };
+
+// What cancelling did, in a line: what it left for a person, and its open
+// sessions, which `chernabog cancel --close-session` closes.
+const cancelMessage = (label: string, cancelled: CancelledRun) => {
+  const left = [
+    ...cancelled.leftForPerson,
+    ...cancelled.openSessions.map(
+      (session) => `${session.launcher} session ${session.handle} still open`,
+    ),
+  ];
+
+  if (left.length === 0) {
+    return `cancelled ${label}`;
+  }
+
+  return `cancelled ${label}; left for you: ${left.join("; ")}`;
+};
 
 const tickMessage = (
   repo: string,
@@ -348,6 +368,25 @@ export const runTui = Effect.gen(function* () {
           return yield* render;
         case "attach":
           return yield* attach(action.run);
+        case "cancel": {
+          const cancelled = yield* Effect.result(
+            daemonCancel({
+              target: CancelTarget.cases.ById.make({ asked: action.run }),
+              by: yield* userName,
+              closeSessions: false,
+            }),
+          );
+
+          yield* say(
+            Result.match(cancelled, {
+              onSuccess: (done) => cancelMessage(action.label, done),
+              onFailure: (failure) => failure.message,
+            }),
+          );
+
+          return yield* refresh;
+        }
+
         case "trigger": {
           const result = yield* Effect.result(
             daemonTick({

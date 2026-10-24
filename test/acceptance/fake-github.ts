@@ -367,6 +367,31 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({}, 201);
   });
 
+  const removeAssignees = withBody(AssigneesBody, (body, args) => {
+    const issue = Option.fromUndefinedOr(issues.get(numberParam(args)));
+
+    if (Option.isSome(issue)) {
+      issue.value.assignees = issue.value.assignees.filter(
+        (login) => !body.assignees.includes(login),
+      );
+    }
+
+    return json({});
+  });
+
+  // How far one branch is ahead of another, as git counts it in the bare repo.
+  const compare = (args: Args) => {
+    const [base = "", head = ""] = (args.params[0] ?? "").split("...").map(decodeURIComponent);
+
+    const ahead = Number(
+      execFileSync("git", ["--git-dir", options.bare, "rev-list", "--count", `${base}..${head}`], {
+        encoding: "utf8",
+      }).trim(),
+    );
+
+    return json({ ahead_by: ahead, behind_by: 0 });
+  };
+
   const createPull = withBody(NewPullBody, (body, args) => {
     if (Option.isNone(refSha(body.head))) {
       return json({ message: `no branch ${body.head}` }, 422);
@@ -580,6 +605,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       pattern: new RegExp(`^${repo}/issues/(\\d+)/assignees$`),
       handle: addAssignees,
     },
+    {
+      method: "DELETE",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/assignees$`),
+      handle: removeAssignees,
+    },
+    { method: "GET", pattern: new RegExp(`^${repo}/compare/(.+)$`), handle: compare },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/issues/(\\d+)$`),

@@ -79,6 +79,8 @@ export type Model = {
   // Lines up from the bottom of the log; 0 follows it as it grows.
   readonly logScroll: number;
   readonly message: Option.Option<string>;
+  // The run in flight a person asked to cancel, until they confirm it or not.
+  readonly cancelling: Option.Option<RunEntry>;
   // Flows turned on or off from here that the daemon hasn't restarted on yet, by flowKey.
   readonly pendingFlows: Readonly<Record<string, boolean>>;
   readonly width: number;
@@ -204,6 +206,7 @@ const STATUS_STYLE: Readonly<Record<RunStatus, Style>> = {
   running: "cyan",
   skipped: "dim",
   "needs-human": "yellow",
+  cancelled: "dim",
   failed: "red",
 };
 
@@ -218,7 +221,7 @@ const select = (line: Line, selected: boolean): Line => {
 };
 
 export const KEYS_MAIN =
-  "tab switch pane · ↑↓ select · enter log or settings · a attach · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
+  "tab switch pane · ↑↓ select · enter log or settings · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
 
 export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
 

@@ -296,6 +296,33 @@ describe("keys", () => {
     });
   });
 
+  test("x asks to cancel the selected run, y cancels it, and any other key keeps it", () => {
+    const asked = update(model({ runIndex: 1 }), { name: "x" });
+
+    expect(asked.action).toEqual({ kind: "none" });
+    expect(Option.getOrThrow(asked.model.message)).toContain("? It stops for good");
+
+    const confirmed = update(asked.model, { name: "y" });
+
+    expect(confirmed.action).toMatchObject({ kind: "cancel", run: "goodbones.review.pr-8.1" });
+    expect(confirmed.model.cancelling).toEqual(Option.none());
+
+    // q while asked keeps the run, rather than quitting.
+    const kept = update(asked.model, { name: "q" });
+
+    expect(kept.action).toEqual({ kind: "none" });
+    expect(Option.getOrThrow(kept.model.message)).toMatch(/^left .* running$/);
+    expect(kept.model.cancelling).toEqual(Option.none());
+  });
+
+  test("x on the flows pane cancels nothing", () => {
+    const onFlows = update(model(), { name: "tab" }).model;
+    const refused = update(onFlows, { name: "x" });
+
+    expect([refused.action, refused.model.cancelling]).toEqual([{ kind: "none" }, Option.none()]);
+    expect(refused.model.message).toEqual(Option.some("select a run to cancel (tab to the runs)"));
+  });
+
   test("e turns the selected flow off or on, from what was last turned here until the daemon restarts on it", () => {
     const onFlows = update(model(), { name: "tab" }).model;
     expect(update(onFlows, { name: "e" }).action).toEqual({

@@ -4,12 +4,19 @@ import { RunId } from "../../../../kernel/run-id.id.ts";
 import { WorkItem } from "./work-item.value-object.ts";
 
 // Where a run is in its life: running until its workflow completes, then one
-// of the ways it can end.
-export const RunStatus = Schema.Literals(["running", "done", "skipped", "needs-human", "failed"]);
+// of the ways it can end, or cancelled by a person before it could.
+export const RunStatus = Schema.Literals([
+  "running",
+  "done",
+  "skipped",
+  "needs-human",
+  "failed",
+  "cancelled",
+]);
 
 export type RunStatus = typeof RunStatus.Type;
 
-// How a run can end.
+// How a run's workflow can end it.
 export const RunEnding = Schema.Literals(["done", "skipped", "needs-human", "failed"]);
 
 export type RunEnding = typeof RunEnding.Type;
