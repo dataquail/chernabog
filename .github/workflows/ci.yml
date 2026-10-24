@@ -20,7 +20,11 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run lint:architecture
+      # Measures coverage too (bunfig.toml).
       - run: bun test
+      # The coverage table in the job summary, even when the tests failed; fails below the floor.
+      - if: always()
+        run: bun scripts/coverage-summary.ts
       - run: bun run build
       - run: CHERNABOG_BIN=$PWD/dist/chernabog bun test test/acceptance/e2e.test.ts test/acceptance/daemon.test.ts
 

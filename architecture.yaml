@@ -111,6 +111,7 @@ graph:
         # Run with `bun scripts/<name>.ts`.
         - "scripts/gen-*.ts"
         - "scripts/homebrew-formula.ts"
+        - "scripts/coverage-summary.ts"
         # A repo's flows are loaded by path (src/loader.ts); these are the ones
         # `chernabog init` and `chernabog recipes add` write out.
         - "templates/**"
@@ -747,7 +748,8 @@ tree:
 
   "scripts/":
     message: >-
-      scripts/ holds the generators and release helpers run with `bun scripts/<name>.ts`.
+      scripts/ holds the generators, release helpers and CI's coverage summary, run with
+      `bun scripts/<name>.ts`.
     layout: open
     imports:
       reset: true
@@ -759,6 +761,10 @@ tree:
     surface:
       - use: no-default-exports
       - use: no-star-exports
+    children:
+      # What a script renders, which a test renders again; the script prints or writes it.
+      "templates.ts": { members: [{ use: no-talking }] }
+      "coverage.ts": { members: [{ use: no-talking }] }
 
   "templates/":
     message: >-
