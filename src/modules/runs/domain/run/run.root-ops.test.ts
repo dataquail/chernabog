@@ -240,3 +240,35 @@ describe("RunRootOps.inFlightFor", () => {
     }
   });
 });
+
+describe("RunRootOps.sharingTarget", () => {
+  const on = (id: string, itemKey: string, fields: Partial<RunRoot> = {}) =>
+    RunRoot.make({ ...running, id: RunId.make(id), itemKey, ...fields });
+
+  test("a review and a re-review of one pull request share it, whatever their keys", () => {
+    const review = on("review", "pr-1");
+    const reReview = on("re-review", "pr-1-review-1", { flow: "re-review" });
+    const addressing = on("address", "pr-1-changes-1", { persona: Option.some("alice") });
+
+    expect(RunRootOps.sharingTarget([review, reReview, addressing], review)).toEqual([
+      reReview,
+      addressing,
+    ]);
+  });
+
+  test("runs that ended, on another item or repo, or on an issue of the same number share nothing", () => {
+    const review = on("review", "pr-1");
+
+    const others = [
+      on("ended", "pr-1-review-1", { status: "done" }),
+      on("other-pull", "pr-2"),
+      on("other-repo", "pr-1", { repo: "elsewhere" }),
+      on("issue", "issue-1"),
+    ];
+
+    expect(RunRootOps.sharingTarget([review, ...others], review)).toEqual([]);
+    expect(
+      RunRootOps.sharingTarget([on("nightly-2", "nightly")], on("nightly", "nightly")),
+    ).toEqual([]);
+  });
+});

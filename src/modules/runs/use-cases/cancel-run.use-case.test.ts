@@ -276,6 +276,48 @@ describe("cancelRunUseCase", () => {
     ),
   );
 
+  const shared = stoppingEngine("review");
+
+  const sharedHoldings = fakeHoldings({
+    worktrees: { review: { removed: ["/w/review-pr-1@bob"], kept: [] } },
+  });
+
+  effect("keeps the worktrees while another run in flight is on the same pull request", () =>
+    Effect.gen(function* () {
+      const cancelled = yield* cancelRunUseCase(byId("review"), asAlice);
+
+      expect(cancelled.run.status).toBe("cancelled");
+      expect(sharedHoldings.cleaned).toEqual([]);
+      expect(cancelled.removedWorktrees).toEqual([]);
+      expect(cancelled.leftForPerson).toEqual([
+        "kept its worktrees: run re-review (demo/re-review pr-1-review-1 as bob) is in flight on the same item",
+      ]);
+    }).pipe(
+      Effect.provide(
+        runtime(shared, sharedHoldings, {
+          runs: [run("review"), run("re-review", { flow: "re-review", itemKey: "pr-1-review-1" })],
+        }),
+      ),
+    ),
+  );
+
+  const apart = stoppingEngine("review");
+  const apartHoldings = fakeHoldings();
+
+  effect("a run in flight on another pull request doesn't keep them", () =>
+    Effect.gen(function* () {
+      yield* cancelRunUseCase(byId("review"), asAlice);
+
+      expect(apartHoldings.cleaned).toEqual(["review"]);
+    }).pipe(
+      Effect.provide(
+        runtime(apart, apartHoldings, {
+          runs: [run("review"), run("other", { itemKey: "pr-2" })],
+        }),
+      ),
+    ),
+  );
+
   const unloaded = fakeEngine();
   unloaded.unloaded.push("demo/review");
 

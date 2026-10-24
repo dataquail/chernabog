@@ -19,7 +19,7 @@ import {
   SeveralRunsInFlight,
 } from "./run.errors.ts";
 import { type RunEnding, RunRoot } from "./run.root.ts";
-import { type WorkItem } from "./work-item.value-object.ts";
+import { itemTarget, type WorkItem } from "./work-item.value-object.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";
 
@@ -164,6 +164,26 @@ const inFlightFor = (
   );
 };
 
+// The other runs in flight in the run's repo on the same issue or pull
+// request, whatever their flow or persona: a review and a re-review of one
+// pull request (`pr-<n>`, `pr-<n>-review-<k>`) share its checkout, so what one
+// leaves behind the others may still be using. None for an item of a flow's own.
+const sharingTarget = (runs: ReadonlyArray<RunRoot>, run: RunRoot) =>
+  Option.match(itemTarget(run.itemKey), {
+    onNone: (): ReadonlyArray<RunRoot> => [],
+    onSome: (target) =>
+      runs.filter(
+        (other) =>
+          isRunning(other) &&
+          other.id !== run.id &&
+          other.repo === run.repo &&
+          Option.exists(
+            itemTarget(other.itemKey),
+            (theirs) => theirs.kind === target.kind && theirs.number === target.number,
+          ),
+      ),
+  });
+
 // A run from before personas, given the persona a repo's runs now act as, so
 // it keeps resuming and holding that persona's slots. None for a run that
 // already has a persona.
@@ -213,5 +233,6 @@ export const RunRootOps = {
   finish,
   cancel,
   inFlightFor,
+  sharingTarget,
   adopt,
 } as const;

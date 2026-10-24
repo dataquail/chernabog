@@ -4,8 +4,12 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 
-import { RunId } from "../../../kernel/run-id.id.ts";
-import { type OpenSession, RunCleanupClient } from "../domain/ports/clients/run-cleanup.client.ts";
+import { RunId, runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
+import {
+  type OpenSession,
+  RunCleanupClient,
+  type WorktreeCleanup,
+} from "../domain/ports/clients/run-cleanup.client.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
@@ -119,7 +123,23 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
 
   const leftForPerson: Array<string> = [];
 
-  const worktrees = yield* cleanup.removeWorktrees(cancelled).pipe(
+  // Worktrees another run in flight on the same issue or pull request may be
+  // using stay, for the last run on it, or a person, to remove.
+  const sharing = RunRootOps.sharingTarget(yield* runs.findAll({ running: true }), cancelled);
+
+  for (const other of sharing) {
+    leftForPerson.push(
+      `kept its worktrees: run ${shortRunId(other.id)} (${runLabel(other)}) is in flight on the same item`,
+    );
+  }
+
+  const removing = Option.liftPredicate(cancelled, () => sharing.length === 0);
+
+  const worktrees = yield* Option.match(removing, {
+    onNone: (): Effect.Effect<WorktreeCleanup, CleanupFailed> =>
+      Effect.succeed({ removed: [], kept: [] }),
+    onSome: (run) => cleanup.removeWorktrees(run),
+  }).pipe(
     Effect.catch((failure) =>
       describeFailure("removing its worktrees failed")(failure).pipe(
         Effect.map((said) => {
