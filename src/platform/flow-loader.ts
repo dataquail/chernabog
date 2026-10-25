@@ -14,7 +14,7 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { authorsPullRequests } from "../kernel/reviewer-pool.value-object.ts";
+import { authorsPullRequests, reviewsPullRequests } from "../kernel/reviewer-pool.value-object.ts";
 import { effectModules, effectRoot } from "./effect-modules.ts";
 
 export class LoadError extends Schema.TaggedError<LoadError, { readonly brand: "LoadError" }>()(
@@ -125,24 +125,29 @@ const flowFiles = (configDir: string) =>
 export const flowNames = (configDir: string) =>
   Effect.map(flowFiles(configDir), (files) => files.map(([name]) => name));
 
-// The flows in <configDir>/flows/ that open pull requests asking the pool for
-// a review. Their code is read, not imported, so it runs nothing; none when
-// the folder can't be read.
-export const authoringFlows = (configDir: string) =>
+// The flows in <configDir>/flows/ whose name and code `test` picks. Their code
+// is read, not imported, so it runs nothing; none when the folder can't be read.
+const flowsWhere = (configDir: string, test: (name: string, source: string) => boolean) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const authoring: Array<string> = [];
+    const picked: Array<string> = [];
 
     for (const [name, path] of yield* flowFiles(configDir)) {
       const source = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
-      if (authorsPullRequests(name, source)) {
-        authoring.push(name);
+      if (test(name, source)) {
+        picked.push(name);
       }
     }
 
-    return authoring;
+    return picked;
   }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+
+// The flows that open pull requests asking the pool for a review.
+export const authoringFlows = (configDir: string) => flowsWhere(configDir, authorsPullRequests);
+
+// The flows that review the pull requests asked of their persona.
+export const reviewingFlows = (configDir: string) => flowsWhere(configDir, reviewsPullRequests);
 
 // Every flow in <configDir>/flows/, by file name.
 export const loadFlows = (configDir: string) =>

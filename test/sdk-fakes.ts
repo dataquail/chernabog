@@ -10,6 +10,7 @@ import {
   type AgentRequest,
   type CiState,
   type Comment,
+  CurrentActivity,
   DEFAULT_LABELS,
   type Flow,
   Git,
@@ -157,6 +158,8 @@ export const makeFake = (
   const submitted: Array<SubmittedReview> = [];
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
+  // The activity each agent call came from, as the Agent service sees it.
+  const steps: Array<Option.Option<string>> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
 
   const merge: MergeFake = {
@@ -421,23 +424,22 @@ export const makeFake = (
     Layer.mock(Agent)({
       adapters: [],
       run: (request) =>
-        Effect.suspend(() => {
+        Effect.gen(function* () {
+          steps.push(yield* CurrentActivity);
           adapters.push(request.adapter);
           requests.push(request);
 
           if (author.closes && request.withPerson === true) {
-            return Effect.fail(
-              new AgentError({
-                message: "claude: the person closed the session before it finished",
-              }),
-            );
+            return yield* new AgentError({
+              message: "claude: the person closed the session before it finished",
+            });
           }
 
-          return Effect.succeed({
+          return {
             sessionId: request.sessionId,
             output: answerFor(request),
-            costUsd: Option.none(),
-          });
+            costUsd: Option.none<number>(),
+          };
         }),
     }),
     Layer.mock(StepRunner)({}),
@@ -452,6 +454,7 @@ export const makeFake = (
     existing,
     merge,
     requests,
+    steps,
     knowRun,
     labelsOf,
     setLabels,

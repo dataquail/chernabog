@@ -222,6 +222,16 @@ const narrowed =
       Effect.fail(new StepFailed({ step: name, message: describeError(other) })),
     );
 
+// The step an activity is running, for what it calls to know by name: the
+// Agent service gives it to the adapter, so a rehearsal's stand-ins are
+// keyed by step. None outside an activity.
+export const CurrentActivity = Context.Reference<Option.Option<string>>(
+  "@chernabog/sdk/CurrentActivity",
+  {
+    defaultValue: () => Option.none(),
+  },
+);
+
 // One durable step of a workflow. It runs once; its result is saved, and a
 // replay returns the saved result. Names must be unique within a run, so a
 // step inside a loop carries its round: `fix-ci-2`. `success` is the result's
@@ -239,7 +249,7 @@ export const activity = <S extends Schema.Constraint = typeof Schema.Void, E = n
       success,
       error: ActivityError,
       execute: withRunLog((log) => log.step(name)).pipe(
-        Effect.andThen(execute),
+        Effect.andThen(Effect.provideService(execute, CurrentActivity, Option.some(name))),
         Effect.ensuring(withRunLog((log) => log.stepDone(name))),
         Effect.mapError(toActivityError(name)),
       ),

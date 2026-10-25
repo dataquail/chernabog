@@ -16,6 +16,7 @@ export type FakeIssue = {
   labels: Array<string>;
   createdAt: string;
   assignees: Array<string>;
+  closed?: boolean;
 };
 
 export type FakeComment = {
@@ -116,8 +117,22 @@ const CheckRunsJson = Schema.Struct({
 
 // What the app sends.
 const GraphqlBody = Schema.Struct({
-  variables: Schema.Struct({ search: Schema.optionalKey(Schema.String) }),
+  query: Schema.optionalKey(Schema.String),
+  variables: Schema.Struct({
+    search: Schema.optionalKey(Schema.String),
+    id: Schema.optionalKey(Schema.String),
+  }),
 });
+
+const NewIssueBody = Schema.Struct({
+  title: Schema.String,
+  body: Schema.String,
+  labels: Schema.optionalKey(Schema.Array(Schema.String)),
+  assignees: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+const StateBody = Schema.Struct({ state: Schema.optionalKey(Schema.Literals(["open", "closed"])) });
+const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
 const CommentBody = Schema.Struct({ body: Schema.String });
@@ -189,6 +204,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   // Logins that can only read the repo; anyone else can write.
   const readOnly = new Set<string>();
+  // Logins that administer the repo, and so may delete its issues.
+  const admins = new Set<string>();
+  // The repo's labels, as created through the API.
+  const repoLabels: Array<string> = [];
+  // Who opened each issue through the API.
+  const openedBy: Array<string> = [];
   const requests: Array<string> = [];
   // Each request, as "<login> <method> <path>".
   const requestsBy: Array<string> = [];
@@ -235,6 +256,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     `https://github.com/${options.slug}/${kind}/${number}`;
 
   const issueJson = (issue: FakeIssue) => ({
+    node_id: `I_${issue.number}`,
     number: issue.number,
     title: issue.title,
     body: issue.body,
@@ -275,7 +297,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     );
 
     const nodes = [...issues.values()].flatMap((issue) => {
-      if (Option.isSome(label) && !issue.labels.includes(label.value)) {
+      if (issue.closed === true || (Option.isSome(label) && !issue.labels.includes(label.value))) {
         return [];
       }
 
@@ -292,6 +314,66 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     });
 
     return json({ data: { search: { nodes } } });
+  });
+
+  // GraphQL's search, and deleteIssue, which only an admin of the repo may run.
+  const graphql = withBody(GraphqlBody, (body, args) => {
+    if (body.query?.includes("deleteIssue") === true) {
+      if (!admins.has(args.login)) {
+        return json({ errors: [{ message: `${args.login} must be an admin to delete an issue` }] });
+      }
+
+      const number = Number((body.variables.id ?? "").replace("I_", ""));
+      issues.delete(number);
+
+      return json({ data: { deleteIssue: {} } });
+    }
+
+    return searchIssues(args);
+  });
+
+  const createIssue = withBody(NewIssueBody, (body, args) => {
+    const issue: FakeIssue = {
+      number: takeNumber(),
+      title: body.title,
+      body: body.body,
+      labels: [...(body.labels ?? [])],
+      createdAt: now(),
+      assignees: [...(body.assignees ?? [])],
+    };
+
+    issues.set(issue.number, issue);
+    openedBy.push(`${args.login} opened #${issue.number}`);
+
+    return json(issueJson(issue), 201);
+  });
+
+  const editIssue = withBody(StateBody, (body, args) =>
+    Option.match(Option.fromUndefinedOr(issues.get(numberParam(args))), {
+      onNone: notFound,
+      onSome: (issue) => {
+        issue.closed = body.state === "closed";
+
+        return json(issueJson(issue));
+      },
+    }),
+  );
+
+  const editPull = withBody(StateBody, (body, args) =>
+    Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
+      onNone: notFound,
+      onSome: (pull) => {
+        pull.state = body.state ?? pull.state;
+
+        return encoded(PullJson, pullJson(pull));
+      },
+    }),
+  );
+
+  const createLabel = withBody(LabelBody, (body) => {
+    repoLabels.push(body.name);
+
+    return json({ name: body.name }, 201);
   });
 
   const createRef = withBody(CreateRefBody, (body) => {
@@ -576,7 +658,17 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const routes: ReadonlyArray<Route> = [
     { method: "GET", pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
     { method: "GET", pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
-    { method: "POST", pattern: /^\/graphql$/, handle: searchIssues },
+    { method: "POST", pattern: /^\/graphql$/, handle: graphql },
+    { method: "POST", pattern: new RegExp(`^${repo}/issues$`), handle: createIssue },
+    { method: "PATCH", pattern: new RegExp(`^${repo}/issues/(\\d+)$`), handle: editIssue },
+    { method: "PATCH", pattern: new RegExp(`^${repo}/pulls/(\\d+)$`), handle: editPull },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/labels$`),
+      handle: () => json(repoLabels.map((name) => ({ name, color: "ededed", description: "" }))),
+    },
+    { method: "POST", pattern: new RegExp(`^${repo}/labels$`), handle: createLabel },
+    { method: "PATCH", pattern: new RegExp(`^${repo}/labels/(.+)$`), handle: () => json({}) },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/git/ref/heads/(.+)$`),
@@ -614,9 +706,20 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/issues/(\\d+)$`),
+      // As on GitHub, a pull request is an issue too.
       handle: (args) =>
         Option.match(Option.fromUndefinedOr(issues.get(numberParam(args))), {
-          onNone: notFound,
+          onNone: () =>
+            Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
+              onNone: notFound,
+              onSome: (pull) =>
+                json({
+                  node_id: `PR_${pull.number}`,
+                  number: pull.number,
+                  labels: pull.labels.map((name) => ({ name })),
+                  pull_request: { html_url: html("pull", pull.number) },
+                }),
+            }),
           onSome: (issue) => json(issueJson(issue)),
         }),
     },
@@ -710,6 +813,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     reviewsOf: (number: number) => reviews.get(number) ?? [],
     merges,
     readOnly,
+    admins,
+    repoLabels,
+    openedBy,
     closePull: (number: number, merged = true) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
       pull.state = "closed";

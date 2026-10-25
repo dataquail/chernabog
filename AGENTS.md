@@ -313,6 +313,33 @@ Errors split by who acts on them (`packages/sdk/src/errors.ts`).
   but raised only when a flow asks for it (as a defect `surfaceSetup` turns
   back into the setup error), so flows that never review run regardless.
 
+## Rehearsals (#115)
+
+`chernabog rehearse <flow> --scenario <file>` runs a repo's own flow file down
+the real path (machine config, personas, routing, pool, real GitHub and CI) on
+a seeded repo, with no agent session.
+
+- **Stand-ins, not a second flow.** `activity()` names its step in
+  `CurrentActivity`, and `AgentLive` passes it on as `AgentRequest.step`. The
+  `rehearsal` adapter (`agents/rehearsal.ts`) answers each step from
+  `standIns` (`src/kernel/stand-in.value-object.ts`): a script in the
+  worktree, or a fixture with placeholder commits. `exclusive: true` sends
+  every agent call to it, so no real agent can start. A step it can't answer
+  is recorded (`recordUnanswered`) and fails the rehearsal whatever the flow
+  did about it; the step's own block still checks the answer's shape.
+- **Every agent answer is recorded** by step, with the commits its step made
+  (`agents/answers.ts`, `sessions/runs/<run>.answers.jsonl`). That's what
+  `--replay <run>` stands in with.
+- **The rehearsals module** reads scenarios (`ScenariosRepository`; the file's
+  shape is `src/kernel/scenario.value-object.ts`, and `init` writes its schema
+  as `rehearsal.schema.json`) and seeds and cleans up GitHub
+  (`ScratchRepoClient`). `rehearse.main.ts` composes it with the runtime: a
+  clone of the scenario's repo, a journal of its own under
+  `rehearsals/<id>/`, and only seeded work items (`chooseSeededWorkUseCase`).
+- **An enrolled repo is refused** unless the scenario says `enrolled: true` or
+  the person passes `--on-enrolled`; then it is paused on this machine
+  meanwhile, and cloned from its own origin.
+
 ## Effect and lint
 
 `bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the

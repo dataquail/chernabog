@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { authorsPullRequests, unservedReviewers } from "./reviewer-pool.value-object.ts";
+import {
+  authorsPullRequests,
+  reviewsPullRequests,
+  unservedReviewers,
+} from "./reviewer-pool.value-object.ts";
 
 describe("review requests no persona here serves", () => {
   test("a flow authors pull requests by its recipe name, or code that asks for a review", () => {
@@ -14,6 +18,14 @@ describe("review requests no persona here serves", () => {
       authorsPullRequests("ship-docs", "yield* Implement.handOff(issue, opened, outcome)"),
     ).toBe(true);
     expect(authorsPullRequests("review", "yield* Review.round(pullRequest, 1)")).toBe(false);
+  });
+
+  test("a flow reviews by its recipe name, or code that reviews", () => {
+    expect(reviewsPullRequests("review", "")).toBe(true);
+    expect(reviewsPullRequests("triage", "yield* Review.round(pullRequest, 1)")).toBe(true);
+    expect(
+      reviewsPullRequests("implement", "yield* Implement.handOff(issue, opened, outcome)"),
+    ).toBe(false);
   });
 
   test("the pool, less the author, when none of it is a persona here", () => {

@@ -2,7 +2,15 @@
 // headless, and returns its final structured answer. No flow depends on a
 // specific agent; each adapter knows how to drive one CLI.
 
-import { Agent, AgentError, HEADLESS, type RepoSettings, Run, RunLog } from "@chernabog/sdk";
+import {
+  Agent,
+  AgentError,
+  CurrentActivity,
+  HEADLESS,
+  type RepoSettings,
+  Run,
+  RunLog,
+} from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -11,16 +19,19 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
+import type { StandIns } from "../../../../kernel/stand-in.value-object.ts";
 import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
+import { commitsSince, headOf, recordAnswer, recordUnanswered } from "./agents/answers.ts";
 import { claudeAdapter } from "./agents/claude.ts";
 import { claudeEnvironment } from "./agents/claude-events.ts";
 import { codexAdapter } from "./agents/codex.ts";
 import { customAdapter } from "./agents/custom.ts";
 import { opencodeAdapter } from "./agents/opencode.ts";
+import { REHEARSAL, rehearsalAdapter } from "./agents/rehearsal.ts";
 import { knownLaunch, sessionFiles } from "./agents/session-files.ts";
 import { knownSession, recordRunSession, type SessionRecord } from "./agents/sessions.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
@@ -32,13 +43,34 @@ export type AgentsConfig = Readonly<
       readonly args?: ReadonlyArray<string>;
       readonly start?: ReadonlyArray<string>;
       readonly resume?: ReadonlyArray<string>;
+      readonly standIns?: StandIns;
+      readonly dir?: string;
+      readonly exclusive?: boolean;
     }
   >
 >;
 
-export const BUILT_IN_AGENTS: ReadonlyArray<string> = ["claude", "codex", "opencode"];
+export const BUILT_IN_AGENTS: ReadonlyArray<string> = ["claude", "codex", "opencode", REHEARSAL];
+
+// The rehearsal agent, when machine config (or a rehearsal) gives it stand-ins.
+const rehearsalOf = (agents: AgentsConfig) =>
+  Option.flatMap(Record.get(agents, REHEARSAL), (agent) =>
+    Option.map(Option.fromUndefinedOr(agent.standIns), (standIns) => ({
+      adapter: rehearsalAdapter({ standIns, dir: agent.dir ?? "." }),
+      exclusive: agent.exclusive === true,
+    })),
+  );
 
 export const adaptersFor = (agents: AgentsConfig): ReadonlyArray<Adapter> => {
+  const rehearsal = rehearsalOf(agents);
+
+  // An exclusive rehearsal answers every call, so no real agent is there to start.
+  if (Option.exists(rehearsal, (found) => found.exclusive)) {
+    return Option.toArray(
+      Option.map(rehearsal, (found) => ({ ...found.adapter, exclusive: true })),
+    );
+  }
+
   const custom = Object.entries(agents).flatMap(([name, agent]) => {
     if (BUILT_IN_AGENTS.includes(name)) {
       return [];
@@ -62,6 +94,7 @@ export const adaptersFor = (agents: AgentsConfig): ReadonlyArray<Adapter> => {
         () => [],
       ),
     ),
+    ...Option.toArray(Option.map(rehearsal, (found) => found.adapter)),
     ...custom,
   ];
 };
@@ -94,7 +127,13 @@ export const AgentLive = (
         adapters: adapters.map((adapter) => adapter.name),
         run: (request) =>
           Effect.gen(function* () {
-            const name = Option.getOrElse(request.adapter, () => settings.agent);
+            const exclusive = Arr.findFirst(adapters, (candidate) => candidate.exclusive === true);
+
+            const name = Option.match(exclusive, {
+              onNone: () => Option.getOrElse(request.adapter, () => settings.agent),
+              onSome: (only) => only.name,
+            });
+
             const found = Arr.findFirst(adapters, (candidate) => candidate.name === name);
 
             if (Option.isNone(found)) {
@@ -103,8 +142,10 @@ export const AgentLive = (
               });
             }
 
+            // A rehearsal stands in for the person too.
             if (
               request.withPerson === true &&
+              name !== REHEARSAL &&
               !(name === "claude" && isInteractive(settings.launcher))
             ) {
               return yield* new AgentError({
@@ -137,13 +178,53 @@ export const AgentLive = (
                 .pipe(Effect.mapError((error) => new AgentError({ message: error.message })))),
             };
 
-            return yield* found.value.run(request, {
-              account,
-              host: host.variables,
-              env,
-              launcher: settings.launcher,
-              log: yield* logOf,
+            const activity = yield* CurrentActivity;
+            const step = Option.orElse(Option.fromUndefinedOr(request.step), () => activity);
+
+            const asked = Option.match(step, {
+              onNone: () => request,
+              onSome: (named) => ({ ...request, step: named }),
             });
+
+            const before = yield* headOf(request.cwd);
+
+            const result = yield* found.value
+              .run(asked, {
+                account,
+                host: host.variables,
+                env,
+                launcher: settings.launcher,
+                log: yield* logOf,
+              })
+              .pipe(
+                // A rehearsal fails on a step it couldn't answer, whatever the flow does about it.
+                Effect.tapError((error) =>
+                  Option.match(
+                    Option.filter(run, () => found.value.exclusive === true),
+                    {
+                      onNone: () => Effect.void,
+                      onSome: (info) =>
+                        recordUnanswered(
+                          info.runId,
+                          Option.getOrElse(step, () => "(outside any step)"),
+                          error.message,
+                        ),
+                    },
+                  ),
+                ),
+              );
+
+            // What a replay stands in with: the answer, and the commits the step made.
+            if (Option.isSome(run) && Option.isSome(step)) {
+              yield* recordAnswer(run.value.runId, {
+                step: step.value,
+                adapter: name,
+                answer: result.output,
+                commits: yield* commitsSince(request.cwd, before),
+              });
+            }
+
+            return result;
           }).pipe(Effect.provide(services)),
       });
     }),

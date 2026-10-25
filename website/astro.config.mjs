@@ -96,7 +96,13 @@ export default defineConfig({
         },
         {
           label: "Write flows",
-          items: [{ slug: "flows/flows" }, { slug: "flows/composing" }, { slug: "flows/steps" }, { slug: "flows/sdk" }],
+          items: [
+            { slug: "flows/flows" },
+            { slug: "flows/composing" },
+            { slug: "flows/steps" },
+            { slug: "flows/rehearsing" },
+            { slug: "flows/sdk" },
+          ],
         },
         {
           label: "Reference",

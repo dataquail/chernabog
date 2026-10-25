@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
@@ -40,14 +41,23 @@ const statusWhen = async (sandbox: Sandbox, wanted: (status: string) => boolean,
 const UNSERVED =
   "demo as alice: pull requests authored as alice go to bob, which this machine doesn't act as; they wait until another machine reviews them";
 
-// alice opens pull requests; the pool is alice and bob.
-const doctorWith = (github: ReadonlyArray<string>) => {
+// alice opens pull requests; the pool is alice and bob. `reviewer` is bob's
+// flows in the repo, when bob is one of its personas.
+const doctorWith = (
+  github: ReadonlyArray<string>,
+  reviewer: Option.Option<Readonly<Record<string, typeof never>>> = Option.none(),
+) => {
   let sandbox: Sandbox;
 
   beforeAll(() => {
+    const alice = { implement: never, review: never };
+
     sandbox = openSandbox(
       { reviewers: ["alice", "bob"] },
-      { github, personas: ["alice"], personaFlows: { alice: { implement: never, review: never } } },
+      Option.match(reviewer, {
+        onNone: () => ({ github, personas: ["alice"], personaFlows: { alice } }),
+        onSome: (bob) => ({ github, personas: ["alice", "bob"], personaFlows: { alice, bob } }),
+      }),
     );
   });
 
@@ -68,11 +78,23 @@ describe("doctor, on a machine that acts only as the author", () => {
   });
 });
 
-describe("doctor, on a machine that acts as the other reviewer too", () => {
+describe("doctor, on a machine that acts as the other reviewer but doesn't review as it", () => {
   const doctor = doctorWith(["alice", "bob"]);
 
+  test("warns that no persona here reviews as that login", async () => {
+    const said = await doctor();
+    expect(said).not.toContain("which this machine doesn't act as");
+    expect(said).toContain("go to bob, which no persona here reviews as");
+  });
+});
+
+describe("doctor, on a machine where the other reviewer runs review", () => {
+  const doctor = doctorWith(["alice", "bob"], Option.some({ review: never }));
+
   test("stays quiet", async () => {
-    expect(await doctor()).not.toContain("which this machine doesn't act as");
+    const said = await doctor();
+    expect(said).not.toContain("which this machine doesn't act as");
+    expect(said).not.toContain("which no persona here reviews as");
   });
 });
 

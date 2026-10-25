@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ScenarioFile } from "../../../../kernel/scenario.value-object.ts";
 import {
   checkVersion,
   decodeManifest,
@@ -37,6 +38,8 @@ const jsonSchemaOf = (schema: Schema.Top) => {
 // Generated from the config schemas, so init rewrites them to pick up new keys.
 const schemaFiles = () => ({
   "config.schema.json": jsonSchemaOf(RepoConfigFile),
+  // For .chernabog/rehearsals/<name>.yaml (chernabog rehearse).
+  "rehearsal.schema.json": jsonSchemaOf(ScenarioFile),
 });
 
 // Every file init writes, by path under .chernabog/, before any recipe.

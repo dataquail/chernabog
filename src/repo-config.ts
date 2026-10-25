@@ -29,6 +29,7 @@ import YAML from "yaml";
 
 import { howToStart } from "./kernel/manual-flow.value-object.ts";
 import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.value-object.ts";
+import { StandIns } from "./kernel/stand-in.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
 import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts";
@@ -184,6 +185,14 @@ export const AgentFile = Schema.Struct({
   // An agent of your own: command templates with {prompt}, {promptFile}, {sessionId} and {cwd}.
   start: Schema.optionalKey(Strings),
   resume: Schema.optionalKey(Strings),
+  // The rehearsal agent's answers, by step name (#115): `agents.rehearsal.standIns`.
+  standIns: Schema.optionalKey(StandIns),
+  // Where the stand-ins' files are, given to scripts as CHERNABOG_STAND_INS;
+  // machine config's own directory when left out.
+  dir: Schema.optionalKey(Schema.String),
+  // Every agent call goes to this agent, whatever adapter a flow or role asks
+  // for, so no real agent can start. `chernabog rehearse` sets it.
+  exclusive: Schema.optionalKey(Schema.Boolean),
 });
 
 // A launcher of your own: command templates with {command}, {cwd}, {title} and {handle}.
@@ -517,8 +526,17 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
 export const loadMachineConfig = Effect.gen(function* () {
   const home = yield* Home;
   const file = yield* readYaml(MachineConfigFile, homePaths(home.root).machineConfig);
+  const machine = normalizeMachineConfig(file, home.user);
 
-  return normalizeMachineConfig(file, home.user);
+  // A rehearsal agent's files are beside machine config unless it says where.
+  const agents = Record.map(machine.agents, (agent) =>
+    Option.match(Option.fromUndefinedOr(agent.standIns), {
+      onNone: () => agent,
+      onSome: () => ({ ...agent, dir: expandHome(agent.dir ?? home.root, home.user) }),
+    }),
+  );
+
+  return { ...machine, agents };
 });
 
 export const repoNameOf = (repo: EnrolledRepo) => EnrolledRepoRootOps.nameOf(toRoot(repo));

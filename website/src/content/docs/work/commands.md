@@ -10,6 +10,7 @@ description: Every chernabog command and flag.
 | `chernabog`                       | The [live view](/chernabog/work/live-view/)                                       |
 | `status`                          | Repos, schedules and trust, runs in flight, recent runs, why ticks were skipped. A [manual flow](/chernabog/flows/flows/#manual-flows) shows as `manual`, with how to start it |
 | `run <flow> --repo <repo>`        | One run now, skipping gates, through the daemon; follows its log                |
+| `rehearse <flow> --repo <repo> --scenario <file>` | [Rehearse the flow](/chernabog/flows/rehearsing/) end to end on a seeded repo, with stand-ins where the agent would be; then clean up what it seeded |
 | `trigger <flow> --repo <repo>`    | A tick now, with its gates, as if the schedule came due. A manual flow has no schedule, so this fails and says how to start it |
 | `cancel <run>`, `cancel <repo> <item>` | End a run in flight for good, waiting or mid-step, through the daemon or, with it stopped, here. It's recorded as `cancelled`, its worktrees are removed (any with uncommitted or unpushed work is kept and named), and its claim on its issue is released: `auto:in-progress` and the assignment come off, and the claim branch is deleted unless it has commits or a pull request. It never comments, reviews, or closes or merges a pull request. `--flow` and `--as` pick among several runs on one item; `--close-session` also closes its agent sessions through their launcher, which are otherwise left to you |
 | `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
@@ -19,7 +20,7 @@ description: Every chernabog command and flag.
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
-| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon; warn when a persona's pull requests can only go to reviewers this machine doesn't act as |
+| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon; warn when a persona's pull requests can only go to reviewers this machine doesn't act as, or that no persona here runs review as |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, bake the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
 | `recipes list [path]`             | Each recipe, with its description and docs page, and a check by the ones the repo has |
