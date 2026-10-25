@@ -59,6 +59,31 @@ export class AmbiguousRunPrefix extends Schema.TaggedError<
   }
 }
 
+// No run is in flight for the repo's item, among the ones a person narrowed to.
+export class NoRunInFlight extends Schema.TaggedError<
+  NoRunInFlight,
+  { readonly brand: "NoRunInFlight" }
+>()("NoRunInFlight", { repo: Schema.String, itemKey: Schema.String }) {
+  public override get message() {
+    return `no run in flight for ${this.repo} ${this.itemKey}`;
+  }
+}
+
+// Several runs are in flight for the repo's item, such as two flows or two
+// personas on one pull request.
+export class SeveralRunsInFlight extends Schema.TaggedError<
+  SeveralRunsInFlight,
+  { readonly brand: "SeveralRunsInFlight" }
+>()("SeveralRunsInFlight", {
+  repo: Schema.String,
+  itemKey: Schema.String,
+  matching: Schema.Array(RunId),
+}) {
+  public override get message() {
+    return `${this.matching.length} runs are in flight for ${this.repo} ${this.itemKey} (${this.matching.join(", ")}); name one by its id, or narrow with --flow or --as`;
+  }
+}
+
 // The run has no log, at the path its log would be.
 export class RunLogMissing extends Schema.TaggedError<
   RunLogMissing,
@@ -82,3 +107,10 @@ export class PersonaNotReady extends Schema.TaggedError<
   PersonaNotReady,
   { readonly brand: "PersonaNotReady" }
 >()("PersonaNotReady", { message: Schema.String }) {}
+
+// Cleaning up what a cancelled run held failed partway; the message says what
+// was left.
+export class CleanupFailed extends Schema.TaggedError<
+  CleanupFailed,
+  { readonly brand: "CleanupFailed" }
+>()("CleanupFailed", { message: Schema.String }) {}

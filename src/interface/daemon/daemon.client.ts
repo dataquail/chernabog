@@ -10,8 +10,10 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { CancelledRun } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
+  CancelRequest,
   DaemonStatus,
   Refusal,
   Reloaded,
@@ -113,4 +115,11 @@ export const daemonReload = send(HttpClientRequest.post("/reload")).pipe(
 export const daemonRunRow = (runId: string) =>
   send(HttpClientRequest.get(`/runs/${encodeURIComponent(runId)}`)).pipe(
     Effect.flatMap(reply(RunReply)),
+  );
+
+export const daemonCancel = (request: CancelRequest) =>
+  HttpClientRequest.schemaBodyJson(CancelRequest)(HttpClientRequest.post("/cancel"), request).pipe(
+    Effect.mapError((error) => new DaemonRefused({ message: error.message })),
+    Effect.flatMap(send),
+    Effect.flatMap(reply(CancelledRun)),
   );

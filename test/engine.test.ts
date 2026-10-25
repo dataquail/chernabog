@@ -43,8 +43,10 @@ import {
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { StateAt } from "../src/modules/runs/runs.layer.ts";
+import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
+import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
+import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
@@ -224,6 +226,7 @@ const withEngine = <A, E, R>(
       runtimeFor(flowsOf).pipe(
         Layer.provideMerge(flowLayer(flowsOf, servicesFor)),
         Layer.provideMerge(StateAt(homePaths(home).state)),
+        Layer.merge(RunLogsLayer),
         Layer.provideMerge(homeLayer),
       ),
     );
@@ -341,6 +344,39 @@ describe("the engine", () => {
       expect(summaryOf(finished)).toBe("woke by pushed");
     }),
   );
+  effect("a cancelled waiting run stops in the engine, and no signal wakes it", () =>
+    Effect.gen(function* () {
+      const cancels = Effect.gen(function* () {
+        const run = yield* started(item("wait"));
+
+        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced("25 millis"),
+            until: ({ waits }) => waits.length > 0,
+            times: POLLS,
+          }),
+        );
+
+        const cancelled = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+          by: "alice",
+          closeSessions: false,
+        });
+
+        const delivered = yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
+        const polled = yield* pollRun(run);
+        const execution = yield* handle.workflow.poll(Option.getOrThrow(run.executionId));
+
+        return { cancelled, delivered, polled, execution };
+      });
+
+      const { value } = yield* withEngine(cancels);
+
+      expect([value.cancelled.stopped, value.cancelled.wakesCleared]).toEqual([true, 1]);
+      expect([value.delivered, value.polled.status]).toEqual([0, "cancelled"]);
+      expect(Option.map(value.execution, (result) => result._tag)).toEqual(Option.some("Complete"));
+    }),
+  );
+
   effect(
     "a start a crash interrupted runs once on recovery, whether or not its workflow had started",
     () =>

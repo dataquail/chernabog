@@ -12,12 +12,14 @@ import { type Persona, samePersona } from "../../../../kernel/persona.value-obje
 import { type RunId } from "../../../../kernel/run-id.id.ts";
 import {
   AmbiguousRunPrefix,
+  NoRunInFlight,
   RunAlreadyActive,
   RunAlreadyFinished,
   RunNotNamed,
+  SeveralRunsInFlight,
 } from "./run.errors.ts";
 import { type RunEnding, RunRoot } from "./run.root.ts";
-import { type WorkItem } from "./work-item.value-object.ts";
+import { itemTarget, type WorkItem } from "./work-item.value-object.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";
 
@@ -98,6 +100,90 @@ const finish = (run: RunRoot, ending: RunEnding, summary: string, at: string) =>
     }),
   );
 
+// The run ended by a person, at `at`, before its workflow could end it. Its
+// summary says who and when, and the step it was interrupted in, if any.
+const cancel = (run: RunRoot, by: string, at: string) =>
+  whileRunning(run, () =>
+    RunRoot.make({
+      ...run,
+      status: "cancelled",
+      summary: Option.some(
+        Option.match(run.currentStep, {
+          onNone: () => `cancelled by ${by} at ${at}`,
+          onSome: (step) => `cancelled by ${by} at ${at}, interrupted in ${step}`,
+        }),
+      ),
+      currentStep: Option.none(),
+      finishedAt: Option.some(at),
+    }),
+  );
+
+// What a person names a run in flight by, without its id: a repo's item, and
+// optionally the flow and persona, when several runs in flight share the item.
+export type InFlightQuery = {
+  readonly repo: string;
+  readonly itemKey: string;
+  readonly flow: Option.Option<string>;
+  readonly persona: Option.Option<string>;
+};
+
+// The one run in flight that `query` names, among `runs`.
+const inFlightFor = (
+  runs: ReadonlyArray<RunRoot>,
+  query: InFlightQuery,
+): Result.Result<RunRoot, NoRunInFlight | SeveralRunsInFlight> => {
+  const matching = runs.filter(
+    (run) =>
+      isRunning(run) &&
+      run.repo === query.repo &&
+      run.itemKey === query.itemKey &&
+      Option.match(query.flow, { onNone: () => true, onSome: (flow) => run.flow === flow }) &&
+      Option.match(query.persona, {
+        onNone: () => true,
+        onSome: (login) => Option.contains(run.persona, login),
+      }),
+  );
+
+  if (matching.length === 1) {
+    return Result.succeed(matching[0]);
+  }
+
+  if (matching.length === 0) {
+    return Result.fail(new NoRunInFlight({ repo: query.repo, itemKey: query.itemKey }));
+  }
+
+  return Result.fail(
+    new SeveralRunsInFlight({
+      repo: query.repo,
+      itemKey: query.itemKey,
+      matching: Arr.sort(
+        matching.map((run) => run.id),
+        Order.String,
+      ),
+    }),
+  );
+};
+
+// The other runs in flight in the run's repo on the same issue or pull
+// request, whatever their flow or persona: a review and a re-review of one
+// pull request (`pr-<n>`, `pr-<n>-review-<k>`) share its checkout, so what one
+// leaves behind the others may still be using. None for an item of a flow's own.
+const sharingTarget = (runs: ReadonlyArray<RunRoot>, run: RunRoot) =>
+  Option.match(itemTarget(run.itemKey), {
+    onNone: (): ReadonlyArray<RunRoot> => [],
+    onSome: (target) =>
+      runs.filter(
+        (other) =>
+          isRunning(other) &&
+          other.id !== run.id &&
+          other.repo === run.repo &&
+          Option.exists(
+            itemTarget(other.itemKey),
+            (theirs) => theirs.kind === target.kind && theirs.number === target.number,
+          ),
+      ),
+  });
+
 // A run from before personas, given the persona a repo's runs now act as, so
 // it keeps resuming and holding that persona's slots. None for a run that
 // already has a persona.
@@ -145,5 +231,8 @@ export const RunRootOps = {
   unexecuted,
   enterStep,
   finish,
+  cancel,
+  inFlightFor,
+  sharingTarget,
   adopt,
 } as const;

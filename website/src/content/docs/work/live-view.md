@@ -15,6 +15,7 @@ description: chernabog with no arguments — a live view of the daemon, its flow
 | `tab`, `↑` `↓` | Switch between flows and runs, and select                                    |
 | `enter`        | On a run: follow its log; `↑` `↓` scroll, `end` follows again, `esc` returns. On a flow: its persona's [settings](#settings) |
 | `a`            | Attach to the run's agent session, to watch or step in                       |
+| `x`            | Cancel the selected run in flight, once you confirm with `y`; see [`cancel`](/chernabog/work/commands/) |
 | `t`            | Trigger the selected flow now, with its gates                                |
 | `e`            | Turn the selected flow off or on for the persona it runs as, in machine config; pending until the daemon restarts on it, once idle |
 | `p`            | Pause or resume the repo                                                     |

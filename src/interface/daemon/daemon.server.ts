@@ -40,6 +40,8 @@ import {
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
 import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
+import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
+import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
@@ -74,6 +76,7 @@ import {
   scheduleFor,
 } from "../../repo-config.ts";
 import {
+  CancelRequest,
   DaemonStatus,
   type PersonaStatus,
   Refusal,
@@ -918,6 +921,44 @@ export const runDaemon = Effect.gen(function* () {
           );
         });
 
+      // A run a person cancels; a repo they name by its slug is the one it runs as.
+      const cancel = Effect.gen(function* () {
+        const body = yield* HttpServerRequest.schemaBodyJson(CancelRequest);
+
+        const target = CancelTarget.match(body.target, {
+          ById: (byId): CancelTarget => byId,
+          ByItem: (byItem): CancelTarget => ({
+            ...byItem,
+            repo: Option.getOrElse(
+              Option.map(
+                Arr.findFirst(
+                  repos,
+                  (candidate) =>
+                    candidate.name === byItem.repo || candidate.enrolled.repo === byItem.repo,
+                ),
+                (found) => found.name,
+              ),
+              () => byItem.repo,
+            ),
+          }),
+        });
+
+        const cancelled = yield* cancelRunUseCase(target, {
+          by: body.by,
+          closeSessions: body.closeSessions,
+        }).pipe(Effect.result);
+
+        if (Result.isFailure(cancelled)) {
+          return yield* refuse(409, cancelled.failure.message);
+        }
+
+        yield* log(
+          `cancelled ${cancelled.success.run.id} (${runLabel(cancelled.success.run)}): ${Option.getOrElse(cancelled.success.run.summary, () => "")}`,
+        );
+
+        return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
+      });
+
       const routes = Layer.mergeAll(
         HttpRouter.add(
           "GET",
@@ -952,6 +993,7 @@ export const runDaemon = Effect.gen(function* () {
           ),
         ),
         HttpRouter.add("POST", "/run", answer(runOrTick(false))),
+        HttpRouter.add("POST", "/cancel", answer(cancel)),
         HttpRouter.add("POST", "/tick", answer(runOrTick(true))),
       );
 
