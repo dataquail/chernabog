@@ -91,7 +91,7 @@ The flow, its prompts and its stages come from your working copy's `.chernabog/`
 
 Rehearse **refuses a scenario whose `repo:` is enrolled** on this machine, unless the scenario says `enrolled: true` (or you pass `--on-enrolled`). Rehearsing on your own repo with a stub issue is the low-effort check. A scratch repo keeps your issue history clean.
 
-On an enrolled repo, chernabog pauses the repo on this machine for the rehearsal, and resumes it afterwards. **Another machine's daemon may still pick up what is seeded.** The rehearsal itself only ever runs on what it seeded, never on real work queued in the repo.
+On an enrolled repo, chernabog pauses the scenario's repo on this machine for the rehearsal, clones it from its own checkout's origin, and resumes it afterwards. That needn't be the `--repo` repo: the flow file comes from `--repo`, so you can rehearse one repo's flow on a stub issue in another repo you're enrolled in. **Another machine's daemon may still pick up what is seeded.** The rehearsal itself only ever runs on what it seeded, never on real work queued in the repo.
 
 ## Cleanup
 

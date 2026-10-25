@@ -3,6 +3,7 @@
 // GitHub serves one repo, the enrolled one, so these rehearse on it with
 // enrolled: true; a scratch repo goes through the same calls.
 
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -146,6 +147,69 @@ describe("chernabog rehearse implement --replay", () => {
     expect(output).toContain("no step asked for the stand-in renamed-step");
     expect(code).toBe(0);
     expect(sandbox.claudeCalls()).toHaveLength(agentRuns);
+  }, 120_000);
+});
+
+describe("chernabog rehearse --repo other, on the enrolled repo demo", () => {
+  let sandbox: Sandbox;
+  let otherOrigin: string;
+
+  // A second enrolled repo, with the same flows and an origin of its own.
+  beforeAll(() => {
+    sandbox = openSandbox();
+    otherOrigin = join(sandbox.root, "other.git");
+    const other = join(sandbox.root, "other");
+    execFileSync("git", ["clone", "-q", "--bare", sandbox.bare, otherOrigin]);
+    execFileSync("git", ["clone", "-q", otherOrigin, other]);
+
+    sandbox.editMachine((document) => {
+      document.addIn(["repos"], {
+        path: other,
+        repo: "dataquail/other",
+        name: "other",
+        account: "work",
+        baseBranch: "main",
+      });
+    });
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  const branchesOf = (bare: string) =>
+    execFileSync("git", ["branch", "--list", "--format=%(refname:short)"], {
+      cwd: bare,
+      encoding: "utf8",
+    });
+
+  test("pauses and pushes to the scenario's repo, not the one whose flow it rehearses", async () => {
+    const path = scenario(sandbox, "elsewhere", {
+      agent: { implement: { script: IMPLEMENT } },
+    });
+
+    const { code, output } = await sandbox.runCli([
+      "rehearse",
+      "implement",
+      "--repo",
+      "other",
+      "--scenario",
+      path,
+      "--keep",
+    ]);
+
+    // The flow's branch went to demo's origin, where its pull request is.
+    expect(Option.getOrThrow(sandbox.github.firstPull()).head).toBe("auto/issue-1");
+    expect(branchesOf(otherOrigin)).not.toContain("auto/issue-1");
+    expect(branchesOf(sandbox.bare)).toContain("auto/issue-1");
+
+    expect(output).toContain("rehearsing implement from other on dataquail/demo");
+    expect(output).toContain("dataquail/demo is enrolled here as demo: paused it");
+    expect(output).toContain("ended done:");
+    expect(code).toBe(0);
+
+    // And both run again here.
+    expect((await sandbox.runCli(["status"])).output).not.toContain("paused");
   }, 120_000);
 });
 

@@ -78,12 +78,14 @@ import { execOptionsFor } from "../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import {
   type EffectiveRepo,
+  type EnrolledRepo,
   findEnrolled,
   flowOff,
   loadMachineConfig,
   type MachineConfig,
   personaOf,
   type PersonaRepo,
+  repoNameOf,
   routingOf,
 } from "../../../repo-config.ts";
 import { fail } from "../cli.output.ts";
@@ -170,17 +172,24 @@ const randomId = Effect.map(
   (digits) => digits.map((digit) => digit.toString(16)).join(""),
 );
 
+// The scenario's repo as this machine enrolls it, if it does. It need not be
+// the repo whose flow is rehearsed, so it's what pauses and clones.
+const seededHere = (machine: MachineConfig, loaded: LoadedScenario) =>
+  Arr.findFirst(
+    machine.repos,
+    (entry) => loaded.enrolled && entry.repo.toLowerCase() === loaded.scenario.repo.toLowerCase(),
+  );
+
 // Where the scenario's repo clones from: an enrolled repo's own origin, so an
 // ssh or GitHub Enterprise origin works as the checkout does; else GitHub.
-const cloneUrl = (loaded: LoadedScenario, checkout: string) => {
-  if (!loaded.enrolled) {
-    return Effect.succeed(`https://github.com/${loaded.scenario.repo}.git`);
-  }
-
-  return Effect.map(execOk("git", ["remote", "get-url", "origin"], { cwd: checkout }), (url) =>
-    url.trim(),
-  );
-};
+const cloneUrl = (loaded: LoadedScenario, here: Option.Option<EnrolledRepo>) =>
+  Option.match(here, {
+    onNone: () => Effect.succeed(`https://github.com/${loaded.scenario.repo}.git`),
+    onSome: (entry) =>
+      Effect.map(execOk("git", ["remote", "get-url", "origin"], { cwd: entry.path }), (url) =>
+        url.trim(),
+      ),
+  });
 
 // A fresh clone of the scenario's repo, as the persona, and its default branch.
 const cloneScratch = (url: string, persona: Persona) =>
@@ -578,30 +587,31 @@ const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona
     yield* fs.remove(scratch.root, { recursive: true, force: true }).pipe(Effect.ignore);
   });
 
-// The repo pauses on this machine while a rehearsal seeds it, and resumes
-// after, unless it was paused already.
+// The scenario's repo pauses on this machine while a rehearsal seeds it, and
+// resumes after, unless it was paused already.
 const pausedMeanwhile = <A, E, R>(
-  loaded: LoadedScenario,
-  name: string,
+  here: Option.Option<EnrolledRepo>,
   effect: Effect.Effect<A, E, R>,
-) => {
-  if (!loaded.enrolled) {
-    return effect;
-  }
+) =>
+  Option.match(here, {
+    onNone: () => effect,
+    onSome: (entry) => {
+      const name = repoNameOf(entry);
 
-  return Effect.acquireUseRelease(
-    Effect.gen(function* () {
-      const paused = yield* pauseRepoUseCase(name);
-      yield* Console.log(
-        `${loaded.scenario.repo} is enrolled here: paused it on this machine for the rehearsal; another machine's daemon may still pick up what is seeded`,
+      return Effect.acquireUseRelease(
+        Effect.gen(function* () {
+          const paused = yield* pauseRepoUseCase(name);
+          yield* Console.log(
+            `${entry.repo} is enrolled here as ${name}: paused it on this machine for the rehearsal; another machine's daemon may still pick up what is seeded`,
+          );
+
+          return paused.changed;
+        }),
+        () => effect,
+        (changed) => Effect.ignore(Effect.when(resumeRepoUseCase(name), Effect.succeed(changed))),
       );
-
-      return paused.changed;
-    }),
-    () => effect,
-    (changed) => Effect.ignore(Effect.when(resumeRepoUseCase(name), Effect.succeed(changed))),
-  );
-};
+    },
+  });
 
 export const rehearse = (options: RehearseOptions) =>
   Effect.gen(function* () {
@@ -648,11 +658,12 @@ export const rehearse = (options: RehearseOptions) =>
       `rehearsing ${loaded.flow}${asSuffix(persona)} from ${repo.settings.name} on ${loaded.scenario.repo}`,
     );
 
+    const here = seededHere(machine, loaded);
+
     return yield* pausedMeanwhile(
-      loaded,
-      repo.settings.name,
+      here,
       Effect.gen(function* () {
-        const scratch = yield* cloneScratch(yield* cloneUrl(loaded, enrolled.path), persona);
+        const scratch = yield* cloneScratch(yield* cloneUrl(loaded, here), persona);
         const scratchRepo = rehearsalRepo(repo, scratch, loaded);
 
         const scratchMachine: MachineConfig = {
