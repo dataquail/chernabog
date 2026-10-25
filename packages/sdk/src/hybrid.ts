@@ -161,11 +161,11 @@ export const finishedJsonSchema = {
 } satisfies Json;
 
 const RESUME_PROMPT =
-  "You are back in your session on this issue, with the person. Pick up where the two of you left off; when you are done, finish with `chernabog open-pr`, as before.";
+  "You are back in your session on this issue, with the person. Pick up where the two of you left off; when you are both done, draft the pull request with `chernabog open-pr --draft` and ask the person, as before.";
 
 // The person and the agent work on the issue in a session in front of the
-// person, until `chernabog open-pr` records the pull request's title, body and
-// summary. Its prompt is .chernabog/prompts/human-initiated.md, or the SDK's own.
+// person, until the person's Yes to the agent's draft (or their own
+// `chernabog open-pr`) records the pull request's title, body and summary. Its prompt is .chernabog/prompts/human-initiated.md, or the SDK's own.
 export const workWithPerson = (issue: number, worktree: string) =>
   activity(
     "work-with-person",

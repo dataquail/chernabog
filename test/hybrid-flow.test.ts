@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import { sessionFilesIn } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { stopHook } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { Exec } from "../src/platform/exec.ts";
 import addressReview from "../templates/recipes/flows/address-review.ts";
 import humanInitiated from "../templates/recipes/flows/human-initiated.ts";
 import implement from "../templates/recipes/flows/implement.ts";
@@ -312,6 +313,6 @@ describe("a session's Stop hook", () => {
       yield* fs.writeFileString(sessionFilesIn(dir).answer, '"done"');
       expect(yield* stopHook(dir, true)).toEqual(Option.none());
       expect(yield* fs.exists(sessionFilesIn(dir).done)).toBe(true);
-    }),
+    }).pipe(Effect.provide(Exec.layer)),
   );
 });

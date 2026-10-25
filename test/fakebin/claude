@@ -11,7 +11,10 @@
 // FAKE_CLAUDE_NEVER_ANSWER: never write the answer.
 // FAKE_CLAUDE_HOLD: while this file exists, wait before doing the work.
 // In a session with a person that `chernabog start` opened, it commits, then
-// finishes as its prompt says, with `chernabog open-pr`.
+// finishes as its prompt says: it drafts with `chernabog open-pr --draft` and
+// asks the person the question that prints, through the question hook from
+// --settings, as Claude's AskUserQuestion does; the person answers Yes. A
+// prompt that names only `chernabog open-pr` gets that instead.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -82,13 +85,32 @@ if (headless) {
 appendFileSync(transcript, `${JSON.stringify(working)}\n`);
 const answerFile = /(?:write your final answer to|your final answer goes to) `([^`]+)`/.exec(prompt)?.[1];
 
+const settings = JSON.parse(readFileSync(flag('--settings')!, 'utf8'));
+const log = (line: string) => process.env.FAKE_CLAUDE_LOG && appendFileSync(process.env.FAKE_CLAUDE_LOG, `${line}\n`);
+const sh = (command: string, input?: string) => spawnSync('/bin/sh', ['-c', command], { cwd, input, encoding: 'utf8' });
+
 // The person agreed: hand the work over as the start prompt says.
 const chernabog = /To run `chernabog` from here, use `([^`]+)`/.exec(prompt)?.[1];
-if (chernabog && prompt.includes('chernabog open-pr')) {
-  const opened = spawnSync('/bin/sh', ['-c', `${chernabog} open-pr --title 'feat: worked out with a person' --body 'Built together.' --summary 'Done with a person.'`], { cwd, encoding: 'utf8' });
-  if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, `open-pr ${sessionId} exited ${opened.status}: ${JSON.stringify((opened.stdout + opened.stderr).slice(0, 200))}\n`);
+const pullRequest = `--title 'feat: worked out with a person' --body 'Built together.' --summary 'Done with a person.'`;
+if (chernabog && prompt.includes('chernabog open-pr --draft')) {
+  const drafted = sh(`${chernabog} open-pr --draft ${pullRequest}`);
+  log(`open-pr --draft ${sessionId} exited ${drafted.status}: ${JSON.stringify((drafted.stdout + drafted.stderr).slice(0, 200))}`);
+  const input = JSON.parse(drafted.stdout.slice(drafted.stdout.indexOf('\n{') + 1));
+  const ask = (event: string, extra: object) => {
+    const hook: string = settings.hooks[event][0].hooks[0].command;
+    const payload = { session_id: sessionId, cwd, hook_event_name: event, tool_name: 'AskUserQuestion', tool_input: input, ...extra };
+    return sh(hook, JSON.stringify(payload)).stdout;
+  };
+  const before = ask('PreToolUse', {});
+  log(`open-pr-question ${sessionId} ${before.includes('"deny"') ? 'refused' : 'asked'}`);
+  if (!before.includes('"deny"')) {
+    const told = ask('PostToolUse', { tool_response: { ...input, answers: { [input.questions[0].question]: 'Yes' } } });
+    log(`open-pr-question ${sessionId} answered Yes: ${JSON.stringify(told.slice(0, 300))}`);
+  }
+} else if (chernabog && prompt.includes('chernabog open-pr')) {
+  const opened = sh(`${chernabog} open-pr ${pullRequest}`);
+  log(`open-pr ${sessionId} exited ${opened.status}: ${JSON.stringify((opened.stdout + opened.stderr).slice(0, 200))}`);
 }
-const settings = JSON.parse(readFileSync(flag('--settings')!, 'utf8'));
 const hook: string = settings.hooks.Stop[0].hooks[0].command;
 const skipOnce = process.env.FAKE_CLAUDE_SKIP_ANSWER_ONCE;
 
