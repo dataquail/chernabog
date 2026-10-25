@@ -177,7 +177,8 @@ const named = (clause: string): ReadonlyArray<readonly [string, string]> =>
     return [[name, Option.getOrElse(Option.fromUndefinedOr(local), () => name)] as const];
   });
 
-const escape = (name: string) => name.replace(/[.$]/g, "\\$&");
+// A binding as a literal in a pattern, every character special to one escaped.
+const escape = (name: string) => name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
 
 // The members a module reaches through a binding, as `binding.member`.
 const membersOf = (code: string, binding: string) =>
