@@ -42,6 +42,9 @@ describe("recipes", () => {
     const { output } = await sandbox.runCli(["recipes", "list"]);
     expect(output).toContain("  human-initiated: The hybrid path");
     expect(output).toContain("    https://dataquail.github.io/chernabog/recipes/human-initiated/");
+    expect(output).toContain(
+      "  resolve-conflicts: Merges the base into the persona's own pull request",
+    );
   }, 30_000);
 
   test("init --recipes bakes the ones named, as the full flow, and enrolls the repo with them", async () => {
@@ -69,6 +72,17 @@ describe("recipes", () => {
     const listed = await sandbox.runCli(["recipes", "list"]);
     expect(listed.output).toContain("✓ human-initiated");
     expect(listed.output).toContain("  re-review");
+
+    const conflicts = await sandbox.runCli(["recipes", "add", "resolve-conflicts"]);
+    expect(conflicts.output).toContain(
+      "wrote .chernabog/flows/resolve-conflicts.ts (resolve-conflicts recipe)",
+    );
+    expect(conflicts.output).toContain(
+      "wrote .chernabog/prompts/resolve-conflicts.md (resolve-conflicts recipe)",
+    );
+    expect(readFileSync(flow("resolve-conflicts"), "utf8")).toBe(
+      RECIPE_FILES["flows/resolve-conflicts.ts"],
+    );
 
     const refused = await sandbox.runCli(["recipes", "add", "ship"]);
     expect(refused.output).toContain("no recipe named ship");

@@ -30,6 +30,12 @@ export const RECIPES: ReadonlyArray<RecipeRoot> = [
     files: ["flows/address-review.ts"],
   }),
   RecipeRoot.make({
+    name: "resolve-conflicts",
+    description:
+      "Merges the base into the persona's own pull request when it conflicts, resolves the conflicts, and asks an approving reviewer to look again",
+    files: ["flows/resolve-conflicts.ts", "prompts/resolve-conflicts.md"],
+  }),
+  RecipeRoot.make({
     name: "human-initiated",
     description:
       "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",

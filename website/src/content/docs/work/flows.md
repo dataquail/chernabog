@@ -1,9 +1,9 @@
 ---
 title: The review loop
-description: implement, review, re-review and address-review, how they hand pull requests to each other through GitHub's review requests, and the hybrid path.
+description: implement, review, re-review, address-review and resolve-conflicts, how they hand pull requests to each other through GitHub's review requests, and the hybrid path.
 ---
 
-Four [recipes](/chernabog/recipes/) make the review loop. A repo bakes the ones it wants into `.chernabog/flows/` when it's set up, or later with `chernabog recipes add`; none is installed unless chosen. Once baked, they're the repo's code to edit; see [Writing flows](/chernabog/flows/flows/).
+Five [recipes](/chernabog/recipes/) make the review loop. A repo bakes the ones it wants into `.chernabog/flows/` when it's set up, or later with `chernabog recipes add`; none is installed unless chosen. Once baked, they're the repo's code to edit; see [Writing flows](/chernabog/flows/flows/).
 
 | Flow        | Picks up                                                | Ends with                                     |
 | ----------- | ------------------------------------------------------- | --------------------------------------------- |
@@ -11,6 +11,7 @@ Four [recipes](/chernabog/recipes/) make the review loop. A repo bakes the ones 
 | [`review`](/chernabog/recipes/review/)    | an open pull request whose review is requested of this persona, which it hasn't reviewed | an approval, which merges an `auto:ship` pull request, or changes requested |
 | [`re-review`](/chernabog/recipes/re-review/) | a pull request that asks this persona again after it reviewed | an approval, or `auto:needs-human`     |
 | [`address-review`](/chernabog/recipes/address-review/) | a pull request this persona wrote whose latest review requests changes, with nothing pushed since | a green push and the reviewer asked again, or `auto:needs-human` |
+| [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) | a pull request this persona wrote that conflicts with its base | the base merged in with a green push, and an approving reviewer asked again, or `auto:needs-human` |
 
 The flows hand work to each other through GitHub's own review requests and reviews. With [personas](/chernabog/reference/configuration/#github-personas), one machine can be both the author and the reviewer.
 
@@ -28,7 +29,7 @@ A machine reviews only as a persona in the pool: a login under `github:` in its 
 
 ## The automated path
 
-An issue labelled `auto:ship` instead of `auto:eligible` is implemented the same way, and its pull request carries `auto:ship` too. Chernabog merges a pull request only when it carries `auto:ship`: the reviewer that approves it calls `PullRequest.merge`, which merges only when that is safe and otherwise hands it to a person. Any other pull request, including one whose label is missing or misspelt, is left for a person to merge.
+An issue labelled `auto:ship` instead of `auto:eligible` is implemented the same way, and its pull request carries `auto:ship` too. Chernabog merges a pull request only when it carries `auto:ship`: the reviewer that approves it calls `PullRequest.merge`, which merges only when that is safe and otherwise hands it to a person. A merge refused because the pull request conflicts with its base is left for [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) instead, which merges the base in and asks the reviewer again. Any other pull request, including one whose label is missing or misspelt, is left for a person to merge.
 
 ## The hybrid path
 

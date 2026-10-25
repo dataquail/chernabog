@@ -114,6 +114,21 @@ describe("installing recipes", () => {
     }),
   );
 
+  effect("resolve-conflicts writes its flow and its prompt", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repo = yield* checkout;
+      expect(yield* bake(repo, "resolve-conflicts")).toEqual([
+        "wrote .chernabog/flows/resolve-conflicts.ts (resolve-conflicts recipe)",
+        "wrote .chernabog/prompts/resolve-conflicts.md (resolve-conflicts recipe)",
+      ]);
+      expect(yield* fs.readFileString(`${repo}/.chernabog/prompts/resolve-conflicts.md`)).toBe(
+        recipeText("prompts/resolve-conflicts.md"),
+      );
+      expect(yield* installed(repo)).toEqual(["resolve-conflicts"]);
+    }),
+  );
+
   effect("never overwrites a flow the repo has, nor a prompt another recipe brought", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -134,7 +149,7 @@ describe("installing recipes", () => {
     Effect.gen(function* () {
       const found = yield* Effect.flip(bake(yield* checkout, "implement", "ship"));
       expect(found.message).toBe(
-        "no recipe named ship (there are: implement, review, re-review, address-review, human-initiated)",
+        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, human-initiated)",
       );
     }),
   );
@@ -180,10 +195,11 @@ describe("choosing recipes", () => {
           "review",
           "re-review",
           "address-review",
+          "resolve-conflicts",
           "human-initiated",
         ]);
         expect(offered.some((choice) => choice.selected === true)).toBe(false);
-        expect(offered[3]?.description).toContain(
+        expect(offered[4]?.description).toContain(
           "https://dataquail.github.io/chernabog/recipes/human-initiated/",
         );
       }),
