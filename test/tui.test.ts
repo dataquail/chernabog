@@ -189,7 +189,7 @@ describe("the main view", () => {
       /running\s+#7\s+implement goodbones Fix the parser\s+30m ago\s+implement/,
     );
     expect(screen).toMatch(
-      /running\s+PR 8 review\s+goodbones Fix the parser\s+30m ago\s+waiting for a signal/,
+      /running\s+PR 8 review\s+goodbones Fix the parser\s+30m ago\s+waiting in implement/,
     );
     expect(screen).toMatch(/needs-human #5\s+implement goodbones .* CI still red/);
   });
@@ -501,7 +501,7 @@ describe("a run's detail", () => {
     expect(plain(view(detail()))).toContain("for pushed since consider-review-1, for 29m");
     expect(
       plain(view(model({ status: Option.some({ ...status, active: [reviewing] }), width: 200 }))),
-    ).toContain("waiting for a signal in consider-review-1");
+    ).toContain("waiting in consider-review-1");
   });
 
   test("a finished run's last step shows how it ended, and the time up to its end", () => {

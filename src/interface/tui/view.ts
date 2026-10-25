@@ -355,7 +355,7 @@ const runDetail = (run: RunEntry) => {
   if (run.parked) {
     return Option.match(run.currentStep, {
       onNone: () => "waiting for a signal",
-      onSome: (step) => `waiting for a signal in ${tidyStep(step)}`,
+      onSome: (step) => `waiting in ${tidyStep(step)}`,
     });
   }
 
