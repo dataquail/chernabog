@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
+import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 describe("chernabog run implement", () => {
@@ -230,7 +231,7 @@ describe("packages from .chernabog/package.json", () => {
     );
     writeFileSync(
       join(config, "package.json"),
-      '{ "private": true, "dependencies": { "greet": "file:./vendor/greet" } }',
+      `{ "private": true, "dependencies": { "greet": "file:./vendor/greet" }, "devDependencies": { "@chernabog/sdk": "${BUNDLED_SDK}" } }`,
     );
     writeFileSync(
       join(config, "flows/greeting.ts"),

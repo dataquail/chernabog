@@ -22,10 +22,10 @@ import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
+import * as Console from "effect/Console";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -34,9 +34,11 @@ import * as Workflow from "effect/workflow/Workflow";
 
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { supportsSdk, unsupportedRunSummary } from "../../../../kernel/sdk-support.value-object.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
+import { VERSION } from "../../../../platform/version.ts";
 import type { EffectiveRepo } from "../../../../repo-config.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
@@ -52,6 +54,7 @@ import {
   UsageLive,
   WorktreeLive,
 } from "./sdk-live.ts";
+import { prepareState } from "./state-stamp.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
@@ -69,18 +72,24 @@ export class RunFailed extends Schema.TaggedError<RunFailed, { readonly brand: "
   },
 ) {}
 
-// The workflow engine and its SQLite journal, in `database`.
+// The workflow engine and its SQLite journal, in `database`, which a newer
+// chernabog's stamp refuses, and an older one's is copied before it moves up.
 export const EngineAt = (database: string) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(database.slice(0, database.lastIndexOf("/")), { recursive: true });
+      const prepared = yield* prepareState((yield* Home).root, database);
+
+      for (const kept of Option.toArray(prepared.kept)) {
+        yield* Console.error(
+          `chernabog: state.db: stamped chernabog ${VERSION}; a copy of it as it was is at ${kept}`,
+        );
+      }
 
       return ClusterWorkflowEngine.layer.pipe(
         Layer.provideMerge(SingleRunner.layer({ runnerStorage: "memory" })),
         Layer.provideMerge(SqliteClient.layer({ filename: database })),
       );
-    }).pipe(Effect.orDie),
+    }).pipe(Effect.catchTag("PlatformError", Effect.die)),
   );
 
 // The repo's settings as a persona sees them: Repo.persona names it.
@@ -237,6 +246,17 @@ export const flowLayer = <R>(
     Effect.gen(function* () {
       const runId = RunId.make(payload.runId);
       const row = (yield* findRunUseCase(runId)).run;
+
+      // A run started under an SDK this binary doesn't run is never replayed
+      // under this one: it goes to a person before any of its flow runs.
+      const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.sdkVersion));
+
+      for (const version of Option.toArray(Option.filter(started, (sdk) => !supportsSdk(sdk)))) {
+        return {
+          status: "needs-human",
+          summary: unsupportedRunSummary(version),
+        } satisfies RunResult;
+      }
 
       const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
         Option.flatMap(row, (found) => found.persona),

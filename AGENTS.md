@@ -340,6 +340,30 @@ a seeded repo, with no agent session.
   the person passes `--on-enrolled`; then it is paused on this machine
   meanwhile, and cloned from its own origin.
 
+## Versions (#123)
+
+One binary runs every enrolled repo, so compatibility is the binary's call.
+
+- **The SDK pin is the contract.** A repo's `.chernabog/package.json`
+  `@chernabog/sdk` pin is the SDK its flows are written against; the binary
+  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`). Move it with
+  the SDK's minor. `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a
+  repo outside it, without a pin, with `engines.chernabog`, or whose flows
+  import what the bundled SDK lacks, as `IncompatibleConfig`; the daemon shows
+  it as `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
+  the way forward, and the only thing that moves an existing manifest's pins.
+- **Local state is stamped, backed up and refused.** Machine config's
+  `chernabog:` key and `state.db`'s `om_meta` hold the version that last
+  migrated them (`src/migrate.ts`, `state-stamp.ts` beside the engine). Any
+  older stamp is copied to `backups/` first (`src/platform/backups.ts`); a
+  newer one is refused with restore instructions. There are no down
+  migrations.
+- **Runs record their SDK** (`om_runs.sdk_version`). `flowLayer` never runs a
+  flow for a run whose SDK this binary doesn't support, and the daemon ends
+  such runs at startup through `cancelRunUseCase` with `needsHuman`. When its
+  executable changes, the daemon drains: no ticks, `/run` refused, and a
+  restart once no run is executing (parked runs don't count).
+
 ## Effect and lint
 
 `bun run lint` is strict: oxlint's rules (`.oxlintrc.json`, including the

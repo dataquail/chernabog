@@ -32,11 +32,15 @@ export const fakeEngine = (): FakeEngine => ({
   unloaded: [],
 });
 
+// The SDK the fake engine's workflows run under.
+export const FAKE_SDK = "0.6.0";
+
 // Executions named `execution-<runId>`.
 export const WorkflowsClientFake = (engine: FakeEngine) =>
   Layer.succeed(
     WorkflowsClient,
     WorkflowsClient.of({
+      sdkVersion: FAKE_SDK,
       runs: (flow) => !engine.unloaded.includes(`${flow.repo}/${flow.flow}`),
       execute: (_flow, runId) =>
         Effect.sync(() => {

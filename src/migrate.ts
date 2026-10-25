@@ -1,5 +1,8 @@
-// Brings machine config up to date with each persona's settings living there
-// (#50). Before, each person's flow choices lived in the checkout's
+// Brings machine config up to date, and stamps it with the chernabog that did,
+// after keeping a copy of it as it was (src/platform/backups.ts). A file a
+// newer chernabog stamped is left alone, for loadMachineConfig to refuse.
+//
+// Each persona's settings live there since #50. Before, each person's flow choices lived in the checkout's
 // .chernabog/local.yaml, and a repo's personas were a list. Now a repo's
 // entry carries the defaults its personas inherit, and `personas` is a map of
 // login to that persona's own choices. Runs before anything reads machine
@@ -16,12 +19,15 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { asSuffix, type Persona } from "./kernel/persona.value-object.ts";
+import { writeFileAtomic } from "./platform/atomic-write.ts";
+import { keepBackup, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { updateFile } from "./platform/file-lock.ts";
 import { flowNames } from "./platform/flow-loader.ts";
 import { viewerLogin } from "./platform/github-api.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
-import { namesRunners, readYaml, RepoConfigFile, teamOff } from "./repo-config.ts";
+import { VERSION } from "./platform/version.ts";
+import { namesRunners, readYaml, RepoConfigFile, STAMP_KEY, teamOff } from "./repo-config.ts";
 
 // What .chernabog/local.yaml held, as written.
 const LocalFile = Schema.Struct({
@@ -60,6 +66,7 @@ const PersonaMap = Schema.Record(
 type Entry = typeof Entry.Type;
 
 const Machine = Schema.Struct({
+  chernabog: Schema.optionalKey(Schema.String),
   github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   repos: Schema.optionalKey(Schema.Array(Schema.Unknown)),
 });
@@ -291,10 +298,38 @@ const migratePaused = (entries: ReadonlyArray<Entry>) =>
     );
   });
 
+// The stamp, as the file's first key, with a comment saying what it is: set
+// where it is, or put first.
+const stampDocument = (document: YAML.Document) => {
+  if (document.has(STAMP_KEY)) {
+    document.set(STAMP_KEY, VERSION);
+
+    return;
+  }
+
+  const pair = document.createPair(STAMP_KEY, VERSION);
+  const contents = document.contents;
+
+  if (YAML.isMap(contents)) {
+    contents.items.unshift(pair);
+  } else {
+    document.contents = document.createNode({ [STAMP_KEY]: VERSION });
+  }
+
+  pair.key = Object.assign(document.createNode(STAMP_KEY), {
+    commentBefore: " The chernabog that last migrated this file. An older one won't read it.",
+  });
+};
+
 // What migrating machine config's text would change: the lines saying what,
 // the repos' entries (none when the file doesn't parse), and the text to
 // write, none when it's up to date.
-const migrateText = (text: Option.Option<string>, user: string) =>
+// `keep` keeps a copy of the text as it was, from its stamp, and says where.
+const migrateText = <E, R>(
+  text: Option.Option<string>,
+  user: string,
+  keep: (stamp: Option.Option<string>, original: string) => Effect.Effect<string, E, R>,
+) =>
   Effect.gen(function* () {
     const untouched: Update<Migrated> = [{ lines: [], entries: Option.none() }, Option.none()];
 
@@ -308,6 +343,14 @@ const migrateText = (text: Option.Option<string>, user: string) =>
     const machine = Schema.decodeUnknownOption(Machine)(document.toJS() ?? {});
 
     if (Option.isNone(machine)) {
+      return untouched;
+    }
+
+    const stamp = Option.fromUndefinedOr(machine.value.chernabog);
+    const state = stampState(stamp);
+
+    // A newer chernabog's shape, which this one doesn't know.
+    if (state === "newer") {
       return untouched;
     }
 
@@ -360,6 +403,21 @@ const migrateText = (text: Option.Option<string>, user: string) =>
       Option.toArray(Schema.decodeUnknownOption(Entry)(raw)),
     );
 
+    if (state === "older") {
+      const kept = yield* keep(
+        stamp,
+        Option.getOrElse(text, () => ""),
+      );
+
+      stampDocument(document);
+      lines.push(
+        `${Option.match(stamp, {
+          onNone: () => "stamped",
+          onSome: (from) => `moved from chernabog ${from} to`,
+        })} chernabog ${VERSION}; a copy of it as it was is at ${kept}`,
+      );
+    }
+
     const update: Update<Migrated> = [
       { lines, entries: Option.some(entries) },
       Option.liftPredicate(document.toString(), () => lines.length > 0),
@@ -380,15 +438,22 @@ export const migrateMachineConfig = Effect.gen(function* () {
     return [];
   }
 
+  // Looking keeps no copy; only the update that changes the file does.
   const [looked, change] = yield* migrateText(
     Option.some(yield* fs.readFileString(file)),
     home.user,
+    () => Effect.succeed(""),
   );
+
+  const keep = (stamp: Option.Option<string>, original: string) =>
+    keepBackup(home.root, "config.yaml", stamp, (path) => writeFileAtomic(fs, path, original));
 
   const migrated = yield* Option.match(change, {
     onNone: () => Effect.succeed(looked),
     onSome: () =>
-      updateFile(fs, file, "migrating machine config", (text) => migrateText(text, home.user)),
+      updateFile(fs, file, "migrating machine config", (text) =>
+        migrateText(text, home.user, keep),
+      ),
   });
 
   return [

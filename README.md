@@ -14,7 +14,7 @@ With Homebrew, on macOS or Linux:
 brew install dataquail/tap/chernabog
 ```
 
-After `brew upgrade chernabog`, run `chernabog stop && chernabog start` to move the daemon onto the new version.
+After `brew upgrade chernabog`, the daemon notices its binary changed, starts no new runs, and restarts on the new version once the runs executing now finish (see [Chernabog versions](#chernabog-versions)).
 
 Without Homebrew, each release attaches a binary for macOS and Linux, on arm64 and x64, with a `sha256` file. With `gh`:
 
@@ -29,7 +29,7 @@ mv chernabog ~/.local/bin/           # or anywhere on your PATH
 
 The binary's tags start with `v`; the SDK's start with `sdk-v`, so GitHub's "latest release" is sometimes the SDK's, and the first line picks the newest `v` tag instead. Download with `gh` or `curl` rather than a browser: the macOS binaries are signed ad hoc, not notarized, and Gatekeeper blocks a browser download.
 
-To upgrade, `chernabog stop`, install the new binary the same way, then `chernabog start`. `mv` replaces the file rather than writing over it, which macOS requires of a signed binary that is running.
+To upgrade, install the new binary the same way; the daemon drains and restarts on it, as it does after `brew upgrade`. `mv` replaces the file rather than writing over it, which macOS requires of a signed binary that is running.
 
 Or build it from source:
 
@@ -141,6 +141,7 @@ The view never runs work itself; it reads the daemon's state over its socket. `c
 | `doctor`                                                              | Checks logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `setup`                                                               | Chooses the GitHub personas this machine acts as and adds AI accounts (`--persona a,b`, `--account dir[:agent],…` without asking); safe to run again                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `recipes list`, `recipes add [names…]`, `recipes diff [names…]`       | Lists the recipes, with a check by each the repo has; bakes recipes into the repo's `.chernabog/flows/`, asking which when none is named, and never overwriting a flow it has; shows how the repo's flows differ from the current recipes they came from                                                                                                                                                                                                                                                                                                      |
+| `recipes upgrade`                                                     | Moves the repo's `.chernabog/` onto this Chernabog's SDK, in the working tree, committing nothing: the `@chernabog/sdk` and `effect` pins move, flows baked from recipes become the current recipes (replacing any edits, which the diff shows), and hand-written flows and steps are listed, with what each imports that the SDK no longer has                                                                                                                                                                                                               |
 | `init`, `enroll`                                                      | `init` scaffolds `.chernabog/`, bakes the recipes chosen (`--recipes a,b` without asking; none piped) and enrolls the repo once it has a flow; `enroll` only enrolls it: which personas work in it, which flows each runs and which accounts they spend (`--persona`, `--flows a,b`, `--defaults`, `--account` without asking)                                                                                                                                                                                                                                |
 | `unenroll <repo>`                                                     | Removes a repo, and its settings, from this machine's config                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `install`, `uninstall`, `start`, `stop`, `daemon`                     | The daemon and its service; `install` runs `setup` first, and takes its flags. `start` with no issue starts the daemon                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -231,6 +232,8 @@ The daemon checks machine config's enrolled repos every ten seconds and, when th
 
 Before starting a run, the daemon checks the machine's limits (global concurrency, quiet hours, the repo's active hours, pauses) and then the flow's own gate, such as the usage gate. A run waiting on a signal holds no slot. Every skipped tick is recorded with its reason; `status` shows the latest.
 
+When its own binary changes, as `brew upgrade` changes it, the daemon drains: it starts no new runs, `status` and the live view say it's draining, and it restarts on the new binary once the runs executing now finish. Runs parked on a signal (a review that may take days) don't hold it up; the new binary decides whether each can resume.
+
 The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`.
 
 ## Trust
@@ -253,7 +256,7 @@ Config has two layers: the team's, committed in the repo, and each person's, in 
 | Repo    | `.chernabog/`, committed          | Flows, steps, prompts, labels, `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, limits, default schedule, default launcher and `allowedLaunchers`, `runners`, `reviewers`, `assignee`, `reviewRequested`                                                                                                               |
 | Machine | `~/.config/chernabog/config.yaml` | Agent accounts, usage thresholds, global concurrency, quiet hours, launcher for every repo, launchers of your own, GitHub personas, and the enrolled repos: for each, keyed by its `owner/name`, the flows that run and their settings, account, agent, roles, schedule, active hours, launcher and whether it's enabled, per persona |
 
-`init` writes `config.schema.json` next to the YAML, so editors autocomplete it. It's generated, so `init` rewrites it whenever it's out of date; re-run it to pick up new keys. It also keeps the `@chernabog/sdk` and `effect` pins in `.chernabog/package.json` at the binary's versions, and `engines.chernabog` at the oldest Chernabog the repo runs on (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
+`init` writes `config.schema.json` next to the YAML, so editors autocomplete it. It's generated, so `init` rewrites it whenever it's out of date; re-run it to pick up new keys. For a new `.chernabog/` it writes `package.json`, pinning `@chernabog/sdk` and `effect` at the binary's versions; after that the pins move only with `recipes upgrade` (see [Chernabog versions](#chernabog-versions)). It never overwrites any other file.
 
 Flows, steps and prompts are read from the base branch, never from the branch or worktree under work, so a pull request can't rewrite the flow that handles it.
 
@@ -294,17 +297,24 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 
 The `implement` recipe composes the SDK's `Implement` building blocks. Reorder them, leave one out, or put a step of your own between them with `step("name", input)`: either `.chernabog/stages/name.ts` exporting `defineStage({ input, output, run })`, or an executable `name` that reads JSON on stdin and prints JSON. Each step runs in its own process; exit 0 continues, 78 skips the run, anything else fails it. A step that crashes partway runs again, so every step must be safe to repeat.
 
-`.chernabog/` is a package of its own, the same in every repo whatever its language. `package.json` pins `@chernabog/sdk` and `effect` as dev dependencies at the versions the binary bundles, and `tsconfig.json` types the flows against them; install them in `.chernabog/` with any package manager for the editor. At runtime the binary always supplies its own copies of those two, to every module that imports them. Anything else a flow or step imports goes in `dependencies`, with the lockfile committed: the daemon installs them into each snapshot of the base branch, using the binary as `bun install --production --frozen-lockfile --ignore-scripts`, so the machine needs no Node or package manager. `doctor` flags pins that have drifted from the binary; `init` updates them.
+`.chernabog/` is a package of its own, the same in every repo whatever its language. `package.json` pins `@chernabog/sdk` and `effect` as dev dependencies at the versions the binary bundles, and `tsconfig.json` types the flows against them; install them in `.chernabog/` with any package manager for the editor. At runtime the binary always supplies its own copies of those two, to every module that imports them. Anything else a flow or step imports goes in `dependencies`, with the lockfile committed: the daemon installs them into each snapshot of the base branch, using the binary as `bun install --production --frozen-lockfile --ignore-scripts`, so the machine needs no Node or package manager. `doctor` flags pins that have drifted from the binary; `recipes upgrade` moves them.
 
 ### Chernabog versions
 
-One daemon runs every enrolled repo, so a repo can't choose its Chernabog; it says which is the oldest it runs on, as a floor in `.chernabog/package.json`:
+One binary runs every repo enrolled on a machine, and each repo's flows were written against whichever SDK was current when someone last moved them. A repo records one fact, the SDK version its flows are written against, as its `@chernabog/sdk` pin in `.chernabog/package.json`. The binary alone decides whether it runs that: before 1.0, it runs the SDK minor it bundles (`>=0.6.0 <0.7.0`, say), since almost every minor breaks flows. `doctor` names the range.
 
-```json
-{ "engines": { "chernabog": ">=0.3.0" } }
-```
+A repo outside that range, without a pin, or with a flow or step that imports something the bundled SDK doesn't export (such as a removed `Review.fixTrigger`), is refused before anything in it is read or run, and every other repo keeps running. `status`, the live view and `doctor` show it as `incompatible`, saying which side is behind:
 
-A binary older than that refuses the repo, before it reads anything else in `.chernabog/`: `status` shows the repo as an error naming the version it needs, and `init` won't move it back. A newer binary runs it. `init` writes the floor at its own version for a new `.chernabog/`, adds it where it's missing, and raises it when it rewrites the schemas or the pins, since the repo can then rely on what this binary added; otherwise it leaves the floor alone, so one person upgrading doesn't force everyone else to. Keys in `config.yaml` that the binary doesn't know fail the repo instead of being ignored: each is a typo or a setting from a newer Chernabog, and either may be a rule the team counts on. `doctor` reports a missing floor and a binary too old for it.
+- **the repo is behind**: run `chernabog recipes upgrade` in its checkout, review the diff, and merge it. It moves the pins and the flows baked from recipes, and lists the hand-written flows it can't move.
+- **the binary is behind**: upgrade Chernabog.
+
+`engines.chernabog`, the floor older releases wrote, is no longer read; a manifest that still has one is refused, and `recipes upgrade` removes it. Keys in `config.yaml` that the binary doesn't know fail the repo instead of being ignored: each is a typo or a setting from a newer Chernabog, and either may be a rule the team counts on.
+
+**Local state.** Machine config (`config.yaml`) and `state.db` are stamped with the Chernabog that last migrated them. Before a newer binary migrates either one, it keeps a copy in `~/.config/chernabog/backups/`, named for the version it came from (`config.yaml.0.9.0`, `state.db.0.9.0`; `before-<version>` for one from before stamps), and says where. The newest three of each are kept. A binary that finds a stamp newer than itself refuses to read the file, and says how to restore its copy. There are no down migrations.
+
+**Runs.** Each run records the SDK it started under. A run in flight, executing or waiting on a signal, that started under an SDK the binary doesn't run is never resumed: at startup it goes to `needs-human`, with a summary naming both versions, and its worktrees and claim are released as `cancel` releases them, so its work can start again.
+
+**Rolling back.** Install the older binary, stop the daemon (`chernabog stop`), restore the copies it left (`cp ~/.config/chernabog/backups/config.yaml.<version> ~/.config/chernabog/config.yaml`, and the same for `state.db`), then `chernabog start`. Whatever happened after the upgrade, such as runs it recorded, is lost with the newer files.
 
 See [`packages/sdk`](packages/sdk/README.md) for the services and helpers.
 

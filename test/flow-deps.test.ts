@@ -1,12 +1,17 @@
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
+import { supportsSdk } from "../src/kernel/sdk-support.value-object.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
-import { installFlowDependencies } from "../src/platform/flow-deps.ts";
+import {
+  BUNDLED_SDK,
+  installFlowDependencies,
+  missingSdkImports,
+} from "../src/platform/flow-deps.ts";
 import { bunExecutable } from "../src/platform/self.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 
@@ -75,4 +80,25 @@ describe("flow dependencies", () => {
         expect(Result.isFailure(installed) && installed.failure.message).toContain("failed");
       }),
   );
+});
+
+describe("the SDK this binary bundles", () => {
+  test("is one it runs", () => {
+    expect(supportsSdk(BUNDLED_SDK)).toBe(true);
+  });
+
+  test("a flow's imports of it are checked by name, through namespaces too", () => {
+    expect(
+      missingSdkImports(
+        'import * as S from "@chernabog/sdk";\nS.defineFlow; S.Review.recheck; S.Review.fixTrigger; S.gone;\n',
+      ),
+    ).toEqual(["Review.fixTrigger", "gone"]);
+    expect(
+      missingSdkImports(
+        'import { Review as R, type Flow, Skip } from "@chernabog/sdk";\nR.labelVerdict; Skip;\n',
+      ),
+    ).toEqual(["Review.labelVerdict"]);
+    expect(missingSdkImports('import sdk from "@chernabog/sdk";\n')).toEqual(["default"]);
+    expect(missingSdkImports('import type { Gone } from "@chernabog/sdk";\n')).toEqual([]);
+  });
 });

@@ -22,6 +22,7 @@ import { RunCleanupClientLive } from "./run-cleanup.client-live.ts";
 const run = (itemKey: string) =>
   RunRoot.make({
     id: RunId.make("run-1"),
+    sdkVersion: "0.6.0",
     repo: "demo",
     persona: Option.some("bob"),
     flow: "implement",

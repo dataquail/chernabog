@@ -10,7 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ConfigError } from "./config-error.ts";
 import { Exec, execOk } from "./exec.ts";
-import { checkConfigVersion, installFlowDependencies } from "./flow-deps.ts";
+import { checkCompatibility, installFlowDependencies } from "./flow-deps.ts";
 import { Home, homePaths } from "./home.ts";
 
 export type Snapshot = { readonly tree: string; readonly configDir: string };
@@ -75,8 +75,8 @@ export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =
           tree,
           `${staging}/.chernabog`,
         ]);
-        // Before installing, so a binary too old for it says so instead of failing the install.
-        yield* checkConfigVersion(`${staging}/.chernabog`);
+        // Before installing, so a repo this binary can't run says so instead of failing the install.
+        yield* checkCompatibility(`${staging}/.chernabog`);
         yield* installFlowDependencies(`${staging}/.chernabog`);
       }).pipe(
         Effect.onError(() => Effect.ignore(fs.remove(staging, { recursive: true, force: true }))),

@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
+import { BUNDLED_SDK } from "../../../../platform/flow-deps.ts";
 import { type RunsQuery, RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
 import { type RunRoot } from "../../domain/run/run.root.ts";
 import { RunColumns, toParameters, toRoot } from "./run.mapper.ts";
@@ -47,6 +48,14 @@ export const RunsRepositoryLive = Layer.effect(
     // One from before runs kept their work item gains it; its rows have none.
     if (!columns.some((column) => column.name === "item")) {
       yield* sql`ALTER TABLE om_runs ADD COLUMN item TEXT`;
+    }
+
+    // One from before runs kept their SDK gains it. Its runs in flight started
+    // under the SDK this binary bundles or one compatible with it: before
+    // stamps, nothing ever ran an incompatible one.
+    if (!columns.some((column) => column.name === "sdk_version")) {
+      yield* sql`ALTER TABLE om_runs ADD COLUMN sdk_version TEXT`;
+      yield* sql`UPDATE om_runs SET sdk_version = ${BUNDLED_SDK} WHERE sdk_version IS NULL`;
     }
 
     yield* sql`DROP INDEX IF EXISTS om_runs_active`;
@@ -93,12 +102,13 @@ export const RunsRepositoryLive = Layer.effect(
         status,
         currentStep,
         summary,
+        sdkVersion,
         startedAt,
         finishedAt,
       ] = toParameters(run);
 
-      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, started_at, finished_at)
-        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${startedAt}, ${finishedAt})
+      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, sdk_version, started_at, finished_at)
+        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${sdkVersion}, ${startedAt}, ${finishedAt})
         ON CONFLICT (id) DO UPDATE SET
           persona = excluded.persona,
           execution_id = excluded.execution_id,

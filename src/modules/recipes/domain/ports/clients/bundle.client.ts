@@ -9,18 +9,19 @@ import { type Scaffold } from "../../scaffold/scaffold.value-object.ts";
 // files, the scaffold, and the versions of the packages flows are written
 // against.
 export type BundleClientService = {
+  // The @chernabog/sdk version this binary bundles, which flows are written against.
+  readonly sdkVersion: string;
   // A recipe's file, by path under .chernabog/, as this binary has it.
   readonly recipeFile: (file: string) => Effect.Effect<string>;
   readonly scaffold: Effect.Effect<Scaffold>;
-  // Fails when a .chernabog/package.json needs a newer chernabog than this.
-  readonly checkFloor: (manifest: string) => Effect.Effect<void, ScaffoldRefused>;
-  // A .chernabog/package.json with this binary's pins, and its chernabog floor
-  // raised to this binary when it picks something of it up (or `raise`); none
-  // when it has them already.
-  readonly pinned: (
-    manifest: string,
-    raise: boolean,
-  ) => Effect.Effect<Option.Option<string>, ScaffoldRefused>;
+  // Fails when a .chernabog/package.json's flows are written against a newer
+  // SDK than this binary runs, so it must not rewrite them.
+  readonly refuseNewer: (manifest: string) => Effect.Effect<void, ScaffoldRefused>;
+  // A .chernabog/package.json with this binary's pins; none when it has them already.
+  readonly pinned: (manifest: string) => Effect.Effect<Option.Option<string>, ScaffoldRefused>;
+  // What a flow or step module imports from the SDK that this binary's SDK
+  // doesn't export, such as Review.fixTrigger.
+  readonly missingImports: (source: string) => ReadonlyArray<string>;
 };
 
 export class BundleClient extends Context.Service<BundleClient, BundleClientService>()(

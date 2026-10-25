@@ -345,7 +345,12 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     ...onlyIf(status.busy > 0, [
       segment(`  ${status.busy} step${plural(status.busy)} executing`, "cyan"),
     ]),
-    ...onlyIf(status.reloadPending, [segment("  restarting on new config when idle", "yellow")]),
+    ...onlyIf(status.draining === true, [
+      segment("  draining: chernabog was upgraded; restarting on it once runs finish", "yellow"),
+    ]),
+    ...onlyIf(status.reloadPending && status.draining !== true, [
+      segment("  restarting on new config when idle", "yellow"),
+    ]),
   ]);
   lines.push([]);
 

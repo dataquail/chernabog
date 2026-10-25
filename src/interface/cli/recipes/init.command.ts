@@ -29,10 +29,6 @@ const describeScaffold = (scaffolded: Scaffolded) =>
             return `wrote ${path} (updated)`;
           }
 
-          case "pinned": {
-            return `wrote ${path} (pins updated)`;
-          }
-
           case "ignored": {
             return `wrote ${path} (+ ${entries.join(", ")})`;
           }

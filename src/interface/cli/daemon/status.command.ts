@@ -65,6 +65,17 @@ const repoLine = (repo: DaemonStatus["repos"][number]) => {
   return repo.status;
 };
 
+// What the daemon is waiting to do, if anything.
+const daemonState = (status: DaemonStatus) => {
+  if (status.draining === true) {
+    const executing = status.active.filter((run) => !run.parked).length;
+
+    return `, draining: chernabog was upgraded, so it starts no new runs and restarts on the new version once ${executing} executing run${when(executing !== 1, "s")} finish${when(executing === 1, "es")}`;
+  }
+
+  return when(status.reloadPending, ", restarting on new config when idle");
+};
+
 const runLine = (run: DaemonStatus["active"][number]) => {
   if (run.parked) {
     return "waiting";
@@ -106,7 +117,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   };
 
   return [
-    `daemon ${status.pid}, up since ${upSince}${when(status.reloadPending, ", restarting on new config when idle")}`,
+    `daemon ${status.pid}, up since ${upSince}${daemonState(status)}`,
     "",
     ...status.repos.flatMap((repo) => [
       `${repo.name} (${repo.slug}): ${repoLine(repo)}${suffix(repo.launcher, ", launcher ")}${suffix(repo.message, " — ")}`,

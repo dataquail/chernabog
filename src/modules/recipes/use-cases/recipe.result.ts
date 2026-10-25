@@ -52,11 +52,11 @@ export class RecipesDiff extends Schema.Class<RecipesDiff, { readonly brand: "Re
   files: Schema.Array(RecipeDiffEntry),
 }) {}
 
-// One file the scaffold changed: written, brought up to date, its pins moved,
-// or, for .gitignore, the entries it gained.
+// One file the scaffold changed: written, brought up to date, or, for
+// .gitignore, the entries it gained.
 export const ScaffoldChange = Schema.Struct({
   path: Schema.String,
-  change: Schema.Literals(["written", "updated", "pinned", "ignored"]),
+  change: Schema.Literals(["written", "updated", "ignored"]),
   entries: Schema.Array(Schema.String),
 });
 
@@ -64,4 +64,29 @@ export class Scaffolded extends Schema.Class<Scaffolded, { readonly brand: "Scaf
   "Scaffolded",
 )({
   changes: Schema.Array(ScaffoldChange),
+}) {}
+
+// One file moving a repo to this chernabog changed: package.json's pins
+// moved, a recipe's file written where it was missing, or one that differed
+// replaced by the current recipe, which a person reviews before committing.
+export const UpgradeChange = Schema.Struct({
+  file: Schema.String,
+  recipe: Schema.Option(Schema.String),
+  change: Schema.Literals(["pinned", "written", "replaced"]),
+});
+
+// A flow or step it couldn't move, and why: hand-written, so from no recipe,
+// with what it imports that this chernabog's SDK doesn't have, if anything.
+export const UpgradeLeft = Schema.Struct({
+  file: Schema.String,
+  missingImports: Schema.Array(Schema.String),
+});
+
+export class RepoUpgraded extends Schema.Class<RepoUpgraded, { readonly brand: "RepoUpgraded" }>(
+  "RepoUpgraded",
+)({
+  // The @chernabog/sdk version it moved the repo to.
+  sdkVersion: Schema.String,
+  changes: Schema.Array(UpgradeChange),
+  left: Schema.Array(UpgradeLeft),
 }) {}

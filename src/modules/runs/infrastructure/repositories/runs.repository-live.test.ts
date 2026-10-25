@@ -17,6 +17,7 @@ const runsAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClient>) =>
 const run = (id: string, startedAt: string, persona: Option.Option<string>) =>
   RunRoot.make({
     id: RunId.make(id),
+    sdkVersion: "0.6.0",
     repo: "demo",
     persona,
     flow: "review",

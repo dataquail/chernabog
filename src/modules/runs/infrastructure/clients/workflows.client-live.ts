@@ -10,6 +10,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
+import { BUNDLED_SDK } from "../../../../platform/flow-deps.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
 import { type FlowHandle, runLogFor, statusOfExit, workflowNamed } from "../runtime/engine.ts";
@@ -41,6 +42,7 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         });
 
       return WorkflowsClient.of({
+        sdkVersion: BUNDLED_SDK,
         runs: (flow) => Option.isSome(handleOf(handles, flow)),
         execute: (flow, runId, item) =>
           handle(flow).pipe(

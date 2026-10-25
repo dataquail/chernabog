@@ -13,6 +13,8 @@ import { RunView } from "./run.result.ts";
 // under a fresh id.
 export type StartRun = {
   readonly id: RunId;
+  // The @chernabog/sdk version it starts under.
+  readonly sdkVersion: string;
   readonly repo: string;
   readonly persona: Persona;
   readonly flow: string;

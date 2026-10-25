@@ -12,6 +12,9 @@ export type WorkflowOutcome = { readonly status: RunEnding; readonly summary: st
 // The durable workflow engine a run's flow executes in, journaled so a run in
 // flight survives a restart.
 export type WorkflowsClientService = {
+  // The @chernabog/sdk version workflows here run under, which a run started
+  // now records.
+  readonly sdkVersion: string;
   // Whether this engine runs the flow's workflow; a process runs only the
   // flows it loaded.
   readonly runs: (flow: FlowRef) => boolean;
