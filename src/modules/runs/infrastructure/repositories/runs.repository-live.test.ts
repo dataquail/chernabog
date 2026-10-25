@@ -90,6 +90,17 @@ describe("RunsRepositoryLive", () => {
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
+  effect("keeps the pull request a run opened", () =>
+    Effect.gen(function* () {
+      const runs = yield* RunsRepository;
+      yield* runs.save(first);
+      const linked = RunRoot.make({ ...first, pullRequest: Option.some(124) });
+      yield* runs.save(linked);
+
+      expect(yield* runs.findOne(first.id)).toEqual(Option.some(linked));
+    }).pipe(Effect.provide(runsAfter(Effect.void))),
+  );
+
   effect("a database from before personas and work items gains the columns, its runs neither", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
@@ -98,9 +109,17 @@ describe("RunsRepositoryLive", () => {
         Option.map(yield* runs.findOne(RunId.make("old")), (found) => ({
           persona: found.persona,
           item: found.item,
+          pullRequest: found.pullRequest,
           status: found.status,
         })),
-      ).toEqual(Option.some({ persona: Option.none(), item: Option.none(), status: "running" }));
+      ).toEqual(
+        Option.some({
+          persona: Option.none(),
+          item: Option.none(),
+          pullRequest: Option.none(),
+          status: "running",
+        }),
+      );
     }).pipe(
       Effect.provide(
         runsAfter(

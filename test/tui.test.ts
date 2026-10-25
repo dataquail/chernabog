@@ -54,7 +54,13 @@ const run = (id: string, status: RunStatus) => {
       ),
       () => "implement",
     ),
-    itemKey: "issue-7",
+    // The item its id names, as in goodbones.review.pr-8.1.
+    itemKey: Option.getOrElse(
+      Option.flatMap(Option.fromNullishOr(/(issue|pr)-\d+/.exec(id)), (match) =>
+        Option.fromUndefinedOr(match[0]),
+      ),
+      () => "issue-7",
+    ),
     itemTitle: Option.some("Fix the parser"),
     itemUrl: Option.none(),
     executionId: Option.some("x"),
@@ -179,11 +185,13 @@ describe("the main view", () => {
   });
 
   test("shows runs in flight with their current step, and waiting ones as waiting", () => {
-    expect(screen).toMatch(/running\s+#7 implement goodbones Fix the parser\s+30m ago\s+implement/);
     expect(screen).toMatch(
-      /running\s+#7 review\s+goodbones Fix the parser\s+30m ago\s+waiting for a signal/,
+      /running\s+#7\s+implement goodbones Fix the parser\s+30m ago\s+implement/,
     );
-    expect(screen).toMatch(/needs-human\s+#7 implement goodbones .* CI still red/);
+    expect(screen).toMatch(
+      /running\s+PR 8 review\s+goodbones Fix the parser\s+30m ago\s+waiting for a signal/,
+    );
+    expect(screen).toMatch(/needs-human #5\s+implement goodbones .* CI still red/);
   });
 
   test("names each run's pull request or issue, and gives the title the width it needs", () => {
@@ -534,6 +542,72 @@ describe("a run's detail", () => {
   });
 });
 
+describe("work threads", () => {
+  const at = (
+    id: string,
+    flow: string,
+    itemKey: string,
+    ended: RunStatus,
+    fields: Partial<RunView> = {},
+  ) => RunView.make({ ...run(id, ended), flow, itemKey, ...fields });
+
+  const rereview = ActiveRun.make({
+    ...at("t4", "re-review", "pr-124-review-2", "running"),
+    parked: false,
+  });
+
+  const thread: DaemonStatus = {
+    ...status,
+    active: [rereview],
+    recent: [
+      at("t3", "address-review", "pr-124-changes-1", "done"),
+      at("other", "review", "pr-200", "done"),
+      at("t2", "review", "pr-124", "done"),
+      at("t1", "human-initiated", "issue-123", "done", { pullRequest: Option.some(124) }),
+      at("t0", "implement", "issue-123", "needs-human"),
+    ],
+  };
+
+  const opened = model({ status: Option.some(thread), width: 160 });
+  const rows = (from: Model) => plain(view(from)).split("\n");
+
+  test("an issue, the pull request it opened, and that pull request's runs are one row", () => {
+    const runs = rows(opened).filter((line) => / (running|done|needs-human) /.test(line));
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatch(/▸ running\s+PR 124 re-review \+4/);
+    expect(runs[1]).toMatch(/^\s+done\s+PR 200 review/);
+  });
+
+  test("space opens a thread under its latest run, and closes it from any of its runs", () => {
+    const open = update(opened, { name: "space" }).model;
+    const screen = plain(view(open));
+    expect(screen).toMatch(/▾ running\s+PR 124 re-review\s/);
+    expect(screen).toMatch(/└ done\s+PR 124 address-review/);
+    expect(screen).toMatch(/└ done\s+#123\s+human-initiated/);
+    expect(screen).toMatch(/└ needs-human #123\s+implement/);
+
+    const onOld = update(update(open, { name: "down" }).model, { name: "down" }).model;
+    expect(update(onOld, { name: "a" }).action).toEqual({ kind: "attach", run: "t2" });
+
+    const closed = update(onOld, { name: "space" }).model;
+    expect(closed.expanded).toEqual([]);
+    expect(closed.runIndex).toBe(0);
+  });
+
+  test("a run's detail lists the other runs of its thread, and enter opens one", () => {
+    const detail = update(opened, { name: "return" }).model;
+    const screen = plain(view(detail));
+    expect(screen).toContain("Thread");
+    expect(screen).toMatch(/done\s+PR 124 address-review/);
+    expect(screen).toMatch(/needs-human #123 implement/);
+    expect(screen).not.toContain("PR 200");
+
+    const second = update(update(detail, { name: "down" }).model, { name: "return" });
+    expect(second.action).toEqual({ kind: "open-run", run: "t2" });
+    expect(second.model.threadIndex).toBe(0);
+  });
+});
+
 describe("project tabs and the persona filter", () => {
   const goodbones = Option.getOrThrow(Option.fromUndefinedOr(status.repos[0]));
   const review = Option.getOrThrow(Option.fromUndefinedOr(goodbones.flows[1]));
@@ -648,7 +722,7 @@ describe("project tabs and the persona filter", () => {
     const screen = plain(view(model({ status: Option.some(one) })));
     expect(screen).not.toContain(" All ");
     expect(screen).not.toContain("persona all");
-    expect(screen).toMatch(/#7 implement Fix the parser/);
+    expect(screen).toMatch(/#7\s+implement Fix the parser/);
     expect(press(model({ status: Option.some(one) }), "1").project).toEqual(Option.none());
   });
 });

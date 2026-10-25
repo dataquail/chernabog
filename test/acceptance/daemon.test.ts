@@ -112,6 +112,11 @@ describe("the daemon", () => {
     const steps = history.steps.map((step) => step.step);
     expect(steps.slice(0, 2)).toEqual(["claim", "prepare-worktree"]);
     expect(steps).toContain("open-pull-request");
+
+    // The pull request it opened is linked to it, so the live view can thread its runs.
+    expect(Option.map(Option.fromUndefinedOr(done), (run) => run.pullRequest)).toEqual(
+      Option.some(Option.some([...sandbox.github.pulls.values()][0]?.number)),
+    );
   }, 60_000);
 
   test("the usage gate holds a run back and says why", async () => {

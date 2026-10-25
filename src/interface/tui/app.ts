@@ -157,6 +157,8 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   focus: "runs",
   flowIndex: 0,
   runIndex: 0,
+  expanded: [],
+  threadIndex: 0,
   view: "main",
   settings: Option.none(),
   detailRun: Option.none(),

@@ -42,6 +42,7 @@ import {
   flowHandle,
   flowLayer,
   forEveryPersona,
+  linkingPullRequests,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
@@ -58,7 +59,9 @@ import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
   type EngineRun,
+  makeFake,
   pollRun,
+  PULL,
   repoAs,
   runtimeFor,
   startRun,
@@ -427,6 +430,28 @@ describe("the engine", () => {
         expect(executed.filter((line) => line.startsWith("after:"))).toEqual(["after:after"]);
         expect(executed.filter((line) => line.startsWith("before:"))).toEqual(["before:before"]);
       }),
+  );
+});
+
+describe("linking a run to its pull request", () => {
+  effect("links the pull request a run opens, or the open one it finds for its branch", () =>
+    Effect.gen(function* () {
+      const linked: Array<number> = [];
+
+      const context = linkingPullRequests(
+        yield* Layer.build(makeFake("approve").services),
+        (pullRequest) => Effect.sync(() => linked.push(pullRequest)),
+      );
+
+      const github = Context.get(context, GitHub);
+      // Nothing open for the branch yet: nothing to adopt.
+      yield* github.pullRequestForBranch("auto/issue-3");
+      expect(linked).toEqual([]);
+
+      yield* github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" });
+      yield* github.pullRequestForBranch("auto/issue-3");
+      expect(linked).toEqual([PULL, PULL]);
+    }).pipe(Effect.scoped),
   );
 });
 

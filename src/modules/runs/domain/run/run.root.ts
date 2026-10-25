@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
@@ -40,6 +41,9 @@ export class RunRoot extends Schema.Class<RunRoot, { readonly brand: "RunRoot" }
   // The workflow execution that runs it, once the engine has started one.
   executionId: Schema.Option(Schema.String),
   status: RunStatus,
+  // The pull request it opened or adopted for its work item, which ties an
+  // issue's run to the runs on its pull request; none until it does.
+  pullRequest: Schema.Option(Schema.Finite).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
   // The step it's in while running.
   currentStep: Schema.Option(Schema.String),
   // How it ended, once it has.

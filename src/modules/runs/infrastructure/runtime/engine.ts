@@ -7,6 +7,7 @@
 import {
   describeError,
   type Flow,
+  GitHub,
   isSetupError,
   NeedsHuman,
   type RepoSettings,
@@ -23,7 +24,7 @@ import * as Cause from "effect/Cause";
 import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
-import type * as Context from "effect/Context";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -43,6 +44,7 @@ import type { EffectiveRepo } from "../../../../repo-config.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
+import { linkPullRequestUseCase } from "../../use-cases/link-pull-request.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
@@ -232,6 +234,39 @@ export const capturing = <Args extends ReadonlyArray<unknown>, A, E, R>(
         Effect.provideContext(use(...args), context),
   );
 
+// The run's GitHub, which links the run to a pull request it opens, or to an
+// open one it finds for its branch and adopts: the only ways a flow takes a
+// pull request on for its work. Services without GitHub stay as they are.
+export const linkingPullRequests = <R>(
+  context: Context.Context<R>,
+  link: (pullRequest: number) => Effect.Effect<void>,
+): Context.Context<R> =>
+  Option.match(Context.getOption(context, GitHub), {
+    onNone: () => context,
+    onSome: (github) =>
+      Context.add(
+        context,
+        GitHub,
+        GitHub.of({
+          ...github,
+          openPullRequest: (pullRequest) =>
+            github.openPullRequest(pullRequest).pipe(Effect.tap((opened) => link(opened.number))),
+          pullRequestForBranch: (branch) =>
+            github
+              .pullRequestForBranch(branch)
+              .pipe(
+                Effect.tap((found) =>
+                  Effect.forEach(
+                    Option.toArray(Option.filter(found, (pull) => pull.state === "open")),
+                    (pull) => link(pull.number),
+                    { discard: true },
+                  ),
+                ),
+              ),
+        }),
+      ),
+  });
+
 // Registers a flow's workflow with the engine. The services each run uses
 // (repoServices, or fakes in tests) are built once per persona of the repo,
 // chosen by the run's persona, then given the run's own Run and RunLog. One
@@ -302,6 +337,16 @@ export const flowLayer = <R>(
 
       const park = yield* capturing(parkRunUseCase);
 
+      const link = yield* capturing((pullRequest: number) =>
+        linkPullRequestUseCase(runId, pullRequest).pipe(
+          Effect.catchTags({
+            RunAlreadyFinished: () => Effect.void,
+            RunNotFound: () => Effect.void,
+          }),
+          Effect.asVoid,
+        ),
+      );
+
       const runLog = yield* runLogFor(payload.runId, {
         onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
         onStepDone: hooks.onStepDone,
@@ -324,7 +369,7 @@ export const flowLayer = <R>(
         }),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
-        Effect.provideContext(context),
+        Effect.provideContext(linkingPullRequests(context, link)),
       );
 
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
