@@ -6,7 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { samePersona } from "../../kernel/persona.value-object.ts";
+import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { ActiveRun } from "../../modules/runs/use-cases/run.result.ts";
 import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
@@ -69,6 +69,10 @@ export type Model = {
   readonly error: Option.Option<string>;
   readonly usage: ReadonlyArray<UsageRow>;
   readonly thresholds: { readonly fiveHourCeiling: number; readonly targetEndUsage: number };
+  // The project tab (a repo's name; none for All) and the persona filter
+  // (none for all), which flows, runs and skips are shown through.
+  readonly project: Option.Option<string>;
+  readonly personaFilter: Option.Option<Persona>;
   readonly focus: "flows" | "runs";
   readonly flowIndex: number;
   readonly runIndex: number;
@@ -121,33 +125,79 @@ const styleIf = (condition: boolean, style: Style): Style => {
   return "plain";
 };
 
-export const flowRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<FlowRow> =>
+// The projects a tab picks from: every repo the daemon has, in its order.
+export const projectsOf = (status: Option.Option<DaemonStatus>): ReadonlyArray<string> =>
+  Option.match(status, {
+    onNone: () => [],
+    onSome: (found) => found.repos.map((repo) => repo.name),
+  });
+
+// The personas the filter picks from: every one a flow runs as, or a run ran
+// as, in the order first seen.
+export const personasOf = (status: Option.Option<DaemonStatus>): ReadonlyArray<Persona> =>
   Option.match(status, {
     onNone: () => [],
     onSome: (found) =>
+      Arr.dedupeWith(
+        [
+          ...found.repos.flatMap((repo) =>
+            repo.flows.map((flow) => Option.fromUndefinedOr(flow.persona)),
+          ),
+          ...found.active.map((run) => run.persona),
+          ...found.recent.map((run) => run.persona),
+        ],
+        samePersona,
+      ),
+  });
+
+// Whether a repo and persona pass the project tab and the persona filter.
+const passes = (model: Model, repo: string, persona: Persona) =>
+  Option.match(model.project, { onNone: () => true, onSome: (name) => name === repo }) &&
+  Option.match(model.personaFilter, {
+    onNone: () => true,
+    onSome: (chosen) => samePersona(chosen, persona),
+  });
+
+// Which run columns show: one a filter fixes, or that has one value to show, is dropped.
+export const shownColumns = (model: Model): Shown => ({
+  repo: Option.isNone(model.project) && projectsOf(model.status).length > 1,
+  persona: Option.isNone(model.personaFilter) && personasOf(model.status).length > 1,
+});
+
+export const flowRows = (model: Model): ReadonlyArray<FlowRow> =>
+  Option.match(model.status, {
+    onNone: () => [],
+    onSome: (found) =>
       found.repos.flatMap((repo) =>
-        repo.flows.map((flow): FlowRow => ({
-          repo: repo.name,
-          flow: flow.name,
-          persona: Option.fromUndefinedOr(flow.persona),
-        })),
+        repo.flows
+          .map((flow): FlowRow => ({
+            repo: repo.name,
+            flow: flow.name,
+            persona: Option.fromUndefinedOr(flow.persona),
+          }))
+          .filter((row) => passes(model, row.repo, row.persona)),
       ),
   });
 
 const MAX_RUNS = 15;
 
-// Runs in flight first, then the latest finished ones.
-export const runRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunEntry> =>
+// Every run the daemon reported: runs in flight first, then the latest finished ones.
+export const allRuns = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunEntry> =>
   Option.match(status, {
     onNone: () => [],
-    onSome: (found) =>
-      [
-        ...found.active,
-        ...found.recent
-          .filter((run) => run.status !== "running")
-          .map((run) => ActiveRun.make({ ...run, parked: false })),
-      ].slice(0, MAX_RUNS),
+    onSome: (found) => [
+      ...found.active,
+      ...found.recent
+        .filter((run) => run.status !== "running")
+        .map((run) => ActiveRun.make({ ...run, parked: false })),
+    ],
   });
+
+// The runs the list shows, through the filters.
+export const runRows = (model: Model): ReadonlyArray<RunEntry> =>
+  allRuns(model.status)
+    .filter((run) => passes(model, run.repo, run.persona))
+    .slice(0, MAX_RUNS);
 
 const MINUTE = 60;
 const HOUR = 3600;
@@ -221,7 +271,7 @@ const select = (line: Line, selected: boolean): Line => {
 };
 
 export const KEYS_MAIN =
-  "tab switch pane · ↑↓ select · enter log or settings · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
+  "tab switch pane · ↑↓ select · enter log or settings · 0-9 [ ] project · @ persona · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
 
 export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
 
@@ -475,6 +525,40 @@ const runLine = (run: RunEntry, columns: RunColumns, now: DateTime.Utc): Line =>
   ];
 };
 
+const personaName = (persona: Persona) =>
+  Option.match(persona, { onNone: () => "implicit", onSome: (login) => `@${login}` });
+
+// The project tabs and the persona filter, each only when there's a choice to make.
+const filterLines = (model: Model): ReadonlyArray<Line> => {
+  const projects = projectsOf(model.status);
+  const personas = personasOf(model.status);
+
+  const tab = (name: string, chosen: boolean): Segment =>
+    segment(` ${name} `, styleIf(chosen, "selected"));
+
+  const tabs: Line = onlyIf(projects.length > 1, [
+    tab("All", Option.isNone(model.project)),
+    ...projects.flatMap((name) => [
+      segment("·", "dim"),
+      tab(name, Option.contains(model.project, name)),
+    ]),
+  ]);
+
+  const persona: Line = onlyIf(personas.length > 1, [
+    segment(`${onlyIf(tabs.length > 0, ["   "]).join("")}persona `, "dim"),
+    segment(
+      Option.match(model.personaFilter, { onNone: () => "all", onSome: personaName }),
+      "bold",
+    ),
+  ]);
+
+  if (tabs.length === 0 && persona.length === 0) {
+    return [];
+  }
+
+  return [[], [...tabs, ...persona]];
+};
+
 const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   const { now } = model;
   const lines: Array<Line> = [];
@@ -495,13 +579,23 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       segment("  restarting on new config when idle", "yellow"),
     ]),
   ]);
+
+  for (const line of filterLines(model)) {
+    lines.push(line);
+  }
+
   lines.push([]);
 
   lines.push(heading("Repos and flows"));
-  const selectedFlow = Arr.get(flowRows(Option.some(status)), model.flowIndex);
+  const flows = flowRows(model);
+  const selectedFlow = Arr.get(flows, model.flowIndex);
+  const shown = shownColumns(model);
 
   const labelOf = (flow: { readonly name: string; readonly persona?: string }) =>
-    `${flow.name}${Option.match(Option.fromUndefinedOr(flow.persona), { onNone: () => "", onSome: (login) => ` @${login}` })}`;
+    `${flow.name}${Option.match(
+      Option.filter(Option.fromUndefinedOr(flow.persona), () => shown.persona),
+      { onNone: () => "", onSome: (login) => ` @${login}` },
+    )}`;
 
   // Wide enough for a persona's name too, within reason.
   const flowColumn = Math.min(
@@ -512,7 +606,9 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     ),
   );
 
-  for (const repo of status.repos) {
+  for (const repo of status.repos.filter((found) =>
+    Option.match(model.project, { onNone: () => true, onSome: (name) => name === found.name }),
+  )) {
     const state = repoState(repo);
     lines.push([
       segment(`  ${repo.name}`, "bold"),
@@ -523,7 +619,9 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       ...Option.toArray(Option.map(repo.message, (message) => segment(`  ${message}`, "dim"))),
     ]);
 
-    for (const flow of repo.flows) {
+    for (const flow of repo.flows.filter((found) =>
+      passes(model, repo.name, Option.fromUndefinedOr(found.persona)),
+    )) {
       const persona = Option.fromUndefinedOr(flow.persona);
 
       const selected =
@@ -582,13 +680,13 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   lines.push([]);
 
   lines.push(heading("Runs"));
-  const runs = runRows(Option.some(status));
+  const runs = runRows(model);
 
   if (runs.length === 0) {
     lines.push([segment("  none yet", "dim")]);
   }
 
-  const columns = runColumns(runs, model.width, { repo: true, persona: true });
+  const columns = runColumns(runs, model.width, shown);
 
   runs.forEach((run, runIndex) => {
     lines.push(
@@ -596,11 +694,13 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     );
   });
 
-  if (status.skips.length > 0) {
+  const skips = status.skips.filter((skip) => passes(model, skip.repo, skip.persona));
+
+  if (skips.length > 0) {
     lines.push([]);
     lines.push(heading("Recent skips"));
 
-    for (const skip of status.skips.slice(0, 4)) {
+    for (const skip of skips.slice(0, 4)) {
       lines.push([
         segment(`  ${pad(`${skip.repo}/${skip.flow}`, 22)} ${firstLine(skip.reason)}`, "dim"),
         segment(`  ${ago(Option.some(skip.at), now)}`, "dim"),
@@ -787,7 +887,7 @@ const mainView = (model: Model): ReadonlyArray<Line> =>
   });
 
 const logView = (model: Model): ReadonlyArray<Line> => {
-  const run = Arr.findFirst(runRows(model.status), (candidate) =>
+  const run = Arr.findFirst(allRuns(model.status), (candidate) =>
     Option.contains(model.logRun, candidate.id),
   );
 

@@ -311,6 +311,9 @@ const DRAINING =
 const SOONEST_MS = 200;
 const LATEST_MS = 15_000;
 
+// The finished runs status reports, newest first.
+const RECENT_RUNS = 100;
+
 const PathParams = Schema.Struct({ id: RunId });
 
 // Every run in flight, whatever its repo, persona or flow.
@@ -915,7 +918,9 @@ export const runDaemon = Effect.gen(function* () {
             agent: account.agent,
           })),
           active: yield* active,
-          recent: (yield* listRecentRunsUseCase(20)).runs,
+          // Enough for the live view's project tabs and persona filter to
+          // still have runs to show.
+          recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
           skips: (yield* listRecentSkipsUseCase(20)).skips,
         } satisfies DaemonStatus;
       });

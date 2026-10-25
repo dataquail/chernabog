@@ -3,7 +3,7 @@
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 
-import { samePersona } from "../../kernel/persona.value-object.ts";
+import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
 import { cronProblem } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
@@ -13,6 +13,8 @@ import {
   type Model,
   personaAccounts,
   personaFlows,
+  personasOf,
+  projectsOf,
   type RunEntry,
   runRows,
   type Settings,
@@ -558,9 +560,76 @@ const confirmCancel = (cleared: Model, run: RunEntry, key: Key): Updated => {
   };
 };
 
+// The filters as they'd be with `project` and `persona`; the selections go
+// back to the top of what's now shown.
+const filteredTo = (
+  model: Model,
+  project: Option.Option<string>,
+  personaFilter: Option.Option<Persona>,
+): Model => ({ ...model, project, personaFilter, flowIndex: 0, runIndex: 0 });
+
+// The next choice after `current` in `choices`, all (none) between the last and the first.
+const cycle = <A>(
+  choices: ReadonlyArray<A>,
+  current: Option.Option<A>,
+  same: (left: A, right: A) => boolean,
+  step: number,
+): Option.Option<A> => {
+  const at = Option.match(current, {
+    onNone: () => -1,
+    onSome: (chosen) => choices.findIndex((choice) => same(choice, chosen)),
+  });
+
+  const count = choices.length + 1;
+  const next = (((at + 1 + step) % count) + count) % count;
+
+  return Arr.get(choices, next - 1);
+};
+
+const typed = (key: Key) => Option.getOrElse(Option.fromUndefinedOr(key.sequence), () => key.name);
+
+// 1-9 picks a project tab, 0 All, [ and ] cycle them, and @ cycles the
+// persona filter. Each does nothing when there's no choice to make.
+const filterKey = (model: Model, key: Key): Option.Option<Model> => {
+  const projects = projectsOf(model.status);
+  const personas = personasOf(model.status);
+  const text = typed(key);
+  const same = (left: string, right: string) => left === right;
+
+  if (text === "@" && personas.length > 1) {
+    return Option.some(
+      filteredTo(model, model.project, cycle(personas, model.personaFilter, samePersona, 1)),
+    );
+  }
+
+  if (projects.length < 2) {
+    return Option.none();
+  }
+
+  if (text === "[" || text === "]") {
+    let step = -1;
+
+    if (text === "]") {
+      step = 1;
+    }
+
+    return Option.some(
+      filteredTo(model, cycle(projects, model.project, same, step), model.personaFilter),
+    );
+  }
+
+  const tab = Number(text);
+
+  if (/^[0-9]$/.test(text) && tab <= projects.length) {
+    return Option.some(filteredTo(model, Arr.get(projects, tab - 1), model.personaFilter));
+  }
+
+  return Option.none();
+};
+
 const updateMain = (model: Model, key: Key): Updated => {
-  const flows = flowRows(model.status);
-  const runs = runRows(model.status);
+  const flows = flowRows(model);
+  const runs = runRows(model);
 
   const selectedRun = Arr.get(runs, model.runIndex).pipe(
     Option.filter(() => model.focus === "runs"),
@@ -695,14 +764,18 @@ const updateMain = (model: Model, key: Key): Updated => {
     }
 
     default:
-      // x asks to cancel the selected run.
-      return Option.match(
-        Option.liftPredicate(key.name, (name) => name === "x"),
-        {
-          onNone: () => ({ model, action: none }),
-          onSome: (name) => onSelectedRun(cleared, selectedRun, name),
-        },
-      );
+      return Option.match(filterKey(cleared, key), {
+        onSome: (filtered) => ({ model: filtered, action: none }),
+        // x asks to cancel the selected run.
+        onNone: () =>
+          Option.match(
+            Option.liftPredicate(key.name, (name) => name === "x"),
+            {
+              onNone: () => ({ model, action: none }),
+              onSome: (name) => onSelectedRun(cleared, selectedRun, name),
+            },
+          ),
+      });
   }
 };
 

@@ -405,6 +405,125 @@ describe("keys", () => {
   });
 });
 
+describe("project tabs and the persona filter", () => {
+  const goodbones = Option.getOrThrow(Option.fromUndefinedOr(status.repos[0]));
+  const review = Option.getOrThrow(Option.fromUndefinedOr(goodbones.flows[1]));
+
+  const as = (id: string, repo: string, persona: string, itemKey: string) =>
+    ActiveRun.make({
+      ...run(id, "running"),
+      repo,
+      flow: "review",
+      persona: Option.some(persona),
+      itemKey,
+      parked: false,
+    });
+
+  const two: DaemonStatus = {
+    ...status,
+    repos: [
+      {
+        ...goodbones,
+        flows: [
+          { ...review, persona: "alice" },
+          { ...review, persona: "bob" },
+        ],
+      },
+      {
+        ...goodbones,
+        name: "chernabog",
+        slug: "dataquail/chernabog",
+        flows: [{ ...review, persona: "alice" }],
+      },
+    ],
+    active: [
+      as("r1", "goodbones", "alice", "pr-1"),
+      as("r2", "goodbones", "bob", "pr-2"),
+      as("r3", "chernabog", "alice", "pr-3"),
+    ],
+    recent: [],
+    skips: [
+      SkipView.make({
+        repo: "chernabog",
+        persona: Option.some("alice"),
+        flow: "review",
+        itemKey: Option.none(),
+        reason: "nothing to review",
+        at: minutes(-1),
+      }),
+    ],
+  };
+
+  const opened = model({ status: Option.some(two) });
+
+  const press = (from: Model, ...keys: ReadonlyArray<string>) =>
+    keys.reduce((current, name) => update(current, { name, sequence: name }).model, from);
+
+  test("shows a tab per project and the persona filter, both at All to begin with", () => {
+    const screen = plain(view(opened));
+    expect(screen).toContain(" All · goodbones · chernabog    persona all");
+    expect(screen).toMatch(/PR 1\s+review goodbones @alice/);
+    expect(screen).toContain("review @bob");
+  });
+
+  test("a project tab shows only its repo's flows, runs and skips, and drops the repo column", () => {
+    const chernabog = press(opened, "2");
+    expect(chernabog.project).toEqual(Option.some("chernabog"));
+
+    const screen = plain(view(chernabog));
+    expect(screen).not.toContain("goodbones  ready");
+    expect(screen).toMatch(/PR 3\s+review @alice/);
+    expect(screen).not.toContain("PR 1");
+    expect(screen).toContain("nothing to review");
+
+    expect(press(chernabog, "0").project).toEqual(Option.none());
+    expect(press(opened, "]").project).toEqual(Option.some("goodbones"));
+    expect(press(opened, "[").project).toEqual(Option.some("chernabog"));
+    expect(press(opened, "]", "]", "]").project).toEqual(Option.none());
+    // There is no ninth project.
+    expect(press(chernabog, "9").project).toEqual(Option.some("chernabog"));
+  });
+
+  test("@ cycles the persona filter, which drops the persona column", () => {
+    const bob = press(opened, "@", "@");
+    expect(bob.personaFilter).toEqual(Option.some(Option.some("bob")));
+
+    const screen = plain(view(bob));
+    expect(screen).toContain("persona @bob");
+    expect(screen).toMatch(/PR 2\s+review goodbones Fix the parser/);
+    expect(screen).not.toContain("PR 1");
+    expect(screen).not.toContain("nothing to review");
+
+    expect(press(bob, "@").personaFilter).toEqual(Option.none());
+  });
+
+  test("keys act on the rows shown, and a filter starts the selection at the top", () => {
+    const down = press(opened, "down", "down");
+    expect(down.runIndex).toBe(2);
+
+    const chernabog = press(down, "2");
+    expect(chernabog.runIndex).toBe(0);
+    expect(update(chernabog, { name: "a" }).action).toEqual({ kind: "attach", run: "r3" });
+
+    const onFlows = press(press(opened, "@", "@"), "tab");
+    expect(update(onFlows, { name: "t" }).action).toEqual({
+      kind: "trigger",
+      repo: "goodbones",
+      flow: "review",
+      persona: Option.some("bob"),
+    });
+  });
+
+  test("with one project and one persona there is nothing to choose, so neither shows", () => {
+    const one = { ...status, repos: [goodbones] };
+    const screen = plain(view(model({ status: Option.some(one) })));
+    expect(screen).not.toContain(" All ");
+    expect(screen).not.toContain("persona all");
+    expect(screen).toMatch(/#7 implement Fix the parser/);
+    expect(press(model({ status: Option.some(one) }), "1").project).toEqual(Option.none());
+  });
+});
+
 const window = (utilization: number) => ({ utilization, resets_at: minutes(600) });
 
 effectAtHome("usage comes from the latest line of each account's usage log", () =>

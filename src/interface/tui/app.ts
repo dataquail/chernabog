@@ -126,6 +126,8 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
     fiveHourCeiling: DEFAULT_GATE.fiveHourCeiling,
     targetEndUsage: DEFAULT_GATE.targetEndUsage,
   },
+  project: Option.none(),
+  personaFilter: Option.none(),
   focus: "runs",
   flowIndex: 0,
   runIndex: 0,
