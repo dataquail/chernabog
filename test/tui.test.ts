@@ -177,11 +177,41 @@ describe("the main view", () => {
   });
 
   test("shows runs in flight with their current step, and waiting ones as waiting", () => {
-    expect(screen).toMatch(/running\s+goodbones\/implement\s+Fix the parser\s+30m ago\s+implement/);
+    expect(screen).toMatch(/running\s+#7 implement goodbones Fix the parser\s+30m ago\s+implement/);
     expect(screen).toMatch(
-      /running\s+goodbones\/review\s+Fix the parser\s+30m ago\s+waiting for a signal/,
+      /running\s+#7 review\s+goodbones Fix the parser\s+30m ago\s+waiting for a signal/,
     );
-    expect(screen).toMatch(/needs-human\s+goodbones\/implement .* CI still red/);
+    expect(screen).toMatch(/needs-human\s+#7 implement goodbones .* CI still red/);
+  });
+
+  test("names each run's pull request or issue, and gives the title the width it needs", () => {
+    const title =
+      "feat!: chernabog decides which repos' flows it runs, and state and runs survive an upgrade";
+
+    const items = {
+      ...status,
+      active: [],
+      recent: [
+        RunView.make({
+          ...run("a", "done"),
+          flow: "address-review",
+          persona: Option.some("zach"),
+          itemKey: "pr-124-changes-1",
+          itemTitle: Option.some(title),
+        }),
+        RunView.make({ ...run("b", "done"), itemKey: "issue-144" }),
+        RunView.make({ ...run("c", "done"), itemKey: "chore-sweep", itemTitle: Option.none() }),
+      ],
+    };
+
+    const rows = plain(view(model({ status: Option.some(items), width: 200 })));
+    expect(rows).toContain(`PR 124      address-review goodbones @zach ${title}`);
+    expect(rows).toMatch(/done\s+#144\s+implement\s+goodbones\s+Fix the parser/);
+    expect(rows).toMatch(/done\s+chore-sweep implement/);
+
+    // On a narrow terminal the title gives way, and the detail keeps some room.
+    const narrow = plain(view(model({ status: Option.some(items), width: 120 })));
+    expect(narrow).toMatch(/PR 124 .* feat!: chernabog .*…\s+5m ago\s+#7: ready/);
   });
 
   test("says why ticks were skipped, and fits the terminal", () => {

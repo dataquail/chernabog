@@ -332,6 +332,149 @@ const detailStyle = (status: RunStatus): Style => {
   return "dim";
 };
 
+// What a run is about, from its item key: a pull request (`pr-124`, and keys
+// with a suffix such as `pr-124-changes-1`), an issue (`issue-144`), or the
+// key itself for any other item.
+export type ItemRef =
+  | { readonly kind: "pr"; readonly number: number }
+  | { readonly kind: "issue"; readonly number: number }
+  | { readonly kind: "other"; readonly key: string };
+
+const ITEM_KEY = /^(pr|issue)-(\d+)(?:-|$)/;
+
+export const itemRef = (itemKey: string): ItemRef =>
+  Option.match(Option.fromNullishOr(ITEM_KEY.exec(itemKey)), {
+    onNone: (): ItemRef => ({ kind: "other", key: itemKey }),
+    onSome: (match): ItemRef => {
+      const number = Number(match[2]);
+
+      if (match[1] === "pr") {
+        return { kind: "pr", number };
+      }
+
+      return { kind: "issue", number };
+    },
+  });
+
+const itemText = (ref: ItemRef) => {
+  if (ref.kind === "pr") {
+    return `PR ${ref.number}`;
+  }
+
+  if (ref.kind === "issue") {
+    return `#${ref.number}`;
+  }
+
+  return ref.key;
+};
+
+const ITEM_STYLE: Readonly<Record<ItemRef["kind"], Style>> = {
+  pr: "magenta",
+  issue: "cyan",
+  other: "plain",
+};
+
+const personaText = (persona: Option.Option<string>) =>
+  Option.match(persona, { onNone: () => "", onSome: (login) => `@${login}` });
+
+// Which of a run row's columns show: a filter that fixes the repo or the
+// persona drops its column.
+export type Shown = { readonly repo: boolean; readonly persona: boolean };
+
+// The widths of a run row's columns, for the runs shown and the terminal's
+// width; 0 for a column that isn't shown.
+type RunColumns = {
+  readonly item: number;
+  readonly flow: number;
+  readonly repo: number;
+  readonly persona: number;
+  readonly title: number;
+};
+
+const STATUS_WIDTH = 12;
+const WHEN_WIDTH = 8;
+const MIN_TITLE = 12;
+const MIN_DETAIL = 24;
+
+const widest = (texts: ReadonlyArray<string>, cap: number) =>
+  Math.min(cap, Math.max(0, ...texts.map((text) => text.length)) + 1);
+
+const widthIf = (condition: boolean, width: number) => {
+  if (condition) {
+    return width;
+  }
+
+  return 0;
+};
+
+const titleOf = (run: RunEntry) => Option.getOrElse(run.itemTitle, () => "");
+
+// The fixed columns fit their longest value, within reason; the title takes
+// what's left up to its longest, and the detail the rest.
+const runColumns = (runs: ReadonlyArray<RunEntry>, width: number, shown: Shown): RunColumns => {
+  const item = widest(
+    runs.map((run) => itemText(itemRef(run.itemKey))),
+    12,
+  );
+
+  const flow = widest(
+    runs.map((run) => run.flow),
+    20,
+  );
+
+  const repo = widthIf(
+    shown.repo,
+    widest(
+      runs.map((run) => run.repo),
+      18,
+    ),
+  );
+
+  const personaWidth = widest(
+    runs.map((run) => personaText(run.persona)),
+    18,
+  );
+
+  // No column for the implicit persona alone.
+  const persona = widthIf(shown.persona && personaWidth > 1, personaWidth);
+
+  const fixed = 2 + STATUS_WIDTH + item + flow + repo + persona + 1 + WHEN_WIDTH + 1;
+  const room = Math.max(0, width - fixed);
+  const longest = widest(runs.map(titleOf), Number.POSITIVE_INFINITY);
+  const detail = Math.min(MIN_DETAIL, Math.floor(room * 0.4));
+  const title = Math.max(MIN_TITLE, Math.min(longest, room - detail));
+
+  return { item, flow, repo, persona, title };
+};
+
+const column = (text: string, width: number) => {
+  if (width === 0) {
+    return "";
+  }
+
+  return pad(text, width);
+};
+
+const runLine = (run: RunEntry, columns: RunColumns, now: DateTime.Utc): Line => {
+  const ref = itemRef(run.itemKey);
+
+  const when = ago(
+    Option.orElse(run.finishedAt, () => Option.some(run.startedAt)),
+    now,
+  );
+
+  return [
+    segment(`  ${pad(run.status, STATUS_WIDTH)}`, STATUS_STYLE[run.status]),
+    segment(column(itemText(ref), columns.item), ITEM_STYLE[ref.kind]),
+    segment(column(run.flow, columns.flow)),
+    segment(column(run.repo, columns.repo), "dim"),
+    segment(column(personaText(run.persona), columns.persona), "dim"),
+    segment(column(titleOf(run), columns.title)),
+    segment(` ${pad(when, WHEN_WIDTH)} `, "dim"),
+    segment(firstLine(runDetail(run)), detailStyle(run.status)),
+  ];
+};
+
 const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   const { now } = model;
   const lines: Array<Line> = [];
@@ -445,26 +588,11 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     lines.push([segment("  none yet", "dim")]);
   }
 
+  const columns = runColumns(runs, model.width, { repo: true, persona: true });
+
   runs.forEach((run, runIndex) => {
-    const title = Option.getOrElse(run.itemTitle, () => run.itemKey);
-
-    const when = ago(
-      Option.orElse(run.finishedAt, () => Option.some(run.startedAt)),
-      now,
-    );
-
     lines.push(
-      select(
-        [
-          segment(`  ${pad(run.status, 12)}`, STATUS_STYLE[run.status]),
-          segment(
-            `${pad(`${run.repo}/${run.flow}${Option.match(run.persona, { onNone: () => "", onSome: (login) => `@${login}` })}`, 22)} ${pad(title, 28)}`,
-          ),
-          segment(` ${pad(when, 8)} `, "dim"),
-          segment(firstLine(runDetail(run)), detailStyle(run.status)),
-        ],
-        model.focus === "runs" && model.runIndex === runIndex,
-      ),
+      select(runLine(run, columns, now), model.focus === "runs" && model.runIndex === runIndex),
     );
   });
 
