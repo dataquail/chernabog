@@ -28,6 +28,7 @@ import { findRunUseCase } from "./find-run.use-case.ts";
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
     id: RunId.make(id),
+    sdkVersion: "0.6.0",
     repo: "demo",
     persona: Option.some("bob"),
     flow: "review",
@@ -78,7 +79,7 @@ const runtime = (
   );
 
 const byId = (asked: string) => CancelTarget.cases.ById.make({ asked });
-const asAlice = { by: "alice", closeSessions: false };
+const asAlice = { by: "alice", closeSessions: false, needsHuman: Option.none<string>() };
 
 const statusOf = (id: string) =>
   findRunUseCase(RunId.make(id)).pipe(
@@ -227,6 +228,37 @@ describe("cancelRunUseCase", () => {
     ),
   );
 
+  const stale = stoppingEngine("old");
+
+  const staleHoldings = fakeHoldings({
+    claims: { old: { branch: "auto/issue-9", kept: Option.none() } },
+  });
+
+  effect(
+    "ends a run this binary can't resume as needing a person, cleaning up as a cancel does",
+    () =>
+      Effect.gen(function* () {
+        const ended = yield* cancelRunUseCase(byId("old"), {
+          by: "chernabog",
+          closeSessions: false,
+          needsHuman: Option.some("it started under @chernabog/sdk 0.5.0"),
+        });
+
+        expect([ended.run.status, ended.run.summary]).toEqual([
+          "needs-human",
+          Option.some("it started under @chernabog/sdk 0.5.0"),
+        ]);
+        expect(stale.interrupted).toEqual(["execution-old"]);
+        expect(staleHoldings.released).toEqual([9]);
+      }).pipe(
+        Effect.provide(
+          runtime(stale, staleHoldings, {
+            runs: [run("old", { flow: "implement", itemKey: "issue-9", sdkVersion: "0.5.0" })],
+          }),
+        ),
+      ),
+  );
+
   const closing = stoppingEngine("i");
 
   const closingHoldings = fakeHoldings({
@@ -238,7 +270,11 @@ describe("cancelRunUseCase", () => {
 
   effect("closes sessions only when asked, and keeps a branch with work on it", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("i"), { by: "alice", closeSessions: true });
+      const cancelled = yield* cancelRunUseCase(byId("i"), {
+        by: "alice",
+        closeSessions: true,
+        needsHuman: Option.none(),
+      });
 
       expect(closingHoldings.closed).toEqual(["term-1"]);
       expect(cancelled.closedSessions.length).toBe(1);

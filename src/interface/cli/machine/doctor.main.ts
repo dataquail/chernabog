@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts";
+import { supportedRange } from "../../../kernel/sdk-support.value-object.ts";
 import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
@@ -30,21 +31,21 @@ import {
   loggedInEmail,
 } from "../../../modules/runs/infrastructure/runtime/usage-gate.ts";
 import { findTrustedTreeUseCase } from "../../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { type Backup, listBackups } from "../../../platform/backups.ts";
+import { IncompatibleConfig } from "../../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { Exec, type ExecResult } from "../../../platform/exec.ts";
 import {
+  checkCompatibility,
   decodeManifest,
   describeDrift,
-  describeTooOld,
-  isTooOld,
   pinDrift,
-  requiredVersion,
+  UPGRADE_COMMAND,
 } from "../../../platform/flow-deps.ts";
 import { authoringFlows, flowNames, reviewingFlows } from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
 import { Home } from "../../../platform/home.ts";
-import { VERSION } from "../../../platform/version.ts";
 import {
   type EffectiveRepo,
   type EnrolledRepo,
@@ -405,6 +406,11 @@ export const doctor = Effect.gen(function* () {
         ),
       );
 
+      // A repo this binary can't run is checkPins' to report.
+      if (Result.isFailure(loaded) && Schema.is(IncompatibleConfig)(loaded.failure)) {
+        return;
+      }
+
       if (Result.isFailure(loaded)) {
         check(
           false,
@@ -455,6 +461,14 @@ export const doctor = Effect.gen(function* () {
       const snapshot = yield* Effect.result(snapshotConfig(repo.path, baseBranch, false));
 
       if (Result.isFailure(snapshot)) {
+        if (Schema.is(IncompatibleConfig)(snapshot.failure)) {
+          check(
+            false,
+            `${name}: incompatible: ${snapshot.failure.message}`,
+            `in ${repo.path}: ${UPGRADE_COMMAND}, or install a newer chernabog, as it says`,
+          );
+        }
+
         return;
       }
 
@@ -484,41 +498,28 @@ export const doctor = Effect.gen(function* () {
         return;
       }
 
-      const required = yield* Effect.result(requiredVersion(manifest.success));
+      const compatible = yield* Effect.result(checkCompatibility(snapshot.success.configDir));
 
-      if (Result.isFailure(required)) {
+      if (Result.isFailure(compatible)) {
         check(
           false,
-          `${name}: ${required.failure.message}`,
-          "fix .chernabog/package.json on the base branch",
-        );
-
-        return;
-      }
-
-      const floor = required.success;
-
-      if (Option.isSome(floor) && isTooOld(floor.value)) {
-        check(
-          false,
-          `${name}: ${describeTooOld(floor.value)}`,
-          `install chernabog ${floor.value} or newer`,
+          `${name}: incompatible: ${compatible.failure.message}`,
+          Option.getOrElse(
+            Option.liftPredicate("install a newer chernabog", () =>
+              compatible.failure.message.endsWith("upgrade chernabog"),
+            ),
+            () => `in ${repo.path}: ${UPGRADE_COMMAND}, then commit and merge the result`,
+          ),
         );
 
         // Its pins aren't drift to fix: this binary can't load the repo at all.
         return;
       }
 
-      const label = Option.match(floor, {
-        onNone: () => `${name}: .chernabog/package.json names the oldest chernabog it runs on`,
-        onSome: (oldest) =>
-          `${name}: .chernabog/ runs on this chernabog (${VERSION}; needs ${oldest} or newer)`,
-      });
-
       check(
-        Option.isSome(floor),
-        label,
-        "chernabog init sets engines.chernabog in .chernabog/package.json; commit it",
+        true,
+        `${name}: .chernabog/ is written against an SDK this chernabog runs (${supportedRange})`,
+        "",
       );
 
       const drift = pinDrift(manifest.success);
@@ -526,7 +527,7 @@ export const doctor = Effect.gen(function* () {
       check(
         drift.length === 0,
         `${name}: .chernabog/package.json pins this binary's SDK and effect${differs}`,
-        "chernabog init updates the pins; commit them, then reinstall in .chernabog/",
+        `${UPGRADE_COMMAND} moves the pins and the recipe flows; commit them, then reinstall in .chernabog/`,
       );
     });
 
@@ -622,6 +623,27 @@ export const doctor = Effect.gen(function* () {
     (yield* checkServiceUseCase()).installed,
     "the daemon service is installed",
     "chernabog install",
+  );
+
+  // The copies of machine config and state.db kept from before an upgrade, for rolling back.
+  const root = (yield* Home).root;
+
+  const backups = yield* Effect.all([
+    listBackups(root, "config.yaml"),
+    listBackups(root, "state.db"),
+  ]).pipe(
+    Effect.map((each) => each.flat()),
+    Effect.orElseSucceed((): ReadonlyArray<Backup> => []),
+  );
+
+  check(
+    true,
+    Option.match(Option.liftPredicate(backups, Arr.isReadonlyArrayNonEmpty), {
+      onNone: () => "no copies of machine config or state.db kept from an upgrade yet",
+      onSome: (kept) =>
+        `copies kept from before an upgrade, to roll back to: ${kept.map((backup) => backup.path).join(", ")}`,
+    }),
+    "",
   );
 
   const status = yield* Effect.result(daemonStatus);

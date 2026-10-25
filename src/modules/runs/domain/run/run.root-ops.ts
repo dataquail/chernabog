@@ -10,6 +10,7 @@ import * as Result from "effect/Result";
 
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { type RunId } from "../../../../kernel/run-id.id.ts";
+import { supportsSdk, unsupportedRunSummary } from "../../../../kernel/sdk-support.value-object.ts";
 import {
   AmbiguousRunPrefix,
   NoRunInFlight,
@@ -43,6 +44,7 @@ const activeFor = (runs: ReadonlyArray<RunRoot>, wanted: RunFor) =>
 
 export type NewRun = RunFor & {
   readonly id: RunId;
+  readonly sdkVersion: string;
   readonly itemTitle: Option.Option<string>;
   readonly itemUrl: Option.Option<string>;
   readonly item: Option.Option<WorkItem>;
@@ -83,6 +85,15 @@ const attachExecution = (run: RunRoot, executionId: string) =>
 // still running, with no execution. None for any other run.
 const unexecuted = (run: RunRoot) =>
   Option.liftPredicate(run, (found) => isRunning(found) && Option.isNone(found.executionId));
+
+// Why this binary mustn't resume a run in flight: it started under an SDK
+// this binary doesn't run, so replaying its journal under this one could do
+// anything. None for a run it can resume, or one that has ended.
+const unsupported = (run: RunRoot) =>
+  Option.liftPredicate(
+    unsupportedRunSummary(run.sdkVersion),
+    () => isRunning(run) && !supportsSdk(run.sdkVersion),
+  );
 
 // The run entering a step.
 const enterStep = (run: RunRoot, step: string) =>
@@ -223,6 +234,7 @@ const named = (
 };
 
 export const RunRootOps = {
+  unsupported,
   named,
   isRunning,
   activeFor,

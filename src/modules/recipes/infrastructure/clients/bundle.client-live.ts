@@ -10,10 +10,13 @@ import * as Schema from "effect/Schema";
 
 import { ScenarioFile } from "../../../../kernel/scenario.value-object.ts";
 import {
-  checkVersion,
+  BUNDLED_SDK,
   decodeManifest,
   flowPackageText,
+  incompatibility,
+  missingSdkImports,
   withBundledPins,
+  writtenForNewer,
 } from "../../../../platform/flow-deps.ts";
 import { RECIPE_FILES, TEMPLATES } from "../../../../platform/templates.ts";
 import { RepoConfigFile } from "../../../../repo-config.ts";
@@ -55,6 +58,7 @@ const refused = (error: { readonly message: string }) =>
 export const BundleClientLive = Layer.succeed(
   BundleClient,
   BundleClient.of({
+    sdkVersion: BUNDLED_SDK,
     // The catalog names only files templates/recipes/ has, so one missing is a bug.
     recipeFile: (file) =>
       Effect.fromOption(
@@ -68,12 +72,19 @@ export const BundleClientLive = Layer.succeed(
 
       return { files, generated: Object.keys(schemaFiles()), manifest };
     }),
-    checkFloor: (manifest) =>
+    refuseNewer: (manifest) =>
       decodeManifest(manifest).pipe(
-        Effect.flatMap(checkVersion),
-        Effect.asVoid,
         Effect.mapError(refused),
+        Effect.flatMap((decoded) =>
+          Effect.fromOption(
+            Option.filter(incompatibility(decoded), () => writtenForNewer(decoded)),
+          ).pipe(
+            Effect.flip,
+            Effect.mapError((message) => refused({ message })),
+          ),
+        ),
       ),
-    pinned: (manifest, raise) => withBundledPins(manifest, raise).pipe(Effect.mapError(refused)),
+    pinned: (manifest) => withBundledPins(manifest).pipe(Effect.mapError(refused)),
+    missingImports: missingSdkImports,
   }),
 );

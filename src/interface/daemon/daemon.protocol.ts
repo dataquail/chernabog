@@ -45,7 +45,7 @@ export type PersonaStatus = typeof PersonaStatus.Type;
 export const RepoStatus = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
-  status: Schema.Literals(["ready", "untrusted", "error", "missing"]),
+  status: Schema.Literals(["ready", "untrusted", "error", "missing", "incompatible"]),
   message: Maybe,
   paused: Schema.Boolean,
   enabled: Schema.Boolean,
@@ -63,6 +63,9 @@ export const DaemonStatus = Schema.Struct({
   startedAt: Schema.String,
   busy: Schema.Finite,
   reloadPending: Schema.Boolean,
+  // Draining to restart on an upgraded chernabog: starting no new runs. Absent
+  // from a daemon from before it could.
+  draining: Schema.optionalKey(Schema.Boolean),
   repos: Schema.Array(RepoStatus),
   // The accounts in machine config, for choosing one.
   accounts: Schema.optionalKey(

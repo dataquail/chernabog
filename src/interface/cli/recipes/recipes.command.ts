@@ -12,7 +12,9 @@ import {
   RECIPE_NAMES,
   type RecipesAdded,
   type RecipesDiff,
+  type RepoUpgraded,
 } from "../../../modules/recipes/use-cases/recipe.result.ts";
+import { upgradeRepoUseCase } from "../../../modules/recipes/use-cases/upgrade-repo.use-case.ts";
 import { VERSION } from "../../../platform/version.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
@@ -174,7 +176,53 @@ const recipesDiff = Command.make(
   ),
 );
 
+const describeUpgrade = (upgraded: RepoUpgraded) => [
+  ...upgraded.changes.map(({ change, file, recipe }) => {
+    const name = Option.getOrElse(recipe, () => "");
+
+    switch (change) {
+      case "pinned": {
+        return `${file}: pins @chernabog/sdk ${upgraded.sdkVersion} and this chernabog's effect`;
+      }
+
+      case "written": {
+        return `${file}: written from the ${name} recipe`;
+      }
+
+      case "replaced": {
+        return `${file}: replaced by the current ${name} recipe; review the diff and re-apply any edits of your own`;
+      }
+    }
+  }),
+  ...upgraded.left.map(({ file, missingImports }) =>
+    Option.match(Option.liftPredicate(missingImports, Arr.isReadonlyArrayNonEmpty), {
+      onNone: () => `${file}: from no recipe, left as it is; check it against the SDK's changes`,
+      onSome: (missing) =>
+        `${file}: from no recipe, left as it is; it imports what @chernabog/sdk ${upgraded.sdkVersion} doesn't have (${missing.join(", ")}), so move it by hand`,
+    }),
+  ),
+];
+
+const recipesUpgrade = Command.make("upgrade", {}, () =>
+  Effect.gen(function* () {
+    const upgraded = yield* upgradeRepoUseCase(yield* rootOf(Option.none()));
+
+    if (upgraded.changes.length === 0 && upgraded.left.length === 0) {
+      return yield* Console.log(`.chernabog/ is already on chernabog ${VERSION}; nothing changed`);
+    }
+
+    yield* printLines(describeUpgrade(upgraded));
+    yield* Console.log(
+      "Nothing is committed. Review the changes (git diff .chernabog/), reinstall in .chernabog/ for your editor, then commit and merge them to the base branch and chernabog trust the repo.",
+    );
+  }),
+).pipe(
+  Command.withDescription(
+    "Move this repo's .chernabog/ onto this chernabog: its SDK pins, and its recipe flows to the current recipes, in the working tree",
+  ),
+);
+
 export const recipesCommand = Command.make("recipes", {}, () => Effect.void).pipe(
   Command.withDescription("Complete flows to bake into a repo, as code it then owns"),
-  Command.withSubcommands([recipesList, recipesAdd, recipesDiff]),
+  Command.withSubcommands([recipesList, recipesAdd, recipesDiff, recipesUpgrade]),
 );

@@ -54,21 +54,21 @@ describe("scaffoldRepoUseCase", () => {
     ".gitignore": "node_modules\n",
   });
 
-  effect("updates a stale generated schema and the pins with it, and keeps the rest", () =>
+  effect("updates a stale generated schema, and keeps the rest, pins included", () =>
     Effect.gen(function* () {
       const { changes } = yield* scaffoldRepoUseCase("/repo");
 
       expect(changes.map((change) => [change.path, change.change])).toEqual([
         [".chernabog/config.schema.json", "updated"],
-        [".chernabog/package.json", "pinned"],
       ]);
       expect(stale.stored["/repo/.chernabog/config.yaml"]).toBe("mine\n");
+      expect(stale.stored["/repo/.chernabog/package.json"]).toBe('{ "pinned" }\n');
     }).pipe(Effect.provide(stale.layer)),
   );
 
   const tooNew = repoWith({ ".chernabog/package.json": '{ "too new" }\n' });
 
-  effect("refuses a .chernabog/ that needs a newer chernabog, writing nothing", () =>
+  effect("refuses a .chernabog/ written against a newer SDK, writing nothing", () =>
     Effect.gen(function* () {
       const refused = yield* Effect.flip(scaffoldRepoUseCase("/repo"));
 

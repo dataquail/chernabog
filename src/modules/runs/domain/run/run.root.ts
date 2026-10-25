@@ -44,6 +44,10 @@ export class RunRoot extends Schema.Class<RunRoot, { readonly brand: "RunRoot" }
   currentStep: Schema.Option(Schema.String),
   // How it ended, once it has.
   summary: Schema.Option(Schema.String),
+  // The @chernabog/sdk version the binary that started it bundled: what its
+  // workflow's journal was written under, so a binary that doesn't run that
+  // SDK never resumes it.
+  sdkVersion: Schema.String,
   // ISO timestamps.
   startedAt: Schema.String,
   finishedAt: Schema.Option(Schema.String),

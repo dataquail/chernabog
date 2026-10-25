@@ -52,6 +52,8 @@ export const homePaths = (root: string) => ({
   sessions: `${root}/sessions`,
   snapshots: `${root}/snapshots`,
   rehearsals: `${root}/rehearsals`,
+  // Copies of machine config and state.db from before a newer chernabog migrated them.
+  backups: `${root}/backups`,
   worktrees: (repo: string) => `${root}/worktrees/${repo}`,
   usageLog: (account: string) => `${root}/usage-${account}.jsonl`,
 });

@@ -48,6 +48,7 @@ import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
+import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
@@ -56,11 +57,13 @@ import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
 import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
   checkManualSchedules,
   type EffectiveRepo,
@@ -140,10 +143,17 @@ export const loadRepoState = (
     const name = repoNameOf(enrolled);
     const unloaded = { enrolled, name, repo: Option.none(), flows: [] };
 
-    const failed = (message: string, tree: Option.Option<string>): RepoState => ({
+    // A repo this binary can't run is incompatible, and says which side to upgrade.
+    const failed = (
+      error: { readonly _tag: string; readonly message: string },
+      tree: Option.Option<string>,
+    ): RepoState => ({
       ...unloaded,
-      status: "error",
-      message: Option.some(message),
+      status: Option.getOrElse(
+        Option.liftPredicate("incompatible" as const, () => Schema.is(IncompatibleConfig)(error)),
+        () => "error" as const,
+      ),
+      message: Option.some(describeError(error)),
       tree,
       latestTree: tree,
     });
@@ -161,7 +171,7 @@ export const loadRepoState = (
     const snapshot = yield* Effect.result(snapshotConfig(enrolled.path, baseBranchOf(enrolled)));
 
     if (Result.isFailure(snapshot)) {
-      return failed(describeError(snapshot.failure), Option.none());
+      return failed(snapshot.failure, Option.none());
     }
 
     const { configDir, tree } = snapshot.success;
@@ -191,7 +201,7 @@ export const loadRepoState = (
     );
 
     if (Result.isFailure(loaded)) {
-      return failed(describeError(loaded.failure), Option.some(tree));
+      return failed(loaded.failure, Option.some(tree));
     }
 
     const { flows, repo } = loaded.success;
@@ -293,6 +303,10 @@ const changedAction = (trusted: boolean) => {
 
   return "not trusted, starting no new runs until chernabog trust";
 };
+
+// Why a draining daemon starts nothing.
+const DRAINING =
+  "chernabog was upgraded; the daemon is draining, starting no new runs until it restarts on the new version";
 
 const SOONEST_MS = 200;
 const LATEST_MS = 15_000;
@@ -418,6 +432,28 @@ export const runDaemon = Effect.gen(function* () {
 
   return yield* Effect.provideContext(
     Effect.gen(function* () {
+      // Runs in flight that started under an SDK this binary doesn't run go
+      // to a person, released as a cancel releases them, rather than resume.
+      for (const { reason, run } of (yield* listUnsupportedRunsUseCase()).runs) {
+        const ended = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+          by: "chernabog",
+          closeSessions: false,
+          needsHuman: Option.some(reason),
+        }).pipe(Effect.result);
+
+        yield* log(
+          Result.match(ended, {
+            onSuccess: (done) =>
+              [
+                `ended ${run.id} (${runLabel(run)}) for a person: ${reason}`,
+                ...done.leftForPerson,
+              ].join("; "),
+            onFailure: (error) =>
+              `could not end ${run.id} (${runLabel(run)}), which ${reason}: ${error.message}`,
+          }),
+        );
+      }
+
       for (const repo of repos) {
         if (Option.isSome(repo.repo)) {
           yield* adoptRuns(repo.repo.value);
@@ -442,6 +478,16 @@ export const runDaemon = Effect.gen(function* () {
       }
 
       const reloadPending = yield* Ref.make(false);
+      // Set once chernabog's binary changes under the daemon: it starts no new
+      // runs, and restarts on the new binary once none is executing.
+      const draining = yield* Ref.make(false);
+      const executable = yield* watchedExecutable;
+
+      const startedAs = yield* Option.match(executable, {
+        onNone: () => Effect.succeedNone,
+        onSome: fileIdentity,
+      });
+
       const reloaded = yield* Deferred.make<true>();
 
       const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
@@ -450,6 +496,10 @@ export const runDaemon = Effect.gen(function* () {
         Effect.gen(function* () {
           const { handle, own: settings, persona } = schedule;
           const ref = { repo: repo.name, flow: handle.name, persona };
+
+          if (yield* Ref.get(draining)) {
+            return { started: [], skipped: Option.some(DRAINING) } satisfies TickResult;
+          }
 
           // Not knowing whether a repo is paused starts nothing in it.
           const paused = yield* Option.match(
@@ -588,8 +638,9 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             const now = yield* DateTime.now;
+            const ticking = !(yield* Ref.get(draining));
 
-            for (const repo of repos) {
+            for (const repo of repos.filter(() => ticking)) {
               const ready = runnable(repo);
 
               if (Option.isNone(ready)) {
@@ -726,6 +777,27 @@ export const runDaemon = Effect.gen(function* () {
         yield* Ref.set(reloadPending, true);
       });
 
+      // Notices chernabog's binary changing under the daemon, as a Homebrew
+      // upgrade changes it, and drains it to restart on the new one.
+      const checkExecutable = Effect.gen(function* () {
+        if (yield* Ref.get(draining)) {
+          return;
+        }
+
+        for (const path of Option.toArray(executable)) {
+          const now = yield* fileIdentity(path);
+
+          if (Option.isNone(now) || Option.isNone(startedAs) || now.value === startedAs.value) {
+            continue;
+          }
+
+          yield* Ref.set(draining, true);
+          yield* log(
+            `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (runs parked on a signal resume after)`,
+          );
+        }
+      });
+
       yield* Effect.forkScoped(
         Effect.forever(Effect.sleep("5 minutes").pipe(Effect.andThen(checkConfig))),
       );
@@ -734,6 +806,7 @@ export const runDaemon = Effect.gen(function* () {
           Effect.sleep("10 seconds").pipe(
             Effect.andThen(checkCheckouts),
             Effect.andThen(checkEnrolled),
+            Effect.andThen(checkExecutable),
           ),
         ),
       );
@@ -742,6 +815,18 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             yield* Effect.sleep("2 seconds");
+
+            // Draining waits on whole runs, not steps: one restarted between two
+            // steps would resume under the new binary.
+            if (yield* Ref.get(draining)) {
+              const executing = (yield* active).filter((run) => !run.parked);
+
+              if (executing.length === 0) {
+                yield* Deferred.succeed(reloaded, true);
+              }
+
+              return;
+            }
 
             if ((yield* Ref.get(reloadPending)) && (yield* Ref.get(busy)) === 0) {
               yield* Deferred.succeed(reloaded, true);
@@ -816,6 +901,7 @@ export const runDaemon = Effect.gen(function* () {
           startedAt: DateTime.formatIso(startedAt),
           busy: yield* Ref.get(busy),
           reloadPending: yield* Ref.get(reloadPending),
+          draining: yield* Ref.get(draining),
           repos: repos.map(
             repoStatus(
               yield* listPausedReposUseCase().pipe(
@@ -903,6 +989,11 @@ export const runDaemon = Effect.gen(function* () {
       const runOrTick = (gates: boolean) =>
         Effect.gen(function* () {
           const body = yield* HttpServerRequest.schemaBodyJson(RunRequest);
+
+          if (yield* Ref.get(draining)) {
+            return yield* refuse(503, DRAINING);
+          }
+
           const found = findSchedule(body.repo, body.flow, Option.fromUndefinedOr(body.persona));
 
           if (Result.isFailure(found)) {
@@ -946,6 +1037,7 @@ export const runDaemon = Effect.gen(function* () {
         const cancelled = yield* cancelRunUseCase(target, {
           by: body.by,
           closeSessions: body.closeSessions,
+          needsHuman: Option.none(),
         }).pipe(Effect.result);
 
         if (Result.isFailure(cancelled)) {
@@ -985,6 +1077,7 @@ export const runDaemon = Effect.gen(function* () {
             checkConfig.pipe(
               Effect.andThen(checkCheckouts),
               Effect.andThen(checkEnrolled),
+              Effect.andThen(checkExecutable),
               Effect.andThen(Ref.get(reloadPending)),
               Effect.flatMap((pending) =>
                 HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }),
@@ -1009,7 +1102,14 @@ export const runDaemon = Effect.gen(function* () {
       yield* log(`daemon ${process.pid} listening on ${paths.socket}`);
 
       yield* Deferred.await(reloaded);
-      yield* log("restarting on new config");
+      const upgraded = yield* Ref.get(draining);
+
+      yield* log(
+        Option.getOrElse(
+          Option.liftPredicate("restarting on the new chernabog", () => upgraded),
+          () => "restarting on new config",
+        ),
+      );
 
       return RELOAD_EXIT_CODE;
     }),

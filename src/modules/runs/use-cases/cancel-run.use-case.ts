@@ -30,6 +30,9 @@ export type CancelOptions = {
   // Whether to close the agent sessions it left open, by their launcher's
   // handle; otherwise they're left for the person.
   readonly closeSessions: boolean;
+  // Why it goes to a person instead, which ends it needs-human with that
+  // summary: a run this binary can't resume.
+  readonly needsHuman: Option.Option<string>;
 };
 
 // The run a prefix names among every run with a log.
@@ -80,7 +83,8 @@ const stopping = (run: RunRoot, executionId: string) =>
     workflows.poll({ repo: run.repo, flow: run.flow, persona: run.persona }, executionId),
   ).pipe(Effect.repeat({ ...STOPPING, until: Option.isSome }), Effect.map(Option.isSome));
 
-// Ends a run in flight for good: records it cancelled, by whom and when,
+// Ends a run in flight for good: records it cancelled, by whom and when (or
+// needing a person, and why, for a run this binary can't resume),
 // before its workflow could record anything else; forgets its waits;
 // interrupts its workflow, which the engine keeps across a restart; and then
 // cleans up what it held: its worktrees, its claim on its issue, and, if asked,
@@ -96,7 +100,14 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
   const cleanup = yield* RunCleanupClient;
   const found = yield* named(target);
   const at = DateTime.formatIso(yield* DateTime.now);
-  const cancelled = yield* Effect.fromResult(RunRootOps.cancel(found, options.by, at));
+
+  const cancelled = yield* Effect.fromResult(
+    Option.match(options.needsHuman, {
+      onNone: () => RunRootOps.cancel(found, options.by, at),
+      onSome: (summary) => RunRootOps.finish(found, "needs-human", summary, at),
+    }),
+  );
+
   yield* runs.save(cancelled);
 
   const parked = yield* waits.findAll(Option.some(found.id));

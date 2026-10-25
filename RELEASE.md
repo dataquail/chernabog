@@ -7,11 +7,30 @@ Chernabog ships two things, versioned separately:
 | the `chernabog` binary | `package.json`              | `v<version>`     | GitHub release assets, per platform, and the `dataquail/homebrew-tap` formula |
 | `@chernabog/sdk`       | `packages/sdk/package.json` | `sdk-v<version>` | npm                                                                           |
 
-`src/platform/version.ts` reads the root `package.json`, so `--version` and the `engines.chernabog` floor follow it.
+`src/platform/version.ts` reads the root `package.json`, so `--version`, and the stamp a binary puts on machine config and `state.db` when it migrates them, follow it.
 
 The root is release-please's `simple` type, with `package.json` as an extra file, not the `node` type. A `node` root takes `chernabog` as its component from `package.json`, and release-please 17 then skips a release PR that releases only the root: the combined PR's branch has no component, the root's is `chernabog`, and the mismatch is only a warning. That is how the merge of v0.4.0's release PR first created no release.
 
 They are versioned separately because a repo's `.chernabog/package.json` pins the SDK at the version the binary bundles, and `chernabog doctor` reports any other version as drift. Bumping the SDK with every binary release would make each upgrade look like drift in every enrolled repo. A commit under `packages/sdk/` still releases both, since the binary bundles the SDK.
+
+## Compatibility
+
+The SDK version is the contract between a binary and a repo's flows. A repo's `.chernabog/package.json` pins the SDK its flows are written against, and the binary declares, in one place, the SDK range it runs: `SUPPORTED_SDK` in `src/kernel/sdk-support.value-object.ts` (before 1.0, the minor it bundles, such as `>=0.6.0 <0.7.0`). A repo pinned outside the range is refused as `incompatible`.
+
+- **A release that moves the SDK's minor** (any `feat!:` under `packages/sdk/`, and most `feat:`s there before 1.0) must move `SUPPORTED_SDK` in the same pull request; a test fails until the bundled SDK is in the range. Every enrolled repo still on the old minor is then refused until someone runs `chernabog recipes upgrade` in it and merges the result, so the release notes should say so, and what changed for hand-written flows.
+- **A release that changes machine config or `state.db`** needs nothing extra: whichever binary first runs a newer version keeps a copy of each in `~/.config/chernabog/backups/`, named for the version it came from, and stamps them with its own. Any version change does this, not only one that changes the shape.
+- **A daemon picks up a new binary by itself.** It watches its own executable, drains (starts no new runs), and restarts once the runs executing finish. Runs in flight that started under an SDK the new binary doesn't run go to `needs-human`.
+
+### Rolling back
+
+There are no down migrations, so rolling back is restoring what the older binary left:
+
+1. Install the older binary from its release's assets, as the README installs without Homebrew; the tap's formula only ever points at the latest release.
+2. `chernabog stop`.
+3. Restore its copies: `cp ~/.config/chernabog/backups/config.yaml.<version> ~/.config/chernabog/config.yaml`, and the same for `state.db`. `chernabog doctor` on the newer binary lists the copies kept.
+4. `chernabog start`.
+
+The older binary refuses newer files until they're restored, and says which copy to restore. Whatever the newer binary recorded after the upgrade is lost.
 
 ## The normal path
 

@@ -20,6 +20,9 @@ const runFields = {
   status: RunStatus,
   currentStep: Maybe,
   summary: Maybe,
+  // The @chernabog/sdk it started under; optional, as a daemon from before
+  // runs kept it answers without.
+  sdkVersion: Schema.optionalKey(Schema.String),
   startedAt: Schema.String,
   finishedAt: Maybe,
 };
@@ -66,4 +69,12 @@ export class RecoveredRuns extends Schema.Class<RecoveredRuns, { readonly brand:
   executed: Schema.Array(RunView),
   abandoned: Schema.Array(RunView),
   left: Schema.Array(RunView),
+}) {}
+
+// The runs in flight this binary mustn't resume, each with why.
+export class UnsupportedRuns extends Schema.Class<
+  UnsupportedRuns,
+  { readonly brand: "UnsupportedRuns" }
+>("UnsupportedRuns")({
+  runs: Schema.Array(Schema.Struct({ run: RunView, reason: Schema.String })),
 }) {}

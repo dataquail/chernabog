@@ -51,6 +51,7 @@ import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
+import { BUNDLED_SDK } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
@@ -360,6 +361,7 @@ describe("the engine", () => {
         const cancelled = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
           by: "alice",
           closeSessions: false,
+          needsHuman: Option.none(),
         });
 
         const delivered = yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);
@@ -384,6 +386,7 @@ describe("the engine", () => {
         const recorded = (key: string) =>
           startRunUseCase({
             id: RunId.make(key),
+            sdkVersion: BUNDLED_SDK,
             repo: "demo",
             persona: IMPLICIT,
             flow: "demo",
@@ -471,6 +474,7 @@ describe("personas", () => {
         const adopted = Effect.gen(function* () {
           yield* startRunUseCase({
             id: OLD,
+            sdkVersion: BUNDLED_SDK,
             repo: "demo",
             persona: bob,
             flow: "demo",
@@ -504,6 +508,7 @@ describe("personas", () => {
         const unadopted = Effect.gen(function* () {
           yield* startRunUseCase({
             id: OLD,
+            sdkVersion: BUNDLED_SDK,
             repo: "demo",
             persona: Option.none(),
             flow: "demo",

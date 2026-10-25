@@ -8,26 +8,30 @@ import { type Scaffold } from "../../domain/scaffold/scaffold.value-object.ts";
 
 // A binary bundling each recipe file as `recipe of <file>`, this scaffold,
 // and the pin `"pinned"`: a manifest without it gets it, on a line of its
-// own; one saying `"too new"` needs a newer chernabog.
+// own; one saying `"too new"` is written for a newer SDK. A module importing
+// `gone` imports what its SDK doesn't have.
 export const BundleClientFake = (scaffold: Scaffold) =>
   Layer.succeed(
     BundleClient,
     BundleClient.of({
+      sdkVersion: "0.6.0",
       recipeFile: (file) => Effect.succeed(`recipe of ${file}\n`),
       scaffold: Effect.succeed(scaffold),
-      checkFloor: (manifest) =>
+      refuseNewer: (manifest) =>
         Effect.fromOption(
           Option.liftPredicate(manifest, (text) => !text.includes('"too new"')),
         ).pipe(
           Effect.asVoid,
-          Effect.mapError(() => new ScaffoldRefused({ message: "needs a newer chernabog" })),
+          Effect.mapError(() => new ScaffoldRefused({ message: "upgrade chernabog" })),
         ),
-      pinned: (manifest, raise) =>
+      pinned: (manifest) =>
         Effect.succeed(
           Option.liftPredicate(
             `${manifest.trimEnd()}\n"pinned"\n`,
-            () => raise || !manifest.includes('"pinned"'),
+            () => !manifest.includes('"pinned"'),
           ),
         ),
+      missingImports: (source) =>
+        Option.toArray(Option.liftPredicate("gone", () => source.includes("gone"))),
     }),
   );

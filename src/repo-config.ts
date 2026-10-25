@@ -47,10 +47,11 @@ import {
   type LaunchersConfig,
 } from "./modules/runs/infrastructure/runtime/launchers.ts";
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
+import { describeNewerStamp, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { FileBusy, updateFile } from "./platform/file-lock.ts";
-import { checkConfigVersion } from "./platform/flow-deps.ts";
+import { checkCompatibility } from "./platform/flow-deps.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 
@@ -224,7 +225,12 @@ export const UsageGateFile = Schema.Struct({
 const GitHubPersonaFile = Schema.Struct({});
 
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
+// The key machine config is stamped with: the chernabog that last migrated it.
+export const STAMP_KEY = "chernabog";
+
 export const MachineConfigFile = Schema.Struct({
+  // The chernabog that last migrated this file (src/platform/backups.ts).
+  [STAMP_KEY]: Schema.optionalKey(Schema.String),
   // GitHub personas by login. Without it, the one persona is whoever the
   // daemon is: GH_TOKEN, then GITHUB_TOKEN, then gh's active account.
   github: Schema.optionalKey(Schema.Record(Schema.String, GitHubPersonaFile)),
@@ -525,7 +531,17 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
 
 export const loadMachineConfig = Effect.gen(function* () {
   const home = yield* Home;
-  const file = yield* readYaml(MachineConfigFile, homePaths(home.root).machineConfig);
+  const path = homePaths(home.root).machineConfig;
+  const file = yield* readYaml(MachineConfigFile, path);
+  const stamp = Option.fromUndefinedOr(file[STAMP_KEY]);
+
+  // A newer chernabog's shape, which this one doesn't know: refused, never misread.
+  for (const newer of Option.toArray(Option.filter(stamp, () => stampState(stamp) === "newer"))) {
+    return yield* new ConfigError({
+      message: yield* describeNewerStamp(home.root, "machine config", path, "config.yaml", newer),
+    });
+  }
+
   const machine = normalizeMachineConfig(file, home.user);
 
   // A rehearsal agent's files are beside machine config unless it says where.
@@ -935,13 +951,13 @@ export const repoEnvironment = (checkout: string) =>
   });
 
 // Reads the repo's committed config from `configDir` (the trusted snapshot).
-// A .chernabog/ that needs a newer binary is refused first. Past that, a key
-// this binary doesn't know is a typo or a newer key the floor wasn't raised
-// for, and either one may be a rule the repo counts on, so it fails the repo
-// instead of being dropped.
+// A .chernabog/ this binary can't run is refused first. Past that, a key
+// this binary doesn't know is a typo or a newer chernabog's key, and either
+// one may be a rule the repo counts on, so it fails the repo instead of being
+// dropped.
 export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configDir: string) =>
   Effect.gen(function* () {
-    yield* checkConfigVersion(configDir);
+    yield* checkCompatibility(configDir);
     const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
 
     return yield* mergeRepoConfig(

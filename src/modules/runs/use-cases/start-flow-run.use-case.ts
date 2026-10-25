@@ -28,6 +28,7 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
   item: WorkItem,
 ) {
   const runs = yield* RunsRepository;
+  const workflows = yield* WorkflowsClient;
   const wanted = { repo: flow.repo, persona: flow.persona, flow: flow.flow, itemKey: item.key };
   const running = yield* runs.findAll({ running: true });
 
@@ -54,6 +55,7 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
     {
       ...wanted,
       id: yield* newRunId,
+      sdkVersion: workflows.sdkVersion,
       itemTitle: Option.fromUndefinedOr(item.title),
       itemUrl: Option.fromUndefinedOr(item.url),
       item: Option.some(item),
@@ -67,7 +69,7 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
 
   yield* runs.save(started.success);
 
-  const executionId = yield* (yield* WorkflowsClient).execute(flow, started.success.id, item);
+  const executionId = yield* workflows.execute(flow, started.success.id, item);
 
   // The run can't have ended yet: nothing polls it before it has an execution.
   const attached = yield* Effect.fromResult(

@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
+import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
 import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
@@ -105,4 +106,59 @@ describe("recipes", () => {
       ".chernabog/flows/human-initiated.ts: the same as the human-initiated recipe",
     );
   }, 30_000);
+
+  test("recipes upgrade moves a repo on an older SDK to one this binary loads, listing what it can't", async () => {
+    const dir = join(sandbox.checkout, ".chernabog");
+
+    // What doctor says of the repo's .chernabog/, as committed to its base branch.
+    const compatible = async () => {
+      sandbox.git(sandbox.checkout, "add", ".");
+      sandbox.git(sandbox.checkout, "commit", "-qm", "chore: change .chernabog/");
+      // As pushed: this origin is only a name, so its ref is moved here.
+      sandbox.git(sandbox.checkout, "update-ref", "refs/remotes/origin/main", "HEAD");
+
+      return (await sandbox.runCli(["doctor"])).output;
+    };
+
+    writeFileSync(
+      join(dir, "package.json"),
+      '{ "private": true, "engines": { "chernabog": ">=0.7.0" }, "devDependencies": { "@chernabog/sdk": "0.5.0", "effect": "4.0.0" } }\n',
+    );
+    writeFileSync(
+      flow("review"),
+      'import { defineFlow, Review } from "@chernabog/sdk";\nexport default defineFlow({ trigger: Review.fixTrigger, workflow: Review.labelVerdict });\n',
+    );
+    writeFileSync(
+      flow("security"),
+      'import { defineFlow, Review } from "@chernabog/sdk";\nexport default defineFlow({ trigger: Review.fixTrigger, workflow: () => undefined });\n',
+    );
+    expect(await compatible()).toContain(
+      "demo: incompatible: .chernabog/: package.json still has engines.chernabog",
+    );
+
+    const { code, output } = await sandbox.runCli(["recipes", "upgrade"]);
+    expect(code).toBe(0);
+    expect(output).toContain(`.chernabog/package.json: pins @chernabog/sdk ${BUNDLED_SDK}`);
+    expect(output).toContain(
+      ".chernabog/flows/review.ts: replaced by the current review recipe; review the diff",
+    );
+    expect(output).toContain(
+      ".chernabog/flows/implement.ts: replaced by the current implement recipe",
+    );
+    expect(output).toContain(
+      `.chernabog/flows/security.ts: from no recipe, left as it is; it imports what @chernabog/sdk ${BUNDLED_SDK} doesn't have (Review.fixTrigger), so move it by hand`,
+    );
+    expect(output).toContain("Nothing is committed.");
+    expect(readFileSync(flow("review"), "utf8")).toBe(RECIPE_FILES["flows/review.ts"]);
+    expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8"))).not.toHaveProperty(
+      "engines",
+    );
+    expect(await compatible()).toContain("demo: incompatible: .chernabog/: flows import what");
+
+    // The hand-written flow, moved by hand.
+    writeFileSync(flow("security"), RECIPE_FILES["flows/review.ts"]);
+    expect(await compatible()).toContain(
+      "demo: .chernabog/ is written against an SDK this chernabog runs",
+    );
+  }, 60_000);
 });

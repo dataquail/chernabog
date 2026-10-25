@@ -16,17 +16,48 @@ describe("BundleClientLive", () => {
       expect(Object.keys(scaffold.files)).toContain("config.yaml");
       expect(scaffold.generated).toEqual(["config.schema.json", "rehearsal.schema.json"]);
       expect(scaffold.files["rehearsal.schema.json"]).toContain('"localGate"');
-      expect(yield* bundle.pinned(scaffold.manifest, false)).toEqual(Option.none());
+      expect(yield* bundle.pinned(scaffold.manifest)).toEqual(Option.none());
     }).pipe(Effect.provide(BundleClientLive)),
   );
 
-  effect("refuses a manifest whose floor is a newer chernabog", () =>
+  effect("refuses a manifest written against a newer SDK, and not an older one", () =>
     Effect.gen(function* () {
+      const bundle = yield* BundleClient;
+
       const refused = yield* Effect.flip(
-        (yield* BundleClient).checkFloor('{ "engines": { "chernabog": ">=999.0.0" } }'),
+        bundle.refuseNewer('{ "devDependencies": { "@chernabog/sdk": "99.0.0" } }'),
       );
 
-      expect(refused.message).toContain("999.0.0");
+      expect(refused.message).toContain("upgrade chernabog");
+      yield* bundle.refuseNewer('{ "devDependencies": { "@chernabog/sdk": "0.0.1" } }');
+    }).pipe(Effect.provide(BundleClientLive)),
+  );
+
+  effect("moves the pins and drops engines.chernabog", () =>
+    Effect.gen(function* () {
+      const bundle = yield* BundleClient;
+
+      const pinned = Option.getOrThrow(
+        yield* bundle.pinned(
+          '{ "engines": { "chernabog": ">=0.3.0", "node": ">=20" }, "devDependencies": { "@chernabog/sdk": "0.5.0" } }',
+        ),
+      );
+
+      expect(pinned).toContain(`"@chernabog/sdk": "${bundle.sdkVersion}"`);
+      expect(pinned).toContain('"engines": {\n    "node": ">=20"\n  }');
+      expect(pinned).not.toContain('"chernabog"');
+    }).pipe(Effect.provide(BundleClientLive)),
+  );
+
+  effect("names what a module imports that this SDK doesn't export", () =>
+    Effect.gen(function* () {
+      const bundle = yield* BundleClient;
+
+      expect(
+        bundle.missingImports(
+          'import { Review, defineFlow, fixTrigger, type Gone } from "@chernabog/sdk";\nReview.fixTrigger; Review.recheck;\n',
+        ),
+      ).toEqual(["Review.fixTrigger", "fixTrigger"]);
     }).pipe(Effect.provide(BundleClientLive)),
   );
 });

@@ -12,6 +12,7 @@ const later = "2026-10-22T01:00:00.000Z";
 
 const asBob = {
   id: RunId.make("a"),
+  sdkVersion: "0.6.0",
   repo: "demo",
   persona: Option.some("bob"),
   flow: "review",
@@ -270,5 +271,23 @@ describe("RunRootOps.sharingTarget", () => {
     expect(
       RunRootOps.sharingTarget([on("nightly-2", "nightly")], on("nightly", "nightly")),
     ).toEqual([]);
+  });
+});
+
+describe("RunRootOps.unsupported", () => {
+  test("a run in flight under an SDK this binary doesn't run mustn't resume, naming both", () => {
+    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, sdkVersion: "0.5.0" }, at));
+
+    expect(Option.getOrThrow(RunRootOps.unsupported(old))).toContain(
+      "it started under @chernabog/sdk 0.5.0, and this chernabog runs @chernabog/sdk >=",
+    );
+    expect(RunRootOps.unsupported(running)).toEqual(Option.none());
+  });
+
+  test("one that has ended is nothing to resume", () => {
+    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, sdkVersion: "0.5.0" }, at));
+    const ended = Result.getOrThrow(RunRootOps.finish(old, "done", "merged", later));
+
+    expect(RunRootOps.unsupported(ended)).toEqual(Option.none());
   });
 });
