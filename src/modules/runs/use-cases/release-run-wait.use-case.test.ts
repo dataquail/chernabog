@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
@@ -22,8 +23,20 @@ describe("releaseRunWaitUseCase", () => {
     }).pipe(
       Effect.provide(
         RunWaitsRepositoryFake([
-          RunWaitRoot.make({ runId, signal: "pushed", deferred: "d1", token: "t1" }),
-          RunWaitRoot.make({ runId, signal: "pushed", deferred: "d2", token: "t2" }),
+          RunWaitRoot.make({
+            runId,
+            signal: "pushed",
+            deferred: "d1",
+            token: "t1",
+            parkedAt: Option.none(),
+          }),
+          RunWaitRoot.make({
+            runId,
+            signal: "pushed",
+            deferred: "d2",
+            token: "t2",
+            parkedAt: Option.none(),
+          }),
         ]),
       ),
     ),

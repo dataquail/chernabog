@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { CancelledRun } from "../../modules/runs/use-cases/cancel-run.result.ts";
+import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,
@@ -115,6 +116,12 @@ export const daemonReload = send(HttpClientRequest.post("/reload")).pipe(
 export const daemonRunRow = (runId: string) =>
   send(HttpClientRequest.get(`/runs/${encodeURIComponent(runId)}`)).pipe(
     Effect.flatMap(reply(RunReply)),
+  );
+
+// The steps a run has entered and the signals it waits on.
+export const daemonRunHistory = (runId: string) =>
+  send(HttpClientRequest.get(`/runs/${encodeURIComponent(runId)}/history`)).pipe(
+    Effect.flatMap(reply(RunHistory)),
   );
 
 export const daemonCancel = (request: CancelRequest) =>

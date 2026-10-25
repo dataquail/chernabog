@@ -10,6 +10,7 @@ export const WaitColumns = Schema.Struct({
   signal: Schema.String,
   deferred: Schema.String,
   token: Schema.String,
+  parked_at: Schema.OptionFromNullOr(Schema.String),
 });
 
 export const toRoot = (row: typeof WaitColumns.Type) =>
@@ -18,4 +19,5 @@ export const toRoot = (row: typeof WaitColumns.Type) =>
     signal: row.signal,
     deferred: row.deferred,
     token: row.token,
+    parkedAt: row.parked_at,
   });

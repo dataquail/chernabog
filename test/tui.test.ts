@@ -20,6 +20,8 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agents/sessions.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
+import { RunHistory, RunStep } from "../src/modules/runs/use-cases/run-history.result.ts";
+import { RunWait } from "../src/modules/runs/use-cases/run-wait.result.ts";
 import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { Home } from "../src/platform/home.ts";
@@ -299,11 +301,18 @@ describe("the main view", () => {
 });
 
 describe("keys", () => {
-  test("enter opens the selected run’s log, and esc comes back", () => {
+  test("enter opens the selected run’s detail, l its log, and esc comes back each time", () => {
     const opened = update(model({ runIndex: 1 }), { name: "return" });
-    expect(opened.action).toEqual({ kind: "open-log", run: "goodbones.review.pr-8.1" });
-    expect(opened.model.view).toBe("log");
-    expect(update(opened.model, { name: "escape" }).model.view).toBe("main");
+    expect(opened.action).toEqual({ kind: "open-run", run: "goodbones.review.pr-8.1" });
+    expect(opened.model.view).toBe("run");
+
+    const log = update(opened.model, { name: "l" });
+    expect(log.action).toEqual({ kind: "open-log", run: "goodbones.review.pr-8.1" });
+    expect(log.model.view).toBe("log");
+
+    const back = update(log.model, { name: "escape" }).model;
+    expect(back.view).toBe("run");
+    expect(update(back, { name: "escape" }).model.view).toBe("main");
   });
 
   test("a attaches to the selected run, t triggers the selected flow, p pauses its repo", () => {
@@ -402,6 +411,126 @@ describe("keys", () => {
 
   test("q quits", () => {
     expect(update(model(), { name: "q" }).action).toEqual({ kind: "quit" });
+  });
+});
+
+describe("a run's detail", () => {
+  const reviewing = ActiveRun.make({
+    ...run("r", "running"),
+    flow: "address-review",
+    persona: Option.some("zach"),
+    itemKey: "pr-124-changes-1",
+    itemTitle: Option.some("feat!: chernabog decides which repos' flows it runs"),
+    itemUrl: Option.some("https://github.com/dataquail/chernabog/pull/124"),
+    currentStep: Option.some("consider-review-1"),
+    startedAt: minutes(-60),
+    parked: true,
+  });
+
+  const entered = (step: string, at: number) => RunStep.make({ step, enteredAt: minutes(at) });
+
+  const history = RunHistory.make({
+    steps: [
+      entered("read-review", -60),
+      entered("find-author", -59),
+      entered("prepare-worktree", -58),
+      entered("comment-pr-124-619c4991c631", -50),
+      entered("ci-1", -49),
+      entered("ci-1", -45),
+      entered("ci-1", -40),
+      entered("consider-review-1", -30),
+    ],
+    waits: [
+      RunWait.make({
+        runId: RunId.make("r"),
+        signal: "pushed",
+        deferred: "d",
+        token: "t",
+        parkedAt: Option.some(minutes(-29)),
+      }),
+    ],
+  });
+
+  const detail = (overrides: Partial<Model> = {}) =>
+    model({
+      status: Option.some({ ...status, active: [reviewing], recent: [] }),
+      view: "run",
+      detailRun: Option.some("r"),
+      history: Option.some(history),
+      worktree: Option.some("/home/zach/.config/chernabog/worktrees/chernabog/auto-issue-123"),
+      ...overrides,
+    });
+
+  test("shows what the run is about, as whom, and the worktree it uses", () => {
+    const screen = plain(view(detail()));
+    expect(screen).toContain("goodbones · address-review · @zach");
+    expect(screen).toContain(
+      "PR 124  feat!: chernabog decides which repos' flows it runs  https://github.com/dataquail/chernabog/pull/124",
+    );
+    expect(screen).toContain("running  started 1h ago");
+    expect(screen).toContain(
+      "worktree  /home/zach/.config/chernabog/worktrees/chernabog/auto-issue-123",
+    );
+  });
+
+  test("shows the steps taken with the time in each, hashes dropped and repeats folded", () => {
+    const screen = plain(view(detail()));
+    expect(screen).toContain(
+      "✓ read-review 1m ─ ✓ find-author 1m ─ ✓ prepare-worktree 8m ─ ✓ comment-pr-124 1m ─ ✓ ci-1 ×3 19m ─ ● consider-review-1 30m",
+    );
+    expect(screen).not.toContain("619c4991c631");
+  });
+
+  test("wraps the path to the terminal's width", () => {
+    const lines = plain(view(detail({ width: 60 }))).split("\n");
+    const path = lines.filter((line) => line.includes("✓") || line.includes("●"));
+    expect(path.length).toBeGreaterThan(1);
+    expect(path.every((line) => line.length <= 60)).toBe(true);
+    expect(path.join(" ")).toContain("● consider-review-1 30m");
+  });
+
+  test("a parked run says which signal it waits on, since which step, and for how long", () => {
+    expect(plain(view(detail()))).toContain("for pushed since consider-review-1, for 29m");
+    expect(
+      plain(view(model({ status: Option.some({ ...status, active: [reviewing] }), width: 200 }))),
+    ).toContain("waiting for a signal in consider-review-1");
+  });
+
+  test("a finished run's last step shows how it ended, and the time up to its end", () => {
+    const failed = ActiveRun.make({
+      ...reviewing,
+      status: "failed",
+      parked: false,
+      finishedAt: Option.some(minutes(-20)),
+      summary: Option.some("CI still red"),
+    });
+
+    const screen = plain(
+      view(detail({ status: Option.some({ ...status, active: [failed], recent: [] }) })),
+    );
+
+    expect(screen).toContain("✗ consider-review-1 10m");
+    expect(screen).toContain("· finished 20m ago  CI still red");
+    expect(screen).not.toContain("for pushed");
+  });
+
+  test("a run from before steps were kept says so, rather than guessing", () => {
+    const old = RunHistory.make({ steps: [], waits: [] });
+    expect(plain(view(detail({ history: Option.some(old), worktree: Option.none() })))).toContain(
+      "no steps recorded: this run started before chernabog kept them",
+    );
+    expect(plain(view(detail({ worktree: Option.none() })))).toContain(
+      "worktree  none yet: no agent session has started",
+    );
+  });
+
+  test("a attaches, x asks to cancel, and the keys say what they do", () => {
+    expect(update(detail(), { name: "a" }).action).toEqual({ kind: "attach", run: "r" });
+
+    const asked = update(detail(), { name: "x" }).model;
+    expect(Option.getOrThrow(asked.message)).toContain("? It stops for good");
+    expect(update(asked, { name: "y" }).action).toMatchObject({ kind: "cancel", run: "r" });
+    expect(plain(view(detail()))).toContain("l log · a attach · x cancel run · esc back");
   });
 });
 

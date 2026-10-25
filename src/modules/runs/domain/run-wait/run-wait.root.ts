@@ -13,4 +13,6 @@ export class RunWaitRoot extends Schema.Class<RunWaitRoot, { readonly brand: "Ru
   signal: Schema.String,
   deferred: Schema.String,
   token: Schema.String,
+  // When it parked, an ISO timestamp; none for a wait from before waits kept it.
+  parkedAt: Schema.Option(Schema.String),
 }) {}

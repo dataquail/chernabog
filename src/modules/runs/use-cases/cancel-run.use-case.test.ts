@@ -52,7 +52,13 @@ const finished = run("done-1", {
 });
 
 const wait = (runId: string, deferred: string) =>
-  RunWaitRoot.make({ runId: RunId.make(runId), signal: "closed", deferred, token: "t" });
+  RunWaitRoot.make({
+    runId: RunId.make(runId),
+    signal: "closed",
+    deferred,
+    token: "t",
+    parkedAt: Option.none(),
+  });
 
 // An engine whose interrupted executions end at once, as the real one does.
 const stoppingEngine = (...ids: ReadonlyArray<string>) => {

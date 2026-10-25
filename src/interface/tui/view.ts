@@ -9,6 +9,7 @@ import * as Record from "effect/Record";
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { ActiveRun } from "../../modules/runs/use-cases/run.result.ts";
+import { type RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
 
 export type Style =
@@ -76,8 +77,13 @@ export type Model = {
   readonly focus: "flows" | "runs";
   readonly flowIndex: number;
   readonly runIndex: number;
-  readonly view: "main" | "log" | "settings";
+  readonly view: "main" | "log" | "settings" | "run";
   readonly settings: Option.Option<Settings>;
+  // The run the detail view shows, where it has been, once the daemon has
+  // said, and the worktree its latest agent session ran in.
+  readonly detailRun: Option.Option<string>;
+  readonly history: Option.Option<RunHistory>;
+  readonly worktree: Option.Option<string>;
   readonly logRun: Option.Option<string>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.
@@ -271,9 +277,11 @@ const select = (line: Line, selected: boolean): Line => {
 };
 
 export const KEYS_MAIN =
-  "tab switch pane · ↑↓ select · enter log or settings · 0-9 [ ] project · @ persona · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
+  "tab switch pane · ↑↓ select · enter run or settings · 0-9 [ ] project · @ persona · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
 
 export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
+
+export const KEYS_RUN = "l log · a attach · x cancel run · esc back · q quit";
 
 export const KEYS_SETTINGS =
   "↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit";
@@ -333,13 +341,23 @@ const plural = (count: number) => {
   return "s";
 };
 
+// A step's name as a person reads it: an activity named for its comment or
+// commit carries a hash (`comment-pr-124-619c4991c631`), which says nothing
+// here. Stored names stay as they are, since they're journal keys.
+const STEP_HASH = /-(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}$/;
+
+export const tidyStep = (step: string) => step.replace(STEP_HASH, "");
+
 const runDetail = (run: RunEntry) => {
   if (run.status !== "running") {
     return Option.getOrElse(run.summary, () => "");
   }
 
   if (run.parked) {
-    return "waiting for a signal";
+    return Option.match(run.currentStep, {
+      onNone: () => "waiting for a signal",
+      onSome: (step) => `waiting for a signal in ${tidyStep(step)}`,
+    });
   }
 
   return Option.getOrElse(run.currentStep, () => "starting");
@@ -921,6 +939,217 @@ const logView = (model: Model): ReadonlyArray<Line> => {
   return [...header, ...shown];
 };
 
+// A stretch of a run's path: a step, how many times over it ran in a row,
+// and the seconds it took in all.
+export type PathStep = { readonly step: string; readonly times: number; readonly seconds: number };
+
+const epochSeconds = (iso: string) =>
+  Option.map(DateTime.make(iso), (at) => DateTime.toEpochMillis(at) / 1000);
+
+// The steps a run took, tidied, with repeats in a row folded into one: each
+// step lasts until the next one starts, and the last until the run finished,
+// or until now.
+export const pathOf = (
+  history: RunHistory,
+  finishedAt: Option.Option<string>,
+  now: DateTime.Utc,
+): ReadonlyArray<PathStep> => {
+  const end = Option.getOrElse(Option.flatMap(finishedAt, epochSeconds), () =>
+    Math.round(DateTime.toEpochMillis(now) / 1000),
+  );
+
+  const lasted = history.steps.map((entered, index) => {
+    const from = Option.getOrElse(epochSeconds(entered.enteredAt), () => end);
+
+    const until = Option.getOrElse(
+      Option.flatMap(Arr.get(history.steps, index + 1), (next) => epochSeconds(next.enteredAt)),
+      () => end,
+    );
+
+    return { step: tidyStep(entered.step), seconds: Math.max(0, until - from) };
+  });
+
+  const path: Array<PathStep> = [];
+
+  for (const entered of lasted) {
+    const last = Arr.last(path);
+
+    if (Option.isSome(last) && last.value.step === entered.step) {
+      path[path.length - 1] = {
+        step: entered.step,
+        times: last.value.times + 1,
+        seconds: last.value.seconds + entered.seconds,
+      };
+      continue;
+    }
+
+    path.push({ step: entered.step, times: 1, seconds: entered.seconds });
+  }
+
+  return path;
+};
+
+// How the last step on a run's path ended: still going, or how the run did.
+const LAST_MARK: Readonly<Record<RunStatus, Segment>> = {
+  running: segment("●", "cyan"),
+  done: segment("✓", "green"),
+  failed: segment("✗", "red"),
+  "needs-human": segment("!", "yellow"),
+  cancelled: segment("✗", "dim"),
+  skipped: segment("○", "dim"),
+};
+
+const durationText = (seconds: number) => spanText(Math.round(seconds));
+
+// The path's steps as lines, `✓ claim 2s ─ ● ci ×4 5m`, wrapped to `width`.
+const pathLines = (
+  path: ReadonlyArray<PathStep>,
+  status: RunStatus,
+  width: number,
+): ReadonlyArray<Line> => {
+  const tokens = path.map((step, index): Line => {
+    const mark = Option.getOrElse(
+      Option.as(
+        Option.liftPredicate(index, (at) => at === path.length - 1),
+        LAST_MARK[status],
+      ),
+      () => segment("✓", "green"),
+    );
+
+    return [
+      mark,
+      segment(` ${step.step}`),
+      ...onlyIf(step.times > 1, [segment(` ×${step.times}`, "bold")]),
+      segment(` ${durationText(step.seconds)}`, "dim"),
+    ];
+  });
+
+  const lines: Array<Line> = [];
+  let used = 0;
+
+  for (const token of tokens) {
+    const length = token.reduce((sum, part) => sum + part.text.length, 0);
+    const current = Arr.last(lines);
+
+    if (Option.isNone(current) || used + 3 + length > width) {
+      lines.push([segment("  "), ...token]);
+      used = 2 + length;
+      continue;
+    }
+
+    lines[lines.length - 1] = [...current.value, segment(" ─ ", "dim"), ...token];
+    used += 3 + length;
+  }
+
+  return lines;
+};
+
+const itemLine = (run: RunEntry): Line => {
+  const ref = itemRef(run.itemKey);
+
+  const named = Option.getOrElse(
+    Option.as(
+      Option.liftPredicate(ref, (found) => found.kind === "issue"),
+      `issue ${itemText(ref)}`,
+    ),
+    () => itemText(ref),
+  );
+
+  return [
+    segment(named, ITEM_STYLE[ref.kind]),
+    ...Option.toArray(Option.map(run.itemTitle, (title) => segment(`  ${title}`))),
+    ...Option.toArray(Option.map(run.itemUrl, (url) => segment(`  ${url}`, "dim"))),
+  ];
+};
+
+// The step a run was in when it parked: the last it entered by then.
+const parkedIn = (history: RunHistory, parkedAt: string) =>
+  Option.map(
+    Arr.findLast(history.steps, (step) => step.enteredAt <= parkedAt),
+    (step) => tidyStep(step.step),
+  );
+
+const waitLines = (run: RunEntry, history: RunHistory, now: DateTime.Utc): ReadonlyArray<Line> =>
+  onlyIf(run.status === "running" && history.waits.length > 0, [
+    [],
+    heading("Waiting"),
+    ...history.waits.map((wait): Line => {
+      const since = Option.match(wait.parkedAt, {
+        onNone: () => "",
+        onSome: (at) =>
+          `${Option.match(parkedIn(history, at), { onNone: () => "", onSome: (step) => ` since ${step}` })}, for ${ago(Option.some(at), now).replace(" ago", "")}`,
+      });
+
+      return [segment("  for "), segment(wait.signal, "yellow"), segment(since, "dim")];
+    }),
+  ]);
+
+const historyLines = (run: RunEntry, model: Model): ReadonlyArray<Line> =>
+  Option.match(model.history, {
+    onNone: () => [[segment("  the daemon hasn't said yet", "dim")]],
+    onSome: (history) => {
+      if (history.steps.length === 0) {
+        return [
+          [
+            segment(
+              "  no steps recorded: this run started before chernabog kept them; l shows its log",
+              "dim",
+            ),
+          ],
+          ...waitLines(run, history, model.now),
+        ];
+      }
+
+      return [
+        ...pathLines(pathOf(history, run.finishedAt, model.now), run.status, model.width - 2),
+        ...waitLines(run, history, model.now),
+      ];
+    },
+  });
+
+// One run: what it's about and as whom, where it works, and the steps it has taken.
+const runView = (model: Model): ReadonlyArray<Line> => {
+  const found = Arr.findFirst(allRuns(model.status), (candidate) =>
+    Option.contains(model.detailRun, candidate.id),
+  );
+
+  return Option.match(found, {
+    onNone: () => [
+      [
+        segment(
+          `${Option.getOrElse(model.detailRun, () => "")} is no longer among the runs the daemon reports`,
+          "yellow",
+        ),
+      ],
+    ],
+    onSome: (run) => [
+      [
+        segment(`${run.repo} · ${run.flow}`, "bold"),
+        ...Option.toArray(Option.map(run.persona, (login) => segment(` · @${login}`, "bold"))),
+        segment(`  ${run.id}`, "dim"),
+      ],
+      itemLine(run),
+      [
+        segment(run.status, STATUS_STYLE[run.status]),
+        segment(`  started ${ago(Option.some(run.startedAt), model.now)}`, "dim"),
+        ...Option.toArray(
+          Option.map(run.finishedAt, (at) =>
+            segment(` · finished ${ago(Option.some(at), model.now)}`, "dim"),
+          ),
+        ),
+        ...Option.toArray(Option.map(run.summary, (summary) => segment(`  ${firstLine(summary)}`))),
+      ],
+      [
+        segment("worktree  ", "dim"),
+        segment(Option.getOrElse(model.worktree, () => "none yet: no agent session has started")),
+      ],
+      [],
+      heading("Path"),
+      ...historyLines(run, model),
+    ],
+  });
+};
+
 const clipLine = (line: Line, width: number): Line => {
   const out: Array<Segment> = [];
   let used = 0;
@@ -943,6 +1172,10 @@ const bodyOf = (model: Model) => {
     return logView(model);
   }
 
+  if (model.view === "run") {
+    return runView(model);
+  }
+
   return Option.match(
     Option.filter(model.settings, () => model.view === "settings"),
     { onNone: () => mainView(model), onSome: (settings) => settingsView(model, settings) },
@@ -958,6 +1191,10 @@ const SETTINGS_KEYS: Readonly<Record<Editing["kind"], string>> = {
 const keysOf = (model: Model) => {
   if (model.view === "log") {
     return KEYS_LOG;
+  }
+
+  if (model.view === "run") {
+    return KEYS_RUN;
   }
 
   return Option.match(

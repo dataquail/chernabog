@@ -2,11 +2,13 @@
 
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
 import { cronProblem } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
+  allRuns,
   flowEnabled,
   type FlowRow,
   flowRows,
@@ -30,6 +32,7 @@ export type Action =
   | { readonly kind: "quit" }
   | { readonly kind: "refresh" }
   | { readonly kind: "open-log"; readonly run: string }
+  | { readonly kind: "open-run"; readonly run: string }
   | { readonly kind: "attach"; readonly run: string }
   | { readonly kind: "cancel"; readonly run: string; readonly label: string }
   | {
@@ -117,7 +120,13 @@ const updateLog = (model: Model, cleared: Model, key: Key): Updated => {
     case "h":
     case "left":
       return {
-        model: { ...cleared, view: "main", logRun: Option.none(), logLines: [], logScroll: 0 },
+        model: {
+          ...cleared,
+          view: Option.match(model.detailRun, { onNone: () => "main", onSome: () => "run" }),
+          logRun: Option.none(),
+          logLines: [],
+          logScroll: 0,
+        },
         action: none,
       };
     case "up":
@@ -468,6 +477,18 @@ const updateSettings = (model: Model, settings: Settings, key: Key): Updated => 
   }
 };
 
+// A run's detail view, until the daemon says where it has been.
+const openRun = (model: Model, run: string): Updated => ({
+  model: {
+    ...model,
+    view: "run",
+    detailRun: Option.some(run),
+    history: Option.none(),
+    worktree: Option.none(),
+  },
+  action: { kind: "open-run", run },
+});
+
 // On a flow: its persona's settings for the repo, with that flow selected. On a run: its log.
 const openSelected = (
   model: Model,
@@ -501,10 +522,7 @@ const openSelected = (
       model: { ...cleared, message: Option.some("select a flow or a run first") },
       action: none,
     }),
-    onSome: (run) => ({
-      model: { ...cleared, view: "log", logRun: Option.some(run.id), logLines: [], logScroll: 0 },
-      action: { kind: "open-log", run: run.id },
-    }),
+    onSome: (run) => openRun(cleared, run.id),
   });
 };
 
@@ -627,6 +645,44 @@ const filterKey = (model: Model, key: Key): Option.Option<Model> => {
   return Option.none();
 };
 
+// The detail view: l its log, a attach, x cancel, esc back to the list.
+const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
+  const run = Arr.findFirst(allRuns(model.status), (candidate) =>
+    Option.contains(model.detailRun, candidate.id),
+  );
+
+  switch (key.name) {
+    case "escape":
+    case "backspace":
+    case "h":
+    case "left":
+      return {
+        model: { ...cleared, view: "main", detailRun: Option.none(), history: Option.none() },
+        action: none,
+      };
+    case "l":
+    case "right":
+      return Option.match(model.detailRun, {
+        onNone: () => ({ model, action: none }),
+        onSome: (id) => ({
+          model: { ...cleared, view: "log", logRun: Option.some(id), logLines: [], logScroll: 0 },
+          action: { kind: "open-log", run: id },
+        }),
+      });
+    case "a":
+    case "x":
+      return onSelectedRun(cleared, run, key.name);
+    default:
+      return { model, action: none };
+  }
+};
+
+// The views other than the list and the settings, by what their keys do.
+const VIEW_KEYS: Readonly<Record<string, (model: Model, cleared: Model, key: Key) => Updated>> = {
+  log: updateLog,
+  run: updateRun,
+};
+
 const updateMain = (model: Model, key: Key): Updated => {
   const flows = flowRows(model);
   const runs = runRows(model);
@@ -659,8 +715,10 @@ const updateMain = (model: Model, key: Key): Updated => {
     return { model: cleared, action: { kind: "refresh" } };
   }
 
-  if (model.view === "log") {
-    return updateLog(model, cleared, key);
+  const elsewhere = Record.get(VIEW_KEYS, model.view);
+
+  if (Option.isSome(elsewhere)) {
+    return elsewhere.value(model, cleared, key);
   }
 
   if (Option.isSome(settings)) {

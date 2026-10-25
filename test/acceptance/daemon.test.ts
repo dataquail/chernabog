@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
+import { RunHistory } from "../../src/modules/runs/use-cases/run-history.result.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 describe("the daemon", () => {
@@ -96,6 +97,21 @@ describe("the daemon", () => {
     );
     const { output } = await sandbox.runCli(["status"]);
     expect(output).toMatch(/done\s+[\da-f]{8}\s+demo\/implement issue-1/);
+
+    // The live view's run detail: the steps it took, in order, over the socket.
+    const status = DaemonStatus.pipe(Schema.decodeUnknownSync)(
+      await (await fetch("http://daemon/status", { unix: socket() })).json(),
+    );
+
+    const done = status.recent.find((run) => run.itemKey === "issue-1" && run.status === "done");
+
+    const history = RunHistory.pipe(Schema.decodeUnknownSync)(
+      await (await fetch(`http://daemon/runs/${done?.id}/history`, { unix: socket() })).json(),
+    );
+
+    const steps = history.steps.map((step) => step.step);
+    expect(steps.slice(0, 2)).toEqual(["claim", "prepare-worktree"]);
+    expect(steps).toContain("open-pull-request");
   }, 60_000);
 
   test("the usage gate holds a run back and says why", async () => {

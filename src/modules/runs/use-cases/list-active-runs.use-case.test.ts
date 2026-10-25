@@ -45,7 +45,13 @@ const stores = Layer.mergeAll(
     run("d", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00.000Z") }),
   ]),
   RunWaitsRepositoryFake([
-    RunWaitRoot.make({ runId: RunId.make("b"), signal: "pushed", deferred: "d", token: "t" }),
+    RunWaitRoot.make({
+      runId: RunId.make("b"),
+      signal: "pushed",
+      deferred: "d",
+      token: "t",
+      parkedAt: Option.none(),
+    }),
   ]),
 );
 
