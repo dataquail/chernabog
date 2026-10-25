@@ -58,6 +58,11 @@ export const RunsRepositoryLive = Layer.effect(
       yield* sql`UPDATE om_runs SET sdk_version = ${BUNDLED_SDK} WHERE sdk_version IS NULL`;
     }
 
+    // One from before runs kept the pull request they opened gains it; its rows have none.
+    if (!columns.some((column) => column.name === "pull_request")) {
+      yield* sql`ALTER TABLE om_runs ADD COLUMN pull_request INTEGER`;
+    }
+
     yield* sql`DROP INDEX IF EXISTS om_runs_active`;
     yield* sql`CREATE INDEX IF NOT EXISTS om_runs_active_by_persona ON om_runs (status, repo, persona, flow, item_key)`;
 
@@ -99,6 +104,7 @@ export const RunsRepositoryLive = Layer.effect(
         itemUrl,
         item,
         executionId,
+        pullRequest,
         status,
         currentStep,
         summary,
@@ -107,11 +113,12 @@ export const RunsRepositoryLive = Layer.effect(
         finishedAt,
       ] = toParameters(run);
 
-      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, sdk_version, started_at, finished_at)
-        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${sdkVersion}, ${startedAt}, ${finishedAt})
+      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, pull_request, status, current_step, summary, sdk_version, started_at, finished_at)
+        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${pullRequest}, ${status}, ${currentStep}, ${summary}, ${sdkVersion}, ${startedAt}, ${finishedAt})
         ON CONFLICT (id) DO UPDATE SET
           persona = excluded.persona,
           execution_id = excluded.execution_id,
+          pull_request = excluded.pull_request,
           status = excluded.status,
           current_step = excluded.current_step,
           summary = excluded.summary,

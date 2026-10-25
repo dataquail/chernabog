@@ -202,6 +202,7 @@ describe("planTickUseCase", () => {
               signal: "ci",
               deferred: "deferred",
               token: "token",
+              parkedAt: Option.none(),
             }),
           ],
           flows: { "demo/review": { items: [item("pr-1")] } },

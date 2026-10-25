@@ -2,22 +2,28 @@
 
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 
-import { samePersona } from "../../kernel/persona.value-object.ts";
+import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
 import { cronProblem } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
+  allRuns,
   flowEnabled,
   type FlowRow,
   flowRows,
   type Model,
   personaAccounts,
   personaFlows,
+  personasOf,
+  projectsOf,
   type RunEntry,
+  type RunRow,
   runRows,
   type Settings,
   type SettingsRow,
   settingsRows,
+  threadRuns,
 } from "./view.ts";
 
 // A key as the terminal gives it: its name, and the text it types, if any.
@@ -28,6 +34,7 @@ export type Action =
   | { readonly kind: "quit" }
   | { readonly kind: "refresh" }
   | { readonly kind: "open-log"; readonly run: string }
+  | { readonly kind: "open-run"; readonly run: string }
   | { readonly kind: "attach"; readonly run: string }
   | { readonly kind: "cancel"; readonly run: string; readonly label: string }
   | {
@@ -80,7 +87,7 @@ const otherPane = (focus: Model["focus"]): Model["focus"] => {
 const move = (
   model: Model,
   flows: ReadonlyArray<FlowRow>,
-  runs: ReadonlyArray<RunEntry>,
+  runs: ReadonlyArray<RunRow>,
   step: number,
 ): Updated => {
   if (model.focus === "flows") {
@@ -115,7 +122,13 @@ const updateLog = (model: Model, cleared: Model, key: Key): Updated => {
     case "h":
     case "left":
       return {
-        model: { ...cleared, view: "main", logRun: Option.none(), logLines: [], logScroll: 0 },
+        model: {
+          ...cleared,
+          view: Option.match(model.detailRun, { onNone: () => "main", onSome: () => "run" }),
+          logRun: Option.none(),
+          logLines: [],
+          logScroll: 0,
+        },
         action: none,
       };
     case "up":
@@ -466,6 +479,19 @@ const updateSettings = (model: Model, settings: Settings, key: Key): Updated => 
   }
 };
 
+// A run's detail view, until the daemon says where it has been.
+const openRun = (model: Model, run: string): Updated => ({
+  model: {
+    ...model,
+    view: "run",
+    detailRun: Option.some(run),
+    history: Option.none(),
+    worktree: Option.none(),
+    threadIndex: 0,
+  },
+  action: { kind: "open-run", run },
+});
+
 // On a flow: its persona's settings for the repo, with that flow selected. On a run: its log.
 const openSelected = (
   model: Model,
@@ -499,10 +525,7 @@ const openSelected = (
       model: { ...cleared, message: Option.some("select a flow or a run first") },
       action: none,
     }),
-    onSome: (run) => ({
-      model: { ...cleared, view: "log", logRun: Option.some(run.id), logLines: [], logScroll: 0 },
-      action: { kind: "open-log", run: run.id },
-    }),
+    onSome: (run) => openRun(cleared, run.id),
   });
 };
 
@@ -558,13 +581,195 @@ const confirmCancel = (cleared: Model, run: RunEntry, key: Key): Updated => {
   };
 };
 
-const updateMain = (model: Model, key: Key): Updated => {
-  const flows = flowRows(model.status);
-  const runs = runRows(model.status);
+// The filters as they'd be with `project` and `persona`; the selections go
+// back to the top of what's now shown.
+const filteredTo = (
+  model: Model,
+  project: Option.Option<string>,
+  personaFilter: Option.Option<Persona>,
+): Model => ({ ...model, project, personaFilter, flowIndex: 0, runIndex: 0 });
 
-  const selectedRun = Arr.get(runs, model.runIndex).pipe(
+// The next choice after `current` in `choices`, all (none) between the last and the first.
+const cycle = <A>(
+  choices: ReadonlyArray<A>,
+  current: Option.Option<A>,
+  same: (left: A, right: A) => boolean,
+  step: number,
+): Option.Option<A> => {
+  const at = Option.match(current, {
+    onNone: () => -1,
+    onSome: (chosen) => choices.findIndex((choice) => same(choice, chosen)),
+  });
+
+  const count = choices.length + 1;
+  const next = (((at + 1 + step) % count) + count) % count;
+
+  return Arr.get(choices, next - 1);
+};
+
+const typed = (key: Key) => Option.getOrElse(Option.fromUndefinedOr(key.sequence), () => key.name);
+
+// 1-9 picks a project tab, 0 All, [ and ] cycle them, and @ cycles the
+// persona filter. Each does nothing when there's no choice to make.
+const filterKey = (model: Model, key: Key): Option.Option<Model> => {
+  const projects = projectsOf(model.status);
+  const personas = personasOf(model.status);
+  const text = typed(key);
+  const same = (left: string, right: string) => left === right;
+
+  if (text === "@" && personas.length > 1) {
+    return Option.some(
+      filteredTo(model, model.project, cycle(personas, model.personaFilter, samePersona, 1)),
+    );
+  }
+
+  if (projects.length < 2) {
+    return Option.none();
+  }
+
+  if (text === "[" || text === "]") {
+    let step = -1;
+
+    if (text === "]") {
+      step = 1;
+    }
+
+    return Option.some(
+      filteredTo(model, cycle(projects, model.project, same, step), model.personaFilter),
+    );
+  }
+
+  const tab = Number(text);
+
+  if (/^[0-9]$/.test(text) && tab <= projects.length) {
+    return Option.some(filteredTo(model, Arr.get(projects, tab - 1), model.personaFilter));
+  }
+
+  return Option.none();
+};
+
+// The detail view: l its log, a attach, x cancel, esc back to the list.
+const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
+  const run = Arr.findFirst(allRuns(model.status), (candidate) =>
+    Option.contains(model.detailRun, candidate.id),
+  );
+
+  const thread = Option.match(model.detailRun, {
+    onNone: () => [],
+    onSome: (id) => threadRuns(model, id),
+  });
+
+  switch (key.name) {
+    case "up":
+    case "k":
+      return {
+        model: { ...cleared, threadIndex: clamp(model.threadIndex - 1, thread.length) },
+        action: none,
+      };
+    case "down":
+    case "j":
+      return {
+        model: { ...cleared, threadIndex: clamp(model.threadIndex + 1, thread.length) },
+        action: none,
+      };
+    case "return":
+    case "enter":
+      return Option.match(Arr.get(thread, model.threadIndex), {
+        onNone: () => ({ model, action: none }),
+        onSome: (other) => openRun(cleared, other.id),
+      });
+    case "escape":
+    case "backspace":
+    case "h":
+    case "left":
+      return {
+        model: { ...cleared, view: "main", detailRun: Option.none(), history: Option.none() },
+        action: none,
+      };
+    case "l":
+    case "right":
+      return Option.match(model.detailRun, {
+        onNone: () => ({ model, action: none }),
+        onSome: (id) => ({
+          model: { ...cleared, view: "log", logRun: Option.some(id), logLines: [], logScroll: 0 },
+          action: { kind: "open-log", run: id },
+        }),
+      });
+    case "a":
+    case "x":
+      return onSelectedRun(cleared, run, key.name);
+    default:
+      return { model, action: none };
+  }
+};
+
+// Where a thread's latest run is in the list, so closing the thread from one
+// of its other runs selects the thread.
+const leadIndex = (model: Model, thread: string) =>
+  Math.max(
+    0,
+    runRows(model).findIndex((row) => row.thread === thread && row.lead),
+  );
+
+// space opens or closes the selected run's thread, and x asks to cancel the selected run.
+const listKey = (
+  model: Model,
+  cleared: Model,
+  selectedRow: Option.Option<RunRow>,
+  key: Key,
+): Updated => {
+  if (key.name === "x") {
+    return onSelectedRun(
+      cleared,
+      Option.map(selectedRow, (row) => row.run),
+      key.name,
+    );
+  }
+
+  if (key.name !== "space") {
+    return { model, action: none };
+  }
+
+  return Option.match(
+    Option.filter(selectedRow, (row) => row.others > 0),
+    {
+      onNone: () => ({ model, action: none }),
+      onSome: (row) => {
+        if (row.expanded) {
+          return {
+            model: {
+              ...cleared,
+              expanded: model.expanded.filter((thread) => thread !== row.thread),
+              runIndex: leadIndex(model, row.thread),
+            },
+            action: none,
+          };
+        }
+
+        return {
+          model: { ...cleared, expanded: [...model.expanded, row.thread] },
+          action: none,
+        };
+      },
+    },
+  );
+};
+
+// The views other than the list and the settings, by what their keys do.
+const VIEW_KEYS: Readonly<Record<string, (model: Model, cleared: Model, key: Key) => Updated>> = {
+  log: updateLog,
+  run: updateRun,
+};
+
+const updateMain = (model: Model, key: Key): Updated => {
+  const flows = flowRows(model);
+  const runs = runRows(model);
+
+  const selectedRow = Arr.get(runs, model.runIndex).pipe(
     Option.filter(() => model.focus === "runs"),
   );
+
+  const selectedRun = Option.map(selectedRow, (row) => row.run);
 
   const cleared: Model = { ...model, message: Option.none() };
 
@@ -590,8 +795,10 @@ const updateMain = (model: Model, key: Key): Updated => {
     return { model: cleared, action: { kind: "refresh" } };
   }
 
-  if (model.view === "log") {
-    return updateLog(model, cleared, key);
+  const elsewhere = Record.get(VIEW_KEYS, model.view);
+
+  if (Option.isSome(elsewhere)) {
+    return elsewhere.value(model, cleared, key);
   }
 
   if (Option.isSome(settings)) {
@@ -679,7 +886,11 @@ const updateMain = (model: Model, key: Key): Updated => {
     }
 
     case "p": {
-      const name = selectedRepoName(model, flows, Arr.get(runs, model.runIndex));
+      const name = selectedRepoName(
+        model,
+        flows,
+        Option.map(Arr.get(runs, model.runIndex), (row) => row.run),
+      );
 
       const repo = Option.flatMap(model.status, (status) =>
         Arr.findFirst(status.repos, (candidate) => Option.contains(name, candidate.name)),
@@ -695,14 +906,10 @@ const updateMain = (model: Model, key: Key): Updated => {
     }
 
     default:
-      // x asks to cancel the selected run.
-      return Option.match(
-        Option.liftPredicate(key.name, (name) => name === "x"),
-        {
-          onNone: () => ({ model, action: none }),
-          onSome: (name) => onSelectedRun(cleared, selectedRun, name),
-        },
-      );
+      return Option.match(filterKey(cleared, key), {
+        onSome: (filtered) => ({ model: filtered, action: none }),
+        onNone: () => listKey(model, cleared, selectedRow, key),
+      });
   }
 };
 

@@ -1,4 +1,6 @@
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
@@ -14,9 +16,14 @@ export type Parking = {
 };
 
 // Parks a run on a signal its flow's trigger will report, such as a push to a
-// review's pull request. A parked run holds no slot until it wakes.
+// review's pull request. A parked run holds no slot until it wakes. The wait
+// keeps when it parked, for a person to see how long it has waited.
 export const parkRunUseCase = Effect.fn("parkRunUseCase")(function* (parking: Parking) {
-  const wait = RunWaitRoot.make(parking);
+  const wait = RunWaitRoot.make({
+    ...parking,
+    parkedAt: Option.some(DateTime.formatIso(yield* DateTime.now)),
+  });
+
   yield* (yield* RunWaitsRepository).save(wait);
 
   return RunWait.make({ ...wait });

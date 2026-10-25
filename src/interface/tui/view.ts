@@ -6,9 +6,10 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
-import { samePersona } from "../../kernel/persona.value-object.ts";
+import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { ActiveRun } from "../../modules/runs/use-cases/run.result.ts";
+import { type RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
 
 export type Style =
@@ -69,11 +70,24 @@ export type Model = {
   readonly error: Option.Option<string>;
   readonly usage: ReadonlyArray<UsageRow>;
   readonly thresholds: { readonly fiveHourCeiling: number; readonly targetEndUsage: number };
+  // The project tab (a repo's name; none for All) and the persona filter
+  // (none for all), which flows, runs and skips are shown through.
+  readonly project: Option.Option<string>;
+  readonly personaFilter: Option.Option<Persona>;
   readonly focus: "flows" | "runs";
   readonly flowIndex: number;
   readonly runIndex: number;
-  readonly view: "main" | "log" | "settings";
+  // The threads opened in the runs list to show all their runs, by threadOf.
+  readonly expanded: ReadonlyArray<string>;
+  // The selected run among the detail view's thread.
+  readonly threadIndex: number;
+  readonly view: "main" | "log" | "settings" | "run";
   readonly settings: Option.Option<Settings>;
+  // The run the detail view shows, where it has been, once the daemon has
+  // said, and the worktree its latest agent session ran in.
+  readonly detailRun: Option.Option<string>;
+  readonly history: Option.Option<RunHistory>;
+  readonly worktree: Option.Option<string>;
   readonly logRun: Option.Option<string>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.
@@ -121,32 +135,72 @@ const styleIf = (condition: boolean, style: Style): Style => {
   return "plain";
 };
 
-export const flowRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<FlowRow> =>
+// The projects a tab picks from: every repo the daemon has, in its order.
+export const projectsOf = (status: Option.Option<DaemonStatus>): ReadonlyArray<string> =>
+  Option.match(status, {
+    onNone: () => [],
+    onSome: (found) => found.repos.map((repo) => repo.name),
+  });
+
+// The personas the filter picks from: every one a flow runs as, or a run ran
+// as, in the order first seen.
+export const personasOf = (status: Option.Option<DaemonStatus>): ReadonlyArray<Persona> =>
   Option.match(status, {
     onNone: () => [],
     onSome: (found) =>
+      Arr.dedupeWith(
+        [
+          ...found.repos.flatMap((repo) =>
+            repo.flows.map((flow) => Option.fromUndefinedOr(flow.persona)),
+          ),
+          ...found.active.map((run) => run.persona),
+          ...found.recent.map((run) => run.persona),
+        ],
+        samePersona,
+      ),
+  });
+
+// Whether a repo and persona pass the project tab and the persona filter.
+const passes = (model: Model, repo: string, persona: Persona) =>
+  Option.match(model.project, { onNone: () => true, onSome: (name) => name === repo }) &&
+  Option.match(model.personaFilter, {
+    onNone: () => true,
+    onSome: (chosen) => samePersona(chosen, persona),
+  });
+
+// Which run columns show: one a filter fixes, or that has one value to show, is dropped.
+export const shownColumns = (model: Model): Shown => ({
+  repo: Option.isNone(model.project) && projectsOf(model.status).length > 1,
+  persona: Option.isNone(model.personaFilter) && personasOf(model.status).length > 1,
+});
+
+export const flowRows = (model: Model): ReadonlyArray<FlowRow> =>
+  Option.match(model.status, {
+    onNone: () => [],
+    onSome: (found) =>
       found.repos.flatMap((repo) =>
-        repo.flows.map((flow): FlowRow => ({
-          repo: repo.name,
-          flow: flow.name,
-          persona: Option.fromUndefinedOr(flow.persona),
-        })),
+        repo.flows
+          .map((flow): FlowRow => ({
+            repo: repo.name,
+            flow: flow.name,
+            persona: Option.fromUndefinedOr(flow.persona),
+          }))
+          .filter((row) => passes(model, row.repo, row.persona)),
       ),
   });
 
 const MAX_RUNS = 15;
 
-// Runs in flight first, then the latest finished ones.
-export const runRows = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunEntry> =>
+// Every run the daemon reported: runs in flight first, then the latest finished ones.
+export const allRuns = (status: Option.Option<DaemonStatus>): ReadonlyArray<RunEntry> =>
   Option.match(status, {
     onNone: () => [],
-    onSome: (found) =>
-      [
-        ...found.active,
-        ...found.recent
-          .filter((run) => run.status !== "running")
-          .map((run) => ActiveRun.make({ ...run, parked: false })),
-      ].slice(0, MAX_RUNS),
+    onSome: (found) => [
+      ...found.active,
+      ...found.recent
+        .filter((run) => run.status !== "running")
+        .map((run) => ActiveRun.make({ ...run, parked: false })),
+    ],
   });
 
 const MINUTE = 60;
@@ -221,9 +275,12 @@ const select = (line: Line, selected: boolean): Line => {
 };
 
 export const KEYS_MAIN =
-  "tab switch pane · ↑↓ select · enter log or settings · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
+  "tab switch pane · ↑↓ select · enter run or settings · space open thread · 0-9 [ ] project · @ persona · a attach · x cancel run · t trigger · e flow on/off · p pause/resume · r refresh · q quit";
 
 export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
+
+export const KEYS_RUN =
+  "↑↓ select in thread · enter open it · l log · a attach · x cancel run · esc back · q quit";
 
 export const KEYS_SETTINGS =
   "↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit";
@@ -283,13 +340,23 @@ const plural = (count: number) => {
   return "s";
 };
 
+// A step's name as a person reads it: an activity named for its comment or
+// commit carries a hash (`comment-pr-124-619c4991c631`), which says nothing
+// here. Stored names stay as they are, since they're journal keys.
+const STEP_HASH = /-(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{8,}$/;
+
+export const tidyStep = (step: string) => step.replace(STEP_HASH, "");
+
 const runDetail = (run: RunEntry) => {
   if (run.status !== "running") {
     return Option.getOrElse(run.summary, () => "");
   }
 
   if (run.parked) {
-    return "waiting for a signal";
+    return Option.match(run.currentStep, {
+      onNone: () => "waiting for a signal",
+      onSome: (step) => `waiting in ${tidyStep(step)}`,
+    });
   }
 
   return Option.getOrElse(run.currentStep, () => "starting");
@@ -332,6 +399,324 @@ const detailStyle = (status: RunStatus): Style => {
   return "dim";
 };
 
+// What a run is about, from its item key: a pull request (`pr-124`, and keys
+// with a suffix such as `pr-124-changes-1`), an issue (`issue-144`), or the
+// key itself for any other item.
+export type ItemRef =
+  | { readonly kind: "pr"; readonly number: number }
+  | { readonly kind: "issue"; readonly number: number }
+  | { readonly kind: "other"; readonly key: string };
+
+const ITEM_KEY = /^(pr|issue)-(\d+)(?:-|$)/;
+
+export const itemRef = (itemKey: string): ItemRef =>
+  Option.match(Option.fromNullishOr(ITEM_KEY.exec(itemKey)), {
+    onNone: (): ItemRef => ({ kind: "other", key: itemKey }),
+    onSome: (match): ItemRef => {
+      const number = Number(match[2]);
+
+      if (match[1] === "pr") {
+        return { kind: "pr", number };
+      }
+
+      return { kind: "issue", number };
+    },
+  });
+
+const itemText = (ref: ItemRef) => {
+  if (ref.kind === "pr") {
+    return `PR ${ref.number}`;
+  }
+
+  if (ref.kind === "issue") {
+    return `#${ref.number}`;
+  }
+
+  return ref.key;
+};
+
+const ITEM_STYLE: Readonly<Record<ItemRef["kind"], Style>> = {
+  pr: "magenta",
+  issue: "cyan",
+  other: "plain",
+};
+
+// A row of the runs list: the latest run of a piece of work, with how many
+// others it has, or, under it while its thread is open, one of those others.
+export type RunRow = {
+  readonly run: RunEntry;
+  readonly thread: string;
+  readonly lead: boolean;
+  readonly others: number;
+  readonly expanded: boolean;
+};
+
+const issueKey = (repo: string, issue: number) => `${repo} issue-${issue}`;
+
+// The pull request each issue's work went to, from the runs that opened or
+// adopted one, latest first.
+const issueLinks = (runs: ReadonlyArray<RunEntry>) => {
+  const links = new Map<string, number>();
+
+  for (const run of runs) {
+    const ref = itemRef(run.itemKey);
+
+    if (ref.kind === "issue" && Option.isSome(run.pullRequest)) {
+      const key = issueKey(run.repo, ref.number);
+      links.set(key, links.get(key) ?? run.pullRequest.value);
+    }
+  }
+
+  return links;
+};
+
+// The piece of work a run is part of: its pull request's, once there is one
+// (an issue's run that opened it, or a run on the pull request itself), else
+// its issue's, else its own item's.
+const threadOf = (run: RunEntry, links: ReadonlyMap<string, number>) => {
+  const ref = itemRef(run.itemKey);
+  let pullRequest = run.pullRequest;
+
+  if (ref.kind === "pr") {
+    pullRequest = Option.some(ref.number);
+  }
+
+  if (ref.kind === "issue") {
+    pullRequest = Option.orElse(pullRequest, () =>
+      Option.fromUndefinedOr(links.get(issueKey(run.repo, ref.number))),
+    );
+  }
+
+  return Option.match(pullRequest, {
+    onSome: (number) => `${run.repo} pr-${number}`,
+    onNone: () => {
+      if (ref.kind === "issue") {
+        return issueKey(run.repo, ref.number);
+      }
+
+      return `${run.repo} ${run.itemKey}`;
+    },
+  });
+};
+
+// Runs grouped by the piece of work they're part of, each latest first, in
+// the order of their latest runs.
+const threads = (runs: ReadonlyArray<RunEntry>, links: ReadonlyMap<string, number>) => {
+  const grouped = new Map<string, Array<RunEntry>>();
+
+  for (const run of runs) {
+    const thread = threadOf(run, links);
+    grouped.set(thread, [...(grouped.get(thread) ?? []), run]);
+  }
+
+  return [...grouped];
+};
+
+// The runs list: a row per piece of work through the filters, and the other
+// runs of each thread that's open under it.
+export const runRows = (model: Model): ReadonlyArray<RunRow> => {
+  const all = allRuns(model.status);
+  const shown = all.filter((run) => passes(model, run.repo, run.persona));
+
+  return threads(shown, issueLinks(all))
+    .slice(0, MAX_RUNS)
+    .flatMap(([thread, runs]) => {
+      const expanded = model.expanded.includes(thread);
+
+      return runs
+        .filter((_, index) => index === 0 || expanded)
+        .map((run, index): RunRow => ({
+          run,
+          thread,
+          lead: index === 0,
+          others: runs.length - 1,
+          expanded,
+        }));
+    });
+};
+
+// The other runs of the piece of work `runId` is part of, latest first.
+export const threadRuns = (model: Model, runId: string): ReadonlyArray<RunEntry> => {
+  const all = allRuns(model.status);
+  const links = issueLinks(all);
+
+  return Option.match(
+    Arr.findFirst(all, (run) => run.id === runId),
+    {
+      onNone: () => [],
+      onSome: (found) => {
+        const thread = threadOf(found, links);
+
+        return all.filter((run) => run.id !== runId && threadOf(run, links) === thread);
+      },
+    },
+  );
+};
+
+const personaText = (persona: Option.Option<string>) =>
+  Option.match(persona, { onNone: () => "", onSome: (login) => `@${login}` });
+
+// Which of a run row's columns show: a filter that fixes the repo or the
+// persona drops its column.
+export type Shown = { readonly repo: boolean; readonly persona: boolean };
+
+// The widths of a run row's columns, for the runs shown and the terminal's
+// width; 0 for a column that isn't shown.
+type RunColumns = {
+  readonly item: number;
+  readonly flow: number;
+  readonly repo: number;
+  readonly persona: number;
+  readonly title: number;
+};
+
+const STATUS_WIDTH = 12;
+const MARK_WIDTH = 4;
+const WHEN_WIDTH = 8;
+const MIN_TITLE = 12;
+const MIN_DETAIL = 24;
+
+const widest = (texts: ReadonlyArray<string>, cap: number) =>
+  Math.min(cap, Math.max(0, ...texts.map((text) => text.length)) + 1);
+
+const widthIf = (condition: boolean, width: number) => {
+  if (condition) {
+    return width;
+  }
+
+  return 0;
+};
+
+const titleOf = (run: RunEntry) => Option.getOrElse(run.itemTitle, () => "");
+
+// The fixed columns fit their longest value, within reason; the title takes
+// what's left up to its longest, and the detail the rest.
+// The flow, and for a closed thread how many other runs it holds.
+const flowText = (row: RunRow) => {
+  if (row.lead && !row.expanded && row.others > 0) {
+    return `${row.run.flow} +${row.others}`;
+  }
+
+  return row.run.flow;
+};
+
+const runColumns = (rows: ReadonlyArray<RunRow>, width: number, shown: Shown): RunColumns => {
+  const runs = rows.map((row) => row.run);
+
+  const item = widest(
+    runs.map((run) => itemText(itemRef(run.itemKey))),
+    12,
+  );
+
+  const flow = widest(rows.map(flowText), 24);
+
+  const repo = widthIf(
+    shown.repo,
+    widest(
+      runs.map((run) => run.repo),
+      18,
+    ),
+  );
+
+  const personaWidth = widest(
+    runs.map((run) => personaText(run.persona)),
+    18,
+  );
+
+  // No column for the implicit persona alone.
+  const persona = widthIf(shown.persona && personaWidth > 1, personaWidth);
+
+  const fixed = MARK_WIDTH + STATUS_WIDTH + item + flow + repo + persona + 1 + WHEN_WIDTH + 1;
+  const room = Math.max(0, width - fixed);
+  const longest = widest(runs.map(titleOf), Number.POSITIVE_INFINITY);
+  const detail = Math.min(MIN_DETAIL, Math.floor(room * 0.4));
+  const title = Math.max(MIN_TITLE, Math.min(longest, room - detail));
+
+  return { item, flow, repo, persona, title };
+};
+
+const column = (text: string, width: number) => {
+  if (width === 0) {
+    return "";
+  }
+
+  return pad(text, width);
+};
+
+// A thread's latest run is marked open or closed when it has others; the
+// others hang under it.
+const markOf = (row: RunRow) => {
+  if (!row.lead) {
+    return "  └ ";
+  }
+
+  if (row.others === 0) {
+    return "    ";
+  }
+
+  if (row.expanded) {
+    return "  ▾ ";
+  }
+
+  return "  ▸ ";
+};
+
+const runLine = (row: RunRow, columns: RunColumns, now: DateTime.Utc): Line => {
+  const { run } = row;
+  const ref = itemRef(run.itemKey);
+
+  const when = ago(
+    Option.orElse(run.finishedAt, () => Option.some(run.startedAt)),
+    now,
+  );
+
+  return [
+    segment(markOf(row), "dim"),
+    segment(pad(run.status, STATUS_WIDTH), STATUS_STYLE[run.status]),
+    segment(column(itemText(ref), columns.item), ITEM_STYLE[ref.kind]),
+    segment(column(flowText(row), columns.flow)),
+    segment(column(run.repo, columns.repo), "dim"),
+    segment(column(personaText(run.persona), columns.persona), "dim"),
+    segment(column(titleOf(run), columns.title)),
+    segment(` ${pad(when, WHEN_WIDTH)} `, "dim"),
+    segment(firstLine(runDetail(run)), detailStyle(run.status)),
+  ];
+};
+
+const personaName = (persona: Persona) =>
+  Option.match(persona, { onNone: () => "implicit", onSome: (login) => `@${login}` });
+
+// The project tabs and the persona filter, each only when there's a choice to make.
+const filterLines = (model: Model): ReadonlyArray<Line> => {
+  const projects = projectsOf(model.status);
+  const personas = personasOf(model.status);
+
+  const tab = (name: string, chosen: boolean): Segment =>
+    segment(` ${name} `, styleIf(chosen, "selected"));
+
+  const tabs: Line = onlyIf(projects.length > 1, [
+    tab("All", Option.isNone(model.project)),
+    ...projects.flatMap((name) => [
+      segment("·", "dim"),
+      tab(name, Option.contains(model.project, name)),
+    ]),
+  ]);
+
+  const persona: Line = onlyIf(personas.length > 1, [
+    segment(`${onlyIf(tabs.length > 0, ["   "]).join("")}persona `, "dim"),
+    segment(
+      Option.match(model.personaFilter, { onNone: () => "all", onSome: personaName }),
+      "bold",
+    ),
+  ]);
+
+  if (tabs.length === 0 && persona.length === 0) {
+    return [];
+  }
+
+  return [[], [...tabs, ...persona]];
+};
+
 const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   const { now } = model;
   const lines: Array<Line> = [];
@@ -352,13 +737,23 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       segment("  restarting on new config when idle", "yellow"),
     ]),
   ]);
+
+  for (const line of filterLines(model)) {
+    lines.push(line);
+  }
+
   lines.push([]);
 
   lines.push(heading("Repos and flows"));
-  const selectedFlow = Arr.get(flowRows(Option.some(status)), model.flowIndex);
+  const flows = flowRows(model);
+  const selectedFlow = Arr.get(flows, model.flowIndex);
+  const shown = shownColumns(model);
 
   const labelOf = (flow: { readonly name: string; readonly persona?: string }) =>
-    `${flow.name}${Option.match(Option.fromUndefinedOr(flow.persona), { onNone: () => "", onSome: (login) => ` @${login}` })}`;
+    `${flow.name}${Option.match(
+      Option.filter(Option.fromUndefinedOr(flow.persona), () => shown.persona),
+      { onNone: () => "", onSome: (login) => ` @${login}` },
+    )}`;
 
   // Wide enough for a persona's name too, within reason.
   const flowColumn = Math.min(
@@ -369,7 +764,9 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     ),
   );
 
-  for (const repo of status.repos) {
+  for (const repo of status.repos.filter((found) =>
+    Option.match(model.project, { onNone: () => true, onSome: (name) => name === found.name }),
+  )) {
     const state = repoState(repo);
     lines.push([
       segment(`  ${repo.name}`, "bold"),
@@ -380,7 +777,9 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       ...Option.toArray(Option.map(repo.message, (message) => segment(`  ${message}`, "dim"))),
     ]);
 
-    for (const flow of repo.flows) {
+    for (const flow of repo.flows.filter((found) =>
+      passes(model, repo.name, Option.fromUndefinedOr(found.persona)),
+    )) {
       const persona = Option.fromUndefinedOr(flow.persona);
 
       const selected =
@@ -439,40 +838,27 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   lines.push([]);
 
   lines.push(heading("Runs"));
-  const runs = runRows(Option.some(status));
+  const runs = runRows(model);
 
   if (runs.length === 0) {
     lines.push([segment("  none yet", "dim")]);
   }
 
-  runs.forEach((run, runIndex) => {
-    const title = Option.getOrElse(run.itemTitle, () => run.itemKey);
+  const columns = runColumns(runs, model.width, shown);
 
-    const when = ago(
-      Option.orElse(run.finishedAt, () => Option.some(run.startedAt)),
-      now,
-    );
-
+  runs.forEach((row, runIndex) => {
     lines.push(
-      select(
-        [
-          segment(`  ${pad(run.status, 12)}`, STATUS_STYLE[run.status]),
-          segment(
-            `${pad(`${run.repo}/${run.flow}${Option.match(run.persona, { onNone: () => "", onSome: (login) => `@${login}` })}`, 22)} ${pad(title, 28)}`,
-          ),
-          segment(` ${pad(when, 8)} `, "dim"),
-          segment(firstLine(runDetail(run)), detailStyle(run.status)),
-        ],
-        model.focus === "runs" && model.runIndex === runIndex,
-      ),
+      select(runLine(row, columns, now), model.focus === "runs" && model.runIndex === runIndex),
     );
   });
 
-  if (status.skips.length > 0) {
+  const skips = status.skips.filter((skip) => passes(model, skip.repo, skip.persona));
+
+  if (skips.length > 0) {
     lines.push([]);
     lines.push(heading("Recent skips"));
 
-    for (const skip of status.skips.slice(0, 4)) {
+    for (const skip of skips.slice(0, 4)) {
       lines.push([
         segment(`  ${pad(`${skip.repo}/${skip.flow}`, 22)} ${firstLine(skip.reason)}`, "dim"),
         segment(`  ${ago(Option.some(skip.at), now)}`, "dim"),
@@ -659,7 +1045,7 @@ const mainView = (model: Model): ReadonlyArray<Line> =>
   });
 
 const logView = (model: Model): ReadonlyArray<Line> => {
-  const run = Arr.findFirst(runRows(model.status), (candidate) =>
+  const run = Arr.findFirst(allRuns(model.status), (candidate) =>
     Option.contains(model.logRun, candidate.id),
   );
 
@@ -693,6 +1079,249 @@ const logView = (model: Model): ReadonlyArray<Line> => {
   return [...header, ...shown];
 };
 
+// A stretch of a run's path: a step, how many times over it ran in a row,
+// and the seconds it took in all.
+export type PathStep = { readonly step: string; readonly times: number; readonly seconds: number };
+
+const epochSeconds = (iso: string) =>
+  Option.map(DateTime.make(iso), (at) => DateTime.toEpochMillis(at) / 1000);
+
+// The steps a run took, tidied, with repeats in a row folded into one: each
+// step lasts until the next one starts, and the last until the run finished,
+// or until now.
+export const pathOf = (
+  history: RunHistory,
+  finishedAt: Option.Option<string>,
+  now: DateTime.Utc,
+): ReadonlyArray<PathStep> => {
+  const end = Option.getOrElse(Option.flatMap(finishedAt, epochSeconds), () =>
+    Math.round(DateTime.toEpochMillis(now) / 1000),
+  );
+
+  const lasted = history.steps.map((entered, index) => {
+    const from = Option.getOrElse(epochSeconds(entered.enteredAt), () => end);
+
+    const until = Option.getOrElse(
+      Option.flatMap(Arr.get(history.steps, index + 1), (next) => epochSeconds(next.enteredAt)),
+      () => end,
+    );
+
+    return { step: tidyStep(entered.step), seconds: Math.max(0, until - from) };
+  });
+
+  const path: Array<PathStep> = [];
+
+  for (const entered of lasted) {
+    const last = Arr.last(path);
+
+    if (Option.isSome(last) && last.value.step === entered.step) {
+      path[path.length - 1] = {
+        step: entered.step,
+        times: last.value.times + 1,
+        seconds: last.value.seconds + entered.seconds,
+      };
+      continue;
+    }
+
+    path.push({ step: entered.step, times: 1, seconds: entered.seconds });
+  }
+
+  return path;
+};
+
+// How the last step on a run's path ended: still going, or how the run did.
+const LAST_MARK: Readonly<Record<RunStatus, Segment>> = {
+  running: segment("●", "cyan"),
+  done: segment("✓", "green"),
+  failed: segment("✗", "red"),
+  "needs-human": segment("!", "yellow"),
+  cancelled: segment("✗", "dim"),
+  skipped: segment("○", "dim"),
+};
+
+const durationText = (seconds: number) => spanText(Math.round(seconds));
+
+// The path's steps as lines, `✓ claim 2s ─ ● ci ×4 5m`, wrapped to `width`.
+const pathLines = (
+  path: ReadonlyArray<PathStep>,
+  status: RunStatus,
+  width: number,
+): ReadonlyArray<Line> => {
+  const tokens = path.map((step, index): Line => {
+    const mark = Option.getOrElse(
+      Option.as(
+        Option.liftPredicate(index, (at) => at === path.length - 1),
+        LAST_MARK[status],
+      ),
+      () => segment("✓", "green"),
+    );
+
+    return [
+      mark,
+      segment(` ${step.step}`),
+      ...onlyIf(step.times > 1, [segment(` ×${step.times}`, "bold")]),
+      segment(` ${durationText(step.seconds)}`, "dim"),
+    ];
+  });
+
+  const lines: Array<Line> = [];
+  let used = 0;
+
+  for (const token of tokens) {
+    const length = token.reduce((sum, part) => sum + part.text.length, 0);
+    const current = Arr.last(lines);
+
+    if (Option.isNone(current) || used + 3 + length > width) {
+      lines.push([segment("  "), ...token]);
+      used = 2 + length;
+      continue;
+    }
+
+    lines[lines.length - 1] = [...current.value, segment(" ─ ", "dim"), ...token];
+    used += 3 + length;
+  }
+
+  return lines;
+};
+
+const itemLine = (run: RunEntry): Line => {
+  const ref = itemRef(run.itemKey);
+
+  const named = Option.getOrElse(
+    Option.as(
+      Option.liftPredicate(ref, (found) => found.kind === "issue"),
+      `issue ${itemText(ref)}`,
+    ),
+    () => itemText(ref),
+  );
+
+  return [
+    segment(named, ITEM_STYLE[ref.kind]),
+    ...Option.toArray(Option.map(run.itemTitle, (title) => segment(`  ${title}`))),
+    ...Option.toArray(Option.map(run.itemUrl, (url) => segment(`  ${url}`, "dim"))),
+  ];
+};
+
+// The step a run was in when it parked: the last it entered by then.
+const parkedIn = (history: RunHistory, parkedAt: string) =>
+  Option.map(
+    Arr.findLast(history.steps, (step) => step.enteredAt <= parkedAt),
+    (step) => tidyStep(step.step),
+  );
+
+const waitLines = (run: RunEntry, history: RunHistory, now: DateTime.Utc): ReadonlyArray<Line> =>
+  onlyIf(run.status === "running" && history.waits.length > 0, [
+    [],
+    heading("Waiting"),
+    ...history.waits.map((wait): Line => {
+      const since = Option.match(wait.parkedAt, {
+        onNone: () => "",
+        onSome: (at) =>
+          `${Option.match(parkedIn(history, at), { onNone: () => "", onSome: (step) => ` since ${step}` })}, for ${ago(Option.some(at), now).replace(" ago", "")}`,
+      });
+
+      return [segment("  for "), segment(wait.signal, "yellow"), segment(since, "dim")];
+    }),
+  ]);
+
+const historyLines = (run: RunEntry, model: Model): ReadonlyArray<Line> =>
+  Option.match(model.history, {
+    onNone: () => [[segment("  the daemon hasn't said yet", "dim")]],
+    onSome: (history) => {
+      if (history.steps.length === 0) {
+        return [
+          [
+            segment(
+              "  no steps recorded: this run started before chernabog kept them; l shows its log",
+              "dim",
+            ),
+          ],
+          ...waitLines(run, history, model.now),
+        ];
+      }
+
+      return [
+        ...pathLines(pathOf(history, run.finishedAt, model.now), run.status, model.width - 2),
+        ...waitLines(run, history, model.now),
+      ];
+    },
+  });
+
+// The other runs of the run's piece of work, each of which opens its own detail.
+const threadLines = (model: Model, run: RunEntry): ReadonlyArray<Line> => {
+  const others = threadRuns(model, run.id);
+
+  return onlyIf(others.length > 0, [
+    [],
+    heading("Thread"),
+    ...others.map((other, index) => {
+      const ref = itemRef(other.itemKey);
+
+      return select(
+        [
+          segment(`  ${pad(other.status, STATUS_WIDTH)}`, STATUS_STYLE[other.status]),
+          segment(`${itemText(ref)} `, ITEM_STYLE[ref.kind]),
+          segment(other.flow),
+          segment(
+            `${Option.match(other.persona, { onNone: () => "", onSome: (login) => ` @${login}` })}  ${ago(
+              Option.orElse(other.finishedAt, () => Option.some(other.startedAt)),
+              model.now,
+            )}`,
+            "dim",
+          ),
+          segment(`  ${firstLine(runDetail(other))}`, detailStyle(other.status)),
+        ],
+        index === model.threadIndex,
+      );
+    }),
+  ]);
+};
+
+// One run: what it's about and as whom, where it works, the steps it has
+// taken, and the other runs of its piece of work.
+const runView = (model: Model): ReadonlyArray<Line> => {
+  const found = Arr.findFirst(allRuns(model.status), (candidate) =>
+    Option.contains(model.detailRun, candidate.id),
+  );
+
+  return Option.match(found, {
+    onNone: () => [
+      [
+        segment(
+          `${Option.getOrElse(model.detailRun, () => "")} is no longer among the runs the daemon reports`,
+          "yellow",
+        ),
+      ],
+    ],
+    onSome: (run) => [
+      [
+        segment(`${run.repo} · ${run.flow}`, "bold"),
+        ...Option.toArray(Option.map(run.persona, (login) => segment(` · @${login}`, "bold"))),
+        segment(`  ${run.id}`, "dim"),
+      ],
+      itemLine(run),
+      [
+        segment(run.status, STATUS_STYLE[run.status]),
+        segment(`  started ${ago(Option.some(run.startedAt), model.now)}`, "dim"),
+        ...Option.toArray(
+          Option.map(run.finishedAt, (at) =>
+            segment(` · finished ${ago(Option.some(at), model.now)}`, "dim"),
+          ),
+        ),
+        ...Option.toArray(Option.map(run.summary, (summary) => segment(`  ${firstLine(summary)}`))),
+      ],
+      [
+        segment("worktree  ", "dim"),
+        segment(Option.getOrElse(model.worktree, () => "none yet: no agent session has started")),
+      ],
+      [],
+      heading("Path"),
+      ...historyLines(run, model),
+      ...threadLines(model, run),
+    ],
+  });
+};
+
 const clipLine = (line: Line, width: number): Line => {
   const out: Array<Segment> = [];
   let used = 0;
@@ -715,6 +1344,10 @@ const bodyOf = (model: Model) => {
     return logView(model);
   }
 
+  if (model.view === "run") {
+    return runView(model);
+  }
+
   return Option.match(
     Option.filter(model.settings, () => model.view === "settings"),
     { onNone: () => mainView(model), onSome: (settings) => settingsView(model, settings) },
@@ -730,6 +1363,10 @@ const SETTINGS_KEYS: Readonly<Record<Editing["kind"], string>> = {
 const keysOf = (model: Model) => {
   if (model.view === "log") {
     return KEYS_LOG;
+  }
+
+  if (model.view === "run") {
+    return KEYS_RUN;
   }
 
   return Option.match(

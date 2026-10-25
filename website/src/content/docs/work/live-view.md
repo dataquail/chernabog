@@ -7,13 +7,20 @@ description: chernabog with no arguments — a live view of the daemon, its flow
 
 - each repo and its flows, with their next tick and what the last tick found queued;
 - account usage against the [usage gate](/chernabog/agents/usage-gate/)'s thresholds;
-- runs in flight with their current step, and recent runs;
+- runs, one row per piece of work, with what each is about (`PR 124`, `#144`), its flow, repo and persona, and its current step or how it ended;
 - why recent ticks were skipped.
+
+With more than one repo, a tab row (`All · goodbones · chernabog`) picks a project; with more than one persona, a filter picks one. Both apply to the flows, runs and skips together, and a column a filter fixes is dropped from the runs, giving the title more room.
+
+**Work threads.** An issue, the pull request a run opened or adopted for it, and the runs on that pull request (`review`, `address-review`, `re-review`) are one piece of work. The list shows its latest run, marked `▸` with how many others it has (`re-review +3`); `space` opens it to show them under it.
 
 | Key            | Does                                                                         |
 | -------------- | ---------------------------------------------------------------------------- |
 | `tab`, `↑` `↓` | Switch between flows and runs, and select                                    |
-| `enter`        | On a run: follow its log; `↑` `↓` scroll, `end` follows again, `esc` returns. On a flow: its persona's [settings](#settings) |
+| `enter`        | On a run: its [detail](#a-runs-detail). On a flow: its persona's [settings](#settings) |
+| `space`        | Open or close the selected run's thread                                      |
+| `1`–`9`, `0`   | Pick a project tab; `0` is All. `[` and `]` cycle through them               |
+| `@`            | Cycle the persona filter: all, then each persona                             |
 | `a`            | Attach to the run's agent session, to watch or step in                       |
 | `x`            | Cancel the selected run in flight, once you confirm with `y`; see [`cancel`](/chernabog/work/commands/) |
 | `t`            | Trigger the selected flow now, with its gates                                |
@@ -24,6 +31,25 @@ description: chernabog with no arguments — a live view of the daemon, its flow
 **Attach.** A session still running under a [launcher](/chernabog/agents/launchers/) comes up there — its Orca tab, or `tmux attach`. Otherwise it opens in the agent's own interactive UI (`claude --resume`, `codex resume`) in its worktree; exit the agent to come back. `chernabog attach <run>` does the same from the command line.
 
 **Turn off or on.** `e` lists or unlists the flow under the persona's `flows` in machine config; a flow it turns off keeps its settings, as `enabled: false`. When the repo has several personas and this one inherits the repo entry's flows, it gets its own copy of them first, so the others keep theirs.
+
+## A run's detail
+
+`enter` on a run shows what it's about (`issue #123`, `PR 124`, with its link) and as whom, its status and when it started and finished, the worktree its agent session works in, and the path it has taken:
+
+```
+✓ read-review 1m ─ ✓ find-author 2s ─ ✓ prepare-worktree 10s ─ ● consider-review-1 5m
+```
+
+Each step shows the time spent in it, `●` marks the step it's in, and the path wraps to the terminal. Step names are tidied for display: a hash suffix is dropped (`comment-pr-124`), and repeats in a row are folded (`ci ×4`). The view shows only where the run has been, never steps ahead: a flow branches and loops, so there's no single path to draw. A run parked on a signal says which one, since which step, and for how long. A run from before chernabog kept steps says so; its log still has them.
+
+Below, the other runs of its thread; `↑` `↓` select one and `enter` opens its detail.
+
+| Key            | Does                                                                         |
+| -------------- | ---------------------------------------------------------------------------- |
+| `l`            | Follow its log; `↑` `↓` scroll, `end` follows again, `esc` returns to the detail |
+| `a`            | Attach to its agent session                                                  |
+| `x`            | Cancel it, once you confirm with `y`                                         |
+| `esc`          | Back to the main view                                                        |
 
 ## Settings
 

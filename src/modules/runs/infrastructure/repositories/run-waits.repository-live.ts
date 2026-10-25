@@ -11,6 +11,8 @@ import { RunWaitsRepository } from "../../domain/ports/repositories/run-waits.re
 import { type RunWaitRoot } from "../../domain/run-wait/run-wait.root.ts";
 import { toRoot, WaitColumns } from "./run-wait.mapper.ts";
 
+const ColumnName = Schema.Struct({ name: Schema.String });
+
 export const RunWaitsRepositoryLive = Layer.effect(
   RunWaitsRepository,
   Effect.gen(function* () {
@@ -23,6 +25,15 @@ export const RunWaitsRepositoryLive = Layer.effect(
       token TEXT NOT NULL,
       PRIMARY KEY (run_id, deferred)
     )`;
+
+    // A database from before waits kept when they parked gains the column; its waits have none.
+    const columns = yield* sql`SELECT name FROM pragma_table_info('om_waits')`.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ColumnName))),
+    );
+
+    if (!columns.some((column) => column.name === "parked_at")) {
+      yield* sql`ALTER TABLE om_waits ADD COLUMN parked_at TEXT`;
+    }
 
     // Queries this adapter wrote against its own table: a failure is a bug, not a condition.
     const waits = <E>(query: Effect.Effect<ReadonlyArray<object>, E>) =>
@@ -39,7 +50,7 @@ export const RunWaitsRepositoryLive = Layer.effect(
       });
 
     const save = (wait: RunWaitRoot) =>
-      sql`INSERT OR REPLACE INTO om_waits (run_id, signal, deferred, token) VALUES (${wait.runId}, ${wait.signal}, ${wait.deferred}, ${wait.token})`.pipe(
+      sql`INSERT OR REPLACE INTO om_waits (run_id, signal, deferred, token, parked_at) VALUES (${wait.runId}, ${wait.signal}, ${wait.deferred}, ${wait.token}, ${Option.getOrNull(wait.parkedAt)})`.pipe(
         Effect.asVoid,
         Effect.orDie,
       );

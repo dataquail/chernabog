@@ -65,7 +65,13 @@ const runtime = (
   );
 
 const wait = (signal: string, deferred: string) =>
-  RunWaitRoot.make({ runId: RunId.make("a"), signal, deferred, token: "t" });
+  RunWaitRoot.make({
+    runId: RunId.make("a"),
+    signal,
+    deferred,
+    token: "t",
+    parkedAt: Option.none(),
+  });
 
 describe("deliverSignalsUseCase", () => {
   const engine = fakeEngine();

@@ -96,9 +96,17 @@ describe("RunRootOps lifecycle", () => {
     ]);
   });
 
-  test("a run that ended takes no step, no execution and no second ending", () => {
+  test("a running run links the pull request it opened", () => {
+    expect(Result.getOrThrow(RunRootOps.linkPullRequest(running, 124)).pullRequest).toEqual(
+      Option.some(124),
+    );
+    expect(running.pullRequest).toEqual(Option.none());
+  });
+
+  test("a run that ended takes no step, no execution, no pull request and no second ending", () => {
     for (const refused of [
       RunRootOps.enterStep(finished, "late"),
+      RunRootOps.linkPullRequest(finished, 9),
       RunRootOps.attachExecution(finished, "y"),
       RunRootOps.finish(finished, "failed", "again", later),
     ]) {

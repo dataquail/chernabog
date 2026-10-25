@@ -20,6 +20,8 @@ import {
 } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agents/sessions.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
+import { RunHistory, RunStep } from "../src/modules/runs/use-cases/run-history.result.ts";
+import { RunWait } from "../src/modules/runs/use-cases/run-wait.result.ts";
 import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { Home } from "../src/platform/home.ts";
@@ -52,7 +54,13 @@ const run = (id: string, status: RunStatus) => {
       ),
       () => "implement",
     ),
-    itemKey: "issue-7",
+    // The item its id names, as in goodbones.review.pr-8.1.
+    itemKey: Option.getOrElse(
+      Option.flatMap(Option.fromNullishOr(/(issue|pr)-\d+/.exec(id)), (match) =>
+        Option.fromUndefinedOr(match[0]),
+      ),
+      () => "issue-7",
+    ),
     itemTitle: Option.some("Fix the parser"),
     itemUrl: Option.none(),
     executionId: Option.some("x"),
@@ -177,11 +185,43 @@ describe("the main view", () => {
   });
 
   test("shows runs in flight with their current step, and waiting ones as waiting", () => {
-    expect(screen).toMatch(/running\s+goodbones\/implement\s+Fix the parser\s+30m ago\s+implement/);
     expect(screen).toMatch(
-      /running\s+goodbones\/review\s+Fix the parser\s+30m ago\s+waiting for a signal/,
+      /running\s+#7\s+implement goodbones Fix the parser\s+30m ago\s+implement/,
     );
-    expect(screen).toMatch(/needs-human\s+goodbones\/implement .* CI still red/);
+    expect(screen).toMatch(
+      /running\s+PR 8 review\s+goodbones Fix the parser\s+30m ago\s+waiting in implement/,
+    );
+    expect(screen).toMatch(/needs-human #5\s+implement goodbones .* CI still red/);
+  });
+
+  test("names each run's pull request or issue, and gives the title the width it needs", () => {
+    const title =
+      "feat!: chernabog decides which repos' flows it runs, and state and runs survive an upgrade";
+
+    const items = {
+      ...status,
+      active: [],
+      recent: [
+        RunView.make({
+          ...run("a", "done"),
+          flow: "address-review",
+          persona: Option.some("zach"),
+          itemKey: "pr-124-changes-1",
+          itemTitle: Option.some(title),
+        }),
+        RunView.make({ ...run("b", "done"), itemKey: "issue-144" }),
+        RunView.make({ ...run("c", "done"), itemKey: "chore-sweep", itemTitle: Option.none() }),
+      ],
+    };
+
+    const rows = plain(view(model({ status: Option.some(items), width: 200 })));
+    expect(rows).toContain(`PR 124      address-review goodbones @zach ${title}`);
+    expect(rows).toMatch(/done\s+#144\s+implement\s+goodbones\s+Fix the parser/);
+    expect(rows).toMatch(/done\s+chore-sweep implement/);
+
+    // On a narrow terminal the title gives way, and the detail keeps some room.
+    const narrow = plain(view(model({ status: Option.some(items), width: 120 })));
+    expect(narrow).toMatch(/PR 124 .* feat!: chernabog .*…\s+5m ago\s+#7: ready/);
   });
 
   test("says why ticks were skipped, and fits the terminal", () => {
@@ -269,11 +309,18 @@ describe("the main view", () => {
 });
 
 describe("keys", () => {
-  test("enter opens the selected run’s log, and esc comes back", () => {
+  test("enter opens the selected run’s detail, l its log, and esc comes back each time", () => {
     const opened = update(model({ runIndex: 1 }), { name: "return" });
-    expect(opened.action).toEqual({ kind: "open-log", run: "goodbones.review.pr-8.1" });
-    expect(opened.model.view).toBe("log");
-    expect(update(opened.model, { name: "escape" }).model.view).toBe("main");
+    expect(opened.action).toEqual({ kind: "open-run", run: "goodbones.review.pr-8.1" });
+    expect(opened.model.view).toBe("run");
+
+    const log = update(opened.model, { name: "l" });
+    expect(log.action).toEqual({ kind: "open-log", run: "goodbones.review.pr-8.1" });
+    expect(log.model.view).toBe("log");
+
+    const back = update(log.model, { name: "escape" }).model;
+    expect(back.view).toBe("run");
+    expect(update(back, { name: "escape" }).model.view).toBe("main");
   });
 
   test("a attaches to the selected run, t triggers the selected flow, p pauses its repo", () => {
@@ -372,6 +419,311 @@ describe("keys", () => {
 
   test("q quits", () => {
     expect(update(model(), { name: "q" }).action).toEqual({ kind: "quit" });
+  });
+});
+
+describe("a run's detail", () => {
+  const reviewing = ActiveRun.make({
+    ...run("r", "running"),
+    flow: "address-review",
+    persona: Option.some("zach"),
+    itemKey: "pr-124-changes-1",
+    itemTitle: Option.some("feat!: chernabog decides which repos' flows it runs"),
+    itemUrl: Option.some("https://github.com/dataquail/chernabog/pull/124"),
+    currentStep: Option.some("consider-review-1"),
+    startedAt: minutes(-60),
+    parked: true,
+  });
+
+  const entered = (step: string, at: number) => RunStep.make({ step, enteredAt: minutes(at) });
+
+  const history = RunHistory.make({
+    steps: [
+      entered("read-review", -60),
+      entered("find-author", -59),
+      entered("prepare-worktree", -58),
+      entered("comment-pr-124-619c4991c631", -50),
+      entered("ci-1", -49),
+      entered("ci-1", -45),
+      entered("ci-1", -40),
+      entered("consider-review-1", -30),
+    ],
+    waits: [
+      RunWait.make({
+        runId: RunId.make("r"),
+        signal: "pushed",
+        deferred: "d",
+        token: "t",
+        parkedAt: Option.some(minutes(-29)),
+      }),
+    ],
+  });
+
+  const detail = (overrides: Partial<Model> = {}) =>
+    model({
+      status: Option.some({ ...status, active: [reviewing], recent: [] }),
+      view: "run",
+      detailRun: Option.some("r"),
+      history: Option.some(history),
+      worktree: Option.some("/home/zach/.config/chernabog/worktrees/chernabog/auto-issue-123"),
+      ...overrides,
+    });
+
+  test("shows what the run is about, as whom, and the worktree it uses", () => {
+    const screen = plain(view(detail()));
+    expect(screen).toContain("goodbones · address-review · @zach");
+    expect(screen).toContain(
+      "PR 124  feat!: chernabog decides which repos' flows it runs  https://github.com/dataquail/chernabog/pull/124",
+    );
+    expect(screen).toContain("running  started 1h ago");
+    expect(screen).toContain(
+      "worktree  /home/zach/.config/chernabog/worktrees/chernabog/auto-issue-123",
+    );
+  });
+
+  test("shows the steps taken with the time in each, hashes dropped and repeats folded", () => {
+    const screen = plain(view(detail()));
+    expect(screen).toContain(
+      "✓ read-review 1m ─ ✓ find-author 1m ─ ✓ prepare-worktree 8m ─ ✓ comment-pr-124 1m ─ ✓ ci-1 ×3 19m ─ ● consider-review-1 30m",
+    );
+    expect(screen).not.toContain("619c4991c631");
+  });
+
+  test("wraps the path to the terminal's width", () => {
+    const lines = plain(view(detail({ width: 60 }))).split("\n");
+    const path = lines.filter((line) => line.includes("✓") || line.includes("●"));
+    expect(path.length).toBeGreaterThan(1);
+    expect(path.every((line) => line.length <= 60)).toBe(true);
+    expect(path.join(" ")).toContain("● consider-review-1 30m");
+  });
+
+  test("a parked run says which signal it waits on, since which step, and for how long", () => {
+    expect(plain(view(detail()))).toContain("for pushed since consider-review-1, for 29m");
+    expect(
+      plain(view(model({ status: Option.some({ ...status, active: [reviewing] }), width: 200 }))),
+    ).toContain("waiting in consider-review-1");
+  });
+
+  test("a finished run's last step shows how it ended, and the time up to its end", () => {
+    const failed = ActiveRun.make({
+      ...reviewing,
+      status: "failed",
+      parked: false,
+      finishedAt: Option.some(minutes(-20)),
+      summary: Option.some("CI still red"),
+    });
+
+    const screen = plain(
+      view(detail({ status: Option.some({ ...status, active: [failed], recent: [] }) })),
+    );
+
+    expect(screen).toContain("✗ consider-review-1 10m");
+    expect(screen).toContain("· finished 20m ago  CI still red");
+    expect(screen).not.toContain("for pushed");
+  });
+
+  test("a run from before steps were kept says so, rather than guessing", () => {
+    const old = RunHistory.make({ steps: [], waits: [] });
+    expect(plain(view(detail({ history: Option.some(old), worktree: Option.none() })))).toContain(
+      "no steps recorded: this run started before chernabog kept them",
+    );
+    expect(plain(view(detail({ worktree: Option.none() })))).toContain(
+      "worktree  none yet: no agent session has started",
+    );
+  });
+
+  test("a attaches, x asks to cancel, and the keys say what they do", () => {
+    expect(update(detail(), { name: "a" }).action).toEqual({ kind: "attach", run: "r" });
+
+    const asked = update(detail(), { name: "x" }).model;
+    expect(Option.getOrThrow(asked.message)).toContain("? It stops for good");
+    expect(update(asked, { name: "y" }).action).toMatchObject({ kind: "cancel", run: "r" });
+    expect(plain(view(detail()))).toContain("l log · a attach · x cancel run · esc back");
+  });
+});
+
+describe("work threads", () => {
+  const at = (
+    id: string,
+    flow: string,
+    itemKey: string,
+    ended: RunStatus,
+    fields: Partial<RunView> = {},
+  ) => RunView.make({ ...run(id, ended), flow, itemKey, ...fields });
+
+  const rereview = ActiveRun.make({
+    ...at("t4", "re-review", "pr-124-review-2", "running"),
+    parked: false,
+  });
+
+  const thread: DaemonStatus = {
+    ...status,
+    active: [rereview],
+    recent: [
+      at("t3", "address-review", "pr-124-changes-1", "done"),
+      at("other", "review", "pr-200", "done"),
+      at("t2", "review", "pr-124", "done"),
+      at("t1", "human-initiated", "issue-123", "done", { pullRequest: Option.some(124) }),
+      at("t0", "implement", "issue-123", "needs-human"),
+    ],
+  };
+
+  const opened = model({ status: Option.some(thread), width: 160 });
+  const rows = (from: Model) => plain(view(from)).split("\n");
+
+  test("an issue, the pull request it opened, and that pull request's runs are one row", () => {
+    const runs = rows(opened).filter((line) => / (running|done|needs-human) /.test(line));
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatch(/▸ running\s+PR 124 re-review \+4/);
+    expect(runs[1]).toMatch(/^\s+done\s+PR 200 review/);
+  });
+
+  test("space opens a thread under its latest run, and closes it from any of its runs", () => {
+    const open = update(opened, { name: "space" }).model;
+    const screen = plain(view(open));
+    expect(screen).toMatch(/▾ running\s+PR 124 re-review\s/);
+    expect(screen).toMatch(/└ done\s+PR 124 address-review/);
+    expect(screen).toMatch(/└ done\s+#123\s+human-initiated/);
+    expect(screen).toMatch(/└ needs-human #123\s+implement/);
+
+    const onOld = update(update(open, { name: "down" }).model, { name: "down" }).model;
+    expect(update(onOld, { name: "a" }).action).toEqual({ kind: "attach", run: "t2" });
+
+    const closed = update(onOld, { name: "space" }).model;
+    expect(closed.expanded).toEqual([]);
+    expect(closed.runIndex).toBe(0);
+  });
+
+  test("a run's detail lists the other runs of its thread, and enter opens one", () => {
+    const detail = update(opened, { name: "return" }).model;
+    const screen = plain(view(detail));
+    expect(screen).toContain("Thread");
+    expect(screen).toMatch(/done\s+PR 124 address-review/);
+    expect(screen).toMatch(/needs-human #123 implement/);
+    expect(screen).not.toContain("PR 200");
+
+    const second = update(update(detail, { name: "down" }).model, { name: "return" });
+    expect(second.action).toEqual({ kind: "open-run", run: "t2" });
+    expect(second.model.threadIndex).toBe(0);
+  });
+});
+
+describe("project tabs and the persona filter", () => {
+  const goodbones = Option.getOrThrow(Option.fromUndefinedOr(status.repos[0]));
+  const review = Option.getOrThrow(Option.fromUndefinedOr(goodbones.flows[1]));
+
+  const as = (id: string, repo: string, persona: string, itemKey: string) =>
+    ActiveRun.make({
+      ...run(id, "running"),
+      repo,
+      flow: "review",
+      persona: Option.some(persona),
+      itemKey,
+      parked: false,
+    });
+
+  const two: DaemonStatus = {
+    ...status,
+    repos: [
+      {
+        ...goodbones,
+        flows: [
+          { ...review, persona: "alice" },
+          { ...review, persona: "bob" },
+        ],
+      },
+      {
+        ...goodbones,
+        name: "chernabog",
+        slug: "dataquail/chernabog",
+        flows: [{ ...review, persona: "alice" }],
+      },
+    ],
+    active: [
+      as("r1", "goodbones", "alice", "pr-1"),
+      as("r2", "goodbones", "bob", "pr-2"),
+      as("r3", "chernabog", "alice", "pr-3"),
+    ],
+    recent: [],
+    skips: [
+      SkipView.make({
+        repo: "chernabog",
+        persona: Option.some("alice"),
+        flow: "review",
+        itemKey: Option.none(),
+        reason: "nothing to review",
+        at: minutes(-1),
+      }),
+    ],
+  };
+
+  const opened = model({ status: Option.some(two) });
+
+  const press = (from: Model, ...keys: ReadonlyArray<string>) =>
+    keys.reduce((current, name) => update(current, { name, sequence: name }).model, from);
+
+  test("shows a tab per project and the persona filter, both at All to begin with", () => {
+    const screen = plain(view(opened));
+    expect(screen).toContain(" All · goodbones · chernabog    persona all");
+    expect(screen).toMatch(/PR 1\s+review goodbones @alice/);
+    expect(screen).toContain("review @bob");
+  });
+
+  test("a project tab shows only its repo's flows, runs and skips, and drops the repo column", () => {
+    const chernabog = press(opened, "2");
+    expect(chernabog.project).toEqual(Option.some("chernabog"));
+
+    const screen = plain(view(chernabog));
+    expect(screen).not.toContain("goodbones  ready");
+    expect(screen).toMatch(/PR 3\s+review @alice/);
+    expect(screen).not.toContain("PR 1");
+    expect(screen).toContain("nothing to review");
+
+    expect(press(chernabog, "0").project).toEqual(Option.none());
+    expect(press(opened, "]").project).toEqual(Option.some("goodbones"));
+    expect(press(opened, "[").project).toEqual(Option.some("chernabog"));
+    expect(press(opened, "]", "]", "]").project).toEqual(Option.none());
+    // There is no ninth project.
+    expect(press(chernabog, "9").project).toEqual(Option.some("chernabog"));
+  });
+
+  test("@ cycles the persona filter, which drops the persona column", () => {
+    const bob = press(opened, "@", "@");
+    expect(bob.personaFilter).toEqual(Option.some(Option.some("bob")));
+
+    const screen = plain(view(bob));
+    expect(screen).toContain("persona @bob");
+    expect(screen).toMatch(/PR 2\s+review goodbones Fix the parser/);
+    expect(screen).not.toContain("PR 1");
+    expect(screen).not.toContain("nothing to review");
+
+    expect(press(bob, "@").personaFilter).toEqual(Option.none());
+  });
+
+  test("keys act on the rows shown, and a filter starts the selection at the top", () => {
+    const down = press(opened, "down", "down");
+    expect(down.runIndex).toBe(2);
+
+    const chernabog = press(down, "2");
+    expect(chernabog.runIndex).toBe(0);
+    expect(update(chernabog, { name: "a" }).action).toEqual({ kind: "attach", run: "r3" });
+
+    const onFlows = press(press(opened, "@", "@"), "tab");
+    expect(update(onFlows, { name: "t" }).action).toEqual({
+      kind: "trigger",
+      repo: "goodbones",
+      flow: "review",
+      persona: Option.some("bob"),
+    });
+  });
+
+  test("with one project and one persona there is nothing to choose, so neither shows", () => {
+    const one = { ...status, repos: [goodbones] };
+    const screen = plain(view(model({ status: Option.some(one) })));
+    expect(screen).not.toContain(" All ");
+    expect(screen).not.toContain("persona all");
+    expect(screen).toMatch(/#7\s+implement Fix the parser/);
+    expect(press(model({ status: Option.some(one) }), "1").project).toEqual(Option.none());
   });
 });
 

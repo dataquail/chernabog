@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
@@ -11,7 +12,13 @@ import { RunWaitRoot } from "../../domain/run-wait/run-wait.root.ts";
 import { RunWaitsRepositoryLive } from "./run-waits.repository-live.ts";
 
 const wait = (runId: string, deferred: string, token: string) =>
-  RunWaitRoot.make({ runId: RunId.make(runId), signal: "pushed", deferred, token });
+  RunWaitRoot.make({
+    runId: RunId.make(runId),
+    signal: "pushed",
+    deferred,
+    token,
+    parkedAt: Option.none(),
+  });
 
 describe("RunWaitsRepositoryLive", () => {
   effect("saves waits, replacing a run's wait on the same deferred, and removes them", () =>
@@ -32,5 +39,41 @@ describe("RunWaitsRepositoryLive", () => {
         (yield* waits.findAll(Option.some(RunId.make("a")))).map((found) => found.deferred),
       ).toEqual(["d2"]);
     }).pipe(Effect.provide(RunWaitsRepositoryLive.pipe(Layer.provide(sqliteAfter(Effect.void))))),
+  );
+
+  effect(
+    "a table from before waits kept when they parked gains the column, its waits with none",
+    () =>
+      Effect.gen(function* () {
+        const waits = yield* RunWaitsRepository;
+        yield* waits.save(
+          RunWaitRoot.make({
+            runId: RunId.make("b"),
+            signal: "pushed",
+            deferred: "d2",
+            token: "t2",
+            parkedAt: Option.some("2026-10-20T00:00:00.000Z"),
+          }),
+        );
+
+        expect((yield* waits.findAll(Option.none())).map((found) => found.parkedAt)).toEqual([
+          Option.none(),
+          Option.some("2026-10-20T00:00:00.000Z"),
+        ]);
+      }).pipe(
+        Effect.provide(
+          RunWaitsRepositoryLive.pipe(
+            Layer.provide(
+              sqliteAfter(
+                Effect.gen(function* () {
+                  const sql = yield* SqlClient.SqlClient;
+                  yield* sql`CREATE TABLE om_waits (run_id TEXT NOT NULL, signal TEXT NOT NULL, deferred TEXT NOT NULL, token TEXT NOT NULL, PRIMARY KEY (run_id, deferred))`;
+                  yield* sql`INSERT INTO om_waits VALUES ('a', 'pushed', 'd1', 't1')`;
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
   );
 });

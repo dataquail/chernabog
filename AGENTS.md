@@ -178,8 +178,13 @@ transitive reach), the coverage floors and the baseline.
 - **Runs are the runs module's.** `RunRoot` (`om_runs` in `state.db`) keeps
   its lifecycle in `RunRootOps`: it starts running, takes steps while it runs
   and ends exactly once, and a persona has one run in flight per flow and item.
-  `RunWaitRoot` (`om_waits`) parks a run on a signal; `SkipRoot` (`om_skips`)
-  logs why a tick started nothing. The engine, the daemon and `chernabog run`
+  `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
+  `RunStepRoot` (`om_steps`) logs each step a run enters, which
+  `enterStepUseCase` writes beside its current step; `SkipRoot` (`om_skips`)
+  logs why a tick started nothing. A run's `pullRequest` is the one it opened
+  or adopted, which `flowLayer` links by wrapping the run's `GitHub`
+  (`linkingPullRequests`); the live view threads an issue's runs with that
+  pull request's by it. The engine, the daemon and `chernabog run`
   record and read them only through the module's use-cases
   (`startRunUseCase`, `enterStepUseCase`, `finishRunUseCase`, …); a run's
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a

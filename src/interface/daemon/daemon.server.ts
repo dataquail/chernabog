@@ -51,9 +51,11 @@ import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent
 import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
+import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
@@ -310,6 +312,9 @@ const DRAINING =
 
 const SOONEST_MS = 200;
 const LATEST_MS = 15_000;
+
+// The finished runs status reports, newest first.
+const RECENT_RUNS = 100;
 
 const PathParams = Schema.Struct({ id: RunId });
 
@@ -915,7 +920,9 @@ export const runDaemon = Effect.gen(function* () {
             agent: account.agent,
           })),
           active: yield* active,
-          recent: (yield* listRecentRunsUseCase(20)).runs,
+          // Enough for the live view's project tabs and persona filter to
+          // still have runs to show.
+          recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
           skips: (yield* listRecentSkipsUseCase(20)).skips,
         } satisfies DaemonStatus;
       });
@@ -1066,6 +1073,19 @@ export const runDaemon = Effect.gen(function* () {
 
               return yield* HttpServerResponse.schemaJson(RunReply)(
                 (yield* findRunUseCase(id)).run,
+              );
+            }),
+          ),
+        ),
+        HttpRouter.add(
+          "GET",
+          "/runs/:id/history",
+          answer(
+            Effect.gen(function* () {
+              const { id } = yield* HttpRouter.schemaPathParams(PathParams);
+
+              return yield* HttpServerResponse.schemaJson(RunHistory)(
+                yield* readRunHistoryUseCase(id),
               );
             }),
           ),

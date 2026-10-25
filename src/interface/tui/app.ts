@@ -44,7 +44,13 @@ import { readRunLogUseCase } from "../../modules/runs/use-cases/read-run-log.use
 import { userName } from "../../platform/environment.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
-import { daemonCancel, daemonReload, daemonStatus, daemonTick } from "../daemon/daemon.client.ts";
+import {
+  daemonCancel,
+  daemonReload,
+  daemonRunHistory,
+  daemonStatus,
+  daemonTick,
+} from "../daemon/daemon.client.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
 
@@ -118,6 +124,26 @@ const readLog = (runId: string) =>
     Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
 
+// The worktree a run works in, as its latest agent session ran there.
+const worktreeOf = (runId: string) =>
+  runSessions(runId).pipe(
+    Effect.map((sessions) => Option.map(Arr.last(sessions), (last) => last.cwd)),
+  );
+
+// What the detail view shows of a run beyond its row: its steps and waits,
+// which the daemon keeps, and its worktree.
+// A daemon from before runs kept their steps doesn't answer for them.
+const readDetail = (runId: string) =>
+  Effect.gen(function* () {
+    const history = yield* Effect.result(daemonRunHistory(runId));
+
+    return {
+      history: Result.getSuccess(history),
+      failure: Option.map(Result.getFailure(history), (failure) => failure.message),
+      worktree: yield* worktreeOf(runId),
+    };
+  });
+
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
   status: Option.none(),
   error: Option.none(),
@@ -126,11 +152,18 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
     fiveHourCeiling: DEFAULT_GATE.fiveHourCeiling,
     targetEndUsage: DEFAULT_GATE.targetEndUsage,
   },
+  project: Option.none(),
+  personaFilter: Option.none(),
   focus: "runs",
   flowIndex: 0,
   runIndex: 0,
+  expanded: [],
+  threadIndex: 0,
   view: "main",
   settings: Option.none(),
+  detailRun: Option.none(),
+  history: Option.none(),
+  worktree: Option.none(),
   logRun: Option.none(),
   logLines: [],
   logScroll: 0,
@@ -303,6 +336,11 @@ export const runTui = Effect.gen(function* () {
       model = { ...model, logLines: yield* readLog(model.logRun.value) };
     }
 
+    if (model.view === "run" && Option.isSome(model.detailRun)) {
+      const { history, worktree } = yield* readDetail(model.detailRun.value);
+      model = { ...model, history, worktree };
+    }
+
     yield* render;
   });
 
@@ -366,6 +404,23 @@ export const runTui = Effect.gen(function* () {
           model = { ...model, logLines: yield* readLog(action.run) };
 
           return yield* render;
+        case "open-run": {
+          yield* render;
+          const { failure, history, worktree } = yield* readDetail(action.run);
+
+          model = {
+            ...model,
+            history,
+            worktree,
+            message: Option.map(
+              failure,
+              (why) => `the daemon didn't say where the run has been: ${why}`,
+            ),
+          };
+
+          return yield* render;
+        }
+
         case "attach":
           return yield* attach(action.run);
         case "cancel": {
