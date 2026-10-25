@@ -64,6 +64,7 @@ import { initCommand } from "./recipes/init.command.ts";
 import { recipesCommand } from "./recipes/recipes.command.ts";
 import { rehearseCommand } from "./rehearsals/rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
+import { cancelRun } from "./runs/cancel.main.ts";
 import { logsCommand } from "./runs/logs.command.ts";
 import { openPr } from "./runs/open-pr.main.ts";
 import { runInForeground } from "./runs/run.main.ts";
@@ -254,6 +255,50 @@ const run = Command.make(
   ),
 );
 
+const cancel = Command.make(
+  "cancel",
+  {
+    run: Argument.String("run").pipe(
+      Argument.withDescription("The run's id, or enough of it; with an item, the repo it's in"),
+    ),
+    item: Argument.String("item").pipe(
+      Argument.withDescription("The work item a run is in flight for, such as pr-116 or issue-12"),
+      Argument.optional,
+    ),
+    flow: Flag.String("flow").pipe(
+      Flag.withDescription("The flow, when several runs are in flight for the item"),
+      Flag.optional,
+    ),
+    as: Flag.String("as").pipe(
+      Flag.withDescription("The persona, when several runs are in flight for the item"),
+      Flag.optional,
+    ),
+    closeSession: Flag.Boolean("close-session").pipe(
+      Flag.withDescription(
+        "Also close the agent sessions the run left open, through their launcher; otherwise they're left to you",
+      ),
+      Flag.withDefault(false),
+    ),
+  },
+  ({ as, closeSession, flow, item, run: named }) =>
+    cancelRun({ run: named, item, flow, persona: as, closeSessions: closeSession }).pipe(
+      Effect.flatMap(printLines),
+      Effect.catchTags({
+        DaemonRefused: (refused) => fail(refused.message),
+        RunNotNamed: (failure) => fail(failure.message),
+        RunNotFound: (failure) => fail(failure.message),
+        AmbiguousRunPrefix: (failure) => fail(failure.message),
+        RunAlreadyFinished: (failure) => fail(failure.message),
+        NoRunInFlight: (failure) => fail(failure.message),
+        SeveralRunsInFlight: (failure) => fail(failure.message),
+      }),
+    ),
+).pipe(
+  Command.withDescription(
+    "End a run in flight for good: it stops, is recorded as cancelled, and its worktrees and claim are released; through the daemon when it is running",
+  ),
+);
+
 const trigger = Command.make(
   "trigger",
   { flow: Argument.String("flow"), repo: repoFlag, as: asFlag },
@@ -375,6 +420,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     attach,
     run,
     rehearseCommand,
+    cancel,
     trigger,
     openPrCommand,
     logsCommand,

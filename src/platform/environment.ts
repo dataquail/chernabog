@@ -3,7 +3,9 @@
 // account's config directory set, API keys removed) needs the whole set, which
 // only the host can enumerate. This is the one place that reads it.
 
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -46,3 +48,17 @@ export const withVariables = (base: Environment, set: Environment, remove: Reado
   Object.fromEntries(
     Object.entries({ ...base, ...set }).filter(([name]) => !remove.includes(name)),
   );
+
+// The name of the person this process runs for, as the host gives it, such as
+// for a run's record of who cancelled it.
+export const userName = HostEnvironment.use((host) =>
+  Effect.succeed(
+    Option.getOrElse(
+      Arr.findFirst(
+        [host.variables.USER, host.variables.LOGNAME],
+        (name): name is string => typeof name === "string" && name.length > 0,
+      ),
+      () => "a person",
+    ),
+  ),
+);

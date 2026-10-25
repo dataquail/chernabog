@@ -21,4 +21,6 @@ Bakes `.chernabog/flows/re-review.ts`, and `.chernabog/prompts/review.md` for a 
 2. `limits.reviewRounds` caps the re-reviews of one pull request, 1 by default: past it, `PullRequest.handToPerson` hands the pull request to a person without reviewing.
 3. `Review.recheck` — resumes the session of its own review with the change since, and posts its review.
 4. `Review.doneReviewing`, then `PullRequest.comment` — lists which findings are remediated and which are still open.
-5. An approval merges on the automated path. Changes requested again hand the pull request to a person.
+5. An approval merges on the automated path, as `review` does: a merge GitHub refuses because the pull request conflicts with its base is left for [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/), and any other refusal goes to a person. Changes requested again hand the pull request to a person.
+
+A repo that baked `re-review` before this keeps handing a conflicting approval to a person until it brings the change over: `chernabog recipes diff re-review` shows it.

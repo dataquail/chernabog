@@ -152,6 +152,18 @@ export const surfaceSetup = <A, E, R>(
 export const defaultPersona = (repo: EffectiveRepo): Persona =>
   Arr.headNonEmpty(repo.personas).persona;
 
+export const workflowName = (repo: string, flow: string) => `${repo}/${flow}`;
+
+// The workflow a flow's runs execute in, by its name alone, for reaching an
+// execution of a flow this process didn't load, or that a repo no longer has.
+export const workflowNamed = (repo: string, flow: string) =>
+  Workflow.make(workflowName(repo, flow), {
+    payload: FlowPayload,
+    idempotencyKey: (payload) => payload.runId,
+    success: RunResult,
+    error: RunFailed,
+  });
+
 export type FlowHandle = {
   readonly repo: EffectiveRepo;
   readonly name: string;
@@ -164,18 +176,11 @@ export type FlowHandle = {
   >;
 };
 
-export const workflowName = (repo: string, flow: string) => `${repo}/${flow}`;
-
 export const flowHandle = (repo: EffectiveRepo, name: string, flow: Flow): FlowHandle => ({
   repo,
   name,
   flow,
-  workflow: Workflow.make(workflowName(repo.settings.name, name), {
-    payload: FlowPayload,
-    idempotencyKey: (payload) => payload.runId,
-    success: RunResult,
-    error: RunFailed,
-  }),
+  workflow: workflowNamed(repo.settings.name, name),
 });
 
 export const runLogFile = (runId: string) =>

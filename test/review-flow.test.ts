@@ -99,6 +99,35 @@ describe("review", () => {
     }),
   );
 
+  effect(
+    "leaves an approved auto:ship pull request that conflicts with its base to resolve-conflicts",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        fake.merge.refusal = Option.some("Pull Request is not mergeable");
+        fake.merge.state = "dirty";
+        const finished = yield* runToEnd(reviewing, fake, work);
+        expect(finished.status).toBe("done");
+        expect(summaryOf(finished)).toBe(
+          `#${PULL} approved, but it conflicts with its base; resolve-conflicts takes it`,
+        );
+        expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
+  );
+
+  effect(
+    "hands an approved auto:ship pull request GitHub refuses to merge for any other reason to a person",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        fake.merge.refusal = Option.some("Required status check is expected");
+        fake.merge.state = "blocked";
+        const finished = yield* runToEnd(reviewing, fake, work);
+        expect(finished.status).toBe("needs-human");
+        expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+      }),
+  );
+
   effect("requests changes as a real review, for the author to answer", () =>
     Effect.gen(function* () {
       const fake = asked(["request-changes"]);
@@ -170,6 +199,45 @@ describe("re-review", () => {
           ),
         ).toBe(true);
       }),
+  );
+
+  // Approved on the re-review, with GitHub refusing the merge: `state` is the pull request's mergeable_state.
+  const refusedAfterApproval = (state: string) =>
+    Effect.gen(function* () {
+      const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
+      fake.merge.refusal = Option.some("Pull Request is not mergeable");
+      fake.merge.state = state;
+
+      const finished = yield* runToEnd(
+        reReviewing,
+        fake,
+        item(`pr-${PULL}-review-2`, {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          agentWritten: true,
+        }),
+      );
+
+      return { fake, finished };
+    });
+
+  effect("leaves an approval it can't merge for a conflict to resolve-conflicts", () =>
+    Effect.gen(function* () {
+      const { fake, finished } = yield* refusedAfterApproval("dirty");
+      expect(finished.status).toBe("done");
+      expect(summaryOf(finished)).toBe(
+        `#${PULL} approved, but it conflicts with its base; resolve-conflicts takes it`,
+      );
+      expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+    }),
+  );
+
+  effect("hands an approval GitHub refuses to merge for any other reason to a person", () =>
+    Effect.gen(function* () {
+      const { fake, finished } = yield* refusedAfterApproval("blocked");
+      expect(finished.status).toBe("needs-human");
+      expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+    }),
   );
 
   effect("requests changes again and hands the pull request to a person", () =>

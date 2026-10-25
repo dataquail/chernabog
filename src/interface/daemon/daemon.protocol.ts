@@ -3,6 +3,7 @@
 
 import * as Schema from "effect/Schema";
 
+import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
 
@@ -93,3 +94,13 @@ export const Reloaded = Schema.Struct({ reloadPending: Schema.Boolean });
 export const Refusal = Schema.Struct({ error: Schema.String });
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
+
+// A person cancelling a run in flight: which, who they are, and whether to
+// close the agent sessions it left open.
+export const CancelRequest = Schema.Struct({
+  target: CancelTarget,
+  by: Schema.String,
+  closeSessions: Schema.Boolean,
+});
+
+export type CancelRequest = typeof CancelRequest.Type;

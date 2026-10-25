@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { Exec } from "../../platform/exec.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { type FlowRegistry, FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
+import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
@@ -25,10 +27,15 @@ export const RunLogsLayer = RunLogsClientLive;
 export type { FlowRegistry };
 
 // The runtime a tick and a run drive: the flows a process loaded, with each
-// persona's services, and their workflows in the engine it runs. Built inside
-// that engine, and over the runs' stores.
+// persona's services, their workflows in the engine it runs, and cleaning up
+// after a run that's cancelled. Built inside that engine, and over the runs'
+// stores.
 export const RuntimeLayer = (registry: FlowRegistry) =>
-  Layer.mergeAll(FlowsClientLive(registry), WorkflowsClientLive(registry.handles));
+  Layer.mergeAll(
+    FlowsClientLive(registry),
+    WorkflowsClientLive(registry.handles),
+    RunCleanupClientLive(registry.services).pipe(Layer.provide(Exec.layer)),
+  );
 
 // The workflow engine, and the runs' stores beside its journal, in `database`.
 export const StateAt = (database: string) => RunsLayer.pipe(Layer.provideMerge(EngineAt(database)));
