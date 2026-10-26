@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { BUNDLED_SDK_VERSION } from "../../../../kernel/sdk-support.value-object.ts";
 import { SeveralRunsInFlight } from "./run.errors.ts";
 import { RunRoot } from "./run.root.ts";
 import { RunRootOps } from "./run.root-ops.ts";
@@ -12,7 +13,7 @@ const later = "2026-10-22T01:00:00.000Z";
 
 const asBob = {
   id: RunId.make("a"),
-  sdkVersion: "0.6.0",
+  sdkVersion: BUNDLED_SDK_VERSION,
   repo: "demo",
   persona: Option.some("bob"),
   flow: "review",

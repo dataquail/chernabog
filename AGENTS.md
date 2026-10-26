@@ -143,7 +143,7 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   package version reaches every repo that imports it at once. Keep a recipe's
   step names when you change it, and never rename one in a block.
 - `@chernabog/recipes`' `@chernabog/sdk` peer range must include the bundled
-  SDK (a test checks). Move it with `SUPPORTED_SDK`.
+  SDK (a test checks). Keep it in step with `SUPPORTED_SDK`.
 - The acceptance sandbox runs a local npm registry (`test/acceptance/fake-registry.ts`)
   that packs `packages/recipes/`, so bun installs for real with no network.
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
@@ -368,11 +368,14 @@ One binary runs every enrolled repo, so compatibility is the binary's call.
 
 - **The SDK pin is the contract.** A repo's `.chernabog/package.json`
   `@chernabog/sdk` pin is the SDK its flows are written against; the binary
-  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`). Move it with
-  the SDK's minor. `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a
-  repo outside it, without a pin, with `engines.chernabog`, or whose flows
-  import what the bundled SDK lacks, as `IncompatibleConfig`; the daemon shows
-  it as `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
+  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`): up to the
+  minor of `BUNDLED_SDK_VERSION`, which release-please moves with the SDK's
+  version, from `OLDEST_SUPPORTED_SDK`, which a person moves up when a minor
+  breaks flows written against the one before.
+  `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a repo outside it,
+  without a pin, with `engines.chernabog`, or whose flows import what the
+  bundled SDK lacks, as `IncompatibleConfig`; the daemon shows it as
+  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
   the way forward, and the only thing that moves an existing manifest's pins.
 - **Local state is stamped, backed up and refused.** Machine config's
   `chernabog:` key and `state.db`'s `om_meta` hold the version that last

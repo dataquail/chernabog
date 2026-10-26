@@ -7,10 +7,22 @@
 
 import * as Option from "effect/Option";
 
-// The one place the binary declares what it runs: from `from`, up to but not
-// including `below`. Move it when the SDK's minor moves. 0.7 only added the
+// The SDK this binary bundles, as packages/sdk/package.json has it.
+// release-please moves both together (release-please-config.json), and
+// flow-deps.test.ts fails if they drift.
+export const BUNDLED_SDK_VERSION = "0.6.0"; // x-release-please-version
+
+const [major, minor] = BUNDLED_SDK_VERSION.split(".").map(Number);
+
+// The oldest SDK this binary still runs flows written against. Move it up to
+// the bundled minor when that minor breaks flows written against the one
+// before; leave it when the new minor only adds to the SDK. 0.7 only added the
 // FlowPackage service (#129), so flows written against 0.6 still run.
-export const SUPPORTED_SDK = { from: "0.6.0", below: "0.8.0" } as const;
+const OLDEST_SUPPORTED_SDK = "0.6.0";
+
+// What the binary runs: from `from`, up to but not including `below`, the
+// minor after the one it bundles.
+export const SUPPORTED_SDK = { from: OLDEST_SUPPORTED_SDK, below: `${major}.${minor + 1}.0` };
 
 export const supportedRange = `>=${SUPPORTED_SDK.from} <${SUPPORTED_SDK.below}`;
 

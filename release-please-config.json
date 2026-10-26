@@ -12,7 +12,8 @@
     "packages/sdk": {
       "release-type": "node",
       "package-name": "@chernabog/sdk",
-      "component": "sdk"
+      "component": "sdk",
+      "extra-files": [{ "type": "generic", "path": "/src/kernel/sdk-support.value-object.ts" }]
     },
     "packages/recipes": {
       "release-type": "node",
