@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
@@ -25,6 +26,7 @@ import { startServiceUseCase } from "../../modules/machine/use-cases/start-servi
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
 import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
+import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import {
   desiredLabels,
@@ -137,6 +139,12 @@ const openPrCommand = Command.make(
         "What changed and how it was tested, for the issue; the title when left out",
       ),
       Flag.optional,
+    ),
+    draft: Flag.Boolean("draft").pipe(
+      Flag.withDescription(
+        "Keep it as a draft and print the question that asks the person whether to open it; their Yes hands it over",
+      ),
+      Flag.withDefault(false),
     ),
   },
   (options) => Effect.flatMap(openPr(options), printLines),
@@ -402,6 +410,16 @@ const stopHookChild = Command.make(
     ),
 );
 
+// Claude's PreToolUse and PostToolUse hook on AskUserQuestion, in a session with a person.
+const questionHookChild = Command.make("__question-hook", { dir: Flag.String("dir") }, ({ dir }) =>
+  Effect.gen(function* () {
+    const stdio = yield* Stdio.Stdio;
+    const input = yield* Stream.mkString(Stream.decodeText(stdio.stdin));
+    const printed = yield* questionHook(dir, input);
+    yield* Option.match(printed, { onNone: () => Effect.void, onSome: Console.log });
+  }),
+);
+
 // With no subcommand, in a terminal: the live view. Piped, the status instead.
 const live = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
@@ -442,6 +460,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     Command.unlisted(stepChild),
     Command.unlisted(launchChild),
     Command.unlisted(stopHookChild),
+    Command.unlisted(questionHookChild),
   ]),
 );
 

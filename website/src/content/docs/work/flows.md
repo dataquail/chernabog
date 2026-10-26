@@ -33,7 +33,7 @@ An issue labelled `auto:ship` instead of `auto:eligible` is implemented the same
 
 ## The hybrid path
 
-Some work needs a person through planning and implementation. `chernabog start <issue>` hands the issue to the repo's `human-initiated` flow, which opens an interactive session where the person and the agent work on it together. When they're done, `chernabog open-pr`, run from that session, hands the work back, and chernabog opens the pull request and asks a reviewer from the pool. From there `review`, `address-review` and `re-review` run as usual, with the person at the decisions: a request for changes reopens their session, and a person merges, since the pull request never carries `auto:ship`.
+Some work needs a person through planning and implementation. `chernabog start <issue>` hands the issue to the repo's `human-initiated` flow, which opens an interactive session where the person and the agent work on it together. When the agent thinks they're done, it drafts the pull request and asks the person whether to open it; their Yes hands the work back, and chernabog opens the pull request and asks a reviewer from the pool. From there `review`, `address-review` and `re-review` run as usual, with the person at the decisions: a request for changes reopens their session, and a person merges, since the pull request never carries `auto:ship`.
 
 The pull request is labelled `hybrid` so the path shows on GitHub. No flow decides anything from it, so a missing or wrong label changes nothing.
 

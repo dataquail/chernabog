@@ -23,6 +23,7 @@ import review from "../packages/recipes/flows/review.ts";
 import { sessionFilesIn } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { stopHook } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { Exec } from "../src/platform/exec.ts";
 import { effect } from "./effect-test.ts";
 import {
   HEAD,
@@ -312,6 +313,6 @@ describe("a session's Stop hook", () => {
       yield* fs.writeFileString(sessionFilesIn(dir).answer, '"done"');
       expect(yield* stopHook(dir, true)).toEqual(Option.none());
       expect(yield* fs.exists(sessionFilesIn(dir).done)).toBe(true);
-    }),
+    }).pipe(Effect.provide(Exec.layer)),
   );
 });

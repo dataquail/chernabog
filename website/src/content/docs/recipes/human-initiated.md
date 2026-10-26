@@ -17,7 +17,7 @@ This is [the hybrid path](/chernabog/work/flows/#the-hybrid-path). It runs only 
 
 1. `Hybrid.claim` — the issue's branch, `auto/issue-<n>`, labelled `auto:in-progress`, with `auto:eligible` and `auto:ship` removed. A branch an unattended run claimed is left to it. An earlier start's claim is taken over.
 2. `prepareWorktree` — as `implement`'s.
-3. `Hybrid.workWithPerson` — the session with the person, from the `human-initiated` prompt. It ends when `chernabog open-pr` records the pull request's title, body and summary. If the person closes the session before that, the run fails and keeps the claim.
+3. `Hybrid.workWithPerson` — the session with the person, from the `human-initiated` prompt. When the agent thinks the work is done, it drafts the pull request with `chernabog open-pr --draft` and asks the person, in a Yes/No question, whether to open it. The session ends on their Yes, which a hook acts on, not the agent; on No they keep working. The person can also run `chernabog open-pr` themselves. If the person closes the session before that, the run fails and keeps the claim.
 4. `localGate(worktree, { session })` — with `Hybrid.personSession(issue)`, so a failure's fix goes back to the person's session.
 5. `push(…, { withPerson: true })`, `Hybrid.openPullRequest` — labelled `hybrid`, never `auto:ship`. The person watched the change written, so it pushes even if it touches `humanOnlyPaths`; see [Trust](/chernabog/operate/trust/). A change to `.github/workflows/` needs a token with the `workflow` scope.
 6. `waitForCi` — red goes back to the person's session, up to `limits.ciRounds`. Its fixes push the same way.

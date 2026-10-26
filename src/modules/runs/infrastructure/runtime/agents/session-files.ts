@@ -22,6 +22,10 @@ export const sessionFilesIn = (dir: string) => ({
   done: `${dir}/done`,
   // How many times the hook has sent the agent back.
   blocks: `${dir}/blocks`,
+  // Written by `chernabog open-pr --draft`: the pull request the person is asked to open.
+  draft: `${dir}/draft.json`,
+  // The HEAD the Stop hook last reminded the agent at to offer the pull request.
+  reminded: `${dir}/reminded`,
   // Which call the files belong to: a hash of its prompt.
   call: `${dir}/call`,
   // The launcher and handle the session runs under.

@@ -16,7 +16,7 @@ description: Every chernabog command and flag.
 | `logs <run> [-f]`                 | A run's log; `-f` follows it. `<run>` is its id, or enough of it to name one run, such as the 8 characters `status` shows |
 | `attach <run>`                    | Open the run's agent session                                                     |
 | `start <issue>`                   | Run the repo's [`human-initiated` flow](/chernabog/recipes/human-initiated/) on the issue, whatever its labels, through the daemon (which must be running), and bring its session up here: the Orca tab, or `tmux attach`. On an issue whose run is in flight, bring up that run's session |
-| `open-pr --title <title>`         | From inside the session `chernabog start` opened: check the worktree is clean, and hand the work to chernabog, which runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close |
+| `open-pr --title <title>`         | From inside the session `chernabog start` opened: check the worktree is clean, and hand the work to chernabog, which runs the local gate, pushes, opens the pull request, waits for CI and asks a reviewer. The session stays open for you to close. With `--draft`, which the agent uses, it keeps the pull request as a draft and prints a question for the agent to ask you; your Yes hands it over |
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
@@ -58,6 +58,7 @@ description: Every chernabog command and flag.
 | `--body <markdown>`      | `open-pr` | The pull request body, without the `Closes` line, which chernabog adds  |
 | `--body-file <file>`     | `open-pr` | A file holding the body, instead of `--body`                           |
 | `--summary <text>`       | `open-pr` | What changed and how it was tested, for the issue; the title when left out |
+| `--draft`                | `open-pr` | Keep it as a draft and print the question that asks you whether to open it |
 | `-f`, `--follow`         | `logs`   | Keep printing as the log grows                                          |
 
 ## Files
