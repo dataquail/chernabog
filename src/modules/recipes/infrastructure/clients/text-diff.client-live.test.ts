@@ -23,4 +23,27 @@ describe("TextDiffClientLive", () => {
       expect(yield* differ.diff("flows/review.ts", "same\n", "same\n")).toBe("");
     }).pipe(Effect.provide(TextDiffClientLive)),
   );
+
+  effect(
+    "merges the recipe's changes into the repo's edits, and marks where both changed a line",
+    () =>
+      Effect.gen(function* () {
+        const differ = yield* TextDiffClient;
+
+        const clean = yield* differ.merge(
+          "flows/review.ts",
+          "a\nb\nc\n",
+          "a\nB\nc\n",
+          "a\nb\nc\nd\n",
+        );
+
+        expect(clean).toEqual({ text: "a\nB\nc\nd\n", conflicts: false });
+
+        const clash = yield* differ.merge("flows/review.ts", "a\nb\n", "a\nours\n", "a\ntheirs\n");
+        expect(clash.conflicts).toBe(true);
+        expect(clash.text).toContain("<<<<<<< repo/.chernabog/flows/review.ts\nours\n");
+        expect(clash.text).toContain("||||||| copied\nb\n");
+        expect(clash.text).toContain(">>>>>>> recipe/.chernabog/flows/review.ts");
+      }).pipe(Effect.provide(TextDiffClientLive)),
+  );
 });

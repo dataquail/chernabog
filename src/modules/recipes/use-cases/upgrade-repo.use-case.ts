@@ -1,12 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
+import * as Result from "effect/Result";
 
 import { BundleClient } from "../domain/ports/clients/bundle.client.ts";
 import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client.ts";
+import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
+import { copiedOf, decodeRepoManifest } from "../domain/recipe/repo-manifest.value-object.ts";
 import { RepoUpgraded } from "./recipe.result.ts";
-
-type Change = (typeof RepoUpgraded.Type.changes)[number];
 
 type Left = (typeof RepoUpgraded.Type.left)[number];
 
@@ -14,16 +16,15 @@ const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
 // Moves the repo at `root` onto the SDK this binary runs, in its working tree,
 // committing nothing (.chernabog/ is a person's to merge): package.json's pins
-// move to this binary's SDK and effect, and the flows baked from recipes, and
-// the files their recipes render, become the current recipes. A recipe's file
-// that differs may hold a person's own edits, so it's replaced and said, for
-// them to review in the diff. Flows and steps from no recipe are left, each
-// with what it imports that this SDK doesn't have. A .chernabog/ written
-// against a newer SDK than this binary runs is refused, rather than moved back.
+// move to this binary's SDK and effect. Its copied recipes move with
+// updateRecipesUseCase, which the command runs next. Flows and steps from no
+// recipe are left, each with what it imports that this SDK doesn't have. A
+// .chernabog/ written against a newer SDK than this binary runs is refused,
+// rather than moved back.
 export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (root: string) {
   const dir = yield* ChernabogDirClient;
   const bundle = yield* BundleClient;
-  const changes: Array<Change> = [];
+  const packages = yield* RecipePackagesClient;
   const manifestPath = ".chernabog/package.json";
   const manifest = yield* dir.read(root, manifestPath);
 
@@ -38,45 +39,40 @@ export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (roo
 
   for (const text of Option.toArray(pinned)) {
     yield* dir.write(root, manifestPath, text);
-    changes.push({ file: manifestPath, recipe: Option.none(), change: "pinned" });
   }
 
-  const flows = (yield* dir.list(root, ".chernabog/flows")).filter((file) => MODULE.test(file));
-  const recipes = RecipeRootOps.installed((file) => flows.includes(file.replace(/^flows\//, "")));
-  const moved = new Set<string>();
+  const records = Option.getOrElse(
+    Option.flatMap(manifest, (text) =>
+      Option.map(Result.getSuccess(decodeRepoManifest(text)), copiedOf),
+    ),
+    () => ({}),
+  );
 
-  for (const recipe of recipes) {
-    for (const file of recipe.files.filter((each) => !moved.has(each))) {
-      moved.add(file);
+  const flows = (yield* dir.list(root, ".chernabog/flows"))
+    .filter((file) => MODULE.test(file))
+    .map((file) => `flows/${file}`);
 
-      const path = `.chernabog/${file}`;
-      const current = yield* bundle.recipeFile(file);
-      const theirs = yield* dir.read(root, path);
+  // A package missing from node_modules only hides which flows are copies.
+  const installed = yield* packages.restore(root).pipe(
+    Effect.andThen(packages.installed(root)),
+    Effect.orElseSucceed(() => []),
+  );
 
-      if (Option.contains(theirs, current)) {
-        continue;
-      }
-
-      yield* dir.write(root, path, current);
-      changes.push({
-        file: path,
-        recipe: Option.some(recipe.name),
-        change: Option.match(theirs, {
-          onNone: () => "written" as const,
-          onSome: () => "replaced" as const,
-        }),
-      });
-    }
-  }
+  const copied = new Set([
+    ...Object.keys(records),
+    ...RecipeRootOps.copiedIn(installed, (file) => flows.includes(file)).flatMap(
+      RecipeRootOps.filesOf,
+    ),
+  ]);
 
   const left: Array<Left> = [];
 
   const handWritten = [
-    ...flows.map((file) => `flows/${file}`),
+    ...flows,
     ...(yield* dir.list(root, ".chernabog/stages"))
       .filter((file) => MODULE.test(file))
       .map((file) => `stages/${file}`),
-  ].filter((file) => !moved.has(file));
+  ].filter((file) => !copied.has(file) && !Record.has(records, file));
 
   for (const file of handWritten) {
     const path = `.chernabog/${file}`;
@@ -85,5 +81,5 @@ export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (roo
     left.push({ file: path, missingImports: bundle.missingImports(source) });
   }
 
-  return RepoUpgraded.make({ sdkVersion: bundle.sdkVersion, changes, left });
+  return RepoUpgraded.make({ sdkVersion: bundle.sdkVersion, pinned: Option.isSome(pinned), left });
 });

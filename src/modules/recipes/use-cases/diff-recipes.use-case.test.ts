@@ -1,56 +1,39 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
-import { BundleClientFake } from "../infrastructure/clients/bundle.client-fake.ts";
-import { ChernabogDirClientFake } from "../infrastructure/clients/chernabog-dir.client-fake.ts";
-import { TextDiffClientFake } from "../infrastructure/clients/text-diff.client-fake.ts";
+import { jsonText, recipeRepo } from "../../../../test/recipe-repo.ts";
 import { diffRecipesUseCase } from "./diff-recipes.use-case.ts";
 
-const SCAFFOLD = {
-  files: { "config.yaml": "flows: {}\n", "config.schema.json": "{ schema }\n" },
-  generated: ["config.schema.json"],
-  manifest: "{ }\n",
-};
-
-// A checkout at /repo holding `files`, by path under it.
-const repoWith = (files: Record<string, string>) => {
-  const stored: Record<string, string> = Object.fromEntries(
-    Object.entries(files).map(([path, text]) => [`/repo/${path}`, text]),
-  );
-
-  return {
-    stored,
-    layer: Layer.mergeAll(
-      ChernabogDirClientFake(stored),
-      BundleClientFake(SCAFFOLD),
-      TextDiffClientFake,
-    ),
-  };
-};
+const manifest = jsonText({
+  devDependencies: { "@chernabog/sdk": "0.6.0", "@chernabog/recipes": "0.2.0" },
+  chernabog: {
+    copied: { "flows/review.ts": { from: "@chernabog/recipes/review", version: "0.1.0" } },
+  },
+});
 
 describe("diffRecipesUseCase", () => {
-  const repo = repoWith({
-    ".chernabog/flows/review.ts": "edited\n",
-    ".chernabog/prompts/review.md": "recipe of prompts/review.md\n",
+  const repo = recipeRepo({
+    ".chernabog/package.json": manifest,
+    ".chernabog/flows/review.ts": "review\nedited\n",
+    ".chernabog/prompts/review.md": "review prompt\n",
     ".chernabog/flows/security.ts": "ours\n",
   });
 
-  effect("sets each of the repo's flows against its recipe, and lists the ones from none", () =>
-    Effect.gen(function* () {
-      const { files } = yield* diffRecipesUseCase("/repo", []);
+  effect(
+    "sets each copied file against the version it came from, else the one installed, and lists the flows from none",
+    () =>
+      Effect.gen(function* () {
+        const { files } = yield* diffRecipesUseCase("/repo", []);
 
-      expect(files.map((file) => [file.file, file.state])).toEqual([
-        [".chernabog/flows/review.ts", "differs"],
-        [".chernabog/prompts/review.md", "same"],
-        [".chernabog/flows/security.ts", "unowned"],
-      ]);
-      expect(files[0].diff).toEqual(
-        Option.some("-recipe of flows/review.ts\n+edited (flows/review.ts)"),
-      );
-    }).pipe(Effect.provide(repo.layer)),
+        expect(files.map((file) => [file.file, file.state, file.version, file.recorded])).toEqual([
+          [".chernabog/flows/review.ts", "differs", Option.some("@chernabog/recipes@0.1.0"), true],
+          [".chernabog/prompts/review.md", "same", Option.some("@chernabog/recipes@0.2.0"), false],
+          [".chernabog/flows/security.ts", "unowned", Option.none(), false],
+        ]);
+        expect(files[0].diff).toEqual(Option.some("-review\n+review\nedited (flows/review.ts)"));
+      }).pipe(Effect.provide(repo.layer)),
   );
 
   effect("with names, only those recipes, saying which files the repo lacks", () =>

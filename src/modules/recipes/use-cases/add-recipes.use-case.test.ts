@@ -1,62 +1,62 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import { effect } from "../../../../test/effect-test.ts";
-import { BundleClientFake } from "../infrastructure/clients/bundle.client-fake.ts";
-import { ChernabogDirClientFake } from "../infrastructure/clients/chernabog-dir.client-fake.ts";
-import { TextDiffClientFake } from "../infrastructure/clients/text-diff.client-fake.ts";
+import { manifestOf, manifestWith, recipeRepo } from "../../../../test/recipe-repo.ts";
 import { addRecipesUseCase } from "./add-recipes.use-case.ts";
 
-const SCAFFOLD = {
-  files: { "config.yaml": "flows: {}\n", "config.schema.json": "{ schema }\n" },
-  generated: ["config.schema.json"],
-  manifest: "{ }\n",
-};
-
-// A checkout at /repo holding `files`, by path under it.
-const repoWith = (files: Record<string, string>) => {
-  const stored: Record<string, string> = Object.fromEntries(
-    Object.entries(files).map(([path, text]) => [`/repo/${path}`, text]),
-  );
-
-  return {
-    stored,
-    layer: Layer.mergeAll(
-      ChernabogDirClientFake(stored),
-      BundleClientFake(SCAFFOLD),
-      TextDiffClientFake,
-    ),
-  };
-};
-
 describe("addRecipesUseCase", () => {
-  const repo = repoWith({ ".chernabog/flows/review.ts": "ours\n" });
+  const repo = recipeRepo({
+    ".chernabog/package.json": manifestWith({
+      "@chernabog/recipes": "0.1.0",
+      "@acme/recipes": "1.0.0",
+    }),
+    ".chernabog/flows/review.ts": "ours\n",
+  });
 
-  effect("writes each recipe's files, keeping the repo's own flow and a prompt already there", () =>
-    Effect.gen(function* () {
-      const added = yield* addRecipesUseCase("/repo", ["review", "re-review"]);
+  effect(
+    "copies each recipe's files from its package, keeping the repo's own flow and a prompt already there, and records each version",
+    () =>
+      Effect.gen(function* () {
+        const added = yield* addRecipesUseCase("/repo", [
+          "review",
+          "re-review",
+          "@acme/recipes/deploy",
+        ]);
 
-      expect(added.files.map((file) => [file.outcome, file.file])).toEqual([
-        ["kept", ".chernabog/flows/review.ts"],
-        ["wrote", ".chernabog/prompts/review.md"],
-        ["wrote", ".chernabog/flows/re-review.ts"],
-      ]);
-      expect(repo.stored["/repo/.chernabog/flows/review.ts"]).toBe("ours\n");
-      expect(repo.stored["/repo/.chernabog/flows/re-review.ts"]).toBe(
-        "recipe of flows/re-review.ts\n",
-      );
-    }).pipe(Effect.provide(repo.layer)),
+        expect(
+          added.files.map((file) => [file.outcome, file.file, file.recipe, file.version]),
+        ).toEqual([
+          ["kept", ".chernabog/flows/review.ts", "review", "0.1.0"],
+          ["wrote", ".chernabog/prompts/review.md", "review", "0.1.0"],
+          ["wrote", ".chernabog/flows/re-review.ts", "re-review", "0.1.0"],
+          ["wrote", ".chernabog/flows/deploy.ts", "@acme/recipes/deploy", "1.0.0"],
+        ]);
+        expect(repo.stored["/repo/.chernabog/flows/review.ts"]).toBe("ours\n");
+        expect(repo.stored["/repo/.chernabog/flows/deploy.ts"]).toBe("deploy\n");
+        expect(manifestOf(repo.stored).chernabog).toEqual({
+          copied: {
+            "flows/deploy.ts": { from: "@acme/recipes/deploy", version: "1.0.0" },
+            "flows/re-review.ts": { from: "@chernabog/recipes/re-review", version: "0.1.0" },
+            "prompts/review.md": { from: "@chernabog/recipes/review", version: "0.1.0" },
+          },
+        });
+      }).pipe(Effect.provide(repo.layer)),
   );
 
-  const fresh = repoWith({});
+  const fresh = recipeRepo({});
 
-  effect("refuses a name that isn't a recipe, writing nothing", () =>
-    Effect.gen(function* () {
-      const refused = yield* Effect.flip(addRecipesUseCase("/repo", ["implement", "ship"]));
+  effect(
+    "refuses a name that isn't a recipe, or is from a package that isn't installed, writing nothing",
+    () =>
+      Effect.gen(function* () {
+        const before = { ...fresh.stored };
+        const unknown = yield* Effect.flip(addRecipesUseCase("/repo", ["implement", "ship"]));
+        const missing = yield* Effect.flip(addRecipesUseCase("/repo", ["@globex/recipes/ship"]));
 
-      expect(refused._tag).toBe("UnknownRecipe");
-      expect(fresh.stored).toEqual({});
-    }).pipe(Effect.provide(fresh.layer)),
+        expect(unknown._tag).toBe("UnknownRecipe");
+        expect(missing.message).toContain("@globex/recipes isn't installed in .chernabog/");
+        expect(fresh.stored).toEqual(before);
+      }).pipe(Effect.provide(fresh.layer)),
   );
 });

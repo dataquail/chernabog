@@ -5,14 +5,12 @@ import type * as Option from "effect/Option";
 import { type ScaffoldRefused } from "../../recipe/recipe.errors.ts";
 import { type Scaffold } from "../../scaffold/scaffold.value-object.ts";
 
-// What this chernabog binary bundles for a repo's .chernabog/: each recipe's
-// files, the scaffold, and the versions of the packages flows are written
-// against.
+// What this chernabog binary bundles for a repo's .chernabog/: the scaffold,
+// and the versions of the packages flows are written against. It bundles no
+// recipes: those are packages a repo installs (RecipePackagesClient).
 export type BundleClientService = {
   // The @chernabog/sdk version this binary bundles, which flows are written against.
   readonly sdkVersion: string;
-  // A recipe's file, by path under .chernabog/, as this binary has it.
-  readonly recipeFile: (file: string) => Effect.Effect<string>;
   readonly scaffold: Effect.Effect<Scaffold>;
   // Fails when a .chernabog/package.json's flows are written against a newer
   // SDK than this binary runs, so it must not rewrite them.

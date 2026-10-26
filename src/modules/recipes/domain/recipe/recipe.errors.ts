@@ -27,3 +27,20 @@ export class ScaffoldRefused extends Schema.TaggedError<
   ScaffoldRefused,
   { readonly brand: "ScaffoldRefused" }
 >()("ScaffoldRefused", { message: Schema.String }) {}
+
+// A recipe named from a package that isn't installed in the repo's .chernabog/.
+export class RecipePackageMissing extends Schema.TaggedError<
+  RecipePackageMissing,
+  { readonly brand: "RecipePackageMissing" }
+>()("RecipePackageMissing", { package: Schema.String }) {
+  public override get message() {
+    return `${this.package} isn't installed in .chernabog/; install it there with bun add -d ${this.package}, and commit package.json and bun.lock`;
+  }
+}
+
+// A recipe package couldn't be found, chosen or installed: offline, a
+// registry that refused, or no version for the repo's SDK.
+export class RecipePackageUnavailable extends Schema.TaggedError<
+  RecipePackageUnavailable,
+  { readonly brand: "RecipePackageUnavailable" }
+>()("RecipePackageUnavailable", { package: Schema.String, message: Schema.String }) {}

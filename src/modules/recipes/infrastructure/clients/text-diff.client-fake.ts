@@ -4,7 +4,9 @@ import * as Option from "effect/Option";
 
 import { TextDiffClient } from "../../domain/ports/clients/text-diff.client.ts";
 
-// A diff that's empty when the texts match, and otherwise names both.
+// A diff that's empty when the texts match, and otherwise names both; and a
+// merge that takes the recipe's side where the repo's is the base, the repo's
+// where the recipe's is, and otherwise conflicts, holding all three.
 export const TextDiffClientFake = Layer.succeed(
   TextDiffClient,
   TextDiffClient.of({
@@ -18,5 +20,16 @@ export const TextDiffClientFake = Layer.succeed(
           () => "",
         ),
       ),
+    merge: (_file, base, repo, recipe) => {
+      if (repo === base || repo === recipe) {
+        return Effect.succeed({ text: recipe, conflicts: false });
+      }
+
+      if (recipe === base) {
+        return Effect.succeed({ text: repo, conflicts: false });
+      }
+
+      return Effect.succeed({ text: `<${repo}|${base}|${recipe}>`, conflicts: true });
+    },
   }),
 );

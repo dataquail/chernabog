@@ -6,7 +6,10 @@
 // copied one would.
 
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
+
+import { RecipeRoot } from "./recipe.root.ts";
 
 // The package a bare recipe name, such as `review`, means.
 export const OFFICIAL_PACKAGE = "@chernabog/recipes";
@@ -48,6 +51,46 @@ export const RecipePackageManifest = Schema.Struct({
 });
 
 export type RecipePackageManifest = typeof RecipePackageManifest.Type;
+
+export const SDK_PACKAGE = "@chernabog/sdk";
+
+// A recipe package as installed: its version, the SDK range it declares, and
+// its recipes, in the order its package.json lists them.
+export type RecipePackage = {
+  readonly name: string;
+  readonly version: string;
+  readonly sdkRange: Option.Option<string>;
+  readonly recipes: ReadonlyArray<RecipeRoot>;
+};
+
+export const recipePackageOf = (manifest: RecipePackageManifest): RecipePackage => ({
+  name: manifest.name,
+  version: manifest.version,
+  sdkRange: Record.get(manifest.peerDependencies ?? {}, SDK_PACKAGE),
+  recipes: Record.toEntries(manifest.chernabog.recipes).map(([name, recipe]) =>
+    RecipeRoot.make({
+      package: manifest.name,
+      version: manifest.version,
+      name,
+      description: recipe.description,
+      flow: recipe.flow,
+      prompts: recipe.prompts ?? [],
+      stages: recipe.stages ?? [],
+      docs: Option.fromUndefinedOr(recipe.docs),
+    }),
+  ),
+});
+
+// A package's released versions, newest first, without prereleases: the
+// order a version supporting the repo's SDK is looked for in.
+export const newestFirst = (versions: ReadonlyArray<string>) =>
+  versions
+    .filter((version) => !version.includes("-"))
+    .toSorted((left, right) => Bun.semver.order(right, left));
+
+// Whether a package declaring this SDK range supports flows written against `sdk`.
+export const supportsSdk = (sdkRange: Option.Option<string>, sdk: string) =>
+  Option.exists(sdkRange, (range) => Bun.semver.satisfies(sdk, range));
 
 // A recipe as a person names it: `<package>/<recipe>`, or a bare `<recipe>`
 // from the official package. A scoped package keeps its scope:

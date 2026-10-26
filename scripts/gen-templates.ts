@@ -1,7 +1,5 @@
 // Writes src/platform/templates.ts: every file under templates/.chernabog/, as the text
-// `chernabog init` scaffolds, and the flows and prompts of packages/recipes/, as
-// the recipes bake. They stay real files, so the flows among them are
-// type-checked against the SDK.
+// `chernabog init` scaffolds.
 // Run after changing a template: bun scripts/gen-templates.ts
 
 import { fileURLToPath } from "node:url";

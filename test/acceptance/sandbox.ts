@@ -14,12 +14,28 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { RECIPES } from "../../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
+import { RecipePackageManifest } from "../../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
 import { scaffoldFiles } from "../../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
-import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { startFakeGitHub } from "./fake-github.ts";
+import { type FakeRegistry, startFakeRegistry } from "./fake-registry.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const RECIPES = join(ROOT, "packages/recipes");
+
+// The files of the recipes named, from packages/recipes/, as copying them writes them.
+export const recipeFiles = (names: ReadonlyArray<string>): Readonly<Record<string, string>> => {
+  const catalog = Schema.decodeSync(Schema.fromJsonString(RecipePackageManifest))(
+    readFileSync(join(RECIPES, "package.json"), "utf8"),
+  ).chernabog.recipes;
+
+  return Object.fromEntries(
+    Object.entries(catalog)
+      .filter(([name]) => names.includes(name))
+      .flatMap(([, recipe]) => [recipe.flow, ...(recipe.prompts ?? [])])
+      .map((file) => [file, readFileSync(join(RECIPES, file), "utf8")]),
+  );
+};
+
 const SLUG = "dataquail/demo";
 
 // `install: null`, as config.yaml says there is no install step.
@@ -149,15 +165,7 @@ export const openSandbox = (
   execFileSync("git", ["clone", "-q", bare, checkout]);
   const files = scaffoldFiles();
 
-  const recipes = RECIPES.filter((recipe) =>
-    (machine.recipes ?? REVIEW_LOOP).includes(recipe.name),
-  );
-
-  const baked = Object.fromEntries(
-    Object.entries(RECIPE_FILES).filter(([file]) =>
-      recipes.some((recipe) => recipe.files.includes(file)),
-    ),
-  );
+  const baked = recipeFiles(machine.recipes ?? REVIEW_LOOP);
 
   for (const [relative, content] of Object.entries({
     ...files,
@@ -182,7 +190,18 @@ export const openSandbox = (
     join(root, "claude", ".credentials.json"),
     JSON.stringify({ claudeAiOauth: { accessToken: "fake-token", expiresAt: 4102444800000 } }),
   );
-  const github = startFakeGitHub({ slug: SLUG, bare });
+  const fakeGitHub = startFakeGitHub({ slug: SLUG, bare });
+  // The registry bun installs recipe packages from; stopped with the fake GitHub.
+  const registry: FakeRegistry = startFakeRegistry();
+
+  const github = {
+    ...fakeGitHub,
+    stop: async () => {
+      await fakeGitHub.stop();
+      await registry.stop();
+    },
+  };
+
   const ghLog = join(root, "gh.log");
   const agentTokenLog = join(root, "agent-tokens.log");
   const claudeLog = join(root, "claude.log");
@@ -206,6 +225,9 @@ export const openSandbox = (
     FAKE_ORCA_STATE: join(root, "orca"),
     FAKE_ORCA_LOG: join(root, "orca.log"),
     CHERNABOG_USAGE_URL: `${github.url}/api/oauth/usage`,
+    // bun installs from the fake registry, into a cache of the sandbox's own.
+    NPM_CONFIG_REGISTRY: registry.url,
+    BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"),
   };
 
   const [program = "chernabog", ...programArgs] = chernabogCommand();
@@ -265,6 +287,7 @@ export const openSandbox = (
     machineConfig,
     editMachine,
     github,
+    registry,
     cli,
     runCli,
     claudeCalls,

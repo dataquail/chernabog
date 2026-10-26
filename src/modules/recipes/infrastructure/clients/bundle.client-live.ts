@@ -1,8 +1,7 @@
-// What this binary bundles for a repo's .chernabog/: the recipes and the
-// scaffold generated from templates/ (src/templates.ts), the config schema
-// generated from this binary's RepoConfigFile, and the pins of its packages.
+// What this binary bundles for a repo's .chernabog/: the scaffold generated
+// from templates/ (src/platform/templates.ts), the config schema generated
+// from this binary's RepoConfigFile, and the pins of its packages.
 
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,7 +17,7 @@ import {
   withBundledPins,
   writtenForNewer,
 } from "../../../../platform/flow-deps.ts";
-import { RECIPE_FILES, TEMPLATES } from "../../../../platform/templates.ts";
+import { TEMPLATES } from "../../../../platform/templates.ts";
 import { RepoConfigFile } from "../../../../repo-config.ts";
 import { BundleClient } from "../../domain/ports/clients/bundle.client.ts";
 import { ScaffoldRefused } from "../../domain/recipe/recipe.errors.ts";
@@ -59,14 +58,6 @@ export const BundleClientLive = Layer.succeed(
   BundleClient,
   BundleClient.of({
     sdkVersion: BUNDLED_SDK,
-    // The catalog names only files templates/recipes/ has, so one missing is a bug.
-    recipeFile: (file) =>
-      Effect.fromOption(
-        Option.map(
-          Arr.findFirst(Object.entries(RECIPE_FILES), ([name]) => name === file),
-          ([, text]) => text,
-        ),
-      ).pipe(Effect.orDie),
     scaffold: Effect.sync(() => {
       const { "package.json": manifest, ...files } = scaffoldFiles();
 
