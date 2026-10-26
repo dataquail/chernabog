@@ -315,7 +315,6 @@ describe("diffing against the recipes", () => {
         expect(lines.slice(2)).toEqual([
           `.chernabog/prompts/review.md: the same as the review recipe in @chernabog/recipes@${V}`,
           `.chernabog/flows/re-review.ts: the same as the re-review recipe in @chernabog/recipes@${V}`,
-          `.chernabog/prompts/review.md: the same as the re-review recipe in @chernabog/recipes@${V}`,
           ".chernabog/flows/security.ts: from no recipe",
         ]);
       }),

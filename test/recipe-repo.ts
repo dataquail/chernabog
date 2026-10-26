@@ -17,6 +17,7 @@ import {
   RecipePackagesClientFake,
 } from "../src/modules/recipes/infrastructure/clients/recipe-packages.client-fake.ts";
 import { TextDiffClientFake } from "../src/modules/recipes/infrastructure/clients/text-diff.client-fake.ts";
+import { FlowImportsRepositoryFake } from "../src/modules/recipes/infrastructure/repositories/flow-imports.repository-fake.ts";
 
 export const SCAFFOLD = {
   files: { "config.yaml": "flows: {}\n", "config.schema.json": "{ schema }\n" },
@@ -81,7 +82,16 @@ export const manifestOf = (stored: Readonly<Record<string, string>>) =>
 
 // A checkout at /repo holding `files`, by path under it, with @chernabog/recipes
 // 0.1.0 installed unless the files give a package.json of their own.
-export const recipeRepo = (files: Record<string, string>, offline = false) => {
+export const recipeRepo = (
+  files: Record<string, string>,
+  offline = false,
+  imported: Readonly<Record<string, string>> = {},
+) => {
+  // config.yaml's flows.<name>.from, by `/repo/<name>`.
+  const imports = new Map(
+    Object.entries(imported).map(([flow, from]) => [`/repo/${flow}`, from] as const),
+  );
+
   const stored: Record<string, string> = Object.fromEntries(
     Object.entries({
       ".chernabog/package.json": manifestWith({ "@chernabog/recipes": "0.1.0" }),
@@ -91,7 +101,9 @@ export const recipeRepo = (files: Record<string, string>, offline = false) => {
 
   return {
     stored,
+    imports,
     layer: Layer.mergeAll(
+      FlowImportsRepositoryFake(imports),
       ChernabogDirClientFake(stored),
       BundleClientFake(SCAFFOLD),
       RecipePackagesClientFake(REGISTRY, stored, offline),

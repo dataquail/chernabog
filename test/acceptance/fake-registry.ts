@@ -2,7 +2,8 @@
 // run down the real path (bun add, bun info, .npmrc auth) with no network.
 // @chernabog/recipes is packed from packages/recipes/, at 0.1.0 and at 0.2.0,
 // which changes the implement recipe; @acme/recipes, a company's own
-// package, answers only with its token. @chernabog/sdk and effect are stubs
+// package, answers only with its token, at 1.0.0 and at 2.0.0, which is
+// written for an SDK this binary doesn't run. @chernabog/sdk and effect are stubs
 // holding only their package.json: the loader always substitutes the
 // binary's own copies, so nothing reads what's installed of them.
 
@@ -72,6 +73,24 @@ export default defineFlow({
 });
 `;
 
+const acmeRecipes = (version: string, sdkRange: string): Release => ({
+  manifest: {
+    name: "@acme/recipes",
+    version,
+    peerDependencies: { "@chernabog/sdk": sdkRange },
+    chernabog: {
+      recipes: {
+        deploy: {
+          description: "Deploys what's labelled deploy",
+          flow: "flows/deploy.ts",
+          prompts: ["prompts/deploy.md"],
+        },
+      },
+    },
+  },
+  files: { "flows/deploy.ts": ACME_DEPLOY, "prompts/deploy.md": "Deploy {{repo}}.\n" },
+});
+
 const PACKAGES = {
   "@chernabog/recipes": {
     "0.1.0": officialRecipes("0.1.0", () => {}),
@@ -80,23 +99,9 @@ const PACKAGES = {
     }),
   },
   "@acme/recipes": {
-    "1.0.0": {
-      manifest: {
-        name: "@acme/recipes",
-        version: "1.0.0",
-        peerDependencies: { "@chernabog/sdk": `^${BUNDLED_SDK}` },
-        chernabog: {
-          recipes: {
-            deploy: {
-              description: "Deploys what's labelled deploy",
-              flow: "flows/deploy.ts",
-              prompts: ["prompts/deploy.md"],
-            },
-          },
-        },
-      },
-      files: { "flows/deploy.ts": ACME_DEPLOY, "prompts/deploy.md": "Deploy {{repo}}.\n" },
-    },
+    "1.0.0": acmeRecipes("1.0.0", `^${BUNDLED_SDK}`),
+    // Written for an SDK older than any this binary runs.
+    "2.0.0": acmeRecipes("2.0.0", "^0.5.0"),
   },
   "@chernabog/sdk": { [BUNDLED_SDK]: stub("@chernabog/sdk", BUNDLED_SDK) },
   effect: { [EFFECT_VERSION]: stub("effect", EFFECT_VERSION) },

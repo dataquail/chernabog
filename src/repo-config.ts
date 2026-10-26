@@ -51,7 +51,7 @@ import { describeNewerStamp, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { FileBusy, updateFile } from "./platform/file-lock.ts";
-import { checkCompatibility } from "./platform/flow-deps.ts";
+import { checkRunnable } from "./platform/flow-deps.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 
@@ -101,9 +101,16 @@ const Runners = Schema.Array(Schema.String).annotate({
     "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config.",
 });
 
+// A flow imported from a recipe package rather than copied into flows/.
+const FlowFrom = Schema.String.annotate({
+  description:
+    'Runs this flow from a recipe package installed in .chernabog/ (its package.json\'s dependencies), instead of a file in flows/: "<package>/<recipe>", such as "@chernabog/recipes/review". The package\'s team owns it; a prompt in prompts/ overrides the package\'s. chernabog recipes eject copies it in.',
+});
+
 const RepoFlowSettings = Schema.Struct({
   ...FlowSettings.fields,
   runners: Schema.optionalKey(Runners),
+  from: Schema.optionalKey(FlowFrom),
 });
 
 const LimitsFile = Schema.Struct({
@@ -957,7 +964,7 @@ export const repoEnvironment = (checkout: string) =>
 // dropped.
 export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configDir: string) =>
   Effect.gen(function* () {
-    yield* checkCompatibility(configDir);
+    yield* checkRunnable(configDir);
     const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
 
     return yield* mergeRepoConfig(

@@ -8,7 +8,7 @@ import { TextDiffClient } from "../domain/ports/clients/text-diff.client.ts";
 import { planCopyUpdate, type Unrecorded } from "../domain/recipe/copy-update.value-object.ts";
 import { RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { type RecipeRoot } from "../domain/recipe/recipe.root.ts";
-import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
+import { type Copy, RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { SDK_PACKAGE } from "../domain/recipe/recipe-package.value-object.ts";
 import {
   copiedOf,
@@ -75,8 +75,7 @@ const movePackages = (root: string, manifest: RepoManifest, sdk: string) =>
 // the file's new record, if either changed.
 const updateFile = (
   root: string,
-  recipe: RecipeRoot,
-  file: string,
+  { file, packageFile, recipe }: Copy,
   record: Option.Option<CopiedRecord>,
   unrecorded: Unrecorded,
 ) =>
@@ -85,8 +84,20 @@ const updateFile = (
     const packages = yield* RecipePackagesClient;
     const differ = yield* TextDiffClient;
     const path = `.chernabog/${file}`;
-    const target = { from: `${recipe.package}/${recipe.name}`, version: recipe.version };
-    const theirs = yield* packages.file(root, recipe.package, file);
+
+    const target: CopiedRecord = {
+      from: `${recipe.package}/${recipe.name}`,
+      version: recipe.version,
+      ...Option.match(
+        Option.liftPredicate(packageFile, (found) => found !== file),
+        {
+          onNone: () => ({}),
+          onSome: (found) => ({ file: found }),
+        },
+      ),
+    };
+
+    const theirs = yield* packages.file(root, recipe.package, packageFile);
 
     if (Option.isNone(theirs)) {
       return Option.none();
@@ -134,7 +145,7 @@ const updateFile = (
       case "merge": {
         const base = yield* Option.match(record, {
           onNone: () => Effect.succeed(Option.none<string>()),
-          onSome: (found) => packages.fileAt(root, recipe.package, found.version, file),
+          onSome: (found) => packages.fileAt(root, recipe.package, found.version, packageFile),
         });
 
         if (Option.isSome(ours) && Option.contains(base, ours.value)) {
@@ -197,31 +208,30 @@ export const updateRecipesUseCase = Effect.fn("updateRecipesUseCase")(function* 
   const records = copiedOf(manifest);
   const flows = (yield* dir.list(root, ".chernabog/flows")).map((entry) => `flows/${entry}`);
 
-  const recipes: ReadonlyArray<RecipeRoot> = yield* Option.match(
-    Option.liftPredicate(names, (named) => named.length > 0),
+  const named = yield* Option.match(
+    Option.liftPredicate(names, (some) => some.length > 0),
     {
-      onSome: (named) => Effect.fromResult(RecipeRootOps.allNamed(installed, named)),
-      onNone: () =>
-        Effect.succeed(RecipeRootOps.copiedIn(installed, (file) => flows.includes(file))),
+      onSome: (some) => Effect.asSome(Effect.fromResult(RecipeRootOps.allNamed(installed, some))),
+      onNone: () => Effect.succeed(Option.none<ReadonlyArray<RecipeRoot>>()),
     },
   );
 
   const changes: Array<Change> = [];
   const recorded: Record<string, Option.Option<CopiedRecord>> = {};
-  const done = new Set<string>();
 
-  for (const recipe of recipes) {
-    for (const file of RecipeRootOps.filesOf(recipe).filter((each) => !done.has(each))) {
-      done.add(file);
+  for (const copy of RecipeRootOps.copiesIn(
+    installed,
+    records,
+    (file) => flows.includes(file),
+    named,
+  )) {
+    for (const updated of Option.toArray(
+      yield* updateFile(root, copy, Record.get(records, copy.file), unrecorded),
+    )) {
+      recorded[copy.file] = Option.some(updated.record);
 
-      for (const updated of Option.toArray(
-        yield* updateFile(root, recipe, file, Record.get(records, file), unrecorded),
-      )) {
-        recorded[file] = Option.some(updated.record);
-
-        for (const change of Option.toArray(updated.change)) {
-          changes.push(change);
-        }
+      for (const change of Option.toArray(updated.change)) {
+        changes.push(change);
       }
     }
   }

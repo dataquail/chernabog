@@ -40,6 +40,38 @@ export class RecipesAdded extends Schema.Class<RecipesAdded, { readonly brand: "
   files: Schema.Array(RecipeWrite),
 }) {}
 
+// One flow importing recipes touched: imported, already imported, or kept as
+// it was, because the repo has a flow of that name or imports it from
+// elsewhere.
+export const RecipeImport = Schema.Struct({
+  flow: Schema.String,
+  recipe: Schema.String,
+  version: Schema.String,
+  outcome: Schema.Literals(["imported", "present", "kept"]),
+  // Why it was kept: the file of that name, or the other recipe it imports.
+  keptFor: Schema.Option(Schema.String),
+});
+
+export class RecipesImported extends Schema.Class<
+  RecipesImported,
+  { readonly brand: "RecipesImported" }
+>("RecipesImported")({
+  flows: Schema.Array(RecipeImport),
+  // The packages moved to dependencies, which a snapshot installs.
+  dependencies: Schema.Array(Schema.String),
+}) {}
+
+// An imported flow copied into the repo: the files written, and the ones it
+// kept because the repo has its own.
+export class RecipeEjected extends Schema.Class<RecipeEjected, { readonly brand: "RecipeEjected" }>(
+  "RecipeEjected",
+)({
+  flow: Schema.String,
+  recipe: Schema.String,
+  version: Schema.String,
+  files: Schema.Array(RecipeWrite),
+}) {}
+
 // A recipe package made sure of in .chernabog/: added at the newest version
 // for the repo's SDK, or already declared.
 export class RecipePackageAdded extends Schema.Class<

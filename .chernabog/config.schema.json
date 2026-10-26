@@ -245,6 +245,10 @@
               "type": "string"
             },
             "description": "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config."
+          },
+          "from": {
+            "type": "string",
+            "description": "Runs this flow from a recipe package installed in .chernabog/ (its package.json's dependencies), instead of a file in flows/: \"<package>/<recipe>\", such as \"@chernabog/recipes/review\". The package's team owns it; a prompt in prompts/ overrides the package's. chernabog recipes eject copies it in."
           }
         },
         "additionalProperties": true

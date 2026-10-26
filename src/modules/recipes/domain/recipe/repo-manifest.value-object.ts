@@ -14,7 +14,13 @@ import { SDK_PACKAGE } from "./recipe-package.value-object.ts";
 
 // Where a copied file came from: the recipe, as `<package>/<recipe>`, and
 // the package's version.
-export const CopiedRecord = Schema.Struct({ from: Schema.String, version: Schema.String });
+export const CopiedRecord = Schema.Struct({
+  from: Schema.String,
+  version: Schema.String,
+  // The file's path in the package, where it isn't the same as in the repo:
+  // a flow ejected under another name than its recipe's.
+  file: Schema.optionalKey(Schema.String),
+});
 
 export type CopiedRecord = typeof CopiedRecord.Type;
 
@@ -127,4 +133,21 @@ export const withCopied = (
     );
 
     return `${yield* Result.mapError(Schema.encodeResult(PackageText)(written), invalid)}\n`;
+  });
+
+// The manifest without a package in one of its lists, so installing it into
+// the other moves it there.
+export const withoutDependency = (text: string, name: string, kind: DependencyKind) =>
+  Result.gen(function* () {
+    const file = yield* Result.mapError(Schema.decodeResult(PackageText)(text), invalid);
+
+    const list = Option.getOrElse(
+      Option.flatMap(Record.get(file, kind), Schema.decodeUnknownOption(Dependencies)),
+      () => ({}),
+    );
+
+    return `${yield* Result.mapError(
+      Schema.encodeResult(PackageText)({ ...file, [kind]: Record.remove(list, name) }),
+      invalid,
+    )}\n`;
   });

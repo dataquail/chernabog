@@ -94,7 +94,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   });
 
   const flowLine = (flow: DaemonStatus["repos"][number]["flows"][number]) => {
-    const name = `${flow.name}${asSuffix(Option.fromUndefinedOr(flow.persona))}`;
+    const name = `${flow.name}${asSuffix(Option.fromUndefinedOr(flow.persona))}${suffix(Option.fromUndefinedOr(flow.source), " · ")}`;
 
     if (!flow.enabled) {
       return `  ${name}: off${suffix(

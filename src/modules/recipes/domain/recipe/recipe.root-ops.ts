@@ -14,6 +14,7 @@ import {
   parseRecipeRef,
   type RecipePackage,
 } from "./recipe-package.value-object.ts";
+import { type CopiedRecord } from "./repo-manifest.value-object.ts";
 
 const docsOf = (recipe: RecipeRoot) => recipe.docs;
 
@@ -81,7 +82,64 @@ const copiedIn = (packages: ReadonlyArray<RecipePackage>, has: (file: string) =>
     (left, right) => left.flow === right.flow,
   );
 
+// One file a repo copied from a recipe: where it is under .chernabog/, and
+// where in the package it came from.
+export type Copy = {
+  readonly file: string;
+  readonly packageFile: string;
+  readonly recipe: RecipeRoot;
+};
+
+// Every file a repo copied from the installed recipes, each once: the files
+// of the recipes whose flow it has, and the files recorded as copied, such as
+// a flow ejected under another name. With `only`, just those recipes'.
+const copiesIn = (
+  packages: ReadonlyArray<RecipePackage>,
+  records: Readonly<Record<string, CopiedRecord>>,
+  has: (file: string) => boolean,
+  only: Option.Option<ReadonlyArray<RecipeRoot>> = Option.none(),
+): ReadonlyArray<Copy> => {
+  const wanted = (recipe: RecipeRoot) =>
+    Option.match(only, {
+      onNone: () => true,
+      onSome: (chosen) =>
+        chosen.some((each) => each.package === recipe.package && each.name === recipe.name),
+    });
+
+  const byFlow = Option.match(only, {
+    onNone: () => copiedIn(packages, has),
+    onSome: (chosen) => chosen,
+  }).flatMap((recipe) => filesOf(recipe).map((file) => ({ file, packageFile: file, recipe })));
+
+  // A recorded flow counts while the repo has it; a deleted one isn't brought back.
+  const byRecord = Object.entries(records)
+    .filter(([file]) => !file.startsWith("flows/") || has(file))
+    .flatMap(([file, record]) =>
+      Option.toArray(
+        Option.map(Result.getSuccess(named(packages, record.from)), (recipe): Copy => ({
+          file,
+          packageFile: Option.getOrElse(Option.fromUndefinedOr(record.file), () => file),
+          recipe,
+        })),
+      ),
+    );
+
+  return Arr.dedupeWith(
+    [...byFlow, ...byRecord].filter((copy) => wanted(copy.recipe)),
+    (left, right) => left.file === right.file,
+  );
+};
+
+// A recipe as `<package>/<recipe>`, however a person named it.
+const fullRef = (text: string) => {
+  const ref = parseRecipeRef(text);
+
+  return `${ref.package}/${ref.name}`;
+};
+
 export const RecipeRootOps = {
+  fullRef,
+  copiesIn,
   docsOf,
   refOf,
   filesOf,

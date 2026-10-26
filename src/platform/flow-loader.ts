@@ -4,6 +4,11 @@
 // always one `effect` version and the binary chooses it, for packages in
 // node_modules that import it too. Other npm dependencies resolve from
 // .chernabog/node_modules, installed from .chernabog/package.json.
+//
+// A flow is a file in .chernabog/flows/, named for it, or imported from a
+// recipe package: config.yaml's `flows.<name>.from: "<package>/<recipe>"`
+// names the recipe whose flow runs under that name, from
+// .chernabog/node_modules. A name that is both is refused.
 
 import * as Sdk from "@chernabog/sdk";
 import * as Arr from "effect/Array";
@@ -14,6 +19,7 @@ import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { parseRecipeRef, RecipePackageManifest } from "../kernel/recipe-package.value-object.ts";
 import { authorsPullRequests, reviewsPullRequests } from "../kernel/reviewer-pool.value-object.ts";
 import { effectModules, effectRoot } from "./effect-modules.ts";
 
@@ -96,7 +102,7 @@ const flowName = (file: string) =>
   );
 
 // Each flow module in <configDir>/flows/, as [name, file], in name order.
-const flowFiles = (configDir: string) =>
+const localFlowFiles = (configDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const directory = `${configDir}/flows`;
@@ -120,10 +126,182 @@ const flowFiles = (configDir: string) =>
     ),
   );
 
+// Where an imported flow comes from: the recipe package, as installed, and
+// the recipe in it.
+export type FlowSource = {
+  readonly package: string;
+  readonly version: string;
+  readonly recipe: string;
+  // The package's directory under .chernabog/node_modules.
+  readonly dir: string;
+};
+
+// How a flow's source reads to a person: `@acme/recipes@2.1.0`.
+export const describeSource = (source: FlowSource) => `${source.package}@${source.version}`;
+
+// What the loader reads of config.yaml: the flows imported from packages.
+const ImportsFile = Schema.Struct({
+  flows: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Record(
+        Schema.String,
+        Schema.NullOr(Schema.Struct({ from: Schema.optionalKey(Schema.String) })),
+      ),
+    ),
+  ),
+});
+
+const PackageJson = Schema.fromJsonString(RecipePackageManifest);
+
+// config.yaml's `flows.<name>.from`, by flow name; none without config.yaml.
+export const flowImports = (configDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = `${configDir}/config.yaml`;
+
+    if (!(yield* fs.exists(path))) {
+      return new Map<string, string>();
+    }
+
+    const text = yield* fs.readFileString(path);
+
+    // Read only for `from`; repo-config.ts decodes the whole file.
+    const file = yield* Effect.try({
+      try: () => Schema.decodeUnknownEffect(ImportsFile)(Bun.YAML.parse(text)),
+      catch: (error) => new LoadError({ path, message: Sdk.describeError(error) }),
+    }).pipe(
+      Effect.flatten,
+      Effect.catchTag("SchemaError", (error) =>
+        Effect.fail(new LoadError({ path, message: error.message })),
+      ),
+    );
+
+    return new Map(
+      Object.entries(file.flows ?? {}).flatMap(([name, settings]) =>
+        Option.toArray(
+          Option.map(Option.fromUndefinedOr(settings?.from), (from) => [name, from] as const),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(new LoadError({ path: configDir, message: error.message })),
+    ),
+  );
+
+// The flow module `flows.<name>.from` names, and where it comes from; fails,
+// naming the package, when it or the recipe isn't installed.
+const resolveImport = (configDir: string, name: string, from: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const ref = parseRecipeRef(from);
+    const dir = `${configDir}/node_modules/${ref.package}`;
+    const where = `flows.${name}.from in config.yaml names ${from}`;
+
+    if (!(yield* fs.exists(`${dir}/package.json`))) {
+      return yield* new LoadError({
+        path: `${configDir}/config.yaml`,
+        message: `${where}, but ${ref.package} isn't installed in .chernabog/; add it to package.json's dependencies (chernabog recipes add --import ${from} does), install it there and commit the lockfile`,
+      });
+    }
+
+    const manifest = yield* Schema.decodeEffect(PackageJson)(
+      yield* fs.readFileString(`${dir}/package.json`),
+    ).pipe(
+      Effect.mapError(
+        (error) =>
+          new LoadError({
+            path: `${dir}/package.json`,
+            message: `${where}, but ${ref.package} isn't a recipe package: ${error.message}`,
+          }),
+      ),
+    );
+
+    const recipe = yield* Effect.fromOption(
+      Option.fromUndefinedOr(manifest.chernabog.recipes[ref.name]),
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new LoadError({
+            path: `${dir}/package.json`,
+            message: `${where}, but ${ref.package} ${manifest.version} has no recipe named ${ref.name} (it has: ${Object.keys(manifest.chernabog.recipes).join(", ")})`,
+          }),
+      ),
+    );
+
+    const source: FlowSource = {
+      package: ref.package,
+      version: manifest.version,
+      recipe: ref.name,
+      dir,
+    };
+
+    return { path: `${dir}/${recipe.flow}`, source };
+  }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(new LoadError({ path: configDir, message: error.message })),
+    ),
+  );
+
+type FlowFile = {
+  readonly name: string;
+  readonly path: string;
+  readonly source: Option.Option<FlowSource>;
+};
+
+// Every flow, local or imported, in name order. A name that is both is refused.
+const flowFiles = (configDir: string) =>
+  Effect.gen(function* () {
+    const local = yield* localFlowFiles(configDir);
+    const imports = yield* flowImports(configDir);
+
+    const files: Array<FlowFile> = local.map(([name, path]) => ({
+      name,
+      path,
+      source: Option.none(),
+    }));
+
+    for (const [name, from] of imports) {
+      for (const [, path] of local.filter(([localName]) => localName === name)) {
+        return yield* new LoadError({
+          path,
+          message: `flows.${name} in config.yaml imports ${from}, and ${path.slice(configDir.length + 1)} is a flow of the same name; remove the file, or the from (chernabog recipes eject ${name} copies the imported flow in)`,
+        });
+      }
+
+      const resolved = yield* resolveImport(configDir, name, from);
+      files.push({ name, path: resolved.path, source: Option.some(resolved.source) });
+    }
+
+    return Arr.sort(
+      files,
+      Order.mapInput(Order.String, (file: FlowFile) => file.name),
+    );
+  });
+
+// Where each imported flow comes from, by name, without importing any code.
+export const flowSources = (configDir: string) =>
+  Effect.map(
+    flowFiles(configDir),
+    (files) =>
+      new Map(
+        files.flatMap((file) =>
+          Option.toArray(Option.map(file.source, (source) => [file.name, source] as const)),
+        ),
+      ),
+  );
+
+// The sources of the flows loadFlows imported, by the flow it exported.
+const sources = new WeakMap<Sdk.Flow, FlowSource>();
+
+// Where a loaded flow comes from: its package, for one imported; none for a
+// flow in the repo.
+export const flowSourceOf = (flow: Sdk.Flow) => Option.fromUndefinedOr(sources.get(flow));
+
 // The names of the flows in <configDir>/flows/, without importing them, so
 // listing an untrusted .chernabog/ runs none of its code.
 export const flowNames = (configDir: string) =>
-  Effect.map(flowFiles(configDir), (files) => files.map(([name]) => name));
+  Effect.map(flowFiles(configDir), (files) => files.map((file) => file.name));
 
 // The flows in <configDir>/flows/ whose name and code `test` picks. Their code
 // is read, not imported, so it runs nothing; none when the folder can't be read.
@@ -132,11 +310,11 @@ const flowsWhere = (configDir: string, test: (name: string, source: string) => b
     const fs = yield* FileSystem.FileSystem;
     const picked: Array<string> = [];
 
-    for (const [name, path] of yield* flowFiles(configDir)) {
-      const source = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+    for (const file of yield* flowFiles(configDir)) {
+      const source = yield* fs.readFileString(file.path).pipe(Effect.orElseSucceed(() => ""));
 
-      if (test(name, source)) {
-        picked.push(name);
+      if (test(file.name, source)) {
+        picked.push(file.name);
       }
     }
 
@@ -149,13 +327,28 @@ export const authoringFlows = (configDir: string) => flowsWhere(configDir, autho
 // The flows that review the pull requests asked of their persona.
 export const reviewingFlows = (configDir: string) => flowsWhere(configDir, reviewsPullRequests);
 
-// Every flow in <configDir>/flows/, by file name.
+// Every flow, by name: those in <configDir>/flows/, by file name, and those
+// imported from recipe packages, by the name config.yaml gives them. An
+// imported flow is a copy of the package's module, so two names importing one
+// recipe each keep their own source.
 export const loadFlows = (configDir: string) =>
   Effect.gen(function* () {
     const flows = new Map<string, Sdk.Flow>();
 
-    for (const [name, path] of yield* flowFiles(configDir)) {
-      flows.set(name, yield* importDefault(path, FlowDefinition, FLOW_EXPORT));
+    for (const file of yield* flowFiles(configDir)) {
+      const loaded = yield* importDefault(file.path, FlowDefinition, FLOW_EXPORT);
+
+      const flow = Option.match(file.source, {
+        onNone: () => loaded,
+        onSome: (source) => {
+          const imported: Sdk.Flow = { ...loaded };
+          sources.set(imported, source);
+
+          return imported;
+        },
+      });
+
+      flows.set(file.name, flow);
     }
 
     return flows;
@@ -163,20 +356,21 @@ export const loadFlows = (configDir: string) =>
 
 export type StageModule = { readonly kind: "effect" | "shell"; readonly path: string };
 
-// A step is <name>.ts (an Effect step) or an executable <name> (a shell step).
-export const findStage = (configDir: string, name: string) =>
+// A step is <name>.ts (an Effect step) or an executable <name> (a shell step),
+// in <dir>/stages/.
+const stageIn = (dir: string, name: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
     for (const extension of MODULE_EXTENSIONS) {
-      const path = `${configDir}/stages/${name}${extension}`;
+      const path = `${dir}/stages/${name}${extension}`;
 
       if (yield* fs.exists(path)) {
         return Option.some<StageModule>({ kind: "effect", path });
       }
     }
 
-    const path = `${configDir}/stages/${name}`;
+    const path = `${dir}/stages/${name}`;
 
     if (yield* fs.exists(path)) {
       return Option.some<StageModule>({ kind: "shell", path });
@@ -184,6 +378,21 @@ export const findStage = (configDir: string, name: string) =>
 
     return Option.none<StageModule>();
   }).pipe(Effect.orElseSucceed(() => Option.none<StageModule>()));
+
+// A step, in the repo's .chernabog/stages/, or, for a flow imported from a
+// package, in the package's stages/ after it.
+export const findStage = (configDir: string, name: string, packageDir = Option.none<string>()) =>
+  Effect.gen(function* () {
+    for (const dir of [configDir, ...Option.toArray(packageDir)]) {
+      const found = yield* stageIn(dir, name);
+
+      if (Option.isSome(found)) {
+        return found;
+      }
+    }
+
+    return Option.none<StageModule>();
+  });
 
 export const loadStage = (path: string) =>
   importDefault(path, StageDefinition, "defineStage({ input, output, run })");

@@ -7,7 +7,8 @@ describe("the SDK versions this binary runs", () => {
   test("say which side is behind for a version outside them", () => {
     expect(sdkSupport("0.5.9")).toBe("older");
     expect(sdkSupport("0.6.3")).toBe("supported");
-    expect(sdkSupport("0.7.0")).toBe("newer");
+    expect(sdkSupport("0.7.2")).toBe("supported");
+    expect(sdkSupport("0.8.0")).toBe("newer");
     expect(sdkSupport("1.0.0")).toBe("newer");
   });
 

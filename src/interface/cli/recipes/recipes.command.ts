@@ -1,17 +1,22 @@
 import * as Arr from "effect/Array";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
+import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { addRecipesUseCase } from "../../../modules/recipes/use-cases/add-recipes.use-case.ts";
 import { diffRecipesUseCase } from "../../../modules/recipes/use-cases/diff-recipes.use-case.ts";
+import { ejectRecipeUseCase } from "../../../modules/recipes/use-cases/eject-recipe.use-case.ts";
+import { importRecipesUseCase } from "../../../modules/recipes/use-cases/import-recipes.use-case.ts";
 import { listRecipesUseCase } from "../../../modules/recipes/use-cases/list-recipes.use-case.ts";
 import {
+  type RecipeEjected,
   type RecipeList,
   type RecipesAdded,
   type RecipesDiff,
+  type RecipesImported,
   type RecipesUpdated,
   type RepoUpgraded,
 } from "../../../modules/recipes/use-cases/recipe.result.ts";
@@ -116,6 +121,52 @@ const recipesList = Command.make(
   ),
 );
 
+const describeImported = (imported: RecipesImported) => [
+  ...imported.flows.map(({ flow, keptFor, outcome, recipe, version }) => {
+    switch (outcome) {
+      case "imported": {
+        return `imported ${flow} from the ${recipe} recipe, ${version} (flows.${flow}.from in .chernabog/config.yaml)`;
+      }
+
+      case "present": {
+        return `${flow} already imports the ${recipe} recipe`;
+      }
+
+      case "kept": {
+        return `kept ${flow}, which is ${Option.getOrElse(keptFor, () => "")} already; remove it, or name the flow you mean`;
+      }
+    }
+  }),
+  ...imported.dependencies.map(
+    (name) => `.chernabog/package.json: ${name} in dependencies, which a snapshot installs`,
+  ),
+];
+
+// Imports the recipes chosen into the repo at `root`, and the lines that say so.
+const importRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>) =>
+  Effect.gen(function* () {
+    const names = yield* chooseRecipes(root, named);
+
+    if (names.length === 0) {
+      return [];
+    }
+
+    return describeImported(yield* importRecipesUseCase(root, names));
+  });
+
+const addOrImport = (
+  importing: boolean,
+  root: string,
+  named: Option.Option<ReadonlyArray<string>>,
+) =>
+  Effect.gen(function* () {
+    if (importing) {
+      return yield* importRecipes(root, named);
+    }
+
+    return yield* bakeRecipes(root, named);
+  });
+
 const recipesAdd = Command.make(
   "add",
   {
@@ -125,13 +176,19 @@ const recipesAdd = Command.make(
       ),
       Argument.variadic(),
     ),
+    importing: Flag.Boolean("import").pipe(
+      Flag.withDescription(
+        "Import the recipes instead of copying them: each runs from its package, which its team owns, under flows.<name>.from in config.yaml, and the package moves to dependencies",
+      ),
+      Flag.withDefault(false),
+    ),
   },
-  ({ names }) =>
+  ({ importing, names }) =>
     Effect.gen(function* () {
-      const lines = yield* bakeRecipes(
-        yield* rootOf(Option.none()),
-        Option.liftPredicate(names, Arr.isReadonlyArrayNonEmpty),
-      );
+      const root = yield* rootOf(Option.none());
+      const named = Option.liftPredicate(names, Arr.isReadonlyArrayNonEmpty);
+
+      const lines = yield* addOrImport(importing, root, named);
 
       if (lines.length === 0) {
         return yield* Console.log("Nothing added");
@@ -144,7 +201,42 @@ const recipesAdd = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Copy recipes into this repo's .chernabog/, never overwriting a file it has, and record the version each came from",
+    "Copy recipes into this repo's .chernabog/, never overwriting a file it has, and record the version each came from; or, with --import, run them from their package",
+  ),
+);
+
+const describeEjected = (ejected: RecipeEjected) => [
+  ...ejected.files.map(({ file, outcome }) =>
+    Option.getOrElse(
+      Option.liftPredicate(
+        `kept ${file}, which the repo has already and which overrode the package's`,
+        () => outcome === "kept",
+      ),
+      () => `wrote ${file} (${ejected.recipe} recipe, ${ejected.version})`,
+    ),
+  ),
+  `removed flows.${ejected.flow}.from from .chernabog/config.yaml; ${ejected.flow} now runs from .chernabog/flows/, under the same name and settings`,
+];
+
+const recipesEject = Command.make(
+  "eject",
+  {
+    flow: Argument.String("flow").pipe(
+      Argument.withDescription("The imported flow to copy in, by its name in config.yaml"),
+    ),
+  },
+  ({ flow }) =>
+    Effect.gen(function* () {
+      yield* printLines(
+        describeEjected(yield* ejectRecipeUseCase(yield* rootOf(Option.none()), flow)),
+      );
+      yield* Console.log(
+        "The flow is the repo's own now: edit it as you like. chernabog recipes diff shows your edits, and chernabog recipes update merges the package's later changes into them. Commit and merge it to the base branch, then chernabog trust the repo.",
+      );
+    }),
+).pipe(
+  Command.withDescription(
+    "Copy an imported flow, with its prompts and steps, into this repo's .chernabog/, so the repo owns it from now on",
   ),
 );
 
@@ -303,5 +395,12 @@ export const recipesCommand = Command.make("recipes", {}, () => Effect.void).pip
   Command.withDescription(
     "Complete flows from recipe packages, copied into a repo as code it then owns",
   ),
-  Command.withSubcommands([recipesList, recipesAdd, recipesDiff, recipesUpdate, recipesUpgrade]),
+  Command.withSubcommands([
+    recipesList,
+    recipesAdd,
+    recipesEject,
+    recipesDiff,
+    recipesUpdate,
+    recipesUpgrade,
+  ]),
 );

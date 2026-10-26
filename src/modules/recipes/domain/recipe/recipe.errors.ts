@@ -44,3 +44,18 @@ export class RecipePackageUnavailable extends Schema.TaggedError<
   RecipePackageUnavailable,
   { readonly brand: "RecipePackageUnavailable" }
 >()("RecipePackageUnavailable", { package: Schema.String, message: Schema.String }) {}
+
+// A flow named for ejecting that config.yaml doesn't import.
+export class FlowNotImported extends Schema.TaggedError<
+  FlowNotImported,
+  { readonly brand: "FlowNotImported" }
+>()("FlowNotImported", { flow: Schema.String, imported: Schema.Array(Schema.String) }) {
+  public override get message() {
+    const imported = Option.getOrElse(
+      Option.liftPredicate(this.imported.join(", "), (names) => names.length > 0),
+      () => "none",
+    );
+
+    return `config.yaml doesn't import a flow named ${this.flow} (it imports: ${imported})`;
+  }
+}
