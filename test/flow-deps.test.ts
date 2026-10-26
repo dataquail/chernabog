@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 
-import { supportsSdk } from "../src/kernel/sdk-support.value-object.ts";
+import { BUNDLED_SDK_VERSION, supportsSdk } from "../src/kernel/sdk-support.value-object.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import {
   BUNDLED_SDK,
@@ -85,6 +85,10 @@ describe("flow dependencies", () => {
 describe("the SDK this binary bundles", () => {
   test("is one it runs", () => {
     expect(supportsSdk(BUNDLED_SDK)).toBe(true);
+  });
+
+  test("is the version the kernel declares, which release-please moves with it", () => {
+    expect(BUNDLED_SDK_VERSION).toBe(BUNDLED_SDK);
   });
 
   test("a flow's imports of it are checked by name, through namespaces too", () => {
