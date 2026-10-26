@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import * as Record from "effect/Record";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
+import { BUNDLED_SDK_VERSION } from "../../../../kernel/sdk-support.value-object.ts";
 import {
   type WorkflowOutcome,
   WorkflowsClient,
@@ -33,7 +34,7 @@ export const fakeEngine = (): FakeEngine => ({
 });
 
 // The SDK the fake engine's workflows run under.
-export const FAKE_SDK = "0.6.0";
+export const FAKE_SDK = BUNDLED_SDK_VERSION;
 
 // Executions named `execution-<runId>`.
 export const WorkflowsClientFake = (engine: FakeEngine) =>

@@ -351,11 +351,12 @@ One binary runs every enrolled repo, so compatibility is the binary's call.
 
 - **The SDK pin is the contract.** A repo's `.chernabog/package.json`
   `@chernabog/sdk` pin is the SDK its flows are written against; the binary
-  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`). Move it with
-  the SDK's minor. `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a
-  repo outside it, without a pin, with `engines.chernabog`, or whose flows
-  import what the bundled SDK lacks, as `IncompatibleConfig`; the daemon shows
-  it as `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
+  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`), the minor
+  of `BUNDLED_SDK_VERSION`, which release-please moves with the SDK's version.
+  `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a repo outside it,
+  without a pin, with `engines.chernabog`, or whose flows import what the
+  bundled SDK lacks, as `IncompatibleConfig`; the daemon shows it as
+  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
   the way forward, and the only thing that moves an existing manifest's pins.
 - **Local state is stamped, backed up and refused.** Machine config's
   `chernabog:` key and `state.db`'s `om_meta` hold the version that last

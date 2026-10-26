@@ -6,9 +6,16 @@
 
 import * as Option from "effect/Option";
 
-// The one place the binary declares what it runs: from `from`, up to but not
-// including `below`. Move it when the SDK's minor moves.
-export const SUPPORTED_SDK = { from: "0.6.0", below: "0.7.0" } as const;
+// The SDK this binary bundles, as packages/sdk/package.json has it.
+// release-please moves both together (release-please-config.json), and
+// flow-deps.test.ts fails if they drift.
+export const BUNDLED_SDK_VERSION = "0.6.0"; // x-release-please-version
+
+const [major, minor] = BUNDLED_SDK_VERSION.split(".").map(Number);
+
+// What the binary runs: from `from`, up to but not including `below`, which is
+// the minor it bundles.
+export const SUPPORTED_SDK = { from: `${major}.${minor}.0`, below: `${major}.${minor + 1}.0` };
 
 export const supportedRange = `>=${SUPPORTED_SDK.from} <${SUPPORTED_SDK.below}`;
 

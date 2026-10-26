@@ -5,12 +5,17 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
 import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
+
+// The SDK in this checkout. A release PR bumps it before npm has it, so the
+// pin resolves here rather than from the registry.
+const SDK_CHECKOUT = fileURLToPath(new URL("../../packages/sdk", import.meta.url));
 
 describe("chernabog run implement", () => {
   let sandbox: Sandbox;
@@ -231,7 +236,7 @@ describe("packages from .chernabog/package.json", () => {
     );
     writeFileSync(
       join(config, "package.json"),
-      `{ "private": true, "dependencies": { "greet": "file:./vendor/greet" }, "devDependencies": { "@chernabog/sdk": "${BUNDLED_SDK}" } }`,
+      `{ "private": true, "dependencies": { "greet": "file:./vendor/greet" }, "devDependencies": { "@chernabog/sdk": "${BUNDLED_SDK}" }, "overrides": { "@chernabog/sdk": "file:${SDK_CHECKOUT}" } }`,
     );
     writeFileSync(
       join(config, "flows/greeting.ts"),

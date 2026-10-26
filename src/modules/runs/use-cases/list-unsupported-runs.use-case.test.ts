@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { supportedRange } from "../../../kernel/sdk-support.value-object.ts";
+import { BUNDLED_SDK_VERSION, supportedRange } from "../../../kernel/sdk-support.value-object.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { listUnsupportedRunsUseCase } from "./list-unsupported-runs.use-case.ts";
@@ -12,7 +12,7 @@ import { listUnsupportedRunsUseCase } from "./list-unsupported-runs.use-case.ts"
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
     id: RunId.make(id),
-    sdkVersion: "0.6.0",
+    sdkVersion: BUNDLED_SDK_VERSION,
     repo: "demo",
     persona: Option.some("bob"),
     flow: "review",
