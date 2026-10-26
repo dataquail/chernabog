@@ -1,8 +1,12 @@
-// `chernabog open-pr`, run from the session `chernabog start` opened, by the
-// agent or the person: it records the pull request's title, body and summary
-// as the session's answer and ends it, once the worktree is clean. The start
-// flow's run then pushes, opens the pull request, waits for CI and asks for a
-// review. The session stays open for the person to close.
+// `chernabog open-pr`, run from the session `chernabog start` opened: it
+// records the pull request's title, body and summary as the session's answer
+// and ends it, once the worktree is clean. The start flow's run then pushes,
+// opens the pull request, waits for CI and asks for a review. The session
+// stays open for the person to close.
+//
+// The agent runs it with --draft instead: that keeps the answer as a draft and
+// prints the question to ask the person, whose Yes hands it over (see
+// open-pr-question.ts). Without --draft it is the person's own way to finish.
 
 import { printJson } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
@@ -13,7 +17,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
-  Done,
+  Draft,
+  handOver,
+  questionFor,
+  worktreeAt,
+} from "../../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
+import {
   readDecoded,
   SESSION_ENV,
   sessionFilesIn,
@@ -22,13 +31,13 @@ import { checkAnswer } from "../../../modules/runs/infrastructure/runtime/agents
 import { LaunchSpecJson } from "../../../modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
-import { Exec } from "../../../platform/exec.ts";
 
 export type OpenPrOptions = {
   readonly title: string;
   readonly body: Option.Option<string>;
   readonly bodyFile: Option.Option<string>;
   readonly summary: Option.Option<string>;
+  readonly draft: boolean;
 };
 
 const JsonFile = Schema.fromJsonString(Schema.Json);
@@ -42,20 +51,6 @@ const bodyOf = (options: OpenPrOptions) =>
       FileSystem.FileSystem.use((fs) => fs.readFileString(file)).pipe(
         Effect.mapError((error) => refuse(`could not read ${file}: ${error.message}`)),
       ),
-  });
-
-// Uncommitted changes in the session's worktree, as git status lists them.
-const uncommitted = (cwd: string) =>
-  Effect.gen(function* () {
-    const status = yield* (yield* Exec).run("git", ["status", "--porcelain"], { cwd });
-
-    if (status.exitCode !== 0) {
-      return yield* refuse(
-        `git status in ${cwd} exited ${status.exitCode}: ${status.stderr.trim()}`,
-      );
-    }
-
-    return status.stdout.trimEnd();
   });
 
 export const openPr = (options: OpenPrOptions) =>
@@ -81,11 +76,11 @@ export const openPr = (options: OpenPrOptions) =>
       return yield* refuse(`${files.dir} is not a session chernabog started`);
     }
 
-    const changes = yield* uncommitted(spec.value.cwd);
+    const worktree = yield* worktreeAt(spec.value.cwd);
 
-    if (changes.length > 0) {
+    if (worktree.uncommitted.length > 0) {
       return yield* refuse(
-        `commit or remove these first, then run chernabog open-pr again:\n${changes}`,
+        `commit or remove these first, then run chernabog open-pr again:\n${worktree.uncommitted}`,
       );
     }
 
@@ -103,8 +98,17 @@ export const openPr = (options: OpenPrOptions) =>
       );
     }
 
-    yield* fs.writeFileString(files.answer, answer);
-    yield* fs.writeFileString(files.done, yield* Schema.encodeEffect(Done)({ ok: true }));
+    if (options.draft) {
+      const draft = { head: worktree.head, answer };
+      yield* fs.writeFileString(files.draft, yield* Schema.encodeEffect(Draft)(draft));
+
+      return [
+        "Drafted. Now ask the person whether to open it, with AskUserQuestion and exactly this input; only their Yes hands the work to chernabog:",
+        printJson(questionFor(draft)),
+      ];
+    }
+
+    yield* handOver(files, answer);
 
     return [
       "Handed to chernabog: it runs the local gate, pushes the branch, opens the pull request, waits for CI and asks a reviewer from the pool.",

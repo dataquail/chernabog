@@ -1,7 +1,8 @@
 // The hybrid path end to end, through the daemon and tmux, with the
 // human-initiated recipe: alice starts an
 // issue with `chernabog start`, works on it with Claude in a session in front
-// of her and finishes with `chernabog open-pr`. bob, the team's reviewer,
+// of her, and says Yes when Claude, having drafted the pull request with
+// `chernabog open-pr --draft`, asks whether to open it. bob, the team's reviewer,
 // asks for changes; alice's session opens again to answer them; bob approves.
 // Nobody but a person merges it.
 
@@ -108,7 +109,7 @@ describe("the hybrid path", () => {
     ).toEqual(["bob CHANGES_REQUESTED", "bob APPROVED"]);
     expect(sandbox.github.merges).toEqual([]);
 
-    // One Claude session, under tmux, with alice: opened by start, finished by open-pr, then reopened to weigh the review and answer it.
+    // One Claude session, under tmux, with alice: opened by start, finished by her Yes to the drafted pull request, then reopened to weigh the review and answer it.
     const claude = sandbox.claudeCalls();
     const sessions = claude.filter((call) => !call.startsWith("open-pr"));
     expect(
@@ -121,9 +122,13 @@ describe("the hybrid path", () => {
       ),
     ).toEqual(["start interactive", "resume interactive", "resume interactive"]);
     expect(new Set(sessions.map((call) => call.split(" ")[1])).size).toBe(1);
-    expect(claude.some((call) => call.startsWith("open-pr") && call.includes("exited 0"))).toBe(
-      true,
-    );
+    expect(
+      claude.some((call) => call.startsWith("open-pr --draft") && call.includes("exited 0")),
+    ).toBe(true);
+    const asked = claude.filter((call) => call.startsWith("open-pr-question"));
+    expect(asked).toHaveLength(2);
+    expect(asked[0]).toMatch(/ asked$/);
+    expect(asked[1]).toContain("the work is handed to chernabog");
 
     expect(sandbox.daemonLog()).toMatch(
       /started [\da-f-]{36} \(demo\/human-initiated issue-1 as alice\)/,

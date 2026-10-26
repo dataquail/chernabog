@@ -106,28 +106,29 @@ export const withAnswerFile = (
   return `${prompt}\n\n## Your final answer\n\nWhen you are finished, write your final answer to \`${files.answer}\` ${format}\nThen stop. Don't start background work after writing it.\n`;
 };
 
-// With a person, the hook never sends the agent back: stopping to wait for them is the point.
-const stopHookSettings = (files: SessionFiles, withPerson: boolean) => {
-  const person = Option.toArray(Option.liftPredicate("--person", () => withPerson));
+const hook = (args: ReadonlyArray<string>) => ({
+  type: "command",
+  command: shellCommand([...selfCommand(), ...args]),
+});
+
+// With a person, the Stop hook never insists on the answer: stopping to wait for them is the
+// point. The question hook makes the person's answer to the Open PR question what ends it.
+const sessionSettings = (files: SessionFiles, withPerson: boolean) => {
+  const stop = [{ hooks: [hook(["__stop-hook", "--dir", files.dir])] }];
+
+  if (!withPerson) {
+    return printJson({ hooks: { Stop: stop } });
+  }
+
+  const question = [
+    { matcher: "AskUserQuestion", hooks: [hook(["__question-hook", "--dir", files.dir])] },
+  ];
 
   return printJson({
     hooks: {
-      Stop: [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: shellCommand([
-                ...selfCommand(),
-                "__stop-hook",
-                "--dir",
-                files.dir,
-                ...person,
-              ]),
-            },
-          ],
-        },
-      ],
+      Stop: [{ hooks: [hook(["__stop-hook", "--dir", files.dir, "--person"])] }],
+      PreToolUse: question,
+      PostToolUse: question,
     },
   });
 };
@@ -337,7 +338,7 @@ const start = (
       onNone: () => fs.remove(files.schema, { force: true }),
       onSome: (json) => fs.writeFileString(files.schema, printJson(json)),
     });
-    yield* fs.writeFileString(files.settings, stopHookSettings(files, withPerson));
+    yield* fs.writeFileString(files.settings, sessionSettings(files, withPerson));
 
     const spec = yield* Schema.encodeEffect(LaunchSpecJson)({
       command: "claude",
@@ -419,7 +420,14 @@ export const runInteractiveClaude = (
         yield* closeSession(previous.value, context.log);
       }
 
-      for (const file of [files.answer, files.done, files.blocks, files.launch]) {
+      for (const file of [
+        files.answer,
+        files.done,
+        files.blocks,
+        files.draft,
+        files.reminded,
+        files.launch,
+      ]) {
         yield* fs.remove(file, { force: true });
       }
 

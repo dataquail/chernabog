@@ -28,7 +28,9 @@ Under a launcher the prompt asks the agent to write its final answer as JSON to 
 On [the hybrid path](/chernabog/work/flows/#the-hybrid-path) a person works in the session with the agent. A request with `withPerson` runs only with Claude under a launcher; headless, or another agent, fails with the reason. Such a session differs in four ways:
 
 - The prompt adds a note that a person is here, so the agent talks things over with them instead of working unattended.
-- The Stop hook never sends the agent back for its answer: stopping to wait for the person is the point. The session is done once a valid answer is written; in a hybrid session, `chernabog open-pr` writes it.
+- The Stop hook never sends the agent back for its answer: stopping to wait for the person is the point. The session is done once a valid answer is written.
+- In a hybrid session, the agent drafts the pull request with `chernabog open-pr --draft` and asks the person with Claude's question prompt whether to open it. A hook on that question writes the answer on their Yes, and refuses a question that doesn't show the draft, or a draft the worktree has moved on from. `chernabog open-pr` without `--draft` writes it directly, for the person to run themselves.
+- In a hybrid session, the Stop hook reminds the agent to offer the pull request once for each new commit, when nothing is uncommitted, the commit isn't pushed and there's no draft for it yet.
 - Chernabog leaves the session open after it answers, for the person to close. The next call on the session closes it first.
 - A session the person closes before answering fails the call, rather than being resumed.
 
