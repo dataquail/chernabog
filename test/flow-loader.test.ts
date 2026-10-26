@@ -6,7 +6,13 @@ import * as Option from "effect/Option";
 import { defineFlow, isManual } from "../packages/sdk/src/flow.ts";
 import { printJson } from "../packages/sdk/src/json.ts";
 import { BUNDLED_SDK, checkFlowImports } from "../src/platform/flow-deps.ts";
-import { describeSource, flowNames, flowSourceOf, loadFlows } from "../src/platform/flow-loader.ts";
+import {
+  describeSource,
+  flowNames,
+  flowSourceOf,
+  loadFlows,
+  reviewingFlows,
+} from "../src/platform/flow-loader.ts";
 import { effect } from "./effect-test.ts";
 
 // A .chernabog/ holding one flow module, flows/<name>.ts.
@@ -165,6 +171,23 @@ describe("importing flows from a recipe package", () => {
         "flows.deploy in config.yaml imports @acme/recipes/deploy, and flows/deploy.ts is a flow of the same name",
       );
     }),
+  );
+
+  effect(
+    "names an imported flow, and reads the other flows' code, before its package is installed",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const configDir = yield* withPackage('flows:\n  ship:\n    from: "@globex/recipes/ship"\n');
+        yield* fs.makeDirectory(`${configDir}/flows`);
+        yield* fs.writeFileString(
+          `${configDir}/flows/review.ts`,
+          'import { Review } from "@chernabog/sdk";\nexport default { trigger: Review.trigger };\n',
+        );
+
+        expect(yield* flowNames(configDir)).toEqual(["review", "ship"]);
+        expect(yield* reviewingFlows(configDir)).toEqual(["review"]);
+      }),
   );
 
   effect("refuses a from naming a package that isn't installed, or a recipe it hasn't", () =>

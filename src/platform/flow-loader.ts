@@ -345,25 +345,44 @@ export const flowSourceOf = (flow: Sdk.Flow) => Option.fromUndefinedOr(sources.g
 
 // The names of the flows in <configDir>/flows/, without importing them, so
 // listing an untrusted .chernabog/ runs none of its code.
+// An imported flow is named without its package, which needn't be installed:
+// a fresh clone lists its flows before anyone runs bun install there.
 export const flowNames = (configDir: string) =>
-  Effect.map(flowFiles(configDir), (files) => files.map((file) => file.name));
+  Effect.gen(function* () {
+    const local = (yield* localFlowFiles(configDir)).map(([name]) => name);
+    const imported = [...(yield* flowImports(configDir)).keys()];
 
-// The flows in <configDir>/flows/ whose name and code `test` picks. Their code
-// is read, not imported, so it runs nothing; none when the folder can't be read.
+    return Arr.sort(Arr.dedupe([...local, ...imported]), Order.String);
+  });
+
+// The flows, in <configDir>/flows/ or imported, whose name and code `test`
+// picks. Their code is read, not imported, so it runs nothing; none when the
+// folder can't be read.
 const flowsWhere = (configDir: string, test: (name: string, source: string) => boolean) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const picked: Array<string> = [];
 
-    for (const file of yield* flowFiles(configDir)) {
-      const source = yield* fs.readFileString(file.path).pipe(Effect.orElseSucceed(() => ""));
+    const files: Array<readonly [string, string]> = [...(yield* localFlowFiles(configDir))];
 
-      if (test(file.name, source)) {
-        picked.push(file.name);
+    // An imported flow whose package isn't installed is left out, not the rest.
+    for (const [name, from] of yield* flowImports(configDir)) {
+      for (const resolved of Option.toArray(
+        yield* Effect.option(resolveImport(configDir, name, from, NO_OVERRIDES)),
+      )) {
+        files.push([name, resolved.path]);
       }
     }
 
-    return picked;
+    for (const [name, path] of files) {
+      const source = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+
+      if (test(name, source)) {
+        picked.push(name);
+      }
+    }
+
+    return Arr.sort(picked, Order.String);
   }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
 
 // The flows that open pull requests asking the pool for a review.

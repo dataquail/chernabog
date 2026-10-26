@@ -62,6 +62,17 @@ describe("updateRecipesUseCase", () => {
       }).pipe(Effect.provide(repo.layer)),
   );
 
+  const uncopied = recipeRepo({ ".chernabog/flows/review.ts": "review\n" });
+
+  effect("leaves a named recipe the repo hasn't copied for recipes add", () =>
+    Effect.gen(function* () {
+      const updated = yield* updateRecipesUseCase("/repo", ["implement"], "adopt");
+
+      expect(updated.changes).toEqual([]);
+      expect(uncopied.stored["/repo/.chernabog/flows/implement.ts"]).toBeUndefined();
+    }).pipe(Effect.provide(uncopied.layer)),
+  );
+
   const legacy = recipeRepo({ ".chernabog/flows/review.ts": "old review\n" });
 
   effect(

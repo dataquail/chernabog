@@ -219,12 +219,15 @@ export const updateRecipesUseCase = Effect.fn("updateRecipesUseCase")(function* 
   const changes: Array<Change> = [];
   const recorded: Record<string, Option.Option<CopiedRecord>> = {};
 
-  for (const copy of RecipeRootOps.copiesIn(
+  // Only what the repo copied: a named recipe it hasn't is left for recipes add.
+  const copies = RecipeRootOps.copiesIn(
     installed,
     records,
     (file) => flows.includes(file),
     named,
-  )) {
+  ).filter((copy) => flows.includes(copy.recipe.flow) || Record.has(records, copy.file));
+
+  for (const copy of copies) {
     for (const updated of Option.toArray(
       yield* updateFile(root, copy, Record.get(records, copy.file), unrecorded),
     )) {
