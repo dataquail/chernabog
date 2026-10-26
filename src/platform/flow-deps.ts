@@ -25,7 +25,7 @@ import { ConfigError, IncompatibleConfig } from "./config-error.ts";
 import { EFFECT_VERSION } from "./effect-modules.ts";
 import { HostEnvironment } from "./environment.ts";
 import { Exec } from "./exec.ts";
-import { flowImports } from "./flow-loader.ts";
+import { flowImports, packageDirOf, type PackageOverrides } from "./flow-loader.ts";
 import { bunExecutable } from "./self.ts";
 import { VERSION } from "./version.ts";
 
@@ -323,17 +323,24 @@ const lockedVersion = (lockfile: string, name: string) =>
 // dependency (a snapshot installs only those), not installed, installed at
 // another version than bun.lock pins, or written for an SDK this binary
 // doesn't run. None when it can.
-const importedPackageProblem = (configDir: string, manifest: Manifest, name: string) =>
+const importedPackageProblem = (
+  configDir: string,
+  manifest: Manifest,
+  name: string,
+  overrides: PackageOverrides,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    // A package read from a directory of its own is checked only for its SDK range.
+    const overridden = overrides.has(name);
 
-    if (!Record.has(manifest.dependencies ?? {}, name)) {
+    if (!overridden && !Record.has(manifest.dependencies ?? {}, name)) {
       return Option.some(
         `config.yaml imports flows from ${name}, which package.json doesn't list in dependencies (a snapshot installs only those); chernabog recipes add --import puts it there`,
       );
     }
 
-    const path = `${configDir}/node_modules/${name}/package.json`;
+    const path = `${packageDirOf(configDir, name, overrides)}/package.json`;
 
     if (!(yield* fs.exists(path))) {
       return Option.some(
@@ -354,7 +361,7 @@ const importedPackageProblem = (configDir: string, manifest: Manifest, name: str
 
     const lockfile = `${configDir}/bun.lock`;
 
-    if (yield* fs.exists(lockfile)) {
+    if (!overridden && (yield* fs.exists(lockfile))) {
       const locked = lockedVersion(yield* fs.readFileString(lockfile), name);
 
       for (const pinned of Option.toArray(
@@ -379,7 +386,7 @@ const importedPackageProblem = (configDir: string, manifest: Manifest, name: str
 
 // Fails when a flow config.yaml imports comes from a package this binary
 // can't run, naming the package. Read once the packages are installed.
-export const checkFlowImports = (configDir: string) =>
+export const checkFlowImports = (configDir: string, overrides: PackageOverrides = new Map()) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
@@ -396,7 +403,7 @@ export const checkFlowImports = (configDir: string) =>
 
     for (const name of names) {
       for (const problem of Option.toArray(
-        yield* importedPackageProblem(configDir, manifest, name),
+        yield* importedPackageProblem(configDir, manifest, name, overrides),
       )) {
         return yield* incompatible(problem);
       }
@@ -409,8 +416,8 @@ export const checkFlowImports = (configDir: string) =>
 
 // Checks this binary can run the installed .chernabog/ in `configDir`:
 // checkCompatibility, then the packages its flows import from.
-export const checkRunnable = (configDir: string) =>
-  Effect.andThen(checkCompatibility(configDir), checkFlowImports(configDir));
+export const checkRunnable = (configDir: string, overrides: PackageOverrides = new Map()) =>
+  Effect.andThen(checkCompatibility(configDir), checkFlowImports(configDir, overrides));
 
 export type Drift = {
   readonly name: string;

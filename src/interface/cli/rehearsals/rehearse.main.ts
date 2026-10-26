@@ -72,7 +72,7 @@ import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { execOk } from "../../../platform/exec.ts";
-import { reviewingFlows } from "../../../platform/flow-loader.ts";
+import { packageOverride, reviewingFlows } from "../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../platform/github-api.ts";
 import { execOptionsFor } from "../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
@@ -116,6 +116,8 @@ export type RehearseOptions = {
   readonly onEnrolled: boolean;
   readonly trusted: boolean;
   readonly timeout: Duration.Duration;
+  // Recipe package checkouts to rehearse with, in place of the versions installed.
+  readonly packages: ReadonlyArray<string>;
 };
 
 // Where a rehearsal works on this machine: a clone of the scenario's repo,
@@ -625,7 +627,17 @@ export const rehearse = (options: RehearseOptions) =>
       allowEnrolled: options.onEnrolled,
     });
 
-    const { flows, repo } = yield* openRepo(machine, enrolled, !options.trusted);
+    const overrides = new Map<string, string>();
+
+    for (const dir of options.packages) {
+      const found = yield* packageOverride(dir);
+      overrides.set(found.name, found.dir);
+      yield* Console.log(
+        `rehearsing with ${found.name} ${found.version} from ${found.dir}, in place of the version installed`,
+      );
+    }
+
+    const { flows, repo } = yield* openRepo(machine, enrolled, !options.trusted, overrides);
     const flow = Option.fromUndefinedOr(flows.get(loaded.flow));
 
     if (Option.isNone(flow)) {
@@ -770,12 +782,18 @@ export const rehearseCommand = Command.make(
       ),
       Flag.withDefault(false),
     ),
+    packages: Flag.Directory("package", { mustExist: true }).pipe(
+      Flag.withDescription(
+        "A recipe package's checkout to rehearse its imported flows from, in place of the version installed in .chernabog/; repeat it for several",
+      ),
+      Flag.atLeast(0),
+    ),
     timeout: Flag.Int("timeout").pipe(
       Flag.withDescription("Minutes to follow the run before reporting where it waits"),
       Flag.withDefault(30),
     ),
   },
-  ({ as, flow, item, keep, onEnrolled, replay, repo, scenario, timeout, trusted }) =>
+  ({ as, flow, item, keep, onEnrolled, packages, replay, repo, scenario, timeout, trusted }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
 
@@ -790,6 +808,7 @@ export const rehearseCommand = Command.make(
         onEnrolled,
         trusted,
         timeout: Duration.minutes(timeout),
+        packages,
       });
 
       if (!ok) {

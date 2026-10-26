@@ -113,6 +113,16 @@ A step the replayed run had and the flow no longer has is reported:
 
 Only runs made since chernabog started recording agents' answers can be replayed.
 
+## A recipe package you're writing
+
+A flow [imported](/chernabog/recipes/#copy-or-import) from a recipe package rehearses like any other. To rehearse a package before you publish it, pass its checkout with `--package`, and the rehearsal loads the flow, its prompts and its steps from there, in place of the version installed in `.chernabog/`:
+
+```sh
+chernabog rehearse deploy --repo scratch --scenario .chernabog/rehearsals/deploy.yaml --package ~/code/acme-chernabog-recipes
+```
+
+See [Writing a recipe package](/chernabog/recipes/packages/#rehearsing).
+
 ## Flags
 
 | Flag            | What it does                                                         |
@@ -125,5 +135,6 @@ Only runs made since chernabog started recording agents' answers can be replayed
 | `--on-enrolled` | Allow a scenario whose repo is enrolled here                         |
 | `--trusted`     | Rehearse the trusted `.chernabog/` rather than the working copy's    |
 | `--timeout`     | Minutes to follow the run before reporting where it waits (default 30) |
+| `--package`     | A recipe package's checkout to load imported flows from; repeat it for several |
 
 `rehearse` exits non-zero when the run doesn't end as the scenario expects, or when a step had no stand-in.

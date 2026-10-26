@@ -189,13 +189,58 @@ export const flowImports = (configDir: string) =>
     ),
   );
 
+// Recipe packages to read from a directory of their own, by name, in place of
+// the version installed in .chernabog/: a checkout of a package being written,
+// which `chernabog rehearse --package` runs.
+export type PackageOverrides = ReadonlyMap<string, string>;
+
+const NO_OVERRIDES: PackageOverrides = new Map();
+
+// A recipe package's checkout, read in place of the version installed: its
+// name, version and directory; fails when the directory isn't a recipe package.
+export const packageOverride = (dir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const real = yield* fs.realPath(dir);
+
+    const manifest = yield* Schema.decodeEffect(PackageJson)(
+      yield* fs.readFileString(`${real}/package.json`),
+    ).pipe(
+      Effect.mapError(
+        (error) =>
+          new LoadError({
+            path: `${real}/package.json`,
+            message: `isn't a recipe package: ${error.message}`,
+          }),
+      ),
+    );
+
+    return { name: manifest.name, version: manifest.version, dir: real };
+  }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(new LoadError({ path: dir, message: error.message })),
+    ),
+  );
+
+// Where a recipe package is read from.
+export const packageDirOf = (configDir: string, name: string, overrides: PackageOverrides) =>
+  Option.getOrElse(
+    Option.fromUndefinedOr(overrides.get(name)),
+    () => `${configDir}/node_modules/${name}`,
+  );
+
 // The flow module `flows.<name>.from` names, and where it comes from; fails,
 // naming the package, when it or the recipe isn't installed.
-const resolveImport = (configDir: string, name: string, from: string) =>
+const resolveImport = (
+  configDir: string,
+  name: string,
+  from: string,
+  overrides: PackageOverrides,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const ref = parseRecipeRef(from);
-    const dir = `${configDir}/node_modules/${ref.package}`;
+    const dir = packageDirOf(configDir, ref.package, overrides);
     const where = `flows.${name}.from in config.yaml names ${from}`;
 
     if (!(yield* fs.exists(`${dir}/package.json`))) {
@@ -250,7 +295,7 @@ type FlowFile = {
 };
 
 // Every flow, local or imported, in name order. A name that is both is refused.
-const flowFiles = (configDir: string) =>
+const flowFiles = (configDir: string, overrides: PackageOverrides = NO_OVERRIDES) =>
   Effect.gen(function* () {
     const local = yield* localFlowFiles(configDir);
     const imports = yield* flowImports(configDir);
@@ -269,7 +314,7 @@ const flowFiles = (configDir: string) =>
         });
       }
 
-      const resolved = yield* resolveImport(configDir, name, from);
+      const resolved = yield* resolveImport(configDir, name, from, overrides);
       files.push({ name, path: resolved.path, source: Option.some(resolved.source) });
     }
 
@@ -331,11 +376,11 @@ export const reviewingFlows = (configDir: string) => flowsWhere(configDir, revie
 // imported from recipe packages, by the name config.yaml gives them. An
 // imported flow is a copy of the package's module, so two names importing one
 // recipe each keep their own source.
-export const loadFlows = (configDir: string) =>
+export const loadFlows = (configDir: string, overrides: PackageOverrides = NO_OVERRIDES) =>
   Effect.gen(function* () {
     const flows = new Map<string, Sdk.Flow>();
 
-    for (const file of yield* flowFiles(configDir)) {
+    for (const file of yield* flowFiles(configDir, overrides)) {
       const loaded = yield* importDefault(file.path, FlowDefinition, FLOW_EXPORT);
 
       const flow = Option.match(file.source, {

@@ -30,3 +30,5 @@ Any npm package can hold recipes. This one is the first, and a company's own pac
 - `flow` is the recipe's flow, under `flows/`. `prompts` are the prompts it renders, under `prompts/`, and `stages` are the steps it runs, under `stages/`. The files keep the layout of a repo's `.chernabog/`, so a copy lands at the same path.
 - The `@chernabog/sdk` peer range is the SDK versions its flows are written against.
 - **Step names are public API.** A run in flight resumes by its step names, and a new version of the package reaches every repo that imports from it at once. Renaming a step is a breaking change for the package.
+
+[Writing a recipe package](https://dataquail.github.io/chernabog/recipes/packages/) covers the format, the SDK range, type-checking, rehearsing and publishing.

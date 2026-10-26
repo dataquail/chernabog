@@ -52,6 +52,7 @@ import { ConfigError } from "./platform/config-error.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { FileBusy, updateFile } from "./platform/file-lock.ts";
 import { checkRunnable } from "./platform/flow-deps.ts";
+import { type PackageOverrides } from "./platform/flow-loader.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 
@@ -962,9 +963,16 @@ export const repoEnvironment = (checkout: string) =>
 // this binary doesn't know is a typo or a newer chernabog's key, and either
 // one may be a rule the repo counts on, so it fails the repo instead of being
 // dropped.
-export const loadRepo = (machine: MachineConfig, enrolled: EnrolledRepo, configDir: string) =>
+// `overrides` reads recipe packages from directories of their own, as
+// `chernabog rehearse --package` does.
+export const loadRepo = (
+  machine: MachineConfig,
+  enrolled: EnrolledRepo,
+  configDir: string,
+  overrides: PackageOverrides = new Map(),
+) =>
   Effect.gen(function* () {
-    yield* checkRunnable(configDir);
+    yield* checkRunnable(configDir, overrides);
     const repo = yield* readYaml(RepoConfigFile, `${configDir}/config.yaml`, true);
 
     return yield* mergeRepoConfig(
