@@ -20,43 +20,8 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run lint:architecture
-      # Measures coverage too (bunfig.toml). In a process group of its own, as
-      # the runner's agent shares the step's: a test that signals its group
-      # can't take the runner down with it. Prints the runner's load every 15
-      # seconds, which streams live even if the runner stops answering, and
-      # fails a hang at 20 minutes so its log is kept.
-      - run: |
-          (while sleep 15; do
-            echo "::group::runner at $(date -u +%T): $(ps -e --no-headers | wc -l) processes"
-            uptime
-            df -h / /tmp | tail -n +2
-            ps -eo pid,pgid,etimes,pcpu,rss,args --sort=-pcpu | head -15 | cut -c1-200
-            echo "::endgroup::"
-          done) &
-          sampler=$!
-          set +e
-          setsid --wait bun test
-          status=$?
-          echo "bun test exited $status"
-          kill "$sampler"
-          exit "$status"
-        timeout-minutes: 20
-      # What the acceptance tests' sandboxes were doing when the tests failed or hung.
-      - if: failure()
-        run: |
-          ps -eo pid,pgid,etimes,pcpu,rss,args --sort=-pcpu | head -30 | cut -c1-200
-          df -h / /tmp
-          sudo dmesg | tail -20
-          for dir in /tmp/chernabog-e2e-*; do
-            echo "::group::$dir"
-            for log in claude.log tmux.log home/daemon.log; do
-              if [ -f "$dir/$log" ]; then
-                echo "== $log ($(wc -c < "$dir/$log") bytes)"
-                tail -40 "$dir/$log" | cut -c1-300
-              fi
-            done
-            echo "::endgroup::"
-          done
+      # Measures coverage too (bunfig.toml).
+      - run: bun test
       # The coverage table in the job summary, even when the tests failed; fails below the floor.
       - if: always()
         run: bun scripts/coverage-summary.ts
