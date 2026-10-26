@@ -92,13 +92,13 @@ graph:
         These files import each other, so none of them can be understood, tested or loaded
         without the rest. Break the cycle by moving the shared piece below both, or by inverting
         one edge through a port.
-      within: ["@/**", "~/**", "test/**", "scripts/**", "templates/**"]
+      within: ["@/**", "~/**", "test/**", "scripts/**"]
   orphans:
     - name: no-orphans
       message: >-
         Nothing imports this file and it is not an entry point. Delete it, or, if something
         outside the import graph loads it by design, list it under `entry` with the reason.
-      within: ["@/**", "~/**", "test/**", "scripts/**", "templates/**"]
+      within: ["@/**", "~/**", "test/**", "scripts/**"]
       # A fake is owed to its port, whether or not a test currently takes it.
       withinNot: "**/*-fake.ts"
       entry:
@@ -112,9 +112,10 @@ graph:
         - "scripts/gen-*.ts"
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
-        # A repo's flows are loaded by path (src/loader.ts); these are the ones
-        # `chernabog init` and `chernabog recipes add` write out.
-        - "templates/**"
+        # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
+        # are the recipes `chernabog recipes add` copies and a repo's
+        # `flows.<name>.from` imports.
+        - "~/recipes/**"
   reach:
     - name: domain-reaches-no-adapter
       message: >-
@@ -723,6 +724,27 @@ tree:
     surface:
       - use: no-default-exports
 
+  "~/recipes/":
+    message: >-
+      The published @chernabog/recipes: the recipes a repo copies into its .chernabog/ or imports
+      from it, in the recipe package format (its package.json's `chernabog.recipes`).
+    layout: open
+    imports:
+      reset: true
+      message: >-
+        A recipe is a person's flow, copied or imported: it names the published SDK and effect,
+        and nothing of the daemon's.
+      external: [effect]
+      allow: ["~/sdk/**"]
+    children:
+      # One flow per recipe, named for it, and the prompts the flows render.
+      "flows/":
+        children:
+          "*.ts": {}
+      "prompts/":
+        children:
+          "*.md": {}
+
   "test/":
     message: >-
       test/ holds the unit and engine tests, the harnesses they share (fakes, scripted askers,
@@ -739,7 +761,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - yaml
-      allow: ["node:**", "@/**", "~/sdk/**", "test/**", "scripts/**", "templates/**"]
+      allow: ["node:**", "@/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
       "acceptance/": { layout: open }
       "fakebin/": { layout: open }
@@ -765,26 +787,3 @@ tree:
       # What a script renders, which a test renders again; the script prints or writes it.
       "templates.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
-
-  "templates/":
-    message: >-
-      templates/ holds the scaffold `chernabog init` writes and the recipes a person bakes into
-      their repo. They are written from the published SDK, as a person's own flows are.
-    layout: open
-    imports:
-      reset: true
-      message: >-
-        A template is a person's flow-to-be: it names the published SDK and effect, and nothing of
-        the daemon's.
-      external: [effect]
-      allow: ["~/sdk/**"]
-    children:
-      "recipes/":
-        children:
-          # One flow per recipe, named for it, and the prompts the flows render.
-          "flows/":
-            children:
-              "*.ts": {}
-          "prompts/":
-            children:
-              "*.md": {}

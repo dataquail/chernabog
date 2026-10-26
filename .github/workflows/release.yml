@@ -3,8 +3,8 @@ name: Release
 # Every push to main updates release-please's release PR, which gathers the
 # conventional commits since the last release and shows the versions and
 # changelogs they make. Merging that PR tags the release and creates the GitHub
-# release; the jobs after it build the binaries and publish the SDK, in this
-# same run. A dispatch with an existing tag builds and publishes it again, to
+# release; the jobs after it build the binaries and publish the SDK and the
+# recipes, in this same run. A dispatch with an existing tag builds and publishes it again, to
 # finish a release that failed partway. See RELEASE.md.
 on:
   push:
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: An existing release tag to build and publish again, e.g. v0.4.0 or sdk-v0.1.1
+        description: An existing release tag to build and publish again, e.g. v0.4.0, sdk-v0.1.1 or recipes-v0.1.0
         required: true
         type: string
 
@@ -29,6 +29,7 @@ jobs:
     outputs:
       binary-tag: ${{ steps.plan.outputs.binary-tag }}
       sdk-tag: ${{ steps.plan.outputs.sdk-tag }}
+      recipes-tag: ${{ steps.plan.outputs.recipes-tag }}
       pr: ${{ steps.release.outputs.pr }}
     steps:
       # An App token rather than GITHUB_TOKEN: a PR opened with GITHUB_TOKEN
@@ -47,7 +48,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       # The root package is the binary, tagged v<version>; the SDK is tagged
-      # sdk-v<version>. Each output is empty when that half has nothing to ship.
+      # sdk-v<version>, and the recipes recipes-v<version>. Each output is
+      # empty when that part has nothing to ship.
       - id: plan
         env:
           DISPATCHED: ${{ inputs.tag }}
@@ -55,19 +57,25 @@ jobs:
           BINARY_TAG: ${{ steps.release.outputs.tag_name }}
           SDK_CREATED: ${{ steps.release.outputs['packages/sdk--release_created'] }}
           SDK_TAG: ${{ steps.release.outputs['packages/sdk--tag_name'] }}
+          RECIPES_CREATED: ${{ steps.release.outputs['packages/recipes--release_created'] }}
+          RECIPES_TAG: ${{ steps.release.outputs['packages/recipes--tag_name'] }}
         run: |
           binary=""
           sdk=""
+          recipes=""
           [ "$BINARY_CREATED" = "true" ] && binary=$BINARY_TAG
           [ "$SDK_CREATED" = "true" ] && sdk=$SDK_TAG
+          [ "$RECIPES_CREATED" = "true" ] && recipes=$RECIPES_TAG
           case "$DISPATCHED" in
             "") ;;
             v*) binary=$DISPATCHED ;;
             sdk-v*) sdk=$DISPATCHED ;;
-            *) echo "::error::$DISPATCHED is neither a chernabog tag (v*) nor an SDK tag (sdk-v*)"; exit 1 ;;
+            recipes-v*) recipes=$DISPATCHED ;;
+            *) echo "::error::$DISPATCHED is neither a chernabog tag (v*), an SDK tag (sdk-v*) nor a recipes tag (recipes-v*)"; exit 1 ;;
           esac
           echo "binary-tag=$binary" >> "$GITHUB_OUTPUT"
           echo "sdk-tag=$sdk" >> "$GITHUB_OUTPUT"
+          echo "recipes-tag=$recipes" >> "$GITHUB_OUTPUT"
 
   # release-please updates package.json but not bun.lock, which records the
   # SDK's version as a workspace package. Refresh it on the release PR's branch
@@ -242,6 +250,51 @@ jobs:
 
           # npm gives `latest` to whatever it publishes unless told otherwise,
           # so a prerelease goes out under its own tag: 0.2.0-beta.1 -> beta.
+          dist_tag=latest
+          case "$version" in
+            *-*)
+              prerelease=${version#*-}
+              dist_tag=${prerelease%%.*}
+              [[ "$dist_tag" =~ ^[0-9]+$ ]] && dist_tag=next
+              ;;
+          esac
+
+          npm publish --provenance --tag "$dist_tag"
+
+  # @chernabog/recipes, published as the SDK is. `chernabog init` installs it,
+  # so a binary released in the same run needs it on npm minutes later.
+  recipes:
+    needs: plan
+    if: needs.plan.outputs.recipes-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ needs.plan.outputs.recipes-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      # Trusted publishing, as for the SDK; NPM_TOKEN is only for the first
+      # publish, before the package exists to configure.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Publish @chernabog/recipes
+        working-directory: packages/recipes
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          [ "recipes-v$version" = "$TAG" ] || { echo "::error::$TAG holds @chernabog/recipes $version"; exit 1; }
+
+          if npm view "@chernabog/recipes@$version" version >/dev/null 2>&1; then
+            echo "@chernabog/recipes@$version is already on the registry"
+            exit 0
+          fi
+
           dist_tag=latest
           case "$version" in
             *-*)

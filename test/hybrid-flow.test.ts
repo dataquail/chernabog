@@ -16,13 +16,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
+import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
+import implement from "../packages/recipes/flows/implement.ts";
+import review from "../packages/recipes/flows/review.ts";
 import { sessionFilesIn } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { stopHook } from "../src/modules/runs/infrastructure/runtime/agents/stop-hook.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import addressReview from "../templates/recipes/flows/address-review.ts";
-import humanInitiated from "../templates/recipes/flows/human-initiated.ts";
-import implement from "../templates/recipes/flows/implement.ts";
-import review from "../templates/recipes/flows/review.ts";
 import { effect } from "./effect-test.ts";
 import {
   HEAD,

@@ -111,7 +111,7 @@ personas and accounts come in from the machine module's
 chooses to bake into their repo (`init --recipes`, `chernabog recipes add`);
 after that the file is theirs, and chernabog never rewrites it.
 
-- Recipe sources are `templates/recipes/` (flows and the prompts they render),
+- Recipe sources are `packages/recipes/` (`@chernabog/recipes`: flows and the prompts they render),
   listed with a description in the recipes module's catalog
   (`src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts`); the
   base scaffold is `templates/.chernabog/`. Run `bun scripts/gen-templates.ts`
@@ -123,7 +123,7 @@ after that the file is theirs, and chernabog never rewrites it.
   policy is in the repo's file. The SDK exports no whole workflows or
   review-loop triggers; add a block rather than hide a decision in one.
 - This repo's own `.chernabog/flows/` are baked recipes. Keep them in step
-  with `templates/recipes/` (`chernabog recipes diff`, from a sandbox, shows
+  with `packages/recipes/` (`chernabog recipes diff`, from a sandbox, shows
   where they differ).
 - **Activity names are journal keys**: a run in flight resumes by them. Keep a
   recipe's step names when you change it, and never rename one in a block.

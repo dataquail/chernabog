@@ -18,11 +18,11 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
+import implement from "../packages/recipes/flows/implement.ts";
+import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
-import addressReview from "../templates/recipes/flows/address-review.ts";
-import implement from "../templates/recipes/flows/implement.ts";
-import reviewFlow from "../templates/recipes/flows/review.ts";
 import { effect } from "./effect-test.ts";
 import {
   type EngineRun,

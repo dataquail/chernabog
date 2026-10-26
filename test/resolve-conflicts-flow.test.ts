@@ -6,8 +6,8 @@ import { DEFAULT_LABELS, Implement, ownerMarker } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
+import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import resolveConflicts from "../templates/recipes/flows/resolve-conflicts.ts";
 import { effect } from "./effect-test.ts";
 import {
   flowTriggered,

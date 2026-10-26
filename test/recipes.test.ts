@@ -8,16 +8,20 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import implement from "../packages/recipes/flows/implement.ts";
+import RecipesPackage from "../packages/recipes/package.json" with { type: "json" };
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
 import { RecipeRootOps } from "../src/modules/recipes/domain/recipe/recipe.root-ops.ts";
 import { RECIPES } from "../src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts";
+import { RecipePackageManifest } from "../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
 import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
 import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
 import { Exec } from "../src/platform/exec.ts";
+import { BUNDLED_SDK } from "../src/platform/flow-deps.ts";
 import { RECIPE_FILES } from "../src/platform/templates.ts";
-import implement from "../templates/recipes/flows/implement.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
 import { flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
@@ -69,7 +73,30 @@ describe("the recipes", () => {
     }),
   );
 
-  effect("every file under templates/recipes/ belongs to one", () =>
+  effect("@chernabog/recipes describes each, and supports the SDK this binary bundles", () =>
+    Effect.gen(function* () {
+      const manifest = yield* Schema.decodeEffect(RecipePackageManifest)(RecipesPackage);
+
+      expect(
+        Object.entries(manifest.chernabog.recipes).map(([name, recipe]) => ({
+          name,
+          description: recipe.description,
+          files: [recipe.flow, ...(recipe.prompts ?? [])],
+        })),
+      ).toEqual(
+        RECIPES.map((recipe) => ({
+          name: recipe.name,
+          description: recipe.description,
+          files: [...recipe.files],
+        })),
+      );
+      expect(
+        Bun.semver.satisfies(BUNDLED_SDK, manifest.peerDependencies?.["@chernabog/sdk"] ?? ""),
+      ).toBe(true);
+    }),
+  );
+
+  effect("every file of packages/recipes/ belongs to one", () =>
     Effect.sync(() => {
       const owned = new Set<string>(RECIPES.flatMap((recipe) => recipe.files));
       expect(Object.keys(RECIPE_FILES).filter((file) => !owned.has(file))).toEqual([]);
