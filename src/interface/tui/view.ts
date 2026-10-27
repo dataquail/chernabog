@@ -362,12 +362,17 @@ const runDetail = (run: RunEntry) => {
   return Option.getOrElse(run.currentStep, () => "starting");
 };
 
-const flowTiming = (
-  enabled: boolean,
-  pending: boolean,
-  next: Option.Option<string>,
+// When a flow next ticks: due now while an event's tick waits to run (#138).
+const nextTickOf = (
+  flow: { readonly next: Option.Option<string>; readonly pending?: string },
   now: DateTime.Utc,
-) => {
+) =>
+  Option.match(Option.fromUndefinedOr(flow.pending), {
+    onNone: () => ago(flow.next, now),
+    onSome: () => "due now",
+  });
+
+const flowTiming = (enabled: boolean, pending: boolean, next: string) => {
   if (pending && enabled) {
     return segment(pad("on, pending", 14), "yellow");
   }
@@ -377,7 +382,7 @@ const flowTiming = (
   }
 
   if (enabled) {
-    return segment(`next ${pad(ago(next, now), 9)}`);
+    return segment(`next ${pad(next, 9)}`);
   }
 
   return segment(pad("off", 14), "dim");
@@ -797,7 +802,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
         );
 
       const enabled = flowEnabled(model, repo.name, flow);
-      const timing = flowTiming(enabled, enabled !== flow.enabled, flow.next, now);
+      const timing = flowTiming(enabled, enabled !== flow.enabled, nextTickOf(flow, now));
 
       const why = Option.filter(
         Option.fromUndefinedOr(flow.offReason),
@@ -814,6 +819,19 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
               "dim",
             ),
             ...sourceOf(flow),
+            // What made its pending tick, or its last one.
+            segment(
+              Option.getOrElse(
+                Option.map(
+                  Option.orElse(Option.fromUndefinedOr(flow.pending), () =>
+                    Option.fromUndefinedOr(flow.lastCause),
+                  ),
+                  (cause) => `  ${cause}`,
+                ),
+                () => "",
+              ),
+              "dim",
+            ),
           ],
           selected,
         ),
@@ -1006,7 +1024,7 @@ const settingsView = (model: Model, settings: Settings): ReadonlyArray<Line> => 
           segment(`  ${pad(flow.name, 14)}`),
           segment(pad(onOff(enabled), 5), styleIf(!enabled, "dim")),
           schedule,
-          segment(`  next ${ago(flow.next, model.now)}`, "dim"),
+          segment(`  next ${nextTickOf(flow, model.now)}`, "dim"),
         ],
         isSelected({ kind: "flow", flow: flow.name }),
       ),

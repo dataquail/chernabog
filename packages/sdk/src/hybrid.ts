@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as Claims from "./claims.ts";
 import { HUMAN_INITIATED } from "./default-prompts.ts";
 import { Skip, StepFailed } from "./errors.ts";
 import { activity, reportAs } from "./flow.ts";
@@ -21,11 +22,13 @@ import {
   type AuthorSession,
   branchFor,
   issueItem,
+  latestClaim,
+  legacyClaim,
   PullRequestRef,
   sessionIdFor,
 } from "./implement.ts";
 import type { Json } from "./json.ts";
-import { claimMarker, latestMarker, sessionMarker } from "./markers.ts";
+import { claimMarker, sessionMarker } from "./markers.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import { Agent, GitHub, Repo, Run, type WorkItem } from "./services.ts";
@@ -70,12 +73,22 @@ const claimComment = (claimedAt: string, branch: string, runId: string) =>
     "",
     `- Run: \`${runId}\``,
     "",
-    claimMarker.write({ runId, claimedAt, branch, withPerson: true }),
+    claimMarker.write({ runId, claimedAt, branch, withPerson: true, ref: true }),
   ].join("\n");
 
-// Creates the issue's branch, or takes over one an earlier start left, and
-// labels, assigns and comments as claim does. It takes the issue out of the
-// unattended queues. A branch an unattended run claimed is left to it.
+// How to let go of the claim another run holds: cancelling it, which for a run
+// that has ended deletes only the claim ref its flow left.
+const cancelHint = (holder: Option.Option<Claims.Holder>) =>
+  Option.match(holder, {
+    onNone: () => "`chernabog cancel` the run that holds it",
+    onSome: (found) => `\`chernabog cancel ${found.runId}\``,
+  });
+
+// Claims the issue with its claim ref, then creates the issue's branch, or
+// takes up one an earlier start or an ended run left, and labels, assigns and
+// comments as claim does. It takes the issue out of the unattended queues. An
+// issue another run holds is left to it. Wrap the run in
+// `Claims.releasing(Claims.issue(issue))` to let the claim go when it ends.
 export const claim = (issue: number) =>
   activity(
     "claim",
@@ -84,6 +97,7 @@ export const claim = (issue: number) =>
       const repo = yield* Repo;
       const run = yield* Run;
       const branch = branchFor(issue);
+      const item = Claims.issue(issue);
       const baseSha = yield* github.branchSha(repo.baseBranch);
 
       if (Option.isNone(baseSha)) {
@@ -93,17 +107,25 @@ export const claim = (issue: number) =>
         });
       }
 
+      const claimed = yield* Claims.acquire(item, { withPerson: true });
+
+      if (!claimed.acquired) {
+        return yield* new Skip({
+          reason: `#${issue} is already claimed (${Claims.describeHolder(item, claimed.holder)}); ${cancelHint(claimed.holder)} to start it here`,
+        });
+      }
+
       if ((yield* github.createBranch(branch, baseSha.value)) === "already-exists") {
-        const latest = latestMarker(
-          claimMarker.read,
-          (yield* github.comments(issue)).map((comment) => comment.body),
-        );
+        const latest = yield* latestClaim(issue);
 
         if (Option.exists(latest, (marker) => marker.runId === run.runId)) {
           return { branch };
         }
 
-        if (Option.exists(latest, (marker) => marker.withPerson !== true)) {
+        // An earlier start that held it by its branch alone is taken over, as before claim refs.
+        if (Option.exists(legacyClaim(latest, run.runId), (marker) => marker.withPerson !== true)) {
+          yield* Claims.release(item);
+
           return yield* new Skip({
             reason: `#${issue} is already claimed by an unattended run (${branch} exists)`,
           });

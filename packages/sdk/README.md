@@ -5,7 +5,7 @@ The services and helpers for writing Chernabog flows and steps. At runtime the `
 ## Flows
 
 ```ts
-import { defineFlow, Implement, step } from "@chernabog/sdk";
+import { Claims, defineFlow, Implement, step } from "@chernabog/sdk";
 import { Effect, Schema } from "effect";
 
 export default defineFlow({
@@ -14,14 +14,18 @@ export default defineFlow({
   concurrency: 1,
   workflow: (item) =>
     Effect.gen(function* () {
-      const issue = Implement.issueOf(item);
-      const { branch } = yield* Implement.claim(issue);
-      const checked = yield* step(
-        "check-scope",
-        { issue },
-        { output: Schema.Struct({ ok: Schema.Boolean }) },
-      );
-      // ...
+      const issue = yield* Implement.issueOf(item);
+
+      // However the run ends, its claim on the issue goes.
+      return yield* Effect.gen(function* () {
+        const { branch } = yield* Implement.claim(issue);
+        const checked = yield* step(
+          "check-scope",
+          { issue },
+          { output: Schema.Struct({ ok: Schema.Boolean }) },
+        );
+        // ...
+      }).pipe(Claims.releasing(Claims.issue(issue)));
     }),
 });
 ```

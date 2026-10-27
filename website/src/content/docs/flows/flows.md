@@ -21,7 +21,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 Each step in a workflow is an **activity** whose result is saved in SQLite, so after a crash or restart the run resumes after the last completed step.
 
 ```ts
-import { defineFlow, Implement, step } from "@chernabog/sdk";
+import { Claims, defineFlow, Implement, step } from "@chernabog/sdk";
 import { Effect, Schema } from "effect";
 
 export default defineFlow({
@@ -31,9 +31,13 @@ export default defineFlow({
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
-      const { branch } = yield* Implement.claim(issue);
-      const checked = yield* step("check-scope", { issue }, { output: Schema.Struct({ ok: Schema.Boolean }) });
-      // ...
+
+      // However the run ends, its claim on the issue goes.
+      return yield* Effect.gen(function* () {
+        const { branch } = yield* Implement.claim(issue);
+        const checked = yield* step("check-scope", { issue }, { output: Schema.Struct({ ok: Schema.Boolean }) });
+        // ...
+      }).pipe(Claims.releasing(Claims.issue(issue)));
     }),
 });
 ```
@@ -136,7 +140,8 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `Review.authoredByMe`, `Review.decisiveReviews(pr)` and `Review.addressItem` find the reviews that ask for changes on this persona's pull requests; `Review.changesAsked`, `authorSession`, `prepareAuthorWorktree`, `checkChanged` and `askAgain` are `address-review`'s steps around `Implement.considerFindings` and `addressFindings`. `Review.ownedByARun(pull)` says whether another flow's run owns a pull request.
 - The SDK has no whole workflows and no triggers of the review loop: those are written out in each recipe, where a repo can read and change them.
 - `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
-- `PullRequest.owning(pr)(effect)` marks the pull request as the run's while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone.
+- `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's; wrap the run in `releasing` so it goes.
+- `PullRequest.owning(pr)(effect)` holds the pull request's claim while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone. A pull request another run owns is skipped.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
 

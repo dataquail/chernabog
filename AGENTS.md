@@ -486,6 +486,35 @@ Decisions that cut across them:
   and `auto:changes-requested` stay in the label set but no default flow sets
   them.
 
+### Claims (#133)
+
+- **A claim is a ref of its own**, `refs/chernabog/claims/<item>`
+  (`Claims.issue(n)`, `Claims.pullRequest(n)`), at an empty-tree commit whose
+  message names the holder (run, persona, flow, claimed-at, with-person; never
+  the machine, since the ref is as public as the repo). Creating it is the
+  lock (`Claims.acquire`), reading it says who holds it (`Claims.holder`).
+- **The work branch is just the work.** `Implement.claim` and `Hybrid.claim`
+  acquire the claim ref, then create `auto/issue-<n>` or adopt one with no
+  claim on it.
+- **Release is a block, not the engine's.** The recipes wrap the run in
+  `Claims.releasing(Claims.issue(issue))`, which deletes the ref however the
+  run ends (a wait keeps it), as `PullRequest.owning` does for `pr-<n>`.
+  The branch and any pull request stay; labels, assignee and claim comment
+  are for people.
+- **`chernabog cancel` lets a claim ref go**, on the run's issue or pull
+  request (`RunCleanupClient.releaseClaimRef`, only a ref naming the run).
+  A flow that doesn't wrap its claim in `Claims.releasing` (any baked before
+  claims were refs) leaves its ref when the run ends; `cancel <run>` on that
+  ended run deletes only the ref (`CancelledRun.alreadyEnded`), the run keeps
+  its ending, and with no ref left it is refused (`RunAlreadyFinished`).
+- **No takeover yet** (#134). GitHub doesn't check fast-forwards for refs
+  outside `refs/heads/`, so a non-forced `PATCH` on a claim ref is not a
+  compare-and-swap; leases need another way.
+- **Migration, to drop a release later:** a branch whose latest claim marker
+  has no `ref: true` is an earlier version's claim (`Implement.legacyClaim`),
+  and a pull request with no claim ref falls back to its owner markers
+  (`PullRequest.ownerOf`).
+
 ### Hybrid path (#55)
 
 - No hybrid flow is scaffolded: `init` writes the same four defaults. The
@@ -499,8 +528,10 @@ Decisions that cut across them:
   repo has no such flow). The optional `Flow.item(key)` finds an item the
   trigger doesn't report (`FlowsClient.find`, for the daemon
   and `run --item`). It then attaches to the session (`liveAttach`).
-- `Hybrid.claim` takes over an earlier start's claim (`ClaimMarker.withPerson`)
-  but skips a branch an unattended run claimed. One Claude session per
+- `Hybrid.claim` takes the issue's claim ref like `Implement.claim`, and
+  skips an issue another run holds. During the migration it still takes over
+  a branch an earlier version's start claimed (`ClaimMarker.withPerson`), but
+  not one an earlier unattended run claimed. One Claude session per
   repo+issue (`sessionIdFor(slug#issue, 'human-initiated')`), so a restart resumes it.
 - `AgentRequest.withPerson`: only claude under an interactive launcher; the
   Stop hook gets `--person` and never blocks; the session stays open after

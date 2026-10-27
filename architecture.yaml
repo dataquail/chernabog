@@ -267,6 +267,13 @@ defs:
       fixture two tests share belongs in a harness beside them.
     count: { max: 0 }
 
+  # A recipe's flow is a file the loader reads by its default export.
+  flow-exports-only-itself:
+    message: >-
+      A recipe's flow file exports only its default, the defineFlow the loader reads. A block two
+      flows share belongs in the SDK.
+    count: { max: 1 }
+
 tree:
   "@/":
     message: >-
@@ -740,7 +747,8 @@ tree:
       # One flow per recipe, named for it, and the prompts the flows render.
       "flows/":
         children:
-          "*.ts": {}
+          "*.ts":
+            surface: [{ use: flow-exports-only-itself }, { use: no-star-exports }]
       "prompts/":
         children:
           "*.md": {}

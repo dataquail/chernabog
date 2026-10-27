@@ -79,17 +79,9 @@ export const reviewItem = (pull: PullRequest, key: string): WorkItem => ({
   reviewers: pull.requestedReviewers,
 });
 
-const commentBodies = (pull: PullRequest) =>
-  GitHub.use((github) => github.comments(pull.number)).pipe(
-    Effect.map((comments) => comments.map((comment) => comment.body)),
-  );
-
-// Whether a run of another flow owns the pull request; the standalone flows leave it alone.
-const ownedByARunOf = (bodies: ReadonlyArray<string>) =>
-  PullRequestSteps.ownerOf(bodies).pipe(Effect.map(Option.isSome));
-
+// Whether a run of another flow owns the pull request, by its claim ref; the standalone flows leave it alone.
 export const ownedByARun = (pull: PullRequest) =>
-  commentBodies(pull).pipe(Effect.flatMap(ownedByARunOf));
+  PullRequestSteps.owner(pull.number).pipe(Effect.map(Option.isSome));
 
 const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 

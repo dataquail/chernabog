@@ -306,6 +306,7 @@ describe("cancelRunUseCase", () => {
       expect(cancelled.run.status).toBe("cancelled");
       expect(cancelled.leftForPerson).toEqual([
         "removing its worktrees failed: gh is down",
+        "deleting its claim ref on issue-7 failed: gh is down",
         "releasing its claim on #7 failed: gh is down",
       ]);
       expect(yield* statusOf("i")).toEqual(Option.some("cancelled"));
@@ -316,6 +317,69 @@ describe("cancelRunUseCase", () => {
         }),
       ),
     ),
+  );
+
+  const holding = stoppingEngine("issue-run", "pr-run");
+
+  const holdingRefs = fakeHoldings({
+    claimRefs: { "issue-run": ["issue-7"], "pr-run": ["pr-1"] },
+  });
+
+  effect("deletes the claim ref a run holds, on an issue or a pull request", () =>
+    Effect.gen(function* () {
+      const onIssue = yield* cancelRunUseCase(byId("issue-run"), asAlice);
+      const onPull = yield* cancelRunUseCase(byId("pr-run"), asAlice);
+
+      expect([onIssue.releasedClaims, onPull.releasedClaims]).toEqual([
+        ["refs/chernabog/claims/issue-7"],
+        ["refs/chernabog/claims/pr-1"],
+      ]);
+      expect([onIssue.alreadyEnded, onPull.alreadyEnded]).toEqual([false, false]);
+    }).pipe(
+      Effect.provide(
+        runtime(holding, holdingRefs, {
+          runs: [
+            run("issue-run", { flow: "implement", itemKey: "issue-7" }),
+            run("pr-run", { itemKey: "pr-1-changes-2" }),
+          ],
+        }),
+      ),
+    ),
+  );
+
+  const leftBehind = fakeEngine();
+  const leftRefs = fakeHoldings({ claimRefs: { "ended-1": ["issue-7"] } });
+
+  effect(
+    "a run that ended with its claim ref still held keeps its ending, and only lets the ref go",
+    () =>
+      Effect.gen(function* () {
+        const released = yield* cancelRunUseCase(byId("ended-1"), asAlice);
+
+        expect(released.alreadyEnded).toBe(true);
+        expect(released.run.status).toBe("done");
+        expect(released.releasedClaims).toEqual(["refs/chernabog/claims/issue-7"]);
+        expect([leftRefs.cleaned, leftRefs.released]).toEqual([[], []]);
+        expect([leftBehind.interrupted, leftBehind.notes]).toEqual([[], []]);
+        expect(yield* statusOf("ended-1")).toEqual(Option.some("done"));
+
+        // Once it is gone there is nothing left to let go of.
+        const again = yield* Effect.flip(cancelRunUseCase(byId("ended-1"), asAlice));
+        expect(again._tag).toBe("RunAlreadyFinished");
+      }).pipe(
+        Effect.provide(
+          runtime(leftBehind, leftRefs, {
+            runs: [
+              run("ended-1", {
+                ...finished,
+                id: RunId.make("ended-1"),
+                flow: "implement",
+                itemKey: "issue-7",
+              }),
+            ],
+          }),
+        ),
+      ),
   );
 
   const shared = stoppingEngine("review");

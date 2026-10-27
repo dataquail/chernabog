@@ -288,6 +288,14 @@ export type SubmittedReview = {
   readonly commitSha: string;
 };
 
+export type NewCommit = {
+  readonly message: string;
+  readonly tree: string;
+  readonly parents: ReadonlyArray<string>;
+};
+
+export type RefCommit = { readonly sha: string; readonly message: string };
+
 export type MergeMethod = "merge" | "squash" | "rebase";
 
 // The merge of exactly `sha`: GitHub refuses one whose head has moved since.
@@ -340,6 +348,14 @@ export class GitHub extends Context.Service<
       sha: string,
     ): Effect.Effect<"created" | "already-exists", GitHubError>;
     deleteBranch(branch: string): Effect.Effect<void, GitHubError>;
+    // A commit made through the API, with no worktree: its sha.
+    createCommit(commit: NewCommit): Effect.Effect<string, GitHubError>;
+    // Any ref, named in full (`refs/chernabog/claims/issue-12`). Whoever creates one first holds it.
+    createRef(ref: string, sha: string): Effect.Effect<"created" | "already-exists", GitHubError>;
+    // The commit a ref points at, with its message; none for a ref GitHub doesn't have.
+    ref(ref: string): Effect.Effect<Option.Option<RefCommit>, GitHubError>;
+    // Deleting a ref GitHub doesn't have is not an error.
+    deleteRef(ref: string): Effect.Effect<void, GitHubError>;
     pullRequest(number: number): Effect.Effect<PullRequest, NotFound | GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;

@@ -12,26 +12,31 @@ import {
 import { CleanupFailed } from "../../domain/run/run.errors.ts";
 
 // What a test's runs hold, by run id, and what cleaning up did: the
-// worktrees each run's cleanup finds, the claim it releases, if any, the sessions
-// it has open, and the runs and issues cleaned up, and sessions closed. A run
+// worktrees each run's cleanup finds, the claim it releases, if any, the claim
+// refs that name it (`issue-<n>`, `pr-<n>`), the sessions it has open, and the
+// runs and issues cleaned up, the refs deleted, and sessions closed. A run
 // listed in `failing` fails every cleanup with its message.
 export type FakeHoldings = {
   readonly worktrees: Record<string, WorktreeCleanup>;
   readonly claims: Record<string, ReleasedClaim>;
+  readonly claimRefs: Record<string, ReadonlyArray<string>>;
   readonly sessions: Record<string, ReadonlyArray<OpenSession>>;
   readonly failing: Record<string, string>;
   readonly cleaned: Array<string>;
   readonly released: Array<number>;
+  readonly deletedRefs: Array<string>;
   readonly closed: Array<string>;
 };
 
 export const fakeHoldings = (held: Partial<FakeHoldings> = {}): FakeHoldings => ({
   worktrees: {},
   claims: {},
+  claimRefs: {},
   sessions: {},
   failing: {},
   cleaned: [],
   released: [],
+  deletedRefs: [],
   closed: [],
   ...held,
 });
@@ -56,6 +61,25 @@ export const RunCleanupClientFake = (holdings: FakeHoldings) => {
                 Record.get(holdings.worktrees, run.id),
                 (): WorktreeCleanup => ({ removed: [], kept: [] }),
               );
+            }),
+          ),
+        ),
+      releaseClaimRef: (run, claim) =>
+        failure(run.id).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              const held = Option.getOrElse(
+                Record.get(holdings.claimRefs, run.id),
+                (): ReadonlyArray<string> => [],
+              );
+
+              if (!held.includes(claim) || holdings.deletedRefs.includes(claim)) {
+                return Option.none<string>();
+              }
+
+              holdings.deletedRefs.push(claim);
+
+              return Option.some(`refs/chernabog/claims/${claim}`);
             }),
           ),
         ),

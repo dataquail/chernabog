@@ -7,12 +7,14 @@ import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equivalence from "effect/Equivalence";
 import * as FileSystem from "effect/FileSystem";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
@@ -21,10 +23,18 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
-import { type Persona } from "../../kernel/persona.value-object.ts";
+import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
 import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import {
+  causeOf,
+  DEFAULT_EVENT_TICK_MIN,
+  eventTickAt,
+  localCause,
+  noteEvent,
+  type PendingTick,
+} from "../../modules/runs/domain/schedule/event-tick.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
   type FlowHandle,
@@ -39,7 +49,12 @@ import {
   servicesFrom,
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
-import { type FlowRegistry, RuntimeLayer, StateLive } from "../../modules/runs/runs.layer.ts";
+import {
+  type FlowRegistry,
+  NotificationsLayer,
+  RuntimeLayer,
+  StateLive,
+} from "../../modules/runs/runs.layer.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
@@ -49,7 +64,9 @@ import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
 import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
+import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
+import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
@@ -70,6 +87,7 @@ import {
   checkManualSchedules,
   type EffectiveRepo,
   EnrolledRepo,
+  eventsFor,
   flowOff,
   loadMachineConfig,
   loadRepo,
@@ -107,6 +125,11 @@ type FlowSchedule = {
   readonly teamExpression: Option.Option<string>;
   next: Option.Option<DateTime.Utc>;
   lastTick: Option.Option<DateTime.Utc>;
+  // What made the last tick: cron, manual, or the event that asked for it.
+  lastCause: Option.Option<string>;
+  // A tick events asked for, not run yet, and when the last such tick ran (#138).
+  pending: Option.Option<PendingTick>;
+  lastEventTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
   // What the last tick left for other machines, by flows.<flow>.assignee and
   // reviewRequested, and for the review flow, review requests no persona here serves.
@@ -241,6 +264,9 @@ export const loadRepoState = (
             teamExpression,
             next: Option.flatMap(expression, (cron) => nextTick(cron, now)),
             lastTick: Option.none(),
+            lastCause: Option.none(),
+            pending: Option.none(),
+            lastEventTick: Option.none(),
             queued: [],
             elsewhere: [],
           };
@@ -250,7 +276,48 @@ export const loadRepoState = (
     } satisfies RepoState;
   });
 
-export type TickOptions = { readonly gates: boolean; readonly item: Option.Option<string> };
+export type TickOptions = {
+  readonly gates: boolean;
+  readonly item: Option.Option<string>;
+  // What made the tick, as status shows it.
+  readonly cause: string;
+};
+
+// The least time between two event ticks of a repo's flows: the team's limits.eventTickMin.
+const eventTickMinOf = (repo: RepoState) =>
+  Option.getOrElse(
+    Option.map(repo.repo, (loaded) => loaded.eventTickMin),
+    () => DEFAULT_EVENT_TICK_MIN,
+  );
+
+// When a schedule's pending event tick runs, if one is pending.
+const eventDueAt = (repo: RepoState, schedule: FlowSchedule) =>
+  Option.map(schedule.pending, (pending) =>
+    eventTickAt(pending, schedule.lastEventTick, eventTickMinOf(repo)),
+  );
+
+// Marks the schedules an event is for as due, each by the event tick rules.
+// A manual flow never ticks on a schedule, so no event ticks it either.
+const markDue = (schedules: ReadonlyArray<FlowSchedule>, cause: string, at: DateTime.Utc) => {
+  const ticking = schedules.filter((found) => Option.isSome(found.expression));
+
+  for (const schedule of ticking) {
+    schedule.pending = Option.some(noteEvent(schedule.pending, cause, at));
+  }
+
+  return ticking.length > 0;
+};
+
+// The personas this machine polls notifications for: each of github:'s logins
+// whose events say so, or the implicit persona when there are none.
+const notifiedPersonas = (machine: MachineConfig): ReadonlyArray<Persona> =>
+  Option.match(Option.liftPredicate(machine.github, Arr.isReadonlyArrayNonEmpty), {
+    onNone: () => [IMPLICIT],
+    onSome: (logins) => logins.map((login): Persona => Option.some(login)),
+  }).filter((persona) => eventsFor(machine, persona).notifications);
+
+// How long a persona whose notifications poll failed waits to try again.
+const NOTIFICATIONS_RETRY = Duration.minutes(5);
 
 const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTime.formatIso);
 
@@ -393,9 +460,41 @@ export const runDaemon = Effect.gen(function* () {
 
   const busy = yield* Ref.make(0);
 
+  // Wakes the scheduling loop early, when an event makes a tick due.
+  const wake = yield* Latch.make();
+
+  // A change a run here made, in a repo by its name: every flow of it whose
+  // persona ticks on local events is due once the event tick rules allow,
+  // save those `spared` leaves to cron.
+  const noteLocal = (
+    repoName: string,
+    cause: string,
+    spared: (schedule: FlowSchedule) => boolean = () => false,
+  ) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+
+      const marked = repos
+        .filter((repo) => repo.name === repoName || repo.enrolled.repo === repoName)
+        .some((repo) =>
+          markDue(
+            repo.flows.filter(
+              (schedule) => eventsFor(machine, schedule.persona).local && !spared(schedule),
+            ),
+            cause,
+            now,
+          ),
+        );
+
+      if (marked) {
+        yield* wake.open;
+      }
+    });
+
   const hooks = {
     onStep: () => Ref.update(busy, (count) => count + 1),
     onStepDone: () => Ref.update(busy, (count) => count - 1),
+    onChange: noteLocal,
   };
 
   // Each repo's services, once per persona.
@@ -559,6 +658,7 @@ export const runDaemon = Effect.gen(function* () {
 
           for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
+            schedule.lastCause = Option.some(options.cause);
             schedule.queued = routed.queued;
             schedule.elsewhere = [...routed.elsewhere, ...unserved];
           }
@@ -630,6 +730,16 @@ export const runDaemon = Effect.gen(function* () {
                 yield* log(
                   `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
                 );
+                // A run that didn't finish its work leaves its own flow to
+                // cron, so a trigger whose item fails fast retries no faster.
+                yield* noteLocal(
+                  finished.repo,
+                  localCause(`${finished.flow} run ended`, Option.none()),
+                  (schedule) =>
+                    finished.status !== "done" &&
+                    schedule.handle.name === finished.flow &&
+                    samePersona(schedule.persona, finished.persona),
+                );
               }
             }
 
@@ -642,6 +752,7 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
+            yield* wake.close;
             const now = yield* DateTime.now;
             const ticking = !(yield* Ref.get(draining));
 
@@ -653,13 +764,34 @@ export const runDaemon = Effect.gen(function* () {
               }
 
               for (const schedule of repo.flows) {
-                if (
-                  !Option.exists(schedule.next, (next) => DateTime.isLessThanOrEqualTo(next, now))
-                ) {
+                const due = (at: Option.Option<DateTime.Utc>) =>
+                  Option.exists(at, (next) => DateTime.isLessThanOrEqualTo(next, now));
+
+                const cron = due(schedule.next);
+                const event = due(eventDueAt(repo, schedule));
+
+                if (!cron && !event) {
                   continue;
                 }
 
-                schedule.next = Option.flatMap(schedule.expression, (cron) => nextTick(cron, now));
+                // Cron's tick reads the same state an event's would, so it covers what's pending.
+                const cause = Option.getOrElse(
+                  Option.map(
+                    Option.filter(schedule.pending, () => !cron),
+                    causeOf,
+                  ),
+                  () => "cron",
+                );
+
+                if (cron) {
+                  schedule.next = Option.flatMap(schedule.expression, (expression) =>
+                    nextTick(expression, now),
+                  );
+                } else {
+                  schedule.lastEventTick = Option.some(now);
+                }
+
+                schedule.pending = Option.none();
                 const context = ready.value.contextFor(schedule.persona);
 
                 if (Option.isNone(context)) {
@@ -669,6 +801,7 @@ export const runDaemon = Effect.gen(function* () {
                 const result = yield* tick(repo, schedule, {
                   gates: true,
                   item: Option.none(),
+                  cause,
                 });
 
                 if (Option.isSome(result.skipped)) {
@@ -680,13 +813,101 @@ export const runDaemon = Effect.gen(function* () {
             }
 
             const dueIn = repos
-              .flatMap((repo) => repo.flows.flatMap((flow) => Option.toArray(flow.next)))
+              .flatMap((repo) =>
+                repo.flows.flatMap((flow) => [
+                  ...Option.toArray(flow.next),
+                  ...Option.toArray(eventDueAt(repo, flow)),
+                ]),
+              )
               .map((next) => DateTime.toEpochMillis(next) - DateTime.toEpochMillis(now));
 
-            yield* Effect.sleep(Math.max(SOONEST_MS, Math.min(LATEST_MS, ...dueIn)));
+            // An event that makes a tick due wakes the loop before the sleep is out.
+            yield* Effect.timeoutOrElse(wake.await, {
+              duration: Math.max(SOONEST_MS, Math.min(LATEST_MS, ...dueIn)),
+              orElse: () => Effect.void,
+            });
           }),
         ),
       );
+
+      // Each persona's notifications poll, and why it fails, if it does.
+      const notifications = new Map<string, Option.Option<string>>();
+
+      // Makes a persona's flows in the repo news is about due.
+      const markNews = (persona: Persona, news: NotificationNews, now: DateTime.Utc) =>
+        repos
+          .filter((repo) => repo.enrolled.repo.toLowerCase() === news.repo.toLowerCase())
+          .map((repo) =>
+            markDue(
+              repo.flows.filter((schedule) => samePersona(schedule.persona, persona)),
+              news.cause,
+              now,
+            ),
+          )
+          .some(Boolean);
+
+      // Polls a persona's GitHub notifications as often as GitHub asks, and makes
+      // the flows it runs in a repo a notification is about due. A poll that
+      // fails is shown in status, with its fix, and tried again later; its
+      // flows go on ticking on cron.
+      const pollNotifications = (persona: Persona) =>
+        Effect.gen(function* () {
+          const key = Option.getOrElse(persona, () => "");
+
+          const who = Option.match(persona, {
+            onNone: () => "",
+            onSome: (named) => ` for ${named}`,
+          });
+
+          const cursor = yield* Ref.make({
+            lastModified: Option.none<string>(),
+            since: DateTime.formatIso(startedAt),
+          });
+
+          notifications.set(key, Option.none());
+
+          const pollOnce = Effect.gen(function* () {
+            const slugs = repos
+              .filter((repo) => Option.isSome(runnable(repo)))
+              .map((repo) => repo.enrolled.repo);
+
+            const polled = yield* Effect.result(
+              pollNotificationsUseCase(persona, yield* Ref.get(cursor), slugs),
+            );
+
+            if (Result.isFailure(polled)) {
+              // Logged once, when it starts failing; status shows it meanwhile.
+              if (!Option.exists(Option.fromUndefinedOr(notifications.get(key)), Option.isSome)) {
+                yield* log(`notifications${who}: ${polled.failure.message}`);
+              }
+
+              notifications.set(key, Option.some(polled.failure.message));
+
+              return Duration.toMillis(NOTIFICATIONS_RETRY);
+            }
+
+            notifications.set(key, Option.none());
+            yield* Ref.set(cursor, {
+              lastModified: polled.success.lastModified,
+              since: polled.success.since,
+            });
+
+            const now = yield* DateTime.now;
+            const marked = polled.success.news.map((news) => markNews(persona, news, now));
+
+            if (marked.some(Boolean)) {
+              yield* wake.open;
+            }
+
+            return polled.success.pollIntervalMs;
+          });
+
+          return yield* Effect.forever(pollOnce.pipe(Effect.flatMap(Effect.sleep)));
+        }).pipe(Effect.provide(NotificationsLayer));
+
+      for (const persona of notifiedPersonas(machine)) {
+        yield* Effect.forkScoped(pollNotifications(persona));
+      }
 
       // Restarts the daemon on a repo's trusted tree, only the first time it does.
       const reloadOn = (repo: RepoState, tree: string) =>
@@ -871,8 +1092,28 @@ export const runDaemon = Effect.gen(function* () {
               Option.fromUndefinedOr(flow.own.own.flows?.[flow.handle.name]?.schedule),
               { onNone: () => ({}), onSome: (ownSchedule) => ({ ownSchedule }) },
             ),
-            next: formatOption(flow.next),
+            // A pending event tick is the next one, when it comes before cron's.
+            next: formatOption(
+              Option.match(eventDueAt(repo, flow), {
+                onNone: () => flow.next,
+                onSome: (event) =>
+                  Option.some(
+                    Option.match(flow.next, {
+                      onNone: () => event,
+                      onSome: (cron) => DateTime.min(cron, event),
+                    }),
+                  ),
+              }),
+            ),
             lastTick: formatOption(flow.lastTick),
+            ...Option.match(flow.lastCause, {
+              onNone: () => ({}),
+              onSome: (lastCause) => ({ lastCause }),
+            }),
+            ...Option.match(flow.pending, {
+              onNone: () => ({}),
+              onSome: (pending) => ({ pending: causeOf(pending) }),
+            }),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
             ...Option.match(flowSourceOf(flow.handle.flow), {
@@ -928,6 +1169,16 @@ export const runDaemon = Effect.gen(function* () {
           // still have runs to show.
           recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
           skips: (yield* listRecentSkipsUseCase(20)).skips,
+          notifications: [...notifications].map(([persona, problem]) => ({
+            ...Option.match(
+              Option.liftPredicate(persona, (named) => named.length > 0),
+              {
+                onNone: () => ({}),
+                onSome: (named) => ({ persona: named }),
+              },
+            ),
+            problem,
+          })),
         } satisfies DaemonStatus;
       });
 
@@ -1019,7 +1270,7 @@ export const runDaemon = Effect.gen(function* () {
           }
 
           return yield* HttpServerResponse.schemaJson(TickResult)(
-            yield* tick(repo, schedule, { gates, item: body.item }),
+            yield* tick(repo, schedule, { gates, item: body.item, cause: "manual" }),
           );
         });
 
@@ -1055,9 +1306,15 @@ export const runDaemon = Effect.gen(function* () {
           return yield* refuse(409, cancelled.failure.message);
         }
 
-        yield* log(
-          `cancelled ${cancelled.success.run.id} (${runLabel(cancelled.success.run)}): ${Option.getOrElse(cancelled.success.run.summary, () => "")}`,
-        );
+        if (cancelled.success.alreadyEnded) {
+          yield* log(
+            `deleted the claim refs ${cancelled.success.releasedClaims.join(", ")} of ended run ${cancelled.success.run.id} (${runLabel(cancelled.success.run)})`,
+          );
+        } else {
+          yield* log(
+            `cancelled ${cancelled.success.run.id} (${runLabel(cancelled.success.run)}): ${Option.getOrElse(cancelled.success.run.summary, () => "")}`,
+          );
+        }
 
         return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
       });

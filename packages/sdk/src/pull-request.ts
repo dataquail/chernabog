@@ -10,8 +10,9 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+import * as Claims from "./claims.ts";
 import { commentStep } from "./comment.ts";
-import { MergeRefused, NeedsHuman, PullRequestClosed } from "./errors.ts";
+import { MergeRefused, NeedsHuman, PullRequestClosed, Skip } from "./errors.ts";
 import { activity } from "./flow.ts";
 import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from "./markers.ts";
 import { pathsMatching } from "./paths.ts";
@@ -25,53 +26,94 @@ import {
   Runs,
 } from "./services.ts";
 
-const writeOwner = (name: string, pullRequest: number, released: boolean) =>
+// Marks the pull request as this run's: its claim ref, and a comment for people to read.
+export const own = (pullRequest: number) =>
   activity(
-    name,
+    `own-pr-${pullRequest}`,
     Effect.gen(function* () {
       const run = yield* Run;
-      const marker = ownerMarker.write({ flow: run.flow, runId: run.runId, released });
+      const item = Claims.pullRequest(pullRequest);
+      const claimed = yield* Claims.acquire(item);
 
-      if (released) {
-        yield* (yield* GitHub).comment(
-          pullRequest,
-          `The \`${run.flow}\` run is done with this pull request. ${marker}`,
-        );
-      } else {
-        yield* (yield* GitHub).comment(
-          pullRequest,
-          `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
-        );
+      if (!claimed.acquired) {
+        return yield* new Skip({
+          reason: `#${pullRequest} is owned by another run (${Claims.describeHolder(item, claimed.holder)})`,
+        });
       }
+
+      const marker = ownerMarker.write({
+        flow: run.flow,
+        runId: run.runId,
+        released: false,
+        ref: true,
+      });
+
+      yield* (yield* GitHub).comment(
+        pullRequest,
+        `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
+      );
     }),
   );
 
 // Comments on the pull request, and does nothing else.
 export const comment = (pullRequest: number, body: string) => commentStep("pr", pullRequest, body);
 
-// Marks the pull request as this run's.
-export const own = (pullRequest: number) => writeOwner(`own-pr-${pullRequest}`, pullRequest, false);
-
 // Lets the pull request go, so the standalone flows pick it up again.
 export const release = (pullRequest: number) =>
-  writeOwner(`release-pr-${pullRequest}`, pullRequest, true);
+  activity(
+    `release-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const run = yield* Run;
+      yield* Claims.release(Claims.pullRequest(pullRequest));
+
+      const marker = ownerMarker.write({
+        flow: run.flow,
+        runId: run.runId,
+        released: true,
+        ref: true,
+      });
+
+      yield* (yield* GitHub).comment(
+        pullRequest,
+        `The \`${run.flow}\` run is done with this pull request. ${marker}`,
+      );
+    }),
+  );
 
 // Owns the pull request for as long as `effect` runs, and releases it however
-// that ends. A run waiting on a signal keeps it.
+// that ends. A run waiting on a signal keeps it. A pull request another run
+// owns is skipped.
 export const owning =
   (pullRequest: number) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     own(pullRequest).pipe(
-      Effect.andThen(effect),
-      // A wait suspends the run by interrupting it; that is not an ending.
-      Effect.onExit((exit) => {
-        if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)) {
-          return Effect.void;
-        }
+      Effect.andThen(
+        effect.pipe(
+          // A wait suspends the run by interrupting it; that is not an ending.
+          Effect.onExit((exit) => {
+            if (Exit.isFailure(exit) && Cause.hasInterrupts(exit.cause)) {
+              return Effect.void;
+            }
 
-        return release(pullRequest).pipe(Effect.ignore);
-      }),
+            return release(pullRequest).pipe(Effect.ignore);
+          }),
+        ),
+      ),
     );
+
+// Whether this machine knows the run has ended; a run it never had, such as
+// one on another machine, is taken to be going.
+const knownEnded = (runId: string) =>
+  Effect.gen(function* () {
+    const runs = yield* Effect.serviceOption(Runs);
+
+    const active = yield* Option.match(runs, {
+      onNone: () => Effect.succeedNone,
+      onSome: (known) => known.isActive(runId),
+    });
+
+    return Option.contains(active, false);
+  });
 
 // The run that owns the pull request, from its comments: none once it let go,
 // or when this machine knows the run has ended.
@@ -86,18 +128,39 @@ export const ownerOf = (bodies: ReadonlyArray<string>) =>
       return Option.none<OwnerMarker>();
     }
 
-    const runs = yield* Effect.serviceOption(Runs);
-
-    const active = yield* Option.match(runs, {
-      onNone: () => Effect.succeedNone,
-      onSome: (known) => known.isActive(latest.value.runId),
-    });
-
-    if (Option.contains(active, false)) {
+    if (yield* knownEnded(latest.value.runId)) {
       return Option.none<OwnerMarker>();
     }
 
     return latest;
+  });
+
+export type Owner = { readonly flow: string; readonly runId: string };
+
+// The run that owns the pull request: the holder of its claim ref, none when
+// this machine knows that run has ended. Migration: while runs that owned a
+// pull request by comment alone may be in flight, one with no claim ref falls
+// back to the latest owner marker that names no ref (ownerOf). Drop the
+// fallback a release after owners became claim refs.
+export const owner = (pullRequest: number) =>
+  Effect.gen(function* () {
+    const held = yield* Claims.holder(Claims.pullRequest(pullRequest));
+
+    if (Option.isSome(held)) {
+      if (yield* knownEnded(held.value.runId)) {
+        return Option.none<Owner>();
+      }
+
+      return Option.some<Owner>({ flow: held.value.flow, runId: held.value.runId });
+    }
+
+    const bodies = (yield* (yield* GitHub).comments(pullRequest)).map((found) => found.body);
+    const legacy = yield* ownerOf(bodies);
+
+    return Option.map(
+      Option.filter(legacy, (marker) => marker.ref !== true),
+      (marker): Owner => ({ flow: marker.flow, runId: marker.runId }),
+    );
   });
 
 export type MergeOptions = { readonly method: MergeMethod };

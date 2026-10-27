@@ -22,6 +22,11 @@ export const FlowStatus = Schema.Struct({
   ownSchedule: Schema.optionalKey(Schema.String),
   next: Maybe,
   lastTick: Maybe,
+  // What made the last tick: cron, manual, or an event such as
+  // "local: #73 review requested" or "notification: review_requested on #73".
+  lastCause: Schema.optionalKey(Schema.String),
+  // The event a tick is due for, while it waits to run.
+  pending: Schema.optionalKey(Schema.String),
   enabled: Schema.Boolean,
   // Why it doesn't run on this machine, when it doesn't.
   offReason: Schema.optionalKey(Schema.String),
@@ -77,6 +82,11 @@ export const DaemonStatus = Schema.Struct({
   active: Schema.Array(ActiveRun),
   recent: Schema.Array(RunView),
   skips: Schema.Array(SkipView),
+  // Each persona whose GitHub notifications tick its flows, and why its poll
+  // fails, with the fix, if it does. Absent from a daemon from before them.
+  notifications: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ persona: Schema.optionalKey(Schema.String), problem: Maybe })),
+  ),
 });
 
 export type DaemonStatus = typeof DaemonStatus.Type;

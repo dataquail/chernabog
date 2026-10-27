@@ -107,9 +107,20 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
     );
   }).pipe(Effect.scoped);
 
+const deletedRefs = (cancelled: CancelledRun) =>
+  cancelled.releasedClaims.map((ref) => `deleted its claim ref ${ref}`);
+
 // What cancelling did, for a person to read.
 export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string> => {
   const { run } = cancelled;
+
+  if (cancelled.alreadyEnded) {
+    return [
+      `${run.id} (${runLabel(run)}) had already ended (${run.status}), and keeps its ending`,
+      ...deletedRefs(cancelled),
+      ...cancelled.leftForPerson.map((line) => `left for you: ${line}`),
+    ];
+  }
 
   const stopped = Option.match(run.executionId, {
     onNone: () => [],
@@ -132,6 +143,7 @@ export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string
       ),
     ),
     ...cancelled.removedWorktrees.map((path) => `removed worktree ${path}`),
+    ...deletedRefs(cancelled),
     ...Option.toArray(
       Option.map(cancelled.released, (released) =>
         Option.match(released.deletedBranch, {

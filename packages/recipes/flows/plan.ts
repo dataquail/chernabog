@@ -13,6 +13,7 @@
 // run in flight resumes by, so renaming one restarts that step.
 
 import {
+  Claims,
   defineFlow,
   GitHub,
   Implement,
@@ -76,9 +77,8 @@ const planUntilApproved = (spec: number) =>
     }
   });
 
-const workflow = (item: WorkItem) =>
+const work = (spec: number, item: WorkItem) =>
   Effect.gen(function* () {
-    const spec = yield* Implement.issueOf(item);
     yield* Implement.claim(spec, yield* Implement.queuedBy(item));
 
     // Each ending removes the plan's checkout first.
@@ -106,6 +106,15 @@ const workflow = (item: WorkItem) =>
     return yield* Plan.askForClarification(spec, outcome).pipe(
       Effect.flatMap(Implement.endForPerson),
     );
+  });
+
+const workflow = (item: WorkItem) =>
+  Effect.gen(function* () {
+    const spec = yield* Implement.issueOf(item);
+
+    // However the run ends, its claim on the spec goes; a run waiting on an
+    // answer to its plan keeps it.
+    return yield* work(spec, item).pipe(Claims.releasing(Claims.issue(spec)));
   }).pipe(
     // An issue deleted or transferred under the run leaves nothing to do.
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
