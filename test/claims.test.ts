@@ -188,7 +188,7 @@ describe("claiming an issue with a person", () => {
       heldBy(fake, ISSUE_REF, { ...OTHER, flow: "human-initiated", withPerson: true });
       const skipped = yield* runToEnd(starting, fake, work);
       expect(skipped.status).toBe("skipped");
-      expect(summaryOf(skipped)).toContain("`chernabog cancel` that run");
+      expect(summaryOf(skipped)).toContain("`chernabog cancel another-run` to start it here");
       expect(fake.requests).toEqual([]);
     }),
   );

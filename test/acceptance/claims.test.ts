@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
+import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 const claimRef = (issue: number) => `refs/chernabog/claims/issue-${issue}`;
@@ -96,4 +97,49 @@ describe("a claim ref", () => {
     expect(pull?.state).toBe("open");
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
   }, 60_000);
+});
+
+// The implement recipe as a repo baked it before claims were refs: it claims,
+// but never lets the claim go.
+const RELEASING = "        Claims.releasing(Claims.issue(issue)),\n";
+const unreleasing = RECIPE_FILES["flows/implement.ts"].replace(RELEASING, "");
+
+describe("a flow baked before claims were refs", () => {
+  let sandbox: Sandbox;
+
+  beforeAll(() => {
+    sandbox = openSandbox({}, { repoFiles: { "flows/implement.ts": unreleasing } });
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("leaves its claim ref when the run ends, which cancel then lets go", async () => {
+    expect(unreleasing).not.toContain("Claims.releasing");
+    const issue = sandbox.github.addIssue("Claimed by an old flow", ["auto:eligible"]);
+    expect((await sandbox.runCli(["run", "implement", "--repo", "demo"])).output).toContain(
+      `done: #${issue}:`,
+    );
+
+    const left = Option.getOrThrow(sandbox.github.refSha(claimRef(issue)));
+    const runId = /^Run: (.+)$/m.exec(sandbox.github.messageOf(left))?.[1] ?? "";
+
+    // Queued again, the issue is held by the ended run's claim.
+    sandbox.github.issue(issue).labels.push("auto:eligible");
+    const held = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
+    expect(held.output).toContain(`holds ${claimRef(issue)}`);
+
+    const cancelled = await sandbox.runCli(["cancel", runId.slice(0, 8)]);
+    expect(cancelled.output).toContain("had already ended (done), and keeps its ending");
+    expect(cancelled.output).toContain(`deleted its claim ref ${claimRef(issue)}`);
+    expect(cancelled.code).toBe(0);
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+
+    // With nothing left to let go of, it is refused as before.
+    expect((await sandbox.runCli(["cancel", runId.slice(0, 8)])).code).not.toBe(0);
+
+    const again = await sandbox.runCli(["run", "implement", "--repo", "demo"]);
+    expect(again.output).toContain(`done: #${issue}:`);
+  }, 120_000);
 });

@@ -15,7 +15,7 @@ This is [the hybrid path](/chernabog/work/flows/#the-hybrid-path). It runs only 
 
 ## Its steps
 
-1. `Hybrid.claim` — the issue's [claim ref](/chernabog/flows/sdk/#claims), then its branch, `auto/issue-<n>` (or the one an earlier start left), labelled `auto:in-progress`, with `auto:eligible` and `auto:ship` removed. An issue another run holds is left to it; `chernabog cancel` that run to start it here. The claim goes when the run ends, however it ends; the branch and any pull request stay.
+1. `Hybrid.claim` — the issue's [claim ref](/chernabog/flows/sdk/#claims), then its branch, `auto/issue-<n>` (or the one an earlier start left), labelled `auto:in-progress`, with `auto:eligible` and `auto:ship` removed. An issue another run holds is left to it; the skip names the run, and `chernabog cancel <run>` lets the claim go, whether that run is in flight or has ended with its claim ref left behind. The claim goes when the run ends, however it ends; the branch and any pull request stay.
 2. `prepareWorktree` — as `implement`'s.
 3. `Hybrid.workWithPerson` — the session with the person, from the `human-initiated` prompt. When the agent thinks the work is done, it drafts the pull request with `chernabog open-pr --draft` and asks the person, in a Yes/No question, whether to open it. The session ends on their Yes, which a hook acts on, not the agent; on No they keep working. The person can also run `chernabog open-pr` themselves. If the person closes the session before that, the run fails and lets the claim go; the issue stays `auto:in-progress`, and `chernabog start` on it again picks the session back up.
 4. `localGate(worktree, { session })` — with `Hybrid.personSession(issue)`, so a failure's fix goes back to the person's session.

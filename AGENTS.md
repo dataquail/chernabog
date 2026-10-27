@@ -480,8 +480,14 @@ Decisions that cut across them:
 - **Release is a block, not the engine's.** The recipes wrap the run in
   `Claims.releasing(Claims.issue(issue))`, which deletes the ref however the
   run ends (a wait keeps it), as `PullRequest.owning` does for `pr-<n>`.
-  `chernabog cancel` deletes the issue's ref too. The branch and any pull
-  request stay; labels, assignee and claim comment are for people.
+  The branch and any pull request stay; labels, assignee and claim comment
+  are for people.
+- **`chernabog cancel` lets a claim ref go**, on the run's issue or pull
+  request (`RunCleanupClient.releaseClaimRef`, only a ref naming the run).
+  A flow that doesn't wrap its claim in `Claims.releasing` (any baked before
+  claims were refs) leaves its ref when the run ends; `cancel <run>` on that
+  ended run deletes only the ref (`CancelledRun.alreadyEnded`), the run keeps
+  its ending, and with no ref left it is refused (`RunAlreadyFinished`).
 - **No takeover yet** (#134). GitHub doesn't check fast-forwards for refs
   outside `refs/heads/`, so a non-forced `PATCH` on a claim ref is not a
   compare-and-swap; leases need another way.

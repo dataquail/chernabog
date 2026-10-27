@@ -76,6 +76,14 @@ const claimComment = (claimedAt: string, branch: string, runId: string) =>
     claimMarker.write({ runId, claimedAt, branch, withPerson: true, ref: true }),
   ].join("\n");
 
+// How to let go of the claim another run holds: cancelling it, which for a run
+// that has ended deletes only the claim ref its flow left.
+const cancelHint = (holder: Option.Option<Claims.Holder>) =>
+  Option.match(holder, {
+    onNone: () => "`chernabog cancel` the run that holds it",
+    onSome: (found) => `\`chernabog cancel ${found.runId}\``,
+  });
+
 // Claims the issue with its claim ref, then creates the issue's branch, or
 // takes up one an earlier start or an ended run left, and labels, assigns and
 // comments as claim does. It takes the issue out of the unattended queues. An
@@ -103,7 +111,7 @@ export const claim = (issue: number) =>
 
       if (!claimed.acquired) {
         return yield* new Skip({
-          reason: `#${issue} is already claimed (${Claims.describeHolder(item, claimed.holder)}); \`chernabog cancel\` that run to start it here`,
+          reason: `#${issue} is already claimed (${Claims.describeHolder(item, claimed.holder)}); ${cancelHint(claimed.holder)} to start it here`,
         });
       }
 

@@ -65,7 +65,7 @@ Claimed-At: 2026-10-26T14:00:00.000Z
 
 Creating a ref is the one write GitHub refuses to a second writer, so the run that creates it holds the item, and `Claims.holder(item)` reads who that is. It says nothing about the machine: the ref is as public as the repo. A ref outside `refs/heads/` isn't a branch: it isn't in the branch list, and `push` workflows, which run for branches and tags, don't see it.
 
-`Claims.releasing(item)(effect)` deletes the ref when `effect` ends, whatever the ending; a run waiting on a signal keeps it, and `chernabog cancel` releases it too. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
+`Claims.releasing(item)(effect)` deletes the ref when `effect` ends, whatever the ending; a run waiting on a signal keeps it. A flow that never wraps its claim in it, such as a recipe baked before claims were refs, leaves the ref behind when its run ends, and the issue stays held. `chernabog cancel <run>` lets it go: a run in flight is cancelled as ever, with its claim ref; for a run that has already ended, cancel deletes only the claim ref that still names it, and the run keeps its ending. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
 
 Runs of an earlier version held an issue by its branch alone. While they may be in flight, a branch whose latest claim comment names no claim ref is still theirs, and `claim` skips it.
 
