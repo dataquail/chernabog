@@ -25,6 +25,8 @@ export type GithubResponse = {
   readonly status: number;
   readonly body: Option.Option<Json>;
   readonly nextUrl: Option.Option<string>;
+  // The response's headers, by lowercase name.
+  readonly headers: Readonly<Record<string, string>>;
 };
 
 const nextPageUrl = (linkHeader: string) =>
@@ -39,6 +41,7 @@ export class GitHubApi extends Context.Service<
       method: HttpMethod.HttpMethod,
       pathOrUrl: string,
       body: Option.Option<Json>,
+      headers?: Readonly<Record<string, string>>,
     ): Effect.Effect<GithubResponse, GitHubError>;
   }
 >()("chernabog/GitHubApi") {
@@ -64,6 +67,7 @@ export class GitHubApi extends Context.Service<
           method: HttpMethod.HttpMethod,
           pathOrUrl: string,
           body: Option.Option<Json>,
+          headers: Readonly<Record<string, string>> = {},
         ) =>
           Effect.gen(function* () {
             let url = `${root}${pathOrUrl}`;
@@ -77,6 +81,7 @@ export class GitHubApi extends Context.Service<
               HttpClientRequest.setHeaders({
                 Accept: "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
+                ...headers,
               }),
             );
 
@@ -99,6 +104,7 @@ export class GitHubApi extends Context.Service<
               status: response.status,
               body: parsed,
               nextUrl: Option.flatMap(Headers.get(response.headers, "link"), nextPageUrl),
+              headers: { ...response.headers },
             };
           }).pipe(
             Effect.mapError(
@@ -250,6 +256,7 @@ export const githubTestLayer = (
               status: answer.status,
               body: Option.some(answer.body),
               nextUrl: Option.none<string>(),
+              headers: {},
             }),
         }),
     }),

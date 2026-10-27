@@ -14,7 +14,12 @@ const github = (status: number) =>
     GitHubApi,
     GitHubApi.of({
       request: () =>
-        Effect.succeed({ status, body: Option.some({ login: "carol" }), nextUrl: Option.none() }),
+        Effect.succeed({
+          status,
+          body: Option.some({ login: "carol" }),
+          nextUrl: Option.none(),
+          headers: {},
+        }),
     }),
   );
 

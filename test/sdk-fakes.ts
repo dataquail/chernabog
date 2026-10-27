@@ -47,6 +47,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
+import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   type FlowHandle,
   flowLayer,
@@ -116,6 +117,7 @@ export const repoAs = (
 ): EffectiveRepo => ({
   settings: repoSettings,
   personas: Arr.map(personas, (persona) => asPersona(repoSettings, persona)),
+  eventTickMin: DEFAULT_EVENT_TICK_MIN,
 });
 
 export const repo = repoAs(settings);

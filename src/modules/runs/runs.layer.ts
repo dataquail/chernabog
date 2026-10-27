@@ -2,8 +2,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { Exec } from "../../platform/exec.ts";
+import { GitHubApi } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { type FlowRegistry, FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
+import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
@@ -27,6 +29,9 @@ export const RunsLayer = Layer.mergeAll(
 export const RunLogsLayer = RunLogsClientLive;
 
 export type { FlowRegistry };
+
+// Each persona's GitHub notifications, which the daemon polls to tick sooner.
+export const NotificationsLayer = NotificationsClientLive(GitHubApi.layerFor);
 
 // The runtime a tick and a run drive: the flows a process loaded, with each
 // persona's services, their workflows in the engine it runs, and cleaning up

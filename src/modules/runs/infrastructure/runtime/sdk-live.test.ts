@@ -63,7 +63,7 @@ const answering = (status: number, body: Option.Option<Json>) => {
         Effect.sync(() => {
           requests.push({ method, path, body: sent });
 
-          return { status, body, nextUrl: Option.none() };
+          return { status, body, nextUrl: Option.none(), headers: {} };
         }),
     }),
   );
@@ -254,7 +254,7 @@ const routing = (answer: (method: string, path: string) => { body: Json; status:
           requests.push(`${method} ${path}`);
           const { body, status } = answer(method, path);
 
-          return { status, body: Option.some(body), nextUrl: Option.none() };
+          return { status, body: Option.some(body), nextUrl: Option.none(), headers: {} };
         }),
     }),
   );

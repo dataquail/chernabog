@@ -40,6 +40,7 @@ import {
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
+import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
 import type { AgentsConfig } from "./modules/runs/infrastructure/runtime/agents.ts";
 import {
@@ -112,6 +113,8 @@ const LimitsFile = Schema.Struct({
   reviewRounds: Schema.optionalKey(Schema.Int),
   staleAfter: Schema.optionalKey(DurationText),
   ciTimeout: Schema.optionalKey(DurationText),
+  // The least time between two ticks of a persona's flow that events ask for (#138).
+  eventTickMin: Schema.optionalKey(DurationText),
   planNodes: Schema.optionalKey(Schema.Int),
   planRounds: Schema.optionalKey(Schema.Int),
 });
@@ -224,7 +227,16 @@ export const UsageGateFile = Schema.Struct({
 
 // A GitHub persona on this machine. Its token always comes from
 // `gh auth token --user <login>` and is never written here.
-const GitHubPersonaFile = Schema.Struct({});
+// Which events tick a persona's flows sooner than cron (#138): a change a run
+// here makes, and the persona's GitHub notifications.
+const EventsFile = Schema.Struct({
+  local: Schema.optionalKey(Schema.Boolean),
+  notifications: Schema.optionalKey(Schema.Boolean),
+});
+
+const GitHubPersonaFile = Schema.Struct({
+  events: Schema.optionalKey(EventsFile),
+});
 
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
 // The key machine config is stamped with: the chernabog that last migrated it.
@@ -241,6 +253,8 @@ export const MachineConfigFile = Schema.Struct({
   concurrency: Schema.optionalKey(Schema.Int),
   quietHours: Schema.optionalKey(Schema.String),
   humanOnly: Schema.optionalKey(Strings),
+  // Every persona's events, unless its github: entry says otherwise.
+  events: Schema.optionalKey(EventsFile),
   agents: Schema.optionalKey(Schema.Record(Schema.String, AgentFile)),
   // Your launcher for every repo, and launchers of your own. Only here, never in a repo.
   launcher: Schema.optionalKey(Schema.String),
@@ -267,6 +281,12 @@ export const DEFAULT_LIMITS: Limits = {
   planRounds: 2,
 };
 
+// A change a run here makes ticks the repo's flows; notifications wait until
+// they have run for a while.
+export const DEFAULT_EVENTS: Events = { local: true, notifications: false };
+
+export type Events = { readonly local: boolean; readonly notifications: boolean };
+
 // Each account belongs to one agent: claude unless it says otherwise.
 export type MachineAccount = Account & { readonly agent: string };
 
@@ -281,8 +301,20 @@ export type MachineConfig = {
   readonly concurrency: number;
   readonly quietHours: Option.Option<string>;
   readonly humanOnly: ReadonlyArray<string>;
+  // Which events tick each persona's flows: machine config's own, and each login's over it.
+  readonly events: {
+    readonly all: Events;
+    readonly byLogin: Readonly<Record<string, Events>>;
+  };
   readonly repos: ReadonlyArray<EnrolledRepo>;
 };
+
+// Which events tick a persona's flows.
+export const eventsFor = (machine: MachineConfig, persona: Persona): Events =>
+  Option.getOrElse(
+    Option.flatMap(persona, (login) => Record.get(machine.events.byLogin, login)),
+    () => machine.events.all,
+  );
 
 // One enrolled repo as one persona runs it, with every layer merged.
 export type PersonaRepo = {
@@ -309,6 +341,8 @@ export type EffectiveRepo = {
   readonly settings: RepoSettings;
   // The repo's personas, or only the implicit one.
   readonly personas: Arr.NonEmptyReadonlyArray<PersonaRepo>;
+  // The team's limits.eventTickMin: the least time between two event ticks of a persona's flow.
+  readonly eventTickMin: Duration.Duration;
 };
 
 export const personaOf = (repo: EffectiveRepo, persona: Persona) =>
@@ -520,6 +554,15 @@ const launcherCommandsOf = (file: typeof LauncherFile.Type): LauncherCommands =>
   attach: Option.fromUndefinedOr(file.attach),
 });
 
+const eventsOf = (file: MachineConfigFile): MachineConfig["events"] => {
+  const all = { ...DEFAULT_EVENTS, ...file.events };
+
+  return {
+    all,
+    byLogin: Record.map(file.github ?? {}, (persona) => ({ ...all, ...persona.events })),
+  };
+};
+
 export const normalizeMachineConfig = (file: MachineConfigFile, home: string): MachineConfig => ({
   github: Object.keys(file.github ?? {}),
   accounts: Object.entries(file.accounts ?? { work: {} }).map(fromAccountFile(home)),
@@ -530,6 +573,7 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   concurrency: file.concurrency ?? 1,
   quietHours: Option.fromUndefinedOr(file.quietHours),
   humanOnly: file.humanOnly ?? [],
+  events: eventsOf(file),
   repos: (file.repos ?? []).map((repo) => ({ ...repo, path: expandHome(repo.path, home) })),
 });
 
@@ -939,7 +983,16 @@ export const mergeRepoConfig = (
     const head = yield* merge(first);
     const tail = yield* Effect.forEach(rest, merge);
 
-    return { settings: head.settings, personas: [head, ...tail] } satisfies EffectiveRepo;
+    const eventTickMin = Option.getOrElse(
+      Option.flatMap(Option.fromUndefinedOr(repo.limits?.eventTickMin), parseDuration),
+      () => DEFAULT_EVENT_TICK_MIN,
+    );
+
+    return {
+      settings: head.settings,
+      personas: [head, ...tail],
+      eventTickMin,
+    } satisfies EffectiveRepo;
   });
 
 // launchd and systemd start with a bare PATH and no nvm, so the repo's pinned Node goes first.
