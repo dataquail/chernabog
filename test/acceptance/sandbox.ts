@@ -44,6 +44,9 @@ export type MachineOptions = {
   readonly repoFiles?: Readonly<Record<string, string>>;
   // The recipes baked in; the review loop's four when unset.
   readonly recipes?: ReadonlyArray<string>;
+  // Which events tick every persona's flows sooner than cron (#138), and each login's own.
+  readonly events?: Readonly<Record<string, Json>>;
+  readonly personaEvents?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
 };
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
@@ -101,10 +104,21 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
   const github = Option.fromUndefinedOr(machine.github);
 
   if (Option.isSome(github)) {
-    document.set("github", Object.fromEntries(github.value.map((login) => [login, {}])));
+    document.set(
+      "github",
+      Object.fromEntries(
+        github.value.map((login) => [
+          login,
+          Option.match(Option.fromUndefinedOr(machine.personaEvents?.[login]), {
+            onNone: () => ({}),
+            onSome: (events) => ({ events }),
+          }),
+        ]),
+      ),
+    );
   }
 
-  for (const key of ["agents", "launcher", "launchers"] as const) {
+  for (const key of ["agents", "launcher", "launchers", "events"] as const) {
     const value = Option.fromUndefinedOr(machine[key]);
 
     if (Option.isSome(value)) {

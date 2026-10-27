@@ -24,6 +24,15 @@ Hours are `HH:MM-HH:MM` in local time, and may wrap midnight. Every skipped tick
 
 A run waiting on a signal holds no slot.
 
+### Ticks on events
+
+Cron is the backstop; two kinds of event tick a flow sooner. Each runs the same tick as cron and `t` do, every check above included, so an event never starts what a scheduled tick wouldn't. An event decides nothing itself: the trigger reads the real state.
+
+- **A change a run here makes.** When a run on this machine opens or pushes to a pull request, requests or submits a review, merges, labels, comments, or ends, every flow of that repo is due, for each persona whose `events.local` is on (the default). This is how one persona's pull request reaches another's `review` on the same machine within seconds.
+- **A persona's GitHub notifications.** With `events.notifications` on, the daemon polls each persona's `GET /notifications` at the interval GitHub asks for (about a minute), with `If-Modified-Since`, so an answer that nothing changed is a 304 that costs no rate limit. A notification about an enrolled repo makes that persona's flows there due. This covers handoffs between machines: a review requested of you, a review on your pull request. The daemon never marks a notification read. A token that can't read notifications (fine-grained tokens can't) shows in `status` with the fix, and that persona's flows go on ticking on cron.
+
+Several events within a few seconds make one tick, and the repo's `limits.eventTickMin` (default `30 seconds`) caps how often events tick one persona's flow. `status` shows what made each flow's last tick (`cron`, `manual`, `local: #73 review requested`, `notification: review_requested on #73`), and `next due now` while an event's tick waits to run.
+
 The daemon reads machine config's enrolled repos when it starts, and checks them every ten seconds. When they change — a repo `chernabog enroll` adds, one dropped or moved, a flow turned on or off for a persona — the daemon restarts on them once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
 
 A repo whose checkout is gone shows as `missing`, with `checkout missing at <path>`, and starts no runs. Its settings stay in machine config. When the checkout comes back, or `chernabog init` at its new place points the entry there, the daemon restarts on it.

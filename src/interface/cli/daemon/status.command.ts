@@ -113,12 +113,33 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
 
     const elsewhere = flow.assignedElsewhere ?? [];
 
-    return `  ${name}: ${flow.schedule}, next ${relative(flow.next, now)}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;
+    // An event tick waiting to run is due now, whenever the rate cap lets it go.
+    const next = Option.match(Option.fromUndefinedOr(flow.pending), {
+      onNone: () => relative(flow.next, now),
+      onSome: (pending) => `due now (${pending})`,
+    });
+
+    const last = Option.match(Option.fromUndefinedOr(flow.lastCause), {
+      onNone: () => "",
+      onSome: (cause) => `, last ${relative(flow.lastTick, now)} (${cause})`,
+    });
+
+    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;
   };
 
   return [
     `daemon ${status.pid}, up since ${upSince}${daemonState(status)}`,
     "",
+    // A persona whose notifications can't be read, and the fix; its flows tick on cron.
+    ...(status.notifications ?? []).flatMap((polling) =>
+      Option.toArray(
+        Option.map(
+          polling.problem,
+          (problem) =>
+            `notifications${suffix(Option.fromUndefinedOr(polling.persona), " for ")}: ${problem} (ticking on cron meanwhile)`,
+        ),
+      ),
+    ),
     ...status.repos.flatMap((repo) => [
       `${repo.name} (${repo.slug}): ${repoLine(repo)}${suffix(repo.launcher, ", launcher ")}${suffix(repo.message, " — ")}`,
       ...repo.flows.map(flowLine),

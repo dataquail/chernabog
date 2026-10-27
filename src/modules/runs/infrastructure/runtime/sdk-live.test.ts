@@ -63,7 +63,7 @@ const answering = (status: number, body: Option.Option<Json>) => {
         Effect.sync(() => {
           requests.push({ method, path, body: sent });
 
-          return { status, body, nextUrl: Option.none() };
+          return { status, body, nextUrl: Option.none(), headers: {} };
         }),
     }),
   );

@@ -10,9 +10,16 @@ import * as Option from "effect/Option";
 export type StepHooks = {
   readonly onStep: (name: string) => Effect.Effect<void>;
   readonly onStepDone: (name: string) => Effect.Effect<void>;
+  // A run changed something on GitHub, in a repo by its name, which can tick
+  // the repo's flows sooner (#138). `cause` says what, as a tick shows it.
+  readonly onChange: (repo: string, cause: string) => Effect.Effect<void>;
 };
 
-export const noHooks: StepHooks = { onStep: () => Effect.void, onStepDone: () => Effect.void };
+export const noHooks: StepHooks = {
+  onStep: () => Effect.void,
+  onStepDone: () => Effect.void,
+  onChange: () => Effect.void,
+};
 
 const directoryOf = (path: string) =>
   Option.getOrElse(

@@ -65,3 +65,5 @@ limits:
   reviewRounds: 1
   staleAfter: 6 hours
   ciTimeout: 2 hours
+  # The least time between two ticks events ask for, for one persona's flow.
+  # eventTickMin: 30 seconds

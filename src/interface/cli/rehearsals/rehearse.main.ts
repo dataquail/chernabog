@@ -164,7 +164,11 @@ const rehearsalRepo = (
     settings: rehearsing(own.settings, scratch, loaded),
   }));
 
-  return { settings: rehearsing(repo.settings, scratch, loaded), personas: [first, ...rest] };
+  return {
+    ...repo,
+    settings: rehearsing(repo.settings, scratch, loaded),
+    personas: [first, ...rest],
+  };
 };
 
 const randomId = Effect.map(

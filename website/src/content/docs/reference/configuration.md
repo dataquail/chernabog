@@ -37,6 +37,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
 | `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
+| `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 
 `launchers` is refused here: only machine config defines launcher commands.
 
@@ -129,6 +130,7 @@ limits: { reviewRounds: 2 }
 | `usageGate`             | see [the gate](/chernabog/agents/usage-gate/) | all four thresholds, or none            |
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
 | `quietHours`            | none         | start no runs within these hours                                  |
+| `events`                | `{ local: true, notifications: false }` | which [events](/chernabog/operate/daemon/#ticks-on-events) tick flows sooner than cron; `github.<login>.events` overrides it for one persona |
 | `humanOnly`             | `[]`         | decisions every repo's agent must stop for                        |
 | `agents.<name>`         | —            | `args` for a built-in adapter; `start`, `resume` for [your own](/chernabog/agents/adapters/#your-own-agent); `standIns`, `dir` and `exclusive` for [`rehearsal`](/chernabog/flows/rehearsing/#stand-ins) |
 | `launcher`              | —            | your launcher for every repo                                      |
@@ -216,7 +218,7 @@ A flow several personas run should set `assignee` or `reviewRequested` to `@me`,
 # ~/.config/chernabog/config.yaml
 github:
   you: {}
-  your-reviewer: {}
+  your-reviewer: { events: { notifications: true } }   # its review requests tick it within a minute
 accounts:
   personal: { configDir: ~/.claude-personal, expectedEmail: you@example.com }
   codex-personal: { agent: codex, configDir: ~/.codex }

@@ -60,6 +60,7 @@ const fakes = (logins: ReadonlyArray<string>) =>
             status: 200,
             body: Option.some({ login: "carol" }),
             nextUrl: Option.none(),
+            headers: {},
           }),
       }),
     ),

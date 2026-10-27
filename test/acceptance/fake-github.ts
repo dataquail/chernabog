@@ -166,7 +166,7 @@ type Args = {
 type Route = {
   readonly method: string;
   readonly pattern: RegExp;
-  readonly handle: (args: Args) => Response;
+  readonly handle: (args: Args, request: Request) => Response;
 };
 
 const json = (body: Json, status = 200) =>
@@ -193,11 +193,33 @@ const now = () => new Date().toISOString();
 
 const numberParam = (args: Args) => Number(args.params[0] ?? "0");
 
+// One of a login's notifications: why GitHub sent it, the pull request it's
+// about, and when its thread last changed, in milliseconds.
+export type FakeNotification = {
+  readonly login: string;
+  readonly reason: string;
+  readonly number: number;
+  readonly updatedAt: number;
+};
+
+// How long the fake asks a poller to wait between polls, in seconds.
+const POLL_INTERVAL = 1;
+
 export const startFakeGitHub = (options: { slug: string; bare: string; checks?: Checks }) => {
   const issues = new Map<number, FakeIssue>();
   const comments = new Map<number, Array<FakeComment>>();
   const pulls = new Map<number, FakePull>();
   const reviews = new Map<number, Array<FakeReview>>();
+  const notifications: Array<FakeNotification> = [];
+  // The Last-Modified each login was last answered with, and how far it reached.
+  const lastAnswered = new Map<string, { readonly header: string; readonly at: number }>();
+
+  // As on GitHub, nobody is notified of what they did themselves.
+  const notify = (login: string, reason: string, number: number, by: string) => {
+    if (login !== by) {
+      notifications.push({ login, reason, number, updatedAt: Date.now() });
+    }
+  };
 
   const merges: Array<{ readonly number: number; readonly method: string; readonly by: string }> =
     [];
@@ -542,6 +564,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     reviews.set(number, [...(reviews.get(number) ?? []), review]);
 
     for (const found of Option.toArray(pull)) {
+      notify(found.author, "author", number, args.login);
       found.reviewers = found.reviewers.filter((login) => login !== args.login);
     }
 
@@ -556,6 +579,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
           ...pull.reviewers.filter((login) => !body.reviewers.includes(login)),
           ...body.reviewers,
         ];
+
+        for (const login of body.reviewers) {
+          notify(login, "review_requested", pull.number, args.login);
+        }
 
         return encoded(PullJson, pullJson(pull), 201);
       },
@@ -655,9 +682,57 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   const repo = `/repos/${options.slug}`;
 
+  // A login's notifications, read or not, changed after `since`. It answers
+  // If-Modified-Since with a 304 when none changed since that answer, and
+  // never marks one read.
+  const listNotifications = (args: Args, request: Request) => {
+    const mine = notifications.filter((found) => found.login === args.login);
+    const latest = Math.max(0, ...mine.map((found) => found.updatedAt));
+    const last = Option.fromUndefinedOr(lastAnswered.get(args.login));
+    const asked = Option.fromNullishOr(request.headers.get("if-modified-since"));
+
+    const headers = {
+      "content-type": "application/json",
+      "x-poll-interval": String(POLL_INTERVAL),
+    };
+
+    if (Option.exists(last, (seen) => Option.contains(asked, seen.header) && latest <= seen.at)) {
+      return new Response("", { status: 304, headers });
+    }
+
+    // HTTP dates have only seconds, so the fake keeps how far each answer reached itself.
+    const header = new Date(Math.max(latest, Date.now())).toUTCString();
+    lastAnswered.set(args.login, { header, at: Math.max(latest, Date.now()) });
+
+    const since = Option.match(Option.fromNullishOr(args.url.searchParams.get("since")), {
+      onNone: () => 0,
+      onSome: Date.parse,
+    });
+
+    return new Response(
+      printJson(
+        mine.flatMap((found) =>
+          Option.toArray(
+            Option.map(
+              Option.liftPredicate(found, () => found.updatedAt > since),
+              (fresh) => ({
+                reason: fresh.reason,
+                updated_at: new Date(fresh.updatedAt).toISOString(),
+                repository: { full_name: options.slug },
+                subject: { url: `https://api.github.com${repo}/pulls/${fresh.number}` },
+              }),
+            ),
+          ),
+        ),
+      ),
+      { status: 200, headers: { ...headers, "last-modified": header } },
+    );
+  };
+
   const routes: ReadonlyArray<Route> = [
     { method: "GET", pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
     { method: "GET", pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
+    { method: "GET", pattern: /^\/notifications$/, handle: listNotifications },
     { method: "POST", pattern: /^\/graphql$/, handle: graphql },
     { method: "POST", pattern: new RegExp(`^${repo}/issues$`), handle: createIssue },
     { method: "PATCH", pattern: new RegExp(`^${repo}/issues/(\\d+)$`), handle: editIssue },
@@ -778,7 +853,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
           Option.fromNullishOr(route.pattern.exec(url.pathname)),
           () => route.method === request.method,
         ),
-        (match) => route.handle({ params: match.slice(1), body, url, login }),
+        (match) => route.handle({ params: match.slice(1), body, url, login }, request),
       ),
     );
 
@@ -811,6 +886,30 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     firstPull: () => Arr.head([...pulls.values()]),
     commentsOn: (number: number) => comments.get(number) ?? [],
     reviewsOf: (number: number) => reviews.get(number) ?? [],
+    notifications,
+    // A review someone off this machine submits on the pull request's head.
+    submitReview: (
+      number: number,
+      login: string,
+      state: "CHANGES_REQUESTED" | "APPROVED",
+      body: string,
+    ) => {
+      const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
+
+      reviews.set(number, [
+        ...(reviews.get(number) ?? []),
+        {
+          id: takeCommentId(),
+          body,
+          commit_id: Option.getOrElse(refSha(pull.head), () => ""),
+          comments: [],
+          author: login,
+          state,
+        },
+      ]);
+      pull.reviewers = pull.reviewers.filter((reviewer) => reviewer !== login);
+      notify(pull.author, "author", number, login);
+    },
     merges,
     readOnly,
     admins,

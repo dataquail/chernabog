@@ -7,6 +7,7 @@
 import {
   describeError,
   type Flow,
+  Git,
   GitHub,
   isSetupError,
   NeedsHuman,
@@ -41,6 +42,7 @@ import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
 import type { EffectiveRepo } from "../../../../repo-config.ts";
+import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
@@ -267,6 +269,79 @@ export const linkingPullRequests = <R>(
       ),
   });
 
+// The run's GitHub and Git, which report each change they make: what a run
+// here changes is what the runtime sees, so no flow declares it. A change is
+// reported once made; a failed one changed nothing to tick for.
+export const reportingChanges = <R>(
+  context: Context.Context<R>,
+  changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,
+): Context.Context<R> => {
+  const on =
+    (what: string, item: Option.Option<number> = Option.none()) =>
+    <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.tap(effect, () => changed(what, item));
+
+  const withGitHub = Option.match(Context.getOption(context, GitHub), {
+    onNone: () => context,
+    onSome: (github) =>
+      Context.add(
+        context,
+        GitHub,
+        GitHub.of({
+          ...github,
+          comment: (number, body) =>
+            github.comment(number, body).pipe(on("commented", Option.some(number))),
+          addLabel: (number, label) =>
+            github.addLabel(number, label).pipe(on(`labelled ${label}`, Option.some(number))),
+          removeLabel: (number, label) =>
+            github.removeLabel(number, label).pipe(on(`unlabelled ${label}`, Option.some(number))),
+          moveToStatus: (number, status) =>
+            github.moveToStatus(number, status).pipe(on(`moved to ${status}`, Option.some(number))),
+          assignSelf: (number) =>
+            github.assignSelf(number).pipe(on("assigned", Option.some(number))),
+          openPullRequest: (pullRequest) =>
+            github
+              .openPullRequest(pullRequest)
+              .pipe(
+                Effect.tap((opened) => changed("pull request opened", Option.some(opened.number))),
+              ),
+          requestReviewers: (pullRequest, logins) =>
+            github
+              .requestReviewers(pullRequest, logins)
+              .pipe(on("review requested", Option.some(pullRequest))),
+          review: (pullRequest, review) =>
+            github
+              .review(pullRequest, review)
+              .pipe(on("review submitted", Option.some(pullRequest))),
+          merge: (pullRequest, merge) =>
+            github.merge(pullRequest, merge).pipe(on("merged", Option.some(pullRequest))),
+          request: (method, path, body) =>
+            Option.match(
+              Option.liftPredicate(method, (named) => named !== "GET"),
+              {
+                onNone: () => github.request(method, path, body),
+                onSome: (writing) =>
+                  github.request(method, path, body).pipe(on(`${writing} ${path}`)),
+              },
+            ),
+        }),
+      ),
+  });
+
+  return Option.match(Context.getOption(withGitHub, Git), {
+    onNone: () => withGitHub,
+    onSome: (git) =>
+      Context.add(
+        withGitHub,
+        Git,
+        Git.of({
+          ...git,
+          push: (cwd, branch) => git.push(cwd, branch).pipe(on(`pushed ${branch}`)),
+        }),
+      ),
+  });
+};
+
 // Registers a flow's workflow with the engine. The services each run uses
 // (repoServices, or fakes in tests) are built once per persona of the repo,
 // chosen by the run's persona, then given the run's own Run and RunLog. One
@@ -350,6 +425,7 @@ export const flowLayer = <R>(
       const runLog = yield* runLogFor(payload.runId, {
         onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
         onStepDone: hooks.onStepDone,
+        onChange: hooks.onChange,
       });
 
       const signals = Signals.of({
@@ -369,7 +445,11 @@ export const flowLayer = <R>(
         }),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
-        Effect.provideContext(linkingPullRequests(context, link)),
+        Effect.provideContext(
+          reportingChanges(linkingPullRequests(context, link), (what, item) =>
+            hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+          ),
+        ),
       );
 
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
