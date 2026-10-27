@@ -6,10 +6,12 @@ import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repos
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { type FlowRef, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { RunWaitRootOps } from "../domain/run-wait/run-wait.root-ops.ts";
 import { Delivered } from "./flow.result.ts";
 
 // Wakes the persona's runs waiting on a signal its flow's trigger reported for
-// their item, each wait once.
+// their item, each wait once. A wait that wins a race of several signals
+// takes the others in that race with it, so the run doesn't look parked after.
 export const deliverSignalsUseCase = Effect.fn("deliverSignalsUseCase")(function* (
   flow: FlowRef,
   items: ReadonlyArray<WorkItem>,
@@ -29,13 +31,24 @@ export const deliverSignalsUseCase = Effect.fn("deliverSignalsUseCase")(function
 
     for (const active of Option.toArray(run)) {
       const parked = yield* waits.findAll(Option.some(active.id));
+      const done = new Set<string>();
 
       for (const signal of item.signals ?? []) {
         for (const wait of parked.filter((one) => one.signal === signal)) {
+          if (done.has(wait.deferred)) {
+            continue;
+          }
+
           yield* workflows.wake(wait.deferred, wait.token);
           yield* waits.remove(wait);
           yield* workflows.note(wait.runId, `signal: ${signal}`);
           count += 1;
+          done.add(wait.deferred);
+
+          for (const lost of RunWaitRootOps.losersTo(wait, parked)) {
+            yield* waits.remove(lost);
+            done.add(lost.deferred);
+          }
         }
       }
     }
