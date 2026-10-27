@@ -112,6 +112,8 @@ const LimitsFile = Schema.Struct({
   reviewRounds: Schema.optionalKey(Schema.Int),
   staleAfter: Schema.optionalKey(DurationText),
   ciTimeout: Schema.optionalKey(DurationText),
+  planNodes: Schema.optionalKey(Schema.Int),
+  planRounds: Schema.optionalKey(Schema.Int),
 });
 
 const Board = Schema.Struct({
@@ -261,6 +263,8 @@ export const DEFAULT_LIMITS: Limits = {
   reviewRounds: 1,
   staleAfter: Duration.hours(6),
   ciTimeout: Duration.hours(2),
+  planNodes: 12,
+  planRounds: 2,
 };
 
 // Each account belongs to one agent: claude unless it says otherwise.
@@ -645,6 +649,8 @@ const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
     Option.flatMap(Option.fromUndefinedOr(file?.ciTimeout), parseDuration),
     () => DEFAULT_LIMITS.ciTimeout,
   ),
+  planNodes: file?.planNodes ?? DEFAULT_LIMITS.planNodes,
+  planRounds: file?.planRounds ?? DEFAULT_LIMITS.planRounds,
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their

@@ -28,13 +28,17 @@ Labels are how people see where work stands, and how some flows hand it on. Pull
 
 | Label                      | On    | Means                                     | Set by                                                          | Removed by                                     | Read by |
 | -------------------------- | ----- | ----------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ------- |
-| `auto:eligible`            | issue | queued                                    | a person                                                        | `Implement.claim`, `Hybrid.claim`              | `implement`'s trigger |
+| `auto:eligible`            | issue | queued                                    | a person; `Plan.create`, on an `auto` task                      | `Implement.claim`, `Hybrid.claim`              | `implement`'s trigger, which leaves an issue an open issue blocks (`Implement.unblocked`) |
 | `auto:ship`                | both  | queued, or on a pull request: the automated path, which chernabog merges once approved | a person, on the issue; `Implement.openPullRequest`, on its pull request | `Implement.claim` and `Hybrid.claim`, on the issue | `implement`'s trigger; `PullRequest.ships`, which `shipping` and `mergeOrLeave` ask |
 | `auto:in-progress`         | issue | a run owns the issue                      | `Implement.claim`, `Hybrid.claim`                               | `handOff`, `handToHuman`, `askForClarification` | people |
 | `auto:needs-clarification` | issue | questions are on the issue                | `Implement.askForClarification`                                 | a person, on requeue                           | people |
 | `auto:needs-review`        | PR    | open and green, with no reviewer in the pool; a person reviews | `PullRequest.requestReview` (so `Implement.handOff`) | a person | people |
 | `hybrid`                   | PR    | a person worked on it with an agent; a person merges | `Hybrid.openPullRequest` | a person | people; no flow reads it |
-| `auto:needs-human`         | both  | a cap or rule stopped it; a person takes over | `Implement.handToHuman`, `PullRequest.handToPerson`, `PullRequest.mergeOrLeave`, the `address-review` flow | a person | the `re-review` and `address-review` triggers, which skip it; no flow picks it up again |
+| `auto:needs-human`         | both  | a cap or rule stopped it; a person takes over | `Implement.handToHuman`, `Plan.handToHuman`, `PullRequest.handToPerson`, `PullRequest.mergeOrLeave`, the `address-review` flow; `Plan.create`, on a `human` task | a person | the `re-review` and `address-review` triggers, which skip it; no flow picks it up again |
+| `auto:plan`                | issue | a spec queued for a plan                  | a person                                                        | `Implement.claim`                              | `plan`'s trigger |
+| `auto:plan-proposed`       | issue | a plan is posted and waits for a person   | `Plan.propose`                                                  | `Plan.changesAsked`, `Plan.becomeEpic`, `Plan.handToHuman` | `Plan.answers`, in `plan`'s trigger |
+| `auto:plan-approved`       | issue | a person approved the posted plan         | a person                                                        | `Plan.becomeEpic`                              | `Plan.answers`, in `plan`'s trigger |
+| `auto:epic`                | issue | an epic of sub-issues a plan made         | `Plan.becomeEpic`                                               | a person                                       | people, until the epic flow |
 
 `auto:approved`, `auto:stale` and `auto:changes-requested` stay in the label set, and `chernabog labels` creates them, but no recipe sets or reads them.
 

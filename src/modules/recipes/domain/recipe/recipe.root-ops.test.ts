@@ -23,7 +23,7 @@ describe("RecipeRootOps", () => {
 
     const unknown = RecipeRootOps.allNamed(["review", "deploy"]);
     expect(Result.isFailure(unknown) && unknown.failure.message).toBe(
-      "no recipe named deploy (there are: implement, review, re-review, address-review, resolve-conflicts, human-initiated)",
+      "no recipe named deploy (there are: implement, review, re-review, address-review, resolve-conflicts, plan, human-initiated)",
     );
   });
 

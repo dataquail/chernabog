@@ -36,6 +36,12 @@ export const RECIPES: ReadonlyArray<RecipeRoot> = [
     files: ["flows/resolve-conflicts.ts", "prompts/resolve-conflicts.md"],
   }),
   RecipeRoot.make({
+    name: "plan",
+    description:
+      "Turns an auto:plan spec issue into an epic of sub-issues, linked by what blocks what, once a person approves the agent's plan",
+    files: ["flows/plan.ts", "prompts/plan.md"],
+  }),
+  RecipeRoot.make({
     name: "human-initiated",
     description:
       "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",
