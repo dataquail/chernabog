@@ -55,11 +55,14 @@ describe("the hybrid path", () => {
     daemon.kill("SIGTERM");
     await closed(daemon);
 
-    // End the sessions left open for the person to close.
+    // End the sessions left open for the person to close. Without the `--`,
+    // procps' kill reads `-9 -10802` as `kill(-1)`: every process the user
+    // owns, CI's runner among them.
     for (const pidFile of new Bun.Glob("*.pid").scanSync(join(sandbox.root, "tmux"))) {
       Bun.spawnSync([
         "kill",
         "-9",
+        "--",
         `-${readFileSync(join(sandbox.root, "tmux", pidFile), "utf8")}`,
       ]);
     }

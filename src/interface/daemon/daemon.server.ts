@@ -1051,9 +1051,15 @@ export const runDaemon = Effect.gen(function* () {
           return yield* refuse(409, cancelled.failure.message);
         }
 
-        yield* log(
-          `cancelled ${cancelled.success.run.id} (${runLabel(cancelled.success.run)}): ${Option.getOrElse(cancelled.success.run.summary, () => "")}`,
-        );
+        if (cancelled.success.alreadyEnded) {
+          yield* log(
+            `deleted the claim refs ${cancelled.success.releasedClaims.join(", ")} of ended run ${cancelled.success.run.id} (${runLabel(cancelled.success.run)})`,
+          );
+        } else {
+          yield* log(
+            `cancelled ${cancelled.success.run.id} (${runLabel(cancelled.success.run)}): ${Option.getOrElse(cancelled.success.run.summary, () => "")}`,
+          );
+        }
 
         return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
       });

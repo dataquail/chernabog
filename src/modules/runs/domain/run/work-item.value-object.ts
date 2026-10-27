@@ -40,6 +40,16 @@ export type ItemTarget =
 const ISSUE_KEY = /^issue-(\d+)$/;
 const PULL_REQUEST_KEY = /^pr-(\d+)(?:-|$)/;
 
+// The claim a run on the target holds, by the SDK's names for claims:
+// `issue-<n>`, or `pr-<n>` for a pull request.
+export const claimOf = (target: ItemTarget) => {
+  if (target.kind === "issue") {
+    return `issue-${target.number}`;
+  }
+
+  return `pr-${target.number}`;
+};
+
 // The issue or pull request an item key names; none for a key of a flow's own.
 export const itemTarget = (key: string): Option.Option<ItemTarget> =>
   Option.orElse(

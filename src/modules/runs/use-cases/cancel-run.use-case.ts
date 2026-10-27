@@ -14,10 +14,10 @@ import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
-import { type CleanupFailed, RunNotFound } from "../domain/run/run.errors.ts";
+import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { itemTarget } from "../domain/run/work-item.value-object.ts";
+import { claimOf, itemTarget } from "../domain/run/work-item.value-object.ts";
 import { CancelledRun, CancelTarget } from "./cancel-run.result.ts";
 import { RunView } from "./run.result.ts";
 
@@ -83,13 +83,96 @@ const stopping = (run: RunRoot, executionId: string) =>
     workflows.poll({ repo: run.repo, flow: run.flow, persona: run.persona }, executionId),
   ).pipe(Effect.repeat({ ...STOPPING, until: Option.isSome }), Effect.map(Option.isSome));
 
+// Deletes the claim ref on the run's issue or pull request when it names the
+// run: the refs it deleted, and what it couldn't, for a person.
+const releaseClaimRefs = (run: RunRoot, leftForPerson: Array<string>) =>
+  Effect.gen(function* () {
+    const cleanup = yield* RunCleanupClient;
+    const released: Array<string> = [];
+
+    for (const target of Option.toArray(itemTarget(run.itemKey))) {
+      const release = yield* cleanup.releaseClaimRef(run, claimOf(target)).pipe(Effect.result);
+
+      if (Result.isFailure(release)) {
+        leftForPerson.push(
+          `deleting its claim ref on ${claimOf(target)} failed: ${release.failure.message}`,
+        );
+      }
+
+      for (const ref of Option.toArray(Option.flatten(Result.getSuccess(release)))) {
+        released.push(ref);
+      }
+    }
+
+    return released;
+  });
+
+// Releases a cancelled run's claim on its issue, if its item is one: the label
+// and assignment, and its branch unless the branch holds work, which is said.
+const releaseIssueClaim = (cancelled: RunRoot, leftForPerson: Array<string>) =>
+  Effect.gen(function* () {
+    const cleanup = yield* RunCleanupClient;
+    let released = Option.none<{ issue: number; deletedBranch: Option.Option<string> }>();
+    const issue = Option.filter(itemTarget(cancelled.itemKey), (item) => item.kind === "issue");
+
+    for (const { number } of Option.toArray(issue)) {
+      const release = yield* cleanup.releaseClaim(cancelled, number).pipe(Effect.result);
+
+      if (Result.isFailure(release)) {
+        leftForPerson.push(`releasing its claim on #${number} failed: ${release.failure.message}`);
+      }
+
+      for (const { branch, kept } of Option.toArray(Option.flatten(Result.getSuccess(release)))) {
+        released = Option.some({
+          issue: number,
+          deletedBranch: Option.liftPredicate(branch, () => Option.isNone(kept)),
+        });
+
+        for (const reason of Option.toArray(kept)) {
+          leftForPerson.push(`kept branch ${branch}: ${reason}`);
+        }
+      }
+    }
+
+    return released;
+  });
+
+// A run that has ended keeps its ending, but a flow that never let its claim
+// go (one baked before claims were refs) leaves the claim ref behind, which
+// would hold the issue or pull request for good. Cancelling it deletes that
+// ref and nothing else; with no ref to delete, it fails as before.
+const releaseEnded = (found: RunRoot) =>
+  Effect.gen(function* () {
+    const leftForPerson: Array<string> = [];
+    const releasedClaims = yield* releaseClaimRefs(found, leftForPerson);
+
+    if (releasedClaims.length === 0 && leftForPerson.length === 0) {
+      return yield* new RunAlreadyFinished({ runId: found.id, status: found.status });
+    }
+
+    return CancelledRun.make({
+      run: RunView.make({ ...found }),
+      alreadyEnded: true,
+      stopped: true,
+      wakesCleared: 0,
+      removedWorktrees: [],
+      releasedClaims,
+      released: Option.none(),
+      closedSessions: [],
+      openSessions: [],
+      leftForPerson,
+    });
+  });
+
 // Ends a run in flight for good: records it cancelled, by whom and when (or
 // needing a person, and why, for a run this binary can't resume),
 // before its workflow could record anything else; forgets its waits;
 // interrupts its workflow, which the engine keeps across a restart; and then
-// cleans up what it held: its worktrees, its claim on its issue, and, if asked,
-// its agent sessions. What cleaning up can't do is left for a person, and said;
-// it never undoes the cancel. Pull requests are never touched.
+// cleans up what it held: its worktrees, its claim ref, its claim on its
+// issue, and, if asked, its agent sessions. What cleaning up can't do is left
+// for a person, and said; it never undoes the cancel. Pull requests are never
+// touched. A run that has already ended only lets go of its claim ref
+// (releaseEnded).
 export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
   target: CancelTarget,
   options: CancelOptions,
@@ -99,6 +182,11 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
   const workflows = yield* WorkflowsClient;
   const cleanup = yield* RunCleanupClient;
   const found = yield* named(target);
+
+  if (found.status !== "running" && Option.isNone(options.needsHuman)) {
+    return yield* releaseEnded(found);
+  }
+
   const at = DateTime.formatIso(yield* DateTime.now);
 
   const cancelled = yield* Effect.fromResult(
@@ -166,27 +254,9 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
     leftForPerson.push(`kept worktree ${kept.path}: ${kept.reason}`);
   }
 
-  let released = Option.none<{ issue: number; deletedBranch: Option.Option<string> }>();
-  const issue = Option.filter(itemTarget(found.itemKey), (item) => item.kind === "issue");
-
-  for (const { number } of Option.toArray(issue)) {
-    const release = yield* cleanup.releaseClaim(cancelled, number).pipe(Effect.result);
-
-    if (Result.isFailure(release)) {
-      leftForPerson.push(`releasing its claim on #${number} failed: ${release.failure.message}`);
-    }
-
-    for (const { branch, kept } of Option.toArray(Option.flatten(Result.getSuccess(release)))) {
-      released = Option.some({
-        issue: number,
-        deletedBranch: Option.liftPredicate(branch, () => Option.isNone(kept)),
-      });
-
-      for (const reason of Option.toArray(kept)) {
-        leftForPerson.push(`kept branch ${branch}: ${reason}`);
-      }
-    }
-  }
+  // The claim ref goes first: it is what holds the issue or pull request.
+  const releasedClaims = yield* releaseClaimRefs(cancelled, leftForPerson);
+  const released = yield* releaseIssueClaim(cancelled, leftForPerson);
 
   const sessions = yield* cleanup.openSessions(cancelled);
   const closedSessions: Array<OpenSession> = [];
@@ -212,9 +282,11 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
 
   return CancelledRun.make({
     run: RunView.make({ ...cancelled }),
+    alreadyEnded: false,
     stopped,
     wakesCleared: parked.length,
     removedWorktrees: worktrees.removed,
+    releasedClaims,
     released,
     closedSessions,
     openSessions,

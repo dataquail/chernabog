@@ -1,10 +1,12 @@
 // What a cancelled run held, cleaned up as its persona: the worktrees its
-// item's flow keeps, by the SDK's names for them; its claim on its issue, as
-// the issue's claim marker records it; and its agent sessions, by the handle
+// item's flow keeps, by the SDK's names for them; its claim ref, when it still
+// names the run; its claim on its issue, as the issue's claim marker records
+// it; and its agent sessions, by the handle
 // each launch recorded, never by a process's name.
 
 import {
   claimMarker,
+  Claims,
   Git,
   GitHub,
   latestMarker,
@@ -215,6 +217,13 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
               return { removed, kept };
             }),
           ).pipe(Effect.provideContext(platform)),
+        releaseClaimRef: (run, claim) =>
+          asPersona(
+            run,
+            Claims.releaseFor(claim, run.id).pipe(
+              Effect.map((released) => Option.liftPredicate(Claims.refFor(claim), () => released)),
+            ),
+          ),
         releaseClaim: (run, issue) =>
           asPersona(
             run,

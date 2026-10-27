@@ -104,7 +104,7 @@ describe("human-initiated", () => {
   );
 
   effect(
-    "fails when the person closes the session first, keeping the claim for the next start",
+    "fails when the person closes the session first, keeping the issue in progress for the next start",
     () =>
       Effect.gen(function* () {
         const fake = makeFake("approve", POOL);
@@ -117,34 +117,36 @@ describe("human-initiated", () => {
       }),
   );
 
-  effect("takes over the branch an earlier start left, but leaves an unattended run's to it", () =>
-    Effect.gen(function* () {
-      const earlier = makeFake("approve", POOL);
-      earlier.existing.branch = true;
-      earlier.comment(
-        claimMarker.write({
-          runId: "an-earlier-start",
-          claimedAt: "2026-10-20T00:00:00Z",
-          branch: `auto/issue-${ISSUE}`,
-          withPerson: true,
-        }),
-      );
-      expect((yield* runToEnd(starting, earlier, work)).status).toBe("done");
+  effect(
+    "takes over the branch an earlier version's start left, but leaves an earlier unattended run's to it",
+    () =>
+      Effect.gen(function* () {
+        const earlier = makeFake("approve", POOL);
+        earlier.existing.branch = true;
+        earlier.comment(
+          claimMarker.write({
+            runId: "an-earlier-start",
+            claimedAt: "2026-10-20T00:00:00Z",
+            branch: `auto/issue-${ISSUE}`,
+            withPerson: true,
+          }),
+        );
+        expect((yield* runToEnd(starting, earlier, work)).status).toBe("done");
 
-      const unattended = makeFake("approve", POOL);
-      unattended.existing.branch = true;
-      unattended.comment(
-        claimMarker.write({
-          runId: "an-implement-run",
-          claimedAt: "2026-10-20T00:00:00Z",
-          branch: `auto/issue-${ISSUE}`,
-        }),
-      );
-      const skipped = yield* runToEnd(starting, unattended, work);
-      expect(skipped.status).toBe("skipped");
-      expect(summaryOf(skipped)).toContain("already claimed by an unattended run");
-      expect(unattended.requests).toEqual([]);
-    }),
+        const unattended = makeFake("approve", POOL);
+        unattended.existing.branch = true;
+        unattended.comment(
+          claimMarker.write({
+            runId: "an-implement-run",
+            claimedAt: "2026-10-20T00:00:00Z",
+            branch: `auto/issue-${ISSUE}`,
+          }),
+        );
+        const skipped = yield* runToEnd(starting, unattended, work);
+        expect(skipped.status).toBe("skipped");
+        expect(summaryOf(skipped)).toContain("already claimed by an unattended run");
+        expect(unattended.requests).toEqual([]);
+      }),
   );
 
   effect(

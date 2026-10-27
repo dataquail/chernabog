@@ -1,4 +1,13 @@
-import { claimMarker, Git, GitError, GitHub, type Json, Repo, Worktree } from "@chernabog/sdk";
+import {
+  claimMarker,
+  Claims,
+  Git,
+  GitError,
+  GitHub,
+  type Json,
+  Repo,
+  Worktree,
+} from "@chernabog/sdk";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as Context from "effect/Context";
@@ -39,11 +48,13 @@ const run = (itemKey: string) =>
   });
 
 // What the fake GitHub is asked, and what it has: the claim comment on #7, the
-// pull request opened from a branch, and how far a branch is ahead of main.
+// run its claim ref names, if it has one, the pull request opened from a
+// branch, and how far a branch is ahead of main.
 type GitHubState = {
   readonly calls: Array<string>;
   readonly bodies: Array<Option.Option<Json>>;
   claimedBy: string;
+  refHolder: Option.Option<string>;
   pullFrom: Option.Option<number>;
   ahead: number;
   branchGone: boolean;
@@ -87,6 +98,23 @@ const github = (state: GitHubState) =>
     deleteBranch: (branch) =>
       Effect.sync(() => {
         state.calls.push(`delete-branch ${branch}`);
+      }),
+    ref: (ref) =>
+      Effect.sync(() =>
+        Option.map(state.refHolder, (runId) => ({
+          sha: `claim-of-${runId}`,
+          message: Claims.messageOf({
+            runId,
+            persona: "bob",
+            flow: "implement",
+            claimedAt: "2026-10-24T00:00:00.000Z",
+            withPerson: false,
+          }),
+        })).pipe(Option.filter(() => !state.calls.includes(`delete-ref ${ref}`))),
+      ),
+    deleteRef: (ref) =>
+      Effect.sync(() => {
+        state.calls.push(`delete-ref ${ref}`);
       }),
     request: (method, path, body) =>
       Effect.sync(() => {
@@ -159,6 +187,7 @@ const freshState = (): GitHubState => ({
   calls: [],
   bodies: [],
   claimedBy: "run-1",
+  refHolder: Option.none(),
   pullFrom: Option.none(),
   ahead: 0,
   branchGone: false,
@@ -278,6 +307,24 @@ describe("RunCleanupClientLive", () => {
           kept: Option.some("pull request #12 was opened from it"),
         }),
       ]);
+    }),
+  );
+
+  effect("deletes the claim ref only when it names the run", () =>
+    Effect.gen(function* () {
+      const ours = { ...freshState(), refHolder: Option.some("run-1") };
+      const theirs = { ...freshState(), refHolder: Option.some("run-2") };
+      const ourClient = (yield* opened(ours)).client;
+      const theirClient = (yield* opened(theirs)).client;
+
+      expect(yield* ourClient.releaseClaimRef(run("issue-7"), "issue-7")).toEqual(
+        Option.some("refs/chernabog/claims/issue-7"),
+      );
+      expect(ours.calls).toEqual(["delete-ref refs/chernabog/claims/issue-7"]);
+      expect(yield* ourClient.releaseClaimRef(run("issue-7"), "issue-7")).toEqual(Option.none());
+
+      expect(yield* theirClient.releaseClaimRef(run("pr-3"), "pr-3")).toEqual(Option.none());
+      expect(theirs.calls).toEqual([]);
     }),
   );
 

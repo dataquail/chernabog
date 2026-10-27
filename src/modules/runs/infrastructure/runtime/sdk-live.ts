@@ -12,12 +12,14 @@ import {
   type LinkedIssue,
   type Merged,
   MergeRefused,
+  type NewCommit,
   type NewReview,
   NotFound,
   NotInReviewerPool,
   type PullRequest,
   PullRequestClosed,
   PushRejected,
+  type RefCommit,
   Repo,
   type RepoSettings,
   ReviewerSeat,
@@ -157,6 +159,7 @@ const RestLineComment = Schema.Struct({
 
 const RestFile = Schema.Struct({ filename: Schema.String });
 const RestRef = Schema.Struct({ object: Schema.Struct({ sha: Schema.String }) });
+const RestCommit = Schema.Struct({ sha: Schema.String, message: Schema.String });
 const RestUser = Schema.Struct({ login: Schema.String });
 
 const login = (user: typeof User.Type) =>
@@ -408,13 +411,9 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           }),
         );
 
-      const createBranch = (branch: string, sha: string) =>
+      const createRef = (ref: string, sha: string) =>
         provide(
-          githubRequest(
-            "POST",
-            path("/git/refs"),
-            Option.some({ ref: `refs/heads/${branch}`, sha }),
-          ).pipe(
+          githubRequest("POST", path("/git/refs"), Option.some({ ref, sha })).pipe(
             Effect.flatMap((response) =>
               Effect.fromResult(interpretCreateRefResponse(response.status, response.body)).pipe(
                 Effect.mapError((message) => new GitHubError({ message })),
@@ -423,17 +422,66 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           ),
         );
 
-      const deleteBranch = (branch: string) =>
+      const createBranch = (branch: string, sha: string) => createRef(`refs/heads/${branch}`, sha);
+
+      // GitHub answers 422 for a ref it doesn't have, as well as 404.
+      const deleteRef = (ref: string) =>
         provide(
-          githubRequest("DELETE", path(`/git/refs/heads/${branch}`)).pipe(
+          githubRequest("DELETE", path(`/git/${ref}`)).pipe(
             Effect.filterOrFail(
               (response) =>
                 response.status < 300 || response.status === 404 || response.status === 422,
               (response) =>
-                new GitHubError({ message: `deleting ${branch} returned HTTP ${response.status}` }),
+                new GitHubError({ message: `deleting ${ref} returned HTTP ${response.status}` }),
             ),
             Effect.asVoid,
           ),
+        );
+
+      const deleteBranch = (branch: string) => deleteRef(`refs/heads/${branch}`);
+
+      const createCommit = (commit: NewCommit) =>
+        provide(
+          githubJson(
+            "POST",
+            path("/git/commits"),
+            RestCommit,
+            Option.some({
+              message: commit.message,
+              tree: commit.tree,
+              parents: [...commit.parents],
+            }),
+          ).pipe(Effect.map((created) => created.sha)),
+        );
+
+      const ref = (name: string) =>
+        provide(
+          Effect.gen(function* () {
+            const response = yield* githubRequest(
+              "GET",
+              path(`/git/ref/${name.replace(/^refs\//, "")}`),
+            );
+
+            if (response.status === 404) {
+              return Option.none<RefCommit>();
+            }
+
+            if (response.status !== 200) {
+              return yield* new GitHubError({
+                message: `reading ${name} returned HTTP ${response.status}`,
+              });
+            }
+
+            const found = yield* decodeBody(RestRef, `reading ${name}`)(response.body);
+
+            const commit = yield* githubJson(
+              "GET",
+              path(`/git/commits/${found.object.sha}`),
+              RestCommit,
+            );
+
+            return Option.some<RefCommit>({ sha: commit.sha, message: commit.message });
+          }),
         );
 
       const reviewComments = (pullRequest: number) =>
@@ -666,6 +714,10 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
         branchSha,
         createBranch,
         deleteBranch,
+        createCommit,
+        createRef,
+        ref,
+        deleteRef,
         pullRequest: (number) =>
           readOrNotFound(`pull request #${number}`, `/pulls/${number}`, RestPullRequest).pipe(
             Effect.map(toPullRequest),

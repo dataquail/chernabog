@@ -13,8 +13,9 @@ export type WorktreeCleanup = {
   readonly kept: ReadonlyArray<KeptWorktree>;
 };
 
-// A run's claim on its issue, released: the claim label and assignment are
-// gone, and its branch is deleted unless it holds work, which `kept` says.
+// A run's claim on its issue, released: its claim ref, the claim label and
+// assignment are gone, and its branch is deleted unless it holds work, which
+// `kept` says.
 export type ReleasedClaim = {
   readonly branch: string;
   readonly kept: Option.Option<string>;
@@ -28,11 +29,19 @@ export type OpenSession = {
 };
 
 // What a run holds outside state.db, for cancelling it as a run that finishes
-// would leave things: its worktrees, its claim on its issue, and its agent
-// sessions. Each acts as the run's persona, and never touches a pull request.
+// would leave things: its worktrees, its claim ref, its claim on its issue,
+// and its agent sessions. Each acts as the run's persona, and never touches a
+// pull request.
 export type RunCleanupClientService = {
   // Removes the run's worktrees for its item, keeping any with work not pushed.
   readonly removeWorktrees: (run: RunRoot) => Effect.Effect<WorktreeCleanup, CleanupFailed>;
+  // Deletes the claim ref on `claim` (`issue-<n>`, `pr-<n>`) when it names
+  // the run, and says which ref it deleted; none when another run holds it,
+  // or nobody does.
+  readonly releaseClaimRef: (
+    run: RunRoot,
+    claim: string,
+  ) => Effect.Effect<Option.Option<string>, CleanupFailed>;
   // Releases the run's claim on the issue its item is; none when the issue's
   // latest claim isn't the run's, which leaves it alone.
   readonly releaseClaim: (
