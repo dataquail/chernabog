@@ -194,6 +194,9 @@ export const makeFake = (
   const author = { consider: "address", resolve: "resolved", closes: false };
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
+  // Refs other than branches, such as claims, by full name, and the commits made through the API.
+  const refs = new Map<string, string>();
+  const commits = new Map<string, string>();
   let reviewed = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -320,6 +323,34 @@ export const makeFake = (
           return "created";
         }),
       deleteBranch: () => Effect.void,
+      createCommit: (commit) =>
+        Effect.sync(() => {
+          const sha = `commit${commits.size + 1}`;
+          commits.set(sha, commit.message);
+
+          return sha;
+        }),
+      createRef: (ref, sha) =>
+        Effect.sync((): "created" | "already-exists" => {
+          if (refs.has(ref)) {
+            return "already-exists";
+          }
+
+          refs.set(ref, sha);
+
+          return "created";
+        }),
+      ref: (ref) =>
+        Effect.sync(() =>
+          Option.map(Option.fromUndefinedOr(refs.get(ref)), (sha) => ({
+            sha,
+            message: commits.get(sha) ?? "",
+          })),
+        ),
+      deleteRef: (ref) =>
+        Effect.sync(() => {
+          refs.delete(ref);
+        }),
       assignSelf: () => Effect.void,
       moveToStatus: () => Effect.void,
       pullRequestForBranch: () =>
@@ -452,6 +483,8 @@ export const makeFake = (
     git,
     author,
     existing,
+    refs,
+    commits,
     merge,
     requests,
     steps,

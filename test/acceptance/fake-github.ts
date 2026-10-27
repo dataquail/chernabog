@@ -1,6 +1,7 @@
 // A small stand-in for the GitHub API, enough for the default flows: issues,
-// labels, comments, branches (kept in a real bare repo, so git push works),
-// pull requests and check runs.
+// labels, comments, branches and other refs such as claims, and commits made
+// through the API (kept in a real bare repo, so git push works), pull
+// requests and check runs.
 
 import { execFileSync, spawnSync } from "node:child_process";
 
@@ -135,6 +136,13 @@ const StateBody = Schema.Struct({ state: Schema.optionalKey(Schema.Literals(["op
 const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
+
+const CreateCommitBody = Schema.Struct({
+  message: Schema.String,
+  tree: Schema.String,
+  parents: Schema.Array(Schema.String),
+});
+
 const CommentBody = Schema.Struct({ body: Schema.String });
 const LabelsBody = Schema.Struct({ labels: Schema.Array(Schema.String) });
 const AssigneesBody = Schema.Struct({ assignees: Schema.Array(Schema.String) });
@@ -242,15 +250,18 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return id;
   };
 
-  const refSha = (branch: string) => {
+  // The sha a ref points at, named in full.
+  const shaOf = (ref: string) => {
     const result = spawnSync(
       "git",
-      ["--git-dir", options.bare, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`],
+      ["--git-dir", options.bare, "rev-parse", "--verify", "--quiet", ref],
       { encoding: "utf8" },
     );
 
     return Option.liftPredicate(result.stdout.trim(), () => result.status === 0);
   };
+
+  const refSha = (branch: string) => shaOf(`refs/heads/${branch}`);
 
   const html = (kind: string, number: number) =>
     `https://github.com/${options.slug}/${kind}/${number}`;
@@ -376,24 +387,68 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({ name: body.name }, 201);
   });
 
+  // As on GitHub, a second create of one ref answers 422, whoever asks.
   const createRef = withBody(CreateRefBody, (body) => {
-    if (Option.isSome(refSha(body.ref.replace("refs/heads/", "")))) {
+    if (Option.isSome(shaOf(body.ref))) {
       return json({ message: "Reference already exists" }, 422);
     }
 
     git("update-ref", body.ref, body.sha);
 
-    return json({ ref: body.ref }, 201);
+    return json({ ref: body.ref, object: { sha: body.sha } }, 201);
   });
 
-  const deleteRef = (args: Args) => {
-    const branch = args.params[0] ?? "";
+  const createCommit = withBody(CreateCommitBody, (body) => {
+    // The empty tree, which GitHub has in every repo.
+    execFileSync("git", ["--git-dir", options.bare, "hash-object", "-t", "tree", "-w", "--stdin"], {
+      input: "",
+    });
 
-    if (Option.isNone(refSha(branch))) {
+    const sha = execFileSync(
+      "git",
+      [
+        "--git-dir",
+        options.bare,
+        "commit-tree",
+        body.tree,
+        ...body.parents.flatMap((parent) => ["-p", parent]),
+        "-m",
+        body.message,
+      ],
+      {
+        encoding: "utf8",
+        input: "",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "GitHub",
+          GIT_AUTHOR_EMAIL: "noreply@github.com",
+          GIT_COMMITTER_NAME: "GitHub",
+          GIT_COMMITTER_EMAIL: "noreply@github.com",
+        },
+      },
+    ).trim();
+
+    return json({ sha, message: body.message }, 201);
+  });
+
+  const readCommit = (args: Args) => {
+    const sha = args.params[0] ?? "";
+
+    if (Option.isNone(shaOf(`${sha}^{commit}`))) {
+      return notFound();
+    }
+
+    return json({ sha, message: git("log", "-1", "--format=%B", sha) });
+  };
+
+  const deleteRef = (args: Args) => {
+    const ref = `refs/${args.params[0] ?? ""}`;
+
+    if (Option.isNone(shaOf(ref))) {
       return json({ message: "Reference does not exist" }, 422);
     }
 
-    git("update-ref", "-d", `refs/heads/${branch}`);
+    git("update-ref", "-d", ref);
 
     return new Response("", { status: 204 });
   };
@@ -671,15 +726,17 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "PATCH", pattern: new RegExp(`^${repo}/labels/(.+)$`), handle: () => json({}) },
     {
       method: "GET",
-      pattern: new RegExp(`^${repo}/git/ref/heads/(.+)$`),
+      pattern: new RegExp(`^${repo}/git/ref/(.+)$`),
       handle: (args) =>
-        Option.match(refSha(args.params[0] ?? ""), {
+        Option.match(shaOf(`refs/${args.params[0] ?? ""}`), {
           onNone: notFound,
-          onSome: (sha) => json({ object: { sha } }),
+          onSome: (sha) => json({ ref: `refs/${args.params[0] ?? ""}`, object: { sha } }),
         }),
     },
     { method: "POST", pattern: new RegExp(`^${repo}/git/refs$`), handle: createRef },
-    { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/heads/(.+)$`), handle: deleteRef },
+    { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: deleteRef },
+    { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
+    { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
     {
       method: "GET",
@@ -823,6 +880,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     },
     requests,
     requestsBy,
+    // The sha a ref points at, such as a claim, named in full.
+    refSha: shaOf,
+    // A commit's message, as GitHub keeps it.
+    messageOf: (sha: string) => git("log", "-1", "--format=%B", sha),
     setChecks: (state: Checks) => {
       checks = state;
     },

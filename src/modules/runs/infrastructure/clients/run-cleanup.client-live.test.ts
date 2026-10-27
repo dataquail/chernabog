@@ -88,6 +88,7 @@ const github = (state: GitHubState) =>
       Effect.sync(() => {
         state.calls.push(`delete-branch ${branch}`);
       }),
+    ref: () => Effect.succeedNone,
     request: (method, path, body) =>
       Effect.sync(() => {
         state.calls.push(`${method} ${path}`);

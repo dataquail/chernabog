@@ -11,17 +11,17 @@
 // version. The names of its steps ("claim", "work-with-person") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, Hybrid, Implement, Skip, type WorkItem } from "@chernabog/sdk";
+import { Claims, defineFlow, Hybrid, Implement, Skip, type WorkItem } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-const workflow = (item: WorkItem) =>
+const work = (issue: number) =>
   Effect.gen(function* () {
-    const issue = yield* Implement.issueOf(item);
     const { branch } = yield* Hybrid.claim(issue);
     const worktree = yield* Implement.prepareWorktree(branch);
-    // A session the person closes before open-pr fails the run and keeps the
-    // claim, so chernabog start on the issue again picks the session back up.
+    // A session the person closes before open-pr fails the run, which lets
+    // the claim go and keeps the issue in progress, so chernabog start on the
+    // issue again picks the session back up.
     const finished = yield* Hybrid.workWithPerson(issue, worktree);
     let pullRequest = Option.none<number>();
 
@@ -54,6 +54,15 @@ const workflow = (item: WorkItem) =>
         PullRequestClosed: (closed) => toPerson(closed.message),
       }),
     );
+  });
+
+const workflow = (item: WorkItem) =>
+  Effect.gen(function* () {
+    const issue = yield* Implement.issueOf(item);
+
+    // However the run ends, its claim on the issue goes; the branch and any
+    // pull request stay.
+    return yield* work(issue).pipe(Claims.releasing(Claims.issue(issue)));
   }).pipe(
     // An issue deleted or transferred under the run leaves nothing to do.
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),

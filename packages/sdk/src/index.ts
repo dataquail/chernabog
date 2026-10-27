@@ -2,6 +2,7 @@ import * as IssueSteps from "./issue.ts";
 import * as PullRequestSteps from "./pull-request.ts";
 import type * as Services from "./services.ts";
 
+export * as Claims from "./claims.ts";
 export * from "./errors.ts";
 export * from "./flow.ts";
 export * as Hybrid from "./hybrid.ts";

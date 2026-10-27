@@ -13,8 +13,9 @@ export type WorktreeCleanup = {
   readonly kept: ReadonlyArray<KeptWorktree>;
 };
 
-// A run's claim on its issue, released: the claim label and assignment are
-// gone, and its branch is deleted unless it holds work, which `kept` says.
+// A run's claim on its issue, released: its claim ref, the claim label and
+// assignment are gone, and its branch is deleted unless it holds work, which
+// `kept` says.
 export type ReleasedClaim = {
   readonly branch: string;
   readonly kept: Option.Option<string>;

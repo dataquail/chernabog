@@ -124,7 +124,7 @@ export type CreateRefOutcome = "created" | "already-exists";
 
 const RefError = Schema.Struct({ message: Schema.String });
 
-// GitHub's answer to creating the claim branch. A 422 for an existing ref means another run won the claim.
+// GitHub's answer to creating a ref, such as a claim. A 422 for an existing ref means another run won the claim.
 export const interpretCreateRefResponse = (
   status: number,
   body: Option.Option<Json>,
@@ -145,7 +145,7 @@ export const interpretCreateRefResponse = (
     Option.match(body, { onNone: () => "no body", onSome: printJson }),
   );
 
-  return Result.fail(`Creating the claim branch failed with HTTP ${status}: ${said}`);
+  return Result.fail(`Creating a ref failed with HTTP ${status}: ${said}`);
 };
 
 const STATUS_FIELD_QUERY = `

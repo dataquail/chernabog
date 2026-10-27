@@ -47,22 +47,29 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   };
 };
 
-// withPerson: claimed by a person's `chernabog start`, which another start of the issue may take over.
+// withPerson: claimed by a person's `chernabog start`, which another start of
+// the issue may take over. ref: the claim is a claim ref (Claims), which a
+// run of this version always writes; a marker without it is from a run that
+// held the issue by its branch alone.
 export const ClaimMarker = Schema.Struct({
   runId: Schema.String,
   claimedAt: Schema.String,
   branch: Schema.String,
   withPerson: Schema.optionalKey(Schema.Boolean),
+  ref: Schema.optionalKey(Schema.Boolean),
 });
 
 export type ClaimMarker = typeof ClaimMarker.Type;
 
 // A run that owns a pull request, or let it go: the standalone review and fix
-// flows leave a pull request alone while a run of another flow owns it.
+// flows leave a pull request alone while a run of another flow owns it. ref:
+// the run holds the pull request's claim ref (Claims), which decides; a marker
+// without it is from a run that owned it by comment alone.
 export const OwnerMarker = Schema.Struct({
   flow: Schema.String,
   runId: Schema.String,
   released: Schema.Boolean,
+  ref: Schema.optionalKey(Schema.Boolean),
 });
 
 export type OwnerMarker = typeof OwnerMarker.Type;

@@ -171,3 +171,73 @@ effect(
       yield* Effect.void;
     }),
 );
+
+const CLAIM = "refs/chernabog/claims/issue-3";
+
+const onGitHub = <A, E>(
+  github: ReturnType<typeof answering>,
+  use: (service: GitHub["Service"]) => Effect.Effect<A, E>,
+) => GitHub.use(use).pipe(Effect.result, Effect.provide(github.layer));
+
+effect(
+  "a claim ref is created by its full name, and a second create of it says it already exists",
+  () =>
+    Effect.gen(function* () {
+      const created = answering(201, Option.some({ ref: CLAIM }));
+      expect(yield* onGitHub(created, (service) => service.createRef(CLAIM, "c1"))).toEqual(
+        Result.succeed("created"),
+      );
+      expect(created.requests).toEqual([
+        {
+          method: "POST",
+          path: "/repos/dataquail/demo/git/refs",
+          body: Option.some({ ref: CLAIM, sha: "c1" }),
+        },
+      ]);
+
+      const taken = answering(422, Option.some({ message: "Reference already exists" }));
+      expect(yield* onGitHub(taken, (service) => service.createRef(CLAIM, "c1"))).toEqual(
+        Result.succeed("already-exists"),
+      );
+    }),
+);
+
+effect("a claim ref GitHub doesn't have reads as none, and deleting one is not an error", () =>
+  Effect.gen(function* () {
+    const missing = answering(404, Option.none());
+    expect(yield* onGitHub(missing, (service) => service.ref(CLAIM))).toEqual(
+      Result.succeed(Option.none()),
+    );
+    expect(missing.requests.map((request) => request.path)).toEqual([
+      "/repos/dataquail/demo/git/ref/chernabog/claims/issue-3",
+    ]);
+
+    const gone = answering(422, Option.some({ message: "Reference does not exist" }));
+    expect(Result.isSuccess(yield* onGitHub(gone, (service) => service.deleteRef(CLAIM)))).toBe(
+      true,
+    );
+    expect(gone.requests.map((request) => `${request.method} ${request.path}`)).toEqual([
+      "DELETE /repos/dataquail/demo/git/refs/chernabog/claims/issue-3",
+    ]);
+  }),
+);
+
+effect(
+  "a commit made through the API is its message, tree and parents, and comes back as its sha",
+  () =>
+    Effect.gen(function* () {
+      const made = answering(201, Option.some({ sha: "c1", message: "chernabog claim" }));
+      expect(
+        yield* onGitHub(made, (service) =>
+          service.createCommit({ message: "chernabog claim", tree: "t1", parents: [] }),
+        ),
+      ).toEqual(Result.succeed("c1"));
+      expect(made.requests).toEqual([
+        {
+          method: "POST",
+          path: "/repos/dataquail/demo/git/commits",
+          body: Option.some({ message: "chernabog claim", tree: "t1", parents: [] }),
+        },
+      ]);
+    }),
+);

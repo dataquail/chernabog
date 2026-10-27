@@ -14,7 +14,7 @@
 // version. The names of its steps ("claim", "local-gate-1") are the keys a run
 // in flight resumes by, so renaming one restarts that step.
 
-import { defineFlow, GitHub, Implement, Repo, reportAs, Skip } from "@chernabog/sdk";
+import { Claims, defineFlow, GitHub, Implement, Repo, reportAs, Skip } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -44,7 +44,6 @@ export default defineFlow({
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
       const queued = yield* Implement.queuedBy(item);
-      const { branch } = yield* Implement.claim(issue, queued);
       let pullRequest = Option.none<number>();
 
       const toPerson = (reason: string) =>
@@ -53,6 +52,7 @@ export default defineFlow({
         );
 
       return yield* Effect.gen(function* () {
+        const { branch } = yield* Implement.claim(issue, queued);
         const worktree = yield* Implement.prepareWorktree(branch);
         const outcome = yield* Implement.implementWithAgent(issue, worktree);
 
@@ -90,6 +90,9 @@ export default defineFlow({
         // Any other failure once the issue is claimed hands it to a person, rather
         // than leaving it claimed with nobody working on it.
         Effect.catchTag("StepFailed", (failed) => toPerson(`${failed.step}: ${failed.message}`)),
+        // However the run ends, its claim on the issue goes; the branch and
+        // any pull request stay.
+        Claims.releasing(Claims.issue(issue)),
       );
     }).pipe(
       // An issue deleted or transferred under the run leaves nothing to do.

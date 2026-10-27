@@ -15,6 +15,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as Claims from "./claims.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
 import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "./errors.ts";
 import { activity, reportAs, sleep } from "./flow.ts";
@@ -137,28 +138,30 @@ export const claimComment = (claim: ClaimMarker) =>
     claimMarker.write(claim),
   ].join("\n");
 
-// Whether the claim on an existing branch is this run's. No marker at all means
-// this run crashed between creating the branch and commenting, while the issue
-// still says it is queued.
-const holdsClaim = (issue: number, runId: string, label: string) =>
-  Effect.gen(function* () {
-    const github = yield* GitHub;
+// The latest claim marker on the issue, from its comments.
+export const latestClaim = (issue: number) =>
+  GitHub.use((github) => github.comments(issue)).pipe(
+    Effect.map((comments) =>
+      latestMarker(
+        claimMarker.read,
+        comments.map((comment) => comment.body),
+      ),
+    ),
+  );
 
-    const latest = latestMarker(
-      claimMarker.read,
-      (yield* github.comments(issue)).map((comment) => comment.body),
-    );
+// Migration: a run of an earlier version holds an issue by its branch alone,
+// and its claim marker names no claim ref. While such runs may be in flight,
+// an existing branch whose latest marker is one of theirs is still theirs.
+// Drop this a release after claims became refs.
+export const legacyClaim = (latest: Option.Option<ClaimMarker>, runId: string) =>
+  Option.filter(latest, (marker) => marker.ref !== true && marker.runId !== runId);
 
-    if (Option.isSome(latest)) {
-      return { ours: latest.value.runId === runId, commented: true };
-    }
-
-    return { ours: (yield* github.issue(issue)).labels.includes(label), commented: false };
-  });
-
-// Creates the issue's branch, which only one run can do, then labels, assigns
-// and comments as a person picking it up would. Safe to repeat: a run that
-// already holds the claim keeps it. Removes the label that queued the issue.
+// Claims the issue with its claim ref, which only one run can create, then
+// creates the issue's branch, or adopts one with no claim on it, and labels,
+// assigns and comments as a person picking it up would. Safe to repeat: a run
+// that already holds the claim keeps it. Removes the label that queued the
+// issue. Wrap the run in `Claims.releasing(Claims.issue(issue))` to let the
+// claim go when it ends.
 export const claim = (issue: number, options: QueueOptions = {}) =>
   activity(
     "claim",
@@ -168,6 +171,7 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
       const run = yield* Run;
       const label = yield* queueLabel(options);
       const branch = branchFor(issue);
+      const item = Claims.issue(issue);
       const baseSha = yield* github.branchSha(repo.baseBranch);
 
       if (Option.isNone(baseSha)) {
@@ -177,15 +181,25 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
         });
       }
 
-      if ((yield* github.createBranch(branch, baseSha.value)) === "already-exists") {
-        const held = yield* holdsClaim(issue, run.runId, label);
+      const claimed = yield* Claims.acquire(item);
 
-        if (!held.ours) {
-          return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
+      if (!claimed.acquired) {
+        return yield* new Skip({
+          reason: `#${issue} is already claimed (${Claims.describeHolder(item, claimed.holder)})`,
+        });
+      }
+
+      if ((yield* github.createBranch(branch, baseSha.value)) === "already-exists") {
+        const latest = yield* latestClaim(issue);
+
+        if (Option.exists(latest, (marker) => marker.runId === run.runId)) {
+          return { branch };
         }
 
-        if (held.commented) {
-          return { branch };
+        if (Option.isSome(legacyClaim(latest, run.runId))) {
+          yield* Claims.release(item);
+
+          return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
       }
 
@@ -198,7 +212,10 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
 
       yield* github.assignSelf(issue);
       const claimedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* github.comment(issue, claimComment({ runId: run.runId, claimedAt, branch }));
+      yield* github.comment(
+        issue,
+        claimComment({ runId: run.runId, claimedAt, branch, ref: true }),
+      );
 
       return { branch };
     }),

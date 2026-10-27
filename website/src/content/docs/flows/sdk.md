@@ -50,7 +50,26 @@ Most steps only post. The ones above that move labels say so; `Review.round` and
 
 `chernabog status` lists each flow's work from its trigger, so a label left behind shows up there as work waiting to start.
 
-**Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That posts an owner marker on the pull request, and a release marker when the work ends, whether it succeeded or failed. A run waiting on a signal keeps the pull request. While a pull request is owned, `Review.reviewRequests` leaves it out and `Review.ownedByARun` says so, so the `review`, `re-review` and `address-review` recipes don't start on it. A run this machine knows has ended no longer owns anything, even without a release. One on another machine owns the pull request until its release marker appears.
+## Claims
+
+A claim on an issue or a pull request is a ref of its own, `refs/chernabog/claims/<item>` (`issue-12`, `pr-73`), apart from the work branch. It points at a commit with an empty tree, whose message says whose run holds it:
+
+```
+chernabog claim
+
+Run: 3f9c…
+Persona: alice
+Flow: implement
+Claimed-At: 2026-10-26T14:00:00.000Z
+```
+
+Creating a ref is the one write GitHub refuses to a second writer, so the run that creates it holds the item, and `Claims.holder(item)` reads who that is. It says nothing about the machine: the ref is as public as the repo. A ref outside `refs/heads/` isn't a branch: it isn't in the branch list, and `push` workflows, which run for branches and tags, don't see it.
+
+`Claims.releasing(item)(effect)` deletes the ref when `effect` ends, whatever the ending; a run waiting on a signal keeps it, and `chernabog cancel` releases it too. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
+
+Runs of an earlier version held an issue by its branch alone. While they may be in flight, a branch whose latest claim comment names no claim ref is still theirs, and `claim` skips it.
+
+**Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That takes the pull request's claim, `pr-<n>`, and posts an owner marker for people to read, and when the work ends, whether it succeeded or failed, lets the claim go and posts a release marker. A run waiting on a signal keeps the pull request, and a pull request another run owns is skipped. While a pull request is owned, `Review.reviewRequests` leaves it out and `Review.ownedByARun` says so, deciding from the claim ref, so the `review`, `re-review` and `address-review` recipes don't start on it. A run this machine knows has ended no longer owns anything, even with its ref still there. One on another machine owns the pull request until its ref goes. A pull request with no claim ref falls back to the owner markers, for runs of an earlier version.
 
 **Labels of a flow's own.** A flow keyed by its own label, such as `auto:docs`, declares it in `defineFlow({ labels: [{ name: "auto:docs" }] })`, uses `Implement.triggerFor("auto:docs")`, and claims with `Implement.claim(issue, yield* Implement.queuedBy(item))`, which removes that label in place of `auto:eligible`. `chernabog labels` creates declared labels beside the repo's own.
 

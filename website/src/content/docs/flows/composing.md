@@ -11,7 +11,7 @@ This is the `implement` recipe, as `chernabog recipes add implement` bakes it, w
 
 ```ts
 // .chernabog/flows/implement.ts
-import { defineFlow, GitHub, Implement, Repo, reportAs, Skip } from '@chernabog/sdk';
+import { Claims, defineFlow, GitHub, Implement, Repo, reportAs, Skip } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
 
@@ -32,11 +32,11 @@ export default defineFlow({
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
       const queued = yield* Implement.queuedBy(item);
-      const { branch } = yield* Implement.claim(issue, queued);
       let pullRequest = Option.none<number>();
       const toPerson = (reason: string) => Implement.handToHuman(issue, reason, pullRequest).pipe(Effect.flatMap(Implement.endForPerson));
 
       return yield* Effect.gen(function* () {
+        const { branch } = yield* Implement.claim(issue, queued);
         const worktree = yield* Implement.prepareWorktree(branch);
         const outcome = yield* Implement.implementWithAgent(issue, worktree);
 
@@ -59,12 +59,15 @@ export default defineFlow({
             PullRequestClosed: (closed) => toPerson(closed.message),
           }),
         );
-      }).pipe(Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)));
+      }).pipe(
+        Effect.catchTag('StepFailed', (failed) => toPerson(`${failed.step}: ${failed.message}`)),
+        Claims.releasing(Claims.issue(issue)),
+      );
     }).pipe(Effect.catchTag('NotFound', (gone) => Effect.fail(new Skip({ reason: gone.message })))),
 });
 ```
 
-1. **Trigger and claim.** The trigger queues issues labelled `auto:eligible`, then `auto:ship`, each as `Implement.issueItem(issue, label)`, and `reportAs('trigger')` turns a failed read of GitHub into `StepFailed`. `Implement.queuedBy(item)` says which label queued the issue; `claim`, `askForClarification` and `openPullRequest` take it, so the claim removes that label and an `auto:ship` issue's pull request is labelled `auto:ship` too.
+1. **Trigger and claim.** The trigger queues issues labelled `auto:eligible`, then `auto:ship`, each as `Implement.issueItem(issue, label)`, and `reportAs('trigger')` turns a failed read of GitHub into `StepFailed`. `Implement.queuedBy(item)` says which label queued the issue; `claim`, `askForClarification` and `openPullRequest` take it, so the claim removes that label and an `auto:ship` issue's pull request is labelled `auto:ship` too. `Claims.releasing(Claims.issue(issue))` around the claim and the work lets the [claim](/chernabog/flows/sdk/#claims) go however the run ends.
 2. **Implement, gate, push, open, wait for CI.** Each is one activity, so a resumed run picks up after the last one done.
 3. **Hand off.** `handOff` closes out the issue and asks one reviewer from the team's [pool](/chernabog/work/flows/#the-reviewer-pool) to review the pull request. That request is what starts `review`, as the reviewer's persona.
 4. **Hand to a person.** A `NeedsHuman` or `StepFailed` anywhere after the claim ends in `handToHuman`, which labels the issue and the pull request `auto:needs-human` and says why. So do the [work's errors](/chernabog/flows/flows/#errors) the steps raise: nothing committed, a push the token may not make (whose message says how to fix it), CI that stays pending, or a pull request closed under the run. An issue deleted under the run ends it as skipped. The compiler holds the flow to handling each one.

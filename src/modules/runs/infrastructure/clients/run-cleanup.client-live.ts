@@ -5,6 +5,7 @@
 
 import {
   claimMarker,
+  Claims,
   Git,
   GitHub,
   latestMarker,
@@ -221,6 +222,8 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
             Effect.gen(function* () {
               const github = yield* GitHub;
               const repo = yield* Repo;
+              // The claim ref goes first: it is what holds the issue.
+              yield* Claims.releaseFor(Claims.issue(issue), run.id);
 
               const claim = latestMarker(
                 claimMarker.read,
