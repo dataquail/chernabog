@@ -269,9 +269,12 @@ export const linkingPullRequests = <R>(
       ),
   });
 
-// The run's GitHub and Git, which report each change they make: what a run
-// here changes is what the runtime sees, so no flow declares it. A change is
-// reported once made; a failed one changed nothing to tick for.
+// The run's GitHub and Git, which report the changes other flows act on: pull
+// requests, pushes, reviews, merges, labels, statuses, comments and other API
+// writes, so no flow declares them. Branches made or deleted, Git.run, a
+// .chernabog/stages/ step's own process and the agent's own gh or git aren't
+// seen here; the run's end, or cron, catches those. A change is reported once
+// made; a failed one changed nothing to tick for.
 export const reportingChanges = <R>(
   context: Context.Context<R>,
   changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,

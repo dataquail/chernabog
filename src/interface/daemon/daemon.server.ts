@@ -299,11 +299,13 @@ const eventDueAt = (repo: RepoState, schedule: FlowSchedule) =>
 // Marks the schedules an event is for as due, each by the event tick rules.
 // A manual flow never ticks on a schedule, so no event ticks it either.
 const markDue = (schedules: ReadonlyArray<FlowSchedule>, cause: string, at: DateTime.Utc) => {
-  for (const schedule of schedules.filter((found) => Option.isSome(found.expression))) {
+  const ticking = schedules.filter((found) => Option.isSome(found.expression));
+
+  for (const schedule of ticking) {
     schedule.pending = Option.some(noteEvent(schedule.pending, cause, at));
   }
 
-  return schedules.length > 0;
+  return ticking.length > 0;
 };
 
 // The personas this machine polls notifications for: each of github:'s logins
@@ -462,8 +464,13 @@ export const runDaemon = Effect.gen(function* () {
   const wake = yield* Latch.make();
 
   // A change a run here made, in a repo by its name: every flow of it whose
-  // persona ticks on local events is due once the event tick rules allow.
-  const noteLocal = (repoName: string, cause: string) =>
+  // persona ticks on local events is due once the event tick rules allow,
+  // save those `spared` leaves to cron.
+  const noteLocal = (
+    repoName: string,
+    cause: string,
+    spared: (schedule: FlowSchedule) => boolean = () => false,
+  ) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
 
@@ -471,7 +478,9 @@ export const runDaemon = Effect.gen(function* () {
         .filter((repo) => repo.name === repoName || repo.enrolled.repo === repoName)
         .some((repo) =>
           markDue(
-            repo.flows.filter((schedule) => eventsFor(machine, schedule.persona).local),
+            repo.flows.filter(
+              (schedule) => eventsFor(machine, schedule.persona).local && !spared(schedule),
+            ),
             cause,
             now,
           ),
@@ -721,9 +730,15 @@ export const runDaemon = Effect.gen(function* () {
                 yield* log(
                   `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
                 );
+                // A run that didn't finish its work leaves its own flow to
+                // cron, so a trigger whose item fails fast retries no faster.
                 yield* noteLocal(
                   finished.repo,
                   localCause(`${finished.flow} run ended`, Option.none()),
+                  (schedule) =>
+                    finished.status !== "done" &&
+                    schedule.handle.name === finished.flow &&
+                    samePersona(schedule.persona, finished.persona),
                 );
               }
             }
