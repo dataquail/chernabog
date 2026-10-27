@@ -85,6 +85,10 @@ export const Limits = Schema.Struct({
   staleAfter: Schema.Duration,
   // How long CI may stay pending before a person looks.
   ciTimeout: Schema.Duration,
+  // The most tasks one plan may hold, its verify node aside.
+  planNodes: Schema.Finite,
+  // Times the agent is asked to fix a plan that fails its checks before a person takes over.
+  planRounds: Schema.Finite,
 });
 
 export type Limits = typeof Limits.Type;
@@ -219,6 +223,15 @@ export type Issue = {
   readonly assignees: ReadonlyArray<string>;
 };
 
+// An issue as GitHub lists it under another: a sub-issue, or a blocker.
+export type LinkedIssue = Issue & { readonly state: "open" | "closed" };
+
+export type NewIssue = {
+  readonly title: string;
+  readonly body: string;
+  readonly labels: ReadonlyArray<string>;
+};
+
 export type Comment = {
   readonly id: number;
   readonly author: string;
@@ -296,7 +309,20 @@ export class GitHub extends Context.Service<
     // Open issues with this label (and ready on the board, when the repo has one), oldest first.
     queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
+    // Open issues with this label, whatever their status on the board, oldest first.
+    issuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     issue(number: number): Effect.Effect<Issue, NotFound | GitHubError>;
+    createIssue(issue: NewIssue): Effect.Effect<Issue, GitHubError>;
+    // An epic's tasks, open and closed, in GitHub's order.
+    subIssues(parent: number): Effect.Effect<ReadonlyArray<LinkedIssue>, GitHubError>;
+    // Makes `child` a sub-issue of `parent`; one already there stays.
+    addSubIssue(parent: number, child: number): Effect.Effect<void, GitHubError>;
+    // The issues that must close before this one can start, open and closed.
+    blockedBy(issue: number): Effect.Effect<ReadonlyArray<LinkedIssue>, GitHubError>;
+    // Records that `blocker` blocks `issue`; a link already there stays.
+    addBlockedBy(issue: number, blocker: number): Effect.Effect<void, GitHubError>;
+    // Removing a link that isn't there is not an error.
+    removeBlockedBy(issue: number, blocker: number): Effect.Effect<void, GitHubError>;
     // Comments by the repo's owners, members and collaborators only; anyone can comment on a public repo.
     trustedComments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;
     comments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;

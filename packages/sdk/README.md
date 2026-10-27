@@ -35,7 +35,7 @@ export default defineFlow({
 | `renderPrompt(name, values)`            | Fills `.chernabog/prompts/<name>.md`, or, for a flow imported from a recipe package (`FlowPackage`), the package's when the repo has none.                                                                                           |
 | `Skip`, `NeedsHuman`                    | End a run cleanly, or hand its item to a person.                                                                                                                                                                                     |
 
-`Implement`, `Review` and `PullRequest` hold the building blocks of the review loop, each an activity a flow can reorder, leave out or wrap. `Hybrid` holds the blocks of the hybrid path, where a person works on an issue with the agent in an interactive session. Chernabog's [recipes](https://dataquail.github.io/chernabog/recipes/) are complete flows written out from these blocks, which a repo bakes into its own `.chernabog/flows/`; they are published as [`@chernabog/recipes`](https://www.npmjs.com/package/@chernabog/recipes), whose source is [`packages/recipes/`](https://github.com/dataquail/chernabog/tree/main/packages/recipes).
+`Implement`, `Review` and `PullRequest` hold the building blocks of the review loop, each an activity a flow can reorder, leave out or wrap. `Hybrid` holds the blocks of the hybrid path, where a person works on an issue with the agent in an interactive session. `Plan` holds the blocks of the plan recipe, which turns a spec issue into an epic of sub-issues once a person approves the agent's plan. Chernabog's [recipes](https://dataquail.github.io/chernabog/recipes/) are complete flows written out from these blocks, which a repo bakes into its own `.chernabog/flows/`; they are published as [`@chernabog/recipes`](https://www.npmjs.com/package/@chernabog/recipes), whose source is [`packages/recipes/`](https://github.com/dataquail/chernabog/tree/main/packages/recipes).
 
 A flow can also give `item: (key) => Effect<Option<WorkItem>>`, the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names.
 
@@ -67,7 +67,7 @@ export default defineStage({
 | ----------------- | ---------------------------------------------------------------------------------------------------- |
 | `Repo`            | The repo's merged settings: slug, base branch, labels, limits, gates, notes                          |
 | `Run`             | The run: flow, run id and work item                                                                  |
-| `GitHub`          | Queued issues, claims, labels, comments, branches, pull requests, CI state                           |
+| `GitHub`          | Queued issues, claims, labels, comments, sub-issues and blockers, branches, pull requests, CI state  |
 | `Agent`           | Starting and resuming agent sessions through an adapter; `withPerson` opens one in front of a person |
 | `Git`, `Worktree` | Commits ahead, changed files, pushes; one worktree per branch                                        |
 | `Usage`           | The account check and the usage gate                                                                 |

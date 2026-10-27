@@ -171,3 +171,104 @@ effect(
       yield* Effect.void;
     }),
 );
+
+// GitHub answering each request by its method and path, and the requests it got.
+const routing = (answer: (method: string, path: string) => { body: Json; status: number }) => {
+  const requests: Array<string> = [];
+
+  const api = Layer.succeed(
+    GitHubApi,
+    GitHubApi.of({
+      request: (method, path) =>
+        Effect.sync(() => {
+          requests.push(`${method} ${path}`);
+          const { body, status } = answer(method, path);
+
+          return { status, body: Option.some(body), nextUrl: Option.none() };
+        }),
+    }),
+  );
+
+  return { requests, layer: GitHubLive(settings).pipe(Layer.provide(api)) };
+};
+
+const restIssue = (number: number, state = "open") => ({
+  id: 9000 + number,
+  number,
+  title: `Issue ${number}`,
+  body: "Do it.",
+  html_url: `https://github.com/dataquail/demo/issues/${number}`,
+  created_at: "2026-10-20T00:00:00Z",
+  labels: [],
+  state,
+});
+
+effect(
+  "sub-issues and blockers are linked by the issue's id, and a link already there stays",
+  () => {
+    const github = routing((method, path) => {
+      if (path.endsWith("/issues/3/sub_issues?per_page=100")) {
+        return { status: 200, body: [restIssue(12)] };
+      }
+
+      if (path.endsWith("/issues/14/dependencies/blocked_by?per_page=100")) {
+        return { status: 200, body: [restIssue(12, "closed")] };
+      }
+
+      if (method === "GET" && path.endsWith("/issues/13")) {
+        return { status: 200, body: restIssue(13) };
+      }
+
+      return { status: 201, body: {} };
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* GitHub;
+      yield* service.addSubIssue(3, 12);
+      yield* service.addSubIssue(3, 13);
+      yield* service.addBlockedBy(14, 12);
+      yield* service.addBlockedBy(14, 13);
+
+      const linked = yield* service.blockedBy(14);
+      expect(linked.map((issue) => [issue.number, issue.state])).toEqual([[12, "closed"]]);
+      expect(github.requests.filter((request) => request.startsWith("POST"))).toEqual([
+        "POST /repos/dataquail/demo/issues/3/sub_issues",
+        "POST /repos/dataquail/demo/issues/14/dependencies/blocked_by",
+      ]);
+    }).pipe(Effect.provide(github.layer));
+  },
+);
+
+effect("unlinking a blocker deletes by its id, and one that isn't linked is not an error", () => {
+  const github = routing((method, path) => {
+    if (method === "GET") {
+      return { status: 200, body: restIssue(Number(path.split("/").at(-1))) };
+    }
+
+    return { status: 404, body: { message: "Not Found" } };
+  });
+
+  return Effect.gen(function* () {
+    yield* (yield* GitHub).removeBlockedBy(14, 12);
+
+    expect(github.requests).toEqual([
+      "GET /repos/dataquail/demo/issues/12",
+      "DELETE /repos/dataquail/demo/issues/14/dependencies/blocked_by/9012",
+    ]);
+  }).pipe(Effect.provide(github.layer));
+});
+
+effect("a new issue is opened with its title, body and labels", () => {
+  const github = routing(() => ({ status: 201, body: restIssue(20) }));
+
+  return Effect.gen(function* () {
+    const created = yield* (yield* GitHub).createIssue({
+      title: "Issue 20",
+      body: "Do it.",
+      labels: ["auto:eligible"],
+    });
+
+    expect(created.number).toBe(20);
+    expect(github.requests).toEqual(["POST /repos/dataquail/demo/issues"]);
+  }).pipe(Effect.provide(github.layer));
+});

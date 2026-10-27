@@ -18,6 +18,7 @@ import {
   HEADLESS,
   type Issue,
   type Json,
+  type LinkedIssue,
   MergeRefused,
   type MergeRequest,
   printJson,
@@ -196,6 +197,21 @@ export const makeFake = (
   const existing = { branch: false };
   let reviewed = 0;
 
+  // The issues a step made, and the sub-issue and blocked-by links between
+  // them and the queued issue. `plans` are the agent's answers to a plan
+  // step, in turn, the last one repeating.
+  const graph = {
+    made: new Map<number, LinkedIssue>(),
+    subIssues: new Map<number, Array<number>>(),
+    blockedBy: new Map<number, Array<number>>(),
+    next: 100,
+  };
+
+  const plans: Array<Json> = [];
+  // The worktrees and checkouts a step removed, by name.
+  const removed: Array<string> = [];
+  let planned = 0;
+
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
   let knownRun = Option.none<boolean>();
 
@@ -207,10 +223,10 @@ export const makeFake = (
     labels.set(number, names);
   };
 
-  const comment = (body: string) => {
+  const comment = (body: string, by = "chernabog-bot") => {
     comments.push({
       id: comments.length + 1,
-      author: "chernabog-bot",
+      author: by,
       body,
       createdAt: "2026-10-20T00:00:00Z",
       trusted: true,
@@ -226,6 +242,12 @@ export const makeFake = (
   // What the agent answers, by the shape the step asked for.
   const answerFor = (request: AgentRequest): Json => {
     const schema = Option.match(request.outputSchema, { onNone: () => "", onSome: printJson });
+
+    if (schema.includes("blockedBy")) {
+      planned += 1;
+
+      return plans[Math.min(planned, plans.length) - 1] ?? {};
+    }
 
     if (schema.includes("remediated")) {
       return {
@@ -303,13 +325,87 @@ export const makeFake = (
     assignees: [],
   });
 
+  const known = (number: number): Option.Option<LinkedIssue> =>
+    Option.orElse(Option.fromUndefinedOr(graph.made.get(number)), () =>
+      Option.liftPredicate({ ...issue(), state: "open" as const }, () => number === ISSUE),
+    );
+
+  const linkedTo = (links: Map<number, Array<number>>, number: number) =>
+    (links.get(number) ?? []).flatMap((linked) =>
+      Option.toArray(
+        Option.map(known(linked), (found) => ({ ...found, labels: labelsOf(linked) })),
+      ),
+    );
+
+  const link = (links: Map<number, Array<number>>, from: number, to: number) => {
+    const linked = links.get(from) ?? [];
+
+    if (!linked.includes(to)) {
+      links.set(from, [...linked, to]);
+    }
+  };
+
+  const allIssues = () => [
+    issue(),
+    ...[...graph.made.values()].map((made) => ({ ...made, labels: labelsOf(made.number) })),
+  ];
+
   const services = Layer.mergeAll(
     Layer.succeed(Repo, Repo.of({ ...settings, ...overrides })),
     Layer.mock(GitHub)({
       queuedIssuesLabelled: (label) =>
         Effect.succeed([issue()].filter((queued) => queued.labels.includes(label))),
-      issue: () => Effect.succeed(issue()),
-      trustedComments: () => Effect.succeed([]),
+      issue: (number) =>
+        Effect.sync(() =>
+          Option.getOrElse(
+            Option.map(Option.fromUndefinedOr(graph.made.get(number)), (made) => ({
+              ...made,
+              labels: labelsOf(number),
+            })),
+            issue,
+          ),
+        ),
+      issuesLabelled: (label) =>
+        Effect.sync(() => allIssues().filter((found) => found.labels.includes(label))),
+      createIssue: (created) =>
+        Effect.sync(() => {
+          const number = graph.next;
+          graph.next += 1;
+
+          const made: LinkedIssue = {
+            number,
+            title: created.title,
+            body: created.body,
+            url: `https://github.com/dataquail/demo/issues/${number}`,
+            createdAt: "2026-10-21T00:00:00Z",
+            labels: [],
+            assignees: [],
+            state: "open",
+          };
+
+          graph.made.set(number, made);
+          labels.set(number, [...created.labels]);
+
+          return made;
+        }),
+      subIssues: (parent) => Effect.sync(() => linkedTo(graph.subIssues, parent)),
+      addSubIssue: (parent, child) =>
+        Effect.sync(() => {
+          link(graph.subIssues, parent, child);
+        }),
+      blockedBy: (number) => Effect.sync(() => linkedTo(graph.blockedBy, number)),
+      addBlockedBy: (number, blocker) =>
+        Effect.sync(() => {
+          link(graph.blockedBy, number, blocker);
+        }),
+      removeBlockedBy: (number, blocker) =>
+        Effect.sync(() => {
+          graph.blockedBy.set(
+            number,
+            (graph.blockedBy.get(number) ?? []).filter((linked) => linked !== blocker),
+          );
+        }),
+      trustedComments: () => Effect.sync(() => comments.filter((found) => found.trusted)),
       branchSha: () => Effect.succeedSome("base1234"),
       createBranch: () =>
         Effect.sync((): "created" | "already-exists" => {
@@ -360,6 +456,13 @@ export const makeFake = (
         Effect.sync((): Json => {
           if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
             return { number: PULL, mergeable_state: merge.state };
+          }
+
+          // The issues this login opened, newest first.
+          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/issues?`)) {
+            return [...graph.made.values()]
+              .toReversed()
+              .map((made) => ({ number: made.number, body: made.body }));
           }
 
           return {};
@@ -418,7 +521,10 @@ export const makeFake = (
       pathFor: (branch) => `/tmp/demo-worktrees/${branch}`,
       ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`),
       checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`),
-      remove: () => Effect.void,
+      remove: (name) =>
+        Effect.sync(() => {
+          removed.push(name);
+        }),
     }),
     Layer.mock(Usage)({}),
     Layer.mock(Agent)({
@@ -464,6 +570,9 @@ export const makeFake = (
     comment,
     people,
     submitted,
+    graph,
+    plans,
+    removed,
   };
 };
 
@@ -475,6 +584,9 @@ export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 export type EngineRun = RunView | ActiveRun;
 
 export type RunsServices = Layer.Success<typeof RunsLayer>;
+
+// What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
+export type RuntimeServices = RunsServices | Layer.Success<ReturnType<typeof runtimeFor>>;
 
 const isRunning = (run: EngineRun) => run.status === "running";
 
@@ -510,7 +622,7 @@ export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
   work: WorkItem,
-  until: (run: EngineRun) => Effect.Effect<boolean, never, RunsServices>,
+  until: (run: EngineRun) => Effect.Effect<boolean, never, RuntimeServices>,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

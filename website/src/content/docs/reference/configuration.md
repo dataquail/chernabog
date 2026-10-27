@@ -38,6 +38,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
 | `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
+| `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
+| `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
 
 `launchers` is refused here: only machine config defines launcher commands.
 

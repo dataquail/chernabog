@@ -56,6 +56,14 @@
         ],
         "docs": "https://dataquail.github.io/chernabog/recipes/resolve-conflicts/"
       },
+      "plan": {
+        "description": "Turns an auto:plan spec issue into an epic of sub-issues, linked by what blocks what, once a person approves the agent's plan",
+        "flow": "flows/plan.ts",
+        "prompts": [
+          "prompts/plan.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/plan/"
+      },
       "human-initiated": {
         "description": "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",
         "flow": "flows/human-initiated.ts",

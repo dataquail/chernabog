@@ -20,15 +20,19 @@ import * as Option from "effect/Option";
 
 // Issues labelled auto:eligible, then ones labelled auto:ship, the automated
 // path, whose pull request chernabog merges once it's approved. Oldest first;
-// with a board, only those whose Status is its readyStatus.
+// with a board, only those whose Status is its readyStatus. An issue another
+// open issue blocks waits for it, as the tasks of a plan's epic do.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
-  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
 
-  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter(
-    (issue) => !eligible.some((queued) => queued.number === issue.number),
+  const eligible = yield* Implement.unblocked(
+    yield* github.queuedIssuesLabelled(repo.labels.eligible),
   );
+
+  const shipping = (yield* Implement.unblocked(
+    yield* github.queuedIssuesLabelled(repo.labels.ship),
+  )).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
 
   return [
     ...eligible.map((issue) => Implement.issueItem(issue)),
