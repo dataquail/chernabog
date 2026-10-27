@@ -65,3 +65,6 @@ limits:
   reviewRounds: 1
   staleAfter: 6 hours
   ciTimeout: 2 hours
+  # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
+  planNodes: 12
+  planRounds: 2

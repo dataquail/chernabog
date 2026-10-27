@@ -91,6 +91,24 @@ export const triggerFor = (label: string) =>
     reportAs("trigger"),
   );
 
+// The issues with no open blocker, in the order given. One that an open issue
+// still blocks waits, so the tasks of an epic start in the order its plan gave.
+export const unblocked = (issues: ReadonlyArray<Issue>) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const ready: Array<Issue> = [];
+
+    for (const issue of issues) {
+      const blockers = yield* github.blockedBy(issue.number);
+
+      if (!blockers.some((blocker) => blocker.state === "open")) {
+        ready.push(issue);
+      }
+    }
+
+    return ready;
+  });
+
 // Which label queued the issue: eligible unless the flow is keyed by its own.
 export type QueueOptions = { readonly label?: string };
 

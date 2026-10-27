@@ -74,10 +74,27 @@ export const OwnerMarker = Schema.Struct({
 
 export type OwnerMarker = typeof OwnerMarker.Type;
 
+// A plan proposed on its spec issue, by round, so the run finds the comments
+// a person left on it since.
+export const PlanMarker = Schema.Struct({ round: Schema.Finite });
+
+export type PlanMarker = typeof PlanMarker.Type;
+
+// An issue a plan made: its spec and its task's key, so a run that resumes
+// finds the issues it made rather than making them twice.
+export const PlanNodeMarker = Schema.Struct({ spec: Schema.Finite, key: Schema.String });
+
+export type PlanNodeMarker = typeof PlanNodeMarker.Type;
+
 export const claimMarker = marker("claim", ClaimMarker);
 export const sessionMarker = marker("session", SessionMarker);
 export const reviewMarker = marker("review", ReviewMarker);
 export const ownerMarker = marker("owner", OwnerMarker);
+export const planMarker = marker("plan", PlanMarker);
+export const planNodeMarker = marker("plan-node", PlanNodeMarker);
+
+// Whether a body carries any of chernabog's markers: a comment chernabog wrote.
+export const hasMarker = (body: string) => /<!-- chernabog-[\w-]+ \{/.test(body);
 
 // The newest marker among comment bodies, oldest first.
 export const latestMarker = <A>(
