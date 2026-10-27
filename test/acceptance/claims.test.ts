@@ -43,7 +43,8 @@ describe("two machines after one issue", () => {
     const other = sandbox.anotherMachine("b");
     const { output } = await other.runCli(["run", "implement", "--repo", "demo"]);
 
-    process.kill(-(first.pid ?? 0), "SIGKILL");
+    // Its own process group, never `-0`: that would be this test runner's group.
+    process.kill(-Option.getOrThrow(Option.fromUndefinedOr(first.pid)), "SIGKILL");
     await closed(first);
 
     expect(output).toContain(`#${issue} is already claimed`);
