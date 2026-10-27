@@ -154,6 +154,12 @@ const ReviewBody = Schema.Struct({
 });
 
 const ReviewersBody = Schema.Struct({ reviewers: Schema.Array(Schema.String) });
+const SubIssueBody = Schema.Struct({ sub_issue_id: Schema.Finite });
+const BlockerBody = Schema.Struct({ issue_id: Schema.Finite });
+
+// An issue's id, which the sub-issue and dependency endpoints take, is not its
+// number on GitHub; the fake keeps them apart so a mix-up fails.
+const ID_OFFSET = 1_000_000;
 const MergeBody = Schema.Struct({ merge_method: Schema.String, sha: Schema.String });
 
 type Args = {
@@ -221,6 +227,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     }
   };
 
+  // Each issue's sub-issues, and the issues that block it, by number.
+  const subIssues = new Map<number, Array<number>>();
+  const blockers = new Map<number, Array<number>>();
+
   const merges: Array<{ readonly number: number; readonly method: string; readonly by: string }> =
     [];
 
@@ -278,8 +288,13 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     `https://github.com/${options.slug}/${kind}/${number}`;
 
   const issueJson = (issue: FakeIssue) => ({
+    id: ID_OFFSET + issue.number,
     node_id: `I_${issue.number}`,
     number: issue.number,
+    state: Option.getOrElse(
+      Option.liftPredicate("closed", () => issue.closed === true),
+      () => "open",
+    ),
     title: issue.title,
     body: issue.body,
     html_url: html("issues", issue.number),
@@ -435,6 +450,60 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
     return json(comment, 201);
   });
+
+  const linkedJson = (links: Map<number, Array<number>>, args: Args) =>
+    json(
+      (links.get(numberParam(args)) ?? []).flatMap((number) =>
+        Option.toArray(Option.map(Option.fromUndefinedOr(issues.get(number)), issueJson)),
+      ),
+    );
+
+  const answerWith = (number: number, status: number) =>
+    Option.match(Option.fromUndefinedOr(issues.get(number)), {
+      onNone: notFound,
+      onSome: (issue) => json(issueJson(issue), status),
+    });
+
+  // Links one issue to another by id, as GitHub does; one already there is refused.
+  const link = (links: Map<number, Array<number>>, args: Args, id: number) => {
+    const from = numberParam(args);
+    const to = id - ID_OFFSET;
+
+    if (!issues.has(from) || !issues.has(to)) {
+      return notFound();
+    }
+
+    const existing = links.get(from) ?? [];
+
+    if (existing.includes(to)) {
+      return json({ message: "Validation Failed" }, 422);
+    }
+
+    links.set(from, [...existing, to]);
+
+    return answerWith(from, 201);
+  };
+
+  const unlink = (args: Args) => {
+    const from = numberParam(args);
+    const to = Number(args.params[1] ?? "0") - ID_OFFSET;
+    const existing = blockers.get(from) ?? [];
+
+    if (!existing.includes(to)) {
+      return notFound();
+    }
+
+    blockers.set(
+      from,
+      existing.filter((number) => number !== to),
+    );
+
+    return answerWith(from, 200);
+  };
+
+  // Issues newest first, as the REST list gives them; creator and state are ignored.
+  const listIssues = () =>
+    json([...issues.values()].toSorted((left, right) => right.number - left.number).map(issueJson));
 
   const addLabels = withBody(LabelsBody, (body, args) => {
     const labels = labelsOf(numberParam(args));
@@ -735,6 +804,32 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "GET", pattern: /^\/notifications$/, handle: listNotifications },
     { method: "POST", pattern: /^\/graphql$/, handle: graphql },
     { method: "POST", pattern: new RegExp(`^${repo}/issues$`), handle: createIssue },
+    { method: "GET", pattern: new RegExp(`^${repo}/issues$`), handle: listIssues },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/sub_issues$`),
+      handle: (args) => linkedJson(subIssues, args),
+    },
+    {
+      method: "POST",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/sub_issues$`),
+      handle: withBody(SubIssueBody, (body, args) => link(subIssues, args, body.sub_issue_id)),
+    },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/dependencies/blocked_by$`),
+      handle: (args) => linkedJson(blockers, args),
+    },
+    {
+      method: "POST",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/dependencies/blocked_by$`),
+      handle: withBody(BlockerBody, (body, args) => link(blockers, args, body.issue_id)),
+    },
+    {
+      method: "DELETE",
+      pattern: new RegExp(`^${repo}/issues/(\\d+)/dependencies/blocked_by/(\\d+)$`),
+      handle: unlink,
+    },
     { method: "PATCH", pattern: new RegExp(`^${repo}/issues/(\\d+)$`), handle: editIssue },
     { method: "PATCH", pattern: new RegExp(`^${repo}/pulls/(\\d+)$`), handle: editPull },
     {
@@ -879,6 +974,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     comments,
     pulls,
     reviews,
+    subIssues,
+    blockers,
     issue: (number: number) =>
       required(Option.fromUndefinedOr(issues.get(number)), `issue #${number}`),
     pull: (number: number) =>

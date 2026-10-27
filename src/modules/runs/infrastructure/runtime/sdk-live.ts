@@ -1,6 +1,7 @@
 // Chernabog's implementations of the SDK services, for one repo.
 
 import {
+  type Board,
   type Comment,
   Git,
   GitError,
@@ -8,6 +9,7 @@ import {
   GitHubError,
   type Issue,
   type Json,
+  type LinkedIssue,
   type Merged,
   MergeRefused,
   type NewReview,
@@ -103,6 +105,16 @@ export const RestIssue = Schema.Struct({
   assignees: Logins,
 });
 
+const RestLinkedIssue = Schema.Struct({
+  ...RestIssue.fields,
+  state: Schema.Literals(["open", "closed"]),
+});
+
+const LinkedIssues = Schema.Array(RestLinkedIssue);
+
+// The id the sub-issue and dependency endpoints take, which is not the issue's number.
+const RestIssueId = Schema.Struct({ id: Schema.Finite });
+
 export const RestPullRequest = Schema.Struct({
   number: Schema.Finite,
   title: Schema.String,
@@ -163,6 +175,11 @@ export const toIssue = (raw: typeof RestIssue.Type): Issue => ({
   createdAt: raw.created_at,
   labels: raw.labels.map((label) => label.name),
   assignees: logins(raw.assignees ?? []),
+});
+
+const toLinkedIssue = (raw: typeof RestLinkedIssue.Type): LinkedIssue => ({
+  ...toIssue(raw),
+  state: raw.state,
 });
 
 const fromNode = (node: LabelledIssueNode): Issue => ({
@@ -257,7 +274,7 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
       const [owner = ""] = repo.split("/");
       const path = (rest: string) => `/repos/${repo}${rest}`;
 
-      const queuedIssuesLabelled = (label: string) =>
+      const labelledOn = (label: string, board: Option.Option<Board>) =>
         provide(
           githubGraphql(
             QUEUED_ISSUES_QUERY,
@@ -266,11 +283,13 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
           ).pipe(
             Effect.map((data) =>
               orderClaimCandidates(
-                eligibleIssuesFrom(data.search.nodes.filter(isIssueNode), settings.board),
+                eligibleIssuesFrom(data.search.nodes.filter(isIssueNode), board),
               ).map(fromNode),
             ),
           ),
         );
+
+      const queuedIssuesLabelled = (label: string) => labelledOn(label, settings.board);
 
       const queuedIssues = queuedIssuesLabelled(settings.labels.eligible);
 
@@ -300,6 +319,26 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
             Effect.asVoid,
           ),
         );
+
+      const issueId = (number: number) =>
+        provide(
+          githubJson("GET", path(`/issues/${number}`), RestIssueId).pipe(
+            Effect.map((found) => found.id),
+          ),
+        );
+
+      const linked = (rest: string) =>
+        provide(
+          githubGetAllPages(path(`${rest}?per_page=100`), LinkedIssues, identity).pipe(
+            Effect.map((raw) => raw.map(toLinkedIssue)),
+          ),
+        );
+
+      const subIssues = (parent: number) => linked(`/issues/${parent}/sub_issues`);
+      const blockedBy = (issue: number) => linked(`/issues/${issue}/dependencies/blocked_by`);
+
+      const has = (found: ReadonlyArray<LinkedIssue>, number: number) =>
+        found.some((one) => one.number === number);
 
       const self = provide(
         githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login)),
@@ -529,10 +568,64 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
             Option.map(Option.fromUndefinedOr(issues[0]), (issue) => issue.number),
           ),
         ),
+        issuesLabelled: (label) => labelledOn(label, Option.none()),
         issue: (number) =>
           readOrNotFound(`issue #${number}`, `/issues/${number}`, RestIssue).pipe(
             Effect.map(toIssue),
           ),
+        createIssue: (issue) =>
+          provide(
+            githubJson(
+              "POST",
+              path("/issues"),
+              RestIssue,
+              Option.some({ title: issue.title, body: issue.body, labels: [...issue.labels] }),
+            ).pipe(Effect.map(toIssue)),
+          ),
+        subIssues,
+        addSubIssue: (parent, child) =>
+          Effect.gen(function* () {
+            if (has(yield* subIssues(parent), child)) {
+              return;
+            }
+
+            yield* provide(
+              githubSend(
+                "POST",
+                path(`/issues/${parent}/sub_issues`),
+                Option.some({ sub_issue_id: yield* issueId(child) }),
+              ),
+            );
+          }),
+        blockedBy,
+        addBlockedBy: (issue, blocker) =>
+          Effect.gen(function* () {
+            if (has(yield* blockedBy(issue), blocker)) {
+              return;
+            }
+
+            yield* provide(
+              githubSend(
+                "POST",
+                path(`/issues/${issue}/dependencies/blocked_by`),
+                Option.some({ issue_id: yield* issueId(blocker) }),
+              ),
+            );
+          }),
+        removeBlockedBy: (issue, blocker) =>
+          Effect.gen(function* () {
+            const id = yield* issueId(blocker);
+
+            const response = yield* provide(
+              githubRequest("DELETE", path(`/issues/${issue}/dependencies/blocked_by/${id}`)),
+            );
+
+            if (response.status >= 300 && response.status !== 404) {
+              return yield* new GitHubError({
+                message: `unlinking #${blocker} from #${issue} returned HTTP ${response.status}`,
+              });
+            }
+          }),
         comments,
         trustedComments: (number) =>
           comments(number).pipe(Effect.map((all) => all.filter((comment) => comment.trusted))),

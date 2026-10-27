@@ -38,6 +38,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
+| `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
+| `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
 
 `launchers` is refused here: only machine config defines launcher commands.
 

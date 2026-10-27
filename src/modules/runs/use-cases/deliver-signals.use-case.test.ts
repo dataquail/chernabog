@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
@@ -89,6 +90,33 @@ describe("deliverSignalsUseCase", () => {
         runtime(engine, {
           runs: [run("a")],
           waits: [wait("pushed", "d1"), wait("approved", "d2")],
+        }),
+      ),
+    ),
+  );
+
+  const racing = fakeEngine();
+
+  effect("a signal that wins a race of several clears the others in it, and wakes no loser", () =>
+    Effect.gen(function* () {
+      const delivered = yield* deliverSignalsUseCase(review, [
+        item("pr-1", { signals: ["approved", "changes-requested"] }),
+      ]);
+
+      expect(delivered.count).toBe(1);
+      expect(racing.woken).toEqual(["approved:plan-1"]);
+      expect(
+        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.deferred),
+      ).toEqual(["pushed:ci-1"]);
+    }).pipe(
+      Effect.provide(
+        runtime(racing, {
+          runs: [run("a")],
+          waits: [
+            wait("approved", "approved:plan-1"),
+            wait("changes-requested", "changes-requested:plan-1"),
+            wait("pushed", "pushed:ci-1"),
+          ],
         }),
       ),
     ),

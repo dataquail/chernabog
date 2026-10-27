@@ -9,6 +9,7 @@ export * as Implement from "./implement.ts";
 export * from "./json.ts";
 export * from "./markers.ts";
 export * from "./paths.ts";
+export * as Plan from "./plan.ts";
 export * from "./prompt.ts";
 export * as Review from "./review.ts";
 export * from "./roles.ts";

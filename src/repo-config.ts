@@ -115,6 +115,8 @@ const LimitsFile = Schema.Struct({
   ciTimeout: Schema.optionalKey(DurationText),
   // The least time between two ticks of a persona's flow that events ask for (#138).
   eventTickMin: Schema.optionalKey(DurationText),
+  planNodes: Schema.optionalKey(Schema.Int),
+  planRounds: Schema.optionalKey(Schema.Int),
 });
 
 const Board = Schema.Struct({
@@ -275,6 +277,8 @@ export const DEFAULT_LIMITS: Limits = {
   reviewRounds: 1,
   staleAfter: Duration.hours(6),
   ciTimeout: Duration.hours(2),
+  planNodes: 12,
+  planRounds: 2,
 };
 
 // A change a run here makes ticks the repo's flows; notifications wait until
@@ -689,6 +693,8 @@ const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
     Option.flatMap(Option.fromUndefinedOr(file?.ciTimeout), parseDuration),
     () => DEFAULT_LIMITS.ciTimeout,
   ),
+  planNodes: file?.planNodes ?? DEFAULT_LIMITS.planNodes,
+  planRounds: file?.planRounds ?? DEFAULT_LIMITS.planRounds,
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their
