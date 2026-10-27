@@ -17,7 +17,7 @@ A spec bigger than one pull request has to be split into issues, and the order t
 
 ## Its steps
 
-1. `claim` — as [`implement`](/chernabog/recipes/implement/)'s does: labels the spec `auto:in-progress` and removes `auto:plan`.
+1. `claim` — as [`implement`](/chernabog/recipes/implement/)'s does: takes the spec's [claim ref](/chernabog/flows/sdk/#claims), labels the spec `auto:in-progress` and removes `auto:plan`. `Claims.releasing` lets the claim go however the run ends; a run waiting on an answer to its plan keeps it.
 2. `draft-plan-<round>` — the agent reads the spec, its trusted comments and the code, in a read-only checkout of the base branch, and answers with its plan: each task's `key`, `title`, `body`, `kind` and the keys it is `blockedBy`. It may answer with questions instead: they go on the spec, labelled `auto:needs-clarification`, and the run ends.
 3. The check, in code — keys unique and usable, every `blockedBy` names a task, no cycles, kinds known, and at most `limits.planNodes` tasks. A plan that fails goes back to the agent with what is wrong (`fix-plan-<round>-<attempt>`), up to `limits.planRounds` times, then to a person.
 4. `propose-plan-<round>` — adds a last **verify** task, blocked by all the others, whose body is the spec's `## Acceptance criteria` section, and posts the plan on the spec with a Mermaid diagram of what blocks what. Labels the spec `auto:plan-proposed`.

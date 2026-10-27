@@ -191,6 +191,9 @@ describe("plan", () => {
 
         expect(fake.labelsOf(ISSUE)).toEqual([Plan.LABELS.epic]);
         expect(fake.removed).toEqual([Plan.planCheckout(ISSUE)]);
+        // The run took the spec's claim ref, and let it go when it ended.
+        expect(fake.commits.size).toBe(1);
+        expect(fake.refs.size).toBe(0);
         expect(fake.comments.at(-1)?.body).toContain(`- #${api} \`api\`: Do api`);
       }),
   );
@@ -252,6 +255,7 @@ describe("plan", () => {
         expect(fake.comments.at(-1)?.body).toContain("still fails its checks after 2 attempts");
         expect(fake.graph.made.size).toBe(0);
         expect(fake.removed).toEqual([Plan.planCheckout(ISSUE)]);
+        expect(fake.refs.size).toBe(0);
       }),
   );
 
