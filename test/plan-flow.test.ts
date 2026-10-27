@@ -76,9 +76,12 @@ const askFor =
   };
 
 // Runs the plan flow, and each time it parks on a plan, gives the next answer
-// and delivers what the trigger then reports, as the daemon's next tick would.
+// and delivers what the trigger then reports, as the daemon's ticks would:
+// again on each poll until it wakes the run, since a run registers the waits
+// of one awaitSignal one at a time.
 const planWith = (fake: Fake, answers: ReadonlyArray<Answer>) => {
   let round = 0;
+  let given = 0;
 
   return runUntil(planning, fake, work, (run) =>
     Effect.gen(function* () {
@@ -91,10 +94,16 @@ const planWith = (fake: Fake, answers: ReadonlyArray<Answer>) => {
       const answer = Arr.get(answers, round);
 
       if (parked && Option.isSome(answer)) {
-        round += 1;
-        answer.value(fake);
+        if (given === round) {
+          given += 1;
+          answer.value(fake);
+        }
+
         const answered = yield* triggered(fake, Plan.answers).pipe(Effect.orDie);
-        yield* deliverSignals(planning, IMPLICIT, answered);
+
+        if ((yield* deliverSignals(planning, IMPLICIT, answered)) > 0) {
+          round += 1;
+        }
       }
 
       return false;
