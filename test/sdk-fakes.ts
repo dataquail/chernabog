@@ -208,6 +208,8 @@ export const makeFake = (
   };
 
   const plans: Array<Json> = [];
+  // The worktrees and checkouts a step removed, by name.
+  const removed: Array<string> = [];
   let planned = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -519,7 +521,10 @@ export const makeFake = (
       pathFor: (branch) => `/tmp/demo-worktrees/${branch}`,
       ensure: (branch) => Effect.succeed(`/tmp/demo-worktrees/${branch}`),
       checkout: (name) => Effect.succeed(`/tmp/demo-worktrees/${name}`),
-      remove: () => Effect.void,
+      remove: (name) =>
+        Effect.sync(() => {
+          removed.push(name);
+        }),
     }),
     Layer.mock(Usage)({}),
     Layer.mock(Agent)({
@@ -567,6 +572,7 @@ export const makeFake = (
     submitted,
     graph,
     plans,
+    removed,
   };
 };
 

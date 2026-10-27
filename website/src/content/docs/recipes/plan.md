@@ -24,6 +24,7 @@ A spec bigger than one pull request has to be split into issues, and the order t
 5. The wait — the run parks until a person answers: the label `auto:plan-approved` approves the plan; a comment from an owner, member or collaborator asks for changes, and the agent drafts it again with that comment (`changes-asked-<round>`, then the next round). Nobody answering within 14 days hands the spec to a person.
 6. `create-issues` — each task becomes an issue and a sub-issue of the spec, linked to the tasks that block it, and only then labelled, so no flow takes one before its blockers are linked. Each issue carries a marker with its task's key, so a run that resumes after a crash finds the issues it made rather than making them twice.
 7. `epic` — labels the spec `auto:epic` and comments which issue each task became.
+8. `clean-up-plan-issue-<n>` — removes the plan's read-only checkout. Every other ending removes it too.
 
 Anything that stops it once the spec is claimed hands it to a person with `auto:needs-human`, and releases the claim, so labelling it `auto:plan` again starts over.
 

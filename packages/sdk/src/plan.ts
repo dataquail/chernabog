@@ -413,6 +413,17 @@ const specPrompt = (spec: number) =>
 
 type Asking = { readonly prompt: string; readonly resume: string };
 
+// The read-only checkout the agent drafts a spec's plan in.
+export const planCheckout = (spec: number) => `plan-issue-${spec}`;
+
+// Removes the plan's checkout once the run is done with it, however it ends:
+// an epic, questions on the spec, or a person's.
+export const doneDrafting = (spec: number) =>
+  activity(
+    `clean-up-${planCheckout(spec)}`,
+    Worktree.use((worktree) => worktree.remove(planCheckout(spec))),
+  );
+
 // Asks the agent for a plan in a read-only checkout of the base branch, in
 // the run's one planning session: `resume` when the session exists, and
 // otherwise `prompt`, which must stand on its own.
@@ -425,7 +436,7 @@ const askForPlan = <E, R>(name: string, spec: number, asking: Effect.Effect<Aski
       const { prompt, resume } = yield* asking;
 
       const worktree = yield* (yield* Worktree).checkout(
-        `plan-issue-${spec}`,
+        planCheckout(spec),
         `origin/${repo.baseBranch}`,
       );
 

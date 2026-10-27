@@ -81,8 +81,12 @@ const workflow = (item: WorkItem) =>
     const spec = yield* Implement.issueOf(item);
     yield* Implement.claim(spec, yield* Implement.queuedBy(item));
 
+    // Each ending removes the plan's checkout first.
     const toPerson = (reason: string) =>
-      Plan.handToHuman(spec, reason).pipe(Effect.flatMap(Implement.endForPerson));
+      Plan.doneDrafting(spec).pipe(
+        Effect.andThen(Plan.handToHuman(spec, reason)),
+        Effect.flatMap(Implement.endForPerson),
+      );
 
     const outcome = yield* planUntilApproved(spec).pipe(
       Effect.catchTags({
@@ -92,6 +96,8 @@ const workflow = (item: WorkItem) =>
         StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
       }),
     );
+
+    yield* Plan.doneDrafting(spec);
 
     if (Predicate.isString(outcome)) {
       return outcome;

@@ -190,6 +190,7 @@ describe("plan", () => {
         expect(fake.graph.blockedBy.get(verify)).toEqual([schema, api, name]);
 
         expect(fake.labelsOf(ISSUE)).toEqual([Plan.LABELS.epic]);
+        expect(fake.removed).toEqual([Plan.planCheckout(ISSUE)]);
         expect(fake.comments.at(-1)?.body).toContain(`- #${api} \`api\`: Do api`);
       }),
   );
@@ -250,6 +251,7 @@ describe("plan", () => {
         expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsHuman]);
         expect(fake.comments.at(-1)?.body).toContain("still fails its checks after 2 attempts");
         expect(fake.graph.made.size).toBe(0);
+        expect(fake.removed).toEqual([Plan.planCheckout(ISSUE)]);
       }),
   );
 
@@ -268,6 +270,7 @@ describe("plan", () => {
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsClarification]);
       expect(fake.comments.at(-1)?.body).toContain("1. What does done look like?");
       expect(fake.comments.at(-1)?.body).toContain("`auto:plan`");
+      expect(fake.removed).toContain(Plan.planCheckout(ISSUE));
     }),
   );
 
