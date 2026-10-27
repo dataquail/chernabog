@@ -25,9 +25,16 @@ const endSessions = (sandbox: Sandbox) => {
       continue;
     }
 
-    // kill(1) rather than process.kill, which throws for a session already ended.
+    // kill(1) rather than process.kill, which throws for a session already
+    // ended. The `--` matters: procps' kill reads `-9 -1676` as `kill(-1)`,
+    // every process the user owns, CI's runner among them.
     for (const pidFile of new Bun.Glob("*.pid").scanSync(join(sandbox.root, dir))) {
-      Bun.spawnSync(["kill", "-9", `-${readFileSync(join(sandbox.root, dir, pidFile), "utf8")}`]);
+      Bun.spawnSync([
+        "kill",
+        "-9",
+        "--",
+        `-${readFileSync(join(sandbox.root, dir, pidFile), "utf8")}`,
+      ]);
     }
   }
 };
