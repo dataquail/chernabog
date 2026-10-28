@@ -2,9 +2,13 @@
 // labels, which leave that to a separate step, and who owns a pull request.
 
 import {
+  activity,
   awaitSignal,
+  claimMarker,
   DEFAULT_LABELS,
   defineFlow,
+  GitHub,
+  Hybrid,
   Implement,
   Issue,
   NeedsHuman,
@@ -12,6 +16,7 @@ import {
   PullRequest,
   Review,
   reviewMarker,
+  Run,
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
@@ -43,6 +48,10 @@ import {
 
 const SHIP = "auto:ship";
 
+// Another task's branch, which a task stacked on it is built on.
+const STACKED = "auto/issue-12";
+const STACKED_HEAD = "stacked1234";
+
 const outcome = {
   status: "done" as const,
   summary: "Did it.",
@@ -51,6 +60,18 @@ const outcome = {
 };
 
 const opened = { number: PULL, url: `https://github.com/dataquail/demo/pull/${PULL}` };
+
+// The implement blocks from claim to the pull request, each on the base the claim settled.
+const implementOn = (options: Implement.BaseOptions) =>
+  Effect.gen(function* () {
+    const claimed = yield* Implement.claim(ISSUE, options);
+    const base = { base: claimed.base };
+    const worktree = yield* Implement.prepareWorktree(claimed.branch);
+    const done = yield* Implement.implementWithAgent(ISSUE, worktree, base);
+    yield* Implement.push("push", worktree, claimed.branch, base);
+
+    return (yield* Implement.openPullRequest(ISSUE, done, base)).url;
+  });
 
 // Each item key names the steps its run takes.
 const flow = defineFlow({
@@ -67,6 +88,47 @@ const flow = defineFlow({
 
       if (work.key === "hand-off") {
         return yield* Implement.handOff(ISSUE, opened, outcome);
+      }
+
+      if (work.key === "on-repo-base") {
+        return yield* implementOn({});
+      }
+
+      if (work.key === "on-stacked-base") {
+        return yield* implementOn({ base: STACKED });
+      }
+
+      if (work.key === "hybrid-on-stacked-base") {
+        const claimed = yield* Hybrid.claim(ISSUE, { base: STACKED });
+        const base = { base: claimed.base };
+        const worktree = yield* Implement.prepareWorktree(claimed.branch);
+        const finished = yield* Hybrid.workWithPerson(ISSUE, worktree, base);
+        yield* Implement.push("push", worktree, claimed.branch, { ...base, withPerson: true });
+
+        return (yield* Hybrid.openPullRequest(ISSUE, finished, base)).url;
+      }
+
+      // As a run that stopped inside claim, after its comment, finds the issue
+      // when it resumes: its branch made, and its claim marker naming its base.
+      if (work.key === "resumed-claim") {
+        yield* activity(
+          "claimed-before",
+          Effect.gen(function* () {
+            const run = yield* Run;
+            yield* (yield* GitHub).comment(
+              ISSUE,
+              claimMarker.write({
+                runId: run.runId,
+                claimedAt: "2026-10-28T00:00:00Z",
+                branch: `auto/issue-${ISSUE}`,
+                base: STACKED,
+                ref: true,
+              }),
+            );
+          }),
+        );
+
+        return yield* implementOn({});
       }
 
       if (work.key === "claim-ship") {
@@ -237,6 +299,88 @@ describe("a flow keyed by its own label", () => {
       expect((yield* runToEnd(fake, "claim-ship")).status).toBe("done");
       // The queue label is gone; the in-progress label claim put on goes when the run ends.
       expect(fake.labelsOf(ISSUE)).toEqual([]);
+    }),
+  );
+});
+
+const claimedOn = (fake: Fake) =>
+  fake.comments.flatMap((comment) =>
+    Option.toArray(Option.map(claimMarker.read(comment.body), (claim) => claim.base)),
+  );
+
+describe("a base branch per item", () => {
+  effect(
+    "without one, the implement blocks build on the repo's base branch, as they always have",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        expect((yield* runToEnd(fake, "on-repo-base")).status).toBe("done");
+        expect(fake.based).toEqual({
+          createdFrom: ["base1234"],
+          targets: ["main"],
+          checkedAgainst: ["main", "main"],
+        });
+        expect(fake.requests[0]?.prompt).toContain("cut from `main`");
+        expect(claimedOn(fake)).toEqual(["main"]);
+      }),
+  );
+
+  effect(
+    "given another task's branch, the claim branch starts from its head, the checks diff against it, and the pull request targets it",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.remote.heads.set(STACKED, STACKED_HEAD);
+        expect((yield* runToEnd(fake, "on-stacked-base")).status).toBe("done");
+        expect(fake.based).toEqual({
+          createdFrom: [STACKED_HEAD],
+          targets: [STACKED],
+          // The no-commits check and the humanOnlyPaths check: the task's own diff, not the task below's.
+          checkedAgainst: [STACKED, STACKED],
+        });
+        expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
+        expect(claimedOn(fake)).toEqual([STACKED]);
+      }),
+  );
+
+  effect("so do the hybrid blocks, for a person's start", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.remote.heads.set(STACKED, STACKED_HEAD);
+      expect((yield* runToEnd(fake, "hybrid-on-stacked-base")).status).toBe("done");
+      expect(fake.based).toEqual({
+        createdFrom: [STACKED_HEAD],
+        targets: [STACKED],
+        // With a person in the session, only the no-commits check runs.
+        checkedAgainst: [STACKED],
+      });
+      expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
+      expect(claimedOn(fake)).toEqual([STACKED]);
+    }),
+  );
+
+  effect(
+    "a base that is gone fails the claim, with the reason, rather than building on the repo's",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.remote.gone.add(STACKED);
+        const failed = yield* runToEnd(fake, "on-stacked-base");
+        expect(failed.status).toBe("failed");
+        expect(summaryOf(failed)).toContain(`base branch ${STACKED} not found`);
+        expect(fake.based.createdFrom).toEqual([]);
+        expect(fake.requests).toEqual([]);
+      }),
+  );
+
+  effect("a resumed claim keeps the base the run claimed the issue on", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.existing.branch = true;
+      expect((yield* runToEnd(fake, "resumed-claim")).status).toBe("done");
+      expect(fake.based.targets).toEqual([STACKED]);
+      expect(fake.based.checkedAgainst).toEqual([STACKED, STACKED]);
+      expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
     }),
   );
 });
