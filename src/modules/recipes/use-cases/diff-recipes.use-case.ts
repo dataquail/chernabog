@@ -1,78 +1,113 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 
-import { BundleClient } from "../domain/ports/clients/bundle.client.ts";
 import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client.ts";
+import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
 import { TextDiffClient } from "../domain/ports/clients/text-diff.client.ts";
 import { type RecipeRoot } from "../domain/recipe/recipe.root.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
+import { parseRecipeRef } from "../domain/recipe/recipe-package.value-object.ts";
+import { copiedOf, decodeRepoManifest } from "../domain/recipe/repo-manifest.value-object.ts";
 import { RecipesDiff } from "./recipe.result.ts";
 
 type Entry = (typeof RecipesDiff.Type.files)[number];
 
-// How the repo's flows, and the prompts their recipes render, differ from
-// this chernabog's recipes they're named for; with names, only those
-// recipes'. Without, each flow from no recipe is listed as such.
+// How the repo's copied flows, and the prompts and steps their recipes bring,
+// differ from the version of the recipe each was copied from, as recorded in
+// .chernabog/package.json: the repo's own edits. A file with no record is
+// compared with the installed version. With names, only those recipes';
+// without, each flow from no recipe is listed as such.
 export const diffRecipesUseCase = Effect.fn("diffRecipesUseCase")(function* (
   root: string,
   names: ReadonlyArray<string>,
 ) {
   const dir = yield* ChernabogDirClient;
-  const bundle = yield* BundleClient;
+  const packages = yield* RecipePackagesClient;
   const differ = yield* TextDiffClient;
 
-  const flows = (yield* dir.list(root, ".chernabog/flows")).filter((entry) =>
-    entry.endsWith(".ts"),
-  );
+  yield* packages.restore(root);
 
-  const recipes: ReadonlyArray<RecipeRoot> = yield* Option.match(
-    Option.liftPredicate(names, (named) => named.length > 0),
+  const installed = yield* packages.installed(root);
+
+  const records = yield* Option.match(yield* dir.read(root, ".chernabog/package.json"), {
+    onNone: () => Effect.succeed({}),
+    onSome: (text) => Effect.map(Effect.fromResult(decodeRepoManifest(text)), copiedOf),
+  });
+
+  const flows = (yield* dir.list(root, ".chernabog/flows")).map((entry) => `flows/${entry}`);
+
+  const named = yield* Option.match(
+    Option.liftPredicate(names, (some) => some.length > 0),
     {
-      onSome: (named) => Effect.fromResult(RecipeRootOps.allNamed(named)),
-      onNone: () =>
-        Effect.succeed(
-          RecipeRootOps.installed((file) => flows.includes(file.replace(/^flows\//, ""))),
-        ),
+      onSome: (some) => Effect.asSome(Effect.fromResult(RecipeRootOps.allNamed(installed, some))),
+      onNone: () => Effect.succeed(Option.none<ReadonlyArray<RecipeRoot>>()),
     },
   );
 
+  const copies = RecipeRootOps.copiesIn(installed, records, (file) => flows.includes(file), named);
   const files: Array<Entry> = [];
 
-  for (const recipe of recipes) {
-    const docs = Option.some(RecipeRootOps.docsOf(recipe));
+  for (const { file, packageFile, recipe } of copies) {
+    const path = `.chernabog/${file}`;
+    const theirs = yield* dir.read(root, path);
 
-    for (const file of recipe.files) {
-      const path = `.chernabog/${file}`;
-      const theirs = yield* dir.read(root, path);
-      const owned = { file: path, recipe: Option.some(recipe.name), docs };
+    // A prompt two recipes share is recorded once, under either.
+    const record = Option.filter(
+      Record.get(records, file),
+      (found) => parseRecipeRef(found.from).package === recipe.package,
+    );
 
-      if (Option.isNone(theirs)) {
-        files.push({ ...owned, state: "missing", diff: Option.none() });
-        continue;
-      }
+    const version = Option.match(record, {
+      onNone: () => recipe.version,
+      onSome: (found) => found.version,
+    });
 
-      const diff = yield* differ.diff(file, yield* bundle.recipeFile(file), theirs.value);
+    const owned = {
+      file: path,
+      recipe: Option.some(RecipeRootOps.refOf(recipe)),
+      version: Option.some(`${recipe.package}@${version}`),
+      recorded: Option.isSome(record),
+      docs: RecipeRootOps.docsOf(recipe),
+    };
 
-      files.push({
-        ...owned,
-        ...Option.match(
-          Option.liftPredicate(diff, (found) => found.length > 0),
-          {
-            onNone: () => ({ state: "same" as const, diff: Option.none() }),
-            onSome: (found) => ({ state: "differs" as const, diff: Option.some(found) }),
-          },
-        ),
-      });
+    if (Option.isNone(theirs)) {
+      files.push({ ...owned, state: "missing", diff: Option.none() });
+      continue;
     }
+
+    const original = yield* Option.match(record, {
+      onNone: () => packages.file(root, recipe.package, packageFile),
+      onSome: (found) => packages.fileAt(root, recipe.package, found.version, packageFile),
+    });
+
+    const diff = yield* differ.diff(
+      file,
+      Option.getOrElse(original, () => ""),
+      theirs.value,
+    );
+
+    files.push({
+      ...owned,
+      ...Option.match(
+        Option.liftPredicate(diff, (found) => found.length > 0),
+        {
+          onNone: () => ({ state: "same" as const, diff: Option.none() }),
+          onSome: (found) => ({ state: "differs" as const, diff: Option.some(found) }),
+        },
+      ),
+    });
   }
 
   if (names.length === 0) {
     for (const flow of flows.filter(
-      (entry) => !recipes.some((recipe) => RecipeRootOps.flowFileOf(recipe) === `flows/${entry}`),
+      (entry) => /\.(?:ts|js|mts|mjs)$/.test(entry) && !copies.some((copy) => copy.file === entry),
     )) {
       files.push({
-        file: `.chernabog/flows/${flow}`,
+        file: `.chernabog/${flow}`,
         recipe: Option.none(),
+        version: Option.none(),
+        recorded: false,
         docs: Option.none(),
         state: "unowned",
         diff: Option.none(),
@@ -80,5 +115,5 @@ export const diffRecipesUseCase = Effect.fn("diffRecipesUseCase")(function* (
     }
   }
 
-  return RecipesDiff.make({ files });
+  return RecipesDiff.make({ files, packagesInstalled: installed.length > 0 });
 });

@@ -32,6 +32,13 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/recipes": {
+      "name": "@chernabog/recipes",
+      "version": "0.0.0",
+      "peerDependencies": {
+        "@chernabog/sdk": ">=0.6.0 <0.8.0",
+      },
+    },
     "packages/sdk": {
       "name": "@chernabog/sdk",
       "version": "0.6.0",
@@ -48,6 +55,8 @@
     "@cacheable/memory": ["@cacheable/memory@2.2.0", "", { "dependencies": { "@cacheable/utils": "^2.5.0", "@keyv/bigmap": "^1.3.1", "hookified": "^1.15.1", "keyv": "^5.6.0" } }, "sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ=="],
 
     "@cacheable/utils": ["@cacheable/utils@2.5.0", "", { "dependencies": { "hashery": "^1.5.1", "keyv": "^5.6.0" } }, "sha512-buipgOVDkkPXNR5+xBpDw7Zk2n1EvU7qBJCNUcL7rhQ//kfpOXPAvQ511Os0vpLYJ1pZnvudNytkQt2hst3wqA=="],
+
+    "@chernabog/recipes": ["@chernabog/recipes@workspace:packages/recipes"],
 
     "@chernabog/sdk": ["@chernabog/sdk@workspace:packages/sdk"],
 

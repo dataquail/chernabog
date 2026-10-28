@@ -94,7 +94,7 @@ export const settings: RepoSettings = {
   limits: DEFAULT_LIMITS,
   env: {},
   // The recipes' prompts, which the implement and review steps render.
-  configDir: fileURLToPath(new URL("../templates/recipes", import.meta.url)),
+  configDir: fileURLToPath(new URL("../packages/recipes", import.meta.url)),
 };
 
 // A repo as one persona runs it, with nothing chosen of its own.

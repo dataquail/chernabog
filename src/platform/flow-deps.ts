@@ -19,11 +19,13 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import SdkPackage from "../../packages/sdk/package.json" with { type: "json" };
+import { parseRecipeRef, RecipePackageManifest } from "../kernel/recipe-package.value-object.ts";
 import { pinnedVersion, sdkSupport, supportedRange } from "../kernel/sdk-support.value-object.ts";
 import { ConfigError, IncompatibleConfig } from "./config-error.ts";
 import { EFFECT_VERSION } from "./effect-modules.ts";
 import { HostEnvironment } from "./environment.ts";
 import { Exec } from "./exec.ts";
+import { flowImports, packageDirOf, type PackageOverrides } from "./flow-loader.ts";
 import { bunExecutable } from "./self.ts";
 import { VERSION } from "./version.ts";
 
@@ -304,6 +306,118 @@ export const checkCompatibility = (configDir: string) =>
       Effect.fail(new ConfigError({ message: `.chernabog/: ${error.message}` })),
     ),
   );
+
+const InstalledPackage = Schema.fromJsonString(RecipePackageManifest);
+
+// The version bun.lock pins a package at; none without a lockfile, or one that
+// doesn't name it.
+const lockedVersion = (lockfile: string, name: string) =>
+  Option.flatMap(
+    Option.fromNullishOr(
+      new RegExp(`"${escape(name)}": \\["${escape(name)}@([^"]+)"`).exec(lockfile),
+    ),
+    (match) => Option.fromUndefinedOr(match[1]),
+  );
+
+// Why this binary can't run one package that a flow imports from: not a
+// dependency (a snapshot installs only those), not installed, installed at
+// another version than bun.lock pins, or written for an SDK this binary
+// doesn't run. None when it can.
+const importedPackageProblem = (
+  configDir: string,
+  manifest: Manifest,
+  name: string,
+  overrides: PackageOverrides,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    // A package read from a directory of its own is checked only for its SDK range.
+    const overridden = overrides.has(name);
+
+    if (!overridden && !Record.has(manifest.dependencies ?? {}, name)) {
+      return Option.some(
+        `config.yaml imports flows from ${name}, which package.json doesn't list in dependencies (a snapshot installs only those); chernabog recipes add --import puts it there`,
+      );
+    }
+
+    const path = `${packageDirOf(configDir, name, overrides)}/package.json`;
+
+    if (!(yield* fs.exists(path))) {
+      return Option.some(
+        `config.yaml imports flows from ${name}, which isn't installed in .chernabog/; run bun install there`,
+      );
+    }
+
+    const installed = yield* Schema.decodeEffect(InstalledPackage)(
+      yield* fs.readFileString(path),
+    ).pipe(
+      Effect.mapError(
+        (error) =>
+          new ConfigError({
+            message: `.chernabog/: ${name} isn't a recipe package: ${error.message}`,
+          }),
+      ),
+    );
+
+    const lockfile = `${configDir}/bun.lock`;
+
+    if (!overridden && (yield* fs.exists(lockfile))) {
+      const locked = lockedVersion(yield* fs.readFileString(lockfile), name);
+
+      for (const pinned of Option.toArray(
+        Option.filter(locked, (version) => version !== installed.version),
+      )) {
+        return Option.some(
+          `${name} is installed at ${installed.version}, and bun.lock pins ${pinned}; run bun install in .chernabog/`,
+        );
+      }
+    }
+
+    const range = Option.fromUndefinedOr(installed.peerDependencies?.[SDK_PACKAGE]);
+
+    if (!Option.exists(range, (found) => Bun.semver.satisfies(BUNDLED_SDK, found))) {
+      return Option.some(
+        `config.yaml imports flows from ${name} ${installed.version}, which supports ${SDK_PACKAGE} ${Option.getOrElse(range, () => "(no range declared)")}, and chernabog ${VERSION} runs ${SDK_PACKAGE} ${BUNDLED_SDK}; move ${name} to a version that supports it (chernabog recipes update) or upgrade chernabog`,
+      );
+    }
+
+    return Option.none<string>();
+  });
+
+// Fails when a flow config.yaml imports comes from a package this binary
+// can't run, naming the package. Read once the packages are installed.
+export const checkFlowImports = (configDir: string, overrides: PackageOverrides = new Map()) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    const imports = yield* flowImports(configDir).pipe(
+      Effect.mapError((error) => new ConfigError({ message: `.chernabog/: ${error.message}` })),
+    );
+
+    if (imports.size === 0) {
+      return;
+    }
+
+    const manifest = yield* decodeManifest(yield* fs.readFileString(`${configDir}/package.json`));
+    const names = Arr.dedupe([...imports.values()].map((from) => parseRecipeRef(from).package));
+
+    for (const name of names) {
+      for (const problem of Option.toArray(
+        yield* importedPackageProblem(configDir, manifest, name, overrides),
+      )) {
+        return yield* incompatible(problem);
+      }
+    }
+  }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(new ConfigError({ message: `.chernabog/: ${error.message}` })),
+    ),
+  );
+
+// Checks this binary can run the installed .chernabog/ in `configDir`:
+// checkCompatibility, then the packages its flows import from.
+export const checkRunnable = (configDir: string, overrides: PackageOverrides = new Map()) =>
+  Effect.andThen(checkCompatibility(configDir), checkFlowImports(configDir, overrides));
 
 export type Drift = {
   readonly name: string;

@@ -3,13 +3,12 @@
 // a branch nobody claims taken up as work.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { RECIPE_FILES } from "../../src/platform/templates.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 const claimRef = (issue: number) => `refs/chernabog/claims/issue-${issue}`;
@@ -102,7 +101,11 @@ describe("a claim ref", () => {
 // The implement recipe as a repo baked it before claims were refs: it claims,
 // but never lets the claim go.
 const RELEASING = "        Claims.releasing(Claims.issue(issue)),\n";
-const unreleasing = RECIPE_FILES["flows/implement.ts"].replace(RELEASING, "");
+
+const unreleasing = readFileSync(
+  new URL("../../packages/recipes/flows/implement.ts", import.meta.url),
+  "utf8",
+).replace(RELEASING, "");
 
 describe("a flow baked before claims were refs", () => {
   let sandbox: Sandbox;

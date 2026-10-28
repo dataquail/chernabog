@@ -105,32 +105,49 @@ personas and accounts come in from the machine module's
 - **Tests answer with `scripted(answers)`** (`test/asker.ts`), which also
   records what was `asked`, rather than driving a TTY.
 
-## Recipes (#67)
+## Recipes (#67, #129)
 
-`chernabog init` scaffolds no flows. A **recipe** is a complete flow a person
-chooses to bake into their repo (`init --recipes`, `chernabog recipes add`);
-after that the file is theirs, and chernabog never rewrites it.
+`chernabog init` scaffolds no flows. A **recipe** is a complete flow from a
+**recipe package**, an npm package a repo installs in `.chernabog/` with bun.
+A repo copies a recipe (`init --recipes`, `chernabog recipes add`), and the
+file is its own from then on, or imports it (`recipes add --import`, which
+writes `flows.<name>.from` in config.yaml), and it runs from the package.
 
-- Recipe sources are `templates/recipes/` (flows and the prompts they render),
-  listed with a description in the recipes module's catalog
-  (`src/modules/recipes/domain/recipe/recipe-catalog.value-object.ts`); the
-  base scaffold is `templates/.chernabog/`. Run `bun scripts/gen-templates.ts`
-  after changing either. `listRecipesUseCase`, `addRecipesUseCase`,
-  `diffRecipesUseCase` and `scaffoldRepoUseCase` are what `recipes` and `init`
-  run; the files they read and write go through `ChernabogDirClient`, and what
-  this binary bundles through `BundleClient`.
+- **The binary bundles no recipes and no list of them.** `packages/recipes/`
+  is `@chernabog/recipes`, released on its own release-please component. Its
+  `package.json` lists its recipes under `chernabog.recipes`: the format any
+  recipe package uses (`src/kernel/recipe-package.value-object.ts`, documented
+  in `website/src/content/docs/recipes/packages.md`). The base scaffold is
+  `templates/.chernabog/`; run `bun scripts/gen-templates.ts` after changing it.
+- **The recipes module** reads installed packages through
+  `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
+  `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
+  and what the binary bundles (the scaffold, the pins) through `BundleClient`.
+  `init` runs `addRecipePackageUseCase`; `recipes` runs `list`, `add`,
+  `import`, `eject`, `diff`, `update` and `upgrade` use-cases.
+- **Copied files record where they came from**, under `chernabog.copied` in
+  `.chernabog/package.json`. `recipes diff` compares a copy with that version;
+  `recipes update` merges the package's changes in 3-way (`git merge-file`).
+- **Imported flows** are resolved by the loader (`src/platform/flow-loader.ts`)
+  from `.chernabog/node_modules`. `checkFlowImports` refuses a repo whose
+  imported package isn't a dependency, isn't the version `bun.lock` pins, or
+  doesn't support the bundled SDK. The SDK's `FlowPackage` (which `flowLayer`
+  provides) makes prompts and steps look in the repo, then the package.
 - A recipe is written out from SDK **blocks**, trigger included, so its
   policy is in the repo's file. The SDK exports no whole workflows or
   review-loop triggers; add a block rather than hide a decision in one.
-- This repo's own `.chernabog/flows/` are baked recipes. Keep them in step
-  with `templates/recipes/` (`chernabog recipes diff`, from a sandbox, shows
+- This repo's own `.chernabog/flows/` are copied recipes. Keep them in step
+  with `packages/recipes/` (`chernabog recipes diff`, from a sandbox, shows
   where they differ).
-- **Activity names are journal keys**: a run in flight resumes by them. Keep a
-  recipe's step names when you change it, and never rename one in a block.
-- `chernabog recipes diff` compares a repo's flows with the current recipes,
-  matching each flow to the recipe it's named for.
+- **Activity names are journal keys**: a run in flight resumes by them, and a
+  package version reaches every repo that imports it at once. Keep a recipe's
+  step names when you change it, and never rename one in a block.
+- `@chernabog/recipes`' `@chernabog/sdk` peer range must include the bundled
+  SDK (a test checks). Keep it in step with `SUPPORTED_SDK`.
+- The acceptance sandbox runs a local npm registry (`test/acceptance/fake-registry.ts`)
+  that packs `packages/recipes/`, so bun installs for real with no network.
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
-  which its description links to.
+  which its `docs` links to.
 
 ## Architecture (goodbones)
 
@@ -351,8 +368,10 @@ One binary runs every enrolled repo, so compatibility is the binary's call.
 
 - **The SDK pin is the contract.** A repo's `.chernabog/package.json`
   `@chernabog/sdk` pin is the SDK its flows are written against; the binary
-  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`), the minor
-  of `BUNDLED_SDK_VERSION`, which release-please moves with the SDK's version.
+  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`): up to the
+  minor of `BUNDLED_SDK_VERSION`, which release-please moves with the SDK's
+  version, from `OLDEST_SUPPORTED_SDK`, which a person moves up when a minor
+  breaks flows written against the one before.
   `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a repo outside it,
   without a pin, with `engines.chernabog`, or whose flows import what the
   bundled SDK lacks, as `IncompatibleConfig`; the daemon shows it as

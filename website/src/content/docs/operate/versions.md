@@ -18,6 +18,8 @@ The binary alone decides whether it runs that. Before 1.0 it runs the SDK minor 
 | newer                                                  | `incompatible`: upgrade Chernabog                                         |
 | missing, or `engines.chernabog` still set              | `incompatible`: `chernabog recipes upgrade` writes the pin and drops the floor |
 
+A repo that [imports flows](/chernabog/recipes/#copy-or-import) from a recipe package is refused, naming the package, unless each package a `from` names is in `package.json`'s `dependencies`, is installed at the version `bun.lock` pins, and declares an `@chernabog/sdk` range that includes the SDK the binary runs. `chernabog recipes update` moves a package to the newest version that supports the repo's SDK.
+
 A repo is also refused when a flow or step imports something the bundled SDK doesn't export, such as a removed `Review.fixTrigger`, so a removed export stops the repo before a run starts rather than partway through one. An incompatible repo is never loaded; every other repo keeps running. `status`, the live view and `doctor` show it as `incompatible`, with the reason.
 
 ## Upgrading a repo
@@ -25,10 +27,10 @@ A repo is also refused when a flow or step imports something the bundled SDK doe
 `chernabog recipes upgrade`, in the repo's checkout, writes to the working tree and commits nothing, since `.chernabog/` is a person's to merge:
 
 - it moves the `@chernabog/sdk` and `effect` pins to the binary's versions, and drops `engines.chernabog`;
-- flows baked from recipes become the current recipes, with the prompts they render. A flow you edited is replaced too, so review the diff and re-apply your edits;
+- it moves each recipe package to its newest version for that SDK, and brings the copied recipes along, as [`recipes update`](/chernabog/recipes/#keeping-up-with-a-recipe) does: a file you haven't edited is replaced, and an edited one is merged from the version it was copied from. A copy from before versions were recorded is replaced, so review the diff and re-apply your edits;
 - hand-written flows and steps are listed, with what each imports that the SDK no longer has.
 
-Merge the result to the base branch and trust it again. `chernabog recipes diff` previews how the flows differ.
+Merge the result to the base branch and trust it again. `chernabog recipes diff` previews how the copied flows differ from the versions they came from. A repo whose recipes the binary baked, before they were a package, needs `chernabog init` first, to install one; see [a repo baked before recipes were packages](/chernabog/recipes/#a-repo-baked-before-recipes-were-packages).
 
 ## Unknown keys
 

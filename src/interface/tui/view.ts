@@ -760,6 +760,12 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       { onNone: () => "", onSome: (login) => ` @${login}` },
     )}`;
 
+  // Where an imported flow comes from, after its row.
+  const sourceOf = (flow: { readonly source?: string }) =>
+    Option.toArray(
+      Option.map(Option.fromUndefinedOr(flow.source), (source) => segment(`  · ${source}`, "dim")),
+    );
+
   // Wide enough for a persona's name too, within reason.
   const flowColumn = Math.min(
     24,
@@ -812,6 +818,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
               `  ${Option.getOrElse(why, () => queueText(flow.queued, flow.assignedElsewhere ?? []))}`,
               "dim",
             ),
+            ...sourceOf(flow),
             // What made its pending tick, or its last one.
             segment(
               Option.getOrElse(

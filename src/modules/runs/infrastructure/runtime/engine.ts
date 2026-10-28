@@ -7,6 +7,7 @@
 import {
   describeError,
   type Flow,
+  FlowPackage,
   Git,
   GitHub,
   isSetupError,
@@ -37,6 +38,7 @@ import * as Workflow from "effect/workflow/Workflow";
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { supportsSdk, unsupportedRunSummary } from "../../../../kernel/sdk-support.value-object.ts";
+import { flowSourceOf } from "../../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
@@ -350,6 +352,21 @@ export const reportingChanges = <R>(
 // chosen by the run's persona, then given the run's own Run and RunLog. One
 // workflow serves every persona, so its name, and the execution ids derived
 // from it, are what they were before personas.
+// The package a flow is imported from, for the SDK's FlowPackage; none for
+// a flow in the repo.
+const provideFlowPackage =
+  (flow: Flow) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Option.match(flowSourceOf(flow), {
+      onNone: () => effect,
+      onSome: (source) =>
+        Effect.provideService(effect, FlowPackage, {
+          name: source.package,
+          version: source.version,
+          dir: source.dir,
+        }),
+    });
+
 export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
@@ -446,6 +463,8 @@ export const flowLayer = <R>(
           executionId,
           item: payload.item,
         }),
+        // An imported flow's prompts and steps are looked up in its package after the repo.
+        provideFlowPackage(handle.flow),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideContext(

@@ -32,6 +32,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
 | `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers)          |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |
 | `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
 | `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
 | `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |

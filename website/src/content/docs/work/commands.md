@@ -22,10 +22,14 @@ description: Every chernabog command and flag.
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon; warn when a persona's pull requests can only go to reviewers this machine doesn't act as, or that no persona here runs review as |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
-| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, bake the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
-| `recipes list [path]`             | Each recipe, with its description and docs page, and a check by the ones the repo has |
-| `recipes add [names…]`            | Bake recipes into this repo's `.chernabog/flows/`; asked in a terminal when none is named. Never overwrites a flow the repo has |
-| `recipes diff [names…]`           | How this repo's flows, and the prompts their recipes render, differ from the current versions of the recipes they came from |
+| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, add `@chernabog/recipes` there, copy the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
+| `recipes list [path]`             | The recipes of each recipe package installed in `.chernabog/`, with their descriptions and docs pages: `✓` by the ones the repo copied, `→` by the ones it imports |
+| `recipes add [names…]`            | Copy recipes into this repo's `.chernabog/`, recording the version each came from; asked in a terminal when none is named. Never overwrites a file the repo has. A name is `<package>/<recipe>`, or a bare name from `@chernabog/recipes` |
+| `recipes add --import [names…]`   | Import recipes instead: write `flows.<name>.from` in `config.yaml` and move the package to `dependencies`, copying nothing |
+| `recipes eject <flow>`            | Copy an imported flow, with its prompts and steps, into the repo, and remove its `from`; it runs on under the same name |
+| `recipes diff [names…]`           | How this repo's copied flows, and the prompts their recipes render, differ from the versions of the recipes they came from |
+| `recipes update [names…]`         | Move each recipe package to its newest version for the repo's SDK, and merge its changes into the copied recipes, keeping your edits and marking conflicts; in the working tree |
+| `recipes upgrade`                 | Move this repo's `.chernabog/` to the SDK this binary runs: its pins, then its copied recipes to the newest versions for that SDK |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
@@ -41,7 +45,9 @@ description: Every chernabog command and flag.
 | `--from-checkout`        | `labels` | Read labels from the working copy, before `.chernabog/` is merged       |
 | `--persona <a,b>`        | `setup`, `install` | The GitHub logins to act as, from `gh auth status`. Asked in a terminal when `gh` has several |
 | `--account <dir[:agent],…>` | `setup`, `install` | Account directories to add, such as `~/.claude-personal`. Found ones are asked about in a terminal |
-| `--recipes <a,b>`        | `init`   | The recipes to bake. Asked in a terminal; piped and without it, none   |
+| `--recipes <a,b>`        | `init`   | The recipes to copy. Asked in a terminal; piped and without it, none   |
+| `--import`               | `recipes add` | Import the recipes, to run from their package, rather than copy them |
+| `--package <dir>`        | `rehearse` | A recipe package's checkout to load imported flows from, in place of the version installed |
 | `--persona <a,b>`        | `init`, `enroll` | The personas that work in this repo. Asked in a terminal when machine config has several |
 | `--flows <a,b>`          | `init`, `enroll` | The flows to run, for every chosen persona; the rest are off. Asked in a terminal for each persona |
 | `--defaults`             | `init`, `enroll` | The team's default flows, for every chosen persona, without asking |

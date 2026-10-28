@@ -78,7 +78,7 @@ import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.u
 import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
-import { loadFlows } from "../../platform/flow-loader.ts";
+import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
@@ -1116,6 +1116,10 @@ export const runDaemon = Effect.gen(function* () {
             }),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
+            ...Option.match(flowSourceOf(flow.handle.flow), {
+              onNone: () => ({}),
+              onSome: (source) => ({ source: describeSource(source) }),
+            }),
             enabled: Option.isNone(offReason(flow)),
             ...Option.match(offReason(flow), {
               onNone: () => ({}),

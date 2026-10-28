@@ -1,0 +1,77 @@
+{
+  "name": "@chernabog/recipes",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "Chernabog's recipes: complete flows a repo copies in, or imports, written from @chernabog/sdk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dataquail/chernabog.git",
+    "directory": "packages/recipes"
+  },
+  "type": "module",
+  "files": [
+    "flows",
+    "prompts",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@chernabog/sdk": ">=0.6.0 <0.8.0"
+  },
+  "chernabog": {
+    "recipes": {
+      "implement": {
+        "description": "Implements the oldest auto:eligible or auto:ship issue unattended, and asks a reviewer from the pool once its pull request is green",
+        "flow": "flows/implement.ts",
+        "prompts": [
+          "prompts/implement.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/implement/"
+      },
+      "review": {
+        "description": "Reviews a pull request whose review is requested of the persona; an approval merges an auto:ship pull request",
+        "flow": "flows/review.ts",
+        "prompts": [
+          "prompts/review.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/review/"
+      },
+      "re-review": {
+        "description": "Reviews again when asked, in its own review session; approves, or hands the pull request to a person",
+        "flow": "flows/re-review.ts",
+        "prompts": [
+          "prompts/review.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/re-review/"
+      },
+      "address-review": {
+        "description": "Answers a review that requests changes on the persona's own pull request, in the session that wrote it",
+        "flow": "flows/address-review.ts",
+        "docs": "https://dataquail.github.io/chernabog/recipes/address-review/"
+      },
+      "resolve-conflicts": {
+        "description": "Merges the base into the persona's own pull request when it conflicts, resolves the conflicts, and asks an approving reviewer to look again",
+        "flow": "flows/resolve-conflicts.ts",
+        "prompts": [
+          "prompts/resolve-conflicts.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/resolve-conflicts/"
+      },
+      "plan": {
+        "description": "Turns an auto:plan spec issue into an epic of sub-issues, linked by what blocks what, once a person approves the agent's plan",
+        "flow": "flows/plan.ts",
+        "prompts": [
+          "prompts/plan.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/plan/"
+      },
+      "human-initiated": {
+        "description": "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",
+        "flow": "flows/human-initiated.ts",
+        "docs": "https://dataquail.github.io/chernabog/recipes/human-initiated/"
+      }
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,6 +1,7 @@
 // The text of src/platform/templates.ts: the files under templates/.chernabog/, which
-// init scaffolds, and under templates/recipes/, which a recipe brings. A test
-// renders it again to check the generated file is current.
+// init scaffolds. The binary bundles no recipes: a repo installs
+// @chernabog/recipes. A test renders it again to check the generated file is
+// current.
 
 import { fileURLToPath } from "node:url";
 
@@ -10,15 +11,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Order from "effect/Order";
 
-export const templatesRoot = fileURLToPath(new URL("../templates/", import.meta.url));
+export const templatesRoot = fileURLToPath(new URL("../", import.meta.url));
 
-// Each generated constant, and the directory under templates/ it holds.
-const SOURCES = [
-  ["TEMPLATES", ".chernabog/"],
-  ["RECIPE_FILES", "recipes/"],
-] as const;
+// Each generated constant, and the directories under the repo it holds, by
+// the path each is keyed under.
+const SOURCES = [["TEMPLATES", [["templates/.chernabog/", ""]]]] as const;
 
-const filesUnder = (root: string) =>
+const filesUnder = (root: string, prefix: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const entries = yield* fs.readDirectory(root, { recursive: true });
@@ -32,13 +31,20 @@ const filesUnder = (root: string) =>
 
     const contents = yield* Effect.forEach(files, (file) => fs.readFileString(`${root}${file}`));
 
-    return files.map((file, index) => `  ${printJson(file)}: ${printJson(contents[index] ?? "")},`);
+    return files.map(
+      (file, index) => `  ${printJson(`${prefix}${file}`)}: ${printJson(contents[index] ?? "")},`,
+    );
   });
 
 export const renderTemplates = (root: string) =>
   Effect.gen(function* () {
-    const blocks = yield* Effect.forEach(SOURCES, ([name, directory]) =>
-      Effect.map(filesUnder(`${root}${directory}`), (entries) => ({ name, entries })),
+    const blocks = yield* Effect.forEach(SOURCES, ([name, directories]) =>
+      Effect.map(
+        Effect.forEach(directories, ([directory, prefix]) =>
+          filesUnder(`${root}${directory}`, prefix),
+        ),
+        (entries) => ({ name, entries: entries.flat() }),
+      ),
     );
 
     const lines = [

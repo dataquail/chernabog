@@ -7,13 +7,18 @@ import * as Option from "effect/Option";
 
 import { listMovedReposUseCase } from "../../../modules/enrollment/use-cases/list-moved-repos.use-case.ts";
 import { repointRepoUseCase } from "../../../modules/enrollment/use-cases/repoint-repo.use-case.ts";
-import { type Scaffolded } from "../../../modules/recipes/use-cases/recipe.result.ts";
+import { addRecipePackageUseCase } from "../../../modules/recipes/use-cases/add-recipe-package.use-case.ts";
+import {
+  OFFICIAL_PACKAGE,
+  type RecipePackageAdded,
+  type Scaffolded,
+} from "../../../modules/recipes/use-cases/recipe.result.ts";
 import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { confirm } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { enrollFlags, enrollHere, rootOf } from "../enrollment/enroll.command.ts";
-import { bakeRecipes, RECIPES_LIST, recipesFlag } from "./recipes.command.ts";
+import { bakeRecipes, recipesFlag } from "./recipes.command.ts";
 
 const describeScaffold = (scaffolded: Scaffolded) =>
   Option.match(Option.liftPredicate(scaffolded.changes, Arr.isReadonlyArrayNonEmpty), {
@@ -35,6 +40,14 @@ const describeScaffold = (scaffolded: Scaffolded) =>
         }
       }),
   });
+
+const describePackage = (added: RecipePackageAdded) =>
+  Option.toArray(
+    Option.liftPredicate(
+      `added ${added.package} ${added.version} to .chernabog/package.json, for its recipes`,
+      () => added.change === "added",
+    ),
+  );
 
 const suffix = (value: Option.Option<string>, prefix: string) =>
   Option.match(value, { onNone: () => "", onSome: (text) => `${prefix}${text}` });
@@ -75,6 +88,8 @@ export const initCommand = Command.make(
       const root = yield* rootOf(path);
 
       yield* printLines(describeScaffold(yield* scaffoldRepoUseCase(root)));
+      // The recipes init offers.
+      yield* printLines(describePackage(yield* addRecipePackageUseCase(root, OFFICIAL_PACKAGE)));
       yield* printLines(yield* bakeRecipes(root, recipes));
 
       // Enrolling would point a moved entry here after all, so a checkout that
@@ -96,13 +111,13 @@ export const initCommand = Command.make(
         ),
         Effect.catchTag("NoFlows", () =>
           Console.log(
-            `Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (${RECIPES_LIST}), or write a flow, then chernabog enroll here.`,
+            "Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (chernabog recipes list names them), or write a flow, then chernabog enroll here.",
           ),
         ),
       );
     }),
 ).pipe(
   Command.withDescription(
-    "Scaffold .chernabog/ in a repo, bake the recipes you choose into its flows, enroll it on this machine, and point a moved checkout's settings at it",
+    "Scaffold .chernabog/ in a repo, install @chernabog/recipes there and copy the recipes you choose, enroll it on this machine, and point a moved checkout's settings at it",
   ),
 );

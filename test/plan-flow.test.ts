@@ -15,11 +15,11 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import implement from "../packages/recipes/flows/implement.ts";
+import plan from "../packages/recipes/flows/plan.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
-import implement from "../templates/recipes/flows/implement.ts";
-import plan from "../templates/recipes/flows/plan.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,

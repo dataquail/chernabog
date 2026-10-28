@@ -18,7 +18,7 @@ import * as Result from "effect/Result";
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig } from "../../../../platform/config-snapshot.ts";
-import { loadFlows } from "../../../../platform/flow-loader.ts";
+import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
 import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
   checkManualSchedules,
@@ -61,11 +61,18 @@ export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
     return { tree, configDir };
   });
 
-export const openRepo = (machine: MachineConfig, enrolled: EnrolledRepo, fromCheckout: boolean) =>
+// `overrides` reads recipe packages from directories of their own, as
+// `chernabog rehearse --package` does.
+export const openRepo = (
+  machine: MachineConfig,
+  enrolled: EnrolledRepo,
+  fromCheckout: boolean,
+  overrides: PackageOverrides = new Map(),
+) =>
   Effect.gen(function* () {
     const { configDir, tree } = yield* repoConfigDir(enrolled, fromCheckout);
-    const repo = yield* loadRepo(machine, enrolled, configDir);
-    const flows = yield* loadFlows(configDir);
+    const repo = yield* loadRepo(machine, enrolled, configDir, overrides);
+    const flows = yield* loadFlows(configDir, overrides);
     yield* checkManualSchedules(repo, flows);
 
     return { repo, flows, tree } satisfies OpenRepo;

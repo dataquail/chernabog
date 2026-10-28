@@ -10,7 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 
 import { ConfigError } from "./config-error.ts";
 import { Exec, execOk } from "./exec.ts";
-import { checkCompatibility, installFlowDependencies } from "./flow-deps.ts";
+import { checkCompatibility, checkFlowImports, installFlowDependencies } from "./flow-deps.ts";
 import { Home, homePaths } from "./home.ts";
 
 export type Snapshot = { readonly tree: string; readonly configDir: string };
@@ -78,6 +78,8 @@ export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =
         // Before installing, so a repo this binary can't run says so instead of failing the install.
         yield* checkCompatibility(`${staging}/.chernabog`);
         yield* installFlowDependencies(`${staging}/.chernabog`);
+        // Once installed: the packages its flows import from, as the lockfile pins them.
+        yield* checkFlowImports(`${staging}/.chernabog`);
       }).pipe(
         Effect.onError(() => Effect.ignore(fs.remove(staging, { recursive: true, force: true }))),
       );

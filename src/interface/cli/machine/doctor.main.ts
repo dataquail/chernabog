@@ -37,13 +37,20 @@ import { configTree, snapshotConfig } from "../../../platform/config-snapshot.ts
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { Exec, type ExecResult } from "../../../platform/exec.ts";
 import {
-  checkCompatibility,
+  checkRunnable,
   decodeManifest,
   describeDrift,
   pinDrift,
   UPGRADE_COMMAND,
 } from "../../../platform/flow-deps.ts";
-import { authoringFlows, flowNames, reviewingFlows } from "../../../platform/flow-loader.ts";
+import {
+  authoringFlows,
+  describeSource,
+  flowNames,
+  type FlowSource,
+  flowSources,
+  reviewingFlows,
+} from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
 import { Home } from "../../../platform/home.ts";
 import {
@@ -317,12 +324,26 @@ export const doctor = Effect.gen(function* () {
         Effect.orElseSucceed((): ReadonlyArray<string> => []),
       );
 
+      const sources = yield* flowSources(configDir).pipe(
+        Effect.orElseSucceed(() => new Map<string, FlowSource>()),
+      );
+
+      // An imported flow says where it comes from: deploy · @acme/recipes@2.1.0.
+      const named = (flow: string) =>
+        `${flow}${Option.getOrElse(
+          Option.map(
+            Option.fromUndefinedOr(sources.get(flow)),
+            (source) => ` · ${describeSource(source)}`,
+          ),
+          () => "",
+        )}`;
+
       for (const own of effective.personas) {
         const on = names.filter((flow) => Option.isNone(flowOff(own, flow)));
 
         const runs = Option.match(Option.liftPredicate(on, Arr.isReadonlyArrayNonEmpty), {
           onNone: () => "runs none of its flows",
-          onSome: (flows) => `runs ${flows.join(", ")}`,
+          onSome: (flows) => `runs ${flows.map(named).join(", ")}`,
         });
 
         check(true, `${name}${asSuffix(own.persona)}: ${runs}`, "");
@@ -498,7 +519,7 @@ export const doctor = Effect.gen(function* () {
         return;
       }
 
-      const compatible = yield* Effect.result(checkCompatibility(snapshot.success.configDir));
+      const compatible = yield* Effect.result(checkRunnable(snapshot.success.configDir));
 
       if (Result.isFailure(compatible)) {
         check(

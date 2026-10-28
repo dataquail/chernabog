@@ -14,7 +14,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { START_FLOW } from "../../../kernel/manual-flow.value-object.ts";
 import { shortRunId } from "../../../kernel/run-id.id.ts";
-import { RECIPES_DOCS } from "../../../modules/recipes/use-cases/recipe.result.ts";
 import {
   type AttachCommand,
   liveAttach,
@@ -24,6 +23,9 @@ import { ConfigError } from "../../../platform/config-error.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "../../../repo-config.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "../../daemon/daemon.client.ts";
+
+// Where each recipe is documented, by name.
+const RECIPES_DOCS = "https://dataquail.github.io/chernabog/recipes/";
 
 // How long the session has to open before the command leaves it to `chernabog attach`.
 const OPENING_POLLS = 120;

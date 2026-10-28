@@ -198,6 +198,21 @@ export type RunInfo = typeof RunInfo.Type;
 
 export class Run extends Context.Service<Run, RunInfo>()("@chernabog/sdk/Run") {}
 
+// The recipe package a run's flow is imported from (config.yaml's
+// flows.<name>.from): its name, version, and the directory it's installed in.
+// Its prompts and steps are looked up there after the repo's own, so a repo can
+// override one of them without copying the flow. A flow copied into the repo,
+// or written there, has none.
+export type FlowPackageInfo = {
+  readonly name: string;
+  readonly version: string;
+  readonly dir: string;
+};
+
+export class FlowPackage extends Context.Service<FlowPackage, FlowPackageInfo>()(
+  "@chernabog/sdk/FlowPackage",
+) {}
+
 export type Issue = {
   readonly number: number;
   readonly title: string;

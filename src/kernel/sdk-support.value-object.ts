@@ -2,7 +2,8 @@
 // A repo records one fact, the SDK version its flows were written against
 // (its .chernabog/package.json pin), and a run records the SDK it started
 // under; this binary alone decides whether it can run either. Before 1.0,
-// almost every SDK minor breaks flows, so it runs the minor it bundles.
+// almost every SDK minor breaks flows, so it runs the minor it bundles, and
+// the one before when the minor it bundles only added to it.
 
 import * as Option from "effect/Option";
 
@@ -13,9 +14,15 @@ export const BUNDLED_SDK_VERSION = "0.6.0"; // x-release-please-version
 
 const [major, minor] = BUNDLED_SDK_VERSION.split(".").map(Number);
 
-// What the binary runs: from `from`, up to but not including `below`, which is
-// the minor it bundles.
-export const SUPPORTED_SDK = { from: `${major}.${minor}.0`, below: `${major}.${minor + 1}.0` };
+// The oldest SDK this binary still runs flows written against. Move it up to
+// the bundled minor when that minor breaks flows written against the one
+// before; leave it when the new minor only adds to the SDK. 0.7 only added the
+// FlowPackage service (#129), so flows written against 0.6 still run.
+const OLDEST_SUPPORTED_SDK = "0.6.0";
+
+// What the binary runs: from `from`, up to but not including `below`, the
+// minor after the one it bundles.
+export const SUPPORTED_SDK = { from: OLDEST_SUPPORTED_SDK, below: `${major}.${minor + 1}.0` };
 
 export const supportedRange = `>=${SUPPORTED_SDK.from} <${SUPPORTED_SDK.below}`;
 

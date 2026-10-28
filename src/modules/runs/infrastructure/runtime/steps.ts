@@ -6,6 +6,7 @@
 
 import {
   describeError,
+  FlowPackage,
   type Json,
   parseJson,
   printJson,
@@ -181,12 +182,19 @@ export const StepRunnerLive = (
       const run = (name: string, input: Json) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const found = yield* findStage(settings.configDir, name);
+
+          // An imported flow's steps are its package's, unless the repo has its own.
+          const flowPackage = Option.map(
+            yield* Effect.serviceOption(FlowPackage),
+            (found) => found.dir,
+          );
+
+          const found = yield* findStage(settings.configDir, name, flowPackage);
 
           if (Option.isNone(found)) {
             return yield* new StepFailed({
               step: name,
-              message: `no step named ${name} in ${settings.configDir}/stages`,
+              message: `no step named ${name} in ${[settings.configDir, ...Option.toArray(flowPackage)].map((dir) => `${dir}/stages`).join(" or ")}`,
             });
           }
 

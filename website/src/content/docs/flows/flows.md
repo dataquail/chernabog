@@ -71,7 +71,7 @@ A manual flow must have `item`, since nothing else could start it, and can't hav
 | `step(name, input, { output })`         | Runs [`.chernabog/stages/<name>`](/chernabog/flows/steps/) in its own process, as an activity |
 | `sleep(name, duration)`                 | A durable pause that survives restarts                                    |
 | `awaitSignal(signals, { id, timeout })` | Waits for one of the signals or the timeout, and says which              |
-| `renderPrompt(name, values)`            | Fills `.chernabog/prompts/<name>.md`                                     |
+| `renderPrompt(name, values)`            | Fills `.chernabog/prompts/<name>.md`; for a flow imported from a recipe package, the package's `prompts/<name>.md` when the repo has none |
 | `Skip`, `NeedsHuman`                    | End a run cleanly, or hand its item to a person                          |
 | `reportAs(step)`                        | Turns the errors a flow can only report into `StepFailed`, for a trigger or work outside an activity |
 

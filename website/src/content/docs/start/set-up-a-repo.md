@@ -1,12 +1,12 @@
 ---
 title: Set up a repo
-description: Scaffold .chernabog/, bake the recipes you choose, enroll the repo on your machine, and trust it.
+description: Scaffold .chernabog/, copy the recipes you choose, enroll the repo on your machine, and trust it.
 ---
 
 ```bash
 chernabog install                   # once per machine: personas, accounts and the daemon; see Installation
 cd ~/code/my-app
-chernabog init                      # scaffold .chernabog/, bake the recipes you pick, and enroll the repo
+chernabog init                      # scaffold .chernabog/, copy the recipes you pick, and enroll the repo
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
 chernabog trust my-app              # approve the base branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
@@ -24,9 +24,9 @@ Re-running `init` rewrites only the generated schema and the [version pins](/che
 
 ## Choose recipes
 
-After scaffolding, `init` lists the [recipes](/chernabog/recipes/), each with a short description and a link to its page, and bakes the ones you pick into `.chernabog/flows/`. None is picked to begin with, and none is installed unless you choose it. The four that make [the review loop](/chernabog/work/flows/) are `implement`, `review`, `re-review` and `address-review`; `human-initiated` is the hybrid path. `--recipes a,b` chooses without asking; piped and without it, `init` bakes none.
+After scaffolding, `init` adds [`@chernabog/recipes`](/chernabog/recipes/) to `.chernabog/package.json` and installs it, then lists its recipes, each with a short description and a link to its page, and copies the ones you pick into `.chernabog/flows/`. None is picked to begin with, and none is copied unless you choose it. The four that make [the review loop](/chernabog/work/flows/) are `implement`, `review`, `re-review` and `address-review`; `human-initiated` is the hybrid path. `--recipes a,b` chooses without asking; piped and without it, `init` copies none. Installing the package needs the registry: offline, `init` fails and says what to install.
 
-`chernabog recipes add <name>` bakes one later, and `chernabog recipes list` shows which the repo has. A baked recipe is the repo's code from then on.
+`chernabog recipes add <name>` copies one later, `chernabog recipes add --import <name>` imports one to run from the package instead, and `chernabog recipes list` shows which the repo has. A copied recipe is the repo's code from then on; an imported one is the package's. [Recipes](/chernabog/recipes/#copy-or-import) says how to choose.
 
 ## Enroll
 

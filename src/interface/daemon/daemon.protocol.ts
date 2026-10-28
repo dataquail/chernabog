@@ -34,6 +34,9 @@ export const FlowStatus = Schema.Struct({
   queued: Schema.Array(Schema.String),
   // What it left for other machines, by flows.<flow>.assignee and reviewRequested.
   assignedElsewhere: Schema.optionalKey(Schema.Array(Schema.String)),
+  // For a flow imported from a recipe package, the package and its version,
+  // as `@acme/recipes@2.1.0`; absent for a flow in the repo.
+  source: Schema.optionalKey(Schema.String),
 });
 
 // The accounts a persona spends in a repo: the one its runs use, and its own

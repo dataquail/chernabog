@@ -6,6 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
@@ -266,5 +267,54 @@ describe("chernabog rehearse implement, where the other reviewer runs review her
     expect(output).toContain("deleted issue #1");
     expect(code).toBe(0);
     expect(sandbox.github.issues.size).toBe(0);
+  }, 120_000);
+});
+
+describe("chernabog rehearse --package, for a flow imported from a recipe package being written", () => {
+  let sandbox: Sandbox;
+  const checkout = fileURLToPath(new URL("../../packages/recipes", import.meta.url));
+
+  beforeAll(() => {
+    sandbox = openSandbox(
+      {
+        reviewers: ["alice", "bob"],
+        flows: { implement: { from: "@chernabog/recipes/implement" } },
+      },
+      {
+        recipes: [],
+        github: ["alice"],
+        personas: ["alice"],
+        personaFlows: { alice: { implement: never } },
+      },
+    );
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("without the package installed, the repo is refused, naming it", async () => {
+    const path = scenario(sandbox, "uninstalled", { agent: { implement: { script: IMPLEMENT } } });
+    const { code, output } = await rehearse(sandbox, path);
+
+    expect(output).toContain(
+      "config.yaml imports flows from @chernabog/recipes, which package.json doesn't list in dependencies",
+    );
+    expect(code).not.toBe(0);
+  }, 120_000);
+
+  test("rehearses the flow from the package's checkout, with its prompts, in place of an installed version", async () => {
+    const path = scenario(sandbox, "from-checkout", {
+      agent: { implement: { script: IMPLEMENT } },
+      expect: { ends: "done", summary: "is ready for review" },
+    });
+
+    const { code, output } = await rehearse(sandbox, path, "--package", checkout);
+
+    expect(output).toContain(`rehearsing with @chernabog/recipes 0.0.0 from ${checkout}`);
+    expect(output).toContain("rehearsal: implement answered by its stand-in");
+    expect(output).toContain("✓ ended as the scenario expects");
+    expect(code).toBe(0);
+    expect(sandbox.claudeCalls()).toEqual([]);
   }, 120_000);
 });
