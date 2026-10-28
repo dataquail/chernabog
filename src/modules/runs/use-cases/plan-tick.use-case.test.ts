@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
@@ -14,9 +15,11 @@ import {
   fakeEngine,
   WorkflowsClientFake,
 } from "../infrastructure/clients/workflows.client-fake.ts";
+import { HoldsRepositoryFake } from "../infrastructure/repositories/holds.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
+import { listHoldsUseCase } from "./list-holds.use-case.ts";
 import { listRecentSkipsUseCase } from "./list-recent-skips.use-case.ts";
 import { planTickUseCase, type TickInput } from "./plan-tick.use-case.ts";
 
@@ -61,6 +64,7 @@ const runtime = (
     RunsRepositoryFake(stored.runs ?? []),
     RunWaitsRepositoryFake(stored.waits ?? []),
     SkipsRepositoryFake([]),
+    HoldsRepositoryFake([]),
     FlowsClientFake(stored.flows ?? {}),
     WorkflowsClientFake(engine),
   );
@@ -249,6 +253,87 @@ describe("planTickUseCase", () => {
         runtime(fakeEngine(), {
           flows: { "demo/review": { items: [], findable: [item("issue-7")] } },
         }),
+      ),
+    ),
+  );
+
+  effect(
+    "never starts a held item, though its signals still go out, and records why it's held",
+    () =>
+      Effect.gen(function* () {
+        const implement = { ...review, flow: "implement" };
+        const plan = yield* planTickUseCase(implement, open);
+
+        expect(keys(plan.start)).toEqual(["issue-15"]);
+        expect(keys(plan.signalled)).toEqual(["issue-14", "issue-15", "issue-16"]);
+        expect(plan.routed).toEqual(Option.some({ queued: ["issue-15"], elsewhere: [] }));
+
+        expect(
+          (yield* listHoldsUseCase()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),
+        ).toEqual([
+          ["implement", "issue-14", "waits on #12, #13"],
+          ["implement", "issue-16", "waits on #15"],
+        ]);
+
+        // Not even a person naming it starts it.
+        const named = yield* planTickUseCase(implement, {
+          ...open,
+          gates: false,
+          item: Option.some("issue-14"),
+        });
+
+        expect(named.start).toEqual([]);
+      }).pipe(
+        Effect.provide(
+          runtime(fakeEngine(), {
+            flows: {
+              "demo/implement": {
+                items: [
+                  item("issue-14", { held: "waits on #12, #13" }),
+                  item("issue-15"),
+                  item("issue-16", { held: "waits on #15", wakeOnly: true, signals: ["ci"] }),
+                ],
+              },
+            },
+          }),
+        ),
+      ),
+  );
+
+  effect("a tick's holds replace the flow's last, and leave other flows' alone", () =>
+    Effect.gen(function* () {
+      const implement = { ...review, flow: "implement" };
+      yield* planTickUseCase(review, open);
+      yield* planTickUseCase(implement, open);
+      yield* planTickUseCase({ ...implement, repo: "next" }, open);
+
+      expect(
+        (yield* listHoldsUseCase()).holds.map(
+          (hold) => `${hold.repo}/${hold.flow} ${hold.itemKey}`,
+        ),
+      ).toEqual(["demo/review pr-1"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          RunsRepositoryFake([]),
+          RunWaitsRepositoryFake([]),
+          SkipsRepositoryFake([]),
+          HoldsRepositoryFake([
+            HoldsRoot.make({
+              repo: "demo",
+              persona: Option.some("bob"),
+              flow: "implement",
+              items: [{ itemKey: "issue-1", reason: "waits on #2" }],
+              at: "2026-10-20T00:00:00.000Z",
+            }),
+          ]),
+          FlowsClientFake({
+            "demo/review": { items: [item("pr-1", { held: "a draft" })] },
+            "demo/implement": { items: [] },
+            "next/implement": { items: [] },
+          }),
+          WorkflowsClientFake(fakeEngine()),
+        ),
       ),
     ),
   );

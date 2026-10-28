@@ -9,6 +9,7 @@ import { NotificationsClientLive } from "./infrastructure/clients/notifications.
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
+import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.repository-live.ts";
 import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
@@ -24,6 +25,7 @@ export const RunsLayer = Layer.mergeAll(
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,
+  HoldsRepositoryLive,
 );
 
 // Run logs, which any process may read: the CLI reads them while the daemon,

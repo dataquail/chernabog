@@ -118,6 +118,8 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 **Signals.** A trigger reports signals in `WorkItem.signals`; a waiting run's `awaitSignal` wakes on them. Report an item with `wakeOnly` to wake a waiting run without starting a new one.
 
+**Held work.** Report an item with `held: "waits on #12, #13"` when the trigger won't start it yet. It starts no run, even with `wakeOnly` unset, its signals still wake a waiting run, and `chernabog status` and the live view list it with the reason, so an idle queue and a queue of blocked work look different.
+
 ## Errors
 
 Errors are split by who has to act on them.

@@ -16,12 +16,19 @@ export const WorkItem = Schema.Struct({
   signals: Schema.optionalKey(Schema.Array(Schema.String)),
   // Only wakes a run already waiting on it; never starts one.
   wakeOnly: Schema.optionalKey(Schema.Boolean),
+  // Why the trigger won't start it yet; it starts no run, but still wakes one.
+  held: Schema.optionalKey(Schema.String),
   // GitHub logins assigned to it, and asked to review it, which routing reads.
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
   reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export type WorkItem = typeof WorkItem.Type;
+
+// Whether a run may start for the item: not when it only wakes one, nor when
+// it's held, whatever else it says. Either way its signals still wake one.
+export const mayStart = (item: WorkItem) =>
+  item.wakeOnly !== true && Option.isNone(Option.fromUndefinedOr(item.held));
 
 // Whether a run's work item is still there to work on, as its flow's
 // stillValid says: Gone, with why, ends the run as superseded.

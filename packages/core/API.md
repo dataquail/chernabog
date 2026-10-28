@@ -765,6 +765,7 @@ export declare const WorkItem: Schema.Struct<{
     readonly data: Schema.Codec<Schema.Json, Schema.Json, never, never>;
     readonly signals: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
+    readonly held: Schema.optionalKey<Schema.String>;
     readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
 }>;
@@ -780,6 +781,7 @@ export declare const RunInfo: Schema.Struct<{
         readonly data: Schema.Codec<Schema.Json, Schema.Json, never, never>;
         readonly signals: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
+        readonly held: Schema.optionalKey<Schema.String>;
         readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     }>;
@@ -797,6 +799,7 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
         readonly data: Schema.Json;
         readonly signals?: readonly string[] | undefined;
         readonly wakeOnly?: boolean | undefined;
+        readonly held?: string | undefined;
         readonly assignees?: readonly string[] | undefined;
         readonly reviewers?: readonly string[] | undefined;
     };

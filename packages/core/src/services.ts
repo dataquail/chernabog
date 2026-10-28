@@ -179,6 +179,10 @@ export const WorkItem = Schema.Struct({
   signals: Schema.optionalKey(Schema.Array(Schema.String)),
   // Only wakes a run already waiting on it; never starts one.
   wakeOnly: Schema.optionalKey(Schema.Boolean),
+  // Why the trigger won't start it yet, such as "waits on #12, #13": it starts
+  // no run, even with wakeOnly unset, and `chernabog status` shows the reason.
+  // Its signals still wake a run waiting on it.
+  held: Schema.optionalKey(Schema.String),
   // GitHub logins assigned to the item, and asked to review it, which
   // flows.<flow>.assignee and reviewRequested match to choose the machines it starts on.
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),

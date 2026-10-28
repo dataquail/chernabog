@@ -878,6 +878,22 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
     );
   });
 
+  const holds = (status.holds ?? []).filter((hold) => passes(model, hold.repo, hold.persona));
+
+  if (holds.length > 0) {
+    lines.push([]);
+    lines.push(heading("Held"));
+
+    for (const hold of holds.slice(0, 4)) {
+      lines.push([
+        segment(
+          `  ${pad(hold.repo, 12)} ${hold.flow} ${itemText(itemRef(hold.itemKey))}: ${firstLine(hold.reason)}`,
+          "dim",
+        ),
+      ]);
+    }
+  }
+
   const skips = status.skips.filter((skip) => passes(model, skip.repo, skip.persona));
 
   if (skips.length > 0) {

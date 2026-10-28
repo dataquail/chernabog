@@ -72,6 +72,7 @@ import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-sign
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
+import { listHoldsUseCase } from "../../modules/runs/use-cases/list-holds.use-case.ts";
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
 import { listUnreleasedMarkersUseCase } from "../../modules/runs/use-cases/list-unreleased-markers.use-case.ts";
@@ -1496,6 +1497,7 @@ export const runDaemon = Effect.gen(function* () {
           // still have runs to show.
           recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
           skips: (yield* listRecentSkipsUseCase(20)).skips,
+          holds: (yield* listHoldsUseCase()).holds,
           notifications: [...notifications].map(([persona, problem]) => ({
             ...Option.match(
               Option.liftPredicate(persona, (named) => named.length > 0),

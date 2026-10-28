@@ -5,7 +5,9 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
+import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
+import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
@@ -18,7 +20,7 @@ import {
 } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { type FlowRef, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { type FlowRef, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
 import {
   decideTick,
   freeSlots,
@@ -53,7 +55,8 @@ const describeQueued = (item: WorkItem) =>
 // gates hold it back, runs the flow's trigger, and says which of the work it
 // found carries signals for runs in flight and which this machine may start
 // runs for, as many as the limits let it. Why it would start nothing, when it
-// wouldn't, is recorded as a skip. Delivering the signals, the flow's own gate
+// wouldn't, is recorded as a skip; the items the trigger holds, and why,
+// replace the flow's holds, and start nothing. Delivering the signals, the flow's own gate
 // and starting the runs are left to the caller, one use-case each.
 export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
   flow: FlowRef,
@@ -147,12 +150,29 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
     ...Option.toArray(lookedUp.success),
   ];
 
+  yield* (yield* HoldsRepository).save(
+    HoldsRoot.make({
+      repo: flow.repo,
+      persona: flow.persona,
+      flow: flow.flow,
+      items: items.flatMap((item) =>
+        Option.toArray(
+          Option.map(Option.fromUndefinedOr(item.held), (reason) => ({
+            itemKey: item.key,
+            reason,
+          })),
+        ),
+      ),
+      at: DateTime.formatIso(yield* DateTime.now),
+    }),
+  );
+
   const running = yield* (yield* RunsRepository).findAll({ running: true });
 
-  // The items a run may start for: not only waking one, and without its run already.
+  // The items a run may start for: not only waking one, not held, and without its run already.
   const waiting = items.filter(
     (item) =>
-      item.wakeOnly !== true &&
+      mayStart(item) &&
       Option.isNone(
         RunRootOps.activeFor(running, {
           repo: flow.repo,
