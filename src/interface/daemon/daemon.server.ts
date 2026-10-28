@@ -1020,6 +1020,29 @@ export const runDaemon = Effect.gen(function* () {
       // whose item went ends as superseded; a check that fails leaves it running.
       const checkValidity = Effect.gen(function* () {
         const now = yield* DateTime.now;
+
+        // The notified items due now, taken before anything here can fail:
+        // a pass that fails leaves none of them due, so the loop never spins
+        // on one. The interval, or the next notification, checks it again.
+        const notified: Array<NotifiedItem> = [];
+
+        for (const [key, item] of notifiedItems) {
+          if (Option.exists(notifiedDueAt(item), (due) => DateTime.isLessThanOrEqualTo(due, now))) {
+            item.pending = Option.none();
+            item.lastChecked = Option.some(now);
+            notified.push(item);
+          } else if (
+            // Forgotten once eventTickMin has passed since its last check:
+            // the next notification about it is checked as soon as it settles.
+            Option.isNone(item.pending) &&
+            Option.exists(item.lastChecked, (last) =>
+              DateTime.isLessThanOrEqualTo(DateTime.addDuration(last, tickMinOf(item)), now),
+            )
+          ) {
+            notifiedItems.delete(key);
+          }
+        }
+
         const running = yield* active;
         const checked = new Set<string>();
         const checking = repos.filter((candidate) => Option.isSome(runnable(candidate)));
@@ -1039,27 +1062,7 @@ export const runDaemon = Effect.gen(function* () {
           }
         }
 
-        for (const [key, item] of notifiedItems) {
-          const at = notifiedDueAt(item);
-
-          if (!Option.exists(at, (due) => DateTime.isLessThanOrEqualTo(due, now))) {
-            // Forgotten once eventTickMin has passed since its last check:
-            // the next notification about it is checked as soon as it settles.
-            if (
-              Option.isNone(item.pending) &&
-              Option.exists(item.lastChecked, (last) =>
-                DateTime.isLessThanOrEqualTo(DateTime.addDuration(last, tickMinOf(item)), now),
-              )
-            ) {
-              notifiedItems.delete(key);
-            }
-
-            continue;
-          }
-
-          item.pending = Option.none();
-          item.lastChecked = Option.some(now);
-
+        for (const item of notified) {
           const about = running.filter(
             (run) =>
               run.repo === item.repo &&
