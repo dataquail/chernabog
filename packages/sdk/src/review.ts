@@ -531,6 +531,7 @@ export const addressItem = (
   data: {
     pullRequest: pull.number,
     headRef: pull.headRef,
+    baseRef: pull.baseRef,
     agentWritten: isAgentBranch(pull.headRef),
     reviewer: review.author,
     reviewedSha: review.commitSha,
@@ -538,8 +539,12 @@ export const addressItem = (
   assignees: pull.assignees,
 });
 
+// baseRef: the pull request's base, which a layer of a stack has as the
+// layer below's branch. An item saved without it pushes against the repo's
+// base branch.
 export const AddressItem = Schema.Struct({
   ...ReviewItem.fields,
+  baseRef: Schema.optionalKey(Schema.String),
   reviewer: Schema.String,
   reviewedSha: Schema.String,
 });

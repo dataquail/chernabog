@@ -173,9 +173,11 @@ export type MergeOptions = { readonly method: MergeMethod };
 
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
-// Merges the pull request, only when that is safe: it is open, its required
-// checks are green on the current head, the latest review approved that very
-// head, it touches no humanOnlyPaths, and GitHub's rules for the repo allow it.
+// Merges the pull request, only when that is safe: it is open and based on
+// the repo's base branch, its required checks are green on the current head,
+// the latest review approved that very head, it touches no humanOnlyPaths,
+// and GitHub's rules for the repo allow it. A layer of a stack, based on the
+// branch of the one below, waits until it sits on the base branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
@@ -193,6 +195,13 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
 
       if (pull.state === "closed") {
         return yield* new PullRequestClosed({ pullRequest, state: "closed" });
+      }
+
+      if (pull.baseRef !== repo.baseBranch) {
+        return yield* refuse(
+          pullRequest,
+          `stacked on ${pull.baseRef}; it merges after the layer below`,
+        );
       }
 
       const ci = yield* github.ciState(pullRequest);

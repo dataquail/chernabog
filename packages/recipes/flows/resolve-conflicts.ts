@@ -191,7 +191,8 @@ const unstick = (conflict: ConflictItem) =>
     }
 
     yield* Implement.localGate(worktree, { id: "resolve", session });
-    yield* Implement.push("push-resolved", worktree, conflict.headRef);
+    // Checked against the pull request's base, the layer below's branch for a layer of a stack.
+    yield* Implement.push("push-resolved", worktree, conflict.headRef, { base: conflict.baseRef });
     yield* PullRequest.comment(
       conflict.pullRequest,
       `Merged \`${conflict.baseRef}\` into this branch to resolve its conflicts.\n\n${resolution.summary}`,
@@ -199,7 +200,7 @@ const unstick = (conflict: ConflictItem) =>
     yield* Implement.waitForCi(
       conflict.pullRequest,
       worktree,
-      { ...session, branch: conflict.headRef },
+      { ...session, branch: conflict.headRef, base: conflict.baseRef },
       { id: "resolve" },
     );
 
