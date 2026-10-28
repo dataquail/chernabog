@@ -9,6 +9,7 @@ import { NotificationsClientLive } from "./infrastructure/clients/notifications.
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
+import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
@@ -19,6 +20,7 @@ import { EngineAt } from "./infrastructure/runtime/engine.ts";
 // provide with the SQL client the workflow engine journals to.
 export const RunsLayer = Layer.mergeAll(
   RunsRepositoryLive,
+  RunMarkersRepositoryLive,
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,

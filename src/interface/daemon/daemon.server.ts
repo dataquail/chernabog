@@ -72,6 +72,7 @@ import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case
 import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
 import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
+import { listUnreleasedMarkersUseCase } from "../../modules/runs/use-cases/list-unreleased-markers.use-case.ts";
 import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
@@ -80,6 +81,7 @@ import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.t
 import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
+import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
@@ -871,6 +873,41 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
+      // Releases the markers ended runs hold, however they ended, and tries
+      // releases that failed again once their backoff is up. A failure is
+      // logged the first time; status shows it until it succeeds.
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.gen(function* () {
+            const releases = yield* releaseMarkersUseCase();
+
+            for (const marker of releases.released) {
+              yield* log(`released ${marker.name} for ${marker.runId}`);
+            }
+
+            for (const marker of releases.failed.filter((failed) => failed.attempts === 1)) {
+              yield* log(
+                `releasing ${marker.name} for ${marker.runId} failed: ${Option.getOrElse(marker.lastError, () => "")}; trying again`,
+              );
+            }
+
+            for (const marker of releases.unreleasable) {
+              yield* log(
+                `can't release ${marker.name} for ${marker.runId}, a person must take it off: ${Option.getOrElse(marker.lastError, () => "")}`,
+              );
+            }
+
+            yield* Effect.sleep("5 seconds");
+          }).pipe(
+            Effect.catchCause((cause) =>
+              log(`releasing markers failed: ${String(cause)}`).pipe(
+                Effect.andThen(Effect.sleep("5 seconds")),
+              ),
+            ),
+          ),
+        ),
+      );
+
       // Runs each flow's trigger when its schedule comes due.
       yield* Effect.forkScoped(
         Effect.forever(
@@ -1373,6 +1410,7 @@ export const runDaemon = Effect.gen(function* () {
             failures: failures.count,
             problem: failures.message,
           })),
+          markers: (yield* listUnreleasedMarkersUseCase()).markers,
         } satisfies DaemonStatus;
       });
 

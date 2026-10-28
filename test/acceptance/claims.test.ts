@@ -99,7 +99,7 @@ describe("a claim ref", () => {
 });
 
 // The implement recipe as a repo baked it before claims were refs: it claims,
-// but never lets the claim go.
+// but never wraps its run in Claims.releasing.
 const RELEASING = "        Claims.releasing(Claims.issue(issue)),\n";
 
 const unreleasing = readFileSync(
@@ -118,14 +118,20 @@ describe("a flow baked before claims were refs", () => {
     await sandbox.github.stop();
   });
 
-  test("leaves its claim ref when the run ends, which cancel then lets go", async () => {
+  test("lets its claim go by its marker; a ref a run of an earlier version left, cancel lets go", async () => {
     expect(unreleasing).not.toContain("Claims.releasing");
     const issue = sandbox.github.addIssue("Claimed by an old flow", ["auto:eligible"]);
     expect((await sandbox.runCli(["run", "implement", "--repo", "demo"])).output).toContain(
       `done: #${issue}:`,
     );
 
-    const left = Option.getOrThrow(sandbox.github.refSha(claimRef(issue)));
+    // The claim ref is a marker the run held, released when it ended.
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+
+    // A run from before markers left it, which the ended run's claim commit stands in for.
+    const made = sandbox.github.createdRefs.findLast((created) => created.ref === claimRef(issue));
+    const left = Option.getOrThrow(Option.fromUndefinedOr(made?.sha));
+    sandbox.github.setRef(claimRef(issue), left);
     const runId = /^Run: (.+)$/m.exec(sandbox.github.messageOf(left))?.[1] ?? "";
 
     // Queued again, the issue is held by the ended run's claim.

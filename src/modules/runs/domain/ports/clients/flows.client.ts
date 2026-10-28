@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
+import type * as Schema from "effect/Schema";
 
 import { type ReviewRequest } from "../../routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../../run/run.errors.ts";
@@ -10,6 +11,7 @@ import {
   type ValidityQuestion,
   type WorkItem,
 } from "../../run/work-item.value-object.ts";
+import { type MarkerUnreleasable } from "../../run-marker/run-marker.errors.ts";
 
 // A repo's flows, as loaded from its trusted .chernabog/, each run with its
 // persona's services: the work its trigger finds, an item it didn't report,
@@ -32,6 +34,17 @@ export type FlowsClientService = {
     flow: FlowRef,
     run: ValidityQuestion,
   ) => Effect.Effect<Option.Option<ItemValidity>, FlowFailed | PersonaNotReady>;
+  // Releases a marker a run held, by the flow's definition of `name` (or the
+  // SDK's), with the arguments the hold gave, as the persona with a timeout.
+  // MarkerUnreleasable when the loaded flow no longer defines it, or the
+  // arguments no longer fit; a flow not loaded, or a release that fails, is
+  // FlowFailed, which is worth trying again.
+  readonly releaseMarker: (
+    flow: FlowRef,
+    run: ValidityQuestion,
+    name: string,
+    args: Schema.Json,
+  ) => Effect.Effect<void, FlowFailed | PersonaNotReady | MarkerUnreleasable>;
   // Why the flow's gate holds its runs back, if it does.
   readonly gate: (flow: FlowRef) => Effect.Effect<Option.Option<string>>;
   // The repo's open pull requests and whom each asks to review, as the

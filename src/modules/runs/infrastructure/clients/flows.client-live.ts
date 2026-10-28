@@ -7,6 +7,7 @@ import {
   describeError,
   GitHub,
   isSetupError,
+  Markers,
   Run,
   Runs,
   type SetupError,
@@ -29,6 +30,7 @@ import { RunsRepository } from "../../domain/ports/repositories/runs.repository.
 import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import { type FlowRef, type ValidityQuestion } from "../../domain/run/work-item.value-object.ts";
+import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
@@ -102,8 +104,47 @@ const gateReason = <E>(failure: E) => {
 // How long a flow's stillValid may take before the check counts as failed.
 const STILL_VALID_TIMEOUT = Duration.minutes(1);
 
+// How long a marker's release may take before it counts as failed.
+const RELEASE_TIMEOUT = Duration.minutes(1);
+
 export type FlowsClientOptions = {
   readonly stillValidTimeout?: Duration.Input;
+};
+
+// The marker `name`: the SDK's, or the loaded flow's; why there is none.
+const markerNamed = (
+  handle: Option.Option<FlowHandle>,
+  flow: FlowRef,
+  name: string,
+): Effect.Effect<Markers.Marker, FlowFailed | MarkerUnreleasable> =>
+  Option.match(
+    Option.orElse(Markers.find(Markers.builtIn, name), () =>
+      Option.flatMap(handle, (loaded) => Markers.find(loaded.flow.markers ?? [], name)),
+    ),
+    {
+      onSome: Effect.succeed,
+      onNone: () =>
+        Option.match(handle, {
+          // The flow may load again, as a paused or untrusted repo's does.
+          onNone: () =>
+            Effect.fail(new FlowFailed({ message: `${flow.repo}/${flow.flow} isn't loaded` })),
+          onSome: () =>
+            Effect.fail(
+              new MarkerUnreleasable({
+                message: `${flow.flow} no longer defines marker ${name}`,
+              }),
+            ),
+        }),
+    },
+  );
+
+// A release's failure: arguments that no longer fit can't be retried.
+const releaseFailed = <E>(error: E): FlowFailed | PersonaNotReady | MarkerUnreleasable => {
+  if (Predicate.isTagged(error, "ArgumentsChanged") && Predicate.hasProperty(error, "message")) {
+    return new MarkerUnreleasable({ message: String(error.message) });
+  }
+
+  return failed(error);
 };
 
 // The run a flow's stillValid asks about, as the SDK's Run service has it.
@@ -195,6 +236,39 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                   Effect.asSome,
                 ),
             });
+          }).pipe(Effect.provideContext(runs)),
+        releaseMarker: (flow, question, name, args) =>
+          Effect.gen(function* () {
+            const marker = yield* markerNamed(handleOf(registry.handles, flow), flow, name);
+
+            const services = yield* Option.match(registry.services(flow.repo, flow.persona), {
+              onNone: () =>
+                Effect.fail(
+                  new FlowFailed({
+                    message: `${flow.repo} has no services as ${Option.getOrElse(flow.persona, () => "the implicit persona")}`,
+                  }),
+                ),
+              onSome: (build) =>
+                build.pipe(
+                  Effect.mapError((error) => new PersonaNotReady({ message: error.message })),
+                ),
+            });
+
+            yield* withRepo(
+              Context.add(services, Run, runInfo(flow, question)),
+              marker.releaseJson(args),
+            ).pipe(
+              Effect.mapError(releaseFailed),
+              Effect.timeoutOrElse({
+                duration: RELEASE_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new FlowFailed({
+                      message: `releasing ${name} timed out after ${Duration.format(RELEASE_TIMEOUT)}`,
+                    }),
+                  ),
+              }),
+            );
           }).pipe(Effect.provideContext(runs)),
         gate: (flow) =>
           Effect.gen(function* () {

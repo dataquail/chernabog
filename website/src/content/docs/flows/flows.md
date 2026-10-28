@@ -14,6 +14,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `labels`      | optional; labels of the flow's own, such as `{ name: "auto:docs" }`, which `chernabog labels` creates |
 | `ownWork`     | optional; `true` when the trigger finds only the work of the persona it runs as, as `review`'s does by its review requests, so the daemon doesn't warn that several personas each take any of it |
 | `stillValid`  | optional; `(item) => Effect<Valid \| Gone>`: whether a run's work item is still there to work on. The daemon ends a run whose item is `Gone` as `superseded`; see [Work that goes away](#work-that-goes-away) |
+| `markers`     | optional; the [markers](/chernabog/flows/sdk/#markers) its runs hold, each from `Markers.define`, so the daemon can release them by name however a run ends. The SDK's own need no listing |
 | `item`        | `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it. Optional, except on a manual flow |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
@@ -178,7 +179,8 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `Review.authoredByMe`, `Review.decisiveReviews(pr)` and `Review.addressItem` find the reviews that ask for changes on this persona's pull requests; `Review.changesAsked`, `authorSession`, `prepareAuthorWorktree`, `checkChanged` and `askAgain` are `address-review`'s steps around `Implement.considerFindings` and `addressFindings`. `Review.ownedByARun(pull)` says whether another flow's run owns a pull request.
 - The SDK has no whole workflows and no triggers of the review loop: those are written out in each recipe, where a repo can read and change them.
 - `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
-- `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's; wrap the run in `releasing` so it goes.
+- `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's, and hold it as a marker, so it goes however the run ends; `releasing` lets it go sooner.
+- `Markers` defines, holds and drops [markers](/chernabog/flows/sdk/#markers): what a run put on an item, which the daemon releases however the run ends.
 - `PullRequest.owning(pr)(effect)` holds the pull request's claim while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone. A pull request another run owns is skipped.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.

@@ -19,12 +19,14 @@ import * as Claims from "./claims.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
 import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "./errors.ts";
 import { activity, reportAs, sleep } from "./flow.ts";
+import * as GitHubMarkers from "./github-markers.ts";
 import type { Json } from "./json.ts";
 import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from "./markers.ts";
 import { pathsMatching } from "./paths.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
+import * as Markers from "./run-markers.ts";
 import {
   Agent,
   type AgentResult,
@@ -181,12 +183,52 @@ export const latestClaim = (issue: number) =>
 export const legacyClaim = (latest: Option.Option<ClaimMarker>, runId: string) =>
   Option.filter(latest, (marker) => marker.ref !== true && marker.runId !== runId);
 
+// Labels the issue in progress, moves it to In Progress on the board, if the
+// repo has one, and assigns the persona, as a person picking it up would.
+// Each is a marker the run holds, held before it is put on, so however the
+// run ends the engine takes it off: the label always; the board Status and
+// the assignment unless the run is done, when the pull request carries on.
+// `keepOn` adds endings on which all three stay.
+export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const repo = yield* Repo;
+    const also = options.keepOn ?? [];
+    const inProgress = { number: issue, label: repo.labels.inProgress };
+
+    yield* Markers.hold(GitHubMarkers.label, inProgress, { keepOn: also });
+    yield* github.addLabel(issue, repo.labels.inProgress);
+
+    if (Option.isSome(repo.board)) {
+      yield* Markers.hold(
+        GitHubMarkers.boardStatus,
+        { number: issue, status: repo.board.value.readyStatus },
+        { keepOn: ["done", ...also] },
+      );
+      yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
+    }
+
+    yield* Markers.hold(
+      GitHubMarkers.assignment,
+      { number: issue, login: yield* github.login },
+      { keepOn: ["done", ...also] },
+    );
+    yield* github.assignSelf(issue);
+  });
+
+// Takes the in-progress label off now, rather than when the run ends.
+export const dropInProgress = (issue: number) =>
+  Repo.use((repo) =>
+    Markers.drop(GitHubMarkers.label, { number: issue, label: repo.labels.inProgress }),
+  );
+
 // Claims the issue with its claim ref, which only one run can create, then
 // creates the issue's branch, or adopts one with no claim on it, and labels,
-// assigns and comments as a person picking it up would. Safe to repeat: a run
-// that already holds the claim keeps it. Removes the label that queued the
-// issue. Wrap the run in `Claims.releasing(Claims.issue(issue))` to let the
-// claim go when it ends.
+// assigns and comments as a person picking it up would (markClaimed). Safe to
+// repeat: a run that already holds the claim keeps it. Removes the label that
+// queued the issue. What it puts on the issue, the claim ref and a branch it
+// created are markers, which the engine releases however the run ends; the
+// branch only while it holds no work, and not when a person takes over.
 export const claim = (issue: number, options: QueueOptions = {}) =>
   activity(
     "claim",
@@ -226,16 +268,12 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
 
           return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
+      } else {
+        yield* Markers.hold(GitHubMarkers.claimBranch, { branch }, { keepOn: ["needs-human"] });
       }
 
-      yield* github.addLabel(issue, repo.labels.inProgress);
+      yield* markClaimed(issue);
       yield* github.removeLabel(issue, label);
-
-      if (Option.isSome(repo.board)) {
-        yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
-      }
-
-      yield* github.assignSelf(issue);
       const claimedAt = DateTime.formatIso(yield* DateTime.now);
       yield* github.comment(
         issue,
@@ -563,7 +601,7 @@ export const askForClarification = (
         ].join("\n"),
       );
       yield* github.addLabel(issue, repo.labels.needsClarification);
-      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* dropInProgress(issue);
       yield* github.deleteBranch(branchFor(issue));
       yield* (yield* Worktree).remove(branchFor(issue));
 
@@ -865,7 +903,7 @@ export const handOff = (
         `Implemented by ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`,
       );
 
-      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* dropInProgress(issue);
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${outcome.summary}`,
@@ -884,7 +922,7 @@ export const handToHuman = (issue: number, reason: string, pullRequest: Option.O
       const github = yield* GitHub;
       const repo = yield* Repo;
       yield* github.addLabel(issue, repo.labels.needsHuman);
-      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
         yield* github.addLabel(pullRequest.value, repo.labels.needsHuman);

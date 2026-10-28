@@ -45,6 +45,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
@@ -57,6 +58,7 @@ import {
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-signals.use-case.ts";
 import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
+import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../src/modules/runs/use-cases/start-flow-run.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
@@ -146,6 +148,9 @@ export type MergeFake = {
 // Whether a person closed the fake's issue, and closed or merged its pull request.
 export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] };
 
+// The body of a request that unassigns people from an issue.
+const Unassigning = Schema.Struct({ assignees: Schema.Array(Schema.String) });
+
 // One issue and its pull request, and what the steps did to them. Reviews
 // answer `verdicts` in turn, the last one repeating.
 export const makeFake = (
@@ -161,8 +166,15 @@ export const makeFake = (
 
   const comments: Array<Comment> = [];
   const reviews: Array<string> = [];
+
   // Who this run acts as, who the pull request asks to review it, and the reviews submitted on it.
-  const people = { me: "chernabog-bot", requested: new Array<string>() };
+  const people = {
+    me: "chernabog-bot",
+    requested: new Array<string>(),
+    // Who is assigned to the issue.
+    assigned: new Array<string>(),
+  };
+
   const submitted: Array<SubmittedReview> = [];
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
@@ -202,6 +214,8 @@ export const makeFake = (
   const author = { consider: "address", resolve: "resolved", closes: false };
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
   const agent = { hangs: false };
+  // The issue's Status on the repo's board, once a step moved it.
+  const board = { status: Option.none<string>() };
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
 
@@ -464,8 +478,14 @@ export const makeFake = (
         Effect.sync(() => {
           refs.delete(ref);
         }),
-      assignSelf: () => Effect.void,
-      moveToStatus: () => Effect.void,
+      assignSelf: () =>
+        Effect.sync(() => {
+          people.assigned = [...people.assigned.filter((login) => login !== people.me), people.me];
+        }),
+      moveToStatus: (_, status) =>
+        Effect.sync(() => {
+          board.status = Option.some(status);
+        }),
       pullRequestForBranch: () =>
         Effect.sync(() => Option.filter(Option.some(pull()), () => git.opened)),
       openPullRequest: () =>
@@ -500,8 +520,28 @@ export const makeFake = (
           });
         }),
       // Only the pull request itself, as GitHub's REST API answers it.
-      request: (method, path) =>
+      request: (method, path, body) =>
         Effect.sync((): Json => {
+          if (method === "DELETE" && path === `/repos/${settings.slug}/issues/${ISSUE}/assignees`) {
+            const leaving = Option.match(body, {
+              onNone: (): ReadonlyArray<string> => [],
+              onSome: (sent) =>
+                Option.match(Schema.decodeUnknownOption(Unassigning)(sent), {
+                  onNone: (): ReadonlyArray<string> => [],
+                  onSome: (unassigning) => unassigning.assignees,
+                }),
+            });
+
+            people.assigned = people.assigned.filter((login) => !leaving.includes(login));
+
+            return {};
+          }
+
+          // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
+          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+            return { ahead_by: git.pushes + git.commits };
+          }
+
           if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
             return { number: PULL, mergeable_state: merge.state };
           }
@@ -631,6 +671,7 @@ export const makeFake = (
     graph,
     plans,
     removed,
+    board,
   };
 };
 
@@ -675,6 +716,12 @@ export const deliverSignals = (
   items: ReadonlyArray<WorkItem>,
 ) => deliverSignalsUseCase(refOf(handle, persona), items).pipe(Effect.map(({ count }) => count));
 
+// A run log that keeps nothing, for a flow's trigger run outside the engine.
+const quietLog = Layer.succeed(
+  RunLog,
+  RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
+);
+
 // Starts a run of the flow on the fake, and polls until `until` says it has got far enough.
 export const runUntil = (
   handle: FlowHandle,
@@ -685,18 +732,25 @@ export const runUntil = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-steps-" });
+    const platform = yield* Effect.context<BunServices.BunServices>();
+    const built = yield* Layer.build(fake.services);
+    const services = forEveryPersona(built);
 
-    const services = forEveryPersona(yield* Layer.build(fake.services));
+    const releasing = Context.merge(
+      platform,
+      yield* Layer.build(Layer.merge(fake.services, quietLog)),
+    );
 
     const engine = yield* Layer.build(
-      runtimeFor(handle).pipe(
+      RuntimeLayer({
+        handles: [handle],
+        services: () => Option.some(Effect.succeed(releasing)),
+      }).pipe(
         Layer.provideMerge(flowLayer(handle, services)),
         Layer.provideMerge(StateAt(homePaths(home).state)),
         Layer.provideMerge(Home.at(home, home)),
       ),
     );
-
-    const platform = yield* Effect.context<BunServices.BunServices>();
 
     const run = startRun(handle, IMPLICIT, work).pipe(
       Effect.flatMap((started) => Effect.fromOption(started.run)),
@@ -711,6 +765,13 @@ export const runUntil = (
         ),
       ),
       Effect.map((step) => step.polled),
+      // A run that ended has its markers released, as the daemon releases them.
+      Effect.tap((polled) =>
+        Effect.when(
+          releaseMarkersUseCase(),
+          Effect.sync(() => !isRunning(polled)),
+        ),
+      ),
       Effect.orDie,
     );
 
@@ -729,12 +790,6 @@ export const triggered = <E, R>(
   fake: Fake,
   trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>,
 ) => Effect.provide(trigger, fake.services);
-
-// A run log that keeps nothing, for a flow's trigger run outside the engine.
-const quietLog = Layer.succeed(
-  RunLog,
-  RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
-);
 
 // What a flow's own trigger reports on the fake.
 export const flowTriggered = (fake: Fake, flow: Flow) =>
