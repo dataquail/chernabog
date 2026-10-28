@@ -30,7 +30,10 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { type CancelledRun, CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
+import {
+  type CancelledRun,
+  CancelTarget,
+} from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { RunValidity } from "../src/modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../src/modules/runs/use-cases/check-run-validity.use-case.ts";
