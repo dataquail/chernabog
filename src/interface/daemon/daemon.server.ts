@@ -41,6 +41,7 @@ import {
   type CheckFailures,
   DEFAULT_VALIDITY_EVERY,
   noteCheckFailure,
+  runIsAbout,
   validityDue,
 } from "../../modules/runs/domain/schedule/validity.value-object.ts";
 import {
@@ -310,6 +311,16 @@ const validityEveryOf = (repo: RepoState) =>
 type WakingItem = { readonly key: string; readonly signals?: ReadonlyArray<string> };
 
 const isGone = Predicate.isTagged("Gone");
+
+// The runs of an issue or pull request a notification was about, by the
+// repo's name and the number: their check, pending until its burst settles,
+// and when they were last checked for one.
+type NotifiedItem = {
+  readonly repo: string;
+  readonly number: number;
+  pending: Option.Option<PendingTick>;
+  lastChecked: Option.Option<DateTime.Utc>;
+};
 
 // How often the daemon looks for repos whose runs are due a validity check,
 // unless a notification asks sooner.
@@ -953,27 +964,67 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
-      // When each repo's runs were last checked, by its name; a notification
-      // about a repo forgets it, so its runs are checked at once.
+      // When each repo's runs were last checked, by its name.
       const validityChecked = new Map<string, DateTime.Utc>();
       const validityWake = yield* Latch.make();
 
-      const checkSoon = (slug: string) => {
-        for (const repo of repos.filter(
-          (candidate) => candidate.enrolled.repo.toLowerCase() === slug.toLowerCase(),
-        )) {
-          validityChecked.delete(repo.name);
-        }
-      };
+      // Each issue or pull request a notification was about, by repo name
+      // and number: its runs' check, pending until the burst settles, and
+      // when they were last checked for one. Checks for one item are
+      // limits.eventTickMin apart, as a flow's event ticks are.
+      const notifiedItems = new Map<string, NotifiedItem>();
+
+      const tickMinOf = (item: NotifiedItem) =>
+        Option.match(Option.fromUndefinedOr(repos.find((repo) => repo.name === item.repo)), {
+          onNone: () => DEFAULT_EVENT_TICK_MIN,
+          onSome: eventTickMinOf,
+        });
+
+      // When a notified item's runs are checked, if a check is pending.
+      const notifiedDueAt = (item: NotifiedItem) =>
+        Option.map(item.pending, (pending) =>
+          eventTickAt(pending, item.lastChecked, tickMinOf(item)),
+        );
+
+      // Asks for the runs of the item news is about to be checked soon; news
+      // about no item waits for the interval. Whether it marked any.
+      const checkSoon = (news: NotificationNews, now: DateTime.Utc) =>
+        Option.match(news.item, {
+          onNone: () => false,
+          onSome: (number) => {
+            const about = repos.filter(
+              (candidate) => candidate.enrolled.repo.toLowerCase() === news.repo.toLowerCase(),
+            );
+
+            for (const repo of about) {
+              const key = `${repo.name}#${number}`;
+
+              const item = notifiedItems.get(key) ?? {
+                repo: repo.name,
+                number,
+                pending: Option.none(),
+                lastChecked: Option.none(),
+              };
+
+              item.pending = Option.some(noteEvent(item.pending, news.cause, now));
+              notifiedItems.set(key, item);
+            }
+
+            return about.length > 0;
+          },
+        });
 
       // Checks the runs in flight, executing or parked, of each repo whose
-      // flows may run, once its limits.validityEvery comes round. A run whose
-      // item went ends as superseded; a check that fails leaves it running.
+      // flows may run, once its limits.validityEvery comes round, and the
+      // runs of each item a notification was about, once it's due. A run
+      // whose item went ends as superseded; a check that fails leaves it running.
       const checkValidity = Effect.gen(function* () {
         const now = yield* DateTime.now;
         const running = yield* active;
+        const checked = new Set<string>();
+        const checking = repos.filter((candidate) => Option.isSome(runnable(candidate)));
 
-        for (const repo of repos.filter((candidate) => Option.isSome(runnable(candidate)))) {
+        for (const repo of checking) {
           const last = Option.fromUndefinedOr(validityChecked.get(repo.name));
 
           if (!validityDue(last, validityEveryOf(repo), now)) {
@@ -983,6 +1034,42 @@ export const runDaemon = Effect.gen(function* () {
           validityChecked.set(repo.name, now);
 
           for (const run of running.filter((found) => found.repo === repo.name)) {
+            checked.add(run.id);
+            yield* checkRun(run);
+          }
+        }
+
+        for (const [key, item] of notifiedItems) {
+          const at = notifiedDueAt(item);
+
+          if (!Option.exists(at, (due) => DateTime.isLessThanOrEqualTo(due, now))) {
+            // Forgotten once eventTickMin has passed since its last check:
+            // the next notification about it is checked as soon as it settles.
+            if (
+              Option.isNone(item.pending) &&
+              Option.exists(item.lastChecked, (last) =>
+                DateTime.isLessThanOrEqualTo(DateTime.addDuration(last, tickMinOf(item)), now),
+              )
+            ) {
+              notifiedItems.delete(key);
+            }
+
+            continue;
+          }
+
+          item.pending = Option.none();
+          item.lastChecked = Option.some(now);
+
+          const about = running.filter(
+            (run) =>
+              run.repo === item.repo &&
+              checking.some((repo) => repo.name === run.repo) &&
+              !checked.has(run.id) &&
+              runIsAbout(run, item.number),
+          );
+
+          for (const run of about) {
+            checked.add(run.id);
             yield* checkRun(run);
           }
         }
@@ -997,13 +1084,24 @@ export const runDaemon = Effect.gen(function* () {
         Effect.catchCause((cause) => log(`checking runs' work items failed: ${String(cause)}`)),
       );
 
+      // Until the next notified item's check is due, or VALIDITY_POLL at the latest.
+      const untilNextCheck = Effect.map(DateTime.now, (now) =>
+        Arr.reduce([...notifiedItems.values()], VALIDITY_POLL, (soonest, item) =>
+          Option.match(notifiedDueAt(item), {
+            onNone: () => soonest,
+            onSome: (at) =>
+              Duration.min(soonest, Duration.max(Duration.zero, DateTime.distance(now, at))),
+          }),
+        ),
+      );
+
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
             yield* validityWake.close;
             yield* checkValidity;
             yield* Effect.timeoutOrElse(validityWake.await, {
-              duration: VALIDITY_POLL,
+              duration: yield* untilNextCheck,
               orElse: () => Effect.void,
             });
           }),
@@ -1075,12 +1173,10 @@ export const runDaemon = Effect.gen(function* () {
             const now = yield* DateTime.now;
             const marked = polled.success.news.map((news) => markNews(persona, news, now));
 
-            // News about a repo may be its runs' work items going.
-            for (const news of polled.success.news) {
-              checkSoon(news.repo);
-            }
+            // News about an issue or pull request may be its runs' work item going.
+            const checking = polled.success.news.map((news) => checkSoon(news, now));
 
-            if (polled.success.news.length > 0) {
+            if (checking.some(Boolean)) {
               yield* validityWake.open;
             }
 
