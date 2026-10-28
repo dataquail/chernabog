@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import YAML from "yaml";
 
+import RecipesPackage from "../../packages/recipes/package.json" with { type: "json" };
 import { type ScenarioFile } from "../../src/kernel/scenario.value-object.ts";
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
@@ -311,7 +312,9 @@ describe("chernabog rehearse --package, for a flow imported from a recipe packag
 
     const { code, output } = await rehearse(sandbox, path, "--package", checkout);
 
-    expect(output).toContain(`rehearsing with @chernabog/recipes 0.0.0 from ${checkout}`);
+    expect(output).toContain(
+      `rehearsing with @chernabog/recipes ${RecipesPackage.version} from ${checkout}`,
+    );
     expect(output).toContain("rehearsal: implement answered by its stand-in");
     expect(output).toContain("✓ ended as the scenario expects");
     expect(code).toBe(0);
