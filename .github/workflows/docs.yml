@@ -1,7 +1,7 @@
 name: Docs
 
 # Builds the site in website/ and deploys it to GitHub Pages. Release calls this
-# once @chernabog/sdk is on npm, with the tag it published; a dispatch deploys
+# once @chernabog/sdk or @chernabog/core is on npm, with the tag it published; a dispatch deploys
 # whatever ref it is run on, to republish without a release. Pull requests only
 # build it, in CI.
 on:

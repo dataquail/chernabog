@@ -6,14 +6,31 @@
     ".": {
       "release-type": "simple",
       "include-component-in-tag": false,
-      "extra-files": [{ "type": "json", "path": "package.json", "jsonpath": "$.version" }],
-      "exclude-paths": ["packages/recipes"]
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        }
+      ],
+      "exclude-paths": ["packages/recipes", "packages/sdk"]
+    },
+    "packages/core": {
+      "release-type": "node",
+      "package-name": "@chernabog/core",
+      "component": "core",
+      "release-as": "1.0.0",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "/src/kernel/core-support.value-object.ts"
+        }
+      ]
     },
     "packages/sdk": {
       "release-type": "node",
       "package-name": "@chernabog/sdk",
-      "component": "sdk",
-      "extra-files": [{ "type": "generic", "path": "/src/kernel/sdk-support.value-object.ts" }]
+      "component": "sdk"
     },
     "packages/recipes": {
       "release-type": "node",
