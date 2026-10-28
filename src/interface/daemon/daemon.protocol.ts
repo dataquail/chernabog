@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { RunMarkerView } from "../../modules/runs/use-cases/run-marker.result.ts";
 import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
@@ -95,6 +96,10 @@ export const DaemonStatus = Schema.Struct({
       Schema.Struct({ runId: Schema.String, failures: Schema.Finite, problem: Schema.String }),
     ),
   ),
+  // What ended runs left on their items: markers whose release is pending or
+  // keeps failing, and ones no flow defines a release for any more, for a
+  // person. Absent from a daemon from before markers.
+  markers: Schema.optionalKey(Schema.Array(RunMarkerView)),
 });
 
 export type DaemonStatus = typeof DaemonStatus.Type;

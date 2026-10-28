@@ -6,10 +6,18 @@ requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect
 ## Before you finish
 
 `bun run format:check`, `bun run check`, `bun run lint`,
-`bun run lint:architecture` and `bun test` must all pass. `bun run format`
-applies Prettier; oxlint's `curly` rule requires a braced block for every if,
-else and loop body, which Prettier then breaks onto lines of its own. Run the full suite with no edits in flight; one that overlaps an
-edit fails spuriously.
+`bun run lint:architecture` and `bun test` must all pass.
+
+The pre-commit hook (`.husky/pre-commit`, installed by `bun install`) runs them
+in that order through `bun run precommit` and refuses the commit at the first
+failure, in the main checkout and in a linked worktree alike. It only checks:
+`bun run format` applies Prettier. `HUSKY=0 git commit …` skips the hook for a
+work-in-progress commit you will fix before pushing; never `--no-verify` one
+that you push. CI's build and its acceptance tests stay in CI.
+
+oxlint's `curly` rule requires a braced block for every if, else and loop body,
+which Prettier then breaks onto lines of its own. Run the full suite with no
+edits in flight; one that overlaps an edit fails spuriously.
 
 ## Hard rules
 
@@ -334,6 +342,29 @@ Errors split by who acts on them (`packages/sdk/src/abi/errors.ts`).
 - **A capability's setup is a service.** `ReviewerSeat` is checked at build
   but raised only when a flow asks for it (as a defect `surfaceSetup` turns
   back into the setup error), so flows that never review run regardless.
+
+## Markers (#143)
+
+A marker is something a run put on an item outside chernabog (a label, an
+assignment, a board Status, a claim ref or branch), with a named release.
+
+- **The SDK side** is `packages/sdk/src/abi/run-markers.ts` (exported as
+  `Markers`): `define(name, argsSchema, release)`, `hold`, `drop`, `dropAll`,
+  `forget`. A hold goes through the `MarkerHolds` service the engine provides
+  (`flowLayer`), and does nothing outside a recorded run. A flow lists its
+  definitions in `defineFlow({ markers })`; the SDK's own
+  (`blocks/github-markers.ts`, plus `Claims.refMarker`) are `Markers.builtIn`. Keep a
+  marker's name and arguments' shape once runs hold it: a run in flight is
+  released by them.
+- **The runs module** keeps holds as `RunMarkerRoot` (`om_markers`), one per
+  run, name and arguments. `releaseMarkersUseCase` releases what ended runs
+  hold, newest first, through `FlowsClient.releaseMarker` (the loaded flow's
+  definition, as the run's persona); keepOn endings are kept, a failure backs
+  off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
+  The daemon runs it every few seconds, `chernabog run` once its run ends, and
+  `status` shows `listUnreleasedMarkersUseCase`.
+- **Cancel still does its own cleanup** (claim ref, label, assignment, branch)
+  for runs from before markers; markers' releases are safe to repeat after it.
 
 ## Rehearsals (#115)
 

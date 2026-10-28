@@ -3,7 +3,12 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 
-import { DEFAULT_VALIDITY_EVERY, noteCheckFailure, validityDue } from "./validity.value-object.ts";
+import {
+  DEFAULT_VALIDITY_EVERY,
+  noteCheckFailure,
+  runIsAbout,
+  validityDue,
+} from "./validity.value-object.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -28,5 +33,22 @@ describe("noteCheckFailure", () => {
       count: 2,
       message: "timed out",
     });
+  });
+});
+
+describe("runIsAbout", () => {
+  test("a run is about the issue or pull request its item names, or the pull request it opened", () => {
+    const run = (itemKey: string, pullRequest = Option.none<number>()) => ({
+      itemKey,
+      pullRequest,
+    });
+
+    expect(runIsAbout(run("issue-12"), 12)).toBe(true);
+    expect(runIsAbout(run("pr-73"), 73)).toBe(true);
+    expect(runIsAbout(run("pr-73-changes-2"), 73)).toBe(true);
+    expect(runIsAbout(run("issue-12", Option.some(40)), 40)).toBe(true);
+    expect(runIsAbout(run("issue-12", Option.some(40)), 41)).toBe(false);
+    expect(runIsAbout(run("pr-73"), 7)).toBe(false);
+    expect(runIsAbout(run("nightly-12"), 12)).toBe(false);
   });
 });

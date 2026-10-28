@@ -69,9 +69,41 @@ Claimed-At: 2026-10-26T14:00:00.000Z
 
 Creating a ref is the one write GitHub refuses to a second writer, so the run that creates it holds the item, and `Claims.holder(item)` reads who that is. It says nothing about the machine: the ref is as public as the repo. A ref outside `refs/heads/` isn't a branch: it isn't in the branch list, and `push` workflows, which run for branches and tags, don't see it.
 
-`Claims.releasing(item)(effect)` deletes the ref when `effect` ends, whatever the ending; a run waiting on a signal keeps it. A flow that never wraps its claim in it, such as a recipe baked before claims were refs, leaves the ref behind when its run ends, and the issue stays held. `chernabog cancel <run>` lets it go: a run in flight is cancelled as ever, with its claim ref; for a run that has already ended, cancel deletes only the claim ref that still names it, and the run keeps its ending. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
+`Claims.acquire` holds the ref as a [marker](#markers), so however the run ends, cancelled or superseded included, the daemon deletes it. `Claims.releasing(item)(effect)` deletes it as soon as `effect` ends instead, whatever the ending; a run waiting on a signal keeps it. A run of an earlier version, which held no marker and never wrapped its claim in `releasing`, leaves the ref behind when it ends, and the issue stays held. `chernabog cancel <run>` lets it go: a run in flight is cancelled as ever, with its claim ref; for a run that has already ended, cancel deletes only the claim ref that still names it, and the run keeps its ending. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
 
 Runs of an earlier version held an issue by its branch alone. While they may be in flight, a branch whose latest claim comment names no claim ref is still theirs, and `claim` skips it.
+
+## Markers
+
+A marker is something a run put on an item outside chernabog, with a named way to take it off. A run holds it, and the daemon releases it however the run ends: done, failed, needs-human, cancelled or superseded. A closure can't be journaled, so a release is defined by name at the top of the flow's module, with a schema for its arguments, and listed in the flow's `markers`:
+
+```ts
+const inProgress = Markers.define(
+  "jira-in-progress",
+  Schema.Struct({ key: Schema.String }),
+  (args) => Jira.transition(args.key, "To Do"),
+);
+
+export default defineFlow({
+  markers: [inProgress],
+  workflow: (item) =>
+    activity(
+      "start",
+      Effect.gen(function* () {
+        yield* Markers.hold(inProgress, { key: item.key });
+        yield* Jira.transition(item.key, "In Progress");
+      }),
+    ),
+  // …
+});
+```
+
+- **Hold it before putting it on**, inside an activity, so a crash in between leaves nothing unrecorded. A run holds a name and arguments once: one that resumes and holds it again changes nothing. Holding a marker the flow doesn't list fails the step, since nothing could release it.
+- **Releases run after the run ends**, newest first, from the flow as the base branch has it then, as the run's persona. A release must be safe to repeat: one that fails is tried again, backing off from 30 seconds to an hour, and `chernabog status` shows it under "not yet released" until it succeeds.
+- **`keepOn`** names endings on which a marker stays: `Markers.hold(m, args, { keepOn: ["needs-human"] })` for something put there for a person to see. **`Markers.drop(m, args)`** releases one now, when the run is done with it, and `Markers.dropAll(m)` every hold of it.
+- **A release the flow no longer defines** (it changed since the hold, or the arguments no longer fit its schema) isn't dropped silently: status lists it as unreleasable, with its arguments, for a person to take off.
+
+The SDK's blocks hold markers of their own, which no flow lists (`Markers.builtIn`): `Implement.claim` and `Hybrid.claim` (and `Plan`, through `Implement.claim`) hold the claim ref, the `auto:in-progress` label, the persona's assignment, the board Status and the claim branch they create. The label goes on every ending; the assignment and board Status stay on a run that's done, since its pull request carries on, and the board moves back to its ready Status otherwise; the claim branch is deleted only while it holds no commits and no pull request, and stays on needs-human. On the hybrid path, a run that fails, as one whose session the person closes does, keeps the issue in progress for their next start.
 
 **Ownership.** A flow that reviews and fixes its own pull request wraps that work in `PullRequest.owning(pr)`. That takes the pull request's claim, `pr-<n>`, and posts an owner marker for people to read, and when the work ends, whether it succeeded or failed, lets the claim go and posts a release marker. A run waiting on a signal keeps the pull request, and a pull request another run owns is skipped. While a pull request is owned, `Review.reviewRequests` leaves it out and `Review.ownedByARun` says so, deciding from the claim ref, so the `review`, `re-review` and `address-review` recipes don't start on it. A run this machine knows has ended no longer owns anything, even with its ref still there. One on another machine owns the pull request until its ref goes. A pull request with no claim ref falls back to the owner markers, for runs of an earlier version.
 

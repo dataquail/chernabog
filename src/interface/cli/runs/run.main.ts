@@ -38,6 +38,7 @@ import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-s
 import { listActiveRunsUseCase } from "../../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs.use-case.ts";
+import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
 import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
@@ -113,6 +114,16 @@ const followRun = (
     }
 
     yield* tail;
+
+    // What the run held is released here, as the daemon would; a release
+    // that fails is left to the daemon, or the next run, to try again.
+    const releases = yield* releaseMarkersUseCase();
+
+    for (const marker of [...releases.failed, ...releases.unreleasable]) {
+      yield* Console.log(
+        `not released: ${marker.name}: ${Option.getOrElse(marker.lastError, () => "")}`,
+      );
+    }
 
     return current;
   });

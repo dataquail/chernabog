@@ -45,6 +45,7 @@ describe("pollNotificationsUseCase", () => {
       expect(poll.news.map((news) => news.cause)).toEqual([
         "notification: review_requested on #73",
       ]);
+      expect(poll.news.map((news) => news.item)).toEqual([Option.some(73)]);
       expect(poll.since).toBe("2026-10-27T12:03:00Z");
       expect(poll.pollIntervalMs).toBe(60_000);
 

@@ -22,7 +22,8 @@
     "architecture:conformance": "architecture conformance src packages test scripts",
     "architecture:explain": "architecture explain",
     "architecture:facts": "architecture facts",
-    "prepare": "effect-tsgo patch --oxlint",
+    "prepare": "husky && effect-tsgo patch --oxlint",
+    "precommit": "bun run format:check || { echo 'Prettier would change the files above: run bun run format, then commit again.' >&2; exit 1; } && bun run check && bun run lint && bun run lint:architecture && bun test",
     "gen:templates": "bun scripts/gen-templates.ts"
   },
   "dependencies": {
@@ -45,6 +46,7 @@
     "effect-bun-test": "0.4.0",
     "eslint-plugin-simple-import-sort": "^13.0.0",
     "eslint-plugin-sort-destructure-keys": "^3.0.0",
+    "husky": "^9.1.7",
     "oxlint": "1.88.0",
     "oxlint-plugin-effect": "0.28.1",
     "oxlint-tsgolint": "7.0.2004",

@@ -8,6 +8,7 @@ export * as Claims from "./claims.ts";
 export * as Hybrid from "./hybrid.ts";
 export * as Implement from "./implement.ts";
 export * from "./markers.ts";
+export * as Markers from "./markers-api.ts";
 export * as Plan from "./plan.ts";
 export * from "./prompt.ts";
 export * as Review from "./review.ts";
