@@ -228,6 +228,27 @@ effect("a claim ref GitHub doesn't have reads as none, and deleting one is not a
   }),
 );
 
+effect("moving a claim ref is a forced update, and a refusal is an error", () =>
+  Effect.gen(function* () {
+    const moved = answering(200, Option.some({ ref: CLAIM }));
+    expect(
+      Result.isSuccess(yield* onGitHub(moved, (service) => service.updateRef(CLAIM, "c2"))),
+    ).toBe(true);
+    expect(moved.requests).toEqual([
+      {
+        method: "PATCH",
+        path: "/repos/dataquail/demo/git/refs/chernabog/claims/issue-3",
+        body: Option.some({ sha: "c2", force: true }),
+      },
+    ]);
+
+    const refused = answering(422, Option.some({ message: "Reference does not exist" }));
+    expect(
+      Result.isFailure(yield* onGitHub(refused, (service) => service.updateRef(CLAIM, "c2"))),
+    ).toBe(true);
+  }),
+);
+
 effect(
   "a commit made through the API is its message, tree and parents, and comes back as its sha",
   () =>

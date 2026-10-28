@@ -137,6 +137,11 @@ const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
 
+const UpdateRefBody = Schema.Struct({
+  sha: Schema.String,
+  force: Schema.optionalKey(Schema.Boolean),
+});
+
 const CreateCommitBody = Schema.Struct({
   message: Schema.String,
   tree: Schema.String,
@@ -439,7 +444,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({ ref: body.ref, object: { sha: body.sha } }, 201);
   });
 
-  const createCommit = withBody(CreateCommitBody, (body) => {
+  // A commit of `tree` on `parents`, as GitHub makes one through the API: its sha.
+  const commitTree = (body: {
+    readonly message: string;
+    readonly tree: string;
+    readonly parents: ReadonlyArray<string>;
+  }) => {
     // The empty tree, which GitHub has in every repo.
     execFileSync("git", ["--git-dir", options.bare, "hash-object", "-t", "tree", "-w", "--stdin"], {
       input: "",
@@ -469,8 +479,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       },
     ).trim();
 
-    return json({ sha, message: body.message }, 201);
-  });
+    return sha;
+  };
+
+  const createCommit = withBody(CreateCommitBody, (body) =>
+    json({ sha: commitTree(body), message: body.message }, 201),
+  );
 
   const readCommit = (args: Args) => {
     const sha = args.params[0] ?? "";
@@ -493,6 +507,19 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
     return new Response("", { status: 204 });
   };
+
+  // As on GitHub outside refs/heads/: forced or not, the ref moves.
+  const updateRef = withBody(UpdateRefBody, (body, args) => {
+    const ref = `refs/${args.params[0] ?? ""}`;
+
+    if (Option.isNone(shaOf(ref))) {
+      return json({ message: "Reference does not exist" }, 422);
+    }
+
+    git("update-ref", ref, body.sha);
+
+    return json({ ref, object: { sha: body.sha } });
+  });
 
   const addComment = withBody(CommentBody, (body, args) => {
     const number = numberParam(args);
@@ -909,6 +936,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     },
     { method: "POST", pattern: new RegExp(`^${repo}/git/refs$`), handle: createRef },
     { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: deleteRef },
+    { method: "PATCH", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: updateRef },
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
@@ -1089,6 +1117,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     },
     // A commit's message, as GitHub keeps it.
     messageOf: (sha: string) => git("log", "-1", "--format=%B", sha),
+    // A commit with an empty tree, such as a claim another machine made: its sha.
+    commit: (message: string, parents: ReadonlyArray<string> = []) =>
+      commitTree({ message, tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904", parents }),
     setChecks: (state: Checks) => {
       checks = state;
     },

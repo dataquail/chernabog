@@ -1,3 +1,4 @@
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,6 +16,7 @@ import {
   type WorkItem,
 } from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
+import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
 
 // A flow as a test has it: the work its trigger reports (or why it fails),
 // the items it finds by key, and why its gate holds runs back, if it does.
@@ -42,6 +44,15 @@ export type FakeFlow = {
     readonly args: Schema.Json;
   }>;
   readonly releaseFails?: Array<string>;
+  // What each claim's lease is found to be, by item, released when it isn't
+  // listed, or why reading it fails; each ask is appended to `leaseAsks`.
+  readonly leases?: Readonly<Record<string, LeaseState>>;
+  readonly leaseFails?: string;
+  readonly leaseAsks?: Array<{
+    readonly runId: string;
+    readonly item: string;
+    readonly renew: Option.Option<Duration.Duration>;
+  }>;
 };
 
 const keyOf = (flow: FlowRef) => `${flow.repo}/${flow.flow}`;
@@ -107,6 +118,20 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
             });
           },
         ),
+      lease: (flow, run, item, renew) =>
+        Effect.flatMap(flowOf(flow), (found): Effect.Effect<LeaseState, FlowFailed> => {
+          found.leaseAsks?.push({ runId: run.runId, item, renew });
+
+          return Option.match(Option.fromUndefinedOr(found.leaseFails), {
+            onSome: (message) => Effect.fail(new FlowFailed({ message })),
+            onNone: () =>
+              Effect.succeed(
+                Option.getOrElse(Record.get(found.leases ?? {}, item), (): LeaseState => ({
+                  status: "released",
+                })),
+              ),
+          });
+        }),
       gate: (flow) =>
         flowOf(flow).pipe(
           Effect.map((found) => Option.fromUndefinedOr(found.gate)),

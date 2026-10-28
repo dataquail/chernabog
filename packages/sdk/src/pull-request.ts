@@ -24,6 +24,7 @@ import {
   Skip,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -56,7 +57,10 @@ export const own = (pullRequest: number) =>
 
       yield* (yield* GitHub).comment(
         pullRequest,
-        `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
+        [
+          ...Option.toArray(Option.map(claimed.takenOver, Claims.describeTakeover)),
+          `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
+        ].join(" "),
       );
     }),
   );
@@ -144,13 +148,19 @@ export const ownerOf = (bodies: ReadonlyArray<string>) =>
 export type Owner = { readonly flow: string; readonly runId: string };
 
 // The run that owns the pull request: the holder of its claim ref, none when
-// this machine knows that run has ended. Migration: while runs that owned a
+// this machine knows that run has ended, or its lease expired, so another run
+// may take it over. Migration: while runs that owned a
 // pull request by comment alone may be in flight, one with no claim ref falls
 // back to the latest owner marker that names no ref (ownerOf). Drop the
 // fallback a release after owners became claim refs.
 export const owner = (pullRequest: number) =>
   Effect.gen(function* () {
     const held = yield* Claims.holder(Claims.pullRequest(pullRequest));
+    const now = yield* DateTime.now;
+
+    if (Option.exists(held, (found) => Claims.expired(found, now))) {
+      return Option.none<Owner>();
+    }
 
     if (Option.isSome(held)) {
       if (yield* knownEnded(held.value.runId)) {

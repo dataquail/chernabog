@@ -7,6 +7,7 @@
 import {
   Agent,
   AgentError,
+  Claims,
   describeError,
   type Flow,
   FlowPackage,
@@ -75,8 +76,9 @@ import { prepareState } from "./state-stamp.ts";
 import { StepRunnerLive } from "./steps.ts";
 import type { GateConfig } from "./usage-gate.ts";
 
+// Lost: the run found, before a write, that another run took its work item over.
 export const RunResult = Schema.Struct({
-  status: Schema.Literals(["done", "skipped", "needs-human"]),
+  status: Schema.Literals(["done", "skipped", "needs-human", "lost"]),
   summary: Schema.String,
 });
 
@@ -485,6 +487,115 @@ export const reportingChanges = <R>(
   });
 };
 
+// The run's GitHub and Git, which check before each write another person or
+// run sees (comments, labels, assignments, statuses, pull requests, reviews,
+// merges, other API writes and pushes) that `fence` lets it through: that
+// every claim the run holds still names it. A run that lost one never gets
+// past the check. A small window between the check and the write remains.
+export const fencing = <R>(
+  context: Context.Context<R>,
+  fence: (what: string) => Effect.Effect<void>,
+): Context.Context<R> => {
+  const first =
+    (what: string) =>
+    <A, E>(effect: Effect.Effect<A, E>) =>
+      Effect.andThen(fence(what), effect);
+
+  const withGitHub = Option.match(Context.getOption(context, GitHub), {
+    onNone: () => context,
+    onSome: (github) =>
+      Context.add(
+        context,
+        GitHub,
+        GitHub.of({
+          ...github,
+          comment: (number, body) => github.comment(number, body).pipe(first("commenting")),
+          addLabel: (number, label) =>
+            github.addLabel(number, label).pipe(first(`labelling ${label}`)),
+          removeLabel: (number, label) =>
+            github.removeLabel(number, label).pipe(first(`unlabelling ${label}`)),
+          moveToStatus: (number, status) =>
+            github.moveToStatus(number, status).pipe(first(`moving to ${status}`)),
+          assignSelf: (number) => github.assignSelf(number).pipe(first("assigning")),
+          openPullRequest: (pullRequest) =>
+            github.openPullRequest(pullRequest).pipe(first("opening a pull request")),
+          requestReviewers: (pullRequest, logins) =>
+            github.requestReviewers(pullRequest, logins).pipe(first("requesting review")),
+          review: (pullRequest, review) =>
+            github.review(pullRequest, review).pipe(first("reviewing")),
+          merge: (pullRequest, merge) => github.merge(pullRequest, merge).pipe(first("merging")),
+          request: (method, path, body) =>
+            Option.match(
+              Option.liftPredicate(method, (named) => named !== "GET"),
+              {
+                onNone: () => github.request(method, path, body),
+                onSome: (writing) =>
+                  github.request(method, path, body).pipe(first(`${writing} ${path}`)),
+              },
+            ),
+        }),
+      ),
+  });
+
+  return Option.match(Context.getOption(withGitHub, Git), {
+    onNone: () => withGitHub,
+    onSome: (git) =>
+      Context.add(
+        withGitHub,
+        Git,
+        Git.of({
+          ...git,
+          push: (cwd, branch) => git.push(cwd, branch).pipe(first(`pushing ${branch}`)),
+        }),
+      ),
+  });
+};
+
+// The fence a run's writes pass (fencing): every claim it holds, as its
+// claim-ref markers say, still names it. One that doesn't completes `lost`
+// with why, which ends the workflow as lost, and the write waits until it
+// does, never made. A read that fails lets the write through.
+const leaseFence =
+  (
+    runId: string,
+    github: Option.Option<GitHub["Service"]>,
+    holds: Markers.MarkerHolds["Service"],
+    lost: Deferred.Deferred<string>,
+  ) =>
+  (what: string) =>
+    Effect.gen(function* () {
+      if (Option.isNone(github)) {
+        return;
+      }
+
+      const claims = (yield* holds.held(Claims.refMarker.name)).flatMap((args) =>
+        Option.toArray(
+          Option.filter(
+            Schema.decodeOption(Claims.refMarker.args)(args),
+            (claim) => claim.runId === runId,
+          ),
+        ),
+      );
+
+      for (const { item } of claims) {
+        const holding = yield* Claims.holds(item, runId).pipe(
+          Effect.provideService(GitHub, github.value),
+          Effect.option,
+        );
+
+        for (const found of Option.toArray(holding)) {
+          if (!found.held) {
+            yield* Deferred.succeed(
+              lost,
+              `${Claims.describeLoss(item, found.holder)}; stopped before ${what}`,
+            );
+
+            return yield* Effect.interruptible(Effect.never);
+          }
+        }
+      }
+    });
+
 // Registers a flow's workflow with the engine. The services each run uses
 // (repoServices, or fakes in tests) are built once per persona of the repo,
 // chosen by the run's persona, then given the run's own Run and RunLog. One
@@ -636,6 +747,8 @@ export const flowLayer = <R>(
       );
 
       const holds = yield* markerHolds(runId, flow);
+      const lost = yield* Deferred.make<string>();
+      const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
 
       const outcome = yield* flow.workflow(payload.item).pipe(
         Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
@@ -646,6 +759,7 @@ export const flowLayer = <R>(
           runId: payload.runId,
           executionId,
           item: payload.item,
+          leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
         }),
         // An imported flow's prompts and steps are looked up in its package after the repo.
         provideFlowPackage(flow),
@@ -654,12 +768,23 @@ export const flowLayer = <R>(
         Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideContext(
           stoppingWith(
-            reportingChanges(linkingPullRequests(context, link), (what, item) =>
-              hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+            fencing(
+              reportingChanges(linkingPullRequests(context, link), (what, item) =>
+                hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+              ),
+              fence,
             ),
             executionId,
           ),
         ),
+        // A run that lost its item ends as lost, before any flow sees why.
+        (workflow) =>
+          Effect.raceFirst(
+            workflow,
+            Deferred.await(lost).pipe(
+              Effect.map((reason): RunResult => ({ status: "lost", summary: reason })),
+            ),
+          ),
         // Told to stop, it ends as an interrupt, before any flow sees why.
         untilStopped(executionId),
       );

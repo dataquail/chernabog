@@ -96,6 +96,21 @@ export const DaemonStatus = Schema.Struct({
       Schema.Struct({ runId: Schema.String, failures: Schema.Finite, problem: Schema.String }),
     ),
   ),
+  // The lease on each claim a run in flight holds, as its last check or
+  // renewal found it: when it runs out and was last renewed, and, when the
+  // last renewal failed, why: the lease is at risk. Absent from a daemon from
+  // before leases.
+  leases: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        runId: Schema.String,
+        item: Schema.String,
+        expiresAt: Maybe,
+        renewedAt: Maybe,
+        atRisk: Maybe,
+      }),
+    ),
+  ),
   // What ended runs left on their items: markers whose release is pending or
   // keeps failing, and ones no flow defines a release for any more, for a
   // person. Absent from a daemon from before markers.

@@ -5,13 +5,18 @@ What `@chernabog/core` declares, module by module, as `tsc` emits it. `bun run g
 ## claims.ts
 
 ```ts
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { type GitHubError } from "./errors.ts";
 import * as Markers from "./run-markers.ts";
 import { GitHub, Run } from "./services.ts";
 export declare const issue: (number: number) => string;
 export declare const pullRequest: (number: number) => string;
 export declare const refFor: (item: string) => string;
+export declare const leaseRefFor: (item: string, sha: string) => string;
+export declare const DEFAULT_LEASE_TTL: Duration.Duration;
 export declare const branchFor: (number: number) => string;
 export type Holder = {
     readonly runId: string;
@@ -19,11 +24,39 @@ export type Holder = {
     readonly flow: string;
     readonly claimedAt: string;
     readonly withPerson: boolean;
+    readonly expiresAt?: string;
+    readonly renewedAt?: string;
+    readonly takenOverFrom?: string;
 };
 export declare const messageOf: (holder: Holder) => string;
 export declare const holderOf: (message: string) => Option.Option<Holder>;
-export declare const holder: (item: string) => Effect.Effect<Option.Option<Holder>, import("./errors.ts").GitHubError, GitHub>;
-export declare const releaseFor: (item: string, runId: string) => Effect.Effect<boolean, import("./errors.ts").GitHubError, GitHub>;
+export type Claim = {
+    readonly sha: string;
+    readonly holder: Holder;
+};
+export declare const current: (item: string) => Effect.Effect<Option.Option<Claim>, GitHubError, GitHub>;
+export declare const holder: (item: string) => Effect.Effect<Option.Option<Holder>, GitHubError, GitHub>;
+export declare const expiresAt: (found: Holder) => Option.Option<DateTime.Utc>;
+export declare const expired: (found: Holder, now: DateTime.Utc) => boolean;
+export declare const liveHolder: (item: string) => Effect.Effect<Option.Option<Holder>, GitHubError, GitHub>;
+export type Renewal = {
+    readonly status: "renewed";
+    readonly expiresAt: string;
+} | {
+    readonly status: "lost";
+    readonly holder: Option.Option<Holder>;
+} | {
+    readonly status: "released";
+};
+export declare const renew: (item: string, runId: string, ttl: Duration.Duration) => Effect.Effect<Renewal, GitHubError, GitHub>;
+export type Holding = {
+    readonly held: true;
+} | {
+    readonly held: false;
+    readonly holder: Option.Option<Holder>;
+};
+export declare const holds: (item: string, runId: string) => Effect.Effect<Holding, GitHubError, GitHub>;
+export declare const releaseFor: (item: string, runId: string) => Effect.Effect<boolean, GitHubError, GitHub>;
 export declare const refMarker: Markers.Definition<{
     readonly item: string;
     readonly runId: string;
@@ -33,20 +66,23 @@ export type AcquireOptions = {
 };
 export type Acquired = {
     readonly acquired: true;
+    readonly takenOver: Option.Option<Holder>;
 } | {
     readonly acquired: false;
     readonly holder: Option.Option<Holder>;
 };
 export declare const acquire: (item: string, options?: AcquireOptions) => Effect.Effect<{
     acquired: true;
-    holder?: undefined;
+    takenOver: Option.Option<Holder>;
 } | {
     acquired: false;
     holder: Option.Option<Holder>;
-}, import("./errors.ts").GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
-export declare const release: (item: string) => Effect.Effect<boolean, import("./errors.ts").GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
+}, GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
+export declare const release: (item: string) => Effect.Effect<boolean, GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
 export declare const releasing: (item: string) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R | import("effect/workflow/WorkflowEngine").WorkflowEngine | import("effect/workflow/WorkflowEngine").WorkflowInstance | Markers.ReleaseServices>;
 export declare const describeHolder: (item: string, held: Option.Option<Holder>) => string;
+export declare const describeLoss: (item: string, held: Option.Option<Holder>) => string;
+export declare const describeTakeover: (previous: Holder) => string;
 ```
 
 ## errors.ts
@@ -495,7 +531,7 @@ import * as Schema from "effect/Schema";
 import { StepFailed } from "./errors.ts";
 import type { Json } from "./json.ts";
 import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type Worktree } from "./services.ts";
-export type Ending = "done" | "skipped" | "needs-human" | "failed" | "cancelled" | "superseded";
+export type Ending = "done" | "skipped" | "needs-human" | "failed" | "cancelled" | "superseded" | "lost";
 export type ReleaseServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Run;
 export type Marker = {
     readonly name: string;
@@ -781,6 +817,7 @@ export declare const RunInfo: Schema.Struct<{
         readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     }>;
     readonly pullRequest: Schema.optionalKey<Schema.Finite>;
+    readonly leaseTtl: Schema.optionalKey<Schema.Finite>;
 }>;
 export type RunInfo = typeof RunInfo.Type;
 declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
@@ -798,6 +835,7 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
         readonly reviewers?: readonly string[] | undefined;
     };
     readonly pullRequest?: number | undefined;
+    readonly leaseTtl?: number | undefined;
 }>;
 export declare class Run extends Run_base {
 }
@@ -930,6 +968,7 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     createRef(ref: string, sha: string): Effect.Effect<"created" | "already-exists", GitHubError>;
     ref(ref: string): Effect.Effect<Option.Option<RefCommit>, GitHubError>;
     deleteRef(ref: string): Effect.Effect<void, GitHubError>;
+    updateRef(ref: string, sha: string): Effect.Effect<void, GitHubError>;
     pullRequest(number: number): Effect.Effect<PullRequest, NotFound | GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;

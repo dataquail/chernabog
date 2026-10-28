@@ -35,27 +35,28 @@ export type CancelOptions = {
 };
 
 // Ending a run in flight otherwise than as cancelled: needing a person, with
-// that summary (a run this binary can't resume), or superseded, because its
-// work item went (closed, merged, claimed by another run).
+// that summary (a run this binary can't resume); superseded, because its
+// work item went (closed, merged, claimed by another run); or lost, because
+// another run took its work item over once its claim's lease expired.
 export type EndAs = {
-  readonly ending: "needs-human" | "superseded";
+  readonly ending: "needs-human" | "superseded" | "lost";
   readonly reason: string;
 };
 
 const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
-  if (endAs.ending === "superseded") {
-    return RunRootOps.supersede(found, endAs.reason, at);
+  if (endAs.ending === "needs-human") {
+    return RunRootOps.finish(found, "needs-human", endAs.reason, at);
   }
 
-  return RunRootOps.finish(found, "needs-human", endAs.reason, at);
+  return RunRootOps.supersede(found, endAs.reason, at, endAs.ending);
 };
 
 // What the run's log says of its ending.
 const noteOf = (ended: RunRoot) => {
   const summary = Option.getOrElse(ended.summary, () => ended.status);
 
-  if (ended.status === "superseded") {
-    return `superseded: ${summary}`;
+  if (ended.status === "superseded" || ended.status === "lost") {
+    return `${ended.status}: ${summary}`;
   }
 
   return summary;
@@ -191,8 +192,9 @@ const releaseEnded = (found: RunRoot) =>
   });
 
 // Ends a run in flight for good: records it cancelled, by whom and when (or
-// needing a person, and why, for a run this binary can't resume, or
-// superseded, and why, for a run whose work item went),
+// needing a person, and why, for a run this binary can't resume,
+// superseded, and why, for a run whose work item went, or lost, to the run
+// that took its item over, which keeps what it left),
 // before its workflow could record anything else; forgets its waits;
 // interrupts its workflow, which the engine keeps across a restart; and then
 // cleans up what it held: its worktrees, its claim ref, its claim on its
@@ -245,6 +247,23 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
   yield* workflows.note(found.id, noteOf(cancelled));
 
   const leftForPerson: Array<string> = [];
+
+  // A run that lost its item leaves everything on it, worktree included, to
+  // the run that took it over, and for a person to look at.
+  if (cancelled.status === "lost") {
+    return CancelledRun.make({
+      run: RunView.make({ ...cancelled }),
+      alreadyEnded: false,
+      stopped,
+      wakesCleared: parked.length,
+      removedWorktrees: [],
+      releasedClaims: [],
+      released: Option.none(),
+      closedSessions: [],
+      openSessions: yield* cleanup.openSessions(cancelled),
+      leftForPerson,
+    });
+  }
 
   // Worktrees another run in flight on the same issue or pull request may be
   // using stay, for the last run on it, or a person, to remove.

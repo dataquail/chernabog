@@ -36,6 +36,11 @@ import {
   noteEvent,
   type PendingTick,
 } from "../../modules/runs/domain/schedule/event-tick.value-object.ts";
+import {
+  DEFAULT_LEASE_LIMITS,
+  leaseTtlFor,
+  renewalDue,
+} from "../../modules/runs/domain/schedule/lease.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
   type CheckFailures,
@@ -66,6 +71,8 @@ import {
 } from "../../modules/runs/runs.layer.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
+import { RunLeases } from "../../modules/runs/use-cases/check-run-leases.result.ts";
+import { checkRunLeasesUseCase } from "../../modules/runs/use-cases/check-run-leases.use-case.ts";
 import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
@@ -310,6 +317,21 @@ const validityEveryOf = (repo: RepoState) =>
     Option.map(repo.repo, (loaded) => loaded.validityEvery),
     () => DEFAULT_VALIDITY_EVERY,
   );
+
+// How long a repo's runs' claims last, and how often they're renewed: the team's lease limits.
+const leasesOf = (repo: RepoState) =>
+  Option.getOrElse(
+    Option.map(repo.repo, (loaded) => loaded.leases),
+    () => DEFAULT_LEASE_LIMITS,
+  );
+
+// The lease on one claim of a run in flight, as status shows it.
+type LeaseNote = {
+  readonly item: string;
+  readonly expiresAt: Option.Option<string>;
+  readonly renewedAt: Option.Option<string>;
+  readonly atRisk: Option.Option<string>;
+};
 
 // An item a trigger reported, with the signals it saw for it.
 type WakingItem = { readonly key: string; readonly signals?: ReadonlyArray<string> };
@@ -678,10 +700,100 @@ export const runDaemon = Effect.gen(function* () {
           }
         });
 
-      // Asks whether a run's work item is still valid, and ends the run as
-      // superseded if it went.
+      // The leases of each run in flight, as their last check found them, and
+      // when this daemon last renewed each run's.
+      const leaseNotes = new Map<string, ReadonlyArray<LeaseNote>>();
+      const leasesRenewed = new Map<string, DateTime.Utc>();
+
+      // Ends a run whose claim another run took over as lost. What it left on
+      // the item, worktree included, stays for the run that took it over.
+      const loseRun = (run: ActiveRun, reason: string) =>
+        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some({ ending: "lost", reason }),
+        }).pipe(
+          Effect.result,
+          Effect.flatMap((ended) =>
+            log(
+              Result.match(ended, {
+                onSuccess: (done) =>
+                  `lost ${run.id} (${runLabel(run)}): ${Option.getOrElse(done.run.summary, () => reason)}`,
+                onFailure: (error) =>
+                  `could not end ${run.id} (${runLabel(run)}) as lost (${reason}): ${error.message}`,
+              }),
+            ),
+          ),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              leaseNotes.delete(run.id);
+              leasesRenewed.delete(run.id);
+            }),
+          ),
+        );
+
+      // Checks, or renews, a run's leases: whether it still holds its work
+      // item. A run that lost it ends as lost; a check that fails leaves the
+      // lease at risk, and the run running.
+      const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
+        Effect.gen(function* () {
+          const found = yield* checkRunLeasesUseCase(run.id, renew);
+          const known = leaseNotes.get(run.id) ?? [];
+
+          yield* RunLeases.match(found, {
+            Held: ({ leases }) =>
+              Effect.sync(() => {
+                leaseNotes.set(
+                  run.id,
+                  leases.map((lease) => ({ ...lease, atRisk: Option.none() })),
+                );
+              }),
+            Lost: ({ reason }) => loseRun(run, reason),
+            CheckFailed: ({ message }) =>
+              Effect.sync(() => {
+                leaseNotes.set(
+                  run.id,
+                  known.map((lease) => ({ ...lease, atRisk: Option.some(message) })),
+                );
+              }),
+            Unchecked: () => Effect.void,
+          });
+
+          return !Predicate.isTagged(found, "Lost");
+        });
+
+      // Renews the leases of every run in flight whose renewal is due, in
+      // every repo, paused or draining included: a run in flight still holds
+      // its work. A parked run's lease lasts the longer parkedLeaseTtl.
+      const renewLeases = Effect.gen(function* () {
+        const now = yield* DateTime.now;
+
+        for (const run of yield* active) {
+          const limits = Option.match(
+            Option.fromUndefinedOr(repos.find((repo) => repo.name === run.repo)),
+            { onNone: () => DEFAULT_LEASE_LIMITS, onSome: leasesOf },
+          );
+
+          if (
+            !renewalDue(Option.fromUndefinedOr(leasesRenewed.get(run.id)), limits.renewEvery, now)
+          ) {
+            continue;
+          }
+
+          leasesRenewed.set(run.id, now);
+          yield* checkLeases(run, Option.some(leaseTtlFor(limits, run.parked)));
+        }
+      }).pipe(Effect.catchCause((cause) => log(`renewing runs' leases failed: ${String(cause)}`)));
+
+      // Asks whether a run still holds its work item, and whether the item is
+      // still valid: a run whose claim another run took over ends as lost,
+      // and one whose item went as superseded. Whether the run carries on.
       const checkRun = (run: ActiveRun) =>
         Effect.gen(function* () {
+          if (!(yield* checkLeases(run, Option.none()))) {
+            return false;
+          }
+
           const found = yield* checkRunValidityUseCase(run.id);
 
           if (!Predicate.isTagged(found, "CheckFailed")) {
@@ -695,7 +807,7 @@ export const runDaemon = Effect.gen(function* () {
             Unchecked: () => Effect.void,
           });
 
-          return found;
+          return !isGone(found);
         });
 
       // The signalled items whose parked run still has its work item: a run
@@ -721,12 +833,12 @@ export const runDaemon = Effect.gen(function* () {
               () => (item.signals ?? []).length > 0,
             );
 
-            const checked = yield* Option.match(waiting, {
-              onNone: () => Effect.succeedNone,
-              onSome: (run) => Effect.asSome(checkRun(run)),
+            const carriesOn = yield* Option.match(waiting, {
+              onNone: () => Effect.succeed(true),
+              onSome: checkRun,
             });
 
-            if (!Option.exists(checked, isGone)) {
+            if (carriesOn) {
               waking.push(item);
             }
           }
@@ -1116,24 +1228,37 @@ export const runDaemon = Effect.gen(function* () {
           }
         }
 
-        // A run that ended has no checks left to fail.
+        // A run that ended has no checks left to fail, and no leases.
         for (const runId of checkFailures.keys()) {
           if (!running.some((run) => run.id === runId)) {
             checkFailures.delete(runId);
+          }
+        }
+
+        for (const runId of [...leaseNotes.keys(), ...leasesRenewed.keys()]) {
+          if (!running.some((run) => run.id === runId)) {
+            leaseNotes.delete(runId);
+            leasesRenewed.delete(runId);
           }
         }
       }).pipe(
         Effect.catchCause((cause) => log(`checking runs' work items failed: ${String(cause)}`)),
       );
 
-      // Until the next notified item's check is due, or VALIDITY_POLL at the latest.
+      // Until the next notified item's check is due, or VALIDITY_POLL (or a
+      // repo's limits.leaseRenewEvery, if sooner) at the latest.
       const untilNextCheck = Effect.map(DateTime.now, (now) =>
-        Arr.reduce([...notifiedItems.values()], VALIDITY_POLL, (soonest, item) =>
-          Option.match(notifiedDueAt(item), {
-            onNone: () => soonest,
-            onSome: (at) =>
-              Duration.min(soonest, Duration.max(Duration.zero, DateTime.distance(now, at))),
-          }),
+        Arr.reduce(
+          [...notifiedItems.values()],
+          Arr.reduce(repos, VALIDITY_POLL, (soonest, repo) =>
+            Duration.min(soonest, leasesOf(repo).renewEvery),
+          ),
+          (soonest, item) =>
+            Option.match(notifiedDueAt(item), {
+              onNone: () => soonest,
+              onSome: (at) =>
+                Duration.min(soonest, Duration.max(Duration.zero, DateTime.distance(now, at))),
+            }),
         ),
       );
 
@@ -1141,6 +1266,7 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             yield* validityWake.close;
+            yield* renewLeases;
             yield* checkValidity;
             yield* Effect.timeoutOrElse(validityWake.await, {
               duration: yield* untilNextCheck,
@@ -1511,6 +1637,9 @@ export const runDaemon = Effect.gen(function* () {
             failures: failures.count,
             problem: failures.message,
           })),
+          leases: [...leaseNotes].flatMap(([runId, leases]) =>
+            leases.map((lease) => ({ runId, ...lease })),
+          ),
           markers: (yield* listUnreleasedMarkersUseCase()).markers,
         } satisfies DaemonStatus;
       });
