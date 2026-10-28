@@ -38,6 +38,7 @@ export const pollNotificationsUseCase = Effect.fn("pollNotificationsUseCase")(fu
       NotificationNews.make({
         repo: notification.repo,
         cause: notificationCause(notification.reason, notification.item),
+        item: notification.item,
       }),
     ),
     lastModified: page.lastModified,

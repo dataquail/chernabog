@@ -1113,6 +1113,28 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
       return number;
     },
+    // A pull request someone off this machine opened, asking `reviewers` to review it.
+    addPull: (title: string, head: string, author: string, reviewers: ReadonlyArray<string>) => {
+      const number = takeNumber();
+      pulls.set(number, {
+        number,
+        title,
+        body: "A change.",
+        head,
+        base: "main",
+        state: "open",
+        merged: false,
+        labels: [],
+        reviewers: [...reviewers],
+        author,
+      });
+
+      return number;
+    },
+    // A notification GitHub sends `login` about a pull request, from someone else.
+    notify: (login: string, reason: string, number: number) => {
+      notify(login, reason, number, "");
+    },
     stop: () => server.stop(true),
   };
 };

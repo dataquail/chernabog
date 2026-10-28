@@ -6,6 +6,8 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 
+import { itemTarget } from "../run/work-item.value-object.ts";
+
 // How often each run in flight is checked, by default: the team's limits.validityEvery.
 export const DEFAULT_VALIDITY_EVERY = Duration.minutes(5);
 
@@ -32,3 +34,12 @@ export const noteCheckFailure = (
   count: Option.match(previous, { onNone: () => 1, onSome: (found) => found.count + 1 }),
   message,
 });
+
+// Whether a run in flight is about the issue or pull request a notification
+// names: its item is that one, or it opened or adopted it as its pull request.
+export const runIsAbout = (
+  run: { readonly itemKey: string; readonly pullRequest: Option.Option<number> },
+  number: number,
+) =>
+  Option.exists(itemTarget(run.itemKey), (target) => target.number === number) ||
+  Option.contains(run.pullRequest, number);
