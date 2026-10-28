@@ -235,7 +235,8 @@ describe("a flow keyed by its own label", () => {
       ]);
 
       expect((yield* runToEnd(fake, "claim-ship")).status).toBe("done");
-      expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.inProgress]);
+      // The queue label is gone; the in-progress label claim put on goes when the run ends.
+      expect(fake.labelsOf(ISSUE)).toEqual([]);
     }),
   );
 });

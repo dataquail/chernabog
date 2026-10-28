@@ -425,12 +425,16 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   });
 
   // As on GitHub, a second create of one ref answers 422, whoever asks.
+  // Every ref created through the API, oldest first, as it pointed when made.
+  const createdRefs: Array<{ readonly ref: string; readonly sha: string }> = [];
+
   const createRef = withBody(CreateRefBody, (body) => {
     if (Option.isSome(shaOf(body.ref))) {
       return json({ message: "Reference already exists" }, 422);
     }
 
     git("update-ref", body.ref, body.sha);
+    createdRefs.push({ ref: body.ref, sha: body.sha });
 
     return json({ ref: body.ref, object: { sha: body.sha } }, 201);
   });
@@ -1078,6 +1082,11 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     requestsBy,
     // The sha a ref points at, such as a claim, named in full.
     refSha: shaOf,
+    createdRefs,
+    // Points a ref, named in full, at a commit, as a run that left it would have.
+    setRef: (ref: string, sha: string) => {
+      git("update-ref", ref, sha);
+    },
     // A commit's message, as GitHub keeps it.
     messageOf: (sha: string) => git("log", "-1", "--format=%B", sha),
     setChecks: (state: Checks) => {
