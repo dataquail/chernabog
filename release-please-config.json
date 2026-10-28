@@ -18,7 +18,8 @@
     "packages/recipes": {
       "release-type": "node",
       "package-name": "@chernabog/recipes",
-      "component": "recipes"
+      "component": "recipes",
+      "initial-version": "0.1.0"
     }
   }
 }
