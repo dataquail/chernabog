@@ -335,6 +335,29 @@ Errors split by who acts on them (`packages/sdk/src/errors.ts`).
   but raised only when a flow asks for it (as a defect `surfaceSetup` turns
   back into the setup error), so flows that never review run regardless.
 
+## Markers (#143)
+
+A marker is something a run put on an item outside chernabog (a label, an
+assignment, a board Status, a claim ref or branch), with a named release.
+
+- **The SDK side** is `packages/sdk/src/run-markers.ts` (exported as
+  `Markers`): `define(name, argsSchema, release)`, `hold`, `drop`, `dropAll`,
+  `forget`. A hold goes through the `MarkerHolds` service the engine provides
+  (`flowLayer`), and does nothing outside a recorded run. A flow lists its
+  definitions in `defineFlow({ markers })`; the SDK's own
+  (`github-markers.ts`, plus `Claims.refMarker`) are `Markers.builtIn`. Keep a
+  marker's name and arguments' shape once runs hold it: a run in flight is
+  released by them.
+- **The runs module** keeps holds as `RunMarkerRoot` (`om_markers`), one per
+  run, name and arguments. `releaseMarkersUseCase` releases what ended runs
+  hold, newest first, through `FlowsClient.releaseMarker` (the loaded flow's
+  definition, as the run's persona); keepOn endings are kept, a failure backs
+  off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
+  The daemon runs it every few seconds, `chernabog run` once its run ends, and
+  `status` shows `listUnreleasedMarkersUseCase`.
+- **Cancel still does its own cleanup** (claim ref, label, assignment, branch)
+  for runs from before markers; markers' releases are safe to repeat after it.
+
 ## Rehearsals (#115)
 
 `chernabog rehearse <flow> --scenario <file>` runs a repo's own flow file down

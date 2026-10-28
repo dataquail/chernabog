@@ -9,6 +9,7 @@ export * as Hybrid from "./hybrid.ts";
 export * as Implement from "./implement.ts";
 export * from "./json.ts";
 export * from "./markers.ts";
+export * as Markers from "./markers-api.ts";
 export * from "./paths.ts";
 export * as Plan from "./plan.ts";
 export * from "./prompt.ts";

@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
+import type * as Schema from "effect/Schema";
 
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
@@ -13,6 +14,7 @@ import {
   type ValidityQuestion,
   type WorkItem,
 } from "../../domain/run/work-item.value-object.ts";
+import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 
 // A flow as a test has it: the work its trigger reports (or why it fails),
 // the items it finds by key, and why its gate holds runs back, if it does.
@@ -31,6 +33,15 @@ export type FakeFlow = {
   readonly validity?: ItemValidity;
   readonly validityFails?: string;
   readonly asked?: Array<ValidityQuestion>;
+  // The markers it defines; each release a run asks of it is appended to
+  // `releases`, and fails with the first of `releaseFails` while it has one.
+  readonly markers?: ReadonlyArray<string>;
+  readonly releases?: Array<{
+    readonly runId: string;
+    readonly name: string;
+    readonly args: Schema.Json;
+  }>;
+  readonly releaseFails?: Array<string>;
 };
 
 const keyOf = (flow: FlowRef) => `${flow.repo}/${flow.flow}`;
@@ -72,6 +83,27 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
             return Option.match(Option.fromUndefinedOr(found.validityFails), {
               onNone: () => Effect.succeed(Option.fromUndefinedOr(found.validity)),
               onSome: (message) => Effect.fail(new FlowFailed({ message })),
+            });
+          },
+        ),
+      releaseMarker: (flow, run, name, args) =>
+        Effect.flatMap(
+          flowOf(flow),
+          (found): Effect.Effect<void, FlowFailed | MarkerUnreleasable> => {
+            if (!(found.markers ?? []).includes(name)) {
+              return Effect.fail(
+                new MarkerUnreleasable({
+                  message: `${flow.flow} no longer defines marker ${name}`,
+                }),
+              );
+            }
+
+            return Option.match(Option.fromUndefinedOr(found.releaseFails?.[0]), {
+              onSome: (message) => Effect.fail(new FlowFailed({ message })),
+              onNone: () =>
+                Effect.sync(() => {
+                  found.releases?.push({ runId: run.runId, name, args });
+                }),
             });
           },
         ),

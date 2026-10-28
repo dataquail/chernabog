@@ -13,6 +13,7 @@ import {
   Git,
   GitHub,
   isSetupError,
+  Markers,
   NeedsHuman,
   type RepoSettings,
   Run,
@@ -52,7 +53,10 @@ import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
+import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
+import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
 import { linkPullRequestUseCase } from "../../use-cases/link-pull-request.use-case.ts";
+import { listRunMarkersUseCase } from "../../use-cases/list-run-markers.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
@@ -464,6 +468,43 @@ const provideFlowPackage =
         }),
     });
 
+// The markers a run holds, recorded against it for their release when it
+// ends. A marker neither the SDK nor the flow defines couldn't be released,
+// so holding one fails.
+const markerHolds = (runId: RunId, flow: Flow) =>
+  Effect.gen(function* () {
+    const known = new Set(
+      [...Markers.builtIn, ...(flow.markers ?? [])].map((marker) => marker.name),
+    );
+
+    const hold = yield* capturing(
+      (name: string, args: Schema.Json, keepOn: ReadonlyArray<string>) =>
+        holdMarkerUseCase({ runId, name, args, keepOn }),
+    );
+
+    const forget = yield* capturing((name: string, args: Schema.Json) =>
+      forgetMarkerUseCase({ runId, name, args }),
+    );
+
+    const held = yield* capturing((name: string) =>
+      listRunMarkersUseCase(runId, Option.some(name)).pipe(
+        Effect.map((found) => found.markers.map((marker) => marker.args)),
+      ),
+    );
+
+    return Markers.MarkerHolds.of({
+      hold: (name, args, keepOn) => {
+        if (!known.has(name)) {
+          return Effect.fail(Markers.unlisted(name));
+        }
+
+        return hold(name, args, keepOn).pipe(Effect.asVoid);
+      },
+      held,
+      forget,
+    });
+  });
+
 export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
@@ -550,6 +591,8 @@ export const flowLayer = <R>(
           park({ runId, signal, deferred, token }).pipe(Effect.asVoid),
       });
 
+      const holds = yield* markerHolds(runId, handle.flow);
+
       const outcome = yield* handle.flow.workflow(payload.item).pipe(
         Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
         surfaceSetup,
@@ -564,6 +607,7 @@ export const flowLayer = <R>(
         provideFlowPackage(handle.flow),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
+        Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideContext(
           stoppingWith(
             reportingChanges(linkingPullRequests(context, link), (what, item) =>

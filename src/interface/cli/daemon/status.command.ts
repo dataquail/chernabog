@@ -12,6 +12,7 @@ import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
 import { FLOW_TURNED_OFF } from "../../../modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { listEnrolledReposUseCase } from "../../../modules/enrollment/use-cases/list-enrolled-repos.use-case.ts";
+import { type RunMarkerView } from "../../../modules/runs/use-cases/run-marker.result.ts";
 import { checkTrustUseCase } from "../../../modules/trust/use-cases/check-trust.use-case.ts";
 import { type TrustCheck } from "../../../modules/trust/use-cases/trust-check.result.ts";
 import { daemonStatus } from "../../daemon/daemon.client.ts";
@@ -85,6 +86,24 @@ const runLine = (run: DaemonStatus["active"][number]) => {
 };
 
 // What the daemon is doing, for a person.
+const argsText = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+
+// A marker an ended run left: its release keeps failing, or a person must take it off.
+const markerLine = (marker: RunMarkerView) => {
+  const what = `  ${shortRunId(marker.runId)}  ${marker.name} ${argsText(marker.args)}`;
+  const why = Option.getOrElse(marker.lastError, () => "");
+
+  if (marker.status === "unreleasable") {
+    return `${what}: can't be released (${why}); take it off by hand`;
+  }
+
+  if (marker.attempts === 0) {
+    return `${what}: releasing`;
+  }
+
+  return `${what}: failed ${marker.attempts} time(s), last: ${why}; trying again`;
+};
+
 export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
   const finished = status.recent.filter((run) => run.status !== "running");
 
@@ -159,6 +178,8 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
             `    stillValid failed ${check.failures} time(s) in a row: ${check.problem} (the run carries on)`,
         ),
     ]),
+    ...Option.toArray(Option.map(Arr.head(status.markers ?? []), () => "\nnot yet released:")),
+    ...(status.markers ?? []).map(markerLine),
     ...Option.toArray(Option.map(Arr.head(finished), () => "\nrecent:")),
     ...finished
       .slice(0, 8)

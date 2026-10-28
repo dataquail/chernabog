@@ -30,6 +30,7 @@ import {
   WorkError,
 } from "./errors.ts";
 import type { Json } from "./json.ts";
+import type { Marker } from "./run-markers.ts";
 import {
   type Agent,
   type Git,
@@ -139,6 +140,10 @@ type FlowCommon = {
   // whose item is Gone as superseded, interrupting what it was doing. Without
   // it, a run carries on until its workflow ends it.
   readonly stillValid?: StillValid;
+  // The markers its runs hold, defined with Markers.define at the top of the
+  // flow's module, so the engine can release them by name when a run ends.
+  // The SDK's own (Markers.builtIn) are always known.
+  readonly markers?: ReadonlyArray<Marker>;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };

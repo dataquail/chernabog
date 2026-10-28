@@ -11,8 +11,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { activity } from "./flow.ts";
+import * as Markers from "./run-markers.ts";
 import { GitHub, Run } from "./services.ts";
 
 // Git's empty tree, which GitHub has in every repo.
@@ -83,6 +85,30 @@ export const holder = (item: string) =>
     Effect.map(Option.flatMap((commit) => holderOf(commit.message))),
   );
 
+// Lets go of the claim on `item` if `runId` holds it, and says whether it did.
+// A claim another run holds is left to it.
+export const releaseFor = (item: string, runId: string) =>
+  Effect.gen(function* () {
+    const held = yield* holder(item);
+
+    if (!Option.exists(held, (found) => found.runId === runId)) {
+      return false;
+    }
+
+    yield* (yield* GitHub).deleteRef(refFor(item));
+
+    return true;
+  });
+
+// The claim ref, as a marker: acquire holds it, so the engine lets the claim
+// go however the run ends, cancelled or superseded included. Released only
+// while the run named holds it.
+export const refMarker = Markers.define(
+  "chernabog/claim-ref",
+  Schema.Struct({ item: Schema.String, runId: Schema.String }),
+  (args) => releaseFor(args.item, args.runId).pipe(Effect.asVoid),
+);
+
 export type AcquireOptions = {
   // A person works on the item in the run, on the hybrid path.
   readonly withPerson?: boolean;
@@ -98,6 +124,9 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const run = yield* Run;
+
+    // Held before the ref exists, so a crash in between leaves nothing unrecorded.
+    yield* Markers.hold(refMarker, { item, runId: run.runId });
 
     const sha = yield* github.createCommit({
       message: messageOf({
@@ -124,27 +153,18 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
     return { acquired: false, holder: held } satisfies Acquired;
   });
 
-// Lets go of the claim on `item` if `runId` holds it, and says whether it did.
-// A claim another run holds is left to it.
-export const releaseFor = (item: string, runId: string) =>
-  Effect.gen(function* () {
-    const held = yield* holder(item);
-
-    if (!Option.exists(held, (found) => found.runId === runId)) {
-      return false;
-    }
-
-    yield* (yield* GitHub).deleteRef(refFor(item));
-
-    return true;
-  });
-
 // Lets go of this run's claim on `item`.
-export const release = (item: string) => Run.use((run) => releaseFor(item, run.runId));
+export const release = (item: string) =>
+  Run.use((run) =>
+    releaseFor(item, run.runId).pipe(
+      Effect.tap(() => Markers.forget(refMarker, { item, runId: run.runId })),
+    ),
+  );
 
-// Holds the claim on `item` for as long as `effect` runs, and releases it
-// however that ends, as the step `release-claim-<item>`. A run waiting on a
-// signal keeps it.
+// Lets the claim on `item` go as soon as `effect` ends, as the step
+// `release-claim-<item>`, rather than when the engine releases the run's
+// markers after it ends. A run waiting on a signal keeps it. acquire's marker
+// already guarantees the release; this only makes it sooner.
 export const releasing =
   (item: string) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -155,9 +175,10 @@ export const releasing =
           return Effect.void;
         }
 
-        return activity(`release-claim-${item}`, release(item).pipe(Effect.asVoid)).pipe(
-          Effect.ignore,
-        );
+        return activity(
+          `release-claim-${item}`,
+          Run.use((run) => Markers.drop(refMarker, { item, runId: run.runId })),
+        ).pipe(Effect.ignore);
       }),
     );
 

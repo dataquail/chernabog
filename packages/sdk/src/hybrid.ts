@@ -18,12 +18,15 @@ import * as Claims from "./claims.ts";
 import { HUMAN_INITIATED } from "./default-prompts.ts";
 import { Skip, StepFailed } from "./errors.ts";
 import { activity, reportAs } from "./flow.ts";
+import * as GitHubMarkers from "./github-markers.ts";
 import {
   type AuthorSession,
   branchFor,
+  dropInProgress,
   issueItem,
   latestClaim,
   legacyClaim,
+  markClaimed,
   PullRequestRef,
   sessionIdFor,
 } from "./implement.ts";
@@ -31,6 +34,7 @@ import type { Json } from "./json.ts";
 import { claimMarker, sessionMarker } from "./markers.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
+import * as Markers from "./run-markers.ts";
 import { Agent, GitHub, Repo, Run, type WorkItem } from "./services.ts";
 
 // Finds nothing, on whatever schedule it is given.
@@ -86,9 +90,8 @@ const cancelHint = (holder: Option.Option<Claims.Holder>) =>
 
 // Claims the issue with its claim ref, then creates the issue's branch, or
 // takes up one an earlier start or an ended run left, and labels, assigns and
-// comments as claim does. It takes the issue out of the unattended queues. An
-// issue another run holds is left to it. Wrap the run in
-// `Claims.releasing(Claims.issue(issue))` to let the claim go when it ends.
+// comments as claim does, holding the same markers. It takes the issue out of
+// the unattended queues. An issue another run holds is left to it.
 export const claim = (issue: number) =>
   activity(
     "claim",
@@ -130,19 +133,18 @@ export const claim = (issue: number) =>
             reason: `#${issue} is already claimed by an unattended run (${branch} exists)`,
           });
         }
+      } else {
+        yield* Markers.hold(GitHubMarkers.claimBranch, { branch }, { keepOn: ["needs-human"] });
       }
 
-      yield* github.addLabel(issue, repo.labels.inProgress);
+      // A person's session that fails, as one they close does, leaves the
+      // issue in progress for their next start.
+      yield* markClaimed(issue, { keepOn: ["failed"] });
 
       for (const queued of [repo.labels.eligible, repo.labels.ship]) {
         yield* github.removeLabel(issue, queued);
       }
 
-      if (Option.isSome(repo.board)) {
-        yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
-      }
-
-      yield* github.assignSelf(issue);
       yield* github.comment(
         issue,
         claimComment(DateTime.formatIso(yield* DateTime.now), branch, run.runId),
@@ -296,7 +298,7 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
         pullRequest.number,
         `Worked on by a person with ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`,
       );
-      yield* github.removeLabel(issue, repo.labels.inProgress);
+      yield* dropInProgress(issue);
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${finished.summary}`,
