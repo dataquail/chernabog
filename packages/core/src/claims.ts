@@ -13,9 +13,9 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { activity } from "../abi/flow.ts";
-import * as Markers from "../abi/run-markers.ts";
-import { GitHub, Run } from "../abi/services.ts";
+import { activity } from "./flow.ts";
+import * as Markers from "./run-markers.ts";
+import { GitHub, Run } from "./services.ts";
 
 // Git's empty tree, which GitHub has in every repo.
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -27,6 +27,9 @@ export const issue = (number: number) => `issue-${number}`;
 export const pullRequest = (number: number) => `pr-${number}`;
 
 export const refFor = (item: string) => `refs/chernabog/claims/${item}`;
+
+// The work branch a run on an issue makes, which the daemon cleans up after it.
+export const branchFor = (number: number) => `auto/issue-${number}`;
 
 // Whose run holds a claim. The commit says nothing about the machine: it is
 // as public as the repo.

@@ -1,4 +1,4 @@
-import { defineFlow, gone, Run, RunLog, Skip, valid } from "@chernabog/sdk";
+import { defineFlow, gone, Run, RunLog, Skip, valid } from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";

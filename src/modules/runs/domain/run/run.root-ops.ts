@@ -8,9 +8,12 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 
+import {
+  resumesRunsFrom,
+  unsupportedRunSummary,
+} from "../../../../kernel/core-support.value-object.ts";
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { supportsSdk, unsupportedRunSummary } from "../../../../kernel/sdk-support.value-object.ts";
 import {
   AmbiguousRunPrefix,
   NoRunInFlight,
@@ -44,7 +47,9 @@ const activeFor = (runs: ReadonlyArray<RunRoot>, wanted: RunFor) =>
 
 export type NewRun = RunFor & {
   readonly id: RunId;
-  readonly sdkVersion: string;
+  readonly coreVersion: string;
+  // The .chernabog/ tree its flow was loaded from; none from a working copy.
+  readonly configTree?: Option.Option<string>;
   readonly itemTitle: Option.Option<string>;
   readonly itemUrl: Option.Option<string>;
   readonly item: Option.Option<WorkItem>;
@@ -86,13 +91,13 @@ const attachExecution = (run: RunRoot, executionId: string) =>
 const unexecuted = (run: RunRoot) =>
   Option.liftPredicate(run, (found) => isRunning(found) && Option.isNone(found.executionId));
 
-// Why this binary mustn't resume a run in flight: it started under an SDK
-// this binary doesn't run, so replaying its journal under this one could do
+// Why this binary mustn't resume a run in flight: it started under a core
+// this binary doesn't provide, so replaying its journal under this one could do
 // anything. None for a run it can resume, or one that has ended.
 const unsupported = (run: RunRoot) =>
   Option.liftPredicate(
-    unsupportedRunSummary(run.sdkVersion),
-    () => isRunning(run) && !supportsSdk(run.sdkVersion),
+    unsupportedRunSummary(run.coreVersion),
+    () => isRunning(run) && !resumesRunsFrom(run.coreVersion),
   );
 
 // The run entering a step.

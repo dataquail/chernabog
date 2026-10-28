@@ -3,7 +3,7 @@
 // opens under the launcher; this brings it up in front of the person who
 // asked: the Orca terminal, or `tmux attach`.
 
-import { describeError } from "@chernabog/sdk";
+import { describeError } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";

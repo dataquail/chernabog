@@ -13,7 +13,7 @@ import {
   type Json,
   parseJson,
   printJson,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

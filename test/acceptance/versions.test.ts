@@ -1,6 +1,6 @@
 // Version compatibility, end to end: a repo whose flows this binary can't run
-// is refused and shown as incompatible; a run in flight from an SDK it doesn't
-// run goes to a person at startup; and a daemon whose binary changes drains
+// is refused and shown as incompatible; a run in flight from a core it doesn't
+// provide goes to a person at startup; and a daemon whose binary changes drains
 // and restarts on it.
 
 import { type ChildProcess } from "node:child_process";
@@ -11,7 +11,8 @@ import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { supportedRange } from "../../src/kernel/sdk-support.value-object.ts";
+import { providedRange } from "../../src/kernel/core-support.value-object.ts";
+import { RELEASED_SDK } from "../../src/platform/flow-deps.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // One daemon at a time in a sandbox, with `env` added: start it, ask it to
@@ -47,14 +48,18 @@ const daemonIn = (sandbox: () => Sandbox, env: Readonly<Record<string, string>> 
   return { start, reload, stop, exited: () => exit };
 };
 
-describe("a repo whose flows are written against an SDK this binary doesn't run", () => {
+describe("a repo whose flows are typed against a core this binary doesn't provide", () => {
   let sandbox: Sandbox;
   const daemon = daemonIn(() => sandbox);
 
   beforeAll(async () => {
     sandbox = openSandbox(
       {},
-      { repoFiles: { "package.json": '{ "devDependencies": { "@chernabog/sdk": "0.0.1" } }\n' } },
+      {
+        repoFiles: {
+          "package.json": `{ "dependencies": { "@chernabog/sdk": "${RELEASED_SDK}" }, "devDependencies": { "@chernabog/core": "0.0.1" } }\n`,
+        },
+      },
     );
     await sandbox.runCli(["trust", "demo"]);
   });
@@ -69,15 +74,13 @@ describe("a repo whose flows are written against an SDK this binary doesn't run"
     const status = (await sandbox.runCli(["status"])).output;
 
     expect(status).toContain("demo (dataquail/demo): incompatible");
-    expect(status).toContain(`its flows are written against @chernabog/sdk 0.0.1, and chernabog`);
-    expect(status).toContain(
-      `runs ${supportedRange}; move the flows with chernabog recipes upgrade`,
-    );
+    expect(status).toContain(`its flows are typed against @chernabog/core 0.0.1, and chernabog`);
+    expect(status).toContain(`provides ${providedRange}; move them with chernabog recipes upgrade`);
     expect((await sandbox.runCli(["doctor"])).output).toContain("demo: incompatible:");
   }, 60_000);
 });
 
-describe("a run in flight from an SDK this binary doesn't run", () => {
+describe("a run in flight from a core this binary doesn't provide", () => {
   let sandbox: Sandbox;
   const daemon = daemonIn(() => sandbox);
 
@@ -97,7 +100,7 @@ describe("a run in flight from an SDK this binary doesn't run", () => {
     await daemon.stop();
     const db = new Database(join(sandbox.home, "state.db"));
     db.run(
-      `INSERT INTO om_runs (id, repo, flow, item_key, status, sdk_version, started_at)
+      `INSERT INTO om_runs (id, repo, flow, item_key, status, core_version, started_at)
        VALUES ('old-run', 'demo', 'review', 'pr-41', 'running', '0.0.1', '2026-10-01T00:00:00.000Z')`,
     );
     db.close();
@@ -116,7 +119,7 @@ describe("a run in flight from an SDK this binary doesn't run", () => {
     reopened.close();
     expect(row).toEqual({
       status: "needs-human",
-      summary: `it started under @chernabog/sdk 0.0.1, and this chernabog runs @chernabog/sdk ${supportedRange}, so it wasn't resumed`,
+      summary: `it started under @chernabog/core 0.0.1, and this chernabog provides @chernabog/core ${providedRange}, so it wasn't resumed`,
     });
   }, 60_000);
 });

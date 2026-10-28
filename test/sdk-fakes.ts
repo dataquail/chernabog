@@ -36,7 +36,7 @@ import {
   Usage,
   type WorkItem,
   Worktree,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import type { BunServices } from "@effect/platform-bun";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";

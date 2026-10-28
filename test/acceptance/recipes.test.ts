@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Result from "effect/Result";
 
 import { decodeRepoManifest } from "../../src/modules/recipes/domain/recipe/repo-manifest.value-object.ts";
-import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
+import { RELEASED_SDK } from "../../src/platform/flow-deps.ts";
 import { ACME_DEPLOY, ACME_TOKEN, UPSTREAM_FIX } from "./fake-registry.ts";
 import { openSandbox, recipeFiles, type Sandbox } from "./sandbox.ts";
 
@@ -203,7 +203,7 @@ describe("recipes", () => {
     );
     writeFileSync(
       flow("security"),
-      'import { defineFlow, Review } from "@chernabog/sdk";\nexport default defineFlow({ trigger: Review.fixTrigger, workflow: () => undefined });\n',
+      'import { Claims, defineFlow } from "@chernabog/core";\nimport { Review } from "@chernabog/sdk";\nexport default defineFlow({ trigger: Review.trigger, workflow: () => Claims.releaseAll });\n',
     );
     expect(await compatible()).toContain(
       "demo: incompatible: .chernabog/: package.json still has engines.chernabog",
@@ -211,12 +211,14 @@ describe("recipes", () => {
 
     const { code, output } = await sandbox.runCli(["recipes", "upgrade"]);
     expect(code).toBe(0);
-    expect(output).toContain(`.chernabog/package.json: pins @chernabog/sdk ${BUNDLED_SDK}`);
+    expect(output).toContain(
+      `.chernabog/package.json: lists @chernabog/sdk ${RELEASED_SDK} and pins this chernabog's @chernabog/core and effect`,
+    );
     expect(output).toContain(
       ".chernabog/flows/review.ts: replaced, since nothing recorded which version it came from; review the diff",
     );
     expect(output).toContain(
-      `.chernabog/flows/security.ts: from no recipe, left as it is; it imports what @chernabog/sdk ${BUNDLED_SDK} doesn't have (Review.fixTrigger), so move it by hand`,
+      ".chernabog/flows/security.ts: from no recipe, left as it is; it imports what this chernabog's @chernabog/core doesn't have (Claims.releaseAll), so move it by hand",
     );
     expect(output).toContain("Nothing is committed.");
     expect(output).not.toContain("No recipe package is installed");
@@ -226,9 +228,7 @@ describe("recipes", () => {
 
     // The hand-written flow, moved by hand.
     writeFileSync(flow("security"), recipeFiles(["review"])["flows/review.ts"]);
-    expect(await compatible()).toContain(
-      "demo: .chernabog/ is written against an SDK this chernabog runs",
-    );
+    expect(await compatible()).toContain("demo: .chernabog/ needs a core this chernabog provides");
   }, 90_000);
 });
 

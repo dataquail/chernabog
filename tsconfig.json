@@ -14,7 +14,9 @@
   },
   "include": [
     "src",
+    "packages/core/src",
     "packages/sdk/src",
+    "packages/sdk/index.ts",
     "scripts",
     "test",
     "templates/.chernabog",

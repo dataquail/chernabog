@@ -1,7 +1,7 @@
 // The launchers an interactive agent session can run under. `headless` is the
 // name for none: the agent runs as a child process, as `claude -p`.
 
-import type { LauncherCommands, RepoSettings, ResolvedLauncher } from "@chernabog/sdk";
+import type { LauncherCommands, RepoSettings, ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 

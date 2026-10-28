@@ -9,5 +9,7 @@ tools/oxlint/
 # Generated: test/templates.test.ts holds src/platform/templates.ts to what its script writes.
 src/platform/templates.ts
 src/platform/effect-modules.ts
+# Generated: test/core-api.test.ts holds it to what tsc declares of core.
+packages/core/API.md
 # Extensionless TypeScript scripts, which Prettier reads as JavaScript from their shebang.
 test/fakebin/

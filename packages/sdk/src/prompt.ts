@@ -3,13 +3,11 @@
 // flow's prompts are looked up in layers: the repo's prompts/<name>.md first,
 // then its package's, then the default the SDK carries, if any.
 
+import { FlowPackage, Repo, StepFailed } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-
-import { StepFailed } from "../abi/errors.ts";
-import { FlowPackage, Repo } from "../abi/services.ts";
 
 export type PromptValue = string | number | ReadonlyArray<string> | Option.Option<string>;
 

@@ -127,6 +127,11 @@ export const RecipePackagesClientLive = Layer.effect(
         }
       });
 
+    const sync = (root: string) =>
+      bun(`${root}/.chernabog`, "package.json", ["install", "--ignore-scripts"]).pipe(
+        Effect.asVoid,
+      );
+
     const describe = (root: string, name: string) =>
       Effect.gen(function* () {
         const text = yield* readText(`${packageDir(root, name)}/package.json`);
@@ -292,6 +297,14 @@ export const RecipePackagesClientLive = Layer.effect(
         `${name}@${version}`,
       ]).pipe(Effect.asVoid);
 
-    return RecipePackagesClient.of({ restore, installed, file, fileAt, newestFor, install });
+    return RecipePackagesClient.of({
+      restore,
+      sync,
+      installed,
+      file,
+      fileAt,
+      newestFor,
+      install,
+    });
   }),
 );

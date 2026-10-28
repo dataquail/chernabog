@@ -13,7 +13,7 @@ import {
   type SetupError,
   triggerOf,
   type TriggerServices,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";

@@ -26,9 +26,14 @@ const runFields = {
   status: RunStatus,
   currentStep: Maybe,
   summary: Maybe,
-  // The @chernabog/sdk it started under; optional, as a daemon from before
+  // The @chernabog/core it started under; optional, as a daemon from before
   // runs kept it answers without.
-  sdkVersion: Schema.optionalKey(Schema.String),
+  coreVersion: Schema.optionalKey(Schema.String),
+  // The .chernabog/ tree it started from and resumes against; absent for a
+  // run from a working copy, and from a daemon from before runs kept it.
+  configTree: Schema.OptionFromOptionalKey(Schema.String).pipe(
+    Schema.withConstructorDefault(Effect.succeedNone),
+  ),
   startedAt: Schema.String,
   finishedAt: Maybe,
 };

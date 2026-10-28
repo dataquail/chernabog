@@ -1,4 +1,4 @@
-import { Agent, CurrentActivity, Run } from "@chernabog/sdk";
+import { Agent, CurrentActivity, Run } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

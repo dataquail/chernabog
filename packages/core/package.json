@@ -1,0 +1,25 @@
+{
+  "name": "@chernabog/core",
+  "version": "1.0.0",
+  "license": "MIT",
+  "description": "The contract between the chernabog binary and a repo's flows: the flow shape, the durable primitives, the service ports, claims and markers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dataquail/chernabog.git",
+    "directory": "packages/core"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "API.md"
+  ],
+  "peerDependencies": {
+    "effect": "4.0.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,7 +1,7 @@
 // Creates a repo's labels, and corrects their colour or description where they
 // drifted. Labels it does not own are left alone.
 
-import type { Flow, Labels } from "@chernabog/sdk";
+import type { Flow, Labels } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

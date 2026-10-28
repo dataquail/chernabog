@@ -1,9 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
+import { BUNDLED_CORE_VERSION } from "../../../../kernel/core-support.value-object.ts";
 import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { BUNDLED_SDK_VERSION } from "../../../../kernel/sdk-support.value-object.ts";
 import {
   type WorkflowOutcome,
   WorkflowsClient,
@@ -33,15 +34,19 @@ export const fakeEngine = (): FakeEngine => ({
   unloaded: [],
 });
 
-// The SDK the fake engine's workflows run under.
-export const FAKE_SDK = BUNDLED_SDK_VERSION;
+// The core the fake engine's workflows run under.
+export const FAKE_CORE = BUNDLED_CORE_VERSION;
+
+// The .chernabog/ tree the fake engine's flows come from.
+export const FAKE_TREE = "fake-tree";
 
 // Executions named `execution-<runId>`.
 export const WorkflowsClientFake = (engine: FakeEngine) =>
   Layer.succeed(
     WorkflowsClient,
     WorkflowsClient.of({
-      sdkVersion: FAKE_SDK,
+      coreVersion: FAKE_CORE,
+      treeOf: () => Option.some(FAKE_TREE),
       runs: (flow) => !engine.unloaded.includes(`${flow.repo}/${flow.flow}`),
       execute: (_flow, runId) =>
         Effect.sync(() => {

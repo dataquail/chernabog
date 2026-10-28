@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
+import { BUNDLED_CORE_VERSION } from "../../../../kernel/core-support.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { BUNDLED_SDK_VERSION } from "../../../../kernel/sdk-support.value-object.ts";
 import { SeveralRunsInFlight } from "./run.errors.ts";
 import { RunRoot } from "./run.root.ts";
 import { RunRootOps } from "./run.root-ops.ts";
@@ -13,7 +13,7 @@ const later = "2026-10-22T01:00:00.000Z";
 
 const asBob = {
   id: RunId.make("a"),
-  sdkVersion: BUNDLED_SDK_VERSION,
+  coreVersion: BUNDLED_CORE_VERSION,
   repo: "demo",
   persona: Option.some("bob"),
   flow: "review",
@@ -312,17 +312,17 @@ describe("RunRootOps.sharingTarget", () => {
 });
 
 describe("RunRootOps.unsupported", () => {
-  test("a run in flight under an SDK this binary doesn't run mustn't resume, naming both", () => {
-    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, sdkVersion: "0.5.0" }, at));
+  test("a run in flight under a core this binary doesn't provide mustn't resume, naming both", () => {
+    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, coreVersion: "0.5.0" }, at));
 
     expect(Option.getOrThrow(RunRootOps.unsupported(old))).toContain(
-      "it started under @chernabog/sdk 0.5.0, and this chernabog runs @chernabog/sdk >=",
+      "it started under @chernabog/core 0.5.0, and this chernabog provides @chernabog/core ^",
     );
     expect(RunRootOps.unsupported(running)).toEqual(Option.none());
   });
 
   test("one that has ended is nothing to resume", () => {
-    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, sdkVersion: "0.5.0" }, at));
+    const old = Result.getOrThrow(RunRootOps.start([], { ...asBob, coreVersion: "0.5.0" }, at));
     const ended = Result.getOrThrow(RunRootOps.finish(old, "done", "merged", later));
 
     expect(RunRootOps.unsupported(ended)).toEqual(Option.none());

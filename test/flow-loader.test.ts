@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { defineFlow, isManual } from "../packages/sdk/src/abi/flow.ts";
-import { printJson } from "../packages/sdk/src/abi/json.ts";
-import { BUNDLED_SDK, checkFlowImports } from "../src/platform/flow-deps.ts";
+import { defineFlow, isManual } from "../packages/core/src/flow.ts";
+import { printJson } from "../packages/core/src/json.ts";
+import { BUNDLED_CORE, checkInstalled, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import {
   describeSource,
   flowNames,
@@ -14,6 +14,7 @@ import {
   reviewingFlows,
 } from "../src/platform/flow-loader.ts";
 import { effect } from "./effect-test.ts";
+import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
 // A .chernabog/ holding one flow module, flows/<name>.ts.
 const withFlow = (name: string, source: string) =>
@@ -22,6 +23,7 @@ const withFlow = (name: string, source: string) =>
     const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-flows-" });
     yield* fs.makeDirectory(`${configDir}/flows`);
     yield* fs.writeFileString(`${configDir}/flows/${name}.ts`, source);
+    yield* installWorkspaceSdk(configDir);
 
     return configDir;
   });
@@ -106,7 +108,7 @@ export default defineFlow({ item: () => Effect.succeedNone, workflow: () => Effe
 // installed, declaring `range` as its SDK range, and holding the deploy recipe.
 const withPackage = (
   config: string,
-  range = ">=0.6.0 <0.8.0",
+  range = `^${RELEASED_SDK}`,
   list: "dependencies" | "devDependencies" = "dependencies",
 ) =>
   Effect.gen(function* () {
@@ -114,13 +116,14 @@ const withPackage = (
     const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-imports-" });
     const dir = `${configDir}/node_modules/@acme/recipes`;
     yield* fs.makeDirectory(`${dir}/flows`, { recursive: true });
+    yield* installWorkspaceSdk(configDir);
     yield* fs.writeFileString(`${configDir}/config.yaml`, config);
     yield* fs.writeFileString(
       `${configDir}/package.json`,
       printJson({
-        dependencies: {},
-        devDependencies: { "@chernabog/sdk": BUNDLED_SDK },
-        [list]: { "@acme/recipes": "1.2.0", "@chernabog/sdk": BUNDLED_SDK },
+        dependencies: { "@chernabog/sdk": RELEASED_SDK },
+        devDependencies: {},
+        [list]: { "@acme/recipes": "1.2.0" },
       }),
     );
     yield* fs.writeFileString(
@@ -154,7 +157,7 @@ describe("importing flows from a recipe package", () => {
           Option.some("@acme/recipes@1.2.0"),
         );
         expect(yield* flowNames(configDir)).toEqual(["ship"]);
-        yield* checkFlowImports(configDir);
+        yield* checkInstalled(configDir);
       }),
   );
 
@@ -212,13 +215,13 @@ describe("importing flows from a recipe package", () => {
   );
 
   effect(
-    "refuses as incompatible, naming the package, one that doesn't support this SDK or isn't a dependency",
+    "refuses as incompatible, naming the package, one that doesn't support the repo's SDK or isn't a dependency",
     () =>
       Effect.gen(function* () {
         const config = 'flows:\n  ship:\n    from: "@acme/recipes/deploy"\n';
 
         const older = yield* Effect.flip(
-          Effect.flatMap(withPackage(config, "^0.5.0"), checkFlowImports),
+          Effect.flatMap(withPackage(config, "^0.5.0"), checkInstalled),
         );
 
         expect(older._tag).toBe("IncompatibleConfig");
@@ -228,12 +231,84 @@ describe("importing flows from a recipe package", () => {
 
         const dev = yield* Effect.flip(
           Effect.flatMap(
-            withPackage(config, ">=0.6.0 <0.8.0", "devDependencies"),
-            checkFlowImports,
+            withPackage(config, `^${RELEASED_SDK}`, "devDependencies"),
+            checkInstalled,
           ),
         );
 
         expect(dev.message).toContain("which package.json doesn't list in dependencies");
+      }),
+  );
+});
+
+// A .chernabog/ with an SDK installed whose package.json needs `coreRange`.
+const withSdkNeeding = (coreRange: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-sdk-" });
+    yield* fs.makeDirectory(`${configDir}/node_modules/@chernabog/sdk`, { recursive: true });
+    yield* fs.writeFileString(`${configDir}/package.json`, printJson({ dependencies: {} }));
+    yield* fs.writeFileString(
+      `${configDir}/node_modules/@chernabog/sdk/package.json`,
+      printJson({
+        name: "@chernabog/sdk",
+        version: "9.9.9",
+        ...Option.match(coreRange, {
+          onNone: () => ({}),
+          onSome: (range) => ({ peerDependencies: { "@chernabog/core": range } }),
+        }),
+      }),
+    );
+
+    return configDir;
+  });
+
+describe("the repo's SDK", () => {
+  effect("runs when it needs a core this binary provides", () =>
+    Effect.gen(function* () {
+      yield* checkInstalled(yield* withSdkNeeding(Option.some(`^${BUNDLED_CORE}`)));
+    }),
+  );
+
+  effect("refuses as incompatible one that isn't installed, saying to install it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-sdk-" });
+      const missing = yield* Effect.flip(checkInstalled(configDir));
+
+      expect(missing._tag).toBe("IncompatibleConfig");
+      expect(missing.message).toContain("@chernabog/sdk isn't installed in .chernabog/");
+    }),
+  );
+
+  effect(
+    "refuses one that needs a newer core, or an older major, or says nothing, saying which side moves",
+    () =>
+      Effect.gen(function* () {
+        const [major] = BUNDLED_CORE.split(".").map(Number);
+
+        const newer = yield* Effect.flip(
+          Effect.flatMap(withSdkNeeding(Option.some(`^${major + 1}.0.0`)), checkInstalled),
+        );
+
+        expect(newer.message).toContain(
+          `its flows are written from @chernabog/sdk 9.9.9, which needs @chernabog/core ^${major + 1}.0.0`,
+        );
+        expect(newer.message).toEndWith("upgrade chernabog");
+
+        const older = yield* Effect.flip(
+          Effect.flatMap(withSdkNeeding(Option.some(`^${major - 1}.0.0`)), checkInstalled),
+        );
+
+        expect(older.message).toEndWith(
+          "move .chernabog/ to a newer @chernabog/sdk with chernabog recipes upgrade",
+        );
+
+        const silent = yield* Effect.flip(
+          Effect.flatMap(withSdkNeeding(Option.none()), checkInstalled),
+        );
+
+        expect(silent.message).toContain("declares no range of @chernabog/core");
       }),
   );
 });

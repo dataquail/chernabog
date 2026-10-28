@@ -4,7 +4,7 @@ import {
   printJson,
   type RepoSettings,
   Usage as UsageService,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import { expect, test } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

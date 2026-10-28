@@ -7,7 +7,7 @@ import {
   type Json,
   Repo,
   Worktree,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as Context from "effect/Context";
@@ -31,7 +31,7 @@ import { RunCleanupClientLive } from "./run-cleanup.client-live.ts";
 const run = (itemKey: string) =>
   RunRoot.make({
     id: RunId.make("run-1"),
-    sdkVersion: "0.6.0",
+    coreVersion: "0.6.0",
     repo: "demo",
     persona: Option.some("bob"),
     flow: "implement",

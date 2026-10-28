@@ -9,19 +9,28 @@
 // reopens their session, and only a person merges, since the pull request
 // isn't on the automated path (auto:ship).
 
+import {
+  activity,
+  Agent,
+  claimMarker,
+  Claims,
+  GitHub,
+  type Json,
+  Markers,
+  Repo,
+  reportAs,
+  Run,
+  sessionMarker,
+  Skip,
+  StepFailed,
+  type WorkItem,
+} from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { Skip, StepFailed } from "../abi/errors.ts";
-import { activity, reportAs } from "../abi/flow.ts";
-import type { Json } from "../abi/json.ts";
-import * as Markers from "../abi/run-markers.ts";
-import { Agent, GitHub, Repo, Run, type WorkItem } from "../abi/services.ts";
-import * as Claims from "./claims.ts";
 import { HUMAN_INITIATED } from "./default-prompts.ts";
-import * as GitHubMarkers from "./github-markers.ts";
 import {
   type AuthorSession,
   branchFor,
@@ -33,7 +42,6 @@ import {
   PullRequestRef,
   sessionIdFor,
 } from "./implement.ts";
-import { claimMarker, sessionMarker } from "./markers.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 
@@ -134,7 +142,7 @@ export const claim = (issue: number) =>
           });
         }
       } else {
-        yield* Markers.hold(GitHubMarkers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
       }
 
       // A person's session that fails, as one they close does, leaves the

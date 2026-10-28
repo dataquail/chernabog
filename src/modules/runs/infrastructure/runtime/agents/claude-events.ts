@@ -1,7 +1,7 @@
 // What both ways of running Claude Code share: the environment it runs with,
 // where it keeps a session's transcript, and how its messages read in a run log.
 
-import type { AgentRequest } from "@chernabog/sdk";
+import type { AgentRequest } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

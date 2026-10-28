@@ -2,7 +2,7 @@
 // records state in SQLite, and serves the CLI and TUI over a local socket. It
 // is the only process that runs the workflow engine.
 
-import { describeError } from "@chernabog/sdk";
+import { describeError } from "@chernabog/core";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -53,6 +53,7 @@ import { describeLauncher } from "../../modules/runs/infrastructure/runtime/laun
 import {
   adoptRuns,
   buildPersonaContexts,
+  flowOrigins,
   type PersonaContext,
   servicesFrom,
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
@@ -242,6 +243,7 @@ export const loadRepoState = (
     }
 
     const { flows, repo } = loaded.success;
+    const originOf = yield* flowOrigins(enrolled, tree);
 
     return {
       enrolled,
@@ -251,7 +253,7 @@ export const loadRepoState = (
       tree: Option.some(tree),
       repo: Option.some(repo),
       flows: [...flows].flatMap(([flowName, flow]): ReadonlyArray<FlowSchedule> => {
-        const handle = flowHandle(repo, flowName, flow);
+        const handle = flowHandle(repo, flowName, flow, Option.some(originOf(flowName)));
 
         return repo.personas.map((own) => {
           const expression = scheduleFor(own, flowName, flow, index, machine.repos.length);

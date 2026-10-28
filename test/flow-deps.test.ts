@@ -3,14 +3,23 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { BUNDLED_SDK_VERSION, supportsSdk } from "../src/kernel/sdk-support.value-object.ts";
+import { parseJson } from "../packages/core/src/json.ts";
+import SdkPackage from "../packages/sdk/package.json" with { type: "json" };
+import {
+  BUNDLED_CORE_VERSION,
+  coreSupport,
+  resumesRunsFrom,
+} from "../src/kernel/core-support.value-object.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import {
-  BUNDLED_SDK,
+  BUNDLED_CORE,
+  flowPackageText,
   installFlowDependencies,
-  missingSdkImports,
+  missingCoreImports,
+  RELEASED_SDK,
 } from "../src/platform/flow-deps.ts";
 import { bunExecutable } from "../src/platform/self.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
@@ -82,27 +91,44 @@ describe("flow dependencies", () => {
   );
 });
 
-describe("the SDK this binary bundles", () => {
-  test("is one it runs", () => {
-    expect(supportsSdk(BUNDLED_SDK)).toBe(true);
+describe("the core this binary bundles", () => {
+  test("is one it provides, and resumes runs from", () => {
+    expect(coreSupport(`^${BUNDLED_CORE}`)).toBe("supported");
+    expect(resumesRunsFrom(BUNDLED_CORE)).toBe(true);
   });
 
   test("is the version the kernel declares, which release-please moves with it", () => {
-    expect(BUNDLED_SDK_VERSION).toBe(BUNDLED_SDK);
+    expect(BUNDLED_CORE_VERSION).toBe(BUNDLED_CORE);
+  });
+
+  test("is one the SDK released with it supports", () => {
+    expect(Bun.semver.satisfies(BUNDLED_CORE, SdkPackage.peerDependencies["@chernabog/core"])).toBe(
+      true,
+    );
+    expect(RELEASED_SDK).toBe(SdkPackage.version);
+  });
+
+  test("a new .chernabog/ lists the released SDK, and pins core and effect for types", () => {
+    expect(Option.getOrThrow(parseJson(flowPackageText()))).toMatchObject({
+      dependencies: { "@chernabog/sdk": RELEASED_SDK },
+      devDependencies: { "@chernabog/core": BUNDLED_CORE },
+    });
   });
 
   test("a flow's imports of it are checked by name, through namespaces too", () => {
     expect(
-      missingSdkImports(
-        'import * as S from "@chernabog/sdk";\nS.defineFlow; S.Review.recheck; S.Review.fixTrigger; S.vanished;\n',
+      missingCoreImports(
+        'import * as C from "@chernabog/core";\nC.defineFlow; C.Claims.releasing; C.Claims.vanished; C.vanished;\n',
       ),
-    ).toEqual(["Review.fixTrigger", "vanished"]);
+    ).toEqual(["Claims.vanished", "vanished"]);
     expect(
-      missingSdkImports(
-        'import { Review as R, type Flow, Skip } from "@chernabog/sdk";\nR.labelVerdict; Skip;\n',
+      missingCoreImports(
+        'import { Claims as K, type Flow, Skip } from "@chernabog/core";\nK.gone; Skip;\n',
       ),
-    ).toEqual(["Review.labelVerdict"]);
-    expect(missingSdkImports('import sdk from "@chernabog/sdk";\n')).toEqual(["default"]);
-    expect(missingSdkImports('import type { Gone } from "@chernabog/sdk";\n')).toEqual([]);
+    ).toEqual(["Claims.gone"]);
+    expect(missingCoreImports('import core from "@chernabog/core";\n')).toEqual(["default"]);
+    expect(missingCoreImports('import type { Gone } from "@chernabog/core";\n')).toEqual([]);
+    // What a flow imports from the SDK is the installed SDK's business.
+    expect(missingCoreImports('import { Vanished } from "@chernabog/sdk";\n')).toEqual([]);
   });
 });

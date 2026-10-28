@@ -3,7 +3,7 @@
 // change), and each persona's services, built once and shared by every
 // trigger, gate and run of its flows as that persona.
 
-import { type Flow, RunLog, type SetupError, type WorkItem } from "@chernabog/sdk";
+import { describeError, type Flow, RunLog, type SetupError, type WorkItem } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -14,10 +14,11 @@ import * as Option from "effect/Option";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
-import { snapshotConfig } from "../../../../platform/config-snapshot.ts";
+import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
 import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
@@ -30,7 +31,13 @@ import {
   type PersonaRepo,
 } from "../../../../repo-config.ts";
 import { adoptImplicitRunsUseCase } from "../../use-cases/adopt-implicit-runs.use-case.ts";
-import { defaultPersona, repoServices, type ServicesFor } from "./engine.ts";
+import {
+  defaultPersona,
+  type FlowOrigin,
+  repoServices,
+  RunFailed,
+  type ServicesFor,
+} from "./engine.ts";
 
 export type OpenRepo = {
   readonly repo: EffectiveRepo;
@@ -60,6 +67,43 @@ export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
 
     return { tree, configDir };
   });
+
+// A repo's flow `name` as the snapshot of `tree` has it, extracted and
+// installed again if it's gone: what a run that started from that tree resumes.
+const flowFromTree = (enrolled: EnrolledRepo, tree: string, name: string) =>
+  Effect.gen(function* () {
+    const snapshot = yield* snapshotTree(enrolled.path, tree);
+    const flows = yield* loadFlows(snapshot.configDir);
+
+    return yield* Effect.fromOption(Option.fromUndefinedOr(flows.get(name))).pipe(
+      Effect.mapError(
+        () =>
+          new RunFailed({ message: `.chernabog/ as this run started from it has no flow ${name}` }),
+      ),
+    );
+  }).pipe(
+    Effect.mapError((error) =>
+      Option.getOrElse(
+        Option.liftPredicate(error, Schema.is(RunFailed)),
+        () =>
+          new RunFailed({
+            message: `loading .chernabog/ as this run started from it (tree ${tree}): ${describeError(error)}`,
+          }),
+      ),
+    ),
+  );
+
+// Where a repo's flows, loaded from `tree`, come from, by flow name: so a run
+// that started from another tree resumes against that tree's snapshot.
+export const flowOrigins = (enrolled: EnrolledRepo, tree: string) =>
+  Effect.map(
+    Effect.context<Effect.Services<ReturnType<typeof flowFromTree>>>(),
+    (context) =>
+      (name: string): FlowOrigin => ({
+        tree,
+        flowAt: (at) => flowFromTree(enrolled, at, name).pipe(Effect.provideContext(context)),
+      }),
+  );
 
 // `overrides` reads recipe packages from directories of their own, as
 // `chernabog rehearse --package` does.

@@ -16,7 +16,7 @@ describe("upgradeRepoUseCase", () => {
   const old = recipeRepo({
     ".chernabog/package.json": OLD,
     ".chernabog/flows/review.ts": "old review\n",
-    ".chernabog/flows/security.ts": 'import { gone } from "@chernabog/sdk";\n',
+    ".chernabog/flows/security.ts": 'import { gone } from "@chernabog/core";\n',
     ".chernabog/stages/lint.ts": "fine\n",
   });
 

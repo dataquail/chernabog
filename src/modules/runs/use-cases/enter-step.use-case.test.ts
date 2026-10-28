@@ -16,7 +16,7 @@ import { readRunHistoryUseCase } from "./read-run-history.use-case.ts";
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
     id: RunId.make(id),
-    sdkVersion: "0.6.0",
+    coreVersion: "0.6.0",
     repo: "demo",
     persona: Option.some("bob"),
     flow: "review",

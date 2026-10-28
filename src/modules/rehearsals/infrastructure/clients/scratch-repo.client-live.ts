@@ -3,7 +3,7 @@
 // (a tree and a commit each, on the base branch's head), so seeding needs no
 // checkout.
 
-import { type GitHubError, type Json } from "@chernabog/sdk";
+import { type GitHubError, type Json } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";

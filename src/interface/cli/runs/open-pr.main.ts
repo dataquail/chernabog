@@ -8,7 +8,7 @@
 // prints the question to ask the person, whose Yes hands it over (see
 // open-pr-question.ts). Without --draft it is the person's own way to finish.
 
-import { printJson } from "@chernabog/sdk";
+import { printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

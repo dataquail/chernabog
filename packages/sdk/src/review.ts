@@ -7,42 +7,47 @@
 // `address-review` is the author's side: it answers a review that asks for
 // changes in the session that wrote the code, and asks the reviewer again.
 
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-
-import { NeedsHuman, StepFailed } from "../abi/errors.ts";
-import { activity } from "../abi/flow.ts";
-import type { Json } from "../abi/json.ts";
-import { adapterFor, type RoleOptions } from "../abi/roles.ts";
 import {
+  activity,
+  adapterFor,
   Agent,
   Git,
   GitHub,
+  type Json,
+  latestMarker,
+  NeedsHuman,
   type PullRequest,
   Repo,
   ReviewerSeat,
   type ReviewEvent,
+  type ReviewMarker,
+  reviewMarker,
   type ReviewNote,
+  type RoleOptions,
   Run,
+  SessionMarker,
+  sessionMarker,
+  StepFailed,
   type SubmittedReview,
   type WorkItem,
   Worktree,
-} from "../abi/services.ts";
+} from "@chernabog/core";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+
 import { RECHECK } from "./default-prompts.ts";
 import { sessionIdFor } from "./implement.ts";
-import {
-  latestMarker,
-  type ReviewMarker,
-  reviewMarker,
-  SessionMarker,
-  sessionMarker,
-} from "./markers.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
 import { pullRequestValidity } from "./still-valid.ts";
 
-export { type ReviewMarker, reviewMarker, type SessionMarker, sessionMarker } from "./markers.ts";
+export {
+  type ReviewMarker,
+  reviewMarker,
+  type SessionMarker,
+  sessionMarker,
+} from "@chernabog/core";
 
 // Agent-written pull requests come from claim branches.
 export const isAgentBranch = (branch: string) => branch.startsWith("auto/");

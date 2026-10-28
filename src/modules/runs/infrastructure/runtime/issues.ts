@@ -1,7 +1,7 @@
 // What the GitHub service needs to know about queued issues, claim branches
 // and project boards, kept apart from the API calls so it can be tested.
 
-import { type Board, type Json, printJson } from "@chernabog/sdk";
+import { type Board, type Json, printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

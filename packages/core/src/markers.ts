@@ -5,7 +5,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { Json } from "../abi/json.ts";
+import type { Json } from "./json.ts";
 
 // The session that wrote a pull request. withPerson: a person worked in it
 // with the agent, on the hybrid path, so answering a review reopens it in

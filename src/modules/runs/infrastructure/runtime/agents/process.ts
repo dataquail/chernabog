@@ -1,7 +1,7 @@
 // Runs an agent CLI headless: the prompt on stdin, each line of its output
 // handed to `onLine` as it arrives, so the run log shows the agent at work.
 
-import { AgentError } from "@chernabog/sdk";
+import { AgentError } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";

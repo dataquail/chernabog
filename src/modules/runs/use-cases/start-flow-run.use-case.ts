@@ -55,7 +55,8 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
     {
       ...wanted,
       id: yield* newRunId,
-      sdkVersion: workflows.sdkVersion,
+      coreVersion: workflows.coreVersion,
+      configTree: workflows.treeOf(flow),
       itemTitle: Option.fromUndefinedOr(item.title),
       itemUrl: Option.fromUndefinedOr(item.url),
       item: Option.some(item),

@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-import { type Account, type ResolvedLauncher, UsageError } from "@chernabog/sdk";
+import { type Account, type ResolvedLauncher, UsageError } from "@chernabog/core";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

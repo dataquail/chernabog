@@ -1,7 +1,7 @@
 // Every answer an agent gave in a run, by step, with the commits its step
 // made: what `chernabog rehearse --replay <run>` stands in with (#115).
 
-import { decodeJsonLines } from "@chernabog/sdk";
+import { decodeJsonLines } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

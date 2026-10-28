@@ -5,7 +5,7 @@
 // blocks decode the answer against the step's schema, as they do a real
 // agent's.
 
-import { AgentError, printJson } from "@chernabog/sdk";
+import { AgentError, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

@@ -10,7 +10,7 @@ import {
   parseJson,
   printJson,
   type ResolvedLauncher,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import type * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

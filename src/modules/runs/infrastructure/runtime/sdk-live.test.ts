@@ -9,7 +9,7 @@ import {
   PushRejected,
   type RepoSettings,
   Worktree,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

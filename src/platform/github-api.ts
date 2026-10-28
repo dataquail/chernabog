@@ -2,7 +2,7 @@
 // github-auth.ts). Bodies come back as JSON for the caller to decode with its
 // own schema.
 
-import { GitHubError, type Json, printJson } from "@chernabog/sdk";
+import { GitHubError, type Json, printJson } from "@chernabog/core";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

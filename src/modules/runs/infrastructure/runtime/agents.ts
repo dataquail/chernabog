@@ -10,7 +10,7 @@ import {
   type RepoSettings,
   Run,
   RunLog,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";

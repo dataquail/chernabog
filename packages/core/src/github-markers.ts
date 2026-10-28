@@ -7,9 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { define, type Marker } from "../abi/run-markers.ts";
-import { GitHub, Repo } from "../abi/services.ts";
 import * as Claims from "./claims.ts";
+import { define, type Marker } from "./run-markers.ts";
+import { GitHub, Repo } from "./services.ts";
 
 // A label on an issue or pull request, taken off.
 export const label = define(

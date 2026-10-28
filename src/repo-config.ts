@@ -16,7 +16,7 @@ import {
   type Limits,
   type RepoSettings,
   type ResolvedLauncher,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

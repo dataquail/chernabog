@@ -3,7 +3,7 @@
 // five-hour window (primary) and the weekly one (secondary). The newest one
 // read is the reading; nightshift reads them the same way.
 
-import { type Account, UsageError } from "@chernabog/sdk";
+import { type Account, UsageError } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

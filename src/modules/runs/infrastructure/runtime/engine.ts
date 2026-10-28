@@ -22,7 +22,7 @@ import {
   Signals,
   Skip,
   WorkItem,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -40,9 +40,12 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Workflow from "effect/workflow/Workflow";
 
+import {
+  resumesRunsFrom,
+  unsupportedRunSummary,
+} from "../../../../kernel/core-support.value-object.ts";
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { supportsSdk, unsupportedRunSummary } from "../../../../kernel/sdk-support.value-object.ts";
 import { flowSourceOf } from "../../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
@@ -187,10 +190,21 @@ export const workflowNamed = (repo: string, flow: string) =>
     error: RunFailed,
   });
 
+// Where a handle's flow was loaded from: the .chernabog/ tree, and how to load
+// the same flow from another tree's snapshot, for a run that started there.
+export type FlowOrigin = {
+  readonly tree: string;
+  readonly flowAt: (tree: string) => Effect.Effect<Flow, RunFailed>;
+};
+
 export type FlowHandle = {
   readonly repo: EffectiveRepo;
   readonly name: string;
   readonly flow: Flow;
+  // The tree `flow` was loaded from; none for a working copy's.
+  readonly tree: Option.Option<string>;
+  // The flow as the snapshot of another tree has it.
+  readonly flowAt: (tree: string) => Effect.Effect<Flow, RunFailed>;
   readonly workflow: Workflow.Workflow<
     string,
     typeof FlowPayload,
@@ -199,12 +213,35 @@ export type FlowHandle = {
   >;
 };
 
-export const flowHandle = (repo: EffectiveRepo, name: string, flow: Flow): FlowHandle => ({
+// Without an origin, as from a working copy, every run runs `flow`.
+export const flowHandle = (
+  repo: EffectiveRepo,
+  name: string,
+  flow: Flow,
+  origin: Option.Option<FlowOrigin> = Option.none(),
+): FlowHandle => ({
   repo,
   name,
   flow,
+  tree: Option.map(origin, (found) => found.tree),
+  flowAt: Option.match(origin, {
+    onNone: () => () => Effect.succeed(flow),
+    onSome: (found) => found.flowAt,
+  }),
   workflow: workflowNamed(repo.settings.name, name),
 });
+
+// The flow a run executes: the one loaded from the tree it started from, so
+// a change merged since, or a move of the repo's SDK, never swaps the blocks
+// under a run in flight. A run that recorded no tree runs the handle's.
+const flowOfRun = (handle: FlowHandle, tree: Option.Option<string>) =>
+  Option.match(
+    Option.filter(tree, (started) => !Option.contains(handle.tree, started)),
+    {
+      onNone: () => Effect.succeed(handle.flow),
+      onSome: handle.flowAt,
+    },
+  );
 
 export const runLogFile = (runId: string) =>
   Home.use((home) => Effect.succeed(homePaths(home.root).runLog(runId)));
@@ -515,11 +552,13 @@ export const flowLayer = <R>(
       const runId = RunId.make(payload.runId);
       const row = (yield* findRunUseCase(runId)).run;
 
-      // A run started under an SDK this binary doesn't run is never replayed
-      // under this one: it goes to a person before any of its flow runs.
-      const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.sdkVersion));
+      // A run started under a core this binary doesn't provide is never
+      // replayed under this one: it goes to a person before any of its flow runs.
+      const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.coreVersion));
 
-      for (const version of Option.toArray(Option.filter(started, (sdk) => !supportsSdk(sdk)))) {
+      for (const version of Option.toArray(
+        Option.filter(started, (sdk) => !resumesRunsFrom(sdk)),
+      )) {
         return {
           status: "needs-human",
           summary: unsupportedRunSummary(version),
@@ -591,9 +630,14 @@ export const flowLayer = <R>(
           park({ runId, signal, deferred, token }).pipe(Effect.asVoid),
       });
 
-      const holds = yield* markerHolds(runId, handle.flow);
+      const flow = yield* flowOfRun(
+        handle,
+        Option.flatMap(row, (found) => found.configTree),
+      );
 
-      const outcome = yield* handle.flow.workflow(payload.item).pipe(
+      const holds = yield* markerHolds(runId, flow);
+
+      const outcome = yield* flow.workflow(payload.item).pipe(
         Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
         surfaceSetup,
         Effect.catch(outcomeOf),
@@ -604,7 +648,7 @@ export const flowLayer = <R>(
           item: payload.item,
         }),
         // An imported flow's prompts and steps are looked up in its package after the repo.
-        provideFlowPackage(handle.flow),
+        provideFlowPackage(flow),
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideService(Markers.MarkerHolds, holds),

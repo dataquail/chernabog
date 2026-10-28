@@ -16,6 +16,9 @@ export type RecipePackagesClientService = {
   // Installs what .chernabog/package.json declares, when any of it is missing
   // from node_modules, as in a fresh clone.
   readonly restore: (root: string) => Effect.Effect<void, RecipePackageUnavailable>;
+  // Installs what .chernabog/package.json declares, and updates the lockfile
+  // to it, whatever node_modules has: after the manifest's pins move.
+  readonly sync: (root: string) => Effect.Effect<void, RecipePackageUnavailable>;
   // The recipe packages .chernabog/package.json declares, as installed.
   readonly installed: (
     root: string,

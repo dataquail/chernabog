@@ -51,11 +51,12 @@ const rehearse = (sandbox: Sandbox, path: string, ...extra: Array<string>) =>
 describe("chernabog rehearse implement, as a single persona that authors", () => {
   let sandbox: Sandbox;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox(
       { reviewers: ["alice", "bob"] },
       { github: ["alice"], personas: ["alice"], personaFlows: { alice: { implement: never } } },
     );
+    await sandbox.installCheckout();
   });
 
   afterAll(async () => {
@@ -121,8 +122,9 @@ describe("chernabog rehearse implement, as a single persona that authors", () =>
 describe("chernabog rehearse implement --replay", () => {
   let sandbox: Sandbox;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox();
+    await sandbox.installCheckout();
   });
 
   afterAll(async () => {
@@ -157,12 +159,13 @@ describe("chernabog rehearse --repo other, on the enrolled repo demo", () => {
   let otherOrigin: string;
 
   // A second enrolled repo, with the same flows and an origin of its own.
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox();
     otherOrigin = join(sandbox.root, "other.git");
     const other = join(sandbox.root, "other");
     execFileSync("git", ["clone", "-q", "--bare", sandbox.bare, otherOrigin]);
     execFileSync("git", ["clone", "-q", otherOrigin, other]);
+    await sandbox.installCheckout(other);
 
     sandbox.editMachine((document) => {
       document.addIn(["repos"], {
@@ -218,8 +221,9 @@ describe("chernabog rehearse --repo other, on the enrolled repo demo", () => {
 describe("chernabog rehearse, on an enrolled repo it wasn't told it may use", () => {
   let sandbox: Sandbox;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox();
+    await sandbox.installCheckout();
   });
 
   afterAll(async () => {
@@ -239,7 +243,7 @@ describe("chernabog rehearse, on an enrolled repo it wasn't told it may use", ()
 describe("chernabog rehearse implement, where the other reviewer runs review here", () => {
   let sandbox: Sandbox;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox(
       { reviewers: ["alice", "bob"] },
       {
@@ -248,6 +252,7 @@ describe("chernabog rehearse implement, where the other reviewer runs review her
         personaFlows: { alice: { implement: never }, bob: { review: never } },
       },
     );
+    await sandbox.installCheckout();
 
     sandbox.github.admins.add("alice");
   });
@@ -275,7 +280,7 @@ describe("chernabog rehearse --package, for a flow imported from a recipe packag
   let sandbox: Sandbox;
   const checkout = fileURLToPath(new URL("../../packages/recipes", import.meta.url));
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox(
       {
         reviewers: ["alice", "bob"],
@@ -288,6 +293,7 @@ describe("chernabog rehearse --package, for a flow imported from a recipe packag
         personaFlows: { alice: { implement: never } },
       },
     );
+    await sandbox.installCheckout();
   });
 
   afterAll(async () => {

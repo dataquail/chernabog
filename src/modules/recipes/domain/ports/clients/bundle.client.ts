@@ -9,16 +9,17 @@ import { type Scaffold } from "../../scaffold/scaffold.value-object.ts";
 // and the versions of the packages flows are written against. It bundles no
 // recipes: those are packages a repo installs (RecipePackagesClient).
 export type BundleClientService = {
-  // The @chernabog/sdk version this binary bundles, which flows are written against.
+  // The @chernabog/sdk version released with this binary, which a new or
+  // upgraded .chernabog/ is pinned to.
   readonly sdkVersion: string;
   readonly scaffold: Effect.Effect<Scaffold>;
-  // Fails when a .chernabog/package.json's flows are written against a newer
-  // SDK than this binary runs, so it must not rewrite them.
+  // Fails when a .chernabog/package.json's flows are typed against a newer
+  // core than this binary provides, so it must not rewrite them.
   readonly refuseNewer: (manifest: string) => Effect.Effect<void, ScaffoldRefused>;
   // A .chernabog/package.json with this binary's pins; none when it has them already.
   readonly pinned: (manifest: string) => Effect.Effect<Option.Option<string>, ScaffoldRefused>;
-  // What a flow or step module imports from the SDK that this binary's SDK
-  // doesn't export, such as Review.fixTrigger.
+  // What a flow or step module imports straight from @chernabog/core that this
+  // binary's core doesn't export, such as Claims.releaseAll.
   readonly missingImports: (source: string) => ReadonlyArray<string>;
 };
 

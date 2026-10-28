@@ -106,13 +106,18 @@ graph:
         - "**/*.test.ts"
         # The CLI binary (`bun build --compile src/interface/cli/main.ts`).
         - "@/interface/cli/main.ts"
-        # The published SDK's entry (packages/sdk/package.json `exports`).
+        # The published packages' entries (their package.json `exports`).
+        - "~/core/src/index.ts"
         - "~/sdk/src/index.ts"
+        # What a compiled binary resolves the SDK to: its root index (packages/sdk/index.ts).
+        - "~/sdk/index.ts"
         # Run with `bun scripts/<name>.ts`.
         - "scripts/gen-*.ts"
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
         - "scripts/release-pr-check.ts"
+        # The acceptance sandbox runs it as a child process, for a lockfile.
+        - "test/acceptance/lockfile.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
         # are the recipes `chernabog recipes add` copies and a repo's
         # `flows.<name>.from` imports.
@@ -139,12 +144,22 @@ graph:
         - "@/modules/*/infrastructure/**"
         - "@/interface/**"
         - "@/platform/**"
-    - name: sdk-reaches-no-daemon
+    - name: packages-reach-no-daemon
       message: >-
-        @chernabog/sdk is published and runs inside a person's flows. A route from it into src/
-        would ship the daemon's internals with the SDK, or fail to resolve once it is installed.
-      from: "~/sdk/**"
+        @chernabog/core and @chernabog/sdk are published and run inside a person's flows. A route
+        from either into src/ would ship the daemon's internals with them, or fail to resolve once
+        they are installed.
+      from: "~/{core,sdk}/**"
       to: "@/**"
+    - name: daemon-reaches-no-sdk
+      message: >-
+        The binary provides @chernabog/core and nothing else of the flows' packages: each repo
+        installs the @chernabog/sdk it pins, and the loader resolves it from there. A route from
+        src/ into the SDK's code would run this checkout's blocks in place of the repo's
+        (docs/adr/0004-core-abi.md). What the daemon itself acts on, such as claims and markers,
+        belongs in core.
+      from: "@/**"
+      to: "~/sdk/src/**"
 
 defs:
   # A default export has no canonical name, so every importer invents one.
@@ -258,7 +273,7 @@ defs:
         - "@/modules/runs/infrastructure/runtime/**"
         - "@/modules/runs/infrastructure/clients/flows.client-live.ts"
         - "@/modules/runs/domain/routing/routing.value-object.ts"
-        - "~/sdk/src/**"
+        - "~/core/src/**"
         - "@/migrate.ts"
         - "@/repo-config.ts"
 
@@ -314,8 +329,10 @@ tree:
           external: [effect]
           allow:
             - "node:**"
-            - "~/sdk/src/**"
-            # The pins a repo's .chernabog/ gets are the bundled SDK's version.
+            - "~/core/src/**"
+            # The pins a repo's .chernabog/ gets: the bundled core's version, and the
+            # SDK's released with it.
+            - "~/core/package.json"
             - "~/sdk/package.json"
             - "@/kernel/**"
             - "@/platform/**"
@@ -440,7 +457,7 @@ tree:
                     - "@/modules/*/use-cases/**"
                     - "@/modules/*/*.layer.ts"
                     - "@/modules/runs/domain/schedule/*.value-object.ts"
-                    - "~/sdk/src/**"
+                    - "~/core/src/**"
                     - "@/modules/runs/infrastructure/runtime/engine.ts"
                     - "@/modules/runs/infrastructure/runtime/launchers.ts"
                     - "@/modules/runs/infrastructure/runtime/runlog.ts"
@@ -665,7 +682,7 @@ tree:
                   external: ["@effect/sql-sqlite-bun"]
                   allow:
                     - "node:**"
-                    - "~/sdk/src/**"
+                    - "~/core/src/**"
                     - "@/platform/**"
                     - "@/modules/{module}/use-cases/**"
                     - "@/repo-config.ts"
@@ -692,7 +709,7 @@ tree:
                   allow:
                     - "@/platform/**"
                     - "@/repo-config.ts"
-                    - "~/sdk/src/**"
+                    - "~/core/src/**"
                 children:
                   "*.client-live.ts": {}
                   "*.client-fake.ts": {}
@@ -712,52 +729,47 @@ tree:
                           "@/platform/exec.ts",
                           "@/platform/github-api.ts",
                           "@/platform/home.ts",
-                          "~/sdk/src/**",
+                          "~/core/src/**",
                           "test/*.ts",
                         ]
       "*.test.ts":
         surface: [{ use: test-exports-nothing }]
 
-  "~/sdk/src/":
+  "~/core/src/":
     message: >-
-      The published @chernabog/sdk: the services and blocks a repo's flows are written from.
+      The published @chernabog/core: the contract between the binary and every repo's flows. The
+      flow shape, the hooks the daemon calls, the durable primitives, the typed errors, the
+      service ports, and the conventions the daemon itself acts on (claims, markers). The binary
+      bundles it and provides its own copy to every flow; within a major it only grows
+      (docs/adr/0004-core-abi.md).
     imports:
       reset: true
       message: >-
-        The SDK is published and runs inside a person's flows. Its entry names the ABI and the
-        blocks, and nothing of the daemon's.
-      allow: ["~/sdk/src/**"]
+        Core is the contract the SDK's blocks are written against, so it names effect and itself:
+        never a block, never the daemon.
+      external: [effect]
+      allow: ["~/core/src/**"]
     surface:
       - use: no-default-exports
     children:
-      # The entry: the ABI and the blocks, re-exported side by side.
-      "index.ts": {}
-      "abi/":
-        message: >-
-          The flow ABI: the flow shape, the durable primitives and the service ports the binary
-          promises every repo's flows (#163).
-        imports:
-          message: >-
-            The ABI is the contract the blocks are written against, so it names effect and
-            itself, never a block.
-          reset: true
-          external: [effect]
-          allow: ["~/sdk/src/abi/**"]
-        children:
-          "*.ts": {}
-      "blocks/":
-        message: >-
-          The blocks: the library a recipe is written from (Implement, Review, Plan, Hybrid,
-          Claims, PullRequest, markers, prompts), over the ABI's ports (#163).
-        imports:
-          message: >-
-            A block reaches the daemon only through the ABI's ports, so it names effect, the
-            platform, the ABI and other blocks, and nothing else.
-          reset: true
-          external: [effect]
-          allow: ["node:**", "~/sdk/src/abi/**", "~/sdk/src/blocks/**"]
-        children:
-          "*.ts": {}
+      "*.ts": {}
+
+  "~/sdk/src/":
+    message: >-
+      The published @chernabog/sdk: the blocks a recipe is written from (Implement, Review, Plan,
+      Hybrid, PullRequest, prompts), over core's ports, and core re-exported, so a flow imports
+      from one package. Each repo installs the version it pins.
+    imports:
+      reset: true
+      message: >-
+        A block reaches the daemon only through core's ports, and core only through its entry,
+        as an installed SDK resolves it: so it names effect, node, core's entry and other blocks.
+      external: [effect]
+      allow: ["node:**", "~/core/src/index.ts", "~/sdk/src/**"]
+    surface:
+      - use: no-default-exports
+    children:
+      "*.ts": {}
 
   "~/recipes/":
     message: >-
@@ -797,7 +809,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - yaml
-      allow: ["node:**", "@/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
+      allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
       "acceptance/": { layout: open }
       "fakebin/": { layout: open }
@@ -822,6 +834,7 @@ tree:
     children:
       # What a script renders, which a test renders again; the script prints or writes it.
       "templates.ts": { members: [{ use: no-talking }] }
+      "core-api.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
       # What release-please would release from its PR, read with release-please's own
       # parser, the version its action bundles, since that parser is what goes wrong.

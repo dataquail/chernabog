@@ -1,7 +1,7 @@
 // Each run's log is a file under ~/.config/chernabog/runs/, one timestamped
 // line per entry. `chernabog logs <run>` prints it; the TUI tails it.
 
-import { RunLog } from "@chernabog/sdk";
+import { RunLog } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

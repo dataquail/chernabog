@@ -5,7 +5,7 @@
 // reminds the agent, once for each new commit, to offer the pull request.
 // Under every launcher, `done` is how Chernabog knows.
 
-import { type Json, parseJson, printJson } from "@chernabog/sdk";
+import { type Json, parseJson, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as JsonSchema from "effect/JsonSchema";

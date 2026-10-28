@@ -2,7 +2,7 @@
 // in state.db: started, polled and resumed through the handle of the flow
 // they run, and woken through the durable deferreds they wait on.
 
-import { signalDeferred } from "@chernabog/sdk";
+import { signalDeferred } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -10,7 +10,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
-import { BUNDLED_SDK } from "../../../../platform/flow-deps.ts";
+import { BUNDLED_CORE } from "../../../../platform/flow-deps.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
 import {
@@ -48,7 +48,8 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
         });
 
       return WorkflowsClient.of({
-        sdkVersion: BUNDLED_SDK,
+        coreVersion: BUNDLED_CORE,
+        treeOf: (flow) => Option.flatMap(handleOf(handles, flow), (found) => found.tree),
         runs: (flow) => Option.isSome(handleOf(handles, flow)),
         execute: (flow, runId, item) =>
           handle(flow).pipe(

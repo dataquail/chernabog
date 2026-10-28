@@ -136,7 +136,7 @@ describe("imported flows", () => {
     push("chore: acme recipes 1.0.0");
     const fixed = (await sandbox.runCli(["doctor"])).output;
     expect(fixed).not.toContain("incompatible");
-    expect(fixed).toContain("demo: .chernabog/ is written against an SDK this chernabog runs");
+    expect(fixed).toContain("demo: .chernabog/ needs a core this chernabog provides");
   }, 90_000);
 
   test("eject copies the imported flow in, and it keeps running under the same name and settings", async () => {

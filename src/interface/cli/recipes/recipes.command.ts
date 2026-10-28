@@ -368,7 +368,7 @@ const recipesUpdate = Command.make(
 const describeUpgrade = (upgraded: RepoUpgraded) => [
   ...Option.toArray(
     Option.liftPredicate(
-      `.chernabog/package.json: pins @chernabog/sdk ${upgraded.sdkVersion} and this chernabog's effect`,
+      `.chernabog/package.json: lists @chernabog/sdk ${upgraded.sdkVersion} and pins this chernabog's @chernabog/core and effect`,
       () => upgraded.pinned,
     ),
   ),
@@ -376,7 +376,7 @@ const describeUpgrade = (upgraded: RepoUpgraded) => [
     Option.match(Option.liftPredicate(missingImports, Arr.isReadonlyArrayNonEmpty), {
       onNone: () => `${file}: from no recipe, left as it is; check it against the SDK's changes`,
       onSome: (missing) =>
-        `${file}: from no recipe, left as it is; it imports what @chernabog/sdk ${upgraded.sdkVersion} doesn't have (${missing.join(", ")}), so move it by hand`,
+        `${file}: from no recipe, left as it is; it imports what this chernabog's @chernabog/core doesn't have (${missing.join(", ")}), so move it by hand`,
     }),
   ),
   ...noPackageHint(upgraded.packagesInstalled, upgraded.left.length > 0),
@@ -398,7 +398,7 @@ const recipesUpgrade = Command.make("upgrade", {}, () =>
   }),
 ).pipe(
   Command.withDescription(
-    "Move this repo's .chernabog/ onto this chernabog's SDK: its pins, and its copied recipes to the newest versions for that SDK, in the working tree",
+    "Move this repo's .chernabog/ onto this chernabog's core and the SDK released with it: its pins, and its copied recipes to the newest versions for that SDK, in the working tree",
   ),
 );
 
