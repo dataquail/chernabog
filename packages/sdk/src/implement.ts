@@ -268,13 +268,15 @@ export const shell = (command: string, cwd: string, env: Readonly<Record<string,
 
 const tail = (text: string, lines = 80) => text.trimEnd().split("\n").slice(-lines).join("\n");
 
-// The worktree for the claim branch, with dependencies installed.
+// The worktree for the claim branch, with dependencies installed. One an
+// earlier run left is brought to the claim first, so its work stays out of this run.
 export const prepareWorktree = (branch: string) =>
   activity(
     "prepare-worktree",
     Effect.gen(function* () {
       const repo = yield* Repo;
-      const path = yield* (yield* Worktree).ensure(branch);
+      const run = yield* Run;
+      const path = yield* (yield* Worktree).ensure(branch, run.runId);
 
       if (Option.isSome(repo.install)) {
         const installed = yield* shell(repo.install.value, path, repo.env);

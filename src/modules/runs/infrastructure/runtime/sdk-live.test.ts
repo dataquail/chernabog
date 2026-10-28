@@ -1,5 +1,6 @@
 import {
   DEFAULT_LABELS,
+  Git,
   GitHub,
   GitHubError,
   HEADLESS,
@@ -7,17 +8,22 @@ import {
   MergeRefused,
   PushRejected,
   type RepoSettings,
+  Worktree,
 } from "@chernabog/sdk";
-import { expect } from "bun:test";
+import { describe, expect } from "bun:test";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { effect } from "../../../../../test/effect-test.ts";
+import { effect, effectAtHomeWith } from "../../../../../test/effect-test.ts";
+import { Exec, execOk } from "../../../../platform/exec.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
+import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { DEFAULT_LIMITS } from "../../../../repo-config.ts";
-import { GitHubLive, pushRejection } from "./sdk-live.ts";
+import { GitHubLive, GitLive, pushRejection, WorktreeLive } from "./sdk-live.ts";
 
 const settings: RepoSettings = {
   name: "demo",
@@ -341,4 +347,91 @@ effect("a new issue is opened with its title, body and labels", () => {
     expect(created.number).toBe(20);
     expect(github.requests).toEqual(["POST /repos/dataquail/demo/issues"]);
   }).pipe(Effect.provide(github.layer));
+});
+
+const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+  execOk("git", ["-C", cwd, ...args]).pipe(Effect.map((said) => said.trim()));
+
+// A bare origin with main at one commit, and a clone of it as the repo's checkout.
+class GitRepo extends Context.Service<
+  GitRepo,
+  { readonly origin: string; readonly checkout: string; readonly base: string }
+>()("test/GitRepo") {}
+
+// The repo, and the run's Worktree and Git over its checkout, as the implicit persona.
+const gitRepo = Layer.unwrap(
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-git-" });
+
+    const root = yield* fs.realPath(temporary);
+    const origin = `${root}/origin.git`;
+    const checkout = `${root}/checkout`;
+
+    yield* execOk("git", ["init", "--quiet", "--bare", "--initial-branch", "main", origin]);
+    yield* execOk("git", ["clone", "--quiet", origin, checkout]);
+    yield* git(checkout, "config", "user.email", "test@example.com");
+    yield* git(checkout, "config", "user.name", "Test");
+    yield* git(checkout, "commit", "--quiet", "--allow-empty", "-m", "base");
+    yield* git(checkout, "push", "--quiet", "origin", "HEAD:refs/heads/main");
+
+    const base = yield* git(checkout, "rev-parse", "HEAD");
+
+    return Layer.mergeAll(
+      Layer.succeed(GitRepo, GitRepo.of({ origin, checkout, base })),
+      WorktreeLive({ ...settings, path: checkout }, Option.none()),
+      GitLive(Option.none()),
+    ).pipe(Layer.provide(GitHubTokens.fixed("token")));
+  }).pipe(Effect.orDie),
+);
+
+// git runs for real.
+const atHome = effectAtHomeWith(Exec.layer);
+
+describe("WorktreeLive", () => {
+  atHome(
+    "a worktree an earlier run left is reset to the claimed branch, and its push succeeds",
+    () =>
+      Effect.gen(function* () {
+        const { base, checkout, origin } = yield* GitRepo;
+        const worktree = yield* Worktree;
+        const pusher = yield* Git;
+        const branch = "auto/issue-7";
+
+        // The earlier run: its work pushed, then the branch deleted from the checkout.
+        const left = yield* worktree.ensure(branch, "run-old");
+        yield* git(left, "commit", "--quiet", "--allow-empty", "-m", "old work");
+        yield* pusher.push(left, branch);
+        yield* git(checkout, "push", "--quiet", "origin", "--delete", branch);
+
+        // This run's claim makes the branch again, at main, through the API.
+        yield* git(origin, "update-ref", `refs/heads/${branch}`, base);
+
+        const path = yield* worktree.ensure(branch, "run-new");
+        expect(path).toBe(left);
+        expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+
+        yield* git(path, "commit", "--quiet", "--allow-empty", "-m", "new work");
+        yield* pusher.push(path, branch);
+
+        expect(yield* git(origin, "rev-parse", branch)).toBe(yield* git(path, "rev-parse", "HEAD"));
+      }).pipe(Effect.provide(gitRepo)),
+  );
+
+  atHome("a run resuming its own worktree keeps its work", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktree = yield* Worktree;
+      const branch = "auto/issue-7";
+
+      const path = yield* worktree.ensure(branch, "run-1");
+      yield* git(path, "commit", "--quiet", "--allow-empty", "-m", "committed work");
+      const head = yield* git(path, "rev-parse", "HEAD");
+      yield* fs.writeFileString(`${path}/draft.txt`, "uncommitted\n");
+
+      expect(yield* worktree.ensure(branch, "run-1")).toBe(path);
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(head);
+      expect(yield* fs.readFileString(`${path}/draft.txt`)).toBe("uncommitted\n");
+    }).pipe(Effect.provide(gitRepo)),
+  );
 });

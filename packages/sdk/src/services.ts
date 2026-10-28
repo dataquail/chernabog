@@ -414,8 +414,10 @@ export class Git extends Context.Service<
 export class Worktree extends Context.Service<
   Worktree,
   {
-    // The worktree for a branch, created from origin/<base> the first time and reused after.
-    ensure(branch: string): Effect.Effect<string, GitError>;
+    // The worktree for a branch, created from origin/<branch> (or origin/<base>) the first time
+    // and reused after. With `runId`, one another run left is first reset to origin/<branch>;
+    // the run's own is reused as is, uncommitted work and all.
+    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     // A detached worktree named `name`, reset to `ref` (fetched first) every call: for reading, such as a review.
