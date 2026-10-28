@@ -189,6 +189,10 @@ const flow = defineFlow({
         NotFound: (gone) => Effect.fail(new StepFailed({ step: work.key, message: gone.message })),
         PullRequestClosed: (closed) =>
           Effect.fail(new StepFailed({ step: work.key, message: closed.message })),
+        NothingCommitted: (nothing) =>
+          Effect.fail(new StepFailed({ step: work.key, message: nothing.message })),
+        PushRejected: (rejected) =>
+          Effect.fail(new StepFailed({ step: work.key, message: rejected.message })),
       }),
     ),
 });

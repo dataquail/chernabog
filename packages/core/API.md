@@ -358,6 +358,7 @@ export declare const ClaimMarker: Schema.Struct<{
     readonly runId: Schema.String;
     readonly claimedAt: Schema.String;
     readonly branch: Schema.String;
+    readonly base: Schema.optionalKey<Schema.String>;
     readonly withPerson: Schema.optionalKey<Schema.Boolean>;
     readonly ref: Schema.optionalKey<Schema.Boolean>;
 }>;
@@ -383,6 +384,7 @@ export declare const claimMarker: {
         readonly runId: string;
         readonly claimedAt: string;
         readonly branch: string;
+        readonly base?: string | undefined;
         readonly withPerson?: boolean | undefined;
         readonly ref?: boolean | undefined;
     }) => string;
@@ -390,6 +392,7 @@ export declare const claimMarker: {
         readonly runId: string;
         readonly claimedAt: string;
         readonly branch: string;
+        readonly base?: string | undefined;
         readonly withPerson?: boolean | undefined;
         readonly ref?: boolean | undefined;
     }>;
