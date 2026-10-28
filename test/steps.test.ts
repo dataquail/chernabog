@@ -587,6 +587,14 @@ describe("PullRequest.merge", () => {
       "it touches paths a person must handle: `.github/workflows/ci.yml`",
     ],
     [
+      "a layer of a stack",
+      (fake) => {
+        approved(fake);
+        fake.stack.base = "auto/issue-2";
+      },
+      "stacked on auto/issue-2; it merges after the layer below",
+    ],
+    [
       "GitHub refuses",
       (fake) => {
         approved(fake);

@@ -225,6 +225,11 @@ export const makeFake = (
   // another, and those deleted from it.
   const remote = { heads: new Map<string, string>(), gone: new Set<string>() };
 
+  // The branch the pull request is based on: the repo's base branch, or the
+  // layer below's for a stacked one, whose files a diff against the repo's
+  // base branch takes in too.
+  const stack = { base: "main", below: new Array<string>() };
+
   // What the steps based their work on: the sha each branch was created from,
   // the base each pull request targets, and the base each push was checked against.
   const based = {
@@ -355,7 +360,7 @@ export const makeFake = (
     state: states.pull,
     headRef: `auto/issue-${ISSUE}`,
     headSha: git.head,
-    baseRef: "main",
+    baseRef: stack.base,
     labels: labelsOf(PULL),
     author: "chernabog-bot",
     assignees: [],
@@ -623,7 +628,11 @@ export const makeFake = (
         Effect.sync(() => {
           based.checkedAgainst.push(base);
 
-          return merge.files;
+          if (base === stack.base) {
+            return merge.files;
+          }
+
+          return [...stack.below, ...merge.files];
         }),
       push: () =>
         Effect.suspend(() => {
@@ -688,6 +697,7 @@ export const makeFake = (
     agent,
     existing,
     remote,
+    stack,
     based,
     states,
     refs,

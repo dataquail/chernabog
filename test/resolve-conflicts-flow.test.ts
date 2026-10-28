@@ -133,6 +133,24 @@ describe("resolve-conflicts", () => {
       }),
   );
 
+  effect("on a layer of a stack, merges in the layer below, not the repo's base branch", () =>
+    Effect.gen(function* () {
+      const fake = conflicting();
+      fake.stack.base = "auto/issue-2";
+      const [found] = yield* flowTriggered(fake, resolveConflicts);
+      expect(found.data).toEqual({
+        pullRequest: PULL,
+        headRef: "auto/issue-3",
+        baseRef: "auto/issue-2",
+      });
+
+      const finished = yield* runToEnd(resolving, fake, found);
+      expect(summaryOf(finished)).toBe(`#${PULL}: merged auto/issue-2 and resolved its conflicts`);
+      expect(fake.requests[0]?.prompt).toContain("git merge --no-ff origin/auto/issue-2");
+      expect(fake.based.checkedAgainst).toEqual(["auto/issue-2", "auto/issue-2"]);
+    }),
+  );
+
   effect("asks no one when the latest decisive review is no approval", () =>
     Effect.gen(function* () {
       const fake = conflicting();
