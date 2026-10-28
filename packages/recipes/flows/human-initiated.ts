@@ -17,12 +17,13 @@ import * as Option from "effect/Option";
 
 const work = (issue: number) =>
   Effect.gen(function* () {
-    const { branch } = yield* Hybrid.claim(issue);
+    // The base the claim settled, the repo's base branch here, which the later steps build on.
+    const { base, branch } = yield* Hybrid.claim(issue);
     const worktree = yield* Implement.prepareWorktree(branch);
     // A session the person closes before open-pr fails the run, which lets
     // the claim go and keeps the issue in progress, so chernabog start on the
     // issue again picks the session back up.
-    const finished = yield* Hybrid.workWithPerson(issue, worktree);
+    const finished = yield* Hybrid.workWithPerson(issue, worktree, { base });
     let pullRequest = Option.none<number>();
 
     const toPerson = (reason: string) =>
@@ -35,10 +36,10 @@ const work = (issue: number) =>
       const session = yield* Hybrid.personSession(issue);
       yield* Implement.localGate(worktree, { session });
       // The person watched the change written, so it may touch humanOnlyPaths; a person merges it.
-      yield* Implement.push("push", worktree, branch, { withPerson: true });
-      const opened = yield* Hybrid.openPullRequest(issue, finished);
+      yield* Implement.push("push", worktree, branch, { base, withPerson: true });
+      const opened = yield* Hybrid.openPullRequest(issue, finished, { base });
       pullRequest = Option.some(opened.number);
-      yield* Implement.waitForCi(opened.number, worktree, { ...session, branch });
+      yield* Implement.waitForCi(opened.number, worktree, { ...session, branch, base });
 
       return yield* Hybrid.handOff(issue, opened, finished);
     }).pipe(

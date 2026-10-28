@@ -58,9 +58,10 @@ export default defineFlow({
         );
 
       return yield* Effect.gen(function* () {
-        const { branch } = yield* Implement.claim(issue, queued);
+        // The base the claim settled, the repo's base branch here, which the later steps build on.
+        const { base, branch } = yield* Implement.claim(issue, queued);
         const worktree = yield* Implement.prepareWorktree(branch);
-        const outcome = yield* Implement.implementWithAgent(issue, worktree);
+        const outcome = yield* Implement.implementWithAgent(issue, worktree, { base });
 
         if (outcome.status === "needs-clarification") {
           return yield* Implement.askForClarification(issue, outcome, queued).pipe(
@@ -70,12 +71,13 @@ export default defineFlow({
 
         return yield* Effect.gen(function* () {
           yield* Implement.localGate(worktree);
-          yield* Implement.push("push", worktree, branch);
-          const opened = yield* Implement.openPullRequest(issue, outcome, queued);
+          yield* Implement.push("push", worktree, branch, { base });
+          const opened = yield* Implement.openPullRequest(issue, outcome, { ...queued, base });
           pullRequest = Option.some(opened.number);
           yield* Implement.waitForCi(opened.number, worktree, {
             ...Implement.thisRunsSession,
             branch,
+            base,
           });
 
           return yield* Implement.handOff(issue, opened, outcome);

@@ -152,6 +152,40 @@ export const queuedBy = (item: WorkItem) =>
 const queueLabel = (options: QueueOptions) =>
   Repo.use((repo) => Effect.succeed(options.label ?? repo.labels.eligible));
 
+// The branch an item's work builds on, and its pull request targets: the
+// repo's base branch unless given, such as another task's branch for a task
+// stacked on it. A flow passes claim's `base` on to the later blocks.
+export type BaseOptions = { readonly base?: string };
+
+export const baseOf = (options: BaseOptions) =>
+  Repo.use((repo) => Effect.succeed(options.base ?? repo.baseBranch));
+
+// What claim settled: the work branch, and the base it is built on.
+export const Claimed = Schema.Struct({
+  branch: Schema.String,
+  // Optional only so a run claimed before bases resumes; claim always gives it.
+  base: Schema.optionalKey(Schema.String),
+});
+
+// The head of the base to create the claim branch from. A base that is gone,
+// such as another task's branch merged and deleted, fails the claim: choosing
+// another is the flow's to do.
+export const baseHead = (base: string) =>
+  Effect.gen(function* () {
+    const sha = yield* (yield* GitHub).branchSha(base);
+
+    if (Option.isNone(sha)) {
+      return yield* new StepFailed({ step: "claim", message: `base branch ${base} not found` });
+    }
+
+    return sha.value;
+  });
+
+// The base a run that already holds the claim recorded, which it keeps
+// whatever it is given now; the repo's base branch for a marker without one.
+export const claimedBase = (marker: ClaimMarker) =>
+  Repo.use((repo) => Effect.succeed(marker.base ?? repo.baseBranch));
+
 // The account is the one machine config expects, and it has room for a task.
 export const gate = Effect.gen(function* () {
   const usage = yield* Usage;
@@ -236,26 +270,20 @@ export const dropInProgress = (issue: number) =>
 // repeat: a run that already holds the claim keeps it. Removes the label that
 // queued the issue. What it puts on the issue, the claim ref and a branch it
 // created are markers, which the engine releases however the run ends; the
-// branch only while it holds no work, and not when a person takes over.
-export const claim = (issue: number, options: QueueOptions = {}) =>
+// branch only while it holds no work, and not when a person takes over. The
+// branch starts from `base`'s head, the repo's base branch unless given, and
+// the claim marker records the base, which a run that resumes keeps.
+export const claim = (issue: number, options: QueueOptions & BaseOptions = {}) =>
   activity(
     "claim",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
       const run = yield* Run;
       const label = yield* queueLabel(options);
       const branch = branchFor(issue);
       const item = Claims.issue(issue);
-      const baseSha = yield* github.branchSha(repo.baseBranch);
-
-      if (Option.isNone(baseSha)) {
-        return yield* new StepFailed({
-          step: "claim",
-          message: `base branch ${repo.baseBranch} not found`,
-        });
-      }
-
+      const base = yield* baseOf(options);
+      const baseSha = yield* baseHead(base);
       const claimed = yield* Claims.acquire(item);
 
       if (!claimed.acquired) {
@@ -264,11 +292,11 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
         });
       }
 
-      if ((yield* github.createBranch(branch, baseSha.value)) === "already-exists") {
+      if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
         const latest = yield* latestClaim(issue);
 
-        if (Option.exists(latest, (marker) => marker.runId === run.runId)) {
-          return { branch };
+        if (Option.isSome(latest) && latest.value.runId === run.runId) {
+          return { branch, base: yield* claimedBase(latest.value) };
         }
 
         if (Option.isSome(legacyClaim(latest, run.runId))) {
@@ -287,13 +315,13 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
         issue,
         [
           ...Option.toArray(Option.map(claimed.takenOver, Claims.describeTakeover)),
-          claimComment({ runId: run.runId, claimedAt, branch, ref: true }),
+          claimComment({ runId: run.runId, claimedAt, branch, base, ref: true }),
         ].join("\n\n"),
       );
 
-      return { branch };
+      return { branch, base };
     }),
-    Schema.Struct({ branch: Schema.String }),
+    Claimed,
   );
 
 // Runs a repo command, such as the install or a local gate check, and keeps
@@ -394,8 +422,9 @@ const decodeOutcome = (result: AgentResult) =>
 
 // The agent implements the issue in the worktree and commits, from
 // .chernabog/prompts/implement.md. It answers done, with the pull request's
-// title and body, or needs-clarification, with its questions.
-export const implementWithAgent = (issue: number, worktree: string) =>
+// title and body, or needs-clarification, with its questions. The prompt's
+// `base` is the given one, the repo's base branch unless given.
+export const implementWithAgent = (issue: number, worktree: string, options: BaseOptions = {}) =>
   activity(
     "implement",
     Effect.gen(function* () {
@@ -412,7 +441,7 @@ export const implementWithAgent = (issue: number, worktree: string) =>
         body: details.body,
         comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
         branch: branchFor(issue),
-        base: repo.baseBranch,
+        base: yield* baseOf(options),
         localGate: repo.localGate.map((command) => `\`${command}\``),
         humanOnly: repo.humanOnly,
         notes: repo.notes,
@@ -691,10 +720,11 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
 
 // withPerson: a person is in the session that wrote the change, so it may
 // touch humanOnlyPaths; a person still merges it (PullRequest.merge checks them again).
-export type PushOptions = { readonly withPerson?: boolean };
+// base: what the branch is built on, so both checks see only its own commits.
+export type PushOptions = BaseOptions & { readonly withPerson?: boolean };
 
-// Checks the branch has commits and, unless a person is in the session,
-// touches no human-only paths, and pushes it. Fails with NothingCommitted when
+// Checks the branch has commits since its base and, unless a person is in the
+// session, touches no human-only paths, and pushes it. Fails with NothingCommitted when
 // there's nothing to push, and PushRejected when the remote refuses it, such
 // as for a token without the workflow scope.
 export const push = (name: string, worktree: string, branch: string, options: PushOptions = {}) =>
@@ -703,16 +733,14 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
     Effect.gen(function* () {
       const git = yield* Git;
       const repo = yield* Repo;
+      const base = yield* baseOf(options);
 
-      if ((yield* git.commitsAhead(worktree, repo.baseBranch)) === 0) {
+      if ((yield* git.commitsAhead(worktree, base)) === 0) {
         return yield* new NothingCommitted({ branch });
       }
 
       if (options.withPerson !== true) {
-        const touched = pathsMatching(
-          yield* git.changedFiles(worktree, repo.baseBranch),
-          repo.humanOnlyPaths,
-        );
+        const touched = pathsMatching(yield* git.changedFiles(worktree, base), repo.humanOnlyPaths);
 
         if (touched.length > 0) {
           return yield* new NeedsHuman({
@@ -739,11 +767,12 @@ const footer = (shipping: boolean) => {
 
 // Opens the pull request for the branch, or finds the one already open. An
 // issue queued by ship (auto:ship) gives its pull request the label too, the
-// automated path, which merges once approved.
+// automated path, which merges once approved. It targets `base`, the repo's
+// base branch unless given.
 export const openPullRequest = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions = {},
+  options: QueueOptions & BaseOptions = {},
 ) =>
   activity(
     "open-pull-request",
@@ -751,6 +780,7 @@ export const openPullRequest = (
       const github = yield* GitHub;
       const repo = yield* Repo;
       const branch = branchFor(issue);
+      const base = yield* baseOf(options);
       const shipping = options.label === repo.labels.ship;
 
       const existing = Option.filter(
@@ -763,7 +793,7 @@ export const openPullRequest = (
         onNone: () =>
           github.openPullRequest({
             head: branch,
-            base: repo.baseBranch,
+            base,
             title: outcome.title,
             body: `Closes #${issue}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
           }),
@@ -822,7 +852,7 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
     return reading;
   });
 
-export type CiBranch = AuthorSession & { readonly branch: string };
+export type CiBranch = AuthorSession & BaseOptions & { readonly branch: string };
 
 // Waits durably for the pull request's checks. On red, the agent reads the
 // failure, fixes, commits, and the branch is pushed again, up to
@@ -863,6 +893,7 @@ export const waitForCi = (
         target,
       );
       yield* push(named(options, `push-ci-${round}`), worktree, target.branch, {
+        base: target.base,
         withPerson: target.withPerson === true,
       });
     }

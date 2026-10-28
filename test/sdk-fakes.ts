@@ -221,6 +221,18 @@ export const makeFake = (
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
 
+  // The remote's branches: each one's head, the base's unless `heads` names
+  // another, and those deleted from it.
+  const remote = { heads: new Map<string, string>(), gone: new Set<string>() };
+
+  // What the steps based their work on: the sha each branch was created from,
+  // the base each pull request targets, and the base each push was checked against.
+  const based = {
+    createdFrom: new Array<string>(),
+    targets: new Array<string>(),
+    checkedAgainst: new Array<string>(),
+  };
+
   // Whether a person closed the issue or closed (or merged) the pull request.
   const states: ItemStates = {
     issue: "open",
@@ -442,12 +454,17 @@ export const makeFake = (
           );
         }),
       trustedComments: () => Effect.sync(() => comments.filter((found) => found.trusted)),
-      branchSha: () => Effect.succeedSome("base1234"),
-      createBranch: () =>
+      branchSha: (name) =>
+        Effect.sync(() =>
+          Option.liftPredicate(remote.heads.get(name) ?? "base1234", () => !remote.gone.has(name)),
+        ),
+      createBranch: (_, sha) =>
         Effect.sync((): "created" | "already-exists" => {
           if (existing.branch) {
             return "already-exists";
           }
+
+          based.createdFrom.push(sha);
 
           return "created";
         }),
@@ -494,9 +511,10 @@ export const makeFake = (
         }),
       pullRequestForBranch: () =>
         Effect.sync(() => Option.filter(Option.some(pull()), () => git.opened)),
-      openPullRequest: () =>
+      openPullRequest: (request) =>
         Effect.sync(() => {
           git.opened = true;
+          based.targets.push(request.base);
 
           return pull();
         }),
@@ -593,10 +611,20 @@ export const makeFake = (
     Layer.mock(Git)({
       // Any other git command, such as cleaning up's: it has nothing to say.
       run: () => Effect.succeed(""),
-      commitsAhead: () => Effect.succeed(1),
+      commitsAhead: (_, base) =>
+        Effect.sync(() => {
+          based.checkedAgainst.push(base);
+
+          return 1;
+        }),
       pull: () => Effect.void,
       headSha: () => Effect.sync(localHead),
-      changedFiles: () => Effect.sync(() => merge.files),
+      changedFiles: (_, base) =>
+        Effect.sync(() => {
+          based.checkedAgainst.push(base);
+
+          return merge.files;
+        }),
       push: () =>
         Effect.suspend(() => {
           if (Option.isSome(git.rejects)) {
@@ -659,6 +687,8 @@ export const makeFake = (
     author,
     agent,
     existing,
+    remote,
+    based,
     states,
     refs,
     commits,

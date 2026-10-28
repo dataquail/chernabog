@@ -50,11 +50,13 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
 // withPerson: claimed by a person's `chernabog start`, which another start of
 // the issue may take over. ref: the claim is a claim ref (Claims), which a
 // run of this version always writes; a marker without it is from a run that
-// held the issue by its branch alone.
+// held the issue by its branch alone. base: the branch the run builds on, so
+// a run that resumes keeps it; a marker without it is on the repo's base branch.
 export const ClaimMarker = Schema.Struct({
   runId: Schema.String,
   claimedAt: Schema.String,
   branch: Schema.String,
+  base: Schema.optionalKey(Schema.String),
   withPerson: Schema.optionalKey(Schema.Boolean),
   ref: Schema.optionalKey(Schema.Boolean),
 });
