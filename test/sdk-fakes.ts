@@ -197,6 +197,11 @@ export const makeFake = (
   const author = { consider: "address", resolve: "resolved", closes: false };
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
+  // Whether a person closed the issue or closed (or merged) the pull request.
+  const states = {
+    issue: "open" as "open" | "closed",
+    pull: "open" as PullRequest["state"],
+  };
   // Refs other than branches, such as claims, by full name, and the commits made through the API.
   const refs = new Map<string, string>();
   const commits = new Map<string, string>();
@@ -310,7 +315,7 @@ export const makeFake = (
     title: "feat: a change",
     body: "",
     url: `https://github.com/dataquail/demo/pull/${PULL}`,
-    state: "open",
+    state: states.pull,
     headRef: `auto/issue-${ISSUE}`,
     headSha: git.head,
     baseRef: "main",
@@ -328,11 +333,12 @@ export const makeFake = (
     createdAt: "2026-10-20T00:00:00Z",
     labels: labelsOf(ISSUE),
     assignees: [],
+    state: states.issue,
   });
 
   const known = (number: number): Option.Option<LinkedIssue> =>
     Option.orElse(Option.fromUndefinedOr(graph.made.get(number)), () =>
-      Option.liftPredicate({ ...issue(), state: "open" as const }, () => number === ISSUE),
+      Option.liftPredicate({ ...issue(), state: states.issue }, () => number === ISSUE),
     );
 
   const linkedTo = (links: Map<number, Array<number>>, number: number) =>
@@ -591,6 +597,7 @@ export const makeFake = (
     git,
     author,
     existing,
+    states,
     refs,
     commits,
     merge,

@@ -125,5 +125,7 @@ export default defineFlow({
   gate: Implement.gate,
   concurrency: 1,
   labels: Plan.flowLabels,
+  // A spec closed, or claimed by another run, ends the run as superseded.
+  stillValid: Plan.stillValid,
   workflow,
 });
