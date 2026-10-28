@@ -364,7 +364,7 @@ describe("the engine", () => {
         const cancelled = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
           by: "alice",
           closeSessions: false,
-          needsHuman: Option.none(),
+          endAs: Option.none(),
         });
 
         const delivered = yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])]);

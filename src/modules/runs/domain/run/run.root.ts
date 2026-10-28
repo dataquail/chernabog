@@ -5,7 +5,9 @@ import { RunId } from "../../../../kernel/run-id.id.ts";
 import { WorkItem } from "./work-item.value-object.ts";
 
 // Where a run is in its life: running until its workflow completes, then one
-// of the ways it can end, or cancelled by a person before it could.
+// of the ways it can end, cancelled by a person before it could, or
+// superseded: its work item went (closed, merged, claimed by another run)
+// while it was in flight.
 export const RunStatus = Schema.Literals([
   "running",
   "done",
@@ -13,6 +15,7 @@ export const RunStatus = Schema.Literals([
   "needs-human",
   "failed",
   "cancelled",
+  "superseded",
 ]);
 
 export type RunStatus = typeof RunStatus.Type;

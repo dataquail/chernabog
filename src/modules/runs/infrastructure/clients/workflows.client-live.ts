@@ -13,7 +13,13 @@ import * as DurableDeferred from "effect/workflow/DurableDeferred";
 import { BUNDLED_SDK } from "../../../../platform/flow-deps.ts";
 import { WorkflowsClient } from "../../domain/ports/clients/workflows.client.ts";
 import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
-import { type FlowHandle, runLogFor, statusOfExit, workflowNamed } from "../runtime/engine.ts";
+import {
+  type FlowHandle,
+  runLogFor,
+  statusOfExit,
+  stopExecution,
+  workflowNamed,
+} from "../runtime/engine.ts";
 import { handleOf } from "./flows.client-live.ts";
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
@@ -69,13 +75,18 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
             Effect.flatMap((found) => found.workflow.resume(executionId)),
             Effect.provideContext(engine),
           ),
+        // An agent call in progress stops now; the engine's interrupt lands
+        // once the activity it was in ends.
         interrupt: (flow, executionId) =>
-          Option.match(handleOf(handles, flow), {
-            onNone: () => workflowNamed(flow.repo, flow.flow),
-            onSome: (found) => found.workflow,
-          })
-            .interrupt(executionId)
-            .pipe(Effect.provideContext(engine)),
+          stopExecution(executionId).pipe(
+            Effect.andThen(
+              Option.match(handleOf(handles, flow), {
+                onNone: () => workflowNamed(flow.repo, flow.flow),
+                onSome: (found) => found.workflow,
+              }).interrupt(executionId),
+            ),
+            Effect.provideContext(engine),
+          ),
         wake: (deferred, token) =>
           Effect.gen(function* () {
             yield* DurableDeferred.succeed(signalDeferred(deferred), {

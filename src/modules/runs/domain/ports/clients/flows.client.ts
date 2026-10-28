@@ -4,7 +4,12 @@ import type * as Option from "effect/Option";
 
 import { type ReviewRequest } from "../../routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../../run/run.errors.ts";
-import { type FlowRef, type WorkItem } from "../../run/work-item.value-object.ts";
+import {
+  type FlowRef,
+  type ItemValidity,
+  type ValidityQuestion,
+  type WorkItem,
+} from "../../run/work-item.value-object.ts";
 
 // A repo's flows, as loaded from its trusted .chernabog/, each run with its
 // persona's services: the work its trigger finds, an item it didn't report,
@@ -20,6 +25,13 @@ export type FlowsClientService = {
     flow: FlowRef,
     key: string,
   ) => Effect.Effect<Option.Option<WorkItem>, FlowFailed | PersonaNotReady>;
+  // Whether a run's work item is still valid, by the flow's stillValid, run
+  // as the persona with a timeout; none for a flow that doesn't say. A check
+  // that fails or times out is FlowFailed, never Gone.
+  readonly stillValid: (
+    flow: FlowRef,
+    run: ValidityQuestion,
+  ) => Effect.Effect<Option.Option<ItemValidity>, FlowFailed | PersonaNotReady>;
   // Why the flow's gate holds its runs back, if it does.
   readonly gate: (flow: FlowRef) => Effect.Effect<Option.Option<string>>;
   // The repo's open pull requests and whom each asks to review, as the

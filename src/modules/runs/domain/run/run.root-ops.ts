@@ -133,6 +133,25 @@ const cancel = (run: RunRoot, by: string, at: string) =>
     }),
   );
 
+// The run ended, at `at`, because its work item went while it was in flight
+// (closed, merged, claimed by another run), before its workflow could end it.
+// Its summary says why, and the step it was interrupted in, if any.
+const supersede = (run: RunRoot, reason: string, at: string) =>
+  whileRunning(run, () =>
+    RunRoot.make({
+      ...run,
+      status: "superseded",
+      summary: Option.some(
+        Option.match(run.currentStep, {
+          onNone: () => reason,
+          onSome: (step) => `${reason}; interrupted in ${step}`,
+        }),
+      ),
+      currentStep: Option.none(),
+      finishedAt: Option.some(at),
+    }),
+  );
+
 // What a person names a run in flight by, without its id: a repo's item, and
 // optionally the flow and persona, when several runs in flight share the item.
 export type InFlightQuery = {
@@ -249,6 +268,7 @@ export const RunRootOps = {
   linkPullRequest,
   finish,
   cancel,
+  supersede,
   inFlightFor,
   sharingTarget,
   adopt,

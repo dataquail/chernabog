@@ -2,7 +2,7 @@
 // GitHub: which of the persona's pull requests it picks up, and how it merges
 // the base in, pushes, waits for CI and asks an approving reviewer again.
 
-import { DEFAULT_LABELS, Implement, ownerMarker } from "@chernabog/sdk";
+import { DEFAULT_LABELS, Implement, ownerMarker, Review } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -47,10 +47,12 @@ describe("resolve-conflicts' flow", () => {
         "concurrency",
         "gate",
         "ownWork",
+        "stillValid",
         "trigger",
         "workflow",
       ]);
       expect(resolveConflicts.concurrency).toBe(1);
+      expect(resolveConflicts.stillValid).toBe(Review.stillValid);
       expect(resolveConflicts.ownWork).toBe(true);
       expect(resolveConflicts.gate).toBe(Implement.gate);
     }),

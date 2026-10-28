@@ -13,6 +13,7 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `schedule`    | optional cron; `flows.<flow>.schedule` and the `schedule` on the repo's entry in machine config override it. Not on a manual flow |
 | `labels`      | optional; labels of the flow's own, such as `{ name: "auto:docs" }`, which `chernabog labels` creates |
 | `ownWork`     | optional; `true` when the trigger finds only the work of the persona it runs as, as `review`'s does by its review requests, so the daemon doesn't warn that several personas each take any of it |
+| `stillValid`  | optional; `(item) => Effect<Valid \| Gone>`: whether a run's work item is still there to work on. The daemon ends a run whose item is `Gone` as `superseded`; see [Work that goes away](#work-that-goes-away) |
 | `item`        | `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it. Optional, except on a manual flow |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
@@ -45,6 +46,43 @@ export default defineFlow({
 :::caution[Replay]
 The workflow body runs again on every replay. Side effects belong inside activities or steps, never in the body.
 :::
+
+## Work that goes away
+
+A run learns that its item changed only if a trigger reports a signal it waits on, or a step reads the item again. `stillValid` says when the item is gone, and the daemon asks it of every run of the flow in flight, executing or parked:
+
+- every `limits.validityEvery` (default `5 minutes`), whatever the flow's own schedule;
+- when a signal is about to wake a parked run, before it resumes;
+- at once, when a persona's [notifications](/chernabog/operate/daemon/#ticks-on-events) have news about the repo.
+
+```ts
+import { defineFlow, gone, Implement, valid } from "@chernabog/sdk";
+
+export default defineFlow({
+  trigger,
+  // The SDK's check for an issue's run: open, claimed by this run or nobody,
+  // and any pull request the run opened still open.
+  stillValid: Implement.stillValid,
+  // Or one of your own, against a client of your own:
+  // stillValid: (item) => Effect.map(myTracker.ticket(item.key), (ticket) =>
+  //   ticket.done ? gone(`${item.key} was resolved`) : valid),
+  workflow,
+});
+```
+
+A run whose item is `Gone` ends as **`superseded`**, with the reason as its summary (`#42 was closed; interrupted in implement`). An agent step in progress stops, and its session is left open, as `chernabog cancel` leaves it; any other activity in progress finishes first, and the run starts no more. Its worktrees, claim ref and claim on its issue are released as `cancel` releases them. `status`, the live view and `chernabog logs <run>` show the ending and the reason.
+
+A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `pullRequest`, the one it opened.
+
+The SDK's checks, which the recipes use:
+
+| Check                 | Gone when                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `Implement.stillValid` | the issue is closed or deleted, another run holds its claim, or the pull request the run opened is closed or merged |
+| `Plan.stillValid`     | the spec is closed or deleted, or another run holds its claim                                       |
+| `Review.stillValid`   | the pull request is closed, merged or deleted, or another run holds its claim                       |
+
+Without `stillValid`, a run carries on until its workflow ends it, as before.
 
 ## Manual flows
 

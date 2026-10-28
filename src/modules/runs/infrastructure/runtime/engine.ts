@@ -5,6 +5,8 @@
 // database takes over workflows the first is still running.
 
 import {
+  Agent,
+  AgentError,
   describeError,
   type Flow,
   FlowPackage,
@@ -27,6 +29,7 @@ import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -277,6 +280,56 @@ export const linkingPullRequests = <R>(
 // .chernabog/stages/ step's own process and the agent's own gh or git aren't
 // seen here; the run's end, or cron, catches those. A change is reported once
 // made; a failed one changed nothing to tick for.
+// The executions told to stop, by id. The engine's interrupt lands only
+// between activities, and an activity in progress, such as an agent step an
+// hour long, checks nothing; so each agent call a run makes ends when its run
+// is told to stop. The agent's session is left as it is.
+const stopRequests = new Map<string, Deferred.Deferred<void>>();
+
+const stopSignal = (executionId: string) => {
+  const found = stopRequests.get(executionId);
+
+  if (Predicate.isNotUndefined(found)) {
+    return found;
+  }
+
+  const made = Deferred.makeUnsafe<void>();
+  stopRequests.set(executionId, made);
+
+  return made;
+};
+
+// Tells a run's execution in this process to stop the agent call it is in,
+// if any, and any it would make after. The engine's own interrupt does the rest.
+export const stopExecution = (executionId: string) =>
+  Effect.suspend(() => Deferred.done(stopSignal(executionId), Exit.void)).pipe(Effect.asVoid);
+
+// The run's services, with each agent call ending when its execution is told to stop.
+export const stoppingWith = <R>(
+  context: Context.Context<R>,
+  executionId: string,
+): Context.Context<R> =>
+  Option.match(Context.getOption(context, Agent), {
+    onNone: () => context,
+    onSome: (agent) =>
+      Context.add(
+        context,
+        Agent,
+        Agent.of({
+          ...agent,
+          run: (request) =>
+            Effect.raceFirst(
+              agent.run(request),
+              Deferred.await(stopSignal(executionId)).pipe(
+                Effect.andThen(
+                  Effect.fail(new AgentError({ message: "the run was stopped mid-step" })),
+                ),
+              ),
+            ),
+        }),
+      ),
+  });
+
 export const reportingChanges = <R>(
   context: Context.Context<R>,
   changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,
@@ -468,10 +521,15 @@ export const flowLayer = <R>(
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideContext(
-          reportingChanges(linkingPullRequests(context, link), (what, item) =>
-            hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+          stoppingWith(
+            reportingChanges(linkingPullRequests(context, link), (what, item) =>
+              hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+            ),
+            executionId,
           ),
         ),
+        // A stop asked for an execution that has ended means nothing more.
+        Effect.ensuring(Effect.sync(() => stopRequests.delete(executionId))),
       );
 
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);

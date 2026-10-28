@@ -149,10 +149,16 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
       onNone: () => "nothing in flight",
       onSome: () => "in flight:",
     }),
-    ...status.active.map(
-      (run) =>
-        `  ${shortRunId(run.id)}  ${runLabel(run)}  ${runLine(run)}${suffix(run.itemTitle, "  ")}`,
-    ),
+    ...status.active.flatMap((run) => [
+      `  ${shortRunId(run.id)}  ${runLabel(run)}  ${runLine(run)}${suffix(run.itemTitle, "  ")}`,
+      // A check of its work item that keeps failing; the run carries on.
+      ...(status.validity ?? [])
+        .filter((check) => check.runId === run.id)
+        .map(
+          (check) =>
+            `    stillValid failed ${check.failures} time(s) in a row: ${check.problem} (the run carries on)`,
+        ),
+    ]),
     ...Option.toArray(Option.map(Arr.head(finished), () => "\nrecent:")),
     ...finished
       .slice(0, 8)

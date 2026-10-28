@@ -16,10 +16,7 @@ const claimValidity = (item: string, what: string) =>
   Effect.gen(function* () {
     const run = yield* Run;
 
-    const other = Option.filter(
-      yield* Claims.holder(item),
-      (found) => found.runId !== run.runId,
-    );
+    const other = Option.filter(yield* Claims.holder(item), (found) => found.runId !== run.runId);
 
     return Option.match(other, {
       onNone: (): Validity => valid,

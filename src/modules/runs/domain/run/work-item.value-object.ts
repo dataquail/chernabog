@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
+import { type RunId } from "../../../../kernel/run-id.id.ts";
 
 // What a flow's trigger reports: one piece of work, such as an issue or a pull
 // request, by a key a run of the flow is for. As the SDK defines it; a flow
@@ -21,6 +22,20 @@ export const WorkItem = Schema.Struct({
 });
 
 export type WorkItem = typeof WorkItem.Type;
+
+// Whether a run's work item is still there to work on, as its flow's
+// stillValid says: Gone, with why, ends the run as superseded.
+export type ItemValidity =
+  { readonly valid: true } | { readonly valid: false; readonly reason: string };
+
+// The run a flow's stillValid is asked about: its id and execution, the item
+// it works on, and the pull request it opened or adopted, if any.
+export type ValidityQuestion = {
+  readonly runId: RunId;
+  readonly executionId: string;
+  readonly item: WorkItem;
+  readonly pullRequest: Option.Option<number>;
+};
 
 // A flow as one persona runs it on this machine: the repo it's in, by the name
 // the daemon schedules it under, the flow's name, and the persona.

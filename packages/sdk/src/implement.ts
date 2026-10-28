@@ -79,9 +79,7 @@ export const issueOf = (item: WorkItem) =>
 // stillValid: it is open, no other run holds its claim, and the pull request
 // the run opened, if any, is open. A run whose issue is gone ends as superseded.
 export const stillValid = (item: WorkItem) =>
-  issueOf(item).pipe(
-    Effect.flatMap((issue) => issueValidity(issue, { pullRequest: true })),
-  );
+  issueOf(item).pipe(Effect.flatMap((issue) => issueValidity(issue, { pullRequest: true })));
 
 // A stable session id per run and purpose, so a rerun after a crash resumes
 // the agent's session instead of starting over.

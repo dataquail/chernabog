@@ -308,6 +308,31 @@ describe("the main view", () => {
   });
 });
 
+describe("status of runs' work items", () => {
+  test("a run whose check keeps failing says so under it, and a superseded run says why", () => {
+    const said = describeStatus(
+      {
+        ...status,
+        recent: [
+          RunView.make({
+            ...run("goodbones.review.pr-6.1", "superseded"),
+            summary: Option.some("#6 was closed; interrupted in await-closed:approved"),
+          }),
+        ],
+        validity: [{ runId: "goodbones.review.pr-8.1", failures: 3, problem: "rate limited" }],
+      },
+      now,
+    );
+
+    expect(said).toContain(
+      "    stillValid failed 3 time(s) in a row: rate limited (the run carries on)",
+    );
+    expect(said.some((line) => /^ {2}superseded .*#6 was closed; interrupted in/.test(line))).toBe(
+      true,
+    );
+  });
+});
+
 describe("keys", () => {
   test("enter opens the selected run’s detail, l its log, and esc comes back each time", () => {
     const opened = update(model({ runIndex: 1 }), { name: "return" });
