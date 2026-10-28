@@ -81,6 +81,8 @@ flows:
     from: "@chernabog/recipes/address-review"
   human-initiated:
     from: "@chernabog/recipes/human-initiated"
+  plan:
+    from: "@chernabog/recipes/plan"
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose
