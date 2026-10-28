@@ -177,6 +177,16 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
           (check) =>
             `    stillValid failed ${check.failures} time(s) in a row: ${check.problem} (the run carries on)`,
         ),
+      // Its leases, and one whose last renewal failed, which is at risk.
+      ...(status.leases ?? [])
+        .filter((lease) => lease.runId === run.id)
+        .map(
+          (lease) =>
+            `    lease on ${lease.item}${suffix(lease.expiresAt, " until ")}${suffix(lease.renewedAt, ", renewed ")}${suffix(
+              Option.map(lease.atRisk, (problem) => `at risk: ${problem}`),
+              "; ",
+            )}`,
+        ),
     ]),
     ...Option.toArray(Option.map(Arr.head(status.markers ?? []), () => "\nnot yet released:")),
     ...(status.markers ?? []).map(markerLine),

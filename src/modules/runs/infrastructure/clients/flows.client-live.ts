@@ -4,6 +4,7 @@
 // request a run owns.
 
 import {
+  Claims,
   describeError,
   GitHub,
   isSetupError,
@@ -16,6 +17,7 @@ import {
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,6 +33,7 @@ import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import { type FlowRef, type ValidityQuestion } from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
+import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
@@ -107,6 +110,53 @@ const STILL_VALID_TIMEOUT = Duration.minutes(1);
 // How long a marker's release may take before it counts as failed.
 const RELEASE_TIMEOUT = Duration.minutes(1);
 
+// How long reading or renewing a lease may take before it counts as failed.
+const LEASE_TIMEOUT = Duration.minutes(1);
+
+// The lease of `runId`'s claim on `item`, as the claim ref has it now.
+const leaseOf = (item: string, runId: string) =>
+  Claims.holder(item).pipe(
+    Effect.map((found): LeaseState => {
+      if (Option.isNone(found)) {
+        return { status: "released" };
+      }
+
+      if (found.value.runId !== runId) {
+        return { status: "lost", reason: Claims.describeLoss(item, found) };
+      }
+
+      return {
+        status: "held",
+        expiresAt: Option.fromUndefinedOr(found.value.expiresAt),
+        renewedAt: Option.fromUndefinedOr(found.value.renewedAt),
+      };
+    }),
+  );
+
+// Renews the lease of `runId`'s claim on `item` for `ttl` from now.
+const renewing = (item: string, runId: string, ttl: Duration.Duration) =>
+  Effect.gen(function* () {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const renewal = yield* Claims.renew(item, runId, ttl);
+
+    if (renewal.status === "renewed") {
+      return {
+        status: "held",
+        expiresAt: Option.some(renewal.expiresAt),
+        renewedAt: Option.some(now),
+      } satisfies LeaseState;
+    }
+
+    if (renewal.status === "lost") {
+      return {
+        status: "lost",
+        reason: Claims.describeLoss(item, renewal.holder),
+      } satisfies LeaseState;
+    }
+
+    return { status: "released" } satisfies LeaseState;
+  });
+
 export type FlowsClientOptions = {
   readonly stillValidTimeout?: Duration.Input;
 };
@@ -138,6 +188,19 @@ const markerNamed = (
     },
   );
 
+// The persona's services for the repo, whether or not its flows loaded.
+const servicesOf = (registry: FlowRegistry, flow: FlowRef) =>
+  Option.match(registry.services(flow.repo, flow.persona), {
+    onNone: () =>
+      Effect.fail(
+        new FlowFailed({
+          message: `${flow.repo} has no services as ${Option.getOrElse(flow.persona, () => "the implicit persona")}`,
+        }),
+      ),
+    onSome: (build) =>
+      build.pipe(Effect.mapError((error) => new PersonaNotReady({ message: error.message }))),
+  });
+
 // A release's failure: arguments that no longer fit can't be retried.
 const releaseFailed = <E>(error: E): FlowFailed | PersonaNotReady | MarkerUnreleasable => {
   if (Predicate.isTagged(error, "ArgumentsChanged") && Predicate.hasProperty(error, "message")) {
@@ -165,6 +228,7 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
     FlowsClient,
     Effect.gen(function* () {
       const runs = yield* Effect.context<Effect.Services<ReturnType<typeof withRepo>>>();
+      const personaServices = (flow: FlowRef) => servicesOf(registry, flow);
 
       // The flow's handle and its persona's services, or why there are none.
       const loaded = (
@@ -240,19 +304,7 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
         releaseMarker: (flow, question, name, args) =>
           Effect.gen(function* () {
             const marker = yield* markerNamed(handleOf(registry.handles, flow), flow, name);
-
-            const services = yield* Option.match(registry.services(flow.repo, flow.persona), {
-              onNone: () =>
-                Effect.fail(
-                  new FlowFailed({
-                    message: `${flow.repo} has no services as ${Option.getOrElse(flow.persona, () => "the implicit persona")}`,
-                  }),
-                ),
-              onSome: (build) =>
-                build.pipe(
-                  Effect.mapError((error) => new PersonaNotReady({ message: error.message })),
-                ),
-            });
+            const services = yield* personaServices(flow);
 
             yield* withRepo(
               Context.add(services, Run, runInfo(flow, question)),
@@ -265,6 +317,28 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                   Effect.fail(
                     new FlowFailed({
                       message: `releasing ${name} timed out after ${Duration.format(RELEASE_TIMEOUT)}`,
+                    }),
+                  ),
+              }),
+            );
+          }).pipe(Effect.provideContext(runs)),
+        lease: (flow, question, item, renew) =>
+          Effect.gen(function* () {
+            const services = yield* personaServices(flow);
+
+            const asked = Option.match(renew, {
+              onNone: () => leaseOf(item, question.runId),
+              onSome: (ttl) => renewing(item, question.runId, ttl),
+            });
+
+            return yield* withRepo(Context.add(services, Run, runInfo(flow, question)), asked).pipe(
+              Effect.mapError(failed),
+              Effect.timeoutOrElse({
+                duration: LEASE_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new FlowFailed({
+                      message: `the lease on ${item} timed out after ${Duration.format(LEASE_TIMEOUT)}`,
                     }),
                   ),
               }),

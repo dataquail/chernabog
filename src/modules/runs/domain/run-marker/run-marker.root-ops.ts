@@ -63,8 +63,10 @@ const holdAgain = (
     },
   });
 
-// Whether the marker stays on this ending.
-const keptOn = (marker: RunMarkerRoot, ending: string) => marker.keepOn.includes(ending);
+// Whether the marker stays on this ending. A run that lost its item keeps
+// every marker: they are the new holder's now.
+const keptOn = (marker: RunMarkerRoot, ending: string) =>
+  ending === "lost" || marker.keepOn.includes(ending);
 
 // Whether a held marker's release may be tried at `now`.
 const isDue = (marker: RunMarkerRoot, now: DateTime.Utc) =>

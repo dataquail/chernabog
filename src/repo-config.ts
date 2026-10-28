@@ -41,6 +41,10 @@ import {
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
+import {
+  DEFAULT_LEASE_LIMITS,
+  type LeaseLimits,
+} from "./modules/runs/domain/schedule/lease.value-object.ts";
 import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "./modules/runs/domain/schedule/validity.value-object.ts";
 import type { AgentsConfig } from "./modules/runs/infrastructure/runtime/agents.ts";
@@ -126,6 +130,11 @@ const LimitsFile = Schema.Struct({
   eventTickMin: Schema.optionalKey(DurationText),
   // How often the daemon asks whether each run's work item is still valid (#142).
   validityEvery: Schema.optionalKey(DurationText),
+  // How long a run's claim lasts unless its daemon renews it, executing and
+  // parked, and how often the daemon renews it (#134).
+  leaseTtl: Schema.optionalKey(DurationText),
+  parkedLeaseTtl: Schema.optionalKey(DurationText),
+  leaseRenewEvery: Schema.optionalKey(DurationText),
   planNodes: Schema.optionalKey(Schema.Int),
   planRounds: Schema.optionalKey(Schema.Int),
 });
@@ -356,6 +365,9 @@ export type EffectiveRepo = {
   readonly eventTickMin: Duration.Duration;
   // The team's limits.validityEvery: how often each run in flight has its work item checked.
   readonly validityEvery: Duration.Duration;
+  // The team's limits.leaseTtl, parkedLeaseTtl and leaseRenewEvery: how long a
+  // run's claims last, executing and parked, and how often the daemon renews them.
+  readonly leases: LeaseLimits;
 };
 
 export const personaOf = (repo: EffectiveRepo, persona: Persona) =>
@@ -1006,11 +1018,27 @@ export const mergeRepoConfig = (
       () => DEFAULT_VALIDITY_EVERY,
     );
 
+    const duration = (text: Option.Option<string>, fallback: Duration.Duration) =>
+      Option.getOrElse(Option.flatMap(text, parseDuration), () => fallback);
+
+    const leases: LeaseLimits = {
+      ttl: duration(Option.fromUndefinedOr(repo.limits?.leaseTtl), DEFAULT_LEASE_LIMITS.ttl),
+      parkedTtl: duration(
+        Option.fromUndefinedOr(repo.limits?.parkedLeaseTtl),
+        DEFAULT_LEASE_LIMITS.parkedTtl,
+      ),
+      renewEvery: duration(
+        Option.fromUndefinedOr(repo.limits?.leaseRenewEvery),
+        DEFAULT_LEASE_LIMITS.renewEvery,
+      ),
+    };
+
     return {
       settings: head.settings,
       personas: [head, ...tail],
       eventTickMin,
       validityEvery,
+      leases,
     } satisfies EffectiveRepo;
   });
 

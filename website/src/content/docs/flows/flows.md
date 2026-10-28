@@ -73,6 +73,8 @@ export default defineFlow({
 
 A run whose item is `Gone` ends as **`superseded`**, with the reason as its summary (`#42 was closed; interrupted in implement`). An agent step in progress stops, and its session is left open, as `chernabog cancel` leaves it; any other activity in progress finishes first, and the run starts no more. Its worktrees, claim ref and claim on its issue are released as `cancel` releases them. `status`, the live view and `chernabog logs <run>` show the ending and the reason.
 
+Before `stillValid`, the daemon checks the run's [lease](/chernabog/operate/daemon/#leases): a run whose claim another run took over, after its lease expired, ends as **`lost`** instead, leaving what it put on the item to that run.
+
 A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `pullRequest`, the one it opened.
 
 The SDK's checks, which the recipes use:

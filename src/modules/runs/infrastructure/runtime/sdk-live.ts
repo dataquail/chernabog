@@ -445,6 +445,14 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
 
       const deleteBranch = (branch: string) => deleteRef(`refs/heads/${branch}`);
 
+      // Forced: GitHub checks no fast-forward outside refs/heads/ either way.
+      const updateRef = (ref: string, sha: string) =>
+        provide(
+          githubSend("PATCH", path(`/git/${ref}`), Option.some({ sha, force: true })).pipe(
+            Effect.asVoid,
+          ),
+        );
+
       const createCommit = (commit: NewCommit) =>
         provide(
           githubJson(
@@ -723,6 +731,7 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
         createRef,
         ref,
         deleteRef,
+        updateRef,
         pullRequest: (number) =>
           readOrNotFound(`pull request #${number}`, `/pulls/${number}`, RestPullRequest).pipe(
             Effect.map(toPullRequest),

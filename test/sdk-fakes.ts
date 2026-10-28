@@ -49,6 +49,7 @@ import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
+import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
@@ -122,6 +123,7 @@ export const repoAs = (
   personas: Arr.map(personas, (persona) => asPersona(repoSettings, persona)),
   eventTickMin: DEFAULT_EVENT_TICK_MIN,
   validityEvery: DEFAULT_VALIDITY_EVERY,
+  leases: DEFAULT_LEASE_LIMITS,
 });
 
 export const repo = repoAs(settings);
@@ -494,6 +496,10 @@ export const makeFake = (
       deleteRef: (ref) =>
         Effect.sync(() => {
           refs.delete(ref);
+        }),
+      updateRef: (ref, sha) =>
+        Effect.sync(() => {
+          refs.set(ref, sha);
         }),
       assignSelf: () =>
         Effect.sync(() => {

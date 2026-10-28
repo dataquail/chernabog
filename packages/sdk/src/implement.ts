@@ -263,8 +263,9 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
 export const dropInProgress = (issue: number) =>
   Repo.use((repo) => Markers.drop(Markers.label, { number: issue, label: repo.labels.inProgress }));
 
-// Claims the issue with its claim ref, which only one run can create, then
-// creates the issue's branch, or adopts one with no claim on it, and labels,
+// Claims the issue with its claim ref, which only one run can create, or takes
+// over one whose lease expired, then creates the issue's branch, or adopts
+// one with no claim on it (or the run it took over from left), and labels,
 // assigns and comments as a person picking it up would (markClaimed). Safe to
 // repeat: a run that already holds the claim keeps it. Removes the label that
 // queued the issue. What it puts on the issue, the claim ref and a branch it
@@ -312,7 +313,10 @@ export const claim = (issue: number, options: QueueOptions & BaseOptions = {}) =
       const claimedAt = DateTime.formatIso(yield* DateTime.now);
       yield* github.comment(
         issue,
-        claimComment({ runId: run.runId, claimedAt, branch, base, ref: true }),
+        [
+          ...Option.toArray(Option.map(claimed.takenOver, Claims.describeTakeover)),
+          claimComment({ runId: run.runId, claimedAt, branch, base, ref: true }),
+        ].join("\n\n"),
       );
 
       return { branch, base };

@@ -40,6 +40,9 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
+| `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
+| `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person |
+| `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight |
 | `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
 | `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
 

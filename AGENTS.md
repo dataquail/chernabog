@@ -567,9 +567,22 @@ Decisions that cut across them:
   claims were refs) leaves its ref when the run ends; `cancel <run>` on that
   ended run deletes only the ref (`CancelledRun.alreadyEnded`), the run keeps
   its ending, and with no ref left it is refused (`RunAlreadyFinished`).
-- **No takeover yet** (#134). GitHub doesn't check fast-forwards for refs
-  outside `refs/heads/`, so a non-forced `PATCH` on a claim ref is not a
-  compare-and-swap; leases need another way.
+- **Claims are leases** (#134). The claim commit carries `Expires-At` (and
+  `Renewed-At`, `Taken-Over-From`). GitHub checks no fast-forward outside
+  `refs/heads/`, so a renewal or takeover (`Claims.renew`, `Claims.acquire` on
+  an expired claim) first creates `refs/chernabog/leases/<item>/<sha replaced>`,
+  which only one writer can; the winner then force-moves the claim ref
+  (`GitHub.updateRef`) and deletes the lease ref, and readers (`Claims.current`)
+  follow a lease ref a writer left. `acquire` holds the claim-ref marker only
+  once it has won.
+- **The daemon renews** each run's claim-ref markers through
+  `checkRunLeasesUseCase` (`FlowsClient.lease`) every `limits.leaseRenewEvery`,
+  for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
+  check; a claim naming another run ends the run as `lost` (`cancelRunUseCase`
+  with `endAs lost`, which removes nothing). In the run, `fencing` in the
+  engine checks `Claims.holds` before every GitHub write and push, and a lost
+  claim ends the workflow as `lost`. A lost run's markers are all kept: they
+  are the taker's.
 - **Migration, to drop a release later:** a branch whose latest claim marker
   has no `ref: true` is an earlier version's claim (`Implement.legacyClaim`),
   and a pull request with no claim ref falls back to its owner markers

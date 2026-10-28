@@ -70,6 +70,12 @@ limits:
   # How often the daemon checks that each run's issue or pull request is
   # still there to work on, and ends a run whose item went as superseded.
   # validityEvery: 5 minutes
+  # A run's claim on its issue or pull request is a lease its daemon renews:
+  # one not renewed for leaseTtl (parkedLeaseTtl while the run waits on
+  # review, CI or a person) expires, and another run may take the work over.
+  # leaseTtl: 12 hours
+  # parkedLeaseTtl: 3 days
+  # leaseRenewEvery: 30 minutes
   # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
   planNodes: 12
   planRounds: 2

@@ -262,6 +262,7 @@ const STATUS_STYLE: Readonly<Record<RunStatus, Style>> = {
   "needs-human": "yellow",
   cancelled: "dim",
   superseded: "dim",
+  lost: "yellow",
   failed: "red",
 };
 
@@ -1163,6 +1164,7 @@ const LAST_MARK: Readonly<Record<RunStatus, Segment>> = {
   "needs-human": segment("!", "yellow"),
   cancelled: segment("✗", "dim"),
   superseded: segment("↷", "dim"),
+  lost: segment("↷", "yellow"),
   skipped: segment("○", "dim"),
 };
 

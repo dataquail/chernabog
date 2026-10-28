@@ -99,18 +99,22 @@ const github = (state: GitHubState) =>
       Effect.sync(() => {
         state.calls.push(`delete-branch ${branch}`);
       }),
+    // Only the claim ref: no lease ref is left over.
     ref: (ref) =>
       Effect.sync(() =>
-        Option.map(state.refHolder, (runId) => ({
-          sha: `claim-of-${runId}`,
-          message: Claims.messageOf({
-            runId,
-            persona: "bob",
-            flow: "implement",
-            claimedAt: "2026-10-24T00:00:00.000Z",
-            withPerson: false,
+        Option.map(
+          Option.filter(state.refHolder, () => ref.startsWith("refs/chernabog/claims/")),
+          (runId) => ({
+            sha: `claim-of-${runId}`,
+            message: Claims.messageOf({
+              runId,
+              persona: "bob",
+              flow: "implement",
+              claimedAt: "2026-10-24T00:00:00.000Z",
+              withPerson: false,
+            }),
           }),
-        })).pipe(Option.filter(() => !state.calls.includes(`delete-ref ${ref}`))),
+        ).pipe(Option.filter(() => !state.calls.includes(`delete-ref ${ref}`))),
       ),
     deleteRef: (ref) =>
       Effect.sync(() => {
