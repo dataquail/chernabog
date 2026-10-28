@@ -75,18 +75,16 @@ export const WorkflowsClientLive = (handles: ReadonlyArray<FlowHandle>) =>
             Effect.flatMap((found) => found.workflow.resume(executionId)),
             Effect.provideContext(engine),
           ),
-        // An agent call in progress stops now; the engine's interrupt lands
-        // once the activity it was in ends.
+        // The engine keeps the interrupt first, so it holds across a restart;
+        // then the workflow in this process stops at once, and the agent call
+        // it was in after it.
         interrupt: (flow, executionId) =>
-          stopExecution(executionId).pipe(
-            Effect.andThen(
-              Option.match(handleOf(handles, flow), {
-                onNone: () => workflowNamed(flow.repo, flow.flow),
-                onSome: (found) => found.workflow,
-              }).interrupt(executionId),
-            ),
-            Effect.provideContext(engine),
-          ),
+          Option.match(handleOf(handles, flow), {
+            onNone: () => workflowNamed(flow.repo, flow.flow),
+            onSome: (found) => found.workflow,
+          })
+            .interrupt(executionId)
+            .pipe(Effect.andThen(stopExecution(executionId)), Effect.provideContext(engine)),
         wake: (deferred, token) =>
           Effect.gen(function* () {
             yield* DurableDeferred.succeed(signalDeferred(deferred), {

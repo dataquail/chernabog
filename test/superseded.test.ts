@@ -30,7 +30,7 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
+import { type CancelledRun, CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { RunValidity } from "../src/modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../src/modules/runs/use-cases/check-run-validity.use-case.ts";
@@ -145,48 +145,92 @@ describe("a run whose work item goes", () => {
     }),
   );
 
+  // An implement run in its agent step, ended by `end`; what it left once its
+  // workflow had stopped in the engine.
+  const endedMidStep = <E, R>(
+    fake: Fake,
+    end: (run: EngineRun) => Effect.Effect<CancelledRun, E, R>,
+  ) =>
+    Effect.gen(function* () {
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+      fake.agent.hangs = true;
+      const handle = flowHandle(repo, "implement", implement);
+
+      return yield* withEngine(
+        handle,
+        fake,
+        Effect.gen(function* () {
+          const work = item(`issue-${ISSUE}`, { issue: ISSUE });
+          const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, work)).run);
+
+          const working = yield* pollRun(started).pipe(
+            Effect.repeat({
+              ...POLLS,
+              until: (run) => Option.contains(run.currentStep, "implement"),
+            }),
+          );
+
+          const commentsBefore = fake.comments.length;
+          const ended = yield* Effect.orDie(end(started));
+
+          // Whatever the workflow would still do, it has done once it stops.
+          yield* handle.workflow
+            .poll(Option.getOrThrow(started.executionId))
+            .pipe(Effect.repeat({ ...POLLS, until: Option.isSome }));
+
+          const polled = yield* pollRun(started);
+
+          return { working, ended, polled, commentsBefore };
+        }),
+      );
+    });
+
   effect(
-    "an implement run whose issue closes mid-agent-step is interrupted and opens no pull request",
+    "an implement run whose issue closes mid-agent-step is interrupted, and writes nothing more",
     () =>
       Effect.gen(function* () {
         const fake = makeFake("approve", { reviewers: ["zach"] });
-        fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
-        fake.agent.hangs = true;
-        const handle = flowHandle(repo, "implement", implement);
 
-        const value = yield* withEngine(
-          handle,
-          fake,
+        const value = yield* endedMidStep(fake, (run) =>
           Effect.gen(function* () {
-            const work = item(`issue-${ISSUE}`, { issue: ISSUE });
-            const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, work)).run);
+            fake.states.issue = "closed";
+            const checked = yield* checkRunValidityUseCase(run.id);
 
-            const working = yield* pollRun(started).pipe(
-              Effect.repeat({
-                ...POLLS,
-                until: (run) => Option.contains(run.currentStep, "implement"),
-              }),
+            expect(checked).toEqual(
+              RunValidity.cases.Gone.make({ reason: `#${ISSUE} was closed` }),
             );
 
-            fake.states.issue = "closed";
-            const checked = yield* checkRunValidityUseCase(started.id);
-
-            const ended = yield* superseding(started, `#${ISSUE} was closed`);
-
-            const polled = yield* pollRun(started);
-
-            return { working, checked, ended, polled };
+            return yield* superseding(run, `#${ISSUE} was closed`);
           }),
         );
 
         expect(Option.getOrThrow(value.working.currentStep)).toBe("implement");
-        expect(value.checked).toEqual(
-          RunValidity.cases.Gone.make({ reason: `#${ISSUE} was closed` }),
-        );
         expect([value.ended.stopped, value.polled.status]).toEqual([true, "superseded"]);
         expect(summaryOf(value.polled)).toBe(`#${ISSUE} was closed; interrupted in implement`);
         expect(fake.git.opened).toBe(false);
         expect(fake.refs.has(Claims.refFor(Claims.issue(ISSUE)))).toBe(false);
+        // No hand-off to a person: no comment, no auto:needs-human.
+        expect(fake.comments.length).toBe(value.commentsBefore);
+        expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.needsHuman);
       }),
+  );
+
+  effect("a cancel mid-agent-step stops the agent, and the run writes nothing more", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve", { reviewers: ["zach"] });
+
+      const value = yield* endedMidStep(fake, (run) =>
+        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+          by: "alice",
+          closeSessions: false,
+          endAs: Option.none(),
+        }),
+      );
+
+      expect([value.ended.stopped, value.polled.status]).toEqual([true, "cancelled"]);
+      expect(fake.git.opened).toBe(false);
+      expect(fake.comments.length).toBe(value.commentsBefore);
+      expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.needsHuman);
+    }),
   );
 });
