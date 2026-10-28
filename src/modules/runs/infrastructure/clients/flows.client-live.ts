@@ -7,6 +7,7 @@ import {
   describeError,
   GitHub,
   isSetupError,
+  Run,
   Runs,
   type SetupError,
   triggerOf,
@@ -14,6 +15,7 @@ import {
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,7 +28,7 @@ import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
 import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
-import { type FlowRef } from "../../domain/run/work-item.value-object.ts";
+import { type FlowRef, type ValidityQuestion } from "../../domain/run/work-item.value-object.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
@@ -74,6 +76,15 @@ const failed = <E>(error: E): FlowFailed | PersonaNotReady => {
   return new FlowFailed({ message: describeError(error) });
 };
 
+// A check that fails says why: a Skip by its reason, anything else as failed says it.
+const checkFailed = <E>(error: E): FlowFailed | PersonaNotReady => {
+  if (Predicate.isTagged(error, "Skip") && Predicate.hasProperty(error, "reason")) {
+    return new FlowFailed({ message: String(error.reason) });
+  }
+
+  return failed(error);
+};
+
 // The gate's Skip is its own reason, as is a setup error; anything else is
 // the gate failing.
 const gateReason = <E>(failure: E) => {
@@ -88,7 +99,27 @@ const gateReason = <E>(failure: E) => {
   return `gate failed: ${describeError(failure)}`;
 };
 
-export const FlowsClientLive = (registry: FlowRegistry) =>
+// How long a flow's stillValid may take before the check counts as failed.
+const STILL_VALID_TIMEOUT = Duration.minutes(1);
+
+export type FlowsClientOptions = {
+  readonly stillValidTimeout?: Duration.Input;
+};
+
+// The run a flow's stillValid asks about, as the SDK's Run service has it.
+const runInfo = (flow: FlowRef, question: ValidityQuestion) =>
+  Run.of({
+    flow: flow.flow,
+    runId: question.runId,
+    executionId: question.executionId,
+    item: question.item,
+    ...Option.match(question.pullRequest, {
+      onNone: () => ({}),
+      onSome: (pullRequest) => ({ pullRequest }),
+    }),
+  });
+
+export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOptions = {}) =>
   Layer.effect(
     FlowsClient,
     Effect.gen(function* () {
@@ -134,6 +165,35 @@ export const FlowsClientLive = (registry: FlowRegistry) =>
             return yield* Option.match(Option.fromUndefinedOr(handle.flow.item), {
               onNone: () => Effect.succeedNone,
               onSome: (find) => withRepo(services, find(key)).pipe(Effect.mapError(failed)),
+            });
+          }).pipe(Effect.provideContext(runs)),
+        stillValid: (flow, question) =>
+          Effect.gen(function* () {
+            const { handle, services } = yield* loaded(flow);
+
+            const timeout = Duration.fromInputUnsafe(
+              options.stillValidTimeout ?? STILL_VALID_TIMEOUT,
+            );
+
+            return yield* Option.match(Option.fromUndefinedOr(handle.flow.stillValid), {
+              onNone: () => Effect.succeedNone,
+              onSome: (check) =>
+                withRepo(
+                  Context.add(services, Run, runInfo(flow, question)),
+                  check(question.item),
+                ).pipe(
+                  Effect.mapError(checkFailed),
+                  Effect.timeoutOrElse({
+                    duration: timeout,
+                    orElse: () =>
+                      Effect.fail(
+                        new FlowFailed({
+                          message: `stillValid timed out after ${Duration.format(timeout)}`,
+                        }),
+                      ),
+                  }),
+                  Effect.asSome,
+                ),
             });
           }).pipe(Effect.provideContext(runs)),
         gate: (flow) =>

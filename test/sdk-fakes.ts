@@ -48,6 +48,7 @@ import * as Schedule from "effect/Schedule";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
+import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
   flowLayer,
@@ -118,6 +119,7 @@ export const repoAs = (
   settings: repoSettings,
   personas: Arr.map(personas, (persona) => asPersona(repoSettings, persona)),
   eventTickMin: DEFAULT_EVENT_TICK_MIN,
+  validityEvery: DEFAULT_VALIDITY_EVERY,
 });
 
 export const repo = repoAs(settings);
@@ -140,6 +142,9 @@ export type MergeFake = {
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
 };
+
+// Whether a person closed the fake's issue, and closed or merged its pull request.
+export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] };
 
 // One issue and its pull request, and what the steps did to them. Reviews
 // answer `verdicts` in turn, the last one repeating.
@@ -195,8 +200,17 @@ export const makeFake = (
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
   const author = { consider: "address", resolve: "resolved", closes: false };
+  // Whether the agent works on and on, as one an hour into a step does, until interrupted.
+  const agent = { hangs: false };
   // Whether the issue's branch exists already, as an earlier run left it.
   const existing = { branch: false };
+
+  // Whether a person closed the issue or closed (or merged) the pull request.
+  const states: ItemStates = {
+    issue: "open",
+    pull: "open",
+  };
+
   // Refs other than branches, such as claims, by full name, and the commits made through the API.
   const refs = new Map<string, string>();
   const commits = new Map<string, string>();
@@ -310,7 +324,7 @@ export const makeFake = (
     title: "feat: a change",
     body: "",
     url: `https://github.com/dataquail/demo/pull/${PULL}`,
-    state: "open",
+    state: states.pull,
     headRef: `auto/issue-${ISSUE}`,
     headSha: git.head,
     baseRef: "main",
@@ -328,11 +342,12 @@ export const makeFake = (
     createdAt: "2026-10-20T00:00:00Z",
     labels: labelsOf(ISSUE),
     assignees: [],
+    state: states.issue,
   });
 
   const known = (number: number): Option.Option<LinkedIssue> =>
     Option.orElse(Option.fromUndefinedOr(graph.made.get(number)), () =>
-      Option.liftPredicate({ ...issue(), state: "open" as const }, () => number === ISSUE),
+      Option.liftPredicate({ ...issue(), state: states.issue }, () => number === ISSUE),
     );
 
   const linkedTo = (links: Map<number, Array<number>>, number: number) =>
@@ -530,6 +545,8 @@ export const makeFake = (
         }),
     }),
     Layer.mock(Git)({
+      // Any other git command, such as cleaning up's: it has nothing to say.
+      run: () => Effect.succeed(""),
       commitsAhead: () => Effect.succeed(1),
       pull: () => Effect.void,
       headSha: () => Effect.sync(localHead),
@@ -568,6 +585,10 @@ export const makeFake = (
           adapters.push(request.adapter);
           requests.push(request);
 
+          if (agent.hangs) {
+            return yield* Effect.never;
+          }
+
           if (author.closes && request.withPerson === true) {
             return yield* new AgentError({
               message: "claude: the person closed the session before it finished",
@@ -590,7 +611,9 @@ export const makeFake = (
     services,
     git,
     author,
+    agent,
     existing,
+    states,
     refs,
     commits,
     merge,

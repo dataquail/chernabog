@@ -29,7 +29,9 @@ export type WorkflowsClientService = {
   // Resumes an execution that was suspended, as a restart leaves one.
   readonly resume: (flow: FlowRef, executionId: string) => Effect.Effect<void>;
   // Interrupts an execution for good: the engine keeps the interrupt, so it
-  // holds across a restart, even for a flow this process didn't load.
+  // holds across a restart, even for a flow this process didn't load. An
+  // agent call in progress stops at once, leaving its session open; any
+  // other activity in progress finishes first.
   readonly interrupt: (flow: FlowRef, executionId: string) => Effect.Effect<void>;
   // Completes a durable deferred a run waits on, waking it.
   readonly wake: (deferred: string, token: string) => Effect.Effect<void>;

@@ -30,9 +30,35 @@ export type CancelOptions = {
   // Whether to close the agent sessions it left open, by their launcher's
   // handle; otherwise they're left for the person.
   readonly closeSessions: boolean;
-  // Why it goes to a person instead, which ends it needs-human with that
-  // summary: a run this binary can't resume.
-  readonly needsHuman: Option.Option<string>;
+  // How it ends instead of cancelled, and why; none for a cancel.
+  readonly endAs: Option.Option<EndAs>;
+};
+
+// Ending a run in flight otherwise than as cancelled: needing a person, with
+// that summary (a run this binary can't resume), or superseded, because its
+// work item went (closed, merged, claimed by another run).
+export type EndAs = {
+  readonly ending: "needs-human" | "superseded";
+  readonly reason: string;
+};
+
+const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
+  if (endAs.ending === "superseded") {
+    return RunRootOps.supersede(found, endAs.reason, at);
+  }
+
+  return RunRootOps.finish(found, "needs-human", endAs.reason, at);
+};
+
+// What the run's log says of its ending.
+const noteOf = (ended: RunRoot) => {
+  const summary = Option.getOrElse(ended.summary, () => ended.status);
+
+  if (ended.status === "superseded") {
+    return `superseded: ${summary}`;
+  }
+
+  return summary;
 };
 
 // The run a prefix names among every run with a log.
@@ -165,7 +191,8 @@ const releaseEnded = (found: RunRoot) =>
   });
 
 // Ends a run in flight for good: records it cancelled, by whom and when (or
-// needing a person, and why, for a run this binary can't resume),
+// needing a person, and why, for a run this binary can't resume, or
+// superseded, and why, for a run whose work item went),
 // before its workflow could record anything else; forgets its waits;
 // interrupts its workflow, which the engine keeps across a restart; and then
 // cleans up what it held: its worktrees, its claim ref, its claim on its
@@ -183,16 +210,16 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
   const cleanup = yield* RunCleanupClient;
   const found = yield* named(target);
 
-  if (found.status !== "running" && Option.isNone(options.needsHuman)) {
+  if (found.status !== "running" && Option.isNone(options.endAs)) {
     return yield* releaseEnded(found);
   }
 
   const at = DateTime.formatIso(yield* DateTime.now);
 
   const cancelled = yield* Effect.fromResult(
-    Option.match(options.needsHuman, {
+    Option.match(options.endAs, {
       onNone: () => RunRootOps.cancel(found, options.by, at),
-      onSome: (summary) => RunRootOps.finish(found, "needs-human", summary, at),
+      onSome: (endAs) => endedAs(found, endAs, at),
     }),
   );
 
@@ -215,10 +242,7 @@ export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
     }
   }
 
-  yield* workflows.note(
-    found.id,
-    Option.getOrElse(cancelled.summary, () => "cancelled"),
-  );
+  yield* workflows.note(found.id, noteOf(cancelled));
 
   const leftForPerson: Array<string> = [];
 

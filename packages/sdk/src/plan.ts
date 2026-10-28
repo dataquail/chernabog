@@ -16,6 +16,7 @@ import {
   askForClarification as askImplementClarification,
   branchFor,
   issueItem,
+  issueOf,
   sessionIdFor,
 } from "./implement.ts";
 import type { Json } from "./json.ts";
@@ -32,6 +33,12 @@ import {
   type WorkItem,
   Worktree,
 } from "./services.ts";
+import { issueValidity } from "./still-valid.ts";
+
+// Whether the spec is still this run's to plan, for a flow's stillValid: it
+// is open, and no other run holds its claim.
+export const stillValid = (item: WorkItem) =>
+  issueOf(item).pipe(Effect.flatMap((spec) => issueValidity(spec, { pullRequest: false })));
 
 // The labels of a plan's life on its spec: queued, proposed and waiting on a
 // person, approved, and made into an epic.

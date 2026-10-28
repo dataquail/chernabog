@@ -22,7 +22,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { CancelTarget } from "./cancel-run.result.ts";
-import { cancelRunUseCase } from "./cancel-run.use-case.ts";
+import { cancelRunUseCase, type EndAs } from "./cancel-run.use-case.ts";
 import { findRunUseCase } from "./find-run.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -85,7 +85,7 @@ const runtime = (
   );
 
 const byId = (asked: string) => CancelTarget.cases.ById.make({ asked });
-const asAlice = { by: "alice", closeSessions: false, needsHuman: Option.none<string>() };
+const asAlice = { by: "alice", closeSessions: false, endAs: Option.none<EndAs>() };
 
 const statusOf = (id: string) =>
   findRunUseCase(RunId.make(id)).pipe(
@@ -247,7 +247,10 @@ describe("cancelRunUseCase", () => {
         const ended = yield* cancelRunUseCase(byId("old"), {
           by: "chernabog",
           closeSessions: false,
-          needsHuman: Option.some("it started under @chernabog/sdk 0.5.0"),
+          endAs: Option.some<EndAs>({
+            ending: "needs-human",
+            reason: "it started under @chernabog/sdk 0.5.0",
+          }),
         });
 
         expect([ended.run.status, ended.run.summary]).toEqual([
@@ -260,6 +263,49 @@ describe("cancelRunUseCase", () => {
         Effect.provide(
           runtime(stale, staleHoldings, {
             runs: [run("old", { flow: "implement", itemKey: "issue-9", sdkVersion: "0.5.0" })],
+          }),
+        ),
+      ),
+  );
+
+  const gone = stoppingEngine("g");
+
+  const goneHoldings = fakeHoldings({
+    claimRefs: { g: ["issue-7"] },
+    claims: { g: { branch: "auto/issue-7", kept: Option.some("it has 1 commit not on main") } },
+    sessions: { g: [{ sessionId: "s", launcher: "orca", handle: "term-1" }] },
+  });
+
+  effect(
+    "ends a run whose item went as superseded, with why, releasing it as a cancel does and leaving its session open",
+    () =>
+      Effect.gen(function* () {
+        const ended = yield* cancelRunUseCase(byId("g"), {
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some<EndAs>({ ending: "superseded", reason: "#7 was closed" }),
+        });
+
+        expect([ended.run.status, ended.run.summary]).toEqual([
+          "superseded",
+          Option.some("#7 was closed; interrupted in implement"),
+        ]);
+        expect(gone.interrupted).toEqual(["execution-g"]);
+        expect(gone.notes).toEqual(["g: superseded: #7 was closed; interrupted in implement"]);
+        expect(ended.releasedClaims).toEqual(["refs/chernabog/claims/issue-7"]);
+        expect(goneHoldings.released).toEqual([7]);
+        expect([ended.openSessions.length, goneHoldings.closed]).toEqual([1, []]);
+        expect(yield* statusOf("g")).toEqual(Option.some("superseded"));
+      }).pipe(
+        Effect.provide(
+          runtime(gone, goneHoldings, {
+            runs: [
+              run("g", {
+                flow: "implement",
+                itemKey: "issue-7",
+                currentStep: Option.some("implement"),
+              }),
+            ],
           }),
         ),
       ),
@@ -279,7 +325,7 @@ describe("cancelRunUseCase", () => {
       const cancelled = yield* cancelRunUseCase(byId("i"), {
         by: "alice",
         closeSessions: true,
-        needsHuman: Option.none(),
+        endAs: Option.none(),
       });
 
       expect(closingHoldings.closed).toEqual(["term-1"]);

@@ -42,6 +42,7 @@ import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.r
 import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
+import { DEFAULT_VALIDITY_EVERY } from "./modules/runs/domain/schedule/validity.value-object.ts";
 import type { AgentsConfig } from "./modules/runs/infrastructure/runtime/agents.ts";
 import {
   BUILT_IN_LAUNCHERS,
@@ -123,6 +124,8 @@ const LimitsFile = Schema.Struct({
   ciTimeout: Schema.optionalKey(DurationText),
   // The least time between two ticks of a persona's flow that events ask for (#138).
   eventTickMin: Schema.optionalKey(DurationText),
+  // How often the daemon asks whether each run's work item is still valid (#142).
+  validityEvery: Schema.optionalKey(DurationText),
   planNodes: Schema.optionalKey(Schema.Int),
   planRounds: Schema.optionalKey(Schema.Int),
 });
@@ -351,6 +354,8 @@ export type EffectiveRepo = {
   readonly personas: Arr.NonEmptyReadonlyArray<PersonaRepo>;
   // The team's limits.eventTickMin: the least time between two event ticks of a persona's flow.
   readonly eventTickMin: Duration.Duration;
+  // The team's limits.validityEvery: how often each run in flight has its work item checked.
+  readonly validityEvery: Duration.Duration;
 };
 
 export const personaOf = (repo: EffectiveRepo, persona: Persona) =>
@@ -996,10 +1001,16 @@ export const mergeRepoConfig = (
       () => DEFAULT_EVENT_TICK_MIN,
     );
 
+    const validityEvery = Option.getOrElse(
+      Option.flatMap(Option.fromUndefinedOr(repo.limits?.validityEvery), parseDuration),
+      () => DEFAULT_VALIDITY_EVERY,
+    );
+
     return {
       settings: head.settings,
       personas: [head, ...tail],
       eventTickMin,
+      validityEvery,
     } satisfies EffectiveRepo;
   });
 

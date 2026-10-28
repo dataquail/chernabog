@@ -99,6 +99,28 @@ export type ItemLookup = (
   key: string,
 ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
 
+// A run's work item is still there to work on.
+export type Valid = { readonly valid: true };
+
+// A run's work item is gone, such as an issue a person closed, and why, for
+// the run's summary: `#42 was closed`. The engine ends the run as superseded.
+export type Gone = { readonly valid: false; readonly reason: string };
+
+export type Validity = Valid | Gone;
+
+export const valid: Valid = { valid: true };
+
+export const gone = (reason: string): Gone => ({ valid: false, reason });
+
+export const isGone = (validity: Validity): validity is Gone => !validity.valid;
+
+// Whether a run's work item is still valid: the engine asks it of every run
+// in flight, executing or parked. A check that fails is not Gone; the run
+// carries on. `Run` names the run it asks for.
+export type StillValid = (
+  item: WorkItem,
+) => Effect.Effect<Validity, FlowError, TriggerServices | Run>;
+
 // What every flow has, whether a trigger finds its work or a person names it.
 type FlowCommon = {
   // Checked before each run starts; fail with Skip to hold the run back, such as on usage.
@@ -111,6 +133,12 @@ type FlowCommon = {
   // review's does by its review requests, so several personas can run the
   // flow without assignee or reviewRequested to tell them apart.
   readonly ownWork?: boolean;
+  // Whether a run's work item is still there to work on. The engine checks
+  // every run in flight on an interval (limits.validityEvery), before a
+  // parked run wakes, and on a notification about its repo, and ends a run
+  // whose item is Gone as superseded, interrupting what it was doing. Without
+  // it, a run carries on until its workflow ends it.
+  readonly stillValid?: StillValid;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };

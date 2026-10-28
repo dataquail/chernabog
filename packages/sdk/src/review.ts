@@ -40,6 +40,7 @@ import {
   type WorkItem,
   Worktree,
 } from "./services.ts";
+import { pullRequestValidity } from "./still-valid.ts";
 
 export { type ReviewMarker, reviewMarker, type SessionMarker, sessionMarker } from "./markers.ts";
 
@@ -64,6 +65,18 @@ const itemData =
     );
 
 export const pullRequestOf = itemData(ReviewItem);
+
+// Any work item on a pull request: review's, re-review's, address-review's,
+// resolve-conflicts'.
+const OnPullRequest = Schema.Struct({ pullRequest: Schema.Finite });
+
+// Whether the pull request is still there to work on, for a flow's
+// stillValid: it is open, and no other run holds its claim. A run whose pull
+// request was closed or merged ends as superseded.
+export const stillValid = (item: WorkItem) =>
+  itemData(OnPullRequest)(item).pipe(
+    Effect.flatMap(({ pullRequest }) => pullRequestValidity(pullRequest)),
+  );
 
 // A pull request as a work item, keyed by `key`, for a trigger to report.
 export const reviewItem = (pull: PullRequest, key: string): WorkItem => ({

@@ -38,6 +38,7 @@ import {
   type WorkItem,
   Worktree,
 } from "./services.ts";
+import { issueValidity } from "./still-valid.ts";
 
 export const branchFor = (issue: number) => `auto/issue-${issue}`;
 
@@ -73,6 +74,12 @@ export const issueOf = (item: WorkItem) =>
         }),
     ),
   );
+
+// Whether the issue is still this run's to implement, for a flow's
+// stillValid: it is open, no other run holds its claim, and the pull request
+// the run opened, if any, is open. A run whose issue is gone ends as superseded.
+export const stillValid = (item: WorkItem) =>
+  issueOf(item).pipe(Effect.flatMap((issue) => issueValidity(issue, { pullRequest: true })));
 
 // A stable session id per run and purpose, so a rerun after a crash resumes
 // the agent's session instead of starting over.

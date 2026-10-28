@@ -33,6 +33,10 @@ Cron is the backstop; two kinds of event tick a flow sooner. Each runs the same 
 
 Several events within a few seconds make one tick, and the repo's `limits.eventTickMin` (default `30 seconds`) caps how often events tick one persona's flow. `status` shows what made each flow's last tick (`cron`, `manual`, `local: #73 review requested`, `notification: review_requested on #73`), and `next due now` while an event's tick waits to run.
 
+### Runs whose work goes away
+
+Every `limits.validityEvery` (default `5 minutes`), before a parked run wakes, and at once on a notification about its repo, the daemon asks each run in flight whose flow has a [`stillValid`](/chernabog/flows/flows/#work-that-goes-away) whether its issue or pull request is still there to work on. A run whose item went (closed, merged, claimed by another run) ends as `superseded`, with why, and is released as `chernabog cancel` releases a run; an agent step in progress stops, leaving its session open. A check that fails leaves the run running: the log says so, and `status` shows `stillValid failed N time(s) in a row` under the run until one succeeds.
+
 The daemon reads machine config's enrolled repos when it starts, and checks them every ten seconds. When they change — a repo `chernabog enroll` adds, one dropped or moved, a flow turned on or off for a persona — the daemon restarts on them once nothing is executing, as it does on newly trusted config. Runs in flight resume, and `status` says a restart is pending. A new repo shows in `status` as `untrusted` until you run `chernabog trust` on it.
 
 A repo whose checkout is gone shows as `missing`, with `checkout missing at <path>`, and starts no runs. Its settings stay in machine config. When the checkout comes back, or `chernabog init` at its new place points the entry there, the daemon restarts on it.

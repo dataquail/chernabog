@@ -102,7 +102,7 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
       ),
     );
 
-    return yield* cancelRunUseCase(named, { by, closeSessions, needsHuman: Option.none() }).pipe(
+    return yield* cancelRunUseCase(named, { by, closeSessions, endAs: Option.none() }).pipe(
       Effect.provideContext(runtime),
     );
   }).pipe(Effect.scoped);

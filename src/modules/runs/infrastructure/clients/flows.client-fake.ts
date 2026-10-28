@@ -7,7 +7,12 @@ import * as Record from "effect/Record";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
-import { type FlowRef, type WorkItem } from "../../domain/run/work-item.value-object.ts";
+import {
+  type FlowRef,
+  type ItemValidity,
+  type ValidityQuestion,
+  type WorkItem,
+} from "../../domain/run/work-item.value-object.ts";
 
 // A flow as a test has it: the work its trigger reports (or why it fails),
 // the items it finds by key, and why its gate holds runs back, if it does.
@@ -21,6 +26,11 @@ export type FakeFlow = {
   readonly gate?: string;
   // The open pull requests, and whom each asks to review.
   readonly reviewRequests?: ReadonlyArray<ReviewRequest>;
+  // What its stillValid answers, if it has one, or why it fails; and the
+  // runs it was asked about, which the fake appends to.
+  readonly validity?: ItemValidity;
+  readonly validityFails?: string;
+  readonly asked?: Array<ValidityQuestion>;
 };
 
 const keyOf = (flow: FlowRef) => `${flow.repo}/${flow.flow}`;
@@ -52,6 +62,18 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
       find: (flow, key) =>
         Effect.map(flowOf(flow), (found) =>
           Option.fromUndefinedOr((found.findable ?? []).find((item) => item.key === key)),
+        ),
+      stillValid: (flow, run) =>
+        Effect.flatMap(
+          flowOf(flow),
+          (found): Effect.Effect<Option.Option<ItemValidity>, FlowFailed> => {
+            found.asked?.push(run);
+
+            return Option.match(Option.fromUndefinedOr(found.validityFails), {
+              onNone: () => Effect.succeed(Option.fromUndefinedOr(found.validity)),
+              onSome: (message) => Effect.fail(new FlowFailed({ message })),
+            });
+          },
         ),
       gate: (flow) =>
         flowOf(flow).pipe(

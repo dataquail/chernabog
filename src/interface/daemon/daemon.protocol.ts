@@ -87,6 +87,14 @@ export const DaemonStatus = Schema.Struct({
   notifications: Schema.optionalKey(
     Schema.Array(Schema.Struct({ persona: Schema.optionalKey(Schema.String), problem: Maybe })),
   ),
+  // Each run in flight whose stillValid check keeps failing: how many times
+  // in a row, and the last failure. The run carries on. Absent from a daemon
+  // from before the checks.
+  validity: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ runId: Schema.String, failures: Schema.Finite, problem: Schema.String }),
+    ),
+  ),
 });
 
 export type DaemonStatus = typeof DaemonStatus.Type;

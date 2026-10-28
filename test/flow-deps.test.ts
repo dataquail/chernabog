@@ -94,9 +94,9 @@ describe("the SDK this binary bundles", () => {
   test("a flow's imports of it are checked by name, through namespaces too", () => {
     expect(
       missingSdkImports(
-        'import * as S from "@chernabog/sdk";\nS.defineFlow; S.Review.recheck; S.Review.fixTrigger; S.gone;\n',
+        'import * as S from "@chernabog/sdk";\nS.defineFlow; S.Review.recheck; S.Review.fixTrigger; S.vanished;\n',
       ),
-    ).toEqual(["Review.fixTrigger", "gone"]);
+    ).toEqual(["Review.fixTrigger", "vanished"]);
     expect(
       missingSdkImports(
         'import { Review as R, type Flow, Skip } from "@chernabog/sdk";\nR.labelVerdict; Skip;\n',

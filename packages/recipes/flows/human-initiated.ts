@@ -72,5 +72,7 @@ export default defineFlow({
   item: Hybrid.itemFor,
   // No trigger finds work for several personas to share: each run is a person's.
   ownWork: true,
+  // An issue closed, or claimed by another run, ends the run as superseded.
+  stillValid: Implement.stillValid,
   workflow,
 });

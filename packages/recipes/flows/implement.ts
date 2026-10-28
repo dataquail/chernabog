@@ -44,6 +44,8 @@ export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
+  // An issue closed, or claimed by another run, ends the run as superseded.
+  stillValid: Implement.stillValid,
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);

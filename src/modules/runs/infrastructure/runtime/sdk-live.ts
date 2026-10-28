@@ -105,6 +105,7 @@ export const RestIssue = Schema.Struct({
   created_at: Schema.String,
   labels: Schema.Array(Named),
   assignees: Logins,
+  state: Schema.optionalKey(Schema.Literals(["open", "closed"])),
 });
 
 const RestLinkedIssue = Schema.Struct({
@@ -178,6 +179,10 @@ export const toIssue = (raw: typeof RestIssue.Type): Issue => ({
   createdAt: raw.created_at,
   labels: raw.labels.map((label) => label.name),
   assignees: logins(raw.assignees ?? []),
+  ...Option.match(Option.fromUndefinedOr(raw.state), {
+    onNone: () => ({}),
+    onSome: (state) => ({ state }),
+  }),
 });
 
 const toLinkedIssue = (raw: typeof RestLinkedIssue.Type): LinkedIssue => ({

@@ -201,6 +201,34 @@ describe("RunRootOps.cancel", () => {
   });
 });
 
+describe("RunRootOps.supersede", () => {
+  test("ends a running run as superseded, with why, and the step it interrupted", () => {
+    const stepped = Result.getOrThrow(RunRootOps.enterStep(running, "implement"));
+    const superseded = Result.getOrThrow(RunRootOps.supersede(stepped, "#7 was closed", later));
+
+    expect([
+      superseded.status,
+      superseded.summary,
+      superseded.currentStep,
+      superseded.finishedAt,
+    ]).toEqual([
+      "superseded",
+      Option.some("#7 was closed; interrupted in implement"),
+      Option.none(),
+      Option.some(later),
+    ]);
+    expect(
+      Result.getOrThrow(RunRootOps.supersede(running, "#7 was closed", later)).summary,
+    ).toEqual(Option.some("#7 was closed"));
+  });
+
+  test("a run that ended can't be superseded", () => {
+    const refused = RunRootOps.supersede(finished, "#7 was closed", later);
+
+    expect(Result.isFailure(refused) && refused.failure._tag).toBe("RunAlreadyFinished");
+  });
+});
+
 describe("RunRootOps.inFlightFor", () => {
   const query = {
     repo: "demo",

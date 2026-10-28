@@ -17,6 +17,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -36,6 +37,12 @@ import {
   type PendingTick,
 } from "../../modules/runs/domain/schedule/event-tick.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
+import {
+  type CheckFailures,
+  DEFAULT_VALIDITY_EVERY,
+  noteCheckFailure,
+  validityDue,
+} from "../../modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
   flowHandle,
@@ -57,6 +64,8 @@ import {
 } from "../../modules/runs/runs.layer.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
+import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
+import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
@@ -71,7 +80,7 @@ import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.t
 import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
-import { type RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
@@ -289,6 +298,22 @@ const eventTickMinOf = (repo: RepoState) =>
     Option.map(repo.repo, (loaded) => loaded.eventTickMin),
     () => DEFAULT_EVENT_TICK_MIN,
   );
+
+// How often a repo's runs in flight have their work item checked: the team's limits.validityEvery.
+const validityEveryOf = (repo: RepoState) =>
+  Option.getOrElse(
+    Option.map(repo.repo, (loaded) => loaded.validityEvery),
+    () => DEFAULT_VALIDITY_EVERY,
+  );
+
+// An item a trigger reported, with the signals it saw for it.
+type WakingItem = { readonly key: string; readonly signals?: ReadonlyArray<string> };
+
+const isGone = Predicate.isTagged("Gone");
+
+// How often the daemon looks for repos whose runs are due a validity check,
+// unless a notification asks sooner.
+const VALIDITY_POLL = Duration.seconds(30);
 
 // When a schedule's pending event tick runs, if one is pending.
 const eventDueAt = (repo: RepoState, schedule: FlowSchedule) =>
@@ -542,7 +567,7 @@ export const runDaemon = Effect.gen(function* () {
         const ended = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
           by: "chernabog",
           closeSessions: false,
-          needsHuman: Option.some(reason),
+          endAs: Option.some({ ending: "needs-human", reason }),
         }).pipe(Effect.result);
 
         yield* log(
@@ -595,6 +620,104 @@ export const runDaemon = Effect.gen(function* () {
       const reloaded = yield* Deferred.make<true>();
 
       const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
+
+      // Each run in flight whose stillValid keeps failing: how often in a
+      // row, and why. Status shows them; the runs carry on.
+      const checkFailures = new Map<string, CheckFailures>();
+
+      // Ends a run whose work item went as superseded, released as a cancel
+      // releases it; its agent sessions stay open.
+      const supersede = (run: ActiveRun, reason: string) =>
+        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some({ ending: "superseded", reason }),
+        }).pipe(
+          Effect.result,
+          Effect.flatMap((ended) =>
+            log(
+              Result.match(ended, {
+                onSuccess: (done) =>
+                  [
+                    `superseded ${run.id} (${runLabel(run)}): ${Option.getOrElse(done.run.summary, () => reason)}`,
+                    ...done.leftForPerson,
+                  ].join("; "),
+                onFailure: (error) =>
+                  `could not end ${run.id} (${runLabel(run)}) as superseded (${reason}): ${error.message}`,
+              }),
+            ),
+          ),
+        );
+
+      // A check that failed: logged when the run's checks start failing, and
+      // counted for status. The run carries on.
+      const noteFailure = (run: ActiveRun, message: string) =>
+        Effect.gen(function* () {
+          const previous = Option.fromUndefinedOr(checkFailures.get(run.id));
+          checkFailures.set(run.id, noteCheckFailure(previous, message));
+
+          if (Option.isNone(previous)) {
+            yield* log(
+              `${run.id} (${runLabel(run)}): stillValid failed: ${message}; the run carries on`,
+            );
+          }
+        });
+
+      // Asks whether a run's work item is still valid, and ends the run as
+      // superseded if it went.
+      const checkRun = (run: ActiveRun) =>
+        Effect.gen(function* () {
+          const found = yield* checkRunValidityUseCase(run.id);
+
+          if (!Predicate.isTagged(found, "CheckFailed")) {
+            checkFailures.delete(run.id);
+          }
+
+          yield* RunValidity.match(found, {
+            CheckFailed: ({ message }) => noteFailure(run, message),
+            Gone: ({ reason }) => supersede(run, reason),
+            Valid: () => Effect.void,
+            Unchecked: () => Effect.void,
+          });
+
+          return found;
+        });
+
+      // The signalled items whose parked run still has its work item: a run
+      // whose item went ends as superseded instead of waking.
+      const stillWaking = <Item extends WakingItem>(
+        ref: { readonly repo: string; readonly flow: string; readonly persona: Persona },
+        items: ReadonlyArray<Item>,
+      ) =>
+        Effect.gen(function* () {
+          const parked = (yield* active).filter(
+            (run) =>
+              run.parked &&
+              run.repo === ref.repo &&
+              run.flow === ref.flow &&
+              samePersona(run.persona, ref.persona),
+          );
+
+          const waking: Array<Item> = [];
+
+          for (const item of items) {
+            const waiting = Option.filter(
+              Arr.findFirst(parked, (run) => run.itemKey === item.key),
+              () => (item.signals ?? []).length > 0,
+            );
+
+            const checked = yield* Option.match(waiting, {
+              onNone: () => Effect.succeedNone,
+              onSome: (run) => Effect.asSome(checkRun(run)),
+            });
+
+            if (!Option.exists(checked, isGone)) {
+              waking.push(item);
+            }
+          }
+
+          return waking;
+        });
 
       const tick = (repo: RepoState, schedule: FlowSchedule, options: TickOptions) =>
         Effect.gen(function* () {
@@ -663,7 +786,7 @@ export const runDaemon = Effect.gen(function* () {
             schedule.elsewhere = [...routed.elsewhere, ...unserved];
           }
 
-          yield* deliverSignalsUseCase(ref, plan.signalled);
+          yield* deliverSignalsUseCase(ref, yield* stillWaking(ref, plan.signalled));
 
           const started: Array<RunView> = [];
           let skipped = plan.skipped;
@@ -830,6 +953,63 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
+      // When each repo's runs were last checked, by its name; a notification
+      // about a repo forgets it, so its runs are checked at once.
+      const validityChecked = new Map<string, DateTime.Utc>();
+      const validityWake = yield* Latch.make();
+
+      const checkSoon = (slug: string) => {
+        for (const repo of repos.filter(
+          (candidate) => candidate.enrolled.repo.toLowerCase() === slug.toLowerCase(),
+        )) {
+          validityChecked.delete(repo.name);
+        }
+      };
+
+      // Checks the runs in flight, executing or parked, of each repo whose
+      // flows may run, once its limits.validityEvery comes round. A run whose
+      // item went ends as superseded; a check that fails leaves it running.
+      const checkValidity = Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const running = yield* active;
+
+        for (const repo of repos.filter((candidate) => Option.isSome(runnable(candidate)))) {
+          const last = Option.fromUndefinedOr(validityChecked.get(repo.name));
+
+          if (!validityDue(last, validityEveryOf(repo), now)) {
+            continue;
+          }
+
+          validityChecked.set(repo.name, now);
+
+          for (const run of running.filter((found) => found.repo === repo.name)) {
+            yield* checkRun(run);
+          }
+        }
+
+        // A run that ended has no checks left to fail.
+        for (const runId of checkFailures.keys()) {
+          if (!running.some((run) => run.id === runId)) {
+            checkFailures.delete(runId);
+          }
+        }
+      }).pipe(
+        Effect.catchCause((cause) => log(`checking runs' work items failed: ${String(cause)}`)),
+      );
+
+      yield* Effect.forkScoped(
+        Effect.forever(
+          Effect.gen(function* () {
+            yield* validityWake.close;
+            yield* checkValidity;
+            yield* Effect.timeoutOrElse(validityWake.await, {
+              duration: VALIDITY_POLL,
+              orElse: () => Effect.void,
+            });
+          }),
+        ),
+      );
+
       // Each persona's notifications poll, and why it fails, if it does.
       const notifications = new Map<string, Option.Option<string>>();
 
@@ -894,6 +1074,15 @@ export const runDaemon = Effect.gen(function* () {
 
             const now = yield* DateTime.now;
             const marked = polled.success.news.map((news) => markNews(persona, news, now));
+
+            // News about a repo may be its runs' work items going.
+            for (const news of polled.success.news) {
+              checkSoon(news.repo);
+            }
+
+            if (polled.success.news.length > 0) {
+              yield* validityWake.open;
+            }
 
             if (marked.some(Boolean)) {
               yield* wake.open;
@@ -1179,6 +1368,11 @@ export const runDaemon = Effect.gen(function* () {
             ),
             problem,
           })),
+          validity: [...checkFailures].map(([runId, failures]) => ({
+            runId,
+            failures: failures.count,
+            problem: failures.message,
+          })),
         } satisfies DaemonStatus;
       });
 
@@ -1299,7 +1493,7 @@ export const runDaemon = Effect.gen(function* () {
         const cancelled = yield* cancelRunUseCase(target, {
           by: body.by,
           closeSessions: body.closeSessions,
-          needsHuman: Option.none(),
+          endAs: Option.none(),
         }).pipe(Effect.result);
 
         if (Result.isFailure(cancelled)) {

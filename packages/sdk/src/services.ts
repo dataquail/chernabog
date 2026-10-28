@@ -192,6 +192,9 @@ export const RunInfo = Schema.Struct({
   runId: Schema.String,
   executionId: Schema.String,
   item: WorkItem,
+  // The pull request the run opened or adopted for its item, as far as the
+  // engine knows; given to a flow's stillValid, absent anywhere else.
+  pullRequest: Schema.optionalKey(Schema.Finite),
 });
 
 export type RunInfo = typeof RunInfo.Type;
@@ -221,6 +224,8 @@ export type Issue = {
   readonly createdAt: string;
   readonly labels: ReadonlyArray<string>;
   readonly assignees: ReadonlyArray<string>;
+  // Whether it is open; absent from a GitHub that doesn't say, which is taken as open.
+  readonly state?: "open" | "closed";
 };
 
 // An issue as GitHub lists it under another: a sub-issue, or a blocker.

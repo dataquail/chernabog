@@ -5,6 +5,8 @@
 // database takes over workflows the first is still running.
 
 import {
+  Agent,
+  AgentError,
   describeError,
   type Flow,
   FlowPackage,
@@ -27,6 +29,8 @@ import * as ClusterWorkflowEngine from "effect/cluster/ClusterWorkflowEngine";
 import * as SingleRunner from "effect/cluster/SingleRunner";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -271,6 +275,99 @@ export const linkingPullRequests = <R>(
       ),
   });
 
+// The executions told to stop, by id. The engine's interrupt lands only
+// between activities, and an activity in progress, such as an agent step an
+// hour long, checks nothing. So a run told to stop ends its workflow at once,
+// as an interrupt no flow can catch, and only then does the agent call it was
+// in end, so nothing in the flow sees that call fail. The agent's session is
+// left as it is.
+type Stopping = {
+  // Set when the execution is told to stop.
+  readonly asked: Deferred.Deferred<void>;
+  // Set once its workflow has stopped.
+  readonly ended: Deferred.Deferred<void>;
+};
+
+const stopRequests = new Map<string, Stopping>();
+
+const stoppingOf = (executionId: string) => {
+  const found = stopRequests.get(executionId);
+
+  if (Predicate.isNotUndefined(found)) {
+    return found;
+  }
+
+  const made: Stopping = { asked: Deferred.makeUnsafe<void>(), ended: Deferred.makeUnsafe<void>() };
+  stopRequests.set(executionId, made);
+
+  return made;
+};
+
+// How long a stopped agent call waits for its workflow to stop before it ends
+// anyway, as one in a workflow this process doesn't run would.
+const STOP_GRACE = Duration.seconds(5);
+
+// Tells a run's execution in this process to stop: its workflow ends as an
+// interrupt, and then the agent call it is in, if any.
+export const stopExecution = (executionId: string) =>
+  Effect.suspend(() => Deferred.done(stoppingOf(executionId).asked, Exit.void)).pipe(Effect.asVoid);
+
+// Ends a run's workflow as an interrupt once its execution is told to stop.
+export const untilStopped =
+  (executionId: string) =>
+  <A, E, R>(workflow: Effect.Effect<A, E, R>) =>
+    Effect.suspend(() => {
+      const stopping = stoppingOf(executionId);
+
+      return Effect.raceFirst(
+        Effect.asSome(workflow),
+        Deferred.await(stopping.asked).pipe(Effect.as(Option.none<A>())),
+      ).pipe(
+        Effect.flatMap(Option.match({ onNone: () => Effect.interrupt, onSome: Effect.succeed })),
+        Effect.ensuring(
+          Deferred.done(stopping.ended, Exit.void).pipe(
+            Effect.andThen(Effect.sync(() => stopRequests.delete(executionId))),
+          ),
+        ),
+      );
+    });
+
+// The run's services, with each agent call ending once its execution is told
+// to stop and its workflow has stopped.
+export const stoppingWith = <R>(
+  context: Context.Context<R>,
+  executionId: string,
+): Context.Context<R> =>
+  Option.match(Context.getOption(context, Agent), {
+    onNone: () => context,
+    onSome: (agent) =>
+      Context.add(
+        context,
+        Agent,
+        Agent.of({
+          ...agent,
+          run: (request) =>
+            Effect.suspend(() => {
+              const stopping = stoppingOf(executionId);
+
+              return Effect.raceFirst(
+                agent.run(request),
+                Deferred.await(stopping.asked).pipe(
+                  Effect.andThen(
+                    Deferred.await(stopping.ended).pipe(
+                      Effect.timeoutOrElse({ duration: STOP_GRACE, orElse: () => Effect.void }),
+                    ),
+                  ),
+                  Effect.andThen(
+                    Effect.fail(new AgentError({ message: "the run was stopped mid-step" })),
+                  ),
+                ),
+              );
+            }),
+        }),
+      ),
+  });
+
 // The run's GitHub and Git, which report the changes other flows act on: pull
 // requests, pushes, reviews, merges, labels, statuses, comments and other API
 // writes, so no flow declares them. Branches made or deleted, Git.run, a
@@ -468,10 +565,15 @@ export const flowLayer = <R>(
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideContext(
-          reportingChanges(linkingPullRequests(context, link), (what, item) =>
-            hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+          stoppingWith(
+            reportingChanges(linkingPullRequests(context, link), (what, item) =>
+              hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+            ),
+            executionId,
           ),
         ),
+        // Told to stop, it ends as an interrupt, before any flow sees why.
+        untilStopped(executionId),
       );
 
       yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);

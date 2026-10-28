@@ -243,5 +243,7 @@ export default defineFlow({
   concurrency: 1,
   // Its trigger finds only pull requests this persona wrote.
   ownWork: true,
+  // A pull request closed or merged ends the run as superseded.
+  stillValid: Review.stillValid,
   workflow,
 });

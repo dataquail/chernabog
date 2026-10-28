@@ -67,6 +67,9 @@ limits:
   ciTimeout: 2 hours
   # The least time between two ticks events ask for, for one persona's flow.
   # eventTickMin: 30 seconds
+  # How often the daemon checks that each run's issue or pull request is
+  # still there to work on, and ends a run whose item went as superseded.
+  # validityEvery: 5 minutes
   # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
   planNodes: 12
   planRounds: 2
