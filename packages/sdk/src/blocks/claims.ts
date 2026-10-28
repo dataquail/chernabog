@@ -12,8 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 
-import { activity } from "./flow.ts";
-import { GitHub, Run } from "./services.ts";
+import { activity } from "../abi/flow.ts";
+import { GitHub, Run } from "../abi/services.ts";
 
 // Git's empty tree, which GitHub has in every repo.
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";

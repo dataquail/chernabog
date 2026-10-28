@@ -8,8 +8,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 
-import { StepFailed } from "./errors.ts";
-import { FlowPackage, Repo } from "./services.ts";
+import { StepFailed } from "../abi/errors.ts";
+import { FlowPackage, Repo } from "../abi/services.ts";
 
 export type PromptValue = string | number | ReadonlyArray<string> | Option.Option<string>;
 

@@ -5,8 +5,8 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import { renderPrompt, renderPromptOr } from "../packages/sdk/src/prompt.ts";
-import { FlowPackage, Repo } from "../packages/sdk/src/services.ts";
+import { FlowPackage, Repo } from "../packages/sdk/src/abi/services.ts";
+import { renderPrompt, renderPromptOr } from "../packages/sdk/src/blocks/prompt.ts";
 import { effect } from "./effect-test.ts";
 import { settings } from "./sdk-fakes.ts";
 

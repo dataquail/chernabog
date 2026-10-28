@@ -10,18 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { NeedsHuman, StepFailed } from "./errors.ts";
-import { activity, awaitSignal, type FlowLabel } from "./flow.ts";
-import {
-  askForClarification as askImplementClarification,
-  branchFor,
-  issueItem,
-  issueOf,
-  sessionIdFor,
-} from "./implement.ts";
-import type { Json } from "./json.ts";
-import { hasMarker, planMarker, planNodeMarker } from "./markers.ts";
-import { renderPrompt } from "./prompt.ts";
+import { NeedsHuman, StepFailed } from "../abi/errors.ts";
+import { activity, awaitSignal, type FlowLabel } from "../abi/flow.ts";
+import type { Json } from "../abi/json.ts";
 import {
   Agent,
   type Comment,
@@ -32,7 +23,16 @@ import {
   Run,
   type WorkItem,
   Worktree,
-} from "./services.ts";
+} from "../abi/services.ts";
+import {
+  askForClarification as askImplementClarification,
+  branchFor,
+  issueItem,
+  issueOf,
+  sessionIdFor,
+} from "./implement.ts";
+import { hasMarker, planMarker, planNodeMarker } from "./markers.ts";
+import { renderPrompt } from "./prompt.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // Whether the spec is still this run's to plan, for a flow's stillValid: it

@@ -312,7 +312,7 @@ transitive reach), the coverage floors and the baseline.
 
 ## Errors (#75)
 
-Errors split by who acts on them (`packages/sdk/src/errors.ts`).
+Errors split by who acts on them (`packages/sdk/src/abi/errors.ts`).
 
 - **A flow fails only with its outcomes**, `Skip | NeedsHuman | StepFailed`
   (`FlowError`), in `trigger`, `gate`, `item` and `workflow` alike. Anything

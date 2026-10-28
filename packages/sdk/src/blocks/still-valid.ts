@@ -6,9 +6,9 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { gone, reportAs, valid, type Validity } from "../abi/flow.ts";
+import { GitHub, Run } from "../abi/services.ts";
 import * as Claims from "./claims.ts";
-import { gone, reportAs, valid, type Validity } from "./flow.ts";
-import { GitHub, Run } from "./services.ts";
 
 // Gone when another run holds the claim on `item`; this run holding it, or
 // nobody, is fine: a run may not have claimed it yet, or has let it go.

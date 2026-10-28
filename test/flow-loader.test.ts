@@ -3,8 +3,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { defineFlow, isManual } from "../packages/sdk/src/flow.ts";
-import { printJson } from "../packages/sdk/src/json.ts";
+import { defineFlow, isManual } from "../packages/sdk/src/abi/flow.ts";
+import { printJson } from "../packages/sdk/src/abi/json.ts";
 import { BUNDLED_SDK, checkFlowImports } from "../src/platform/flow-deps.ts";
 import {
   describeSource,

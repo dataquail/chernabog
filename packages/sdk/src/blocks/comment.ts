@@ -6,8 +6,8 @@ import { createHash } from "node:crypto";
 
 import * as Effect from "effect/Effect";
 
-import { activity } from "./flow.ts";
-import { GitHub } from "./services.ts";
+import { activity } from "../abi/flow.ts";
+import { GitHub } from "../abi/services.ts";
 
 export const commentStep = (kind: "issue" | "pr", number: number, body: string) =>
   activity(

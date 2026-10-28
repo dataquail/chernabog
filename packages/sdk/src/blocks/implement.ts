@@ -15,16 +15,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as Claims from "./claims.ts";
-import { ADDRESS, CONSIDER } from "./default-prompts.ts";
-import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "./errors.ts";
-import { activity, reportAs, sleep } from "./flow.ts";
-import type { Json } from "./json.ts";
-import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from "./markers.ts";
-import { pathsMatching } from "./paths.ts";
-import { renderPrompt, renderPromptOr } from "./prompt.ts";
-import { requestReview } from "./pull-request.ts";
-import type { ReviewResult } from "./review.ts";
+import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "../abi/errors.ts";
+import { activity, reportAs, sleep } from "../abi/flow.ts";
+import type { Json } from "../abi/json.ts";
+import { pathsMatching } from "../abi/paths.ts";
 import {
   Agent,
   type AgentResult,
@@ -37,7 +31,13 @@ import {
   Usage,
   type WorkItem,
   Worktree,
-} from "./services.ts";
+} from "../abi/services.ts";
+import * as Claims from "./claims.ts";
+import { ADDRESS, CONSIDER } from "./default-prompts.ts";
+import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from "./markers.ts";
+import { renderPrompt, renderPromptOr } from "./prompt.ts";
+import { requestReview } from "./pull-request.ts";
+import type { ReviewResult } from "./review.ts";
 import { issueValidity } from "./still-valid.ts";
 
 export const branchFor = (issue: number) => `auto/issue-${issue}`;

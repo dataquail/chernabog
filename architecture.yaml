@@ -721,16 +721,43 @@ tree:
   "~/sdk/src/":
     message: >-
       The published @chernabog/sdk: the services and blocks a repo's flows are written from.
-    layout: open
     imports:
       reset: true
       message: >-
-        The SDK is published and runs inside a person's flows, so it names effect and the
-        platform, and nothing of the daemon's.
-      external: [effect]
-      allow: ["node:**", "~/sdk/src/**"]
+        The SDK is published and runs inside a person's flows. Its entry names the ABI and the
+        blocks, and nothing of the daemon's.
+      allow: ["~/sdk/src/**"]
     surface:
       - use: no-default-exports
+    children:
+      # The entry: the ABI and the blocks, re-exported side by side.
+      "index.ts": {}
+      "abi/":
+        message: >-
+          The flow ABI: the flow shape, the durable primitives and the service ports the binary
+          promises every repo's flows (#163).
+        imports:
+          message: >-
+            The ABI is the contract the blocks are written against, so it names effect and
+            itself, never a block.
+          reset: true
+          external: [effect]
+          allow: ["~/sdk/src/abi/**"]
+        children:
+          "*.ts": {}
+      "blocks/":
+        message: >-
+          The blocks: the library a recipe is written from (Implement, Review, Plan, Hybrid,
+          Claims, PullRequest, markers, prompts), over the ABI's ports (#163).
+        imports:
+          message: >-
+            A block reaches the daemon only through the ABI's ports, so it names effect, the
+            platform, the ABI and other blocks, and nothing else.
+          reset: true
+          external: [effect]
+          allow: ["node:**", "~/sdk/src/abi/**", "~/sdk/src/blocks/**"]
+        children:
+          "*.ts": {}
 
   "~/recipes/":
     message: >-

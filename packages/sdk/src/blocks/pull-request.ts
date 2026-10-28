@@ -10,12 +10,9 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
-import * as Claims from "./claims.ts";
-import { commentStep } from "./comment.ts";
-import { MergeRefused, NeedsHuman, PullRequestClosed, Skip } from "./errors.ts";
-import { activity } from "./flow.ts";
-import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from "./markers.ts";
-import { pathsMatching } from "./paths.ts";
+import { MergeRefused, NeedsHuman, PullRequestClosed, Skip } from "../abi/errors.ts";
+import { activity } from "../abi/flow.ts";
+import { pathsMatching } from "../abi/paths.ts";
 import {
   GitHub,
   type Labels,
@@ -24,7 +21,10 @@ import {
   Repo,
   Run,
   Runs,
-} from "./services.ts";
+} from "../abi/services.ts";
+import * as Claims from "./claims.ts";
+import { commentStep } from "./comment.ts";
+import { latestMarker, type OwnerMarker, ownerMarker, reviewMarker } from "./markers.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
 export const own = (pullRequest: number) =>
