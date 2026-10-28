@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 // The SDK this binary bundles, as packages/sdk/package.json has it.
 // release-please moves both together (release-please-config.json), and
 // flow-deps.test.ts fails if they drift.
-export const BUNDLED_SDK_VERSION = "0.6.0"; // x-release-please-version
+export const BUNDLED_SDK_VERSION = "0.7.0"; // x-release-please-version
 
 const [major, minor] = BUNDLED_SDK_VERSION.split(".").map(Number);
 

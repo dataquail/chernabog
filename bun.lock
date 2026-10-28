@@ -34,14 +34,14 @@
     },
     "packages/recipes": {
       "name": "@chernabog/recipes",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "peerDependencies": {
         "@chernabog/sdk": ">=0.6.0 <0.8.0",
       },
     },
     "packages/sdk": {
       "name": "@chernabog/sdk",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "peerDependencies": {
         "effect": "4.0.5",
       },
