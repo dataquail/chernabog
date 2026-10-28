@@ -112,6 +112,7 @@ graph:
         - "scripts/gen-*.ts"
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
+        - "scripts/release-pr-check.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
         # are the recipes `chernabog recipes add` copies and a repo's
         # `flows.<name>.from` imports.
@@ -795,3 +796,12 @@ tree:
       # What a script renders, which a test renders again; the script prints or writes it.
       "templates.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
+      # What release-please would release from its PR, read with release-please's own
+      # parser, the version its action bundles, since that parser is what goes wrong.
+      "release-pr.ts":
+        members: [{ use: no-talking }]
+        imports:
+          message: >-
+            The release PR check reads the PR's body with release-please's parser, and names
+            effect beside it.
+          external: [release-please]
