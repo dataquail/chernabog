@@ -275,7 +275,7 @@ describe("planTickUseCase", () => {
           ["implement", "issue-16", "waits on #15"],
         ]);
 
-        // Not even a person naming it starts it.
+        // Not even a person naming it starts it, and they hear why.
         const named = yield* planTickUseCase(implement, {
           ...open,
           gates: false,
@@ -283,6 +283,7 @@ describe("planTickUseCase", () => {
         });
 
         expect(named.start).toEqual([]);
+        expect(named.skipped).toEqual(Option.some("issue-14 is held: waits on #12, #13"));
       }).pipe(
         Effect.provide(
           runtime(fakeEngine(), {

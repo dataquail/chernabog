@@ -1,3 +1,4 @@
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -193,6 +194,20 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
     routed: Option.some({ queued: routed.mine.map(describeQueued), elsewhere }),
     unserved,
   };
+
+  // A person who names a held item hears that it's held, and why.
+  const namedHold = Option.flatMap(input.item, (key) =>
+    Arr.findFirst(items, (item) =>
+      Option.map(
+        Option.filter(Option.fromUndefinedOr(item.held), () => item.key === key),
+        (reason) => `${key} is held: ${reason}`,
+      ),
+    ),
+  );
+
+  if (Option.isSome(namedHold)) {
+    return TickPlan.make({ ...so, start: [], skipped: namedHold });
+  }
 
   const candidates = Option.match(input.item, {
     onNone: () => routed.mine,

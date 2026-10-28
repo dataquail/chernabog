@@ -324,7 +324,7 @@ describe("held work", () => {
     const holds = said.indexOf("\nheld:");
 
     expect(holds).toBeGreaterThan(-1);
-    expect(said[holds + 1]).toBe("  goodbones/implement #14: waits on #12, #13");
+    expect(said[holds + 1]).toBe("  goodbones/implement #14: waits on #12, #13 (as of 3m ago)");
     expect(said.indexOf("\nrecent skips:")).toBeGreaterThan(holds + 1);
     expect(describeStatus(status, now)).not.toContain("\nheld:");
   });
@@ -336,6 +336,21 @@ describe("held work", () => {
     expect(screen).toContain("implement #14: waits on #12, #13");
     expect(screen.indexOf("Held")).toBeLessThan(screen.indexOf("Recent skips"));
     expect(plain(view(model()))).not.toContain("Held");
+  });
+
+  test("the live view says how many more items are held than it shows", () => {
+    const holds = [14, 15, 16, 17, 18, 19].map((number) =>
+      HoldView.make({ ...held, itemKey: `issue-${number}` }),
+    );
+
+    const screen = plain(view(model({ status: Option.some({ ...status, holds }) })));
+
+    expect(screen).toContain("implement #17: waits on #12, #13");
+    expect(screen).not.toContain("implement #18");
+    expect(screen).toContain("… 2 more (chernabog status lists them all)");
+    expect(
+      plain(view(model({ status: Option.some({ ...status, holds: holds.slice(0, 4) }) }))),
+    ).not.toContain("more (chernabog status");
   });
 });
 

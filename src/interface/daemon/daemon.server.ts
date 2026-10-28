@@ -1497,7 +1497,21 @@ export const runDaemon = Effect.gen(function* () {
           // still have runs to show.
           recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
           skips: (yield* listRecentSkipsUseCase(20)).skips,
-          holds: (yield* listHoldsUseCase()).holds,
+          // Only a flow the daemon still schedules, and has on, holds anything:
+          // an unenrolled repo's or a turned-off flow's last holds aren't current.
+          holds: (yield* listHoldsUseCase()).holds.filter((hold) =>
+            repos.some(
+              (repo) =>
+                repo.name === hold.repo &&
+                repo.flows.some(
+                  (schedule) =>
+                    schedule.handle.name === hold.flow &&
+                    samePersona(schedule.persona, hold.persona) &&
+                    schedule.own.enabled &&
+                    Option.isNone(flowOff(schedule.own, hold.flow)),
+                ),
+            ),
+          ),
           notifications: [...notifications].map(([persona, problem]) => ({
             ...Option.match(
               Option.liftPredicate(persona, (named) => named.length > 0),
