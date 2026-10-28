@@ -216,9 +216,9 @@ Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybr
 `PullRequest.merge(pr, { method })`, with `method` one of `merge`, `squash` or `rebase`, merges the pull request when that is safe, and decides that itself when it runs:
 
 - its required checks are green on the current head;
-- the latest review approved that very head, so nothing has been pushed since;
+- the latest review approved that very head, or the head has only merged the base in since (`PullRequest.onlyMergedBase`: every commit on its first parents back to the reviewed one is a two-parent merge of a commit on the base branch, with exactly the tree a clean automatic merge gives, so a merge where someone resolved a conflict or added edits still needs a review);
 - it touches no `humanOnlyPaths`;
-- GitHub's rules for the repo allow it. The merge is of exactly the reviewed head, so GitHub refuses it if the head moves in between.
+- GitHub's rules for the repo allow it. The merge is of exactly the head it checked, so GitHub refuses it if the head moves in between.
 
 Otherwise it fails with `MergeRefused`, giving the reason, or `PullRequestClosed` when the pull request was closed without merging, and merges nothing. A pull request merged already, as by a rerun, counts as merged. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
 
