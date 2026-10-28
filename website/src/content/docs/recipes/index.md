@@ -22,7 +22,7 @@ The first five are the [review loop](/chernabog/work/flows/): together, they tak
 A repo chooses, flow by flow, who owns each one:
 
 - **Copy** a recipe, and the repo owns it. Its flow is written to `.chernabog/flows/<name>.ts`, with its prompts beside it. From then on the file is the repo's code: read it, edit it, reorder its steps. This is the default, and it needs no config.
-- **Import** a recipe, and the team that publishes the package owns it. `config.yaml` names it with `flows.<name>.from`, there's no file in `flows/`, and the flow runs straight from the package under the binary's SDK. A new version of the package reaches every repo that imports from it.
+- **Import** a recipe, and the team that publishes the package owns it. `config.yaml` names it with `flows.<name>.from`, there's no file in `flows/`, and the flow runs straight from the package, on the repo's SDK and the binary's core. A new version of the package reaches every repo that imports from it.
 
 ```yaml
 # .chernabog/config.yaml
@@ -85,7 +85,7 @@ A copied recipe doesn't change on its own. Two commands bring over what the pack
 
 An imported flow needs no update of its own: it runs whatever version of the package `.chernabog/bun.lock` pins. `recipes update` moves that pin too.
 
-`chernabog recipes upgrade` is for a new SDK. It moves the repo's pins to the SDK this binary runs, then updates the copied recipes to the newest versions for that SDK. See [Versions](/chernabog/operate/versions/).
+`chernabog recipes upgrade` is for a new SDK. It moves the repo to the SDK released with this binary and pins its core, then updates the copied recipes to the newest versions for that SDK. See [Versions](/chernabog/operate/versions/).
 
 ### A repo baked before recipes were packages
 

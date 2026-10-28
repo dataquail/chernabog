@@ -1,6 +1,8 @@
 # @chernabog/sdk
 
-The services and helpers for writing Chernabog flows and steps. At runtime the `chernabog` binary supplies its own copy of this package and of `effect`, so a repo needs them only as devDependencies, for types.
+The blocks Chernabog flows and steps are written from (`Implement`, `Review`, `Plan`, `Hybrid`, `PullRequest`, prompts), over [`@chernabog/core`](https://www.npmjs.com/package/@chernabog/core), which it re-exports, so a flow imports everything from this one package.
+
+A repo lists it in `.chernabog/package.json`'s `dependencies`, at the version it chooses, and each snapshot of the repo's base branch installs it: two repos on different versions run side by side in one daemon. The `chernabog` binary supplies its own copies of `@chernabog/core` and `effect` at runtime, and runs this package when its peer range on `@chernabog/core` includes a core the binary provides. `chernabog recipes upgrade` moves a repo to the version released with its binary.
 
 ## Flows
 
@@ -66,6 +68,8 @@ export default defineStage({
 ```
 
 ## Services
+
+The services are core's: each is a port the binary provides.
 
 | Service           | Covers                                                                                               |
 | ----------------- | ---------------------------------------------------------------------------------------------------- |

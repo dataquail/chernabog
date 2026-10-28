@@ -29,7 +29,7 @@ description: Every chernabog command and flag.
 | `recipes eject <flow>`            | Copy an imported flow, with its prompts and steps, into the repo, and remove its `from`; it runs on under the same name |
 | `recipes diff [names…]`           | How this repo's copied flows, and the prompts their recipes render, differ from the versions of the recipes they came from |
 | `recipes update [names…]`         | Move each recipe package to its newest version for the repo's SDK, and merge its changes into the copied recipes, keeping your edits and marking conflicts; in the working tree |
-| `recipes upgrade`                 | Move this repo's `.chernabog/` to the SDK this binary runs: its pins, then its copied recipes to the newest versions for that SDK |
+| `recipes upgrade`                 | Move this repo's `.chernabog/` to the SDK released with this binary, and its core and effect pins to the binary's, then its copied recipes to the newest versions for that SDK |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |

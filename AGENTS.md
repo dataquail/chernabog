@@ -137,10 +137,11 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).
 - **Imported flows** are resolved by the loader (`src/platform/flow-loader.ts`)
-  from `.chernabog/node_modules`. `checkFlowImports` refuses a repo whose
+  from `.chernabog/node_modules`. `checkInstalled` refuses a repo whose
   imported package isn't a dependency, isn't the version `bun.lock` pins, or
-  doesn't support the bundled SDK. The SDK's `FlowPackage` (which `flowLayer`
-  provides) makes prompts and steps look in the repo, then the package.
+  doesn't support the repo's SDK or this binary's core. Core's `FlowPackage`
+  (which `flowLayer` provides) makes prompts and steps look in the repo, then
+  the package.
 - A recipe is written out from SDK **blocks**, trigger included, so its
   policy is in the repo's file. The SDK exports no whole workflows or
   review-loop triggers; add a block rather than hide a decision in one.
@@ -150,10 +151,13 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
 - **Activity names are journal keys**: a run in flight resumes by them, and a
   package version reaches every repo that imports it at once. Keep a recipe's
   step names when you change it, and never rename one in a block.
-- `@chernabog/recipes`' `@chernabog/sdk` peer range must include the bundled
-  SDK (a test checks). Keep it in step with `SUPPORTED_SDK`.
+- `@chernabog/recipes`' `@chernabog/sdk` peer range must include the SDK
+  released with the binary, `packages/sdk`'s version (a test checks).
 - The acceptance sandbox runs a local npm registry (`test/acceptance/fake-registry.ts`)
-  that packs `packages/recipes/`, so bun installs for real with no network.
+  that packs `packages/recipes/` and `packages/sdk/`, so bun installs for real
+  with no network. It serves itself, so never install from it synchronously;
+  a sandbox's committed `bun.lock` comes from a child process with a registry
+  of its own (`test/acceptance/lockfile.ts`).
 - Each recipe has a docs page, `website/src/content/docs/recipes/<name>.md`,
   which its `docs` links to.
 
@@ -285,7 +289,7 @@ transitive reach), the coverage floors and the baseline.
   `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the
   engine's `lock.ts`, `config-error.ts`, and a repo's `.chernabog/` as code:
   `flow-loader.ts`, `config-snapshot.ts`, `flow-deps.ts` and the generated
-  `templates.ts` and `effect-modules.ts`. It names effect, node, the SDK, the
+  `templates.ts` and `effect-modules.ts`. It names effect, node, core, the
   kernel and itself, nothing else.
 - **The composition roots are adapters too**: the CLI's
   `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
@@ -293,9 +297,9 @@ transitive reach), the coverage floors and the baseline.
   `architecture.yaml`, which names, file by file, the legacy runtime it still
   drives; moving a file into a module takes it off those lists.
 - **The runtime** a run's flow executes in is the runs module's
-  `infrastructure/runtime/`: the workflow engine and step runner, the SDK's
+  `infrastructure/runtime/`: the workflow engine and step runner, core's
   services over GitHub, git, worktrees and usage, and the agents and
-  launchers. They adapt the published SDK's ports, report a run's steps and
+  launchers. They adapt core's ports, report a run's steps and
   waits back through the module's use-cases, and name no interface or other
   module.
 - **A command that composes the runtime itself** is a `*.main.ts` beside the
@@ -320,7 +324,7 @@ transitive reach), the coverage floors and the baseline.
 
 ## Errors (#75)
 
-Errors split by who acts on them (`packages/sdk/src/abi/errors.ts`).
+Errors split by who acts on them (`packages/core/src/errors.ts`).
 
 - **A flow fails only with its outcomes**, `Skip | NeedsHuman | StepFailed`
   (`FlowError`), in `trigger`, `gate`, `item` and `workflow` alike. Anything
@@ -348,12 +352,12 @@ Errors split by who acts on them (`packages/sdk/src/abi/errors.ts`).
 A marker is something a run put on an item outside chernabog (a label, an
 assignment, a board Status, a claim ref or branch), with a named release.
 
-- **The SDK side** is `packages/sdk/src/abi/run-markers.ts` (exported as
+- **The flow side** is `packages/core/src/run-markers.ts` (exported as
   `Markers`): `define(name, argsSchema, release)`, `hold`, `drop`, `dropAll`,
   `forget`. A hold goes through the `MarkerHolds` service the engine provides
   (`flowLayer`), and does nothing outside a recorded run. A flow lists its
-  definitions in `defineFlow({ markers })`; the SDK's own
-  (`blocks/github-markers.ts`, plus `Claims.refMarker`) are `Markers.builtIn`. Keep a
+  definitions in `defineFlow({ markers })`; core's own
+  (`github-markers.ts`, plus `Claims.refMarker`) are `Markers.builtIn`. Keep a
   marker's name and arguments' shape once runs hold it: a run in flight is
   released by them.
 - **The runs module** keeps holds as `RunMarkerRoot` (`om_markers`), one per
@@ -393,32 +397,57 @@ a seeded repo, with no agent session.
   the person passes `--on-enrolled`; then it is paused on this machine
   meanwhile, and cloned from its own origin.
 
-## Versions (#123)
+## Versions (#123, #163)
 
 One binary runs every enrolled repo, so compatibility is the binary's call.
+docs/adr/0004-core-abi.md has the why.
 
-- **The SDK pin is the contract.** A repo's `.chernabog/package.json`
-  `@chernabog/sdk` pin is the SDK its flows are written against; the binary
-  runs `SUPPORTED_SDK` (`src/kernel/sdk-support.value-object.ts`): up to the
-  minor of `BUNDLED_SDK_VERSION`, which release-please moves with the SDK's
-  version, from `OLDEST_SUPPORTED_SDK`, which a person moves up when a minor
-  breaks flows written against the one before.
-  `checkCompatibility` (`src/platform/flow-deps.ts`) refuses a repo outside it,
-  without a pin, with `engines.chernabog`, or whose flows import what the
-  bundled SDK lacks, as `IncompatibleConfig`; the daemon shows it as
-  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) is
-  the way forward, and the only thing that moves an existing manifest's pins.
+- **Two packages.** `@chernabog/core` (`packages/core/`) is the contract: the
+  flow shape and the hooks the daemon calls, the durable primitives, the
+  errors, the ports, claims and markers. `@chernabog/sdk` (`packages/sdk/`) is
+  the blocks, over core, and re-exports core. The binary imports core only:
+  `daemon-reaches-no-sdk` in `architecture.yaml` fails a route from `src/`
+  into the SDK's code, tests included. Something the daemon itself acts on
+  belongs in core.
+- **The binary provides core; each repo installs its SDK.** The loader
+  substitutes the binary's `@chernabog/core` and `effect`; the SDK resolves
+  from the snapshot's `node_modules`, which `installFlowDependencies` installs
+  from `dependencies` and the lockfile. In tests, `installWorkspaceSdk`
+  (`test/workspace-sdk.ts`) links `packages/sdk` into a fixture's
+  `.chernabog/node_modules`.
+- **The installed SDK's core range is the contract.** The binary runs a repo
+  when a core in `PROVIDED_CORE` (`src/kernel/core-support.value-object.ts`)
+  satisfies it. `checkCompatibility` (`src/platform/flow-deps.ts`) refuses,
+  before installing, a repo without the SDK in `dependencies`, with
+  `engines.chernabog`, typed against a core this binary doesn't provide, or
+  whose flows import from core what it lacks; `checkInstalled` refuses one
+  whose installed SDK needs another core, or whose imported packages don't
+  fit its SDK. Both fail with `IncompatibleConfig`; the daemon shows it as
+  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) moves a
+  repo to the SDK released with the binary (`RELEASED_SDK`) and pins core and
+  effect.
+- **Core only grows within a major** (ADR 0004): add to a port, never change
+  one; never touch the durable primitives, the hooks, or a claim's or
+  marker's name and arguments. `packages/core/API.md` is what `tsc` declares
+  of core: run `bun run gen:core-api` after changing core, and read the diff
+  as a reviewer would. CI's `published` job loads the oldest and newest SDK
+  on npm that claim this core, with their recipes
+  (`test/published-compat.test.ts`, `CHERNABOG_PUBLISHED=true`).
 - **Local state is stamped, backed up and refused.** Machine config's
   `chernabog:` key and `state.db`'s `om_meta` hold the version that last
   migrated them (`src/migrate.ts`, `state-stamp.ts` beside the engine). Any
   older stamp is copied to `backups/` first (`src/platform/backups.ts`); a
   newer one is refused with restore instructions. There are no down
   migrations.
-- **Runs record their SDK** (`om_runs.sdk_version`). `flowLayer` never runs a
-  flow for a run whose SDK this binary doesn't support, and the daemon ends
-  such runs at startup through `cancelRunUseCase` with `needsHuman`. When its
-  executable changes, the daemon drains: no ticks, `/run` refused, and a
-  restart once no run is executing (parked runs don't count).
+- **Runs record their core and their tree** (`om_runs.core_version`,
+  `om_runs.config_tree`). `flowLayer` never runs a flow for a run whose core
+  this binary can't resume (`resumesRunsFrom`: the same major, at that
+  version or later), and the daemon ends such runs at startup through
+  `cancelRunUseCase` with `needsHuman`. A run resumes against the snapshot of
+  the tree it started from (`flowOrigins`, `snapshotTree`), so a merge or an
+  SDK move never swaps its blocks. When its executable changes, the daemon
+  drains: no ticks, `/run` refused, and a restart once no run is executing
+  (parked runs don't count).
 
 ## Effect and lint
 

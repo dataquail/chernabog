@@ -25,9 +25,9 @@ acme-chernabog-recipes/
   "version": "2.1.0",
   "type": "module",
   "files": ["flows", "prompts", "stages"],
-  "peerDependencies": { "@chernabog/sdk": ">=0.6.0 <0.8.0" },
+  "peerDependencies": { "@chernabog/sdk": "^0.8.0" },
   "devDependencies": {
-    "@chernabog/sdk": "0.6.0",
+    "@chernabog/sdk": "0.8.0",
     "@types/bun": "^1.3.0",
     "effect": "4.0.5",
     "typescript": "^5.9.3"
@@ -56,14 +56,16 @@ acme-chernabog-recipes/
 
 The files keep the layout of a repo's `.chernabog/`. A copy lands at the same path, and an imported flow finds its prompts and steps in the package, after any of the repo's own. A recipe is named after its key, so this one is `@acme/chernabog-recipes/deploy`.
 
-A flow imports `@chernabog/sdk` and `effect` like any flow. At runtime chernabog always substitutes its own copies, whatever is installed. Any other package a recipe imports goes in its `dependencies`.
+A flow imports `@chernabog/sdk` and `effect` like any flow. At runtime it runs on the SDK the repo installed, and chernabog substitutes its own copies of `@chernabog/core` and `effect`, whatever is installed. Any other package a recipe imports goes in its `dependencies`.
 
 ## The SDK range
 
-The `@chernabog/sdk` peer dependency says which SDK versions the package's flows are written against. It's the contract between your package and the binaries that run it:
+The `@chernabog/sdk` peer dependency says which SDK versions the package's flows are written against. It's the contract between your package and the repos that install it:
 
 - `chernabog init`, `recipes add` and `recipes update` pick the **newest version of your package whose range includes the repo's SDK pin**. A repo on an older SDK keeps getting the last version that supported it.
-- A repo that **imports** from your package is refused before any run starts, as `incompatible` and naming your package, if your range doesn't include the SDK the binary runs.
+- A repo that **imports** from your package is refused before any run starts, as `incompatible` and naming your package, if your range doesn't include the SDK the repo has installed.
+
+Which binaries run your flows is the SDK's business, not yours: the SDK declares the `@chernabog/core` it needs, and the binary provides core. A package that imports `@chernabog/core` directly can declare a core range too, and the binary checks it the same way.
 
 Widen the range when a new SDK runs your flows unchanged. Move it, in a release of its own, when a recipe needs a newer SDK.
 
