@@ -219,18 +219,19 @@ describe("leases", () => {
 
     sandbox.github.issue(issue).labels.push("contested");
 
+    // The trigger keeps reporting the issue, so later takers may be in flight: look at one that ended.
+    const takerEnded = (run: {
+      readonly flow: string;
+      readonly itemKey: string;
+      readonly status: string;
+    }) => run.flow === "taker" && run.itemKey === `issue-${issue}` && run.status !== "running";
+
     await eventually(
-      async () =>
-        (await status()).recent.some(
-          (run) =>
-            run.flow === "taker" && run.itemKey === `issue-${issue}` && run.status !== "running",
-        ),
+      async () => (await status()).recent.some(takerEnded),
       "the taker's run to end",
     );
 
-    const taker = (await status()).recent.find(
-      (run) => run.flow === "taker" && run.itemKey === `issue-${issue}`,
-    );
+    const taker = (await status()).recent.find(takerEnded);
 
     expect(taker?.status).toBe("skipped");
     expect(Option.getOrElse(taker?.summary ?? Option.none(), () => "")).toContain(
