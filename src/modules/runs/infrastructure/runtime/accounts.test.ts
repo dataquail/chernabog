@@ -1,4 +1,4 @@
-import { type Account, HEADLESS } from "@chernabog/sdk";
+import { type Account, HEADLESS } from "@chernabog/core";
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

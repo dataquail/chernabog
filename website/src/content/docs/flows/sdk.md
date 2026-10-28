@@ -3,7 +3,7 @@ title: SDK services
 description: The services @chernabog/sdk provides to flows and Effect steps.
 ---
 
-`@chernabog/sdk` is on npm for types; at runtime the binary supplies its own copy. Each service is a layer, so a team can replace one with its own implementation, and tests can use fakes.
+The services are [`@chernabog/core`](https://www.npmjs.com/package/@chernabog/core)'s ports, which `@chernabog/sdk` re-exports; the binary provides them, from its own copy of core, to the SDK each repo installs. Each service is a layer, so a team can replace one with its own implementation, and tests can use fakes.
 
 | Service    | Covers                                                                      |
 | ---------- | --------------------------------------------------------------------------- |

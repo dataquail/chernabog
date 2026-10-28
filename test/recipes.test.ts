@@ -21,7 +21,7 @@ import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
 import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
 import { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec } from "../src/platform/exec.ts";
-import { BUNDLED_SDK } from "../src/platform/flow-deps.ts";
+import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
 import { flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
@@ -44,7 +44,8 @@ const checkout = Effect.gen(function* () {
   yield* fs.writeFileString(
     `${root}/.chernabog/package.json`,
     printJson({
-      devDependencies: { "@chernabog/sdk": BUNDLED_SDK, "@chernabog/recipes": MANIFEST.version },
+      dependencies: { "@chernabog/sdk": RELEASED_SDK },
+      devDependencies: { "@chernabog/recipes": MANIFEST.version },
     }),
   );
   yield* fs.symlink(PACKAGE, `${root}/.chernabog/node_modules/@chernabog/recipes`);
@@ -92,10 +93,10 @@ describe("the recipes", () => {
     }),
   );
 
-  effect("@chernabog/recipes supports the SDK this binary bundles", () =>
+  effect("@chernabog/recipes supports the SDK released with this binary", () =>
     Effect.sync(() => {
       expect(
-        Bun.semver.satisfies(BUNDLED_SDK, MANIFEST.peerDependencies?.["@chernabog/sdk"] ?? ""),
+        Bun.semver.satisfies(RELEASED_SDK, MANIFEST.peerDependencies?.["@chernabog/sdk"] ?? ""),
       ).toBe(true);
     }),
   );
@@ -343,7 +344,7 @@ describe("diffing against the recipes", () => {
         yield* fs.makeDirectory(`${repo}/.chernabog/node_modules/@chernabog`, { recursive: true });
         yield* fs.writeFileString(
           `${repo}/.chernabog/package.json`,
-          printJson({ devDependencies: { "@chernabog/sdk": BUNDLED_SDK } }),
+          printJson({ dependencies: { "@chernabog/sdk": RELEASED_SDK } }),
         );
         // The SDK linked, as in a checkout, so nothing installs it from npm.
         yield* fs.symlink(`${PACKAGE}/../sdk`, `${repo}/.chernabog/node_modules/@chernabog/sdk`);

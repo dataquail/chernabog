@@ -1,6 +1,7 @@
 // What this binary bundles for a repo's .chernabog/: the scaffold generated
 // from templates/ (src/platform/templates.ts), the config schema generated
-// from this binary's RepoConfigFile, and the pins of its packages.
+// from this binary's RepoConfigFile, and the pins of its packages: core and
+// effect as it bundles them, and the SDK released with it.
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,11 +10,11 @@ import * as Schema from "effect/Schema";
 
 import { ScenarioFile } from "../../../../kernel/scenario.value-object.ts";
 import {
-  BUNDLED_SDK,
   decodeManifest,
   flowPackageText,
   incompatibility,
-  missingSdkImports,
+  missingCoreImports,
+  RELEASED_SDK,
   withBundledPins,
   writtenForNewer,
 } from "../../../../platform/flow-deps.ts";
@@ -57,7 +58,7 @@ const refused = (error: { readonly message: string }) =>
 export const BundleClientLive = Layer.succeed(
   BundleClient,
   BundleClient.of({
-    sdkVersion: BUNDLED_SDK,
+    sdkVersion: RELEASED_SDK,
     scaffold: Effect.sync(() => {
       const { "package.json": manifest, ...files } = scaffoldFiles();
 
@@ -76,6 +77,6 @@ export const BundleClientLive = Layer.succeed(
         ),
       ),
     pinned: (manifest) => withBundledPins(manifest).pipe(Effect.mapError(refused)),
-    missingImports: missingSdkImports,
+    missingImports: missingCoreImports,
   }),
 );

@@ -28,6 +28,9 @@ export const pullRequest = (number: number) => `pr-${number}`;
 
 export const refFor = (item: string) => `refs/chernabog/claims/${item}`;
 
+// The work branch a run on an issue makes, which the daemon cleans up after it.
+export const branchFor = (number: number) => `auto/issue-${number}`;
+
 // Whose run holds a claim. The commit says nothing about the machine: it is
 // as public as the repo.
 export type Holder = {

@@ -1,7 +1,7 @@
 // A pull request's CI state: red as soon as any check fails, green once every
 // required check has passed, pending otherwise.
 
-import type { CiState } from "@chernabog/sdk";
+import type { CiState } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

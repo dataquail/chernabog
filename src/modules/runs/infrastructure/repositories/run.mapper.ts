@@ -28,7 +28,8 @@ export const RunColumns = Schema.Struct({
   status: RunStatus,
   current_step: Maybe,
   summary: Maybe,
-  sdk_version: Schema.String,
+  core_version: Schema.String,
+  config_tree: Maybe,
   started_at: Schema.String,
   finished_at: Maybe,
 });
@@ -50,7 +51,8 @@ export const toRoot = (row: RunColumns) =>
     status: row.status,
     currentStep: row.current_step,
     summary: row.summary,
-    sdkVersion: row.sdk_version,
+    coreVersion: row.core_version,
+    configTree: row.config_tree,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
   });
@@ -71,7 +73,8 @@ export const toParameters = (run: RunRoot) =>
     run.status,
     Option.getOrNull(run.currentStep),
     Option.getOrNull(run.summary),
-    run.sdkVersion,
+    run.coreVersion,
+    Option.getOrNull(run.configTree),
     run.startedAt,
     Option.getOrNull(run.finishedAt),
   ] as const;

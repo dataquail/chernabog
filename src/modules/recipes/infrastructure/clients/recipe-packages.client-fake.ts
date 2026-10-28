@@ -82,6 +82,7 @@ export const RecipePackagesClientFake = (
     RecipePackagesClient,
     RecipePackagesClient.of({
       restore: () => Effect.void,
+      sync: () => Effect.void,
       installed: (root) =>
         Effect.sync(() =>
           Option.match(manifestOf(root), {

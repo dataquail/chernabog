@@ -2,7 +2,7 @@
 // workspace sandbox, --output-schema for the answer, and its own thread ids,
 // which are recorded the moment Codex reports them.
 
-import { AgentError, printJson } from "@chernabog/sdk";
+import { AgentError, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

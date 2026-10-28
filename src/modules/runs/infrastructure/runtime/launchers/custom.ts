@@ -3,7 +3,7 @@
 // handle, or nothing to make {title} the handle. Without `alive`, a session
 // counts as running until the agent is done.
 
-import type { LauncherCommands } from "@chernabog/sdk";
+import type { LauncherCommands } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

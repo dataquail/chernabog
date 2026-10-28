@@ -146,6 +146,8 @@ describe("the daemon", () => {
   }, 60_000);
 
   test("run goes through the daemon, which holds the engine", async () => {
+    await sandbox.installCheckout();
+
     const { output } = await sandbox.runCli([
       "run",
       "implement",

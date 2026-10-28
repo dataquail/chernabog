@@ -1,7 +1,7 @@
 // `chernabog doctor`: checks logins, gh scopes, labels, trust and the daemon,
 // and says how to fix what is wrong.
 
-import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from "@chernabog/sdk";
+import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
@@ -11,10 +11,10 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { providedRange } from "../../../kernel/core-support.value-object.ts";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts";
-import { supportedRange } from "../../../kernel/sdk-support.value-object.ts";
 import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
@@ -539,7 +539,7 @@ export const doctor = Effect.gen(function* () {
 
       check(
         true,
-        `${name}: .chernabog/ is written against an SDK this chernabog runs (${supportedRange})`,
+        `${name}: .chernabog/ needs a core this chernabog provides (${providedRange})`,
         "",
       );
 

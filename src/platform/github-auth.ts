@@ -3,7 +3,7 @@
 // credential helper that reads it. The token only ever lives in memory and in
 // a child's environment, never on a command line or in a file.
 
-import { GitHubError, NotAuthenticated, PersonaUnavailable } from "@chernabog/sdk";
+import { GitHubError, NotAuthenticated, PersonaUnavailable } from "@chernabog/core";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";

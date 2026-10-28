@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { claimMarker } from "../packages/sdk/src/markers.ts";
+import { claimMarker } from "../packages/core/src/markers.ts";
 
 describe("claim markers", () => {
   test("still reads a claim posted before markers stopped naming the host", () => {

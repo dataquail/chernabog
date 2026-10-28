@@ -1,10 +1,11 @@
 # Releasing
 
-Chernabog ships three things, versioned separately:
+Chernabog ships four things, versioned separately, from one release PR:
 
 | What                   | Version in                      | Tag                  | Goes to                                                                       |
 | ---------------------- | ------------------------------- | -------------------- | ----------------------------------------------------------------------------- |
 | the `chernabog` binary | `package.json`                  | `v<version>`         | GitHub release assets, per platform, and the `dataquail/homebrew-tap` formula |
+| `@chernabog/core`      | `packages/core/package.json`    | `core-v<version>`    | npm                                                                           |
 | `@chernabog/sdk`       | `packages/sdk/package.json`     | `sdk-v<version>`     | npm                                                                           |
 | `@chernabog/recipes`   | `packages/recipes/package.json` | `recipes-v<version>` | npm                                                                           |
 
@@ -12,17 +13,19 @@ Chernabog ships three things, versioned separately:
 
 The root is release-please's `simple` type, with `package.json` as an extra file, not the `node` type. A `node` root takes `chernabog` as its component from `package.json`, and release-please 17 then skips a release PR that releases only the root: the combined PR's branch has no component, the root's is `chernabog`, and the mismatch is only a warning. That is how the merge of v0.4.0's release PR first created no release.
 
-They are versioned separately because a repo's `.chernabog/package.json` pins the SDK at the version the binary bundles, and `chernabog doctor` reports any other version as drift. Bumping the SDK with every binary release would make each upgrade look like drift in every enrolled repo. A commit under `packages/sdk/` still releases both, since the binary bundles the SDK.
+The binary bundles core, so a commit under `packages/core/` releases both. It bundles neither the SDK nor the recipes: a repo installs `@chernabog/sdk` and `@chernabog/recipes` in its `.chernabog/`, at the versions it pins, so a commit only under `packages/sdk/` or `packages/recipes/` releases that package alone; the root package lists both folders in `exclude-paths`. The binary still reads `packages/sdk`'s version at build time: it is the SDK `chernabog init` and `chernabog recipes upgrade` pin a repo to.
 
-The recipes depend on the SDK, not on the binary, which bundles none of them: a repo installs `@chernabog/recipes` in its `.chernabog/` (`chernabog init` adds it), and copies its recipes in or imports them from there. So a commit only under `packages/recipes/` releases the recipes alone; the root package lists the folder in `exclude-paths`. The package's `@chernabog/sdk` peer range says which SDKs its flows are written against: widen it when a recipe works on a new SDK, and move it, in a release of its own, when a recipe needs one. `chernabog init` installs the package from npm, so a binary and a recipes release made from the same merge are both needed for a fresh `init`; the recipes publish finishes minutes after the binary's.
+The SDK peer-depends on a range of core, and the recipes on a range of the SDK. Those ranges are kept by hand: widen one when a package works on a new version, and move it, in a release of its own, when the package needs one. `chernabog init` installs both from npm, so a binary and an SDK or recipes release made from the same merge are both needed for a fresh `init`; the publishes finish minutes after the binary's. Core publishes before the SDK in that run, since the SDK names it.
 
 ## Compatibility
 
-The SDK version is the contract between a binary and a repo's flows. A repo's `.chernabog/package.json` pins the SDK its flows are written against, and the binary declares, in one place, the SDK range it runs: `SUPPORTED_SDK` in `src/kernel/sdk-support.value-object.ts`. Its top follows the minor it bundles, `BUNDLED_SDK_VERSION`, which release-please moves with `packages/sdk`'s version; its floor is `OLDEST_SUPPORTED_SDK`, kept by hand (such as `>=0.6.0 <0.8.0` once the SDK is 0.7). A repo pinned outside the range is refused as `incompatible`.
+Core is the contract between a binary and a repo's flows ([ADR 0004](docs/adr/0004-core-abi.md)). A repo's installed SDK declares the core it needs as a peer range, and the binary declares, in one place, the cores it provides: `PROVIDED_CORE` in `src/kernel/core-support.value-object.ts`, whose head is `BUNDLED_CORE_VERSION`, which release-please moves with `packages/core`'s version. A repo whose SDK needs a core outside it is refused as `incompatible`.
 
-- **A release that moves the SDK's minor** (any `feat!:` under `packages/sdk/`, and most `feat:`s there before 1.0) moves the range's top by itself. When the new minor only adds to the SDK, so flows written against the previous minor still run, leave `OLDEST_SUPPORTED_SDK` where it is (0.7 kept 0.6), and make sure `@chernabog/recipes`' peer range includes the new minor; no repo needs to upgrade. When it breaks them, move `OLDEST_SUPPORTED_SDK` up to the new minor in the pull request that breaks them, and what follows applies. Every enrolled repo still on the old minor is then refused until someone runs `chernabog recipes upgrade` in it and merges the result, so the release notes should say so, and what changed for hand-written flows.
+- **Core only grows within a major.** A `feat:` under `packages/core/` adds to it and moves its minor; every published SDK whose range is `^1.x` keeps running. `packages/core/API.md` shows the change in review; CI's `published` job loads the oldest and newest SDK on npm that claim this core.
+- **A breaking change to core is a major** (`feat!:` under `packages/core/`). Keep the old port as an adapter over the new one and add the old major to `PROVIDED_CORE`, so SDKs written for it keep running. Dropping a major from `PROVIDED_CORE` breaks every repo still on an SDK for it, until someone runs `chernabog recipes upgrade` there and merges the result: that is a major of Chernabog's own, and its release notes should say so.
+- **A release of the SDK** breaks no repo by itself: each repo moves to it with `chernabog recipes upgrade` when it chooses. Make sure `@chernabog/recipes`' peer range includes it.
 - **A release that changes machine config or `state.db`** needs nothing extra: whichever binary first runs a newer version keeps a copy of each in `~/.config/chernabog/backups/`, named for the version it came from, and stamps them with its own. Any version change does this, not only one that changes the shape.
-- **A daemon picks up a new binary by itself.** It watches its own executable, drains (starts no new runs), and restarts once the runs executing finish. Runs in flight that started under an SDK the new binary doesn't run go to `needs-human`.
+- **A daemon picks up a new binary by itself.** It watches its own executable, drains (starts no new runs), and restarts once the runs executing finish. Runs in flight resume against the `.chernabog/` tree they started from; one that started under a core the new binary can't resume goes to `needs-human`.
 
 ### Rolling back
 
@@ -43,18 +46,18 @@ The older binary refuses newer files until they're restored, and says which copy
    - tags the release and creates its GitHub release;
    - builds the binary on macOS (arm64, x64) and Linux (x64, arm64), checks that each one reports the tagged version, and attaches the tarballs and a `sha256` file to the release;
    - points `Formula/chernabog.rb` in `dataquail/homebrew-tap` at those tarballs, written by `scripts/homebrew-formula.ts`. A dispatched re-run of an older tag leaves the formula alone;
-   - publishes `@chernabog/sdk` and `@chernabog/recipes` to npm with provenance, each under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there;
-   - once that publish succeeds, builds the docs site in `website/` from the SDK's tag and deploys it to GitHub Pages (the **Docs** workflow). A release with no SDK version leaves the site as it was.
+   - publishes `@chernabog/core`, then `@chernabog/sdk`, and `@chernabog/recipes` to npm with provenance, each under `latest`, or under the prerelease's name (`beta`) for a prerelease, skipping a version that is already there;
+   - once the SDK's or core's publish succeeds, builds the docs site in `website/` from its tag (the SDK's, when both ship) and deploys it to GitHub Pages (the **Docs** workflow). A release with neither leaves the site as it was.
 
 ## When a release fails partway
 
-The tag and GitHub release already exist, so run **Release** by hand with the tag (`v0.4.0`, `sdk-v0.1.1` or `recipes-v0.1.0`):
+The tag and GitHub release already exist, so run **Release** by hand with the tag (`v0.4.0`, `core-v1.0.0`, `sdk-v0.1.1` or `recipes-v0.1.0`):
 
 ```sh
 gh workflow run release.yml -f tag=v0.4.0
 ```
 
-It rebuilds and replaces the assets, and publishes the SDK or the recipes unless that version is already on npm. A dispatch with an SDK tag deploys the docs again too. To redeploy the docs alone, from `main`:
+It rebuilds and replaces the assets, and publishes core, the SDK or the recipes unless that version is already on npm. A dispatch with a core or SDK tag deploys the docs again too. To redeploy the docs alone, from `main`:
 
 ```sh
 gh workflow run docs.yml
@@ -97,3 +100,5 @@ gh workflow run docs.yml
    The site is served at <https://dataquail.github.io/chernabog/>. Its `github-pages` environment deploys from `main` only, which is where Release runs.
 
 7. For `@chernabog/recipes`, which came later: before its first release PR is merged, add an `NPM_TOKEN` secret again that can create packages in the `chernabog` org. Once `recipes-v0.1.0` is on npm, add the same trusted publisher to `@chernabog/recipes` and delete the secret again. If the first publish fails for want of a token, add one and run **Release** with `-f tag=recipes-v0.1.0`.
+
+8. For `@chernabog/core`, which came with #163: its first release is 1.0.0, which `release-as` in `release-please-config.json` pins. Before that release PR is merged, add an `NPM_TOKEN` secret again that can create packages in the `chernabog` org. Once `core-v1.0.0` is on npm, add the same trusted publisher to `@chernabog/core`, delete the secret, and remove `release-as` from core's entry, or every later release PR would release 1.0.0 again. If the first publish fails for want of a token, add one and run **Release** with `-f tag=core-v1.0.0`.

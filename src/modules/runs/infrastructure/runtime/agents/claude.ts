@@ -2,7 +2,7 @@
 // interactive session; headless, as `claude -p` in auto mode, with a session id
 // we choose and structured output from --json-schema.
 
-import { AgentError, type AgentRequest, type Json, printJson } from "@chernabog/sdk";
+import { AgentError, type AgentRequest, type Json, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

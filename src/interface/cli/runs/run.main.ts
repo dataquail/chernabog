@@ -3,7 +3,7 @@
 // personas' services and the engine, and resumes or starts a run, following
 // its log until it ends.
 
-import { isManual, triggerOf, type WorkItem } from "@chernabog/sdk";
+import { isManual, triggerOf, type WorkItem } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -27,6 +27,7 @@ import {
 import {
   adoptRuns,
   buildPersonaContexts,
+  flowOrigins,
   loginOf,
   openRepo,
   type RepoContext,
@@ -268,7 +269,7 @@ export const runInForeground = (options: RunOptions) =>
   Effect.gen(function* () {
     const machine = yield* loadMachineConfig;
     const enrolled = yield* findEnrolled(machine, options.repo);
-    const { flows, repo } = yield* openRepo(machine, enrolled, options.fromCheckout);
+    const { flows, repo, tree } = yield* openRepo(machine, enrolled, options.fromCheckout);
     const flow = Option.fromUndefinedOr(flows.get(options.flow));
 
     if (Option.isNone(flow)) {
@@ -282,7 +283,17 @@ export const runInForeground = (options: RunOptions) =>
       });
     }
 
-    const handle = flowHandle(repo, options.flow, flow.value);
+    const origins = yield* Effect.transposeOption(
+      Option.map(tree, (from) => flowOrigins(enrolled, from)),
+    );
+
+    const handle = flowHandle(
+      repo,
+      options.flow,
+      flow.value,
+      Option.map(origins, (originOf) => originOf(options.flow)),
+    );
+
     yield* acquireLock(
       homePaths((yield* Home).root).engineLock,
       `run ${options.flow} --repo ${repo.settings.name}`,

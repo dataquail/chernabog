@@ -3,7 +3,7 @@
 // GitHub for it (refs in a local bare repo), a fake `claude` on PATH, and the
 // CLI pointed at all of it.
 
-import { type ChildProcess, execFileSync, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -37,6 +37,21 @@ export const recipeFiles = (names: ReadonlyArray<string>): Readonly<Record<strin
 };
 
 const SLUG = "dataquail/demo";
+
+// The bun.lock installing `manifest` writes, its tarballs fetched from
+// `registryUrl`; none when bun can't install it. Made by a child process with
+// a fake registry of its own (lockfile.ts), so this one waits on it.
+const lockfileFor = (manifest: string, registryUrl: string) => {
+  const made = spawnSync(process.execPath, [join(ROOT, "test/acceptance/lockfile.ts")], {
+    input: manifest,
+    encoding: "utf8",
+  });
+
+  return Option.map(
+    Option.liftPredicate(made.stdout, () => made.status === 0),
+    (lockfile) => lockfile.replaceAll(/http:\/\/localhost:\d+\//g, registryUrl),
+  );
+};
 
 // `install: null`, as config.yaml says there is no install step.
 const NO_INSTALL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))(Option.none());
@@ -177,6 +192,15 @@ export const openSandbox = (
 
   execFileSync("git", ["init", "--bare", "-b", "main", bare]);
   execFileSync("git", ["clone", "-q", bare, checkout]);
+  // The registry bun installs packages from; stopped with the fake GitHub.
+  const registry: FakeRegistry = startFakeRegistry();
+
+  // bun installs from the fake registry, into a cache of the sandbox's own.
+  const registryEnv = {
+    NPM_CONFIG_REGISTRY: registry.url,
+    BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"),
+  };
+
   const files = scaffoldFiles();
 
   const baked = recipeFiles(machine.recipes ?? REVIEW_LOOP);
@@ -193,6 +217,16 @@ export const openSandbox = (
   }
 
   writeFileSync(join(checkout, "README.md"), "# demo\n");
+
+  // Its lockfile committed, as init leaves it, so a snapshot's install of the
+  // SDK has one to follow. A package.json a test gives that bun can't install
+  // has none.
+  for (const lockfile of Option.toArray(
+    lockfileFor(readFileSync(join(checkout, ".chernabog", "package.json"), "utf8"), registry.url),
+  )) {
+    writeFileSync(join(checkout, ".chernabog", "bun.lock"), lockfile);
+  }
+
   git(checkout, "add", ".");
   git(checkout, "commit", "-qm", "chore: set up chernabog");
   git(checkout, "push", "-q", "origin", "main");
@@ -205,8 +239,6 @@ export const openSandbox = (
     JSON.stringify({ claudeAiOauth: { accessToken: "fake-token", expiresAt: 4102444800000 } }),
   );
   const fakeGitHub = startFakeGitHub({ slug: SLUG, bare });
-  // The registry bun installs recipe packages from; stopped with the fake GitHub.
-  const registry: FakeRegistry = startFakeRegistry();
 
   const github = {
     ...fakeGitHub,
@@ -239,9 +271,19 @@ export const openSandbox = (
     FAKE_ORCA_STATE: join(root, "orca"),
     FAKE_ORCA_LOG: join(root, "orca.log"),
     CHERNABOG_USAGE_URL: `${github.url}/api/oauth/usage`,
-    // bun installs from the fake registry, into a cache of the sandbox's own.
-    NPM_CONFIG_REGISTRY: registry.url,
-    BUN_INSTALL_CACHE_DIR: join(root, "bun-cache"),
+    ...registryEnv,
+  };
+
+  // Installs a checkout's .chernabog/ (the sandbox's, unless named), as a person does to try a change from
+  // the working copy (run --from-checkout, rehearse); never synchronously, as
+  // this process serves the registry it installs from.
+  const installCheckout = async (path = checkout) => {
+    await Bun.spawn([process.execPath, "install", "--ignore-scripts"], {
+      cwd: join(path, ".chernabog"),
+      env: { ...env },
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited;
   };
 
   const [program = "chernabog", ...programArgs] = chernabogCommand();
@@ -328,6 +370,8 @@ export const openSandbox = (
     editMachine,
     github,
     registry,
+    registryEnv,
+    installCheckout,
     cli,
     runCli,
     anotherMachine,

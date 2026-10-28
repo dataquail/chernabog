@@ -52,7 +52,7 @@ import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
-import { BUNDLED_SDK } from "../src/platform/flow-deps.ts";
+import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
@@ -389,7 +389,7 @@ describe("the engine", () => {
         const recorded = (key: string) =>
           startRunUseCase({
             id: RunId.make(key),
-            sdkVersion: BUNDLED_SDK,
+            coreVersion: BUNDLED_CORE,
             repo: "demo",
             persona: IMPLICIT,
             flow: "demo",
@@ -430,6 +430,83 @@ describe("the engine", () => {
         expect(executed.filter((line) => line.startsWith("after:"))).toEqual(["after:after"]);
         expect(executed.filter((line) => line.startsWith("before:"))).toEqual(["before:before"]);
       }),
+  );
+});
+
+describe("a run and the .chernabog/ tree it started from", () => {
+  // The flow as an older tree has it, which says which tree it came from.
+  const asOf = (tree: string) =>
+    defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.succeed(`ran ${tree}`) });
+
+  const asked: Array<string> = [];
+
+  const origined = flowHandle(
+    repo,
+    "demo",
+    flow,
+    Option.some({
+      tree: "current",
+      flowAt: (tree) => Effect.sync(() => asked.push(tree)).pipe(Effect.as(asOf(tree))),
+    }),
+  );
+
+  effect(
+    "resumes against the tree it recorded: an older one's flow, or the handle's for its own tree or none",
+    () =>
+      Effect.gen(function* () {
+        const recorded = (key: string, configTree: Option.Option<string>) =>
+          startRunUseCase({
+            id: RunId.make(key),
+            coreVersion: BUNDLED_CORE,
+            configTree,
+            repo: "demo",
+            persona: IMPLICIT,
+            flow: "demo",
+            itemKey: key,
+            itemTitle: Option.none(),
+            itemUrl: Option.none(),
+            item: Option.some(item(key)),
+          });
+
+        const resumes = Effect.gen(function* () {
+          yield* recorded("older-tree", Option.some("older"));
+          yield* recorded("current-tree", Option.some("current"));
+          yield* recorded("no-tree", Option.none());
+
+          const recovered = yield* recoverRunsUseCase();
+
+          return yield* Effect.forEach(recovered.executed, toEnd);
+        });
+
+        const { value } = yield* withEngine(
+          resumes,
+          Effect.map(Layer.build(repoServices), forEveryPersona),
+          origined,
+        );
+
+        expect(Object.fromEntries(value.map((run) => [String(run.id), summaryOf(run)]))).toEqual({
+          "older-tree": "ran older",
+          "current-tree": "did current-tree",
+          "no-tree": "did no-tree",
+        });
+        expect(asked).toEqual(["older"]);
+      }),
+  );
+
+  effect("records the tree its flow was loaded from when it starts", () =>
+    Effect.gen(function* () {
+      const { value } = yield* withEngine(
+        startRun(origined, IMPLICIT, item("fresh")).pipe(
+          Effect.flatMap((outcome) => Effect.fromOption(outcome.run)),
+          Effect.orDie,
+          Effect.flatMap(toEnd),
+        ),
+        Effect.map(Layer.build(repoServices), forEveryPersona),
+        origined,
+      );
+
+      expect(value.configTree).toEqual(Option.some("current"));
+    }),
   );
 });
 
@@ -499,7 +576,7 @@ describe("personas", () => {
         const adopted = Effect.gen(function* () {
           yield* startRunUseCase({
             id: OLD,
-            sdkVersion: BUNDLED_SDK,
+            coreVersion: BUNDLED_CORE,
             repo: "demo",
             persona: bob,
             flow: "demo",
@@ -533,7 +610,7 @@ describe("personas", () => {
         const unadopted = Effect.gen(function* () {
           yield* startRunUseCase({
             id: OLD,
-            sdkVersion: BUNDLED_SDK,
+            coreVersion: BUNDLED_CORE,
             repo: "demo",
             persona: Option.none(),
             flow: "demo",

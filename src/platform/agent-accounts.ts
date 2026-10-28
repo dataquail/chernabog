@@ -1,7 +1,7 @@
 // Where the agents keep an account's login on this machine, and how a login
 // token reaches `claude`.
 
-import type { Account } from "@chernabog/sdk";
+import type { Account } from "@chernabog/core";
 import * as Option from "effect/Option";
 
 import type { Environment } from "./environment.ts";

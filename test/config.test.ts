@@ -9,7 +9,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
-import { supportedRange } from "../src/kernel/sdk-support.value-object.ts";
+import { providedRange } from "../src/kernel/core-support.value-object.ts";
 import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
 import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
 import { setFlowScheduleUseCase } from "../src/modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
@@ -21,7 +21,7 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
-import { BUNDLED_PACKAGES, BUNDLED_SDK } from "../src/platform/flow-deps.ts";
+import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
   checkManualSchedules,
@@ -40,6 +40,7 @@ import {
   scheduleFor,
 } from "../src/repo-config.ts";
 import { effect, effectAtHome } from "./effect-test.ts";
+import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
 const machine = normalizeMachineConfig(
   Schema.decodeSync(MachineConfigFile)({
@@ -628,31 +629,37 @@ describe("init", () => {
     }),
   );
 
-  effect("pins the bundled SDK and effect in a new package.json, and leaves one there alone", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const repo = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-init-" });
-      const path = `${repo}/.chernabog/package.json`;
-      yield* scaffold(repo);
-      expect(parseJson(yield* fs.readFileString(path))).toEqual(
-        Option.some({ private: true, devDependencies: BUNDLED_PACKAGES }),
-      );
+  effect(
+    "lists the released SDK and pins the bundled core and effect in a new package.json, and leaves one there alone",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-init-" });
+        const path = `${repo}/.chernabog/package.json`;
+        yield* scaffold(repo);
+        expect(parseJson(yield* fs.readFileString(path))).toEqual(
+          Option.some({
+            private: true,
+            dependencies: { "@chernabog/sdk": RELEASED_SDK },
+            devDependencies: BUNDLED_PACKAGES,
+          }),
+        );
 
-      const older = '{ "devDependencies": { "@chernabog/sdk": "0.0.1" } }';
-      yield* fs.writeFileString(path, older);
-      expect(yield* scaffold(repo)).toEqual([]);
-      expect(yield* fs.readFileString(path)).toBe(older);
-    }),
+        const older = '{ "dependencies": { "@chernabog/sdk": "0.0.1" } }';
+        yield* fs.writeFileString(path, older);
+        expect(yield* scaffold(repo)).toEqual([]);
+        expect(yield* fs.readFileString(path)).toBe(older);
+      }),
   );
 
-  effect("refuses a .chernabog/ written against a newer SDK, and writes nothing", () =>
+  effect("refuses a .chernabog/ typed against a newer core, and writes nothing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const repo = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-init-" });
       yield* fs.makeDirectory(`${repo}/.chernabog`);
       yield* fs.writeFileString(
         `${repo}/.chernabog/package.json`,
-        '{ "devDependencies": { "@chernabog/sdk": "99.0.0" } }',
+        '{ "dependencies": { "@chernabog/sdk": "99.0.0" }, "devDependencies": { "@chernabog/core": "99.0.0" } }',
       );
       const scaffolded = yield* Effect.result(scaffold(repo));
       expect(Result.isFailure(scaffolded) && scaffolded.failure.message).toContain(
@@ -686,12 +693,17 @@ describe("loading a repo", () => {
       return dir;
     });
 
+  // With the SDK installed, as a snapshot has it.
   const load = (files: Readonly<Record<string, string>>) =>
     Effect.flatMap(configDirWith(files), (dir) =>
-      Effect.result(loadRepo(machine, { ...enrolled, path: dir }, dir)),
+      installWorkspaceSdk(dir).pipe(
+        Effect.andThen(Effect.result(loadRepo(machine, { ...enrolled, path: dir }, dir))),
+      ),
     );
 
-  const pinning = (sdk: string) => `{ "devDependencies": { "@chernabog/sdk": "${sdk}" } }`;
+  // A package.json listing the released SDK, with flows typed against core `core`.
+  const pinning = (core: string) =>
+    `{ "dependencies": { "@chernabog/sdk": "${RELEASED_SDK}" }, "devDependencies": { "@chernabog/core": "${core}" } }`;
 
   const refusal = (
     loaded: Result.Result<unknown, { readonly _tag: string; readonly message: string }>,
@@ -702,7 +714,7 @@ describe("loading a repo", () => {
     });
 
   effectAtHome(
-    "a .chernabog/ written against a newer SDK is refused, before its config is read",
+    "a .chernabog/ typed against a newer core is refused, before its config is read",
     () =>
       Effect.gen(function* () {
         const loaded = yield* load({
@@ -713,31 +725,34 @@ describe("loading a repo", () => {
         expect(refusal(loaded)).toEqual(
           Option.some([
             "IncompatibleConfig",
-            `.chernabog/: its flows are written against @chernabog/sdk 99.0.0, and chernabog ${VERSION} runs ${supportedRange}; upgrade chernabog`,
+            `.chernabog/: its flows are typed against @chernabog/core 99.0.0, and chernabog ${VERSION} provides ${providedRange}; upgrade chernabog`,
           ]),
         );
       }),
   );
 
-  effectAtHome("one written against an older SDK is refused, naming the upgrade", () =>
-    Effect.gen(function* () {
-      const loaded = yield* load({ "package.json": pinning("0.0.1") });
-      expect(refusal(loaded)).toEqual(
-        Option.some([
-          "IncompatibleConfig",
-          `.chernabog/: its flows are written against @chernabog/sdk 0.0.1, and chernabog ${VERSION} runs ${supportedRange}; move the flows with chernabog recipes upgrade and commit the result`,
-        ]),
-      );
-    }),
+  effectAtHome(
+    "one typed against a core major this binary no longer provides is refused, naming the upgrade",
+    () =>
+      Effect.gen(function* () {
+        const loaded = yield* load({ "package.json": pinning("0.0.1") });
+        expect(refusal(loaded)).toEqual(
+          Option.some([
+            "IncompatibleConfig",
+            `.chernabog/: its flows are typed against @chernabog/core 0.0.1, and chernabog ${VERSION} provides ${providedRange}; move them with chernabog recipes upgrade and commit the result`,
+          ]),
+        );
+      }),
   );
 
-  effectAtHome("engines.chernabog, and a missing pin, are refused, naming the fix", () =>
+  effectAtHome("engines.chernabog, and no SDK in dependencies, are refused, naming the fix", () =>
     Effect.gen(function* () {
       const manifests: ReadonlyArray<Readonly<Record<string, string>>> = [
         {
-          "package.json": `{ "engines": { "chernabog": ">=0.3.0" }, ${pinning(BUNDLED_SDK).slice(1)}`,
+          "package.json": `{ "engines": { "chernabog": ">=0.3.0" }, ${pinning(BUNDLED_CORE).slice(1)}`,
         },
         { "package.json": "{}" },
+        { "package.json": '{ "devDependencies": { "@chernabog/sdk": "0.7.0" } }' },
         { "config.yaml": "baseBranch: develop\n" },
       ];
 
@@ -750,18 +765,18 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a flow that imports what the SDK no longer exports is refused", () =>
+  effectAtHome("a flow that imports what core doesn't export is refused", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const dir = yield* configDirWith({ "package.json": pinning(BUNDLED_SDK) });
+      const dir = yield* configDirWith({ "package.json": pinning(BUNDLED_CORE) });
       yield* fs.makeDirectory(`${dir}/flows`);
       yield* fs.writeFileString(
         `${dir}/flows/review.ts`,
-        'import { Review, defineFlow } from "@chernabog/sdk";\nexport default defineFlow({ trigger: Review.fixTrigger });\n',
+        'import { Claims, defineFlow } from "@chernabog/core";\nexport default defineFlow({ trigger: Claims.vanished });\n',
       );
       const loaded = yield* Effect.result(loadRepo(machine, { ...enrolled, path: dir }, dir));
       expect(Result.isFailure(loaded) && loaded.failure.message).toContain(
-        "flows/review.ts (Review.fixTrigger)",
+        "flows/review.ts (Claims.vanished)",
       );
     }),
   );
@@ -769,7 +784,7 @@ describe("loading a repo", () => {
   effectAtHome("a key this binary does not know fails the repo instead of being dropped", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
-        "package.json": pinning(BUNDLED_SDK),
+        "package.json": pinning(BUNDLED_CORE),
         "config.yaml": "limits:\n  ciRounds: 2\n  futureLimit: 1\n",
       });
 
@@ -779,10 +794,10 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a .chernabog/ pinned to an SDK this binary runs loads", () =>
+  effectAtHome("a .chernabog/ whose SDK needs a core this binary provides loads", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
-        "package.json": pinning(BUNDLED_SDK),
+        "package.json": pinning(BUNDLED_CORE),
         "config.yaml": "baseBranch: develop\n",
       });
 

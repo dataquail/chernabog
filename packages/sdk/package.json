@@ -1,8 +1,8 @@
 {
   "name": "@chernabog/sdk",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
-  "description": "Services and helpers for writing Chernabog flows and steps",
+  "description": "The blocks Chernabog flows are written from (Implement, Review, Plan, Hybrid, PullRequest, prompts), over @chernabog/core, which it re-exports",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dataquail/chernabog.git",
@@ -13,10 +13,15 @@
     ".": "./src/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "index.ts"
   ],
   "peerDependencies": {
+    "@chernabog/core": "^1.0.0",
     "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@chernabog/core": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

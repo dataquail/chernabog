@@ -3,9 +3,11 @@
 // @chernabog/recipes is packed from packages/recipes/, at 0.1.0 and at 0.2.0,
 // which changes the implement recipe; @acme/recipes, a company's own
 // package, answers only with its token, at 1.0.0 and at 2.0.0, which is
-// written for an SDK this binary doesn't run. @chernabog/sdk and effect are stubs
-// holding only their package.json: the loader always substitutes the
-// binary's own copies, so nothing reads what's installed of them.
+// written for an SDK the repo doesn't have. @chernabog/sdk is packed from
+// packages/sdk/, as the version released with this binary: each snapshot
+// installs it and runs it. @chernabog/core and effect are stubs holding only
+// their package.json: the loader always substitutes the binary's own copies,
+// so nothing reads what's installed of them.
 
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -18,9 +20,10 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import { EFFECT_VERSION } from "../../src/platform/effect-modules.ts";
-import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
+import { BUNDLED_CORE, RELEASED_SDK } from "../../src/platform/flow-deps.ts";
 
 const RECIPES = fileURLToPath(new URL("../../packages/recipes", import.meta.url));
+const SDK = fileURLToPath(new URL("../../packages/sdk", import.meta.url));
 
 export const ACME_TOKEN = "acme-secret";
 
@@ -57,6 +60,18 @@ const officialRecipes = (version: string, change: (files: Record<string, string>
   change(files);
 
   return { manifest, files };
+};
+
+// packages/sdk/ as npm would have it, without what only the workspace reads.
+const workspaceSdk = (): Release => {
+  const { devDependencies: _workspace, ...manifest } = Schema.decodeSync(PackageJson)(
+    readFileSync(join(SDK, "package.json"), "utf8"),
+  );
+
+  return {
+    manifest,
+    files: { ...filesUnder(SDK, "src"), "index.ts": readFileSync(join(SDK, "index.ts"), "utf8") },
+  };
 };
 
 const stub = (name: string, version: string): Release => ({
@@ -99,11 +114,12 @@ const PACKAGES = {
     }),
   },
   "@acme/recipes": {
-    "1.0.0": acmeRecipes("1.0.0", `^${BUNDLED_SDK}`),
-    // Written for an SDK older than any this binary runs.
+    "1.0.0": acmeRecipes("1.0.0", `^${RELEASED_SDK}`),
+    // Written for an SDK older than the repo's.
     "2.0.0": acmeRecipes("2.0.0", "^0.5.0"),
   },
-  "@chernabog/sdk": { [BUNDLED_SDK]: stub("@chernabog/sdk", BUNDLED_SDK) },
+  "@chernabog/sdk": { [RELEASED_SDK]: workspaceSdk() },
+  "@chernabog/core": { [BUNDLED_CORE]: stub("@chernabog/core", BUNDLED_CORE) },
   effect: { [EFFECT_VERSION]: stub("effect", EFFECT_VERSION) },
 } satisfies Readonly<Record<string, Readonly<Record<string, Release>>>>;
 

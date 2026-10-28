@@ -16,7 +16,7 @@ const AT = "2026-10-20T00:00:00.000Z";
 const run = (id: string, status: RunStatus) =>
   RunRoot.make({
     id: RunId.make(id),
-    sdkVersion: "0.7.0",
+    coreVersion: "0.7.0",
     repo: "demo",
     persona: Option.none(),
     flow: "implement",

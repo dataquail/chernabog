@@ -3,14 +3,17 @@
 // reviews it. The base branch's .chernabog/ tree is extracted once per tree
 // hash under the Chernabog home, outside the repo, with its own dependencies
 // installed: imports resolve from what the trusted tree declares, never from
-// whatever the checkout last installed.
+// whatever the checkout last installed. The SDK is one of those dependencies,
+// so each snapshot runs the blocks its own tree pins. A run records the tree
+// it started from and resumes against that snapshot, whatever the base
+// branch has since.
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import { ConfigError } from "./config-error.ts";
 import { Exec, execOk } from "./exec.ts";
-import { checkCompatibility, checkFlowImports, installFlowDependencies } from "./flow-deps.ts";
+import { checkCompatibility, checkInstalled, installFlowDependencies } from "./flow-deps.ts";
 import { Home, homePaths } from "./home.ts";
 
 export type Snapshot = { readonly tree: string; readonly configDir: string };
@@ -48,10 +51,12 @@ export const configTree = (path: string, baseBranch: string, fetch = true) =>
     });
   });
 
-export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =>
+// The snapshot of the .chernabog/ tree `tree` from the checkout at `path`,
+// extracted and installed the first time it's asked for. A run resumes against
+// the tree it started from by this, after the base branch has moved on.
+export const snapshotTree = (path: string, tree: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const tree = yield* configTree(path, baseBranch, fetch);
     const snapshots = homePaths((yield* Home).root).snapshots;
     const root = `${snapshots}/${tree}`;
     const configDir = `${root}/.chernabog`;
@@ -78,8 +83,8 @@ export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =
         // Before installing, so a repo this binary can't run says so instead of failing the install.
         yield* checkCompatibility(`${staging}/.chernabog`);
         yield* installFlowDependencies(`${staging}/.chernabog`);
-        // Once installed: the packages its flows import from, as the lockfile pins them.
-        yield* checkFlowImports(`${staging}/.chernabog`);
+        // Once installed: the SDK and the packages its flows import from, as the lockfile pins them.
+        yield* checkInstalled(`${staging}/.chernabog`);
       }).pipe(
         Effect.onError(() => Effect.ignore(fs.remove(staging, { recursive: true, force: true }))),
       );
@@ -104,3 +109,7 @@ export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =
       Effect.fail(new ConfigError({ message: `${path}: ${error.message}` })),
     ),
   );
+
+// The snapshot of .chernabog/ as the base branch has it now.
+export const snapshotConfig = (path: string, baseBranch: string, fetch = true) =>
+  Effect.flatMap(configTree(path, baseBranch, fetch), (tree) => snapshotTree(path, tree));

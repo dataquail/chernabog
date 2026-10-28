@@ -1,4 +1,4 @@
-import { DEFAULT_LABELS, defineFlow } from "@chernabog/sdk";
+import { DEFAULT_LABELS, defineFlow } from "@chernabog/core";
 import { expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";

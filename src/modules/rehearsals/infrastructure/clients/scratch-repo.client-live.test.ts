@@ -1,4 +1,4 @@
-import { type Json } from "@chernabog/sdk";
+import { type Json } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

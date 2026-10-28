@@ -5,17 +5,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
-import { BUNDLED_SDK } from "../../src/platform/flow-deps.ts";
+import { BUNDLED_CORE, RELEASED_SDK } from "../../src/platform/flow-deps.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // The SDK in this checkout. A release PR bumps it before npm has it, so the
 // pin resolves here rather than from the registry.
-const SDK_CHECKOUT = fileURLToPath(new URL("../../packages/sdk", import.meta.url));
 
 describe("chernabog run implement", () => {
   let sandbox: Sandbox;
@@ -222,7 +220,7 @@ printf '{"text":"%s"}\\n' "$text"
 describe("packages from .chernabog/package.json", () => {
   let sandbox: Sandbox;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     sandbox = openSandbox();
     const config = join(sandbox.checkout, ".chernabog");
     mkdirSync(join(config, "vendor/greet"), { recursive: true });
@@ -236,7 +234,7 @@ describe("packages from .chernabog/package.json", () => {
     );
     writeFileSync(
       join(config, "package.json"),
-      `{ "private": true, "dependencies": { "greet": "file:./vendor/greet" }, "devDependencies": { "@chernabog/sdk": "${BUNDLED_SDK}" }, "overrides": { "@chernabog/sdk": "file:${SDK_CHECKOUT}" } }`,
+      `{ "private": true, "dependencies": { "@chernabog/sdk": "${RELEASED_SDK}", "greet": "file:./vendor/greet" }, "devDependencies": { "@chernabog/core": "${BUNDLED_CORE}" } }`,
     );
     writeFileSync(
       join(config, "flows/greeting.ts"),
@@ -250,7 +248,13 @@ export default defineFlow({
 `,
     );
     // The lockfile is committed; what this install leaves in the checkout is not, so only the snapshot's install can satisfy the import.
-    execFileSync(process.execPath, ["install"], { cwd: config, stdio: "ignore" });
+    // Never synchronously: this process serves the registry it installs from.
+    await Bun.spawn([process.execPath, "install"], {
+      cwd: config,
+      env: { ...process.env, ...sandbox.registryEnv },
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exited;
     rmSync(join(config, "node_modules"), { recursive: true });
     sandbox.git(sandbox.checkout, "add", ".");
     sandbox.git(sandbox.checkout, "commit", "-qm", "feat: a flow with a dependency");

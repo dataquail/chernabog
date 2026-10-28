@@ -5,7 +5,7 @@
 // before it is shown and acts on the answer, so only the person's Yes hands
 // the work to chernabog, and only while the worktree is as it was drafted.
 
-import { type Json, printJson } from "@chernabog/sdk";
+import { type Json, printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

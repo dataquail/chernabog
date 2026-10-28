@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // The chernabog command line.
 
-import { describeError } from "@chernabog/sdk";
+import { describeError } from "@chernabog/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
 import * as Arr from "effect/Array";
 import * as Argument from "effect/cli/Argument";

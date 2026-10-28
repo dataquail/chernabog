@@ -2,7 +2,7 @@
 // of ours (for agents that pick their own), and every session a run opened,
 // for `chernabog attach` and the TUI.
 
-import { type Account, decodeJsonLines, UsageGateMode } from "@chernabog/sdk";
+import { type Account, decodeJsonLines, UsageGateMode } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";

@@ -17,7 +17,7 @@ const runsAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClient>) =>
 const run = (id: string, startedAt: string, persona: Option.Option<string>) =>
   RunRoot.make({
     id: RunId.make(id),
-    sdkVersion: "0.6.0",
+    coreVersion: "0.6.0",
     repo: "demo",
     persona,
     flow: "review",
@@ -111,6 +111,8 @@ describe("RunsRepositoryLive", () => {
           item: found.item,
           pullRequest: found.pullRequest,
           status: found.status,
+          coreVersion: found.coreVersion,
+          configTree: found.configTree,
         })),
       ).toEqual(
         Option.some({
@@ -118,6 +120,9 @@ describe("RunsRepositoryLive", () => {
           item: Option.none(),
           pullRequest: Option.none(),
           status: "running",
+          // No core-providing binary resumes it.
+          coreVersion: "0.0.0",
+          configTree: Option.none(),
         }),
       );
     }).pipe(
@@ -132,5 +137,38 @@ describe("RunsRepositoryLive", () => {
         ),
       ),
     ),
+  );
+
+  effect(
+    "a database from before core keeps each run's SDK as its core, which no core-providing binary resumes, and gains its tree",
+    () =>
+      Effect.gen(function* () {
+        const runs = yield* RunsRepository;
+
+        expect(
+          Option.map(yield* runs.findOne(RunId.make("old")), (found) => [
+            found.coreVersion,
+            found.configTree,
+          ]),
+        ).toEqual(Option.some(["0.7.0", Option.none()]));
+
+        const saved = RunRoot.make({
+          ...run("new", "2026-10-28T00:00:00Z", Option.none()),
+          configTree: Option.some("abc123"),
+        });
+
+        yield* runs.save(saved);
+        expect(yield* runs.findOne(saved.id)).toEqual(Option.some(saved));
+      }).pipe(
+        Effect.provide(
+          runsAfter(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`CREATE TABLE om_runs (id TEXT PRIMARY KEY, repo TEXT NOT NULL, flow TEXT NOT NULL, item_key TEXT NOT NULL, item_title TEXT, item_url TEXT, execution_id TEXT, status TEXT NOT NULL, current_step TEXT, summary TEXT, started_at TEXT NOT NULL, finished_at TEXT, persona TEXT, item TEXT, sdk_version TEXT, pull_request INTEGER)`;
+              yield* sql`INSERT INTO om_runs (id, repo, flow, item_key, status, sdk_version, started_at) VALUES ('old', 'demo', 'review', 'pr-1', 'running', '0.7.0', '2026-10-20T00:00:00Z')`;
+            }),
+          ),
+        ),
+      ),
   );
 });

@@ -3,7 +3,7 @@
 
 import { fileURLToPath } from "node:url";
 
-import type { Json } from "@chernabog/sdk";
+import type { Json } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";

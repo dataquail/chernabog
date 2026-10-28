@@ -14,13 +14,14 @@ type Left = (typeof RepoUpgraded.Type.left)[number];
 
 const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
-// Moves the repo at `root` onto the SDK this binary runs, in its working tree,
-// committing nothing (.chernabog/ is a person's to merge): package.json's pins
-// move to this binary's SDK and effect. Its copied recipes move with
-// updateRecipesUseCase, which the command runs next. Flows and steps from no
-// recipe are left, each with what it imports that this SDK doesn't have. A
-// .chernabog/ written against a newer SDK than this binary runs is refused,
-// rather than moved back.
+// Moves the repo at `root` onto the core this binary provides and the SDK
+// released with it, in its working tree, committing nothing (.chernabog/ is a
+// person's to merge): package.json's dev pins move to this binary's core and
+// effect, and its SDK to the released one, unless it lists a newer one. Its
+// copied recipes move with updateRecipesUseCase, which the command runs next.
+// Flows and steps from no recipe are left, each with what it imports straight
+// from core that this core doesn't have. A .chernabog/ typed against a newer
+// core than this binary provides is refused, rather than moved back.
 export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (root: string) {
   const dir = yield* ChernabogDirClient;
   const bundle = yield* BundleClient;
@@ -53,7 +54,13 @@ export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (roo
     .map((file) => `flows/${file}`);
 
   // A package missing from node_modules only hides which flows are copies.
-  const installed = yield* packages.restore(root).pipe(
+  // Moved pins move the lockfile too, or no snapshot could install it.
+  const installing = Option.match(pinned, {
+    onNone: () => packages.restore(root),
+    onSome: () => packages.sync(root),
+  });
+
+  const installed = yield* installing.pipe(
     Effect.andThen(packages.installed(root)),
     Effect.orElseSucceed(() => []),
   );

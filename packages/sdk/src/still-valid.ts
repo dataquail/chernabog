@@ -3,12 +3,9 @@
 // its claim, and a pull request the run opened is open. Each reads GitHub as
 // the run's persona; a read that fails fails the check, which is not Gone.
 
+import { Claims, GitHub, gone, reportAs, Run, valid, type Validity } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-
-import * as Claims from "./claims.ts";
-import { gone, reportAs, valid, type Validity } from "./flow.ts";
-import { GitHub, Run } from "./services.ts";
 
 // Gone when another run holds the claim on `item`; this run holding it, or
 // nobody, is fine: a run may not have claimed it yet, or has let it go.

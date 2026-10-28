@@ -5,13 +5,31 @@
 // blocks it. The agent answers with data only: each task's labels decide which
 // of the repo's flows picks it up.
 
+import {
+  activity,
+  Agent,
+  awaitSignal,
+  type Comment,
+  type FlowLabel,
+  GitHub,
+  hasMarker,
+  type Issue,
+  type Json,
+  type Labels,
+  NeedsHuman,
+  planMarker,
+  planNodeMarker,
+  Repo,
+  Run,
+  StepFailed,
+  type WorkItem,
+  Worktree,
+} from "@chernabog/core";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { NeedsHuman, StepFailed } from "./errors.ts";
-import { activity, awaitSignal, type FlowLabel } from "./flow.ts";
 import {
   askForClarification as askImplementClarification,
   branchFor,
@@ -19,20 +37,7 @@ import {
   issueOf,
   sessionIdFor,
 } from "./implement.ts";
-import type { Json } from "./json.ts";
-import { hasMarker, planMarker, planNodeMarker } from "./markers.ts";
 import { renderPrompt } from "./prompt.ts";
-import {
-  Agent,
-  type Comment,
-  GitHub,
-  type Issue,
-  type Labels,
-  Repo,
-  Run,
-  type WorkItem,
-  Worktree,
-} from "./services.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // Whether the spec is still this run's to plan, for a flow's stillValid: it

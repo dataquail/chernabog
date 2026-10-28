@@ -8,7 +8,7 @@ import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { pinnedVersion } from "../../../../kernel/sdk-support.value-object.ts";
+import { pinnedVersion } from "../../../../kernel/core-support.value-object.ts";
 import { RecipeFilesFailed } from "./recipe.errors.ts";
 import { SDK_PACKAGE } from "./recipe-package.value-object.ts";
 

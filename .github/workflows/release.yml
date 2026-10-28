@@ -3,8 +3,8 @@ name: Release
 # Every push to main updates release-please's release PR, which gathers the
 # conventional commits since the last release and shows the versions and
 # changelogs they make. Merging that PR tags the release and creates the GitHub
-# release; the jobs after it build the binaries and publish the SDK and the
-# recipes, in this same run. A dispatch with an existing tag builds and publishes it again, to
+# release; the jobs after it build the binaries and publish core, the SDK and
+# the recipes, in this same run. A dispatch with an existing tag builds and publishes it again, to
 # finish a release that failed partway. See RELEASE.md.
 on:
   push:
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: An existing release tag to build and publish again, e.g. v0.4.0, sdk-v0.1.1 or recipes-v0.1.0
+        description: An existing release tag to build and publish again, e.g. v0.4.0, core-v1.0.0, sdk-v0.1.1 or recipes-v0.1.0
         required: true
         type: string
 
@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       binary-tag: ${{ steps.plan.outputs.binary-tag }}
+      core-tag: ${{ steps.plan.outputs.core-tag }}
       sdk-tag: ${{ steps.plan.outputs.sdk-tag }}
       recipes-tag: ${{ steps.plan.outputs.recipes-tag }}
       pr: ${{ steps.release.outputs.pr }}
@@ -47,38 +48,45 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
 
-      # The root package is the binary, tagged v<version>; the SDK is tagged
-      # sdk-v<version>, and the recipes recipes-v<version>. Each output is
-      # empty when that part has nothing to ship.
+      # The root package is the binary, tagged v<version>; core is tagged
+      # core-v<version>, the SDK sdk-v<version>, and the recipes
+      # recipes-v<version>. Each output is empty when that part has nothing to
+      # ship.
       - id: plan
         env:
           DISPATCHED: ${{ inputs.tag }}
           BINARY_CREATED: ${{ steps.release.outputs.release_created }}
           BINARY_TAG: ${{ steps.release.outputs.tag_name }}
+          CORE_CREATED: ${{ steps.release.outputs['packages/core--release_created'] }}
+          CORE_TAG: ${{ steps.release.outputs['packages/core--tag_name'] }}
           SDK_CREATED: ${{ steps.release.outputs['packages/sdk--release_created'] }}
           SDK_TAG: ${{ steps.release.outputs['packages/sdk--tag_name'] }}
           RECIPES_CREATED: ${{ steps.release.outputs['packages/recipes--release_created'] }}
           RECIPES_TAG: ${{ steps.release.outputs['packages/recipes--tag_name'] }}
         run: |
           binary=""
+          core=""
           sdk=""
           recipes=""
           [ "$BINARY_CREATED" = "true" ] && binary=$BINARY_TAG
+          [ "$CORE_CREATED" = "true" ] && core=$CORE_TAG
           [ "$SDK_CREATED" = "true" ] && sdk=$SDK_TAG
           [ "$RECIPES_CREATED" = "true" ] && recipes=$RECIPES_TAG
           case "$DISPATCHED" in
             "") ;;
             v*) binary=$DISPATCHED ;;
+            core-v*) core=$DISPATCHED ;;
             sdk-v*) sdk=$DISPATCHED ;;
             recipes-v*) recipes=$DISPATCHED ;;
-            *) echo "::error::$DISPATCHED is neither a chernabog tag (v*), an SDK tag (sdk-v*) nor a recipes tag (recipes-v*)"; exit 1 ;;
+            *) echo "::error::$DISPATCHED is neither a chernabog tag (v*), a core tag (core-v*), an SDK tag (sdk-v*) nor a recipes tag (recipes-v*)"; exit 1 ;;
           esac
           echo "binary-tag=$binary" >> "$GITHUB_OUTPUT"
+          echo "core-tag=$core" >> "$GITHUB_OUTPUT"
           echo "sdk-tag=$sdk" >> "$GITHUB_OUTPUT"
           echo "recipes-tag=$recipes" >> "$GITHUB_OUTPUT"
 
-  # release-please updates package.json but not bun.lock, which records the
-  # SDK's version as a workspace package. Refresh it on the release PR's branch
+  # release-please updates package.json but not bun.lock, which records core's
+  # and the SDK's versions as workspace packages. Refresh it on the release PR's branch
   # so the release commit leaves the lockfile matching. release-please rewrites
   # its branch on every push to main, so this runs after each of those.
   lockfile:
@@ -214,9 +222,57 @@ jobs:
           git commit -m "chernabog ${TAG#v}"
           git push
 
-  sdk:
+  # @chernabog/core, the contract the binary provides every repo's flows. It
+  # goes out before the SDK, which peer-depends on it, so a repo installing a
+  # new SDK finds the core it names.
+  core:
     needs: plan
-    if: needs.plan.outputs.sdk-tag != ''
+    if: needs.plan.outputs.core-tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ needs.plan.outputs.core-tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      # Trusted publishing, as for the SDK; NPM_TOKEN is only for the first
+      # publish, before the package exists to configure.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Publish @chernabog/core
+        working-directory: packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          [ "core-v$version" = "$TAG" ] || { echo "::error::$TAG holds @chernabog/core $version"; exit 1; }
+
+          if npm view "@chernabog/core@$version" version >/dev/null 2>&1; then
+            echo "@chernabog/core@$version is already on the registry"
+            exit 0
+          fi
+
+          dist_tag=latest
+          case "$version" in
+            *-*)
+              prerelease=${version#*-}
+              dist_tag=${prerelease%%.*}
+              [[ "$dist_tag" =~ ^[0-9]+$ ]] && dist_tag=next
+              ;;
+          esac
+
+          npm publish --provenance --tag "$dist_tag"
+
+  # After core when both ship: the SDK's peer range names it. A run that
+  # ships the SDK alone goes ahead with core skipped.
+  sdk:
+    needs: [plan, core]
+    if: ${{ !cancelled() && needs.plan.outputs.sdk-tag != '' && needs.core.result != 'failure' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -307,14 +363,15 @@ jobs:
           npm publish --provenance --tag "$dist_tag"
 
   # The docs describe what was just released, so they deploy only once the SDK
-  # is on npm, built from the tag that published it.
+  # or core is on npm, built from the tag that published it (the SDK's, when
+  # both ship).
   docs:
-    needs: [plan, sdk]
-    if: needs.sdk.result == 'success'
+    needs: [plan, core, sdk]
+    if: ${{ !cancelled() && (needs.sdk.result == 'success' || needs.core.result == 'success') }}
     permissions:
       contents: read
       pages: write
       id-token: write
     uses: ./.github/workflows/docs.yml
     with:
-      ref: ${{ needs.plan.outputs.sdk-tag }}
+      ref: ${{ needs.plan.outputs.sdk-tag || needs.plan.outputs.core-tag }}

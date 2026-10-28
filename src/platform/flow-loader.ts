@@ -1,16 +1,18 @@
 // Loads flows and steps, TypeScript modules in a repo's .chernabog/, into this
 // process. Their imports of `effect`, any `effect/*` subpath and
-// `@chernabog/sdk` resolve to the copies bundled in the binary, so there is
-// always one `effect` version and the binary chooses it, for packages in
-// node_modules that import it too. Other npm dependencies resolve from
-// .chernabog/node_modules, installed from .chernabog/package.json.
+// `@chernabog/core` resolve to the copies bundled in the binary, so there is
+// always one `effect` and one core, and the binary chooses them, for packages
+// in node_modules that import them too. Everything else, @chernabog/sdk
+// first, resolves from .chernabog/node_modules, installed from
+// .chernabog/package.json: each repo runs the blocks it pins, over this
+// binary's core.
 //
 // A flow is a file in .chernabog/flows/, named for it, or imported from a
 // recipe package: config.yaml's `flows.<name>.from: "<package>/<recipe>"`
 // names the recipe whose flow runs under that name, from
 // .chernabog/node_modules. A name that is both is refused.
 
-import * as Sdk from "@chernabog/sdk";
+import * as Core from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -44,7 +46,7 @@ Bun.plugin({
       build.module(specifier, () => ({ exports: { ...module }, loader: "object" }));
     }
 
-    build.module("@chernabog/sdk", () => ({ exports: { ...Sdk }, loader: "object" }));
+    build.module("@chernabog/core", () => ({ exports: { ...Core }, loader: "object" }));
   },
 });
 
@@ -52,7 +54,7 @@ Bun.plugin({
 // work, an item lookup a person names it by, or both. Its effects and
 // functions are checked by shape, as code can only be.
 const FlowDefinition = Schema.declare(
-  (module): module is Sdk.Flow =>
+  (module): module is Core.Flow =>
     Predicate.hasProperty(module, "workflow") &&
     Predicate.isFunction(module.workflow) &&
     ((Predicate.hasProperty(module, "trigger") && Effect.isEffect(module.trigger)) ||
@@ -63,7 +65,7 @@ const FlowDefinition = Schema.declare(
 );
 
 const StageDefinition = Schema.declare(
-  (module): module is Sdk.Stage<unknown, unknown, unknown> =>
+  (module): module is Core.Stage<unknown, unknown, unknown> =>
     Predicate.hasProperty(module, "input") &&
     Predicate.hasProperty(module, "output") &&
     Predicate.hasProperty(module, "run") &&
@@ -79,7 +81,7 @@ const importRepoModule = (path: string) => import(path);
 const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: string) =>
   Effect.tryPromise({
     try: () => importRepoModule(path),
-    catch: (error) => new LoadError({ path, message: Sdk.describeError(error) }),
+    catch: (error) => new LoadError({ path, message: Core.describeError(error) }),
   }).pipe(
     Effect.flatMap((module) =>
       Schema.decodeUnknownEffect(Schema.Struct({ default: definition }))(module),
@@ -168,7 +170,7 @@ export const flowImports = (configDir: string) =>
     // Read only for `from`; repo-config.ts decodes the whole file.
     const file = yield* Effect.try({
       try: () => Schema.decodeUnknownEffect(ImportsFile)(Bun.YAML.parse(text)),
-      catch: (error) => new LoadError({ path, message: Sdk.describeError(error) }),
+      catch: (error) => new LoadError({ path, message: Core.describeError(error) }),
     }).pipe(
       Effect.flatten,
       Effect.catchTag("SchemaError", (error) =>
@@ -337,11 +339,11 @@ export const flowSources = (configDir: string) =>
   );
 
 // The sources of the flows loadFlows imported, by the flow it exported.
-const sources = new WeakMap<Sdk.Flow, FlowSource>();
+const sources = new WeakMap<Core.Flow, FlowSource>();
 
 // Where a loaded flow comes from: its package, for one imported; none for a
 // flow in the repo.
-export const flowSourceOf = (flow: Sdk.Flow) => Option.fromUndefinedOr(sources.get(flow));
+export const flowSourceOf = (flow: Core.Flow) => Option.fromUndefinedOr(sources.get(flow));
 
 // The names of the flows in <configDir>/flows/, without importing them, so
 // listing an untrusted .chernabog/ runs none of its code.
@@ -397,7 +399,7 @@ export const reviewingFlows = (configDir: string) => flowsWhere(configDir, revie
 // recipe each keep their own source.
 export const loadFlows = (configDir: string, overrides: PackageOverrides = NO_OVERRIDES) =>
   Effect.gen(function* () {
-    const flows = new Map<string, Sdk.Flow>();
+    const flows = new Map<string, Core.Flow>();
 
     for (const file of yield* flowFiles(configDir, overrides)) {
       const loaded = yield* importDefault(file.path, FlowDefinition, FLOW_EXPORT);
@@ -405,7 +407,7 @@ export const loadFlows = (configDir: string, overrides: PackageOverrides = NO_OV
       const flow = Option.match(file.source, {
         onNone: () => loaded,
         onSome: (source) => {
-          const imported: Sdk.Flow = { ...loaded };
+          const imported: Core.Flow = { ...loaded };
           sources.set(imported, source);
 
           return imported;

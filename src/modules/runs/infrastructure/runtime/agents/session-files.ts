@@ -2,7 +2,7 @@
 // <home>/sessions/interactive/<sessionId>/: what the launcher ran and the
 // agent was asked, the answer the agent writes, and what the Stop hook decided.
 
-import { ResolvedLauncher } from "@chernabog/sdk";
+import { ResolvedLauncher } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

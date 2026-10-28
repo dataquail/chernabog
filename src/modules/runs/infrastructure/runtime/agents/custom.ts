@@ -2,7 +2,7 @@
 // with {prompt}, {promptFile}, {sessionId} and {cwd} filled in. Its answer is
 // the last JSON object it prints.
 
-import { AgentError } from "@chernabog/sdk";
+import { AgentError } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";

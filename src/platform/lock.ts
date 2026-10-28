@@ -2,7 +2,7 @@
 // engine on the same database took over a workflow while the first was still
 // alive. A lock file next to the database keeps a second one from starting.
 
-import { describeError } from "@chernabog/sdk";
+import { describeError } from "@chernabog/core";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

@@ -13,7 +13,7 @@ import {
   Repo,
   type SetupError,
   Worktree,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -67,7 +67,7 @@ const worktreeNames = (run: RunRoot) =>
     onNone: (): ReadonlyArray<string> => [],
     onSome: (target) => {
       if (target.kind === "issue") {
-        return [`auto/issue-${target.number}`];
+        return [Claims.branchFor(target.number)];
       }
 
       return [`review-pr-${target.number}`];

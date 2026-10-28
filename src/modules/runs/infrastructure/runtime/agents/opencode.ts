@@ -3,7 +3,7 @@
 // object of its final message. Its session ids are its own, recorded the
 // moment it reports them.
 
-import { AgentError, printJson } from "@chernabog/sdk";
+import { AgentError, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

@@ -2,7 +2,7 @@
 // registry: @chernabog/recipes at 0.1.0 and 0.2.0 for SDK 0.6, and 0.9.0 for
 // a newer SDK, and @acme/recipes, a company's own package.
 
-import { type Json, printJson } from "@chernabog/sdk";
+import { type Json, printJson } from "@chernabog/core";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";

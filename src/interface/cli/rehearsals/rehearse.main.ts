@@ -5,13 +5,13 @@
 // stand-in wherever the agent would be. No agent session starts.
 
 import {
+  Claims,
   HEADLESS,
-  Implement,
   isManual,
   type RepoSettings,
   triggerOf,
   type WorkItem,
-} from "@chernabog/sdk";
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
@@ -509,7 +509,7 @@ const report = (
       item: ended.itemKey,
       ending,
       summary,
-      branches: seeded.issues.map((issue) => Implement.branchFor(issue.number)),
+      branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
       standIns,
       asked,
       as: seedAs,
@@ -576,7 +576,7 @@ const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona
     const cleaned = yield* cleanUpScenarioUseCase({
       repo: slug,
       seeded,
-      branches: seeded.issues.map((issue) => Implement.branchFor(issue.number)),
+      branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
       as: seedAs,
     });
 

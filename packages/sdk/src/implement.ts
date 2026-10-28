@@ -6,6 +6,35 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  activity,
+  Agent,
+  type AgentResult,
+  CiTimedOut,
+  type ClaimMarker,
+  claimMarker,
+  Claims,
+  Git,
+  GitHub,
+  type Issue,
+  type Json,
+  latestMarker,
+  Markers,
+  NeedsHuman,
+  NothingCommitted,
+  pathsMatching,
+  Repo,
+  reportAs,
+  Run,
+  RunLog,
+  sessionMarker,
+  Skip,
+  sleep,
+  StepFailed,
+  Usage,
+  type WorkItem,
+  Worktree,
+} from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -15,34 +44,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import * as Claims from "./claims.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
-import { CiTimedOut, NeedsHuman, NothingCommitted, Skip, StepFailed } from "./errors.ts";
-import { activity, reportAs, sleep } from "./flow.ts";
-import * as GitHubMarkers from "./github-markers.ts";
-import type { Json } from "./json.ts";
-import { type ClaimMarker, claimMarker, latestMarker, sessionMarker } from "./markers.ts";
-import { pathsMatching } from "./paths.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
-import * as Markers from "./run-markers.ts";
-import {
-  Agent,
-  type AgentResult,
-  Git,
-  GitHub,
-  type Issue,
-  Repo,
-  Run,
-  RunLog,
-  Usage,
-  type WorkItem,
-  Worktree,
-} from "./services.ts";
 import { issueValidity } from "./still-valid.ts";
 
-export const branchFor = (issue: number) => `auto/issue-${issue}`;
+// The work branch of an issue, as core's claims name it.
+export const branchFor = Claims.branchFor;
 
 // An issue to implement, and the label that queued it, when it's not eligible's.
 export const IssueItem = Schema.Struct({
@@ -196,12 +205,12 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
     const also = options.keepOn ?? [];
     const inProgress = { number: issue, label: repo.labels.inProgress };
 
-    yield* Markers.hold(GitHubMarkers.label, inProgress, { keepOn: also });
+    yield* Markers.hold(Markers.label, inProgress, { keepOn: also });
     yield* github.addLabel(issue, repo.labels.inProgress);
 
     if (Option.isSome(repo.board)) {
       yield* Markers.hold(
-        GitHubMarkers.boardStatus,
+        Markers.boardStatus,
         { number: issue, status: repo.board.value.readyStatus },
         { keepOn: ["done", ...also] },
       );
@@ -209,7 +218,7 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
     }
 
     yield* Markers.hold(
-      GitHubMarkers.assignment,
+      Markers.assignment,
       { number: issue, login: yield* github.login },
       { keepOn: ["done", ...also] },
     );
@@ -218,9 +227,7 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
 
 // Takes the in-progress label off now, rather than when the run ends.
 export const dropInProgress = (issue: number) =>
-  Repo.use((repo) =>
-    Markers.drop(GitHubMarkers.label, { number: issue, label: repo.labels.inProgress }),
-  );
+  Repo.use((repo) => Markers.drop(Markers.label, { number: issue, label: repo.labels.inProgress }));
 
 // Claims the issue with its claim ref, which only one run can create, then
 // creates the issue's branch, or adopts one with no claim on it, and labels,
@@ -269,7 +276,7 @@ export const claim = (issue: number, options: QueueOptions = {}) =>
           return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
       } else {
-        yield* Markers.hold(GitHubMarkers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
       }
 
       yield* markClaimed(issue);

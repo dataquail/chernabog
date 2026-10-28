@@ -28,7 +28,7 @@ import { findRunUseCase } from "./find-run.use-case.ts";
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
     id: RunId.make(id),
-    sdkVersion: "0.6.0",
+    coreVersion: "0.6.0",
     repo: "demo",
     persona: Option.some("bob"),
     flow: "review",
@@ -262,7 +262,7 @@ describe("cancelRunUseCase", () => {
       }).pipe(
         Effect.provide(
           runtime(stale, staleHoldings, {
-            runs: [run("old", { flow: "implement", itemKey: "issue-9", sdkVersion: "0.5.0" })],
+            runs: [run("old", { flow: "implement", itemKey: "issue-9", coreVersion: "0.5.0" })],
           }),
         ),
       ),

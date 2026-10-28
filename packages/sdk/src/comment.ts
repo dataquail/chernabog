@@ -4,10 +4,8 @@
 
 import { createHash } from "node:crypto";
 
+import { activity, GitHub } from "@chernabog/core";
 import * as Effect from "effect/Effect";
-
-import { activity } from "./flow.ts";
-import { GitHub } from "./services.ts";
 
 export const commentStep = (kind: "issue" | "pr", number: number, body: string) =>
   activity(

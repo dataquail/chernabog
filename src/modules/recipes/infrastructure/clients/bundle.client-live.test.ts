@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
+import { BUNDLED_CORE_VERSION } from "../../../../kernel/core-support.value-object.ts";
 import { BundleClient } from "../../domain/ports/clients/bundle.client.ts";
 import { BundleClientLive } from "./bundle.client-live.ts";
 
@@ -19,20 +20,22 @@ describe("BundleClientLive", () => {
     }).pipe(Effect.provide(BundleClientLive)),
   );
 
-  effect("refuses a manifest written against a newer SDK, and not an older one", () =>
+  effect("refuses a manifest typed against a newer core, and not an older one", () =>
     Effect.gen(function* () {
       const bundle = yield* BundleClient;
 
       const refused = yield* Effect.flip(
-        bundle.refuseNewer('{ "devDependencies": { "@chernabog/sdk": "99.0.0" } }'),
+        bundle.refuseNewer(
+          '{ "dependencies": { "@chernabog/sdk": "0.8.0" }, "devDependencies": { "@chernabog/core": "99.0.0" } }',
+        ),
       );
 
       expect(refused.message).toContain("upgrade chernabog");
-      yield* bundle.refuseNewer('{ "devDependencies": { "@chernabog/sdk": "0.0.1" } }');
+      yield* bundle.refuseNewer('{ "devDependencies": { "@chernabog/core": "0.0.1" } }');
     }).pipe(Effect.provide(BundleClientLive)),
   );
 
-  effect("moves the pins and drops engines.chernabog", () =>
+  effect("moves the pins, lists the SDK in dependencies, and drops engines.chernabog", () =>
     Effect.gen(function* () {
       const bundle = yield* BundleClient;
 
@@ -42,21 +45,24 @@ describe("BundleClientLive", () => {
         ),
       );
 
-      expect(pinned).toContain(`"@chernabog/sdk": "${bundle.sdkVersion}"`);
+      expect(pinned).toContain(
+        `"dependencies": {\n    "@chernabog/sdk": "${bundle.sdkVersion}"\n  }`,
+      );
+      expect(pinned).toContain(`"@chernabog/core": "${BUNDLED_CORE_VERSION}"`);
       expect(pinned).toContain('"engines": {\n    "node": ">=20"\n  }');
       expect(pinned).not.toContain('"chernabog"');
     }).pipe(Effect.provide(BundleClientLive)),
   );
 
-  effect("names what a module imports that this SDK doesn't export", () =>
+  effect("names what a module imports straight from core that this core doesn't export", () =>
     Effect.gen(function* () {
       const bundle = yield* BundleClient;
 
       expect(
         bundle.missingImports(
-          'import { Review, defineFlow, fixTrigger, type Gone } from "@chernabog/sdk";\nReview.fixTrigger; Review.recheck;\n',
+          'import { Claims, defineFlow, fixTrigger, type Gone } from "@chernabog/core";\nClaims.vanished; Claims.releasing;\n',
         ),
-      ).toEqual(["Review.fixTrigger", "fixTrigger"]);
+      ).toEqual(["Claims.vanished", "fixTrigger"]);
     }).pipe(Effect.provide(BundleClientLive)),
   );
 });

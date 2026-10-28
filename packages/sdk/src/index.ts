@@ -1,28 +1,24 @@
+import type * as Core from "@chernabog/core";
+
 import * as IssueSteps from "./issue.ts";
 import * as PullRequestSteps from "./pull-request.ts";
-import type * as Services from "./services.ts";
 
-export * as Claims from "./claims.ts";
-export * from "./errors.ts";
-export * from "./flow.ts";
+// @chernabog/sdk: the blocks a recipe is written from, over core's ports and
+// nothing else, and core itself, so a flow imports from one package. A repo
+// pins its own version; the binary only provides core.
 export * as Hybrid from "./hybrid.ts";
 export * as Implement from "./implement.ts";
-export * from "./json.ts";
-export * from "./markers.ts";
-export * as Markers from "./markers-api.ts";
-export * from "./paths.ts";
 export * as Plan from "./plan.ts";
 export * from "./prompt.ts";
 export * as Review from "./review.ts";
-export * from "./roles.ts";
-export * from "./services.ts";
-export * from "./stage.ts";
+export * from "@chernabog/core";
 
-// PullRequest and Issue are each both a type and the steps on one.
+// PullRequest and Issue are each both a type, core's, and the steps on one;
+// these win over core's types of the same name.
 export const PullRequest = PullRequestSteps;
 
-export type PullRequest = Services.PullRequest;
+export type PullRequest = Core.PullRequest;
 
 export const Issue = IssueSteps;
 
-export type Issue = Services.Issue;
+export type Issue = Core.Issue;
