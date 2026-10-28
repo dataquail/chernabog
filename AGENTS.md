@@ -6,10 +6,18 @@ requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect
 ## Before you finish
 
 `bun run format:check`, `bun run check`, `bun run lint`,
-`bun run lint:architecture` and `bun test` must all pass. `bun run format`
-applies Prettier; oxlint's `curly` rule requires a braced block for every if,
-else and loop body, which Prettier then breaks onto lines of its own. Run the full suite with no edits in flight; one that overlaps an
-edit fails spuriously.
+`bun run lint:architecture` and `bun test` must all pass.
+
+The pre-commit hook (`.husky/pre-commit`, installed by `bun install`) runs them
+in that order through `bun run precommit` and refuses the commit at the first
+failure, in the main checkout and in a linked worktree alike. It only checks:
+`bun run format` applies Prettier. `HUSKY=0 git commit …` skips the hook for a
+work-in-progress commit you will fix before pushing; never `--no-verify` one
+that you push. CI's build and its acceptance tests stay in CI.
+
+oxlint's `curly` rule requires a braced block for every if, else and loop body,
+which Prettier then breaks onto lines of its own. Run the full suite with no
+edits in flight; one that overlaps an edit fails spuriously.
 
 ## Hard rules
 
