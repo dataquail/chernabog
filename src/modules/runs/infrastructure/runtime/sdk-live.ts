@@ -951,40 +951,87 @@ export const WorktreeLive = (
       const exists = (path: string) => fs.exists(path).pipe(Effect.mapError(gitError));
       const makeRoot = fs.makeDirectory(root, { recursive: true }).pipe(Effect.mapError(gitError));
 
-      const ensure = (branch: string) =>
+      // The branch's remote-tracking ref, fetched over whatever an earlier run left there.
+      const fetchBranch = (branch: string) =>
         Effect.gen(function* () {
-          const path = pathFor(branch);
-
-          if (yield* exists(`${path}/.git`)) {
-            return path;
-          }
-
-          yield* makeRoot;
-          yield* git(["worktree", "prune"]);
-
           const remote = yield* exec
             .run(
               "git",
-              ["fetch", "--quiet", "origin", `${branch}:refs/remotes/origin/${branch}`],
+              ["fetch", "--quiet", "origin", `+${branch}:refs/remotes/origin/${branch}`],
               yield* options(settings.path),
             )
             .pipe(Effect.mapError(gitError));
 
           if (remote.exitCode === 0) {
-            yield* git(["worktree", "add", "--force", "-B", branch, path, `origin/${branch}`]);
-            yield* git(["branch", "--set-upstream-to", `origin/${branch}`, branch], path);
-          } else {
-            yield* git(["fetch", "--quiet", "origin", settings.baseBranch]);
-            yield* git([
-              "worktree",
-              "add",
-              "--force",
-              "-B",
-              branch,
-              path,
-              `origin/${settings.baseBranch}`,
-            ]);
+            return `origin/${branch}`;
           }
+
+          yield* git(["fetch", "--quiet", "origin", settings.baseBranch]);
+
+          return `origin/${settings.baseBranch}`;
+        });
+
+      // Which run last prepared a worktree, kept in its git directory.
+      const ownerFile = (path: string) =>
+        git(["rev-parse", "--absolute-git-dir"], path).pipe(
+          Effect.map((dir) => `${dir.trim()}/chernabog-run`),
+        );
+
+      const owner = (path: string) =>
+        ownerFile(path).pipe(
+          Effect.flatMap((file) => fs.readFileString(file).pipe(Effect.option)),
+          Effect.map(Option.map((found) => found.trim())),
+        );
+
+      const own = (path: string, run: Option.Option<string>) =>
+        Option.match(run, {
+          onNone: () => Effect.void,
+          onSome: (id) =>
+            ownerFile(path).pipe(
+              Effect.flatMap((file) => fs.writeFileString(file, `${id}\n`)),
+              Effect.mapError(gitError),
+            ),
+        });
+
+      const ensure = (branch: string, runId?: string) =>
+        Effect.gen(function* () {
+          const path = pathFor(branch);
+          const run = Option.fromUndefinedOr(runId);
+
+          if (yield* exists(`${path}/.git`)) {
+            // Reused as is without a run, or by the run that prepared it, whose
+            // uncommitted work is there. Another run's is brought to the claim.
+            if (Option.isNone(run)) {
+              return path;
+            }
+
+            if (Option.contains(yield* owner(path), run.value)) {
+              return path;
+            }
+
+            const start = yield* fetchBranch(branch);
+            yield* git(["checkout", "--quiet", "--force", "-B", branch, start], path);
+            yield* git(["clean", "-fdq"], path);
+
+            if (start === `origin/${branch}`) {
+              yield* git(["branch", "--set-upstream-to", start, branch], path);
+            }
+
+            yield* own(path, run);
+
+            return path;
+          }
+
+          yield* makeRoot;
+          yield* git(["worktree", "prune"]);
+          const start = yield* fetchBranch(branch);
+          yield* git(["worktree", "add", "--force", "-B", branch, path, start]);
+
+          if (start === `origin/${branch}`) {
+            yield* git(["branch", "--set-upstream-to", start, branch], path);
+          }
+
+          yield* own(path, run);
 
           return path;
         });
