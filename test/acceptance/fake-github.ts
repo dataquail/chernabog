@@ -1115,6 +1115,20 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     setRef: (ref: string, sha: string) => {
       git("update-ref", ref, sha);
     },
+    // Creates a ref, named in full, as another machine would through the API:
+    // whether it did, as a second create of one ref fails.
+    createRef: (ref: string, sha: string) => {
+      if (Option.isSome(shaOf(ref))) {
+        return false;
+      }
+
+      git("update-ref", ref, sha);
+
+      return true;
+    },
+    deleteRef: (ref: string) => {
+      git("update-ref", "-d", ref);
+    },
     // A commit's message, as GitHub keeps it.
     messageOf: (sha: string) => git("log", "-1", "--format=%B", sha),
     // A commit with an empty tree, such as a claim another machine made: its sha.

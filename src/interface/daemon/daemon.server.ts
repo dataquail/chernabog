@@ -802,7 +802,14 @@ export const runDaemon = Effect.gen(function* () {
 
           yield* RunValidity.match(found, {
             CheckFailed: ({ message }) => noteFailure(run, message),
-            Gone: ({ reason }) => supersede(run, reason),
+            // Its claim may have been taken over since its leases were
+            // checked: a run that lost its item ends as lost, not superseded.
+            Gone: ({ reason }) =>
+              Effect.gen(function* () {
+                if (yield* checkLeases(run, Option.none())) {
+                  yield* supersede(run, reason);
+                }
+              }),
             Valid: () => Effect.void,
             Unchecked: () => Effect.void,
           });

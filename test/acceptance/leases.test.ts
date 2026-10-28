@@ -153,6 +153,26 @@ describe("leases", () => {
     sandbox.github.setRef(claimRef(issue), sha);
   };
 
+  // Another machine taking over the claim on an issue as a run would: by a
+  // commit on top of the claim as it stands, through the lease ref on it that
+  // only one writer can create, so the daemon renewing it meanwhile loses.
+  const takeOverElsewhere = async (issue: number, runId: string, expiresAt: string) => {
+    for (;;) {
+      const held = Option.getOrThrow(claimOn(issue));
+      const lease = `refs/chernabog/leases/issue-${issue}/${held.sha}`;
+
+      if (sandbox.github.createRef(lease, held.sha)) {
+        claimElsewhere(issue, runId, expiresAt, [held.sha]);
+        sandbox.github.deleteRef(lease);
+
+        return;
+      }
+
+      // The daemon is renewing it: take over the claim its renewal leaves.
+      await Bun.sleep(50);
+    }
+  };
+
   beforeAll(async () => {
     sandbox = openSandbox(
       {
@@ -243,10 +263,9 @@ describe("leases", () => {
   test("a run whose claim another machine took over ends as lost when it wakes, writing nothing", async () => {
     const issue = sandbox.github.addIssue("Lost while asleep", ["lease:park"]);
     const runId = await parkedOn(issue);
-    const held = Option.getOrThrow(claimOn(issue));
 
     // Its machine slept past its lease, and another machine took the issue over.
-    claimElsewhere(issue, "thief-run", "2999-01-01T00:00:00.000Z", [held.sha]);
+    await takeOverElsewhere(issue, "thief-run", "2999-01-01T00:00:00.000Z");
     sandbox.github.issue(issue).labels.push("go");
 
     const lost = await ended(runId);
