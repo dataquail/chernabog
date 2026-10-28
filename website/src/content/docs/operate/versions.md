@@ -30,7 +30,7 @@ A repo is also refused when a flow or step imports something the bundled SDK doe
 - it moves each recipe package to its newest version for that SDK, and brings the copied recipes along, as [`recipes update`](/chernabog/recipes/#keeping-up-with-a-recipe) does: a file you haven't edited is replaced, and an edited one is merged from the version it was copied from. A copy from before versions were recorded is replaced, so review the diff and re-apply your edits;
 - hand-written flows and steps are listed, with what each imports that the SDK no longer has.
 
-Merge the result to the base branch and trust it again. `chernabog recipes diff` previews how the copied flows differ from the versions they came from.
+Merge the result to the base branch and trust it again. `chernabog recipes diff` previews how the copied flows differ from the versions they came from. A repo whose recipes the binary baked, before they were a package, needs `chernabog init` first, to install one; see [a repo baked before recipes were packages](/chernabog/recipes/#a-repo-baked-before-recipes-were-packages).
 
 ## Unknown keys
 

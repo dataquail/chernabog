@@ -81,5 +81,10 @@ export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (roo
     left.push({ file: path, missingImports: bundle.missingImports(source) });
   }
 
-  return RepoUpgraded.make({ sdkVersion: bundle.sdkVersion, pinned: Option.isSome(pinned), left });
+  return RepoUpgraded.make({
+    sdkVersion: bundle.sdkVersion,
+    pinned: Option.isSome(pinned),
+    left,
+    packagesInstalled: installed.length > 0,
+  });
 });

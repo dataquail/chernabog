@@ -240,6 +240,16 @@ const recipesEject = Command.make(
   ),
 );
 
+// A repo whose recipes an earlier chernabog baked has no recipe package to
+// compare its flows with, until init installs @chernabog/recipes.
+const noPackageHint = (packagesInstalled: boolean, flows: boolean) =>
+  Option.toArray(
+    Option.liftPredicate(
+      "No recipe package is installed in .chernabog/, so none of its flows can be told from a recipe. If an earlier chernabog baked them, chernabog init installs @chernabog/recipes, keeping every file, and then chernabog recipes diff compares them.",
+      () => !packagesInstalled && flows,
+    ),
+  );
+
 const describeDiff = (diff: RecipesDiff) => {
   const lines = diff.files.flatMap(({ docs, file, recipe, recorded, state, version, ...entry }) => {
     const name = Option.getOrElse(recipe, () => "");
@@ -280,7 +290,7 @@ const describeDiff = (diff: RecipesDiff) => {
 
   return Option.getOrElse(Option.liftPredicate(lines, Arr.isReadonlyArrayNonEmpty), () => [
     ".chernabog/flows/ has no flows; chernabog recipes list shows the recipes",
-  ]);
+  ]).concat(noPackageHint(diff.packagesInstalled, diff.files.length > 0));
 };
 
 // How the repo at `root` differs from the recipes it copied, for a person.
@@ -369,6 +379,7 @@ const describeUpgrade = (upgraded: RepoUpgraded) => [
         `${file}: from no recipe, left as it is; it imports what @chernabog/sdk ${upgraded.sdkVersion} doesn't have (${missing.join(", ")}), so move it by hand`,
     }),
   ),
+  ...noPackageHint(upgraded.packagesInstalled, upgraded.left.length > 0),
 ];
 
 const recipesUpgrade = Command.make("upgrade", {}, () =>

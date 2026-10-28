@@ -115,5 +115,5 @@ export const diffRecipesUseCase = Effect.fn("diffRecipesUseCase")(function* (
     }
   }
 
-  return RecipesDiff.make({ files });
+  return RecipesDiff.make({ files, packagesInstalled: installed.length > 0 });
 });

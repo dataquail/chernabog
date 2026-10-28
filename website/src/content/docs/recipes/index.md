@@ -87,6 +87,10 @@ An imported flow needs no update of its own: it runs whatever version of the pac
 
 `chernabog recipes upgrade` is for a new SDK. It moves the repo's pins to the SDK this binary runs, then updates the copied recipes to the newest versions for that SDK. See [Versions](/chernabog/operate/versions/).
 
+### A repo baked before recipes were packages
+
+Before `@chernabog/recipes`, the binary baked the recipes itself, so such a repo's `.chernabog/` has no recipe package installed, and `recipes diff`, `update` and `upgrade` can't tell its flows from hand-written ones; `diff` and `upgrade` say so. Run `chernabog init` once in its checkout. It installs `@chernabog/recipes` in `.chernabog/` and overwrites nothing; when it asks which recipes to copy, pick none. Then `chernabog recipes diff` compares each baked flow with the version installed, which shows what the recipes changed since, such as [claim refs](/chernabog/flows/sdk/#claims) let go with `Claims.releasing` in `implement` and `human-initiated`. Bring those changes over by hand: `recipes update` keeps a file with no recorded version as it is and records it as from the version installed, its differences counted as your edits. Commit `.chernabog/`, `bun.lock` included, merge it, and `chernabog trust` the repo.
+
 ## Overriding a prompt of an imported flow
 
 An imported flow's prompts are looked up in layers: the repo's `.chernabog/prompts/<name>.md` first, then the package's, then the SDK's default. Its steps are found the same way, in `.chernabog/stages/` before the package's. To change one prompt, write your own `.chernabog/prompts/<name>.md` and the flow keeps running from the package.

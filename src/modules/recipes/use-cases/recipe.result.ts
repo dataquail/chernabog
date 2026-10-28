@@ -101,6 +101,9 @@ export class RecipesDiff extends Schema.Class<RecipesDiff, { readonly brand: "Re
   "RecipesDiff",
 )({
   files: Schema.Array(RecipeDiffEntry),
+  // Whether .chernabog/ has a recipe package installed to compare with: none
+  // in a repo whose recipes an earlier chernabog baked.
+  packagesInstalled: Schema.Boolean,
 }) {}
 
 // A recipe package moved to the newest version for the repo's SDK.
@@ -163,4 +166,6 @@ export class RepoUpgraded extends Schema.Class<RepoUpgraded, { readonly brand: "
   // Whether package.json's pins moved.
   pinned: Schema.Boolean,
   left: Schema.Array(UpgradeLeft),
+  // Whether .chernabog/ has a recipe package installed to tell its copies by.
+  packagesInstalled: Schema.Boolean,
 }) {}

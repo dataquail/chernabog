@@ -219,6 +219,7 @@ describe("recipes", () => {
       `.chernabog/flows/security.ts: from no recipe, left as it is; it imports what @chernabog/sdk ${BUNDLED_SDK} doesn't have (Review.fixTrigger), so move it by hand`,
     );
     expect(output).toContain("Nothing is committed.");
+    expect(output).not.toContain("No recipe package is installed");
     expect(readFileSync(flow("review"), "utf8")).toBe(recipeFiles(["review"])["flows/review.ts"]);
     expect(manifest()).not.toHaveProperty("engines");
     expect(await compatible()).toContain("demo: incompatible: .chernabog/: flows import what");
@@ -228,5 +229,55 @@ describe("recipes", () => {
     expect(await compatible()).toContain(
       "demo: .chernabog/ is written against an SDK this chernabog runs",
     );
+  }, 90_000);
+});
+
+describe("a repo baked before recipes were packages", () => {
+  let sandbox: Sandbox;
+  const flow = () => join(sandbox.checkout, ".chernabog/flows/implement.ts");
+
+  // implement as an earlier chernabog baked it, before claims were refs.
+  const baked = recipeFiles(["implement"])["flows/implement.ts"].replace(
+    "        Claims.releasing(Claims.issue(issue)),\n",
+    "",
+  );
+
+  beforeAll(() => {
+    sandbox = openSandbox({}, { recipes: [], repoFiles: { "flows/implement.ts": baked } });
+    sandbox.git(
+      sandbox.checkout,
+      "remote",
+      "set-url",
+      "origin",
+      join(sandbox.root, "github.com", "dataquail", "demo.git"),
+    );
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("recipes diff points to init, which installs @chernabog/recipes without touching a flow, so diff then shows what the recipe changed", async () => {
+    expect(baked).not.toContain("Claims.releasing");
+
+    const before = await sandbox.runCli(["recipes", "diff"]);
+    expect(before.code).toBe(0);
+    expect(before.output).toContain(".chernabog/flows/implement.ts: from no recipe");
+    expect(before.output).toContain(
+      "If an earlier chernabog baked them, chernabog init installs @chernabog/recipes",
+    );
+
+    const init = await sandbox.runCli(["init"]);
+    expect(init.code).toBe(0);
+    expect(init.output).toContain("added @chernabog/recipes 0.2.0 to .chernabog/package.json");
+    expect(readFileSync(flow(), "utf8")).toBe(baked);
+
+    const after = await sandbox.runCli(["recipes", "diff", "implement"]);
+    expect(after.code).toBe(0);
+    expect(after.output).toContain(
+      ".chernabog/flows/implement.ts: differs from the implement recipe in @chernabog/recipes@0.2.0, the version installed",
+    );
+    expect(after.output).toContain("-        Claims.releasing(Claims.issue(issue)),");
+    expect(after.output).not.toContain("No recipe package is installed");
   }, 90_000);
 });

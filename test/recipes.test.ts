@@ -333,6 +333,29 @@ describe("diffing against the recipes", () => {
     }),
   );
 
+  effect(
+    "in a repo an earlier chernabog baked, with no recipe package, points to init to install one",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const repo = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-recipes-" });
+        yield* fs.makeDirectory(`${repo}/.chernabog/flows`, { recursive: true });
+        yield* fs.writeFileString(
+          `${repo}/.chernabog/package.json`,
+          printJson({ devDependencies: { "@chernabog/sdk": BUNDLED_SDK } }),
+        );
+        yield* fs.writeFileString(
+          `${repo}/.chernabog/flows/implement.ts`,
+          yield* recipeText("flows/implement.ts"),
+        );
+
+        expect(yield* diffing(repo, [])).toEqual([
+          ".chernabog/flows/implement.ts: from no recipe",
+          "No recipe package is installed in .chernabog/, so none of its flows can be told from a recipe. If an earlier chernabog baked them, chernabog init installs @chernabog/recipes, keeping every file, and then chernabog recipes diff compares them.",
+        ]);
+      }),
+  );
+
   effect("says when the repo has no flows", () =>
     Effect.gen(function* () {
       expect(yield* diffing(yield* checkout, [])).toEqual([
