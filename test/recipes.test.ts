@@ -340,10 +340,13 @@ describe("diffing against the recipes", () => {
         const fs = yield* FileSystem.FileSystem;
         const repo = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-recipes-" });
         yield* fs.makeDirectory(`${repo}/.chernabog/flows`, { recursive: true });
+        yield* fs.makeDirectory(`${repo}/.chernabog/node_modules/@chernabog`, { recursive: true });
         yield* fs.writeFileString(
           `${repo}/.chernabog/package.json`,
           printJson({ devDependencies: { "@chernabog/sdk": BUNDLED_SDK } }),
         );
+        // The SDK linked, as in a checkout, so nothing installs it from npm.
+        yield* fs.symlink(`${PACKAGE}/../sdk`, `${repo}/.chernabog/node_modules/@chernabog/sdk`);
         yield* fs.writeFileString(
           `${repo}/.chernabog/flows/implement.ts`,
           yield* recipeText("flows/implement.ts"),
