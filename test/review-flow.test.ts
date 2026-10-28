@@ -128,6 +128,19 @@ describe("review", () => {
       }),
   );
 
+  effect("reviews a layer of a stack against the layer below, and leaves its merge for later", () =>
+    Effect.gen(function* () {
+      const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+      fake.stack.base = "auto/issue-2";
+      const finished = yield* runToEnd(reviewing, fake, work);
+      expect(fake.requests[0]?.prompt).toContain("git diff origin/auto/issue-2...HEAD");
+      expect(summaryOf(finished)).toContain(
+        "not merged: stacked on auto/issue-2; it merges after the layer below",
+      );
+      expect(fake.merge.requests).toEqual([]);
+    }),
+  );
+
   effect("requests changes as a real review, for the author to answer", () =>
     Effect.gen(function* () {
       const fake = asked(["request-changes"]);
@@ -199,6 +212,28 @@ describe("re-review", () => {
           ),
         ).toBe(true);
       }),
+  );
+
+  effect("never merges an approved layer of a stack into the layer below", () =>
+    Effect.gen(function* () {
+      const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
+      fake.stack.base = "auto/issue-2";
+
+      const finished = yield* runToEnd(
+        reReviewing,
+        fake,
+        item(`pr-${PULL}-review-2`, {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          agentWritten: true,
+        }),
+      );
+
+      expect(summaryOf(finished)).toContain(
+        "not merged: stacked on auto/issue-2; it merges after the layer below",
+      );
+      expect(fake.merge.requests).toEqual([]);
+    }),
   );
 
   // Approved on the re-review, with GitHub refusing the merge: `state` is the pull request's mergeable_state.
@@ -343,6 +378,70 @@ describe("address-review", () => {
         fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
         expect(yield* keys(fake, addressReview)).toEqual([]);
       }),
+  );
+
+  effect("records the pull request's base in its work", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.stack.base = "auto/issue-2";
+      const items = yield* flowTriggered(fake, addressReview);
+      expect(items.map((found) => found.data)).toEqual([
+        {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          baseRef: "auto/issue-2",
+          agentWritten: true,
+          reviewer: "data-quail",
+          reviewedSha: HEAD,
+        },
+      ]);
+    }),
+  );
+
+  // The implement run's session marker, and its push.
+  const implemented = (fake: Fake) => {
+    fake.comment(
+      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
+    );
+    fake.git.pushes = 1;
+  };
+
+  effect(
+    "on a layer of a stack, checks only the layer's own commits and files, so the layers below don't count",
+    () =>
+      Effect.gen(function* () {
+        const fake = changesAsked();
+        implemented(fake);
+        fake.stack.base = "auto/issue-2";
+        fake.stack.below = [".github/workflows/ci.yml"];
+
+        const finished = yield* runToEnd(
+          addressing,
+          fake,
+          item(`pr-${PULL}-changes-1`, {
+            pullRequest: PULL,
+            headRef: "auto/issue-3",
+            baseRef: "auto/issue-2",
+            agentWritten: true,
+            reviewer: "data-quail",
+            reviewedSha: HEAD,
+          }),
+        );
+
+        expect(finished.status).toBe("done");
+        expect(fake.git.pushes).toBe(2);
+        expect(fake.based.checkedAgainst).toEqual(["auto/issue-2", "auto/issue-2"]);
+      }),
+  );
+
+  effect("checks work saved without a base against the repo's base branch", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      implemented(fake);
+      const finished = yield* runToEnd(addressing, fake, addressWork);
+      expect(finished.status).toBe("done");
+      expect(fake.based.checkedAgainst).toEqual(["main", "main"]);
+    }),
   );
 
   effect(
