@@ -1,40 +1,10 @@
 {
   "private": true,
   "devDependencies": {
-    "@chernabog/recipes": "0.1.0",
     "@chernabog/sdk": "0.7.0",
     "effect": "4.0.5"
   },
-  "chernabog": {
-    "copied": {
-      "flows/address-review.ts": {
-        "from": "@chernabog/recipes/address-review",
-        "version": "0.1.0"
-      },
-      "flows/human-initiated.ts": {
-        "from": "@chernabog/recipes/human-initiated",
-        "version": "0.1.0"
-      },
-      "flows/implement.ts": {
-        "from": "@chernabog/recipes/implement",
-        "version": "0.1.0"
-      },
-      "flows/re-review.ts": {
-        "from": "@chernabog/recipes/re-review",
-        "version": "0.1.0"
-      },
-      "flows/review.ts": {
-        "from": "@chernabog/recipes/review",
-        "version": "0.1.0"
-      },
-      "prompts/implement.md": {
-        "from": "@chernabog/recipes/implement",
-        "version": "0.1.0"
-      },
-      "prompts/review.md": {
-        "from": "@chernabog/recipes/review",
-        "version": "0.1.0"
-      }
-    }
+  "dependencies": {
+    "@chernabog/recipes": "0.1.0"
   }
 }

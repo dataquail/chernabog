@@ -71,8 +71,16 @@ reviewers: [zacharyweidenbach, data-quail]
 flows:
   review:
     agents: { reviewer: claude }
+    from: "@chernabog/recipes/review"
   re-review:
     agents: { reviewer: claude }
+    from: "@chernabog/recipes/re-review"
+  implement:
+    from: "@chernabog/recipes/implement"
+  address-review:
+    from: "@chernabog/recipes/address-review"
+  human-initiated:
+    from: "@chernabog/recipes/human-initiated"
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose
