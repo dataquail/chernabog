@@ -33,7 +33,12 @@ import * as Schema from "effect/Schema";
 import { HUMAN_INITIATED } from "./default-prompts.ts";
 import {
   type AuthorSession,
+  baseHead,
+  baseOf,
+  type BaseOptions,
   branchFor,
+  Claimed,
+  claimedBase,
   dropInProgress,
   issueItem,
   latestClaim,
@@ -79,13 +84,13 @@ export const personSession = (issue: number) =>
     } satisfies AuthorSession;
   });
 
-const claimComment = (claimedAt: string, branch: string, runId: string) =>
+const claimComment = (claimedAt: string, branch: string, base: string, runId: string) =>
   [
     `Started by a person with Chernabog at ${claimedAt}, on branch \`${branch}\`.`,
     "",
     `- Run: \`${runId}\``,
     "",
-    claimMarker.write({ runId, claimedAt, branch, withPerson: true, ref: true }),
+    claimMarker.write({ runId, claimedAt, branch, base, withPerson: true, ref: true }),
   ].join("\n");
 
 // How to let go of the claim another run holds: cancelling it, which for a run
@@ -99,8 +104,10 @@ const cancelHint = (holder: Option.Option<Claims.Holder>) =>
 // Claims the issue with its claim ref, then creates the issue's branch, or
 // takes up one an earlier start or an ended run left, and labels, assigns and
 // comments as claim does, holding the same markers. It takes the issue out of
-// the unattended queues. An issue another run holds is left to it.
-export const claim = (issue: number) =>
+// the unattended queues. An issue another run holds is left to it. The branch
+// starts from `base`, as Implement.claim's does, and a run that resumes keeps
+// the base its claim marker records.
+export const claim = (issue: number, options: BaseOptions = {}) =>
   activity(
     "claim",
     Effect.gen(function* () {
@@ -109,15 +116,8 @@ export const claim = (issue: number) =>
       const run = yield* Run;
       const branch = branchFor(issue);
       const item = Claims.issue(issue);
-      const baseSha = yield* github.branchSha(repo.baseBranch);
-
-      if (Option.isNone(baseSha)) {
-        return yield* new StepFailed({
-          step: "claim",
-          message: `base branch ${repo.baseBranch} not found`,
-        });
-      }
-
+      const base = yield* baseOf(options);
+      const baseSha = yield* baseHead(base);
       const claimed = yield* Claims.acquire(item, { withPerson: true });
 
       if (!claimed.acquired) {
@@ -126,11 +126,11 @@ export const claim = (issue: number) =>
         });
       }
 
-      if ((yield* github.createBranch(branch, baseSha.value)) === "already-exists") {
+      if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
         const latest = yield* latestClaim(issue);
 
-        if (Option.exists(latest, (marker) => marker.runId === run.runId)) {
-          return { branch };
+        if (Option.isSome(latest) && latest.value.runId === run.runId) {
+          return { branch, base: yield* claimedBase(latest.value) };
         }
 
         // An earlier start that held it by its branch alone is taken over, as before claim refs.
@@ -155,12 +155,12 @@ export const claim = (issue: number) =>
 
       yield* github.comment(
         issue,
-        claimComment(DateTime.formatIso(yield* DateTime.now), branch, run.runId),
+        claimComment(DateTime.formatIso(yield* DateTime.now), branch, base, run.runId),
       );
 
-      return { branch };
+      return { branch, base };
     }),
-    Schema.Struct({ branch: Schema.String }),
+    Claimed,
   );
 
 // What `chernabog open-pr` records when the person and the agent are done.
@@ -197,8 +197,9 @@ const RESUME_PROMPT =
 
 // The person and the agent work on the issue in a session in front of the
 // person, until the person's Yes to the agent's draft (or their own
-// `chernabog open-pr`) records the pull request's title, body and summary. Its prompt is .chernabog/prompts/human-initiated.md, or the SDK's own.
-export const workWithPerson = (issue: number, worktree: string) =>
+// `chernabog open-pr`) records the pull request's title, body and summary. Its prompt is .chernabog/prompts/human-initiated.md, or the SDK's own,
+// whose `base` is the given one, the repo's base branch unless given.
+export const workWithPerson = (issue: number, worktree: string, options: BaseOptions = {}) =>
   activity(
     "work-with-person",
     Effect.gen(function* () {
@@ -214,7 +215,7 @@ export const workWithPerson = (issue: number, worktree: string) =>
         body: details.body,
         comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
         branch: branchFor(issue),
-        base: repo.baseBranch,
+        base: yield* baseOf(options),
         localGate: repo.localGate.map((command) => `\`${command}\``),
         humanOnly: repo.humanOnly,
         notes: repo.notes,
@@ -245,14 +246,15 @@ export const workWithPerson = (issue: number, worktree: string) =>
 
 // Opens the pull request for the branch, or finds the one already open, and
 // labels it hybrid for people reading GitHub. It never carries ship, so a
-// person merges it.
-export const openPullRequest = (issue: number, finished: Finished) =>
+// person merges it. It targets `base`, the repo's base branch unless given.
+export const openPullRequest = (issue: number, finished: Finished, options: BaseOptions = {}) =>
   activity(
     "open-pull-request",
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
       const branch = branchFor(issue);
+      const base = yield* baseOf(options);
 
       const existing = Option.filter(
         yield* github.pullRequestForBranch(branch),
@@ -266,7 +268,7 @@ export const openPullRequest = (issue: number, finished: Finished) =>
         onNone: () =>
           github.openPullRequest({
             head: branch,
-            base: repo.baseBranch,
+            base,
             title: finished.title,
             body: `Closes #${issue}\n\n${finished.body}\n\n---\n${footer}`,
           }),
