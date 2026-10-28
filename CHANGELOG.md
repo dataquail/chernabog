@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.0](https://github.com/dataquail/chernabog/compare/v0.9.0...v0.10.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* after upgrading, an enrolled repo's implement and human-initiated flows (and any flow of its own that calls Implement.claim or Hybrid.claim) take a claim ref that only Claims.releasing lets go when the run ends. Update them with `chernabog recipes diff` / `recipes add`, or wrap the run in `Claims.releasing(Claims.issue(issue))`, then `chernabog trust` the repo. Until then, `chernabog cancel <run>` on the run a skip names deletes the claim ref it left.
+* engines.chernabog in .chernabog/package.json is refused, as is a manifest without an @chernabog/sdk pin; run chernabog recipes upgrade. An older chernabog refuses machine config and state.db once this one has stamped them; restore the copy in ~/.config/chernabog/backups/ to roll back.
+
+### Features
+
+* a person's Yes, not the agent, opens the pull request on the hybrid path ([#128](https://github.com/dataquail/chernabog/issues/128)) ([5f6e7c9](https://github.com/dataquail/chernabog/commit/5f6e7c9fd8477f8e16ff2cf821ee156f1841700e))
+* a plan recipe: an agent turns a spec issue into an epic of ordered sub-issues ([#140](https://github.com/dataquail/chernabog/issues/140)) ([28e264f](https://github.com/dataquail/chernabog/commit/28e264f2858673f57c5eac7a0b35a3a7c7f9a76d))
+* a resolve-conflicts recipe, and review/re-review leave a conflicting approval to it ([#118](https://github.com/dataquail/chernabog/issues/118)) ([4a1cd50](https://github.com/dataquail/chernabog/commit/4a1cd50da7cc3156069c9544e67f6747a0fba785))
+* a run's changes here and a persona's GitHub notifications tick flows right away, not on the next cron tick ([#141](https://github.com/dataquail/chernabog/issues/141)) ([ad9ef65](https://github.com/dataquail/chernabog/commit/ad9ef65eae0352021a27e1f54b3e14340ee61c01))
+* cancel a run in flight with chernabog cancel ([#119](https://github.com/dataquail/chernabog/issues/119)) ([926ead3](https://github.com/dataquail/chernabog/commit/926ead37a46aa2ed173c93dc884691e7ff80a82f))
+* chernabog decides which repos' flows it runs, and state and runs survive an upgrade ([#124](https://github.com/dataquail/chernabog/issues/124)) ([ad7132d](https://github.com/dataquail/chernabog/commit/ad7132d6de135420f9c6690b0aa70cb0b6935727))
+* claims are refs of their own, apart from the work branch ([#139](https://github.com/dataquail/chernabog/issues/139)) ([3fe9282](https://github.com/dataquail/chernabog/commit/3fe928220e25992096408a697641b8bff4bde5cf))
+* **recipes:** recipes as packages: @chernabog/recipes on its own cadence, company recipe packages, and flows that import a recipe ([#130](https://github.com/dataquail/chernabog/issues/130)) ([1d076c5](https://github.com/dataquail/chernabog/commit/1d076c5087bc48f18d91604878369354a1e21711))
+* rehearse a flow end to end on a scratch repo, with stand-ins for the agent ([#121](https://github.com/dataquail/chernabog/issues/121)) ([c909932](https://github.com/dataquail/chernabog/commit/c909932e0fa210cafe90871d0469a37eff6efc8a))
+* **tui:** tabs by project and persona, runs you can scan by issue and PR, a run's step history and work threads ([#127](https://github.com/dataquail/chernabog/issues/127)) ([2a5c035](https://github.com/dataquail/chernabog/commit/2a5c035b82a3f67a8444384aae77383382fe5cef))
+
+
+### Bug Fixes
+
+* the release PR's SDK bump moves the SDK range this binary runs, and its tests pass before npm has it ([#131](https://github.com/dataquail/chernabog/issues/131)) ([7daa1b8](https://github.com/dataquail/chernabog/commit/7daa1b8b05607da21d75425e6d74c1420d7b7818))
+
 ## [0.9.0](https://github.com/dataquail/chernabog/compare/v0.8.0...v0.9.0) (2026-10-23)
 
 
