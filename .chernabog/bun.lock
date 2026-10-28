@@ -1,0 +1,22 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "@chernabog/recipes": "0.1.0",
+      },
+      "devDependencies": {
+        "@chernabog/sdk": "0.7.0",
+        "effect": "4.0.5",
+      },
+    },
+  },
+  "packages": {
+    "@chernabog/recipes": ["@chernabog/recipes@0.1.0", "", { "peerDependencies": { "@chernabog/sdk": ">=0.6.0 <0.8.0" } }, "sha512-KfFvzqgpSi1qP+ppebnlbuTwAbXikP2ADMPIEMGu9ihUzkfPJHmLbRPwm41WnyOw2U6lQp4mo4u5SPed13deOQ=="],
+
+    "@chernabog/sdk": ["@chernabog/sdk@0.7.0", "", { "peerDependencies": { "effect": "4.0.5" } }, "sha512-W6cFoWemUDefGPJ1zPvxW7h15Jz3cBll8SaiA0hfbvzwnj429SJTfbjJV3zkIcHiJPvoGokZlfIp0Eijny6bCA=="],
+
+    "effect": ["effect@4.0.5", "", {}, "sha512-BY4/28NlpOd99yzmV741xbVGmp+1U7tks4oB7F/Png64bTa5tm5eCA6W0RiXsnuLDDoJpjfVSo4Dnq4BZb/89Q=="],
+  }
+}
