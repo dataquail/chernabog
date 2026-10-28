@@ -50,6 +50,7 @@
     "oxlint-tsgolint": "7.0.2004",
     "prettier": "3.9.6",
     "read-package-up": "^12.0.0",
+    "release-please": "17.6.0",
     "typescript": "^5.9.3"
   }
 }

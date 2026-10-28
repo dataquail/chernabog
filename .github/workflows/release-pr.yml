@@ -1,0 +1,35 @@
+name: Release PR
+
+# release-please finds what to release in its PR's body, which it parses as
+# HTML. A release note with text such as `chernabog cancel <run>` reads as an
+# unclosed tag that swallows a part's section, and merging then releases no
+# such part: sdk-v0.7.0 had to be cut by hand. This fails the release PR until
+# every version it moves has its section, and runs again when the body is edited.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  sections:
+    if: github.head_ref == 'release-please--branches--main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Read the base branch's manifest
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --depth=1 origin "$BASE_SHA"
+          git show "$BASE_SHA:.release-please-manifest.json" > "$RUNNER_TEMP/base-manifest.json"
+      - name: Check release-please finds each release in the body
+        env:
+          RELEASE_PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_MANIFEST: ${{ runner.temp }}/base-manifest.json
+        run: bun scripts/release-pr-check.ts

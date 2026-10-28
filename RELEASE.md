@@ -39,7 +39,7 @@ The older binary refuses newer files until they're restored, and says which copy
 
 1. **Merge PRs with conventional titles.** Squash merges make the title the commit, and the **PR title** check enforces the format. `feat:` bumps the minor version, and `fix:` and `perf:` bump the patch. While a version is below 1.0, a breaking change (`feat!:` or a `BREAKING CHANGE:` footer) bumps the minor too. `chore:`, `docs:`, `ci:`, `test:` and `refactor:` release nothing.
 2. **release-please keeps a release PR open** (`chore(main): release …`). It lists the versions and changelog entries that merging would produce, and every push to `main` updates it. The **Release** workflow also refreshes `bun.lock` on that branch when the SDK's version moves.
-3. **Merge the release PR when you want to ship.** The same run then:
+3. **Merge the release PR when you want to ship,** once its **Release PR** check passes. release-please finds what to release in the PR's body, which it parses as HTML, so a release note with text such as `<run>` reads as a tag and can hide a part: merged, the PR would release no such part. The check fails naming the part and the text. Edit the body to write the text as `&lt;run&gt;`, which runs the check again, and merge before the next push to `main` rewrites the body. The same run then:
    - tags the release and creates its GitHub release;
    - builds the binary on macOS (arm64, x64) and Linux (x64, arm64), checks that each one reports the tagged version, and attaches the tarballs and a `sha256` file to the release;
    - points `Formula/chernabog.rb` in `dataquail/homebrew-tap` at those tarballs, written by `scripts/homebrew-formula.ts`. A dispatched re-run of an older tag leaves the formula alone;
