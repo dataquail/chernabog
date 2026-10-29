@@ -13,11 +13,11 @@
 // `refs/chernabog/leases/<item>/<sha replaced>`, so exactly one writer
 // replaces each claim commit: GitHub checks no fast-forward outside
 // refs/heads/, and a create is the one write it refuses a second writer. The
-// winner then points the claim ref at its commit and deletes the lease ref; a
-// reader that finds a lease ref follows it, since a writer may have stopped in
-// between. A reader that read the claim ref before the winner moved it, and
-// asks only after its lease ref is gone, could still replace the old commit:
-// a window of a few requests, which the run that loses sees on its next write.
+// winner then checks the claim ref still points at the commit it replaces,
+// points it at its own and deletes the lease ref; a reader that finds a lease
+// ref follows it, since a writer may have stopped in between. A writer that
+// read the claim ref before another moved it, and makes the lease ref only
+// after that one let it go, finds the claim ref moved and leaves it.
 
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -217,6 +217,16 @@ const replace = (item: string, from: Claim, next: Holder) =>
     });
 
     if ((yield* github.createRef(leaseRefFor(item, from.sha), sha)) === "already-exists") {
+      return false;
+    }
+
+    // A writer that replaced `from` and let go of its lease ref before this
+    // one made it has moved the claim ref on: leave it there.
+    const head = yield* github.ref(refFor(item));
+
+    if (!Option.exists(head, (at) => at.sha === from.sha)) {
+      yield* github.deleteRef(leaseRefFor(item, from.sha));
+
       return false;
     }
 
