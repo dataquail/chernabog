@@ -637,7 +637,9 @@ export const changesAsked = (address: AddressItem) =>
     ReviewResult,
   );
 
-// Fails with NeedsHuman when the author committed nothing since the review.
+// Fails with NeedsHuman when the author committed nothing since the review,
+// or left edits it didn't commit, which the push would leave behind. Ignored
+// files don't count, as `git status --porcelain` doesn't list them.
 export const checkChanged = (
   pullRequest: number,
   round: number,
@@ -647,9 +649,22 @@ export const checkChanged = (
   activity(
     `check-changed-${round}`,
     Effect.gen(function* () {
-      if ((yield* (yield* Git).headSha(worktree)) === reviewedSha) {
+      const git = yield* Git;
+
+      if ((yield* git.headSha(worktree)) === reviewedSha) {
         return yield* new NeedsHuman({
           reason: `#${pullRequest}: the author agent committed nothing in answer to review ${round}`,
+        });
+      }
+
+      const uncommitted = (yield* git.run(["status", "--porcelain"], worktree))
+        .split("\n")
+        .filter((line) => line.trim().length > 0)
+        .map((line) => `\`${line.slice(3)}\``);
+
+      if (uncommitted.length > 0) {
+        return yield* new NeedsHuman({
+          reason: `#${pullRequest}: the author agent left changes it didn't commit in answer to review ${round}: ${uncommitted.join(", ")}`,
         });
       }
     }),

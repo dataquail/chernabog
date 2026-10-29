@@ -46,7 +46,7 @@ It needs `git` and `gh` (logged in, with the `repo` scope) and the agent's own C
 
 ```bash
 bun install
-bun test
+bun run test         # every test file, in parallel
 bun run build        # dist/chernabog, one self-contained binary
 bun run lint         # oxlint, type-aware, warnings fail it
 ```
