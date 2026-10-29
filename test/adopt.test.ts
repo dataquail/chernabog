@@ -116,6 +116,7 @@ describe("an issue an open pull request already closes", () => {
         // The claim marker records the adoption, and the issue says which pull request.
         expect(adoptions(fake)).toEqual([{ number: PULL, url: PULL_URL, draft: false }]);
         expect(saying(fake, `Adopted #${PULL}`)).toHaveLength(1);
+        expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
         // Marked as this persona's to answer reviews on, and sent for review by someone other than its author.
         expect(fake.labelsOf(PULL)).toContain(Implement.ADOPTED_LABEL);

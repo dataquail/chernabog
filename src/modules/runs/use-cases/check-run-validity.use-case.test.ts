@@ -52,12 +52,12 @@ describe("checkRunValidityUseCase", () => {
           runId: RunId.make("a"),
           executionId: "execution-a",
           item: work,
-          pullRequest: Option.some(1),
+          subjects: ["release-1.4", "pr-1"],
         },
       ]);
     }).pipe(
       Effect.provide(
-        runtime([run("a", { pullRequest: Option.some(1) })], {
+        runtime([run("a", { subjects: ["release-1.4", "pr-1"] })], {
           items: [],
           validity: { valid: false, reason: "#1 was closed" },
           asked,
