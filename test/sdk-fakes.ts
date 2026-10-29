@@ -965,16 +965,16 @@ export const triggered = <E, R>(
 export const flowTriggered = (fake: Fake, flow: Flow) =>
   Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
 
-// The pull request stacked on `below`, the head of another open pull request,
-// as a layer of an epic's stack is.
-export const stackOn = (fake: Fake, below: string) => {
+// The pull request stacked on `below`, the head of another pull request, as
+// a layer of an epic's stack is: open, or `state` as the layer below is now.
+export const stackOn = (fake: Fake, below: string, state: PullRequest["state"] = "open") => {
   fake.stack.base = below;
   fake.branchPulls.set(below, {
     number: 2,
     title: "feat: the layer below",
     body: "",
     url: "https://github.com/dataquail/demo/pull/2",
-    state: "open",
+    state,
     headRef: below,
     headSha: "below0000000",
     baseRef: "main",

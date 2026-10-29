@@ -287,9 +287,11 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
     );
   });
 
-// The open pull request whose head branch `pull` is based on, which makes
-// `pull` a layer stacked on it: none when its base is the flow's integration
-// base, or no open pull request comes from its base.
+// The pull request whose head branch `pull` is based on, which makes `pull`
+// a layer stacked on it: one still open, or one that merged while its branch
+// stayed, which nothing retargets `pull` off, so a merge would land in that
+// branch and never reach the base below it. None when `pull`'s base is the
+// flow's integration base, or no open or merged pull request comes from it.
 const layerBelow = (pull: PullRequest) =>
   Effect.gen(function* () {
     if (pull.baseRef === (yield* Settings.base)) {
@@ -298,9 +300,18 @@ const layerBelow = (pull: PullRequest) =>
 
     return Option.filter(
       yield* (yield* GitHub).pullRequestForBranch(pull.baseRef),
-      (below) => below.state === "open",
+      (below) => below.state === "open" || below.state === "merged",
     );
   });
+
+// Why a layer stacked on `below` waits.
+const waitsOn = (pull: PullRequest, below: PullRequest) => {
+  if (below.state === "merged") {
+    return `stacked on ${pull.baseRef}, and the layer below (#${below.number}) merged; it waits to be retargeted onto ${below.baseRef}`;
+  }
+
+  return `stacked on ${pull.baseRef} (#${below.number}); it merges after the layer below`;
+};
 
 // Merges the pull request, only when that is safe: it is open and not a
 // layer of a stack, its required checks are green on the current head,
@@ -308,9 +319,10 @@ const layerBelow = (pull: PullRequest) =>
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
 // GitHub's rules for the repo allow it. A pull request into any branch may
 // merge, such as develop in git flow. One whose base is the head branch of
-// another open pull request is a layer stacked on it, and waits until the
-// layer below merges, unless its base is the flow's integration base
-// (Settings.base), which is never a layer, whatever is open from it.
+// another pull request is a layer stacked on it (layerBelow): it waits while
+// the layer below is open, and after it merges, until it is retargeted onto
+// the base below. A pull request based on the flow's integration base
+// (Settings.base) is never a layer, whatever came from that branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
@@ -333,10 +345,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
       const below = yield* layerBelow(pull);
 
       if (Option.isSome(below)) {
-        return yield* refuse(
-          pullRequest,
-          `stacked on ${pull.baseRef} (#${below.value.number}); it merges after the layer below`,
-        );
+        return yield* refuse(pullRequest, waitsOn(pull, below.value));
       }
 
       const ci = yield* github.ciState(pullRequest);

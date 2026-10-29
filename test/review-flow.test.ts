@@ -148,6 +148,20 @@ describe("review", () => {
     }),
   );
 
+  effect(
+    "never merges a layer into the layer below that merged, while its branch stays and nothing retargets it",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(fake, "auto/issue-2", "merged");
+        const finished = yield* runToEnd(reviewing, fake, work);
+        expect(summaryOf(finished)).toContain(
+          "not merged: stacked on auto/issue-2, and the layer below (#2) merged; it waits to be retargeted onto main",
+        );
+        expect(fake.merge.requests).toEqual([]);
+      }),
+  );
+
   effect("merges an approved pull request into a base no open pull request comes from", () =>
     Effect.gen(function* () {
       const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
