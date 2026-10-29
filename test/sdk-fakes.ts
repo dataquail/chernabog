@@ -220,11 +220,14 @@ export const makeFake = (
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
   // `asks` are worktrees whose next implement session answers with questions.
+  // `leaves` is what an implement session leaves in the worktree, as `git status
+  // --porcelain` lists it, instead of committing it.
   const author = {
     consider: "address",
     resolve: "resolved",
     closes: false,
     asks: new Array<string>(),
+    leaves: new Array<string>(),
   };
 
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
@@ -355,7 +358,11 @@ export const makeFake = (
         return { status: "needs-clarification", summary: "Which way?", title: "", body: "" };
       }
 
-      git.commits += 1;
+      if (author.leaves.length > 0) {
+        git.uncommitted = [...author.leaves];
+      } else {
+        git.commits += 1;
+      }
 
       return {
         status: "done",
@@ -731,6 +738,11 @@ export const makeFake = (
       commitsAhead: (_, base) =>
         Effect.sync(() => {
           based.checkedAgainst.push(base);
+
+          // Nothing, once the author left its work in the worktree on a branch it never pushed.
+          if (git.pushes + git.commits === 0 && git.uncommitted.length > 0) {
+            return 0;
+          }
 
           return 1;
         }),

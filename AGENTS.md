@@ -5,15 +5,20 @@ requests, on a schedule, as one or more GitHub personas. Bun, TypeScript, Effect
 
 ## Before you finish
 
-`bun run format:check`, `bun run check`, `bun run lint`,
-`bun run lint:architecture` and `bun run test` must all pass.
+`bun run format:check`, `bun run check`, `bun run lint` and
+`bun run lint:architecture`, the fast checks, must all pass.
 
-The pre-commit hook (`.husky/pre-commit`, installed by `bun install`) runs them
-in that order through `bun run precommit` and refuses the commit at the first
-failure, in the main checkout and in a linked worktree alike. It only checks:
-`bun run format` applies Prettier. `HUSKY=0 git commit …` skips the hook for a
-work-in-progress commit you will fix before pushing; never `--no-verify` one
-that you push. CI's build and its tests of the binary stay in CI.
+`bun run test` must pass too.
+
+The pre-commit hook (`.husky/pre-commit`, installed by `bun install`) runs the
+fast checks in that order through `bun run precommit` and refuses the commit at
+the first failure, in the main checkout and in a linked worktree alike. It only
+checks: `bun run format` applies Prettier. It leaves out the tests, which take
+minutes: an agent's commit lands before it answers, and a commit of failing
+tests on their own (test-first's red step) passes. The tests run in chernabog's
+local gate before every push, and in CI. `HUSKY=0 git commit …` skips the hook
+for a work-in-progress commit you will fix before pushing; never `--no-verify`
+one that you push. CI's build and its tests of the binary stay in CI.
 
 `bun run test` runs the test files in parallel worker processes;
 `bun run test:unit` leaves out the acceptance tests, and

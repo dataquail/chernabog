@@ -21,7 +21,7 @@ Each line is one SDK block, in the order the recipe calls them.
 2. `prepareWorktree` — a worktree on `auto/issue-<n>`, with `install` run in it.
 3. `implementWithAgent` — the agent implements test first, with `notes` and `humanOnly` in its prompt. It may answer with questions instead: `askForClarification` posts them and labels the issue `auto:needs-clarification`.
 4. `localGate` — runs each `localGate` command; on failure sends the agent back, up to `limits.localGateRounds`.
-5. `push` — a change touching `humanOnlyPaths` stops here, at `auto:needs-human`.
+5. `push` — a change touching `humanOnlyPaths` stops here, at `auto:needs-human`, and so does a branch with no commits; when the agent left its changes staged or unstaged instead, the reason names the files.
 6. `openPullRequest`, then `waitForCi` — an `auto:ship` issue's pull request is labelled `auto:ship`. Waits up to `limits.ciTimeout`, fixing red up to `limits.ciRounds`.
 7. `handOff` — posts `reviewTrigger` on the pull request if set, and asks one reviewer from the pool for a review.
 

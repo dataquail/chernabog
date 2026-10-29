@@ -22,7 +22,8 @@ effect(
     }),
 );
 
-// The pre-commit hook (.husky/pre-commit) runs the checks AGENTS.md's “Before you finish” lists.
+// The pre-commit hook (.husky/pre-commit) runs the fast checks AGENTS.md's “Before you finish”
+// lists first, and leaves the tests to the local gate and CI.
 describe("the pre-commit hook", () => {
   const read = (file: string) =>
     Effect.gen(function* () {
@@ -59,7 +60,7 @@ describe("the pre-commit hook", () => {
     }),
   );
 
-  effect("precommit runs AGENTS.md's “Before you finish” checks, in its order", () =>
+  effect("precommit runs AGENTS.md's fast checks, in its order, and not the tests", () =>
     Effect.gen(function* () {
       const precommit = (yield* scripts).precommit;
       const agents = yield* read("AGENTS.md");
@@ -76,7 +77,6 @@ describe("the pre-commit hook", () => {
         "bun run check",
         "bun run lint",
         "bun run lint:architecture",
-        "bun run test",
       ]);
     }),
   );

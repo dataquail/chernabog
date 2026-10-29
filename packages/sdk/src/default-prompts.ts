@@ -44,7 +44,7 @@ You decided to address this review. You are back in the same worktree, on the sa
 {{review}}
 
 - Make each change the review asks for. Where you disagree, leave the code as it is and say why in \`summary\`; the reviewer reads it.
-- Keep each commit to one change. Commit messages follow the repo's convention. Leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left.
+- Keep each commit to one change. Commit messages follow the repo's convention. Leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left. A commit counts once \`git log\` shows it: when a pre-commit hook is still running, wait for it to finish before you answer.
 - The ground rules of your first task still hold: never push, never weaken a check to get green, and stop with \`needs-clarification\` only for the hard limits.
 - \`summary\`: what you changed for each point, and which points you left and why.
 `;
@@ -118,7 +118,7 @@ The base's whole change is \`git diff {{oldBase}} {{newBase}}\`.
 
 - Resolve each conflicted file so it keeps both sides' intent: this pull request's change, applied on top of what the base now has. Make sure no conflict markers are left, then commit the merge with \`git commit --no-edit\`.
 - Adjust this pull request's own code to the base's change where it builds on what changed: a renamed or reshaped API, moved code, a behaviour it relies on. Where behaviour changes, write or update the test first, then the code.
-- Change nothing the base's move doesn't require. When nothing needs adjusting, commit nothing and say so. Either way, leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left.
+- Change nothing the base's move doesn't require. When nothing needs adjusting, commit nothing and say so. Either way, leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left. A commit counts once \`git log\` shows it: when a pre-commit hook is still running, wait for it to finish before you answer.
 - Keep each commit to one change. Commit messages follow the repo's convention.
 - The ground rules of your first task still hold: never rebase, reset, amend, push or switch branches, never weaken a check to get green, and stop with \`needs-clarification\` only for the hard limits.
 - \`summary\`: what you resolved and adjusted, and why, for the reviewer.

@@ -1053,7 +1053,7 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
       yield* fixWithAgent(
         named(options, `fix-local-gate-${round}`),
         worktree,
-        `The local gate failed. Fix the cause, commit, and answer again.\n\n${result.failure}`,
+        `The local gate failed. Fix the cause, commit, and answer again once \`git log\` shows the commit.\n\n${result.failure}`,
         options.session ?? thisRunsSession,
       );
     }
@@ -1066,8 +1066,9 @@ export type PushOptions = BaseOptions & { readonly withPerson?: boolean };
 
 // Checks the branch has commits since its base and, unless a person is in the
 // session, touches no human-only paths, and pushes it. Fails with NothingCommitted when
-// there's nothing to push, and PushRejected when the remote refuses it, such
-// as for a token without the workflow scope.
+// there's nothing to push, or NeedsHuman naming the files when the agent left
+// its changes in the worktree instead of committing them, and PushRejected when
+// the remote refuses it, such as for a token without the workflow scope.
 export const push = (name: string, worktree: string, branch: string, options: PushOptions = {}) =>
   activity(
     name,
@@ -1077,6 +1078,18 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
       const base = yield* baseOf(options);
 
       if ((yield* git.commitsAhead(worktree, base)) === 0) {
+        // Ignored files don't count, as `git status --porcelain` doesn't list them.
+        const uncommitted = (yield* git.run(["status", "--porcelain"], worktree))
+          .split("\n")
+          .filter((line) => line.trim().length > 0)
+          .map((line) => `\`${line.slice(3)}\``);
+
+        if (uncommitted.length > 0) {
+          return yield* new NeedsHuman({
+            reason: `the agent committed nothing on ${branch}, and left uncommitted: ${uncommitted.join(", ")}`,
+          });
+        }
+
         return yield* new NothingCommitted({ branch });
       }
 
@@ -1236,7 +1249,7 @@ const waitForCiIn = <E, R>(
         [
           `CI failed on pull request #${pullRequest}: ${failed}.`,
           `Read why with \`gh run list --branch ${target.branch} --limit 5\` and \`gh run view <run id> --log-failed\`.`,
-          "Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again.",
+          "Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again, once `git log` shows your commit.",
         ].join("\n"),
         target,
       );
