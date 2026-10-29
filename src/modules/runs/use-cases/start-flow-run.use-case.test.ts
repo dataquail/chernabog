@@ -98,4 +98,24 @@ describe("startFlowRunUseCase", () => {
       expect(busy.executed).toEqual([]);
     }).pipe(Effect.provide(runtime(busy, { runs: [run("a")] }))),
   );
+
+  const holding = fakeEngine();
+
+  effect("starts no run for a held item, wake-only or not, and starts the one beside it", () =>
+    Effect.gen(function* () {
+      const held = yield* startFlowRunUseCase(review, item("pr-4", { held: "waits on #3" }));
+
+      const waking = yield* startFlowRunUseCase(
+        review,
+        item("pr-5", { held: "waits on #3", wakeOnly: true }),
+      );
+
+      const beside = yield* startFlowRunUseCase(review, item("pr-6"));
+
+      expect([held.started, held.run]).toEqual([false, Option.none()]);
+      expect([waking.started, waking.run]).toEqual([false, Option.none()]);
+      expect(beside.started).toBe(true);
+      expect(holding.executed).toEqual([Option.getOrThrow(beside.run).id]);
+    }).pipe(Effect.provide(runtime(holding))),
+  );
 });

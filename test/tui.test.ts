@@ -19,6 +19,7 @@ import {
   sessionFiles,
 } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agents/sessions.ts";
+import { HoldView } from "../src/modules/runs/use-cases/hold.result.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { RunHistory, RunStep } from "../src/modules/runs/use-cases/run-history.result.ts";
 import { RunWait } from "../src/modules/runs/use-cases/run-wait.result.ts";
@@ -305,6 +306,51 @@ describe("the main view", () => {
     expect(said).toContain("  review as alice: 17 * * * *, next in 17m");
     expect(said).toContain("  review as bob: 17 * * * *, next in 17m");
     expect(describeStatus(status, now)).toContain("  review: 17 * * * *, next in 17m");
+  });
+});
+
+const held = HoldView.make({
+  repo: "goodbones",
+  persona: Option.none(),
+  flow: "implement",
+  itemKey: "issue-14",
+  reason: "waits on #12, #13",
+  at: minutes(-3),
+});
+
+describe("held work", () => {
+  test("status lists the items triggers hold, with why, apart from skips", () => {
+    const said = describeStatus({ ...status, holds: [held] }, now);
+    const holds = said.indexOf("\nheld:");
+
+    expect(holds).toBeGreaterThan(-1);
+    expect(said[holds + 1]).toBe("  goodbones/implement #14: waits on #12, #13 (as of 3m ago)");
+    expect(said.indexOf("\nrecent skips:")).toBeGreaterThan(holds + 1);
+    expect(describeStatus(status, now)).not.toContain("\nheld:");
+  });
+
+  test("the live view lists the items triggers hold, with why, apart from skips", () => {
+    const screen = plain(view(model({ status: Option.some({ ...status, holds: [held] }) })));
+
+    expect(screen).toContain("Held");
+    expect(screen).toContain("implement #14: waits on #12, #13");
+    expect(screen.indexOf("Held")).toBeLessThan(screen.indexOf("Recent skips"));
+    expect(plain(view(model()))).not.toContain("Held");
+  });
+
+  test("the live view says how many more items are held than it shows", () => {
+    const holds = [14, 15, 16, 17, 18, 19].map((number) =>
+      HoldView.make({ ...held, itemKey: `issue-${number}` }),
+    );
+
+    const screen = plain(view(model({ status: Option.some({ ...status, holds }) })));
+
+    expect(screen).toContain("implement #17: waits on #12, #13");
+    expect(screen).not.toContain("implement #18");
+    expect(screen).toContain("… 2 more (chernabog status lists them all)");
+    expect(
+      plain(view(model({ status: Option.some({ ...status, holds: holds.slice(0, 4) }) }))),
+    ).not.toContain("more (chernabog status");
   });
 });
 

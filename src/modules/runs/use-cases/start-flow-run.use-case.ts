@@ -9,7 +9,7 @@ import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { type FlowRef, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { type FlowRef, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
 import { StartedRun } from "./flow.result.ts";
 import { RunView } from "./run.result.ts";
 
@@ -22,7 +22,7 @@ const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
 
 // Starts one run of a persona's flow for one work item, unless the persona
 // already has one in flight for it: then that one is the run. An item
-// reported only to wake a run starts none.
+// reported only to wake a run, or held, starts none.
 export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
   flow: FlowRef,
   item: WorkItem,
@@ -46,7 +46,7 @@ export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
       ),
     );
 
-  if (item.wakeOnly === true) {
+  if (!mayStart(item)) {
     return yield* existing(RunRootOps.activeFor(running, wanted));
   }
 

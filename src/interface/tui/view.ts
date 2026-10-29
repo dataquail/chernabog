@@ -724,6 +724,9 @@ const filterLines = (model: Model): ReadonlyArray<Line> => {
   return [[], [...tabs, ...persona]];
 };
 
+// Held items the live view lists before saying how many more.
+const HOLDS_SHOWN = 4;
+
 const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
   const { now } = model;
   const lines: Array<Line> = [];
@@ -878,6 +881,29 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       select(runLine(row, columns, now), model.focus === "runs" && model.runIndex === runIndex),
     );
   });
+
+  const holds = (status.holds ?? []).filter((hold) => passes(model, hold.repo, hold.persona));
+
+  if (holds.length > 0) {
+    lines.push([]);
+    lines.push(heading("Held"));
+
+    for (const hold of holds.slice(0, HOLDS_SHOWN)) {
+      lines.push([
+        segment(
+          `  ${pad(hold.repo, 12)} ${hold.flow} ${itemText(itemRef(hold.itemKey))}: ${firstLine(hold.reason)}`,
+          "dim",
+        ),
+      ]);
+    }
+
+    // The CLI lists them all; say how many more there are here.
+    if (holds.length > HOLDS_SHOWN) {
+      lines.push([
+        segment(`  … ${holds.length - HOLDS_SHOWN} more (chernabog status lists them all)`, "dim"),
+      ]);
+    }
+  }
 
   const skips = status.skips.filter((skip) => passes(model, skip.repo, skip.persona));
 

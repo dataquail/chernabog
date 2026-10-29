@@ -4,6 +4,7 @@
 import * as Schema from "effect/Schema";
 
 import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
+import { HoldView } from "../../modules/runs/use-cases/hold.result.ts";
 import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunMarkerView } from "../../modules/runs/use-cases/run-marker.result.ts";
 import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
@@ -83,6 +84,9 @@ export const DaemonStatus = Schema.Struct({
   active: Schema.Array(ActiveRun),
   recent: Schema.Array(RunView),
   skips: Schema.Array(SkipView),
+  // The items flows' triggers hold, and why, as each flow's latest tick found
+  // them. Absent from a daemon from before holds.
+  holds: Schema.optionalKey(Schema.Array(HoldView)),
   // Each persona whose GitHub notifications tick its flows, and why its poll
   // fails, with the fix, if it does. Absent from a daemon from before them.
   notifications: Schema.optionalKey(

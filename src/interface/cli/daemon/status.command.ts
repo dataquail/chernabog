@@ -45,6 +45,10 @@ const relative = (iso: Option.Option<string>, now: DateTime.Utc) =>
     },
   );
 
+// An item as people name it: #14 for issue-14, PR 8 for pr-8, any other key as is.
+const itemName = (key: string) =>
+  key.replace(/^issue-(\d+)$/, "#$1").replace(/^pr-(\d+)$/, "PR $1");
+
 const suffix = (value: Option.Option<string>, prefix: string) =>
   Option.match(value, { onNone: () => "", onSome: (text) => `${prefix}${text}` });
 
@@ -197,6 +201,14 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
         (run) =>
           `  ${run.status.padEnd(11)} ${shortRunId(run.id)}  ${runLabel(run)}  ${Option.getOrElse(run.summary, () => "")}`,
       ),
+    ...Option.toArray(Option.map(Arr.head(status.holds ?? []), () => "\nheld:")),
+    ...(status.holds ?? []).map(
+      (hold) =>
+        `  ${hold.repo}/${hold.flow}${suffix(
+          Option.map(hold.persona, (login) => `@${login}`),
+          "",
+        )} ${itemName(hold.itemKey)}: ${hold.reason} (as of ${relative(Option.some(hold.at), now)})`,
+    ),
     ...Option.toArray(Option.map(Arr.head(status.skips), () => "\nrecent skips:")),
     ...status.skips.slice(0, 5).map(
       (skip) =>
