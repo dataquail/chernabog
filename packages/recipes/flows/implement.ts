@@ -4,6 +4,12 @@
 // reviewer from the team's pool. An auto:ship issue's pull request carries the
 // label too, so its approving reviewer merges it.
 //
+// An issue an open pull request on another branch already closes is not
+// implemented again: claim adopts that pull request (auto:adopted), and the
+// run waits for CI, fixing red in a worktree on its branch, and hands it off.
+// A draft waits for its author to mark it ready first. Several, or one on a
+// fork, go to a person.
+//
 // Each block is a durable activity from @chernabog/sdk. Reorder them, leave
 // one out, or put a step of your own from .chernabog/stages/ in between with
 // `step("name", input, OutputSchema)`. Side effects belong inside activities or
@@ -14,7 +20,20 @@
 // version. The names of its steps ("claim", "local-gate-1") are the keys a run
 // in flight resumes by, so renaming one restarts that step.
 
-import { Claims, defineFlow, GitHub, Implement, Repo, reportAs, Skip } from "@chernabog/sdk";
+import {
+  type CiTimedOut,
+  Claims,
+  defineFlow,
+  GitHub,
+  Implement,
+  NeedsHuman,
+  type NothingCommitted,
+  type PullRequestClosed,
+  type PushRejected,
+  Repo,
+  reportAs,
+  Skip,
+} from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -23,7 +42,8 @@ import * as Option from "effect/Option";
 // with a board, only those whose Status is its readyStatus. An issue another
 // open issue blocks waits for it, as the tasks of a plan's epic do, and a task
 // of an epic that an epic run holds is that run's to start; both are held,
-// and `chernabog status` says why.
+// and `chernabog status` says why. And the issues whose adopted draft its
+// author marked ready, which wake their run.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
@@ -37,13 +57,18 @@ const trigger = Effect.gen(function* () {
   return [
     ...(yield* Implement.queued(eligible)),
     ...(yield* Implement.queued(shipping, Option.some(repo.labels.ship))),
+    ...(yield* Implement.readied),
   ];
 }).pipe(reportAs("trigger"));
+
+// How long an adopted draft waits for its author to mark it ready.
+const READY_WITHIN = "14 days";
 
 export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
+  labels: Implement.adoptionLabels,
   // An issue closed, or claimed by another run, ends the run as superseded.
   stillValid: Implement.stillValid,
   workflow: (item) =>
@@ -57,9 +82,54 @@ export default defineFlow({
           Effect.flatMap(Implement.endForPerson),
         );
 
+      // Nothing to push, a push the token may not make (its message says the
+      // fix), CI that never finishes, or a pull request closed under the run:
+      // each is a person's to look into.
+      const forPerson = {
+        NeedsHuman: (needsHuman: NeedsHuman) => toPerson(needsHuman.reason),
+        NothingCommitted: (nothing: NothingCommitted) =>
+          toPerson(`the agent finished without committing anything on ${nothing.branch}`),
+        PushRejected: (rejected: PushRejected) => toPerson(rejected.message),
+        CiTimedOut: (timedOut: CiTimedOut) => toPerson(timedOut.message),
+        PullRequestClosed: (closed: PullRequestClosed) => toPerson(closed.message),
+      };
+
       return yield* Effect.gen(function* () {
-        // The base the claim settled, the repo's base branch here, which the later steps build on.
-        const { base, branch } = yield* Implement.claim(issue, queued);
+        // The base the claim settled, the repo's base branch here, which the
+        // later steps build on; for an adopted pull request, its branch and base.
+        const claimed = yield* Implement.claim(issue, { ...queued, adopt: true });
+        const { base, branch } = claimed;
+        const adoption = Option.fromUndefinedOr(claimed.adopted);
+
+        if (Option.isSome(adoption)) {
+          const adopted = adoption.value;
+          pullRequest = Option.some(adopted.number);
+
+          return yield* Effect.gen(function* () {
+            // A draft is its author's until they mark it ready.
+            if (
+              adopted.draft &&
+              (yield* Implement.awaitReady(issue, adopted.number, READY_WITHIN)) === "timeout"
+            ) {
+              return yield* new NeedsHuman({
+                reason: `#${adopted.number} is still a draft after ${READY_WITHIN}`,
+              });
+            }
+
+            // The worktree is made only for a fix.
+            yield* Implement.waitForCiMaking(adopted.number, Implement.prepareWorktree(branch), {
+              ...Implement.thisRunsSession,
+              branch,
+              base,
+            });
+
+            return yield* Implement.handOff(issue, adopted, Implement.adoptedOutcome(adopted), {
+              needsReview: true,
+              adoptedBranch: branch,
+            });
+          }).pipe(Effect.catchTags(forPerson));
+        }
+
         const worktree = yield* Implement.prepareWorktree(branch);
         const outcome = yield* Implement.implementWithAgent(issue, worktree, { base });
 
@@ -81,19 +151,7 @@ export default defineFlow({
           });
 
           return yield* Implement.handOff(issue, opened, outcome);
-        }).pipe(
-          Effect.catchTags({
-            NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
-            // Nothing to push, a push the token may not make (its message
-            // says the fix), CI that never finishes, or a pull request closed
-            // under the run: each is a person's to look into.
-            NothingCommitted: (nothing) =>
-              toPerson(`the agent finished without committing anything on ${nothing.branch}`),
-            PushRejected: (rejected) => toPerson(rejected.message),
-            CiTimedOut: (timedOut) => toPerson(timedOut.message),
-            PullRequestClosed: (closed) => toPerson(closed.message),
-          }),
-        );
+        }).pipe(Effect.catchTags(forPerson));
       }).pipe(
         // Any other failure once the issue is claimed hands it to a person, rather
         // than leaving it claimed with nobody working on it.

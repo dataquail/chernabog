@@ -52,6 +52,9 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
 // run of this version always writes; a marker without it is from a run that
 // held the issue by its branch alone. base: the branch the run builds on, so
 // a run that resumes keeps it; a marker without it is on the repo's base branch.
+// adopted: an open pull request already closed the issue, and the run took it
+// on rather than implementing it again; branch and base are that pull
+// request's, and draft is whether it was one when adopted.
 export const ClaimMarker = Schema.Struct({
   runId: Schema.String,
   claimedAt: Schema.String,
@@ -59,6 +62,9 @@ export const ClaimMarker = Schema.Struct({
   base: Schema.optionalKey(Schema.String),
   withPerson: Schema.optionalKey(Schema.Boolean),
   ref: Schema.optionalKey(Schema.Boolean),
+  adopted: Schema.optionalKey(
+    Schema.Struct({ number: Schema.Finite, url: Schema.String, draft: Schema.Boolean }),
+  ),
 });
 
 export type ClaimMarker = typeof ClaimMarker.Type;

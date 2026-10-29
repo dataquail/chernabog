@@ -398,6 +398,11 @@ export declare const ClaimMarker: Schema.Struct<{
     readonly base: Schema.optionalKey<Schema.String>;
     readonly withPerson: Schema.optionalKey<Schema.Boolean>;
     readonly ref: Schema.optionalKey<Schema.Boolean>;
+    readonly adopted: Schema.optionalKey<Schema.Struct<{
+        readonly number: Schema.Finite;
+        readonly url: Schema.String;
+        readonly draft: Schema.Boolean;
+    }>>;
 }>;
 export type ClaimMarker = typeof ClaimMarker.Type;
 export declare const OwnerMarker: Schema.Struct<{
@@ -424,6 +429,11 @@ export declare const claimMarker: {
         readonly base?: string | undefined;
         readonly withPerson?: boolean | undefined;
         readonly ref?: boolean | undefined;
+        readonly adopted?: {
+            readonly number: number;
+            readonly url: string;
+            readonly draft: boolean;
+        } | undefined;
     }) => string;
     read: (body: string) => Option.Option<{
         readonly runId: string;
@@ -432,6 +442,11 @@ export declare const claimMarker: {
         readonly base?: string | undefined;
         readonly withPerson?: boolean | undefined;
         readonly ref?: boolean | undefined;
+        readonly adopted?: {
+            readonly number: number;
+            readonly url: string;
+            readonly draft: boolean;
+        } | undefined;
     }>;
 };
 export declare const sessionMarker: {
