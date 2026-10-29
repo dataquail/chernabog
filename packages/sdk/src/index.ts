@@ -12,6 +12,7 @@ export * as Implement from "./implement.ts";
 export * as Plan from "./plan.ts";
 export * from "./prompt.ts";
 export * as Review from "./review.ts";
+export * as Stack from "./stack.ts";
 export * from "@chernabog/core";
 
 // PullRequest and Issue are each both a type, core's, and the steps on one;
