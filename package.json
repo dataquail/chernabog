@@ -8,7 +8,9 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "bun test",
+    "test": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json",
+    "test:unit": "bun test --parallel --timeout=15000 --path-ignore-patterns 'test/acceptance/**'",
+    "test:acceptance": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json test/acceptance",
     "check": "tsc --noEmit",
     "build": "bun build --compile src/interface/cli/main.ts --outfile dist/chernabog",
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
@@ -23,7 +25,7 @@
     "architecture:explain": "architecture explain",
     "architecture:facts": "architecture facts",
     "prepare": "husky && effect-tsgo patch --oxlint",
-    "precommit": "bun run format:check || { echo 'Prettier would change the files above: run bun run format, then commit again.' >&2; exit 1; } && bun run check && bun run lint && bun run lint:architecture && bun test",
+    "precommit": "bun run format:check || { echo 'Prettier would change the files above: run bun run format, then commit again.' >&2; exit 1; } && bun run check && bun run lint && bun run lint:architecture && bun run test",
     "gen:templates": "bun scripts/gen-templates.ts",
     "gen:core-api": "bun scripts/gen-core-api.ts"
   },

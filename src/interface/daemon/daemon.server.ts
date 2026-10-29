@@ -1254,12 +1254,12 @@ export const runDaemon = Effect.gen(function* () {
       );
 
       // Until the next notified item's check is due, or VALIDITY_POLL (or a
-      // repo's limits.leaseRenewEvery, if sooner) at the latest.
+      // repo's limits.validityEvery or leaseRenewEvery, if sooner) at the latest.
       const untilNextCheck = Effect.map(DateTime.now, (now) =>
         Arr.reduce(
           [...notifiedItems.values()],
           Arr.reduce(repos, VALIDITY_POLL, (soonest, repo) =>
-            Duration.min(soonest, leasesOf(repo).renewEvery),
+            Duration.min(soonest, Duration.min(validityEveryOf(repo), leasesOf(repo).renewEvery)),
           ),
           (soonest, item) =>
             Option.match(notifiedDueAt(item), {
