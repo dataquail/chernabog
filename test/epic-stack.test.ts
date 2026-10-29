@@ -2,11 +2,14 @@
 // history behind the fake GitHub: a fix pushed on the bottom layer of a
 // three-layer stack is merged into the layer above, then that one's new head
 // into the layer above it, bottom to top. A layer whose refresh is a clean
-// merge of its base keeps its approval, and no review round is counted.
+// merge of its base keeps its approval, and no review round is counted. A
+// refresh that needs a person holds that layer and the ones above it until
+// the person hands it back, and then carries them.
 
 import {
   Agent,
   type AgentRequest,
+  type AgentResult,
   DEFAULT_LABELS,
   Epic,
   Plan,
@@ -66,7 +69,8 @@ const contains = (cwd: string, ancestor: string, commit: string) =>
 // A bare origin, the repo's checkout and a person's clone: main with a.txt,
 // and a stack of three layers, each a branch on the one below adding a file
 // of its own, all pushed. Each layer's branch is its task's work branch.
-const history = (tasks: readonly [number, number, number]) =>
+// conflicting: the middle layer and the bottom layer's fix both change a.txt.
+const history = (tasks: readonly [number, number, number], conflicting = false) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-epic-stack-" });
@@ -101,6 +105,11 @@ const history = (tasks: readonly [number, number, number]) =>
 
     for (const task of tasks) {
       yield* git(clone, "checkout", "--quiet", "-b", `auto/issue-${task}`);
+
+      if (conflicting && task === tasks[1]) {
+        yield* fs.writeFileString(`${clone}/a.txt`, "middle\n");
+      }
+
       heads.push(yield* commit(`task ${task}`, `task-${task}.txt`, `task ${task}\n`));
       yield* git(clone, "push", "--quiet", "origin", `auto/issue-${task}`);
     }
@@ -124,107 +133,128 @@ const history = (tasks: readonly [number, number, number]) =>
     const fixBottom = Effect.gen(function* () {
       yield* inClone("checkout", "--quiet", `auto/issue-${tasks[0]}`);
       yield* fs.writeFileString(`${clone}/task-${tasks[0]}.txt`, "fixed\n");
+
+      if (conflicting) {
+        yield* fs.writeFileString(`${clone}/a.txt`, "bottom\n");
+      }
+
       yield* inClone("commit", "--quiet", "--all", "-m", "bottom: fix");
       yield* inClone("push", "--quiet", "origin", `auto/issue-${tasks[0]}`);
 
       return yield* inClone("rev-parse", "HEAD");
     }).pipe(Effect.orDie);
 
-    return { origin, clone, checkout, heads, fixBottom };
+    // A person bringing the middle layer up to date by hand, resolving
+    // a.txt's conflict: the middle layer's new head.
+    const resolveMiddle = Effect.gen(function* () {
+      yield* inClone("checkout", "--quiet", `auto/issue-${tasks[1]}`);
+      yield* exec.run("git", ["-C", clone, "merge", "--quiet", `auto/issue-${tasks[0]}`]);
+      yield* fs.writeFileString(`${clone}/a.txt`, "both\n");
+      yield* inClone("commit", "--quiet", "--all", "--no-edit");
+      yield* inClone("push", "--quiet", "origin", `auto/issue-${tasks[1]}`);
+
+      return yield* inClone("rev-parse", "HEAD");
+    }).pipe(Effect.orDie);
+
+    return { origin, clone, checkout, heads, fixBottom, resolveMiddle };
   });
 
-describe("epic: carrying a change up the stack", () => {
-  atHome(
-    "a fix pushed on layer 1 brings layer 2 and then layer 3 up to date, keeping a clean merge's approval",
-    () =>
-      Effect.gen(function* () {
-        // The epic is #1 and its tasks #2, #3 and #4, each built on the one before.
-        const tasks = [2, 3, 4] as const;
-        const repoHistory = yield* history(tasks);
+// The epic #1 over the three tasks, each a pull request on the branch of the
+// one below, run against the fake GitHub on `repoHistory` with git for real.
+// The agent answers `answer` to every request, each recorded in `asked`.
+const startEpic = (
+  tasks: readonly [number, number, number],
+  repoHistory: Effect.Success<ReturnType<typeof history>>,
+  answer: AgentResult["output"],
+) =>
+  Effect.gen(function* () {
+    const github = yield* Effect.acquireRelease(
+      Effect.sync(() => startFakeGitHub({ slug: SLUG, bare: repoHistory.origin })),
+      (started) => Effect.promise(() => started.stop()),
+    );
 
-        const github = yield* Effect.acquireRelease(
-          Effect.sync(() => startFakeGitHub({ slug: SLUG, bare: repoHistory.origin })),
-          (started) => Effect.promise(() => started.stop()),
-        );
+    const epicNumber = github.addIssue("An epic", [Plan.LABELS.epic]);
+    expect(epicNumber).toBe(1);
 
-        const epicNumber = github.addIssue("An epic", [Plan.LABELS.epic]);
-        expect(epicNumber).toBe(1);
+    for (const task of tasks) {
+      expect(github.addIssue(`Task ${task}`, [DEFAULT_LABELS.eligible])).toBe(task);
+    }
 
-        for (const task of tasks) {
-          expect(github.addIssue(`Task ${task}`, [DEFAULT_LABELS.eligible])).toBe(task);
-        }
+    github.subIssues.set(epicNumber, [...tasks]);
+    github.blockers.set(3, [2]);
+    github.blockers.set(4, [3]);
 
-        github.subIssues.set(epicNumber, [...tasks]);
-        github.blockers.set(3, [2]);
-        github.blockers.set(4, [3]);
+    // Each task's pull request, on the branch of the one below.
+    const pulls = tasks.map((task) =>
+      github.addPull(`Task ${task}`, `auto/issue-${task}`, "chernabog-bot", []),
+    );
 
-        // Each task's pull request, on the branch of the one below.
-        const pulls = tasks.map((task) =>
-          github.addPull(`Task ${task}`, `auto/issue-${task}`, "chernabog-bot", []),
-        );
+    const [, middle, top] = pulls;
+    github.pull(middle).base = "auto/issue-2";
+    github.pull(top).base = "auto/issue-3";
 
-        const [bottom, middle, top] = pulls;
-        github.pull(middle).base = "auto/issue-2";
-        github.pull(top).base = "auto/issue-3";
+    // bob approved the middle layer as it was.
+    github.submitReview(middle, "bob", "APPROVED", "Looks right.");
 
-        // bob approved the middle layer as it was.
-        github.submitReview(middle, "bob", "APPROVED", "Looks right.");
+    const repoSettings = { ...settings, slug: SLUG, path: repoHistory.checkout };
+    const host = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
 
-        const repoSettings = { ...settings, slug: SLUG, path: repoHistory.checkout };
-        const host = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
+    const api = GitHubApi.layerFor(IMPLICIT).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ CHERNABOG_GITHUB_API: github.url })),
+      ),
+    );
 
-        const api = GitHubApi.layerFor(IMPLICIT).pipe(
-          Layer.provide(FetchHttpClient.layer),
-          Layer.provide(
-            ConfigProvider.layer(ConfigProvider.fromUnknown({ CHERNABOG_GITHUB_API: github.url })),
+    // Every request is recorded, for the tests to check who was asked.
+    const asked: Array<AgentRequest> = [];
+
+    const agent = Layer.succeed(
+      Agent,
+      Agent.of({
+        adapters: ["claude"],
+        run: (request) =>
+          Effect.sync(() => asked.push(request)).pipe(
+            Effect.as({
+              sessionId: request.sessionId,
+              output: answer,
+              costUsd: Option.none(),
+            }),
           ),
-        );
+      }),
+    );
 
-        // A clean merge needs no agent; any request is recorded, and fails the test below.
-        const asked: Array<AgentRequest> = [];
+    const live = Layer.mergeAll(
+      GitHubLive(repoSettings),
+      GitLive(IMPLICIT),
+      WorktreeLive(repoSettings, IMPLICIT),
+      Layer.succeed(Repo, Repo.of(repoSettings)),
+    ).pipe(
+      Layer.provide(api),
+      Layer.provide(Layer.merge(GitHubTokens.fixed("test-token"), Layer.succeedContext(host))),
+    );
 
-        const agent = Layer.succeed(
-          Agent,
-          Agent.of({
-            adapters: ["claude"],
-            run: (request) =>
-              Effect.sync(() => asked.push(request)).pipe(
-                Effect.as({
-                  sessionId: request.sessionId,
-                  output: { status: "done", summary: "Nothing to adjust." },
-                  costUsd: Option.none(),
-                }),
-              ),
-          }),
-        );
+    const base = makeFake("approve");
+    const fake = { ...base, services: Layer.mergeAll(base.services, live, agent) };
+    const working = flowHandle(repoAs(repoSettings), "epic", epic);
 
-        const live = Layer.mergeAll(
-          GitHubLive(repoSettings),
-          GitLive(IMPLICIT),
-          WorktreeLive(repoSettings, IMPLICIT),
-          Layer.succeed(Repo, Repo.of(repoSettings)),
-        ).pipe(
-          Layer.provide(api),
-          Layer.provide(Layer.merge(GitHubTokens.fixed("test-token"), Layer.succeedContext(host))),
-        );
+    // Each branch's head on origin.
+    const headOf = (branch: string) =>
+      Option.getOrElse(github.refSha(`refs/heads/${branch}`), () => "");
 
-        const base = makeFake("approve");
-        const fake = { ...base, services: Layer.mergeAll(base.services, live, agent) };
-        const working = flowHandle(repoAs(repoSettings), "epic", epic);
-
-        // Each branch's head on origin.
-        const headOf = (branch: string) =>
-          Option.getOrElse(github.refSha(`refs/heads/${branch}`), () => "");
-
-        // The heads each time the run parked, and the fix pushed after the first.
+    // Runs the epic and, each time it parks, records each layer's head on
+    // origin, does the next of `acts` and signals the change; once they are
+    // done, stops at the next park.
+    const throughParks = (acts: ReadonlyArray<Effect.Effect<void>>) =>
+      Effect.gen(function* () {
         const parks: Array<ReadonlyArray<string>> = [];
         const answered = new Set<string>();
-        let fixed = "";
+        let acted = 0;
 
         const run = yield* runUntil(
           working,
           fake,
-          item(`issue-${epicNumber}`, { issue: 1 }),
+          item(`issue-${epicNumber}`, { issue: epicNumber }),
           (current) =>
             Effect.gen(function* () {
               if (current.status !== "running") {
@@ -242,12 +272,13 @@ describe("epic: carrying a change up the stack", () => {
                 parks.push(tasks.map((task) => headOf(`auto/issue-${task}`)));
               }
 
-              if (parks.length > 1) {
+              if (parks.length > acts.length) {
                 return true;
               }
 
-              if (fixed === "") {
-                fixed = yield* repoHistory.fixBottom;
+              if (acted < parks.length) {
+                yield* acts[acted] ?? Effect.void;
+                acted += 1;
               }
 
               const found = yield* triggered(fake, Epic.queued).pipe(Effect.orDie);
@@ -259,6 +290,39 @@ describe("epic: carrying a change up the stack", () => {
               return false;
             }),
         );
+
+        return { run, parks };
+      });
+
+    return { github, pulls, asked, throughParks };
+  });
+
+describe("epic: carrying a change up the stack", () => {
+  atHome(
+    "a fix pushed on layer 1 brings layer 2 and then layer 3 up to date, keeping a clean merge's approval",
+    () =>
+      Effect.gen(function* () {
+        // The epic is #1 and its tasks #2, #3 and #4, each built on the one before.
+        const tasks = [2, 3, 4] as const;
+        const repoHistory = yield* history(tasks);
+
+        const { asked, github, pulls, throughParks } = yield* startEpic(tasks, repoHistory, {
+          status: "done",
+          summary: "Nothing to adjust.",
+        });
+
+        const [bottom, middle, top] = pulls;
+
+        // The fix is pushed after the first park.
+        let fixed = "";
+
+        const { parks, run } = yield* throughParks([
+          repoHistory.fixBottom.pipe(
+            Effect.map((sha) => {
+              fixed = sha;
+            }),
+          ),
+        ]);
 
         expect(run.status).toBe("running");
         expect(parks).toHaveLength(2);
@@ -298,6 +362,73 @@ describe("epic: carrying a change up the stack", () => {
           ).toEqual([]);
           expect(github.pull(pull).labels).not.toContain(DEFAULT_LABELS.needsHuman);
         }
+      }),
+  );
+
+  atHome(
+    "a refresh that needs a person holds that layer and the ones above it until the person hands it back",
+    () =>
+      Effect.gen(function* () {
+        const tasks = [2, 3, 4] as const;
+        const repoHistory = yield* history(tasks, true);
+
+        // The fix conflicts with the middle layer, and its author agent needs a person.
+        const { asked, github, pulls, throughParks } = yield* startEpic(tasks, repoHistory, {
+          status: "needs-clarification",
+          summary: "Both changed a.txt.",
+          questions: "Which a.txt should the middle layer keep?",
+        });
+
+        const [, middle, top] = pulls;
+
+        let fixed = "";
+        let resolved = "";
+
+        const { parks, run } = yield* throughParks([
+          repoHistory.fixBottom.pipe(
+            Effect.map((sha) => {
+              fixed = sha;
+            }),
+          ),
+          // The person merges the fix by hand and hands the layer back.
+          repoHistory.resolveMiddle.pipe(
+            Effect.map((sha) => {
+              resolved = sha;
+              const labels = github.pull(middle).labels;
+              labels.splice(labels.indexOf(DEFAULT_LABELS.needsHuman), 1);
+            }),
+          ),
+        ]);
+
+        expect(run.status).toBe("running");
+        expect(parks).toHaveLength(3);
+
+        // Second park: the middle layer went to a person, and the top layer
+        // waited on it; the run carried on to park.
+        expect(parks[1]).toEqual([fixed, repoHistory.heads[1], repoHistory.heads[2]]);
+        expect(asked).toHaveLength(1);
+        expect(
+          github
+            .commentsOn(middle)
+            .filter((posted) =>
+              posted.body.startsWith("Chernabog stopped bringing this layer up to date"),
+            ),
+        ).toHaveLength(1);
+        expect(github.pull(top).labels).not.toContain(DEFAULT_LABELS.needsHuman);
+
+        // Third park: handed back, the middle layer was already up to date,
+        // and the top layer merged the person's head.
+        const [, middleHead = "", topHead = ""] = parks[2] ?? [];
+        expect(middleHead).toBe(resolved);
+        yield* git(repoHistory.clone, "fetch", "--quiet", "origin");
+
+        const parents = yield* git(repoHistory.clone, "rev-list", "--parents", "-n", "1", topHead);
+        expect(parents.split(" ").slice(1)).toEqual([repoHistory.heads[2], resolved]);
+
+        // Nothing new went to a person, and no agent was asked again.
+        expect(asked).toHaveLength(1);
+        expect(github.pull(middle).labels).not.toContain(DEFAULT_LABELS.needsHuman);
+        expect(github.pull(top).labels).not.toContain(DEFAULT_LABELS.needsHuman);
       }),
   );
 });

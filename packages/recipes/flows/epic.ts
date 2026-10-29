@@ -160,14 +160,24 @@ const readBase = (round: number, pullRequest: number) =>
   );
 
 // The run's worktree on the layer's branch, brought up to its remote, as the
-// step `prepare-worktree#refresh-<key>`.
-const refreshWorktree = (branch: string, key: string) =>
+// step `prepare-worktree#refresh-<key>`. After a hand-back it is reset to the
+// remote: the refresh that went to a person may have left a merge unfinished
+// there, and the person may have pushed the layer on.
+const refreshWorktree = (branch: string, key: string, attempt: number) =>
   activity(
     `prepare-worktree#refresh-${key}`,
     Effect.gen(function* () {
       const run = yield* Run;
+      const git = yield* Git;
       const path = yield* (yield* Worktree).ensure(branch, run.runId);
-      yield* (yield* Git).pull(path, branch);
+
+      if (attempt > 1) {
+        yield* git.run(["fetch", "--quiet", "origin", branch], path);
+        yield* git.run(["reset", "--quiet", "--hard", `origin/${branch}`], path);
+        yield* git.run(["clean", "-fdq"], path);
+      } else {
+        yield* git.pull(path, branch);
+      }
 
       return path;
     }),
@@ -190,38 +200,62 @@ const refreshToPerson = (pullRequest: number, key: string, reason: string) =>
     }),
   ).pipe(Effect.as(`#${pullRequest}: ${reason}`));
 
-// A refresh that went to a person: the layer isn't carried.
-const toPersonFor = (pullRequest: number, baseSha: string, reason: string) =>
-  refreshToPerson(pullRequest, `${pullRequest}-${baseSha.slice(0, 12)}`, reason).pipe(
-    Effect.as({ carried: false, pushed: false }),
-  );
+// What one refresh did: whether the layer was carried, whether it pushed,
+// and whether it went to a person.
+type Carried = { readonly carried: boolean; readonly pushed: boolean; readonly toPerson: boolean };
 
 // Brings one layer up to date with its base at `baseSha` (Stack.refreshLayer):
 // merges it in, adjusts the layer when the base changed what it builds on,
-// pushes and waits for CI. Whether it pushed; one that needs a person is
-// handed to one, and reads as not carried, so the layers above it wait.
-const refresh = (layer: Epic.Layer, pullRequest: number, base: string, baseSha: string) =>
-  Effect.gen(function* () {
-    const branch = Claims.branchFor(layer.number);
-    const key = `${pullRequest}-${baseSha.slice(0, 12)}`;
-    const worktree = yield* refreshWorktree(branch, key);
-    const refreshed = yield* Stack.refreshLayer(worktree, { pullRequest, branch, base, baseSha });
+// pushes and waits for CI. One that needs a person is handed to one, and
+// reads as not carried, so the layers above it wait. Every step is keyed by
+// the pull request, the base's sha and, after a hand-back, the attempt, so the
+// refresh after one runs again rather than replaying the outcome it saved.
+const refresh = (
+  layer: Epic.Layer,
+  pullRequest: number,
+  base: string,
+  baseSha: string,
+  attempt: number,
+) => {
+  const again = Option.match(
+    Option.filter(Option.some(attempt), (count) => count > 1),
+    { onNone: () => "", onSome: (count) => `-${count}` },
+  );
 
-    return { carried: true, pushed: !refreshed.upToDate };
+  const key = `${pullRequest}-${baseSha.slice(0, 12)}${again}`;
+
+  const toPerson = (reason: string) =>
+    refreshToPerson(pullRequest, key, reason).pipe(
+      Effect.as<Carried>({ carried: false, pushed: false, toPerson: true }),
+    );
+
+  return Effect.gen(function* () {
+    const branch = Claims.branchFor(layer.number);
+    const worktree = yield* refreshWorktree(branch, key, attempt);
+
+    const refreshed = yield* Stack.refreshLayer(worktree, {
+      pullRequest,
+      branch,
+      base,
+      baseSha,
+      attempt,
+    });
+
+    return { carried: true, pushed: !refreshed.upToDate, toPerson: false } satisfies Carried;
   }).pipe(
     Effect.catchTags({
-      NeedsHuman: (needsHuman) => toPersonFor(pullRequest, baseSha, needsHuman.reason),
-      StepFailed: (failed) =>
-        toPersonFor(pullRequest, baseSha, `${failed.step}: ${failed.message}`),
-      NothingCommitted: (nothing) =>
-        toPersonFor(pullRequest, baseSha, `nothing to push on ${nothing.branch}`),
-      PushRejected: (rejected) => toPersonFor(pullRequest, baseSha, rejected.message),
-      CiTimedOut: (timedOut) => toPersonFor(pullRequest, baseSha, timedOut.message),
+      NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
+      StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
+      NothingCommitted: (nothing) => toPerson(`nothing to push on ${nothing.branch}`),
+      PushRejected: (rejected) => toPerson(rejected.message),
+      CiTimedOut: (timedOut) => toPerson(timedOut.message),
       // A layer closed or gone under the run has nothing above it to carry.
-      PullRequestClosed: () => Effect.succeed({ carried: false, pushed: false }),
-      NotFound: () => Effect.succeed({ carried: false, pushed: false }),
+      PullRequestClosed: () =>
+        Effect.succeed<Carried>({ carried: false, pushed: false, toPerson: false }),
+      NotFound: () => Effect.succeed<Carried>({ carried: false, pushed: false, toPerson: false }),
     }),
   );
+};
 
 // The epic's layers in review on the branch of another in review, bottom to
 // top: each after the one it is stacked on.
@@ -252,14 +286,26 @@ const stackedLayers = (progress: Epic.Progress) => {
     .toSorted((left, right) => depthOf(left) - depthOf(right));
 };
 
+// What the run keeps between rounds about carrying layers up, by pull
+// request: the base head it last brought each layer up to, its refresh
+// attempt, and the layers whose refresh it handed to a person. Rebuilt from
+// the rounds' saved results whenever the run resumes.
+type Upkeep = {
+  readonly attempts: Map<number, number>;
+  readonly recorded: Map<number, string>;
+  readonly withPerson: Set<number>;
+};
+
 // Carries each layer's change up its stack, bottom to top: a layer whose base
 // branch's head is not the one it was last brought up to is refreshed, then
 // the one above it reads its own base, now moved too. A layer a person has,
 // or whose refresh went to one, waits, and so do the layers above it; the
-// rest of the epic carries on. `recorded` is each layer's base head, by pull
-// request, as the run last brought it up to. Whether anything was pushed.
-const carryUp = (round: number, progress: Epic.Progress, recorded: Map<number, string>) =>
+// rest of the epic carries on. A layer the run handed to a person and that
+// no longer carries auto:needs-human is handed back: its next refresh is a
+// new attempt. Whether anything was pushed.
+const carryUp = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
   Effect.gen(function* () {
+    const { attempts, recorded, withPerson } = upkeep;
     const waiting = new Set<number>();
     let pushed = false;
 
@@ -278,13 +324,22 @@ const carryUp = (round: number, progress: Epic.Progress, recorded: Map<number, s
         continue;
       }
 
+      if (withPerson.delete(pullRequest)) {
+        attempts.set(pullRequest, (attempts.get(pullRequest) ?? 1) + 1);
+      }
+
       const baseSha = read.baseSha.value;
 
       if (recorded.get(pullRequest) === baseSha) {
         continue;
       }
 
-      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha);
+      const attempt = attempts.get(pullRequest) ?? 1;
+      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha, attempt);
+
+      if (refreshed.toPerson) {
+        withPerson.add(pullRequest);
+      }
 
       if (!refreshed.carried) {
         waiting.add(layer.number);
@@ -310,7 +365,7 @@ const workThrough = (epic: number) =>
   Effect.gen(function* () {
     const attempts = new Map<number, number>();
     const handedBack = new Set<number>();
-    const bases = new Map<number, string>();
+    const upkeep: Upkeep = { attempts: new Map(), recorded: new Map(), withPerson: new Set() };
 
     for (let round = 1; ; round++) {
       const progress = yield* Epic.progress(epic, round);
@@ -321,7 +376,7 @@ const workThrough = (epic: number) =>
       }
 
       // A refresh moved layers' heads: read the epic again before going on.
-      if (yield* carryUp(round, progress, bases)) {
+      if (yield* carryUp(round, progress, upkeep)) {
         continue;
       }
 
