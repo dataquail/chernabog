@@ -33,8 +33,12 @@ export type UpdateOptions = {
 // resolve-conflicts does, and updating again (with another id) finishes it.
 // base: the branch the layer is now built on, the lower layer's base once it
 // merged. oldBase and newBase: what the layer's own changes were against
-// before, and the base's head merged in now. reconciled: the lower layer's
-// squash or rebase was recorded as already contained.
+// before, and the base's head merged in now; oldBase is the lower head
+// whenever the lower layer's squash or rebase is being reconciled, finished
+// or not. reconciled: that squash or rebase was recorded as already
+// contained. It is false while a conflict in the base before the lower
+// layer's commits stops the reconcile short, so a flow reads `reconciled`,
+// not `oldBase`, to tell whether the reconcile got that far.
 export const Updated = Schema.Struct({
   clean: Schema.Boolean,
   conflicts: Schema.Array(Schema.String),
@@ -108,7 +112,10 @@ const merge = (worktree: string, args: ReadonlyArray<string>) =>
 // The commits a squash or rebase put on the base for the lower layer: those
 // at the tip of the base's first-parent line, ending at `merged`, whose change
 // the lower layer's head has (git cherry's "-"). A squash's one commit
-// matches none of the layer's commits, and is one commit too.
+// matches none of the layer's commits, and is one commit too. A commit on the
+// base just before them whose change matches one of the layer's would be
+// counted too, and recorded with them rather than merged; that is still sound,
+// since its change is one this layer already holds.
 const mergedCount = (worktree: string, lowerHead: string, merged: string) =>
   Effect.gen(function* () {
     const git = yield* Git;

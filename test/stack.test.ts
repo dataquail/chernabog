@@ -2,7 +2,7 @@
 // with its base when the layer below got new commits, and when the layer below
 // merged into main, by a merge commit, a squash or a rebase.
 
-import { GitHub, type PullRequest, Repo, Stack } from "@chernabog/sdk";
+import { defineFlow, Git, GitHub, type PullRequest, Repo, Stack, StepFailed } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,11 +10,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { GitLive } from "../src/modules/runs/infrastructure/runtime/sdk-live.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import { GitHubTokens } from "../src/platform/github-auth.ts";
-import { effectAtHomeWith } from "./effect-test.ts";
-import { settings } from "./sdk-fakes.ts";
+import { effect, effectAtHomeWith } from "./effect-test.ts";
+import { item, makeFake, repo, runToEnd, settings, summaryOf } from "./sdk-fakes.ts";
 
 const LOWER = 1;
 const LOWER_BRANCH = "auto/issue-1";
@@ -346,6 +347,50 @@ describe("Stack.updateFromBase", () => {
     }).pipe(Effect.provide(repos)),
   );
 
+  atHome(
+    "a conflict in main before the squash stops the reconcile short, and updating again finishes it",
+    () =>
+      Effect.gen(function* () {
+        const { upper } = yield* Repos;
+        yield* stack({ "a.txt": aWith(4, "upper") });
+        yield* onMain("main edits line 4", { "a.txt": aWith(4, "main") });
+        const squashed = yield* squashLower;
+
+        const stopped = yield* Stack.updateFromBase(upper, { base: LOWER_BRANCH, lower: LOWER });
+
+        expect(stopped).toEqual({
+          clean: false,
+          conflicts: ["a.txt"],
+          base: "main",
+          oldBase: lower.pull.headSha,
+          newBase: squashed,
+          reconciled: false,
+        });
+
+        // The agent resolves it, keeping the lower layer's line 2 and its own line 4.
+        const resolved = lines(...A_LINES.toSpliced(1, 1, "lower").toSpliced(3, 1, "upper"));
+        yield* (yield* FileSystem.FileSystem).writeFileString(`${upper}/a.txt`, resolved);
+        yield* git(upper, "commit", "--quiet", "--all", "--no-edit");
+
+        const finished = yield* Stack.updateFromBase(upper, {
+          base: LOWER_BRANCH,
+          lower: LOWER,
+          id: "again",
+        });
+
+        expect(finished).toEqual({
+          clean: true,
+          conflicts: [],
+          base: "main",
+          oldBase: lower.pull.headSha,
+          newBase: squashed,
+          reconciled: true,
+        });
+        expect(yield* fileIn("a.txt")).toBe(resolved);
+        expect(yield* ownDiff("main")).toBe("a.txt");
+      }).pipe(Effect.provide(repos)),
+  );
+
   atHome("a rebase-merged layer below is reconciled like a squash", () =>
     Effect.gen(function* () {
       const { upper } = yield* Repos;
@@ -385,5 +430,58 @@ describe("Stack.updateFromBase", () => {
       });
       expect(yield* ownDiff("main")).toBe("a.txt");
     }).pipe(Effect.provide(repos)),
+  );
+});
+
+// Two updates of one layer in one run, each its own durable step.
+const syncing = defineFlow({
+  trigger: Effect.succeed([]),
+  workflow: () =>
+    Effect.gen(function* () {
+      const first = yield* Stack.syncBase("/tmp/layer", { base: LOWER_BRANCH });
+      const again = yield* Stack.syncBase("/tmp/layer", { base: LOWER_BRANCH, id: "again" });
+
+      return `${first.oldBase}..${first.newBase} ${again.clean}`;
+    }).pipe(
+      Effect.catchTag("NotFound", (gone) =>
+        Effect.fail(new StepFailed({ step: "update-from-base", message: gone.message })),
+      ),
+    ),
+});
+
+describe("Stack.syncBase", () => {
+  effect("runs under the engine as update-from-base, once per id", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      const commands: Array<string> = [];
+
+      // What git says to each command the update runs; nothing to any other.
+      const answers = new Map([
+        ["merge-base", "old1234\n"],
+        ["rev-parse", "new5678\n"],
+      ]);
+
+      const recording = Layer.mock(Git)({
+        run: (args) =>
+          Effect.sync(() => {
+            commands.push(args.join(" "));
+
+            return answers.get(args[0] ?? "") ?? "";
+          }),
+      });
+
+      const finished = yield* runToEnd(
+        flowHandle(repo, "demo", syncing),
+        { ...fake, services: Layer.merge(fake.services, recording) },
+        item("layer"),
+      );
+
+      expect(finished.status).toBe("done");
+      expect(summaryOf(finished)).toBe("old1234..new5678 true");
+      expect(commands.filter((command) => command.startsWith("merge "))).toEqual([
+        `merge --no-edit origin/${LOWER_BRANCH}`,
+        `merge --no-edit origin/${LOWER_BRANCH}`,
+      ]);
+    }),
   );
 });
