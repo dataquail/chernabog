@@ -1,6 +1,4 @@
 [test]
-# The timeout the test scripts give, for a bare `bun test` too.
-preload = ["./test/default-timeout.ts"]
 # `bun test` measures coverage the same here and in CI. Its totals' floor is
 # scripts/coverage.ts's, which CI checks after the tests: Bun's own
 # coverageThreshold holds every file to it, not the total.

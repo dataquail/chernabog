@@ -118,8 +118,6 @@ graph:
         - "scripts/release-pr-check.ts"
         # The acceptance sandbox runs it as a child process, for a lockfile.
         - "test/acceptance/lockfile.ts"
-        # bunfig.toml preloads it before every test file.
-        - "test/default-timeout.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
         # are the recipes `chernabog recipes add` copies and a repo's
         # `flows.<name>.from` imports.
