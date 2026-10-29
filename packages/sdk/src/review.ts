@@ -558,29 +558,31 @@ export type AddressItem = typeof AddressItem.Type;
 
 export const addressItemOf = itemData(AddressItem);
 
+// The author's session, from the marker the implement run left; a fresh one
+// for `purpose` if there is none. Outside an activity, for a block that reads
+// it under a name of its own.
+export const findAuthorSession = (pullRequest: number, purpose: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const run = yield* Run;
+    const repo = yield* Repo;
+
+    const found = latestMarker(
+      sessionMarker.read,
+      (yield* github.comments(pullRequest)).map((comment) => comment.body),
+    );
+
+    return Option.getOrElse(found, (): SessionMarker => ({
+      adapter: repo.agent,
+      sessionId: sessionIdFor(run.runId, purpose),
+      issue: 0,
+      branch: "",
+    }));
+  });
+
 // The author's session, from the marker the implement run left; a fresh one if there is none.
 export const authorSession = (pullRequest: number) =>
-  activity(
-    "find-author",
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      const run = yield* Run;
-      const repo = yield* Repo;
-
-      const found = latestMarker(
-        sessionMarker.read,
-        (yield* github.comments(pullRequest)).map((comment) => comment.body),
-      );
-
-      return Option.getOrElse(found, () => ({
-        adapter: repo.agent,
-        sessionId: sessionIdFor(run.runId, "address-review"),
-        issue: 0,
-        branch: "",
-      }));
-    }),
-    SessionMarker,
-  );
+  activity("find-author", findAuthorSession(pullRequest, "address-review"), SessionMarker);
 
 // The author's worktree on the pull request's branch, brought up to date.
 export const prepareAuthorWorktree = (headRef: string) =>
@@ -653,14 +655,19 @@ export const checkChanged = (
     }),
   );
 
+// Says why on the pull request, and asks the reviewer to review again,
+// outside an activity, for a block that asks under a name of its own.
+export const requestAgain = (pullRequest: number, reviewer: string, said: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    yield* github.comment(pullRequest, said);
+    yield* github.requestReviewers(pullRequest, [reviewer]);
+  });
+
 // Asks the reviewer who requested the changes to review again, which starts
 // their re-review.
 export const askAgain = (pullRequest: number, round: number, reviewer: string, summary: string) =>
   activity(
     `ask-again-${round}`,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      yield* github.comment(pullRequest, `Addressed review ${round}: ${summary}`);
-      yield* github.requestReviewers(pullRequest, [reviewer]);
-    }),
+    requestAgain(pullRequest, reviewer, `Addressed review ${round}: ${summary}`),
   );

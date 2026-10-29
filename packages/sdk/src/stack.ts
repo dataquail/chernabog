@@ -1,14 +1,17 @@
 // The blocks of a stack of pull requests, each layer built on the one below:
-// bringing a layer up to date with its base, by merging only. Nothing is
-// rebased or force-pushed, so a layer's history is never rewritten.
+// bringing a layer up to date with its base, by merging only, and adjusting
+// it to what moved. Nothing is rebased or force-pushed, so a layer's history
+// is never rewritten.
 
 import {
   activity,
   Git,
   GitHub,
   type Json,
+  NeedsHuman,
   type PullRequest,
   Repo,
+  SessionMarker,
   StepFailed,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -16,7 +19,18 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { baseOf } from "./implement.ts";
+import { REFRESH } from "./default-prompts.ts";
+import {
+  type AuthorSession,
+  baseOf,
+  fixWithAgent,
+  localGate,
+  push,
+  waitForCi,
+} from "./implement.ts";
+import { renderPromptOr } from "./prompt.ts";
+import { onlyMergedBase } from "./pull-request.ts";
+import { decisiveReviews, findAuthorSession, requestAgain } from "./review.ts";
 
 // base: the branch the layer is built on now, the repo's base branch unless
 // given. lower: the pull request of the layer below, whose head branch is
@@ -232,3 +246,281 @@ export const syncBase = (worktree: string, options: UpdateOptions = {}) =>
     updateFromBase(worktree, options),
     Updated,
   );
+
+// The layer a refresh brings up to date: its pull request and branch, the
+// base it is built on and the layer below's pull request, as updateFromBase
+// takes them, and baseSha, the head of the base the caller saw move, which
+// keys every step: a loop refreshes a layer once per base move. session: the
+// author's session to resume, the one the implementing run's marker on the
+// pull request names unless given.
+export type LayerRefresh = {
+  readonly pullRequest: number;
+  readonly branch: string;
+  readonly base?: string;
+  readonly lower?: number;
+  readonly baseSha: string;
+  readonly session?: AuthorSession;
+};
+
+// What a refresh did. upToDate: the layer already held its base, so nothing
+// was pushed. adjusted: the author agent was asked to resolve conflicts or
+// adjust the layer. askedAgain: the reviewer asked to review again, none when
+// the new head only merged the base into the head they reviewed, or nobody
+// has reviewed it.
+export type Refreshed = {
+  readonly upToDate: boolean;
+  readonly adjusted: boolean;
+  readonly askedAgain: Option.Option<string>;
+};
+
+// The most lines of the base's diff a prompt carries; the agent reads the rest itself.
+const DIFF_LINES = 400;
+
+const BaseChange = Schema.Struct({
+  upToDate: Schema.Boolean,
+  touched: Schema.Array(Schema.String),
+  diff: Schema.String,
+});
+
+// What the merge brought in, against what the layer changes itself: whether
+// it changed anything, the files the base changed that the layer changes too,
+// and the base's diff of them.
+const baseChange = (worktree: string, before: string, synced: Updated) =>
+  Effect.gen(function* () {
+    const git = yield* Git;
+
+    if (synced.clean && output(yield* git.headSha(worktree)) === before) {
+      return { upToDate: true, touched: [], diff: "" };
+    }
+
+    const own = new Set(
+      lines(yield* git.run(["diff", "--name-only", synced.oldBase, before], worktree)),
+    );
+
+    const touched = lines(
+      yield* git.run(["diff", "--name-only", synced.oldBase, synced.newBase], worktree),
+    ).filter((path) => own.has(path));
+
+    if (touched.length === 0) {
+      return { upToDate: false, touched, diff: "" };
+    }
+
+    const diff = (yield* git.run(
+      ["diff", synced.oldBase, synced.newBase, "--", ...touched],
+      worktree,
+    )).split("\n");
+
+    const shown = diff.slice(0, DIFF_LINES);
+
+    if (diff.length > DIFF_LINES) {
+      shown.push(`… ${diff.length - DIFF_LINES} more lines`);
+    }
+
+    return { upToDate: false, touched, diff: shown.join("\n").trimEnd() };
+  }).pipe(
+    Effect.catchTag("GitError", (error) =>
+      Effect.fail(new StepFailed({ step: "refresh", message: error.message })),
+    ),
+  );
+
+const describeMerge = (synced: Updated) => {
+  if (synced.clean) {
+    return "The merge is committed; nothing conflicted.";
+  }
+
+  return [
+    "The merge is left in progress, with these files in conflict:",
+    "",
+    ...synced.conflicts.map((path) => `- ${path}`),
+  ].join("\n");
+};
+
+// Fails with NeedsHuman when the agent left the merge uncommitted, or edits it
+// didn't commit, which the push would leave behind.
+const mergeCommitted = (name: string, worktree: string) =>
+  activity(
+    name,
+    Effect.gen(function* () {
+      const git = yield* Git;
+
+      const inProgress = yield* git
+        .run(["rev-parse", "--quiet", "--verify", "MERGE_HEAD"], worktree)
+        .pipe(
+          Effect.as(true),
+          Effect.catchTag("GitError", () => Effect.succeed(false)),
+        );
+
+      if (!inProgress) {
+        const uncommitted = lines(
+          yield* git
+            .run(["status", "--porcelain"], worktree)
+            .pipe(Effect.catchTag("GitError", () => Effect.succeed(""))),
+        );
+
+        if (uncommitted.length === 0) {
+          return;
+        }
+
+        return yield* new NeedsHuman({
+          reason: `the author agent left changes it didn't commit: ${uncommitted.join(", ")}`,
+        });
+      }
+
+      const conflicts = lines(
+        yield* git
+          .run(["diff", "--name-only", "--diff-filter=U"], worktree)
+          .pipe(Effect.catchTag("GitError", () => Effect.succeed(""))),
+      );
+
+      return yield* new NeedsHuman({
+        reason: `the author agent left the merge of the moved base uncommitted, with conflicts in ${conflicts.join(", ")}`,
+      });
+    }),
+  );
+
+// After the push: the latest approval or request for changes stands when the
+// new head only merged the base into the head it saw (PullRequest.onlyMergedBase),
+// and otherwise its reviewer is asked again. The reviewer, or none. Checked
+// against `base`, the branch the refresh merged in, not the base GitHub still
+// reports, which is the layer below's until the pull request is retargeted.
+const reviewAfterRefresh = (name: string, pullRequest: number, base: string, said: string) =>
+  activity(
+    name,
+    Effect.gen(function* () {
+      const latest = Arr.last(yield* decisiveReviews(pullRequest));
+
+      if (Option.isNone(latest)) {
+        return Option.none<string>();
+      }
+
+      const pull = yield* GitHub.use((github) => github.pullRequest(pullRequest));
+      const since = yield* onlyMergedBase({ ...pull, baseRef: base }, latest.value.commitSha);
+
+      if (since.only) {
+        return Option.none<string>();
+      }
+
+      yield* requestAgain(pullRequest, latest.value.author, said);
+
+      return Option.some(latest.value.author);
+    }).pipe(
+      Effect.catchTag("GitError", (error) =>
+        Effect.fail(new StepFailed({ step: name, message: error.message })),
+      ),
+    ),
+    Schema.Option(Schema.String),
+  );
+
+// Brings a layer whose base moved up to date, outside the review rounds: it
+// merges the base in (syncBase); when that conflicts, or the base changed
+// files the layer changes too, it resumes the author's session with the
+// base's diff, to resolve the conflicts and adjust the layer's own code, test
+// first where behaviour changes (its prompt is .chernabog/prompts/refresh.md,
+// or the SDK's own). Then it runs the local gate, pushes against the base,
+// and waits for CI. A head that only merged the base keeps its review;
+// otherwise the last reviewer is asked again. It writes no review marker, so
+// it never counts against limits.reviewRounds. Every step is keyed by the
+// pull request and baseSha. Fails as push and waitForCi do, and with
+// NeedsHuman when the agent needs a person, leaves the merge unfinished, or
+// leaves edits uncommitted.
+export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
+  Effect.gen(function* () {
+    const key = `${layer.pullRequest}-${layer.baseSha.slice(0, 12)}`;
+
+    const before = yield* activity(
+      `refresh-head-${key}`,
+      Git.use((git) => git.headSha(worktree)).pipe(
+        Effect.map(output),
+        Effect.catchTag("GitError", (error) =>
+          Effect.fail(new StepFailed({ step: "refresh", message: error.message })),
+        ),
+      ),
+      Schema.String,
+    );
+
+    const synced = yield* syncBase(worktree, {
+      ...Option.match(Option.fromUndefinedOr(layer.base), {
+        onNone: () => ({}),
+        onSome: (base) => ({ base }),
+      }),
+      ...Option.match(Option.fromUndefinedOr(layer.lower), {
+        onNone: () => ({}),
+        onSome: (lower) => ({ lower }),
+      }),
+      id: `refresh-${key}`,
+    });
+
+    const change = yield* activity(
+      `refresh-diff-${key}`,
+      baseChange(worktree, before, synced),
+      BaseChange,
+    );
+
+    if (change.upToDate) {
+      return { upToDate: true, adjusted: false, askedAgain: Option.none() } satisfies Refreshed;
+    }
+
+    const session = yield* Option.match(Option.fromUndefinedOr(layer.session), {
+      onSome: Effect.succeed,
+      onNone: () =>
+        activity(
+          `refresh-author-${key}`,
+          findAuthorSession(layer.pullRequest, `refresh-${key}`),
+          SessionMarker,
+        ).pipe(
+          Effect.map((author): AuthorSession => ({
+            sessionId: Option.some(author.sessionId),
+            adapter: Option.some(author.adapter),
+            withPerson: author.withPerson === true,
+          })),
+        ),
+    });
+
+    const adjusted = !synced.clean || change.touched.length > 0;
+    let said = `Merged \`${synced.base}\` at \`${synced.newBase.slice(0, 7)}\` into this branch.`;
+
+    if (adjusted) {
+      const prompt = yield* renderPromptOr("refresh", REFRESH, {
+        pullRequest: layer.pullRequest,
+        branch: layer.branch,
+        base: synced.base,
+        oldBase: synced.oldBase,
+        newBase: synced.newBase,
+        merge: describeMerge(synced),
+        diff: change.diff,
+      });
+
+      const outcome = yield* fixWithAgent(`adjust-${key}`, worktree, prompt, session);
+
+      if (outcome.status === "needs-clarification") {
+        return yield* new NeedsHuman({
+          reason: `the author agent needs a person to bring #${layer.pullRequest} up to date with \`${synced.base}\`:\n\n${outcome.questions ?? outcome.summary}`,
+        });
+      }
+
+      yield* mergeCommitted(`refresh-committed-${key}`, worktree);
+      said = `${said} ${outcome.summary}`;
+    }
+
+    yield* localGate(worktree, { id: `refresh-${key}`, session });
+    // Checked against the base it is now on, so only the layer's own commits count.
+    yield* push(`push-refresh-${key}`, worktree, layer.branch, {
+      base: synced.base,
+      withPerson: session.withPerson === true,
+    });
+    yield* waitForCi(
+      layer.pullRequest,
+      worktree,
+      { ...session, branch: layer.branch, base: synced.base },
+      { id: `refresh-${key}` },
+    );
+
+    const askedAgain = yield* reviewAfterRefresh(
+      `refresh-review-${key}`,
+      layer.pullRequest,
+      synced.base,
+      said,
+    );
+
+    return { upToDate: false, adjusted, askedAgain } satisfies Refreshed;
+  });

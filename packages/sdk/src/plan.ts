@@ -37,6 +37,7 @@ import {
   issueOf,
   sessionIdFor,
 } from "./implement.ts";
+import { LABELS } from "./plan-labels.ts";
 import { renderPrompt } from "./prompt.ts";
 import { issueValidity } from "./still-valid.ts";
 
@@ -47,12 +48,7 @@ export const stillValid = (item: WorkItem) =>
 
 // The labels of a plan's life on its spec: queued, proposed and waiting on a
 // person, approved, and made into an epic.
-export const LABELS = {
-  plan: "auto:plan",
-  proposed: "auto:plan-proposed",
-  approved: "auto:plan-approved",
-  epic: "auto:epic",
-} as const;
+export { LABELS };
 
 // For a flow's `labels`, so `chernabog labels` creates them.
 export const flowLabels: ReadonlyArray<FlowLabel> = [

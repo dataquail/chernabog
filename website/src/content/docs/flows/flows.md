@@ -175,7 +175,7 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 
 `Implement`, `Review` and `PullRequest` hold the blocks of [the review loop](/chernabog/work/flows/), and `Hybrid` those of the hybrid path; each is an activity a flow can reorder, leave out or wrap. The [recipes](/chernabog/recipes/) are written out from them, and are the place to see them used.
 
-- `Implement.issueItem(issue, label)` is an issue as a work item, with the label that queued it; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`.
+- `Implement.issueItem(issue, label)` is an issue as a work item, with the label that queued it; `Implement.queuedBy(item)` says which label queued one, for `claim`, `askForClarification` and `openPullRequest`. `Implement.triggerFor(label)` queues issues by a label of the flow's own, paired with `claim(issue, queuedBy(item))`. `Implement.queued(issues, label)` makes issues work items too, held with the reason when one waits: `waits on #12, #13` while open issues block it, or `belongs to the epic run on #136` when it is a task of an epic an epic run holds.
 - `Implement.handOff(issue, pr, outcome)` asks one reviewer from the pool with `PullRequest.requestReview`; `{ needsReview: false }` hands off without asking.
 - `Review.round(pr, n, { role })` reviews in a fresh session, with the adapter of an optional role from [`flows.<flow>.agents`](/chernabog/reference/configuration/#agents-by-role), and posts a real GitHub review with a marker that records the reviewer and its session. It moves no labels, and leaves the review's checkout, `review-pr-<n>`, for `Review.doneReviewing(pr)` to remove.
 - `Hybrid`'s blocks make [the hybrid path](/chernabog/work/flows/#the-hybrid-path), as the [`human-initiated` recipe](/chernabog/recipes/human-initiated/) composes them. `Hybrid.itemFor` takes an `issue-<n>` key, whatever its labels, as a [manual flow](#manual-flows)'s `item`; `Hybrid.claim`, `workWithPerson`, `openPullRequest` and `handOff` are its steps, between `Implement`'s `prepareWorktree`, `localGate`, `push` and `waitForCi`; `Hybrid.personSession(issue)` names the person's session, for `localGate(worktree, { session })` and `waitForCi` to send fixes back to.
@@ -191,7 +191,7 @@ See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each
 
 | `Implement.`         | `Review.`                    | `PullRequest.`, `Issue.` |
 | -------------------- | ---------------------------- | ------------------------ |
-| `issueItem`, `triggerFor`, `queuedBy`, `gate` | `reviewRequests`, `reviewItem`, `pullRequestOf` | `PullRequest.requestReview`, `ships`, `shipping` |
+| `issueItem`, `triggerFor`, `queued`, `queuedBy`, `gate` | `reviewRequests`, `reviewItem`, `pullRequestOf` | `PullRequest.requestReview`, `ships`, `shipping` |
 | `issueOf`, `claim`   | `round`, `recheck`, `doneReviewing`, `latestOwnReview` | `PullRequest.merge`, `mergeOrLeave`, `handToPerson` |
 | `prepareWorktree`    | `authoredByMe`, `decisiveReviews`, `addressItem`, `addressItemOf` | `PullRequest.comment`, `Issue.comment` |
 | `implementWithAgent`, `askForClarification` | `changesAsked`, `authorSession`, `prepareAuthorWorktree` | `PullRequest.own`, `release`, `owning` |
