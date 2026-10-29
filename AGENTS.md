@@ -408,9 +408,10 @@ Core's settings are the engine's; everything else is a flow's
   core's `Labels`, `DEFAULT_LABELS`, `Limits` and RepoSettings' recipe keys,
   and config.yaml's old keys, which a flow's settings fall back to.
   `reviewTrigger` still loads and does nothing. The engine still reads the
-  reviewer pool (`ReviewerSeat`) and the board (`queuedIssues`) from Repo,
-  which `mergePersona` fills from `settings.reviewers` and `settings.board`
-  when the old keys are unset.
+  reviewer pool (`ReviewerSeat`), the board (`queuedIssues`) and the label
+  names (cancel releases a claim's `inProgress`) from Repo, which
+  `mergePersona` fills from `settings.reviewers` and `settings.board` when
+  the old keys are unset, and from `settings.labels` over the old `labels:`.
 - **config.schema.json** describes each flow's settings from its schema
   (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
   `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and

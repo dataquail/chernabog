@@ -1,4 +1,12 @@
-import { defineFlow, fillTemplate, globToRegExp, parseJson, pathsMatching } from "@chernabog/sdk";
+import {
+  defineFlow,
+  fillTemplate,
+  globToRegExp,
+  parseJson,
+  pathsMatching,
+  Repo,
+  Settings,
+} from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -648,6 +656,34 @@ describe("a flow's own settings", () => {
       const old = yield* merge({ reviewers: ["bob"], settings: { reviewers: ["alice"] } }, {});
       expect(old.settings.reviewers).toEqual(["bob"]);
     }),
+  );
+
+  effect(
+    "label names under shared settings reach the engine too, so a claim and its release agree",
+    () =>
+      Effect.gen(function* () {
+        const merged = yield* merge(
+          {
+            labels: { inProgress: "old:wip", ship: "old:ship" },
+            settings: { labels: { inProgress: "wip" } },
+          },
+          {},
+        );
+
+        expect(merged.settings.labels.inProgress).toBe("wip");
+        expect(merged.settings.labels.ship).toBe("old:ship");
+
+        // What the SDK claims with, for any flow, is what the engine releases.
+        const claimed = yield* Settings.labels.pipe(
+          Effect.provideService(Repo, merged.settings),
+          Effect.provideService(Settings.FlowSettings, {
+            input: flowSettingsInput(merged, "implement"),
+          }),
+        );
+
+        expect(claimed.inProgress).toBe(merged.settings.labels.inProgress);
+        expect(claimed.ship).toBe(merged.settings.labels.ship);
+      }),
   );
 
   effect("reviewTrigger still loads, and does nothing", () =>

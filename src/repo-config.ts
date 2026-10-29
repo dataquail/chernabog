@@ -977,9 +977,11 @@ const otherAccounts = (
     return { accounts, agents };
   });
 
-// The engine still reads the reviewer pool (for a persona's reviewer seat) and
-// the board (for queued issues) from Repo, until core's next major (ADR 0005):
-// so a repo that moved them to its shared settings gives them there. One the
+// The engine still reads the reviewer pool (for a persona's reviewer seat),
+// the board (for queued issues) and the label names (to release a cancelled
+// run's claim) from Repo, until core's next major (ADR 0005): so a repo that
+// moved them to its shared settings gives them there, over the old keys'
+// labels, and the engine and the SDK's blocks agree on them. One the
 // schema doesn't fit is the flows' to refuse, when they decode their settings.
 const sharedSetting = <A, I>(repo: RepoConfigFile, key: string, schema: Schema.Codec<A, I>) =>
   Option.flatMap(Option.fromUndefinedOr(repo.settings?.[key]), (value) =>
@@ -1058,7 +1060,11 @@ const mergePersona = (
         ),
       ),
       roleAgents: roles.agents,
-      labels: { ...DEFAULT_LABELS, ...repo.labels },
+      labels: {
+        ...DEFAULT_LABELS,
+        ...repo.labels,
+        ...Option.getOrElse(sharedSetting(repo, "labels", LabelsFile), () => ({})),
+      },
       install: Option.flatten(Option.fromUndefinedOr(repo.install)),
       localGate: repo.localGate ?? [],
       humanOnly: [...machine.humanOnly, ...(repo.humanOnly ?? [])],

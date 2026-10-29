@@ -6,6 +6,7 @@ import {
   GitHub,
   type Json,
   Repo,
+  type RepoSettings,
   Worktree,
 } from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
@@ -149,7 +150,7 @@ const gitLive = Layer.effect(
 
 // A clone of a bare origin, with its worktrees under `worktrees/`, and the
 // client cleaning up as bob over it.
-const opened = (state: GitHubState) =>
+const opened = (state: GitHubState, labels: Partial<RepoSettings["labels"]> = {}) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
@@ -170,7 +171,15 @@ const opened = (state: GitHubState) =>
     const pathFor = (branch: string) => `${root}/worktrees/${branch.replace(/[^\w.-]+/g, "-")}`;
 
     const context = Layer.mergeAll(
-      Layer.succeed(Repo, Repo.of({ ...settings, path: checkout, persona: "bob" })),
+      Layer.succeed(
+        Repo,
+        Repo.of({
+          ...settings,
+          path: checkout,
+          persona: "bob",
+          labels: { ...settings.labels, ...labels },
+        }),
+      ),
       github(state),
       gitLive,
       Layer.mock(Worktree)({ pathFor }),
@@ -289,6 +298,16 @@ describe("RunCleanupClientLive", () => {
         "delete-branch auto/issue-7",
       ]);
       expect(state.bodies[0]).toEqual(Option.some({ assignees: ["bob"] }));
+    }),
+  );
+
+  effect("releases a claim under the in-progress label the repo renamed", () =>
+    Effect.gen(function* () {
+      const state = freshState();
+      const { client } = yield* opened(state, { inProgress: "wip" });
+
+      yield* client.releaseClaim(run("issue-7"), 7);
+      expect(state.calls[0]).toBe("remove-label #7 wip");
     }),
   );
 
