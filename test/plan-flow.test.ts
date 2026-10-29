@@ -319,18 +319,23 @@ describe("plan", () => {
 });
 
 describe("implement, with a plan's tasks", () => {
-  effect("leaves an issue an open issue blocks, and takes it once its blocker closes", () =>
+  effect("holds an issue an open issue blocks, and takes it once its blocker closes", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
       fake.graph.made.set(50, madeIssue(50, ""));
       fake.graph.blockedBy.set(ISSUE, [50]);
-      expect(yield* flowTriggered(fake, implement)).toEqual([]);
+      expect(
+        (yield* flowTriggered(fake, implement)).map((found) => [found.key, found.held]),
+      ).toEqual([[`issue-${ISSUE}`, "waits on #50"]]);
 
       fake.graph.made.set(50, madeIssue(50, "", "closed"));
-      expect((yield* flowTriggered(fake, implement)).map((found) => found.key)).toEqual([
-        `issue-${ISSUE}`,
-      ]);
+      expect(
+        (yield* flowTriggered(fake, implement)).map((found) => [
+          found.key,
+          Option.isNone(Option.fromUndefinedOr(found.held)),
+        ]),
+      ).toEqual([[`issue-${ISSUE}`, true]]);
     }),
   );
 });

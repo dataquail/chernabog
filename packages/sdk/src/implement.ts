@@ -45,6 +45,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
+import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
@@ -125,6 +126,78 @@ export const unblocked = (issues: ReadonlyArray<Issue>) =>
     }
 
     return ready;
+  });
+
+// The open tasks of each epic an epic run holds, by task, with the epic's
+// number. A repo that runs no epic flow claims no epic, and has none.
+const epicRunTasks = Effect.gen(function* () {
+  const github = yield* GitHub;
+  const owned = new Map<number, number>();
+
+  for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
+    if (Option.isNone(yield* Claims.holder(Claims.epic(epic.number)))) {
+      continue;
+    }
+
+    for (const task of yield* github.subIssues(epic.number)) {
+      if (task.state === "open" && !owned.has(task.number)) {
+        owned.set(task.number, epic.number);
+      }
+    }
+  }
+
+  return owned;
+});
+
+// Why a queued issue waits, if it does: it is a task of an epic an epic run
+// holds, which that run starts itself, or an open issue blocks it.
+const whyWaiting = (issue: Issue, owned: ReadonlyMap<number, number>) =>
+  Effect.gen(function* () {
+    const epic = Option.fromUndefinedOr(owned.get(issue.number));
+
+    if (Option.isSome(epic)) {
+      return Option.some(`belongs to the epic run on #${epic.value}`);
+    }
+
+    const open = (yield* GitHub.use((github) => github.blockedBy(issue.number))).filter(
+      (blocker) => blocker.state === "open",
+    );
+
+    if (open.length === 0) {
+      return Option.none<string>();
+    }
+
+    return Option.some(`waits on ${open.map((blocker) => `#${blocker.number}`).join(", ")}`);
+  });
+
+// The issues, in the order given, as work items, queued by `label` when it's
+// not eligible's. One that waits is held, saying why, so `chernabog status`
+// shows it: "waits on #12, #13" for the open issues that block it, as the
+// tasks of an epic start in the order its plan gave, or "belongs to the epic
+// run on #136" for a task of an epic an epic run holds.
+export const queued = (
+  issues: ReadonlyArray<Issue>,
+  label: Option.Option<string> = Option.none(),
+) =>
+  Effect.gen(function* () {
+    if (issues.length === 0) {
+      return [];
+    }
+
+    const owned = yield* epicRunTasks;
+    const items: Array<WorkItem> = [];
+
+    for (const issue of issues) {
+      const item = issueItem(issue, label);
+      items.push(
+        Option.match(yield* whyWaiting(issue, owned), {
+          onNone: () => item,
+          onSome: (held) => ({ ...item, held }),
+        }),
+      );
+    }
+
+    return items;
   });
 
 // Which label queued the issue: eligible unless the flow is keyed by its own.
