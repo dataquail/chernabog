@@ -320,7 +320,7 @@ describe("ciChecks", () => {
           kind: "check-run",
           state: "passed",
           required: false,
-          url: expect.stringContaining("/runs/1"),
+          url: `https://github.com/${SLUG}/runs/1`,
         },
       ]);
       expect(Ci.verdict(pending, Ci.DEFAULT_POLICY)).toEqual({

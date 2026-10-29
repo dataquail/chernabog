@@ -49,6 +49,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as Ci from "./ci.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
@@ -1210,7 +1211,7 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
 
       reading = yield* activity(
         named(options, `ci-${round}-${poll}`),
-        GitHub.use((github) => github.ciState(pullRequest)),
+        Ci.pullRequestState(pullRequest),
         CiReading,
       );
     }

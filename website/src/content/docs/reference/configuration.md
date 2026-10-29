@@ -47,12 +47,14 @@ The SDK's blocks read these shared settings, which the recipes declare:
 | `localGateRounds`  | `2`                        | times the agent is sent back for a failing local gate                    |
 | `ciRounds`         | `3`                        | times it is sent back for red CI                                          |
 | `ciTimeout`        | `2 hours`                  | wait for CI to finish                                                     |
+| `ciGates`          | `required`                 | the checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or `every` check. Check runs and commit statuses alike |
+| `ciOptionalFailures` | `hold`                   | whether a failing check that doesn't gate still makes CI red, so a fix starts and nothing merges (`hold`), or is left alone (`ignore`) |
 | `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers). Set it under `settings:`, since the flows that ask for reviews and the ones that review share it |
 | `reviewRounds`     | `1`                        | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
 | `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt. A flow's add to the repo's and the machine's |
 | `humanOnlyPaths`   | `[".github/**"]`           | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
 | `notes`            | `[]`                       | repo facts the agent should know                                          |
-| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels). Set it under `settings:`: the engine releases a cancelled run's claim by the shared name |
+| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels). Set it under `settings:`, so every flow that shares a label uses one name |
 | `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus`. Set it under `settings:` |
 | `planNodes`        | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
 | `planRounds`       | `2`                        | times the agent is sent back for a plan that fails its checks             |

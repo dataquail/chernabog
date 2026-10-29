@@ -170,7 +170,26 @@ export const declaredLabels = Effect.map(labels, labelSet);
 export const Ci = Schema.Struct({
   ciRounds: Count("Pushes to fix red CI before a person takes over."),
   ciTimeout: DurationText('How long CI may stay pending before a person looks, such as "2 hours".'),
+  ciGates: Schema.optionalKey(
+    Schema.Literals(["required", "every"]).annotate({
+      description:
+        "The checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or every check.",
+    }),
+  ),
+  ciOptionalFailures: Schema.optionalKey(
+    Schema.Literals(["hold", "ignore"]).annotate({
+      description:
+        "Whether a failing check that doesn't gate still makes CI red (hold), or is left alone (ignore).",
+    }),
+  ),
 });
+
+// The CI gate's policy, for Ci.verdict: required checks gate, and any
+// failing check holds, unless the flow's settings say otherwise.
+export const ciGate = Effect.map(read(Ci), (own) => ({
+  gates: own.ciGates ?? "required",
+  optionalFailures: own.ciOptionalFailures ?? "hold",
+}));
 
 export const ci = Effect.gen(function* () {
   const repo = yield* Repo;

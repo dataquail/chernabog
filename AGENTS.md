@@ -376,8 +376,10 @@ assignment, a board Status, a claim ref or branch), with a named release.
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
   The daemon runs it every few seconds, `chernabog run` once its run ends, and
   `status` shows `listUnreleasedMarkersUseCase`.
-- **Cancel still does its own cleanup** (claim ref, label, assignment, branch)
-  for runs from before markers; markers' releases are safe to repeat after it.
+- **Cancel still does its own cleanup** (claim ref, assignment, branch) for
+  runs from before markers; markers' releases are safe to repeat after it.
+  Labels are the flow's: cancel never removes one, and a run's label marker
+  releases it (#207).
 
 ## Flow settings (#202)
 
@@ -408,10 +410,18 @@ Core's settings are the engine's; everything else is a flow's
   core's `Labels`, `DEFAULT_LABELS`, `Limits` and RepoSettings' recipe keys,
   and config.yaml's old keys, which a flow's settings fall back to.
   `reviewTrigger` still loads and does nothing. The engine still reads the
-  reviewer pool (`ReviewerSeat`), the board (`queuedIssues`) and the label
-  names (cancel releases a claim's `inProgress`) from Repo, which
-  `mergePersona` fills from `settings.reviewers` and `settings.board` when
-  the old keys are unset, and from `settings.labels` over the old `labels:`.
+  reviewer pool (`ReviewerSeat`), the board (`queuedIssuesLabelled`) and,
+  for the deprecated `queuedIssues` and `oldestQueued` alone, the label
+  names from Repo, which `mergePersona` fills from `settings.reviewers` and
+  `settings.board` when the old keys are unset, and from `settings.labels`
+  over the old `labels:`.
+- **CI is facts (#207).** `GitHub.ciChecks` reports every check run and
+  commit status on a pull request's head and whether its base requires it,
+  with no verdict; the SDK's `Ci.verdict` decides, by the flow's `ciGates`
+  and `ciOptionalFailures` (`Settings.Ci`, read by `Settings.ciGate`).
+  `ciState` (which now counts commit statuses too) and `commitCiState` keep
+  their verdicts, deprecated, until core's next major; no SDK block calls
+  `ciState`, `queuedIssues` or `oldestQueued`.
 - **config.schema.json** describes each flow's settings from its schema
   (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
   `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and

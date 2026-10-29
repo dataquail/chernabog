@@ -92,6 +92,7 @@ describe("Ci.verdict", () => {
         ...facts([check("test", "passed", false)], []),
         caveat: Option.some("why"),
       };
+
       expect(Ci.verdict(reading, Ci.DEFAULT_POLICY)).toEqual({ state: "green", caveat: "why" });
     }),
   );
@@ -102,7 +103,7 @@ describe("Settings.ciGate", () => {
     "reads the flow's policy, holding on any failure and gating on required checks by default",
     () =>
       Effect.gen(function* () {
-        const reading = (input: Record<string, unknown>) =>
+        const reading = (input: Settings.FlowSettings["Service"]["input"]) =>
           Settings.ciGate.pipe(
             Effect.provideService(Repo, settings),
             Effect.provideService(Settings.FlowSettings, { input }),

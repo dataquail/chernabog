@@ -242,8 +242,8 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
                 return Option.none<ReleasedClaim>();
               }
 
+              // The claim's label is the flow's: its marker releases it.
               const { branch } = ours.value;
-              yield* github.removeLabel(issue, repo.labels.inProgress);
               const login = yield* github.login;
 
               yield* github.request(

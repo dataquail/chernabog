@@ -1026,6 +1026,19 @@ export type CiState = ({
 }) & {
     readonly caveat?: string;
 };
+export type CiCheck = {
+    readonly name: string;
+    readonly kind: "check-run" | "status";
+    readonly state: "pending" | "passed" | "failed";
+    readonly required: boolean;
+    readonly url: string;
+};
+export type CiChecks = {
+    readonly headSha: string;
+    readonly checks: ReadonlyArray<CiCheck>;
+    readonly required: ReadonlyArray<string>;
+    readonly caveat: Option.Option<string>;
+};
 export type CiFailedRun = {
     readonly name: string;
     readonly url: string;
@@ -1077,6 +1090,7 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
@@ -1125,6 +1139,7 @@ export declare const GitHubCapability: Capabilities.Capability<{
     requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;

@@ -32,6 +32,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
 import * as Settings from "./settings.ts";
 
@@ -289,8 +290,9 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
   });
 
 // Merges the pull request, only when that is safe: it is open and based on
-// the repo's base branch, its required checks are green on the current head,
-// the latest review approved that very head or one the head has only merged
+// the repo's base branch, its checks are green on the current head by the
+// flow's CI policy (Ci.verdict: by default, its required checks passed and no
+// check failed), the latest review approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
 // GitHub's rules for the repo allow it. A layer of a stack, based on the
 // branch of the one below, waits until it sits on the base branch.
@@ -321,7 +323,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         );
       }
 
-      const ci = yield* github.ciState(pullRequest);
+      const ci = yield* Ci.pullRequestState(pullRequest);
 
       if (ci.state === "red") {
         return yield* refuse(pullRequest, `checks failed: ${ci.failedChecks.join(", ")}`);
