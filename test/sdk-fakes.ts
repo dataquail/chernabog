@@ -259,6 +259,10 @@ export const makeFake = (
     next: 100,
   };
 
+  // Pull requests by head branch, apart from the one pull request, such as
+  // those of an epic's other tasks.
+  const branchPulls = new Map<string, PullRequest>();
+
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
   const removed: Array<string> = [];
@@ -514,8 +518,12 @@ export const makeFake = (
         Effect.sync(() => {
           board.status = Option.some(status);
         }),
-      pullRequestForBranch: () =>
-        Effect.sync(() => Option.filter(Option.some(pull()), () => git.opened)),
+      pullRequestForBranch: (branch) =>
+        Effect.sync(() =>
+          Option.orElse(Option.fromUndefinedOr(branchPulls.get(branch)), () =>
+            Option.filter(Option.some(pull()), () => git.opened),
+          ),
+        ),
       openPullRequest: (request) =>
         Effect.sync(() => {
           git.opened = true;
@@ -715,6 +723,7 @@ export const makeFake = (
     people,
     submitted,
     graph,
+    branchPulls,
     plans,
     removed,
     board,
