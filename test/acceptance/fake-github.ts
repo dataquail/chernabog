@@ -330,6 +330,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const statuses = new Map<string, Array<FakeStatus>>();
   // The message of the 403 the branch-rules endpoint answers with, if it refuses.
   let branchRulesRefusal = Option.none<string>();
+  // The checks the base branch's rules require, by context.
+  let requiredContexts: ReadonlyArray<string> = [];
   const inAWhile = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 
   const usageOf = (fiveHour: number, sevenDay: number) => ({
@@ -1057,9 +1059,25 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     });
   };
 
+  // The base branch's rules: a required-checks rule, when it requires any.
+  const rules = () => {
+    if (requiredContexts.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        type: "required_status_checks",
+        parameters: {
+          required_status_checks: requiredContexts.map((context) => ({ context })),
+        },
+      },
+    ];
+  };
+
   const branchRules = () =>
     Option.match(branchRulesRefusal, {
-      onNone: () => json([]),
+      onNone: () => json(rules()),
       onSome: (message) => json({ message, status: "403" }, 403),
     });
 
@@ -1391,6 +1409,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         status,
         ...(statuses.get(sha) ?? []).filter((set) => set.context !== status.context),
       ]);
+    },
+    // Makes the base branch's rules require these checks, by context.
+    requireChecks: (contexts: ReadonlyArray<string>) => {
+      requiredContexts = contexts;
     },
     // Refuses the branch-rules endpoint with a 403. By default it's GitHub's
     // answer on a private repo in a free-plan org.

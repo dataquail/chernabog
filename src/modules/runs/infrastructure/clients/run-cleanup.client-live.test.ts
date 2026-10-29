@@ -6,7 +6,6 @@ import {
   GitHub,
   type Json,
   Repo,
-  type RepoSettings,
   Worktree,
 } from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
@@ -150,7 +149,7 @@ const gitLive = Layer.effect(
 
 // A clone of a bare origin, with its worktrees under `worktrees/`, and the
 // client cleaning up as bob over it.
-const opened = (state: GitHubState, labels: Partial<RepoSettings["labels"]> = {}) =>
+const opened = (state: GitHubState) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
@@ -177,7 +176,6 @@ const opened = (state: GitHubState, labels: Partial<RepoSettings["labels"]> = {}
           ...settings,
           path: checkout,
           persona: "bob",
-          labels: { ...settings.labels, ...labels },
         }),
       ),
       github(state),
@@ -283,32 +281,24 @@ describe("RunCleanupClientLive", () => {
     }),
   );
 
-  effect("releases the run's claim: label, assignment, and a branch with no work", () =>
-    Effect.gen(function* () {
-      const state = freshState();
-      const { client } = yield* opened(state);
+  effect(
+    "releases the run's claim: assignment, and a branch with no work, leaving labels to markers",
+    () =>
+      Effect.gen(function* () {
+        const state = freshState();
+        const { client } = yield* opened(state);
 
-      expect(yield* client.releaseClaim(run("issue-7"), 7)).toEqual(
-        Option.some({ branch: "auto/issue-7", kept: Option.none() }),
-      );
-      expect(state.calls).toEqual([
-        "remove-label #7 auto:in-progress",
-        "DELETE /repos/dataquail/demo/issues/7/assignees",
-        "GET /repos/dataquail/demo/compare/main...auto%2Fissue-7",
-        "delete-branch auto/issue-7",
-      ]);
-      expect(state.bodies[0]).toEqual(Option.some({ assignees: ["bob"] }));
-    }),
-  );
-
-  effect("releases a claim under the in-progress label the repo renamed", () =>
-    Effect.gen(function* () {
-      const state = freshState();
-      const { client } = yield* opened(state, { inProgress: "wip" });
-
-      yield* client.releaseClaim(run("issue-7"), 7);
-      expect(state.calls[0]).toBe("remove-label #7 wip");
-    }),
+        expect(yield* client.releaseClaim(run("issue-7"), 7)).toEqual(
+          Option.some({ branch: "auto/issue-7", kept: Option.none() }),
+        );
+        expect(state.calls).toEqual([
+          "DELETE /repos/dataquail/demo/issues/7/assignees",
+          "GET /repos/dataquail/demo/compare/main...auto%2Fissue-7",
+          "delete-branch auto/issue-7",
+        ]);
+        expect(state.calls.some((call) => call.startsWith("remove-label"))).toBe(false);
+        expect(state.bodies[0]).toEqual(Option.some({ assignees: ["bob"] }));
+      }),
   );
 
   effect("keeps a claim branch with commits or a pull request from it", () =>

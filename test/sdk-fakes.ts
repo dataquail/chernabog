@@ -8,6 +8,8 @@ import {
   Agent,
   AgentError,
   type AgentRequest,
+  type CiCheck,
+  type CiChecks,
   type CiState,
   type Comment,
   CurrentActivity,
@@ -138,14 +140,40 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
   COMMENT: "COMMENTED",
 };
 
-// CI on the head, the files the pull request changes, its mergeable_state on
-// GitHub, whether GitHub refuses the merge, and the merges asked for.
+// CI on the head (the checks GitHub reports, or read from a verdict), the
+// files the pull request changes, its mergeable_state on GitHub, whether
+// GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
+  checks: Option.Option<CiChecks>;
   files: Array<string>;
   state: string;
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
+};
+
+// The checks a verdict stands for, every one required: green is one passing
+// check, red its failed checks, pending the checks it waits on.
+const checksOf = (ci: CiState, headSha: string): CiChecks => {
+  const required = (name: string, state: CiCheck["state"]): CiCheck => ({
+    name,
+    kind: "check-run",
+    state,
+    required: true,
+    url: `https://github.com/dataquail/demo/runs/${name}`,
+  });
+
+  let checks = [required("test", "passed")];
+
+  if (ci.state === "red") {
+    checks = ci.failedChecks.map((name) => required(name, "failed"));
+  }
+
+  if (ci.state === "pending") {
+    checks = ci.waitingOn.map((name) => required(name, "pending"));
+  }
+
+  return { headSha, checks, required: checks.map((check) => check.name), caveat: Option.none() };
 };
 
 // Whether a person closed the fake's issue, and closed or merged its pull request.
@@ -191,6 +219,7 @@ export const makeFake = (
 
   const merge: MergeFake = {
     ci: { state: "green" },
+    checks: Option.none(),
     files: ["src/a.ts"],
     state: "clean",
     refusal: Option.none(),
@@ -616,6 +645,8 @@ export const makeFake = (
           ),
         ),
       ciState: () => Effect.sync(() => merge.ci),
+      ciChecks: () =>
+        Effect.sync(() => Option.getOrElse(merge.checks, () => checksOf(merge.ci, git.head))),
       // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
       commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
       branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
