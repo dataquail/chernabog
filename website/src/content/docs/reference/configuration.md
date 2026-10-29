@@ -52,7 +52,7 @@ The SDK's blocks read these shared settings, which the recipes declare:
 | `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt. A flow's add to the repo's and the machine's |
 | `humanOnlyPaths`   | `[".github/**"]`           | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
 | `notes`            | `[]`                       | repo facts the agent should know                                          |
-| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
+| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels). Set it under `settings:`: the engine releases a cancelled run's claim by the shared name |
 | `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus`. Set it under `settings:` |
 | `planNodes`        | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
 | `planRounds`       | `2`                        | times the agent is sent back for a plan that fails its checks             |
@@ -72,7 +72,7 @@ flows:
 
 A recipe of your own declares its settings beside the SDK's it uses, and reads them typed; see [Settings](/chernabog/flows/sdk/#settings).
 
-The keys these replaced still load until core's next major, and a flow's settings fall back to them: `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, `labels`, `board`, `reviewers` and `limits.localGateRounds`, `ciRounds`, `reviewRounds`, `staleAfter`, `ciTimeout`, `planNodes`, `planRounds` and `stackDepth` at the top of `config.yaml`. `reviewTrigger` still loads, and does nothing.
+The keys these replaced still load until core's next major, and a flow's settings fall back to them: `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, `labels`, `board`, `reviewers` and `limits.localGateRounds`, `ciRounds`, `reviewRounds`, `ciTimeout`, `planNodes`, `planRounds` and `stackDepth` at the top of `config.yaml`. `limits.staleAfter` still loads too, but no SDK block reads it. `reviewTrigger` still loads, and does nothing.
 
 ### Runners
 
