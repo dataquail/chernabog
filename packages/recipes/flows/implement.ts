@@ -109,7 +109,7 @@ export default defineFlow({
             // A draft is its author's until they mark it ready.
             if (
               adopted.draft &&
-              (yield* Implement.awaitReady(adopted.number, READY_WITHIN)) === "timeout"
+              (yield* Implement.awaitReady(issue, adopted.number, READY_WITHIN)) === "timeout"
             ) {
               return yield* new NeedsHuman({
                 reason: `#${adopted.number} is still a draft after ${READY_WITHIN}`,

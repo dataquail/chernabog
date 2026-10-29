@@ -228,16 +228,27 @@ export const claimComment = (claim: ClaimMarker) =>
   ].join("\n");
 
 // The label on a pull request a run adopted, which a person opened for the
-// issue before it was queued. With the persona assigned, address-review and
-// resolve-conflicts take it as the persona's own (Review.authoredByMe).
+// issue before it was queued. hand-off puts it on and assigns the persona,
+// and only then do address-review and resolve-conflicts take it as the
+// persona's own (Review.authoredByMe): until then the implement run is the
+// only one working on it.
 export const ADOPTED_LABEL = "auto:adopted";
 
-// For a flow's `labels`, so `chernabog labels` creates it.
+// The label on an issue whose run waits for its adopted draft to be marked
+// ready, so `readied` reads only those issues. The run holds it as a marker.
+export const AWAITING_READY_LABEL = "auto:awaiting-ready";
+
+// For a flow's `labels`, so `chernabog labels` creates them.
 export const adoptionLabels: ReadonlyArray<FlowLabel> = [
   {
     name: ADOPTED_LABEL,
     color: "c5def5",
     description: "Chernabog took this pull request on for the issue it closes",
+  },
+  {
+    name: AWAITING_READY_LABEL,
+    color: "fbca04",
+    description: "Chernabog waits for the draft that closes this issue to be marked ready",
   },
 ];
 
@@ -395,9 +406,10 @@ const referToPerson = (issue: number, label: string, reason: string) =>
   });
 
 // Takes on the one open pull request, on a branch other than the issue's
-// own, that already closes the issue: marks the issue claimed, labels the
-// pull request adopted and assigns the persona, and records the adoption in
-// the claim marker. Finding the pull request by its branch links the run to
+// own, that already closes the issue: marks the issue claimed, labels it
+// awaiting-ready when the pull request is a draft, and records the adoption
+// in the claim marker. It leaves the pull request alone: hand-off makes it
+// the persona's (ADOPTED_LABEL). Finding the pull request by its branch links the run to
 // it, as one the run opened would be. None closing it is none to adopt;
 // several, or one on a fork, go to a person (NeedsHuman), named. A run that
 // resumes inside claim keeps what its marker records.
@@ -450,8 +462,11 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
     yield* github.pullRequestForBranch(only.headRefName);
     yield* markClaimed(issue);
     yield* github.removeLabel(issue, label);
-    yield* github.addLabel(only.number, ADOPTED_LABEL);
-    yield* github.assignSelf(only.number);
+
+    if (adopted.draft) {
+      yield* Markers.hold(Markers.label, { number: issue, label: AWAITING_READY_LABEL });
+      yield* github.addLabel(issue, AWAITING_READY_LABEL);
+    }
 
     const marker: ClaimMarker = {
       runId: run.runId,
@@ -1217,6 +1232,12 @@ export const handOff = (
 
       yield* github.comment(pullRequest.number, `${by} ${sessionMarker.write(session)}`);
 
+      // Only now is an adopted pull request the persona's to answer reviews on.
+      if (Option.isSome(Option.fromUndefinedOr(options.adoptedBranch))) {
+        yield* github.addLabel(pullRequest.number, ADOPTED_LABEL);
+        yield* github.assignSelf(pullRequest.number);
+      }
+
       yield* dropInProgress(issue);
       yield* github.comment(
         issue,
@@ -1236,21 +1257,30 @@ export const adoptedOutcome = (adopted: Adopted): ImplementOutcome => ({
   body: "",
 });
 
-// Parks the run until the author marks an adopted draft ready for review:
-// `ready`, or `timeout` once `timeout` passes.
-export const awaitReady = (pullRequest: number, timeout: Duration.Input) =>
-  awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout });
+// Parks the run until the author marks the issue's adopted draft ready for
+// review: `ready`, or `timeout` once `timeout` passes. Either way the issue's
+// awaiting-ready label comes off.
+export const awaitReady = (issue: number, pullRequest: number, timeout: Duration.Input) =>
+  awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout }).pipe(
+    Effect.tap(() =>
+      activity(
+        `ready-${pullRequest}`,
+        Markers.drop(Markers.label, { number: issue, label: AWAITING_READY_LABEL }),
+      ),
+    ),
+  );
 
 const DraftState = Schema.Struct({ draft: Schema.Boolean });
 
-// Issues whose run waits on a draft it adopted that its author has since
-// marked ready, as `ready` signals to that run. Never starts a run.
+// Issues whose run waits on a draft it adopted (AWAITING_READY_LABEL) that
+// its author has since marked ready, as `ready` signals to that run. Never
+// starts a run.
 export const readied = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const items: Array<WorkItem> = [];
 
-  for (const issue of yield* github.issuesLabelled(repo.labels.inProgress)) {
+  for (const issue of yield* github.issuesLabelled(AWAITING_READY_LABEL)) {
     const draft = Option.filter(
       Option.flatMap(yield* latestClaim(issue.number), (marker) =>
         Option.fromUndefinedOr(marker.adopted),

@@ -16,7 +16,9 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
@@ -25,6 +27,7 @@ import {
   deliverSignals,
   type Fake,
   flowTriggered,
+  HEAD,
   ISSUE,
   item,
   makeFake,
@@ -77,6 +80,21 @@ const adoptions = (fake: Fake) =>
       ),
     ),
   );
+
+// The persona's pull request flows that would push to it: what each would start on.
+const pushersFind = (fake: Fake) =>
+  Effect.gen(function* () {
+    const answering = yield* flowTriggered(fake, addressReview);
+    const resolving = yield* flowTriggered(fake, resolveConflicts);
+
+    return [...answering, ...resolving].map((found) => found.key);
+  });
+
+// A review asks for changes on the head, and the head conflicts with its base.
+const wantedChanged = (fake: Fake) => {
+  fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+  fake.merge.state = "dirty";
+};
 
 const saying = (fake: Fake, text: string) =>
   fake.comments.filter((comment) => comment.body.includes(text));
@@ -169,6 +187,11 @@ describe("an issue an open pull request already closes", () => {
               expect(adoptions(fake)).toEqual([{ number: PULL, url: PULL_URL, draft: true }]);
               // Still a draft: nothing wakes it.
               expect(yield* triggered(fake, Implement.readied).pipe(Effect.orDie)).toEqual([]);
+              expect(fake.labelsOf(ISSUE)).toContain(Implement.AWAITING_READY_LABEL);
+              // The draft is its author's: until hand-off, it isn't the persona's to push to.
+              expect(fake.labelsOf(PULL)).toEqual([]);
+              expect(fake.people.pullAssigned).toEqual([]);
+              expect(yield* onFake(fake, Review.authoredByMe).pipe(Effect.orDie)).toEqual([]);
               fake.authored.draft = false;
             }
 
@@ -186,13 +209,39 @@ describe("an issue an open pull request already closes", () => {
         expect(finished.status).toBe("done");
         expect(fake.people.requested).toEqual(["data-quail"]);
         expect(fake.requests).toEqual([]);
+        expect(fake.labelsOf(ISSUE)).not.toContain(Implement.AWAITING_READY_LABEL);
+      }),
+  );
+
+  effect(
+    "is no other flow's to push to until hand-off, even with changes asked for and a conflict",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedWithPull();
+        wantedChanged(fake);
+        // Red CI keeps the run on the pull request, and ends it short of hand-off.
+        fake.merge.ci = { state: "red", failedChecks: ["test"] };
+        expect((yield* runToEnd(implementing, fake, work)).status).toBe("needs-human");
+        expect(fake.labelsOf(PULL)).not.toContain(Implement.ADOPTED_LABEL);
+        expect(fake.people.pullAssigned).toEqual([]);
+        expect(yield* pushersFind(fake)).toEqual([]);
+
+        // Handed off, it is the persona's: both flows take it on.
+        const handed = queuedWithPull();
+        expect((yield* runToEnd(implementing, handed, work)).status).toBe("done");
+        handed.people.requested = [];
+        wantedChanged(handed);
+        expect(yield* pushersFind(handed)).toEqual([
+          `pr-${PULL}-changes-1`,
+          `pr-${PULL}-${HEAD.slice(0, 7)}`,
+        ]);
       }),
   );
 
   effect("the recipe's trigger wakes a run waiting on a draft once it is marked ready", () =>
     Effect.gen(function* () {
       const fake = queuedWithPull(true);
-      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Implement.AWAITING_READY_LABEL]);
       fake.comment(
         claimMarker.write({
           runId: "a-run",
