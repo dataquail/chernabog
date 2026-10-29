@@ -1,3 +1,4 @@
+import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -36,12 +37,12 @@ export type ItemValidity =
   { readonly valid: true } | { readonly valid: false; readonly reason: string };
 
 // The run a flow's stillValid is asked about: its id and execution, the item
-// it works on, and the pull request it opened or adopted, if any.
+// it works on, and the work items it named as its subjects.
 export type ValidityQuestion = {
   readonly runId: RunId;
   readonly executionId: string;
   readonly item: WorkItem;
-  readonly pullRequest: Option.Option<number>;
+  readonly subjects: ReadonlyArray<string>;
 };
 
 // A flow as one persona runs it on this machine: the repo it's in, by the name
@@ -84,4 +85,14 @@ export const itemTarget = (key: string): Option.Option<ItemTarget> =>
         kind: "pull-request",
         number: Number(pull[1]),
       })),
+  );
+
+// The first pull request among a run's subjects, which Run's pullRequest
+// carries for SDKs from before subjects; none when it named none.
+export const firstPullRequest = (subjects: ReadonlyArray<string>) =>
+  Arr.findFirst(subjects, (subject) =>
+    Option.map(
+      Option.filter(itemTarget(subject), (target) => target.kind === "pull-request"),
+      (target) => target.number,
+    ),
   );

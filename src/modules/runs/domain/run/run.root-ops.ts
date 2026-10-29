@@ -104,9 +104,15 @@ const unsupported = (run: RunRoot) =>
 const enterStep = (run: RunRoot, step: string) =>
   whileRunning(run, () => RunRoot.make({ ...run, currentStep: Option.some(step) }));
 
-// The run opening or adopting a pull request for its work.
-const linkPullRequest = (run: RunRoot, pullRequest: number) =>
-  whileRunning(run, () => RunRoot.make({ ...run, pullRequest: Option.some(pullRequest) }));
+// The run naming a work item it touched; one it named before changes nothing.
+const nameSubject = (run: RunRoot, subject: string) =>
+  whileRunning(run, () => {
+    if (run.subjects.includes(subject)) {
+      return run;
+    }
+
+    return RunRoot.make({ ...run, subjects: [...run.subjects, subject] });
+  });
 
 // The run ending, at `at`, once: it's in no step after.
 const finish = (run: RunRoot, ending: RunEnding, summary: string, at: string) =>
@@ -276,7 +282,7 @@ export const RunRootOps = {
   attachExecution,
   unexecuted,
   enterStep,
-  linkPullRequest,
+  nameSubject,
   finish,
   cancel,
   supersede,

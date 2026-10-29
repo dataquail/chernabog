@@ -113,9 +113,10 @@ describe("the daemon", () => {
     expect(steps.slice(0, 2)).toEqual(["claim", "prepare-worktree"]);
     expect(steps).toContain("open-pull-request");
 
-    // The pull request it opened is linked to it, so the live view can thread its runs.
-    expect(Option.map(Option.fromUndefinedOr(done), (run) => run.pullRequest)).toEqual(
-      Option.some(Option.some([...sandbox.github.pulls.values()][0]?.number)),
+    // The SDK's block named the pull request it opened as a subject, so the
+    // live view can thread its runs.
+    expect(Option.map(Option.fromUndefinedOr(done), (run) => run.subjects)).toEqual(
+      Option.some([`pr-${[...sandbox.github.pulls.values()][0]?.number}`]),
     );
   }, 60_000);
 

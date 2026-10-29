@@ -217,10 +217,12 @@ transitive reach), the coverage floors and the baseline.
   `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
   `RunStepRoot` (`om_steps`) logs each step a run enters, which
   `enterStepUseCase` writes beside its current step; `SkipRoot` (`om_skips`)
-  logs why a tick started nothing. A run's `pullRequest` is the one it opened
-  or adopted, which `flowLayer` links by wrapping the run's `GitHub`
-  (`linkingPullRequests`); the live view threads an issue's runs with that
-  pull request's by it. The engine, the daemon and `chernabog run`
+  logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
+  are the work items it named with core's `Subjects.name`, such as the pull
+  request an SDK block opened or adopted; the engine records them through
+  `nameSubjectUseCase` and knows nothing of what they mean. The live view
+  threads runs that share a work item, as their own or as a subject, and a
+  flow's `stillValid` gets them as `Run`'s `subjects`. The engine, the daemon and `chernabog run`
   record and read them only through the module's use-cases
   (`startRunUseCase`, `enterStepUseCase`, `finishRunUseCase`, …); a run's
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a

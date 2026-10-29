@@ -378,6 +378,7 @@ export * from "./paths.ts";
 export * from "./roles.ts";
 export * from "./services.ts";
 export * from "./stage.ts";
+export * as Subjects from "./subjects.ts";
 ```
 
 ## json.ts
@@ -870,6 +871,7 @@ export declare const RunInfo: Schema.Struct<{
         readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     }>;
+    readonly subjects: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly pullRequest: Schema.optionalKey<Schema.Finite>;
     readonly leaseTtl: Schema.optionalKey<Schema.Finite>;
 }>;
@@ -889,6 +891,7 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
         readonly assignees?: readonly string[] | undefined;
         readonly reviewers?: readonly string[] | undefined;
     };
+    readonly subjects?: readonly string[] | undefined;
     readonly pullRequest?: number | undefined;
     readonly leaseTtl?: number | undefined;
 }>;
@@ -1240,4 +1243,18 @@ export declare const STEP_EXIT: {
     readonly ok: 0;
     readonly skip: 78;
 };
+```
+
+## subjects.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+declare const RunSubjects_base: Context.ServiceClass<RunSubjects, "@chernabog/sdk/RunSubjects", {
+    name(subject: string): Effect.Effect<void>;
+}>;
+export declare class RunSubjects extends RunSubjects_base {
+}
+export declare const name: (subject: string) => Effect.Effect<void, never, never>;
+export {};
 ```

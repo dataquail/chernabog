@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunUseCase } from "./find-run.use-case.ts";
-import { linkPullRequestUseCase } from "./link-pull-request.use-case.ts";
+import { nameSubjectUseCase } from "./name-subject.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,18 +29,20 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("linkPullRequestUseCase", () => {
-  effect("records the pull request a running run opened", () =>
+describe("nameSubjectUseCase", () => {
+  effect("records each subject a running run names, once", () =>
     Effect.gen(function* () {
       const a = RunId.make("a");
-      expect((yield* linkPullRequestUseCase(a, 124)).pullRequest).toEqual(Option.some(124));
-      expect(Option.map((yield* findRunUseCase(a)).run, (found) => found.pullRequest)).toEqual(
-        Option.some(Option.some(124)),
+      expect((yield* nameSubjectUseCase(a, "pr-124")).subjects).toEqual(["pr-124"]);
+      yield* nameSubjectUseCase(a, "pr-125");
+      yield* nameSubjectUseCase(a, "pr-124");
+      expect(Option.map((yield* findRunUseCase(a)).run, (found) => found.subjects)).toEqual(
+        Option.some(["pr-124", "pr-125"]),
       );
     }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
   );
 
-  effect("a run that ended links nothing, and one that isn't there is not found", () =>
+  effect("a run that ended names nothing, and one that isn't there is not found", () =>
     Effect.gen(function* () {
       const ended = run("ended", {
         status: "done",
@@ -48,10 +50,10 @@ describe("linkPullRequestUseCase", () => {
         finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
       });
 
-      expect((yield* Effect.flip(linkPullRequestUseCase(ended.id, 9)))._tag).toBe(
+      expect((yield* Effect.flip(nameSubjectUseCase(ended.id, "pr-9")))._tag).toBe(
         "RunAlreadyFinished",
       );
-      expect((yield* Effect.flip(linkPullRequestUseCase(RunId.make("gone"), 9)))._tag).toBe(
+      expect((yield* Effect.flip(nameSubjectUseCase(RunId.make("gone"), "pr-9")))._tag).toBe(
         "RunNotFound",
       );
     }).pipe(

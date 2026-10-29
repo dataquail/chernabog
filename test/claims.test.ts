@@ -112,6 +112,8 @@ describe("claiming an issue", () => {
       ]);
       expect(fake.refs.has(ISSUE_REF)).toBe(false);
       expect(fake.git.opened).toBe(true);
+      // The pull request it opened is the run's subject.
+      expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
       // The comment a person reads says the claim is a ref.
       expect(

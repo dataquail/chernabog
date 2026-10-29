@@ -633,6 +633,22 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json(comment, 201);
   });
 
+  // Edits a comment by its id, on whichever issue or pull request it is.
+  const editComment = withBody(CommentBody, (body, args) => {
+    const id = numberParam(args);
+
+    const found = Arr.findFirst([...comments.values()].flat(), (comment) => comment.id === id);
+
+    return Option.match(found, {
+      onNone: notFound,
+      onSome: (comment) => {
+        comment.body = body.body;
+
+        return json(comment);
+      },
+    });
+  });
+
   const linkedJson = (links: Map<number, Array<number>>, args: Args) =>
     json(
       (links.get(numberParam(args)) ?? []).flatMap((number) =>
@@ -1158,6 +1174,11 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
+    {
+      method: "PATCH",
+      pattern: new RegExp(`^${repo}/issues/comments/(\\d+)$`),
+      handle: editComment,
+    },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`),

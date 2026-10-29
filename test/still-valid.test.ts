@@ -118,19 +118,29 @@ describe("Implement.stillValid", () => {
     }),
   );
 
-  effect("is gone once the pull request the run opened is closed or merged", () =>
+  effect("is gone once a pull request the run named as a subject is closed or merged", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
-      expect(yield* check(fake, Implement.stillValid, issueWork, { pullRequest: PULL })).toEqual({
+      const named = { subjects: ["release-1.4", `pr-${PULL}`] };
+      expect(yield* check(fake, Implement.stillValid, issueWork, named)).toEqual({
         valid: true,
       });
 
       fake.states.pull = "merged";
 
+      expect(yield* check(fake, Implement.stillValid, issueWork, named)).toEqual({
+        valid: false,
+        reason: `#${PULL} was merged`,
+      });
+      // A binary from before subjects gives the pull request it linked.
       expect(yield* check(fake, Implement.stillValid, issueWork, { pullRequest: PULL })).toEqual({
         valid: false,
         reason: `#${PULL} was merged`,
       });
+      // Subjects, when given, are all there is.
+      expect(
+        yield* check(fake, Implement.stillValid, issueWork, { subjects: [], pullRequest: PULL }),
+      ).toEqual({ valid: true });
       // Plan opens no pull request, so it never asks.
       expect(yield* check(fake, Plan.stillValid, issueWork, { pullRequest: PULL })).toEqual({
         valid: true,

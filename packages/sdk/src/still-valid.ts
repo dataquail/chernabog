@@ -1,9 +1,19 @@
 // What the SDK's blocks count as a run's work item still being there, for a
 // flow's stillValid: the issue or pull request is open, no other run holds
-// its claim, and a pull request the run opened is open. Each reads GitHub as
+// its claim, and each pull request the run named as a subject is open. Each reads GitHub as
 // the run's persona; a read that fails fails the check, which is not Gone.
 
-import { Claims, GitHub, gone, reportAs, Run, valid, type Validity } from "@chernabog/core";
+import {
+  Claims,
+  GitHub,
+  type GitHubError,
+  gone,
+  reportAs,
+  Run,
+  type RunInfo,
+  valid,
+  type Validity,
+} from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -52,12 +62,43 @@ const issueOpen = (number: number) =>
   );
 
 export type IssueChecks = {
-  // Whether a pull request the run opened must still be open.
+  // Whether each pull request the run named as a subject must still be open.
   readonly pullRequest: boolean;
 };
 
+const PULL_REQUEST_SUBJECT = /^pr-(\d+)$/;
+
+// The pull requests the run named as subjects, or, from a binary from before
+// subjects, the one it linked.
+const pullRequestsOf = (run: RunInfo) =>
+  Option.match(Option.fromUndefinedOr(run.subjects), {
+    onNone: () => Option.toArray(Option.fromUndefinedOr(run.pullRequest)),
+    onSome: (subjects) =>
+      subjects.flatMap((subject) =>
+        Option.toArray(
+          Option.map(Option.fromNullOr(PULL_REQUEST_SUBJECT.exec(subject)), (match) =>
+            Number(match[1]),
+          ),
+        ),
+      ),
+  });
+
+// The first of `checks` that says gone, or valid.
+const allValid = <R>(checks: ReadonlyArray<Effect.Effect<Validity, GitHubError, R>>) =>
+  Effect.gen(function* () {
+    for (const check of checks) {
+      const validity = yield* check;
+
+      if (!validity.valid) {
+        return validity;
+      }
+    }
+
+    return valid;
+  });
+
 // An issue's run: the issue is open, its claim is this run's or nobody's,
-// and, when asked, the pull request the run opened is open.
+// and, when asked, each pull request it named as a subject is open.
 export const issueValidity = (number: number, checks: IssueChecks) =>
   Effect.gen(function* () {
     const run = yield* Run;
@@ -73,10 +114,7 @@ export const issueValidity = (number: number, checks: IssueChecks) =>
       return claim;
     }
 
-    return yield* Option.match(Option.fromUndefinedOr(run.pullRequest), {
-      onNone: () => Effect.succeed<Validity>(valid),
-      onSome: pullRequestOpen,
-    });
+    return yield* allValid(pullRequestsOf(run).map(pullRequestOpen));
   }).pipe(reportAs("still-valid"));
 
 // A pull request's run: the pull request is open, and its claim is this run's or nobody's.

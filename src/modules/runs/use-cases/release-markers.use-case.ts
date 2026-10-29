@@ -20,7 +20,7 @@ const questionOf = (run: RunRoot) => ({
   runId: run.id,
   executionId: Option.getOrElse(run.executionId, () => ""),
   item: Option.getOrElse(run.item, () => ({ key: run.itemKey, data: {} })),
-  pullRequest: run.pullRequest,
+  subjects: run.subjects,
 });
 
 // Releases what ended runs still hold, as each run's persona, through its

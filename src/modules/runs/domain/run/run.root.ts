@@ -47,9 +47,10 @@ export class RunRoot extends Schema.Class<RunRoot, { readonly brand: "RunRoot" }
   // The workflow execution that runs it, once the engine has started one.
   executionId: Schema.Option(Schema.String),
   status: RunStatus,
-  // The pull request it opened or adopted for its work item, which ties an
-  // issue's run to the runs on its pull request; none until it does.
-  pullRequest: Schema.Option(Schema.Finite).pipe(Schema.withConstructorDefault(Effect.succeedNone)),
+  // The work items it named as its subjects (Subjects.name), in the order it
+  // named them, such as the pull request an issue's run opened: what ties
+  // its runs to the others that share one.
+  subjects: Schema.Array(Schema.String).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
   // The step it's in while running.
   currentStep: Schema.Option(Schema.String),
   // How it ended, once it has.
