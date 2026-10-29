@@ -6,6 +6,7 @@
 import {
   activity,
   Claims,
+  Git,
   GitHub,
   type Labels,
   latestMarker,
@@ -22,6 +23,7 @@ import {
   Run,
   Runs,
   Skip,
+  Worktree,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -183,10 +185,114 @@ export type MergeOptions = { readonly method: MergeMethod };
 
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
+const short = (sha: string) => sha.slice(0, 7);
+
+// Whether the head only brought the pull request up to date with its base
+// since `reviewedSha`, and if not, which commit did more.
+export type BaseMerges =
+  { readonly only: true } | { readonly only: false; readonly reason: string };
+
+const notOnly = (reason: string): BaseMerges => ({ only: false, reason });
+
+// Whether every commit between `reviewedSha` and the pull request's head, along
+// its first parents, is a merge of the base branch (baseRef) that git would
+// have made by itself: two parents, the second on the base, and the tree a
+// clean automatic merge of the two gives. A merge where someone resolved a
+// conflict or added edits of their own is not, so the change still needs a
+// review. Reads the history in a detached checkout of the head.
+export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
+  Effect.gen(function* () {
+    const git = yield* Git;
+    const base = pull.baseRef;
+
+    const worktree = yield* (yield* Worktree).checkout(
+      `merge-pr-${pull.number}`,
+      `origin/${pull.headRef}`,
+    );
+
+    // The head by its sha, not origin/<headRef>, so the walk checks the very
+    // commit merge asks GitHub to merge, even if the branch moved since.
+    yield* git.run(
+      [
+        "fetch",
+        "--quiet",
+        "origin",
+        `+refs/heads/${base}:refs/remotes/origin/${base}`,
+        pull.headSha,
+      ],
+      worktree,
+    );
+
+    const reviewedKnown = yield* git
+      .run(["rev-parse", "--verify", "--quiet", `${reviewedSha}^{commit}`], worktree)
+      .pipe(
+        Effect.as(true),
+        Effect.catchTag("GitError", () => Effect.succeed(false)),
+      );
+
+    if (!reviewedKnown) {
+      return notOnly(`the reviewed commit \`${short(reviewedSha)}\` is no longer in its history`);
+    }
+
+    // Newest first: each commit and its parents.
+    const commits = (yield* git.run(
+      ["rev-list", "--first-parent", "--parents", pull.headSha, `^${reviewedSha}`],
+      worktree,
+    ))
+      .split("\n")
+      .filter((line) => line.trim().length > 0)
+      .map((line) => line.trim().split(/\s+/));
+
+    for (const [commit = "", ...parents] of commits) {
+      const [first = "", second = ""] = parents;
+
+      if (parents.length !== 2) {
+        return notOnly(`\`${short(commit)}\` is not a merge of \`${base}\``);
+      }
+
+      const onBase = yield* git.run(
+        [
+          "for-each-ref",
+          "--format=%(refname)",
+          "--contains",
+          second,
+          `refs/remotes/origin/${base}`,
+        ],
+        worktree,
+      );
+
+      if (onBase.trim().length === 0) {
+        return notOnly(`\`${short(commit)}\` is not a merge of \`${base}\``);
+      }
+
+      // merge-tree fails on a conflict, which only a person could have resolved.
+      const clean = yield* git.run(["merge-tree", "--write-tree", first, second], worktree).pipe(
+        Effect.map((said) => Option.fromUndefinedOr(said.trim().split("\n")[0])),
+        Effect.catchTag("GitError", () => Effect.succeedNone),
+      );
+
+      const tree = (yield* git.run(["rev-parse", `${commit}^{tree}`], worktree)).trim();
+
+      if (!Option.contains(clean, tree)) {
+        return notOnly(`\`${short(commit)}\` is not a clean merge of \`${base}\``);
+      }
+
+      // The walk reached the reviewed commit through first parents alone.
+      if (first === reviewedSha) {
+        return { only: true } satisfies BaseMerges;
+      }
+    }
+
+    return notOnly(
+      `the reviewed commit \`${short(reviewedSha)}\` is not on the head's first-parent history`,
+    );
+  });
+
 // Merges the pull request, only when that is safe: it is open and based on
 // the repo's base branch, its required checks are green on the current head,
-// the latest review approved that very head, it touches no humanOnlyPaths,
-// and GitHub's rules for the repo allow it. A layer of a stack, based on the
+// the latest review approved that very head or one the head has only merged
+// its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
+// GitHub's rules for the repo allow it. A layer of a stack, based on the
 // branch of the one below, waits until it sits on the base branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
@@ -234,10 +340,14 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
       }
 
       if (reviewed.value.sha !== pull.headSha) {
-        return yield* refuse(
-          pullRequest,
-          `the head moved to \`${pull.headSha.slice(0, 7)}\` since review ${reviewed.value.round} saw \`${reviewed.value.sha.slice(0, 7)}\``,
-        );
+        const since = yield* onlyMergedBase(pull, reviewed.value.sha);
+
+        if (!since.only) {
+          return yield* refuse(
+            pullRequest,
+            `the head moved to \`${short(pull.headSha)}\` since review ${reviewed.value.round} saw \`${short(reviewed.value.sha)}\`, and ${since.reason}`,
+          );
+        }
       }
 
       if (reviewed.value.verdict !== "approve") {
