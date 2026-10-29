@@ -546,6 +546,10 @@ export const makeFake = (
       closedPullRequestsLabelled: () => Effect.succeed([]),
       pullRequest: () => Effect.sync(pull),
       ciState: () => Effect.sync(() => merge.ci),
+      // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
+      commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      ciFailureDetails: (run) => Effect.succeed({ url: run.url, logTail: Option.none() }),
       pullRequestFiles: () => Effect.sync(() => merge.files),
       merge: (pullRequest, request) =>
         Effect.suspend(() => {
