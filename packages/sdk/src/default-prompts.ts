@@ -44,7 +44,7 @@ You decided to address this review. You are back in the same worktree, on the sa
 {{review}}
 
 - Make each change the review asks for. Where you disagree, leave the code as it is and say why in \`summary\`; the reviewer reads it.
-- Keep each commit to one change. Commit messages follow the repo's convention.
+- Keep each commit to one change. Commit messages follow the repo's convention. Leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left.
 - The ground rules of your first task still hold: never push, never weaken a check to get green, and stop with \`needs-clarification\` only for the hard limits.
 - \`summary\`: what you changed for each point, and which points you left and why.
 `;

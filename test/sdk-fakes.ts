@@ -197,13 +197,15 @@ export const makeFake = (
   };
 
   // The pushed head, pushes so far, whether the pull request is open, the
-  // commits the agent made since the last push, and what the remote says to a push.
+  // commits the agent made since the last push, what the remote says to a push,
+  // and the changes the agent left in the worktree, as `git status --porcelain` lists them.
   const git = {
     head: HEAD,
     pushes: 0,
     opened: false,
     commits: 0,
     rejects: Option.none<PushRejected>(),
+    uncommitted: new Array<string>(),
   };
 
   // The worktree's head: the pushed one, or a commit of the agent's on top.
@@ -717,8 +719,15 @@ export const makeFake = (
         }),
     }),
     Layer.mock(Git)({
-      // Any other git command, such as cleaning up's: it has nothing to say.
-      run: () => Effect.succeed(""),
+      // `git status`, and any other git command, such as cleaning up's: it has nothing else to say.
+      run: (args) =>
+        Effect.sync(() => {
+          if (args[0] === "status") {
+            return git.uncommitted.join("\n");
+          }
+
+          return "";
+        }),
       commitsAhead: (_, base) =>
         Effect.sync(() => {
           based.checkedAgainst.push(base);
