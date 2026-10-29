@@ -2,6 +2,7 @@ import {
   DEFAULT_LABELS,
   Git,
   GitHub,
+  GitHubCapability,
   GitHubError,
   HEADLESS,
   type Json,
@@ -17,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import { effect, effectAtHomeWith } from "../../../../../test/effect-test.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
@@ -404,6 +406,117 @@ const gitRepo = Layer.unwrap(
       GitLive(Option.none()),
     ).pipe(Layer.provide(GitHubTokens.fixed("token")));
   }).pipe(Effect.orDie),
+);
+
+// A call of every member of GitHub, so a test can see what each one asks of GitHub.
+const EVERY_MEMBER = {
+  queuedIssues: (github) => github.queuedIssues,
+  queuedIssuesLabelled: (github) => github.queuedIssuesLabelled("auto:eligible"),
+  oldestQueued: (github) => github.oldestQueued,
+  issuesLabelled: (github) => github.issuesLabelled("auto:eligible"),
+  issue: (github) => github.issue(3),
+  createIssue: (github) => github.createIssue({ title: "a task", body: "", labels: [] }),
+  subIssues: (github) => github.subIssues(3),
+  addSubIssue: (github) => github.addSubIssue(3, 5),
+  blockedBy: (github) => github.blockedBy(3),
+  addBlockedBy: (github) => github.addBlockedBy(3, 4),
+  removeBlockedBy: (github) => github.removeBlockedBy(3, 4),
+  trustedComments: (github) => github.trustedComments(3),
+  comments: (github) => github.comments(3),
+  comment: (github) => github.comment(3, "hello"),
+  addLabel: (github) => github.addLabel(3, "auto:eligible"),
+  removeLabel: (github) => github.removeLabel(3, "auto:eligible"),
+  moveToStatus: (github) => github.moveToStatus(3, "Done"),
+  assignSelf: (github) => github.assignSelf(3),
+  login: (github) => github.login,
+  branchSha: (github) => github.branchSha("auto/issue-3"),
+  createBranch: (github) => github.createBranch("auto/issue-3", "c1"),
+  deleteBranch: (github) => github.deleteBranch("auto/issue-3"),
+  createCommit: (github) => github.createCommit({ message: "m", tree: "t1", parents: [] }),
+  createRef: (github) => github.createRef(CLAIM, "c1"),
+  ref: (github) => github.ref(CLAIM),
+  deleteRef: (github) => github.deleteRef(CLAIM),
+  updateRef: (github) => github.updateRef(CLAIM, "c2"),
+  pullRequest: (github) => github.pullRequest(7),
+  pullRequestForBranch: (github) => github.pullRequestForBranch("auto/issue-3"),
+  pullRequestsLabelled: (github) => github.pullRequestsLabelled("auto:needs-review"),
+  openPullRequests: (github) => github.openPullRequests,
+  requestReviewers: (github) => github.requestReviewers(7, ["zach"]),
+  reviews: (github) => github.reviews(7),
+  openPullRequest: (github) =>
+    github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" }),
+  ciState: (github) => github.ciState(7),
+  commitCiState: (github) => github.commitCiState("c1"),
+  branchCiState: (github) => github.branchCiState("main"),
+  ciFailureDetails: (github) =>
+    github.ciFailureDetails({
+      name: "test",
+      url: "https://github.com/dataquail/demo/actions/runs/1",
+      job: Option.some(1),
+      workflowRun: Option.some(1),
+    }),
+  pullRequestFiles: (github) => github.pullRequestFiles(7),
+  closedPullRequestsLabelled: (github) => github.closedPullRequestsLabelled("auto:stale"),
+  review: (github) =>
+    github.review(7, { body: "ok", commitSha: "c1", comments: [], event: "APPROVE" }),
+  reviewComments: (github) => github.reviewComments(7),
+  merge: (github) => github.merge(7, { method: "squash", sha: "c1" }),
+  request: (github) => github.request("GET", "/repos/dataquail/demo", Option.none()),
+} satisfies {
+  readonly [K in keyof GitHub["Service"]]: (
+    github: GitHub["Service"],
+  ) => Effect.Effect<unknown, unknown>;
+};
+
+const GraphqlRequest = Schema.Struct({ query: Schema.String });
+
+// A request that changes something on GitHub: a GraphQL mutation, or any other request but a GET.
+const writes = (request: {
+  readonly method: string;
+  readonly path: string;
+  readonly body: Option.Option<Json>;
+}) => {
+  if (request.path === "/graphql") {
+    return Option.exists(
+      Option.flatMap(request.body, Schema.decodeUnknownOption(GraphqlRequest)),
+      (sent) => sent.query.trimStart().startsWith("mutation"),
+    );
+  }
+
+  return request.method !== "GET";
+};
+
+effect("every member of GitHub that writes to it is declared a write, a claim, or local", () =>
+  Effect.gen(function* () {
+    const writing = yield* Effect.forEach(Object.entries(EVERY_MEMBER), ([name, call]) =>
+      Effect.gen(function* () {
+        const github = answering(200, Option.some({}));
+        yield* onGitHub(github, (service) => Effect.asVoid<unknown, unknown, never>(call(service)));
+
+        return { name, wrote: github.requests.some(writes) };
+      }),
+    ).pipe(Effect.map((found) => found.filter((member) => member.wrote).map(({ name }) => name)));
+
+    const declared = new Set(
+      Result.getOrElse(
+        yield* onGitHub(answering(200, Option.none()), (github) =>
+          Effect.succeed(Object.keys(GitHubCapability.writes(github, (method) => method))),
+        ),
+        () => [],
+      ),
+    );
+
+    const undeclared = writing.filter(
+      (name) =>
+        !declared.has(name) &&
+        !Object.entries(GitHubCapability.others).some(
+          ([other, kind]) => other === name && kind !== "read",
+        ),
+    );
+
+    expect(writing).toContain("comment");
+    expect(undeclared).toEqual([]);
+  }),
 );
 
 // git runs for real.

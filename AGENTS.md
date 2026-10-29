@@ -587,8 +587,12 @@ Decisions that cut across them:
   for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
   check; a claim naming another run ends the run as `lost` (`cancelRunUseCase`
   with `endAs lost`, which removes nothing). In the run, `fencing` in the
-  engine checks `Claims.holds` before every GitHub write and push, and a lost
-  claim ends the workflow as `lost`. A lost run's markers are all kept: they
+  engine checks `Claims.holds` before every write a capability port declares
+  (`Capabilities.declare` beside each port in core's `services.ts`, listed in
+  `CAPABILITIES`; the claim refs' own writes are declared `claim` and never
+  fenced), and a lost claim ends the workflow as `lost`. `reportingChanges`
+  reports the same writes. The engine names no port method: a new write, or a
+  new port, is fenced and reported by declaring it. A lost run's markers are all kept: they
   are the taker's.
 - **Migration, to drop a release later:** a branch whose latest claim marker
   has no `ref: true` is an earlier version's claim (`Implement.legacyClaim`),
