@@ -94,9 +94,12 @@ export class GitHubApi extends Context.Service<
             const text = yield* response.text;
             let parsed = Option.none<Json>();
 
+            // A body that isn't JSON, such as a job's log, is kept as text.
             if (text.length > 0) {
               parsed = Option.some(
-                yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(text),
+                yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(text).pipe(
+                  Effect.orElseSucceed((): Json => text),
+                ),
               );
             }
 

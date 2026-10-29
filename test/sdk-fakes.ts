@@ -176,8 +176,9 @@ export const makeFake = (
   const people = {
     me: "chernabog-bot",
     requested: new Array<string>(),
-    // Who is assigned to the issue.
+    // Who is assigned to the issue, and to the pull request.
     assigned: new Array<string>(),
+    pullAssigned: new Array<string>(),
   };
 
   const submitted: Array<SubmittedReview> = [];
@@ -272,6 +273,12 @@ export const makeFake = (
   // Pull requests by head branch, apart from the one pull request, such as
   // those of an epic's other tasks.
   const branchPulls = new Map<string, PullRequest>();
+
+  // The pull request as its author opened it: its branch, who opened it, and
+  // whether it is a draft. And the open pull requests GitHub says close the
+  // issue, as its GraphQL API answers closedByPullRequestsReferences.
+  const authored = { headRef: `auto/issue-${ISSUE}`, author: "chernabog-bot", draft: false };
+  const closing: Array<Json> = [];
 
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
@@ -380,12 +387,12 @@ export const makeFake = (
     body: "",
     url: `https://github.com/dataquail/demo/pull/${PULL}`,
     state: states.pull,
-    headRef: `auto/issue-${ISSUE}`,
+    headRef: authored.headRef,
     headSha: git.head,
     baseRef: stack.base,
     labels: labelsOf(PULL),
-    author: "chernabog-bot",
-    assignees: [],
+    author: authored.author,
+    assignees: [...people.pullAssigned],
     requestedReviewers: [...people.requested],
   });
 
@@ -528,8 +535,17 @@ export const makeFake = (
         Effect.sync(() => {
           refs.set(ref, sha);
         }),
-      assignSelf: () =>
+      assignSelf: (number) =>
         Effect.sync(() => {
+          if (number === PULL) {
+            people.pullAssigned = [
+              ...people.pullAssigned.filter((login) => login !== people.me),
+              people.me,
+            ];
+
+            return;
+          }
+
           people.assigned = [...people.assigned.filter((login) => login !== people.me), people.me];
         }),
       moveToStatus: (_, status) =>
@@ -597,6 +613,10 @@ export const makeFake = (
           ),
         ),
       ciState: () => Effect.sync(() => merge.ci),
+      // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
+      commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      ciFailureDetails: (run) => Effect.succeed({ url: run.url, logTail: Option.none() }),
       pullRequestFiles: () => Effect.sync(() => merge.files),
       merge: (pullRequest, request) =>
         Effect.suspend(() => {
@@ -647,7 +667,15 @@ export const makeFake = (
           }
 
           if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
-            return { number: PULL, mergeable_state: merge.state };
+            return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
+          }
+
+          if (method === "POST" && path === "/graphql") {
+            return {
+              data: {
+                repository: { issue: { closedByPullRequestsReferences: { nodes: [...closing] } } },
+              },
+            };
           }
 
           // The issues this login opened, newest first.
@@ -791,6 +819,8 @@ export const makeFake = (
     submitted,
     graph,
     branchPulls,
+    authored,
+    closing,
     plans,
     removed,
     board,

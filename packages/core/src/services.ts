@@ -319,10 +319,42 @@ export type MergeRequest = { readonly method: MergeMethod; readonly sha: string 
 // The merge commit.
 export type Merged = { readonly sha: string };
 
-export type CiState =
+export type CiState = (
   | { state: "pending"; waitingOn: Array<string> }
   | { state: "green" }
-  | { state: "red"; failedChecks: Array<string> };
+  | { state: "red"; failedChecks: Array<string> }
+) & {
+  // Why the reading counts every check rather than the required ones, when
+  // GitHub refused to say which those are, as it does for a private repo in a
+  // free-plan org.
+  readonly caveat?: string;
+};
+
+// A failed check, and where to read why.
+export type CiFailedRun = {
+  readonly name: string;
+  readonly url: string;
+  // The Actions job, for a check run Actions made.
+  readonly job: Option.Option<number>;
+  // The Actions workflow run, for a branch's reading, which is by workflow.
+  readonly workflowRun: Option.Option<number>;
+};
+
+// A commit's or a branch's CI, with the runs that failed.
+export type CiReport = CiState & { readonly failedRuns: ReadonlyArray<CiFailedRun> };
+
+export type CiFailureDetails = {
+  readonly url: string;
+  // The end of each failed job's log; none for a check with no log on GitHub,
+  // such as a commit status from another CI, or a log GitHub no longer keeps.
+  readonly logTail: Option.Option<string>;
+};
+
+export type CommitCiOptions = {
+  // Only Actions workflow runs triggered by this event count, such as "push",
+  // so runs that merely share the sha (Dependabot's) don't decide it.
+  readonly event?: string;
+};
 
 export class GitHub extends Context.Service<
   GitHub,
@@ -386,7 +418,20 @@ export class GitHub extends Context.Service<
     // The reviews submitted on a pull request, oldest first.
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    // Red as soon as any check fails; green once every check the base branch
+    // requires has passed, or every check, when the branch requires none or
+    // GitHub won't say (then `caveat` says so).
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
+    // A commit's check runs and commit statuses. A sha with none yet, such as
+    // just after a push, is pending with nothing in waitingOn: telling "no CI
+    // yet" from "no CI" is up to the flow.
+    commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
+    // For each Actions workflow, its newest completed push run on the branch
+    // (a cancelled one decides nothing): red if any failed. A run still in
+    // progress changes nothing; a workflow with no completed run is waited on.
+    branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
+    // A failed run's link and the tail of its failing log.
+    ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
     // Changed paths of a pull request, for path rules such as humanOnlyPaths.
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
     // Recently closed or merged pull requests carrying the label, newest first.
