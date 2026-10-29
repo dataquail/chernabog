@@ -90,3 +90,15 @@ export const pullRequestValidity = (number: number) =>
 
     return yield* claimValidity(Claims.pullRequest(number), `#${number}`);
   }).pipe(reportAs("still-valid"));
+
+// An epic's run: the epic is open, and its claim is this run's or nobody's.
+export const epicValidity = (number: number) =>
+  Effect.gen(function* () {
+    const open = yield* issueOpen(number);
+
+    if (!open.valid) {
+      return open;
+    }
+
+    return yield* claimValidity(Claims.epic(number), `#${number}`);
+  }).pipe(reportAs("still-valid"));
