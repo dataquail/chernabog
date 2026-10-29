@@ -18,6 +18,7 @@ import {
   Repo,
   reportAs,
   Review,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -29,13 +30,13 @@ import * as Schema from "effect/Schema";
 // per request, unless a person has them (auto:needs-human): asking again
 // during a dispute doesn't restart the loop.
 const trigger = Effect.gen(function* () {
-  const repo = yield* Repo;
+  const labelNames = yield* Settings.labels;
 
   return (yield* Review.reviewRequests).flatMap(({ pull, reviewed }) =>
     Option.toArray(
       Option.liftPredicate(
         Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`),
-        () => reviewed > 0 && !pull.labels.includes(repo.labels.needsHuman),
+        () => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
       ),
     ),
   );
@@ -117,7 +118,7 @@ const reReviews = (count: number) => {
 
 const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.reviewers;
     const { pullRequest } = yield* Review.pullRequestOf(item);
     const earlier = yield* Review.latestOwnReview(pullRequest);
 
@@ -129,10 +130,10 @@ const workflow = (item: WorkItem) =>
     const round = earlier.value.round ?? 1;
     const done = round - 1;
 
-    if (done >= repo.limits.reviewRounds) {
+    if (done >= rounds) {
       return yield* PullRequest.handToPerson(
         pullRequest,
-        `asked to review again after ${reReviews(done)}, and limits.reviewRounds is ${repo.limits.reviewRounds}, so a person decides. Review ${round}'s findings are in its review above.`,
+        `asked to review again after ${reReviews(done)}, and reviewRounds is ${rounds}, so a person decides. Review ${round}'s findings are in its review above.`,
       );
     }
 
@@ -167,7 +168,16 @@ const workflow = (item: WorkItem) =>
     }),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.

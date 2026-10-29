@@ -22,6 +22,7 @@ import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapsh
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
 import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   type EffectiveRepo,
   type EnrolledRepo,
@@ -118,6 +119,7 @@ export const openRepo = (
     const repo = yield* loadRepo(machine, enrolled, configDir, overrides);
     const flows = yield* loadFlows(configDir, overrides);
     yield* checkManualSchedules(repo, flows);
+    yield* checkFlowSettings(repo, flows);
 
     return { repo, flows, tree } satisfies OpenRepo;
   });

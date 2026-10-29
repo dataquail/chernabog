@@ -33,6 +33,7 @@ import {
   reportAs,
   Review,
   Run,
+  Settings,
   Skip,
   StepFailed,
   type WorkItem,
@@ -68,10 +69,11 @@ const decodeIn =
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
+  const labelNames = yield* Settings.labels;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* Review.authoredByMe) {
-    if (pull.labels.includes(repo.labels.needsHuman) || (yield* Review.ownedByARun(pull))) {
+    if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
       continue;
     }
 
@@ -123,15 +125,17 @@ const resolve = (conflict: ConflictItem, worktree: string, sessionId: string) =>
     "resolve",
     Effect.gen(function* () {
       const repo = yield* Repo;
+      const rules = yield* Settings.rules;
+      const localGate = yield* Settings.localGate;
 
       const prompt = yield* renderPrompt("resolve-conflicts", {
         repo: repo.slug,
         pullRequest: conflict.pullRequest,
         branch: conflict.headRef,
         base: conflict.baseRef,
-        humanOnly: repo.humanOnly,
-        notes: repo.notes,
-        localGate: repo.localGate,
+        humanOnly: rules.humanOnly,
+        notes: rules.notes,
+        localGate: localGate.commands,
       });
 
       const result = yield* (yield* Agent).run({
@@ -238,7 +242,17 @@ const workflow = (item: WorkItem) =>
     );
   });
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   gate: Implement.gate,
   concurrency: 1,

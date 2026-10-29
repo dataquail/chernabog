@@ -46,7 +46,9 @@ describe("resolve-conflicts' flow", () => {
       expect(Object.keys(resolveConflicts).toSorted()).toEqual([
         "concurrency",
         "gate",
+        "labels",
         "ownWork",
+        "settings",
         "stillValid",
         "trigger",
         "workflow",

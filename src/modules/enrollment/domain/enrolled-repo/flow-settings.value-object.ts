@@ -1,6 +1,7 @@
-// How a flow runs: its schedule, concurrency, agent, and whose work items it
-// starts. The team's .chernabog/config.yaml sets these per flow, and a person's
-// machine config overrides them for the flows each persona runs.
+// How a flow runs: its schedule, concurrency, agent, whose work items it
+// starts, and the flow's own settings. The team's .chernabog/config.yaml sets
+// these per flow, and a person's machine config overrides them for the flows
+// each persona runs.
 
 import * as Schema from "effect/Schema";
 
@@ -36,6 +37,12 @@ export const FlowSettings = Schema.Struct({
   ),
   assignee: whoFor("assignees"),
   reviewRequested: whoFor("requested reviewers"),
+  settings: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Json).annotate({
+      description:
+        "The flow's own settings, which its settings schema declares, over the repo's shared settings: key by key.",
+    }),
+  ),
 });
 
 export type FlowSettings = typeof FlowSettings.Type;

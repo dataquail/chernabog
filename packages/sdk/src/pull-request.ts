@@ -8,7 +8,6 @@ import {
   Claims,
   Git,
   GitHub,
-  type Labels,
   latestMarker,
   type MergeMethod,
   MergeRefused,
@@ -34,6 +33,7 @@ import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
 import { commentStep } from "./comment.ts";
+import * as Settings from "./settings.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
 export const own = (pullRequest: number) =>
@@ -302,6 +302,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const rules = yield* Settings.rules;
       const pull = yield* github.pullRequest(pullRequest);
 
       // A rerun after a crash finds its own merge done.
@@ -356,7 +357,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
 
       const touched = pathsMatching(
         yield* github.pullRequestFiles(pullRequest),
-        repo.humanOnlyPaths,
+        rules.humanOnlyPaths,
       );
 
       if (touched.length > 0) {
@@ -387,14 +388,15 @@ export const requestReview = (pullRequest: number) =>
     `request-review-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const reviewerPool = (yield* Settings.reviewers).pool;
+      const labelNames = yield* Settings.labels;
       const pull = yield* github.pullRequest(pullRequest);
-      const pool = (repo.reviewers ?? []).filter((login) => !sameLogin(login, pull.author));
+      const pool = reviewerPool.filter((login) => !sameLogin(login, pull.author));
 
       if (pool.length === 0) {
-        yield* github.addLabel(pullRequest, repo.labels.needsReview);
+        yield* github.addLabel(pullRequest, labelNames.needsReview);
 
-        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${repo.labels.needsReview} for a person`;
+        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${labelNames.needsReview} for a person`;
       }
 
       const reviewer = pool[yield* Random.nextIntBetween(0, pool.length, { halfOpen: true })];
@@ -408,7 +410,8 @@ export const requestReview = (pullRequest: number) =>
 // Whether chernabog may merge the pull request: only on the automated path,
 // one labelled ship (auto:ship). Anything else, a missing or misspelt label
 // included, is left for a person to merge. The one place that decides it.
-export const ships = (pull: PullRequest, labels: Labels) => pull.labels.includes(labels.ship);
+export const ships = (pull: PullRequest, labels: Settings.LabelNames) =>
+  pull.labels.includes(labels.ship);
 
 // Labels the pull request needs-human and says why; no flow picks it up again
 // until a person removes the label.
@@ -417,8 +420,8 @@ export const handToPerson = (pullRequest: number, reason: string) =>
     `needs-human-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(pullRequest, repo.labels.needsHuman);
+      const labelNames = yield* Settings.labels;
+      yield* github.addLabel(pullRequest, labelNames.needsHuman);
       yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
@@ -429,9 +432,9 @@ export const shipping = (pullRequest: number) =>
   activity(
     `ships-pr-${pullRequest}`,
     Effect.gen(function* () {
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
 
-      return ships(yield* (yield* GitHub).pullRequest(pullRequest), repo.labels);
+      return ships(yield* (yield* GitHub).pullRequest(pullRequest), labelNames);
     }),
     Schema.Boolean,
   );

@@ -11,23 +11,29 @@ This is the `implement` recipe, as `chernabog recipes add implement` bakes it, w
 
 ```ts
 // .chernabog/flows/implement.ts
-import { Claims, defineFlow, GitHub, Implement, Repo, reportAs, Skip } from '@chernabog/sdk';
+import { Claims, defineFlow, GitHub, Implement, reportAs, Settings, Skip } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
+import * as Schema from 'effect/Schema';
 
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
-  const repo = yield* Repo;
-  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
-  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
+  const labels = yield* Settings.labels;
+  const eligible = yield* github.queuedIssuesLabelled(labels.eligible);
+  const shipping = (yield* github.queuedIssuesLabelled(labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
 
-  return [...eligible.map((issue) => Implement.issueItem(issue)), ...shipping.map((issue) => Implement.issueItem(issue, Option.some(repo.labels.ship)))];
+  return [...eligible.map((issue) => Implement.issueItem(issue)), ...shipping.map((issue) => Implement.issueItem(issue, Option.some(labels.ship)))];
 }).pipe(reportAs('trigger'));
+
+// What config.yaml may set for this flow: the SDK's settings its blocks read.
+const settings = Schema.Struct({ ...Settings.Labels.fields, ...Settings.Board.fields, ...Settings.LocalGate.fields, ...Settings.Rules.fields, ...Settings.Ci.fields, ...Settings.Reviewers.fields });
 
 export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
+  labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...Implement.adoptionLabels]),
+  settings,
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);

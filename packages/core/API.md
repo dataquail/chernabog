@@ -256,6 +256,27 @@ export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticat
 export {};
 ```
 
+## flow-settings.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import type { Json } from "./json.ts";
+export type SettingsSchema = Schema.Codec<unknown, unknown>;
+export type Input = {
+    readonly [key: string]: Json;
+};
+declare const FlowSettings_base: Context.ServiceClass<FlowSettings, "@chernabog/sdk/FlowSettings", {
+    readonly input: Input;
+}>;
+export declare class FlowSettings extends FlowSettings_base {
+}
+export declare const input: Effect.Effect<Input, never, never>;
+export declare const read: <S extends SettingsSchema>(schema: S) => Effect.Effect<S["Type"]>;
+export {};
+```
+
 ## flow.ts
 
 ```ts
@@ -270,6 +291,7 @@ import type * as Scope from "effect/Scope";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
+import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
 import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
@@ -307,7 +329,8 @@ export type StillValid = (item: WorkItem) => Effect.Effect<Validity, FlowError, 
 type FlowCommon = {
     readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
     readonly concurrency?: number;
-    readonly labels?: ReadonlyArray<FlowLabel>;
+    readonly settings?: SettingsSchema;
+    readonly labels?: ReadonlyArray<FlowLabel> | Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
     readonly ownWork?: boolean;
     readonly stillValid?: StillValid;
     readonly markers?: ReadonlyArray<Marker>;
@@ -325,6 +348,7 @@ export type ManualFlow = FlowCommon & {
 };
 export type Flow = TriggeredFlow | ManualFlow;
 export declare const defineFlow: (flow: Flow) => Flow;
+export declare const labelsOf: (flow: Flow) => Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
 export declare const isManual: (flow: Flow) => flow is ManualFlow;
 export declare const triggerOf: (flow: Flow) => TriggeredFlow["trigger"];
 export declare const describeError: <E>(error: E) => string;
@@ -371,6 +395,7 @@ export * as Capabilities from "./capabilities.ts";
 export * as Claims from "./claims.ts";
 export * from "./errors.ts";
 export * from "./flow.ts";
+export * as Settings from "./flow-settings.ts";
 export * from "./json.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";

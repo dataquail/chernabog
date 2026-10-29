@@ -20,6 +20,7 @@ import {
   type RepoSettings,
   Run,
   RunLog,
+  Settings,
   type SetupError,
   Signals,
   Skip,
@@ -54,7 +55,7 @@ import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
-import type { EffectiveRepo } from "../../../../repo-config.ts";
+import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
@@ -474,6 +475,15 @@ const provideFlowPackage =
         }),
     });
 
+// The flow's settings as `persona` runs it; none for a persona the repo no longer has.
+export const flowSettingsFor = (handle: FlowHandle, persona: Persona) =>
+  Settings.FlowSettings.of({
+    input: Option.match(personaOf(handle.repo, persona), {
+      onNone: () => ({}),
+      onSome: (own) => flowSettingsInput(own, handle.name),
+    }),
+  });
+
 // The markers a run holds, recorded against it for their release when it
 // ends. A marker neither the SDK nor the flow defines couldn't be released,
 // so holding one fails.
@@ -626,6 +636,7 @@ export const flowLayer = <R>(
         Effect.provideService(Signals, signals),
         Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
+        Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
         Effect.provideContext(
           stoppingWith(
             fencing(

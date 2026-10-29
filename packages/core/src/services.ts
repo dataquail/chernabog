@@ -19,6 +19,9 @@ import type {
 } from "./errors.ts";
 import type { Json } from "./json.ts";
 
+// The labels of the SDK's issue-to-pull-request recipes. Deprecated: they are
+// those recipes' settings now (the SDK's Settings.labels), and core's next
+// major drops these, DEFAULT_LABELS and RepoSettings.labels (ADR 0005).
 export const Labels = Schema.Struct({
   eligible: Schema.String,
   inProgress: Schema.String,
@@ -75,6 +78,9 @@ export const Account = Schema.Struct({
 
 export type Account = typeof Account.Type;
 
+// The SDK's recipes' limits. Deprecated: each is a setting of the SDK block
+// that reads it now (the SDK's Settings), and core's next major drops them
+// (ADR 0005). The engine's own limits (leases, ticks) were never here.
 export const Limits = Schema.Struct({
   // Agent attempts to get the local gate passing before a person takes over.
   localGateRounds: Schema.Finite,
@@ -127,7 +133,12 @@ export const HEADLESS: ResolvedLauncher = {
 };
 
 // Everything a run knows about the repo it works on, merged from the repo's
-// committed config and the persona's settings in machine config.
+// committed config and the persona's settings in machine config. The
+// recipes' keys (reviewers, labels, install, localGate, humanOnly,
+// humanOnlyPaths, notes, board, reviewTrigger and limits) are deprecated:
+// a flow's own settings (Settings) hold them now, the binary fills these
+// from config.yaml's old keys for SDKs that still read them, and core's next
+// major drops them (ADR 0005). reviewTrigger is always none.
 export const RepoSettings = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,

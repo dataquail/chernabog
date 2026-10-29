@@ -1,6 +1,6 @@
 # @chernabog/core
 
-The contract between the `chernabog` binary and every repo's flows: the flow shape and the hooks the daemon calls (`defineFlow`, `trigger`, `item`, `gate`, `stillValid`), the durable primitives a run in flight resumes by (`activity`, `step`, `sleep`, `awaitSignal`, `gone`), the typed errors, the service ports (`GitHub`, `Git`, `Worktree`, `Agent`, `Usage`, `Run`, `Repo`, `FlowPackage`), and what the daemon itself acts on whatever the flow: `Claims` and `Markers`.
+The contract between the `chernabog` binary and every repo's flows: the flow shape and the hooks the daemon calls (`defineFlow`, `trigger`, `item`, `gate`, `stillValid`), the durable primitives a run in flight resumes by (`activity`, `step`, `sleep`, `awaitSignal`, `gone`), the typed errors, the service ports (`GitHub`, `Git`, `Worktree`, `Agent`, `Usage`, `Run`, `Repo`, `FlowPackage`), a flow's own settings (`Settings`), and what the daemon itself acts on whatever the flow: `Claims` and `Markers`.
 
 Flows don't import this package directly: [`@chernabog/sdk`](https://www.npmjs.com/package/@chernabog/sdk), the blocks they're written from, re-exports all of it. The binary bundles core and supplies its own copy to every flow it runs, so a repo pins it only as a dev dependency, for types.
 

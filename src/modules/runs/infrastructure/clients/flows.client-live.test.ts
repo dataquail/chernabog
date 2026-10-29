@@ -1,12 +1,13 @@
-import { defineFlow, gone, Run, RunLog, Skip, valid } from "@chernabog/core";
+import { defineFlow, gone, Run, RunLog, Settings, Skip, valid } from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
-import { item, makeFake, repo } from "../../../../../test/sdk-fakes.ts";
+import { item, makeFake, repo, repoAs, settings } from "../../../../../test/sdk-fakes.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepositoryFake } from "../repositories/runs.repository-fake.ts";
@@ -54,6 +55,32 @@ const failing = defineFlow({
   workflow: () => Effect.void,
 });
 
+// A flow of a setting nothing else knows: which queue its trigger reads, and its gate names.
+const Queue = Schema.Struct({ queue: Schema.String });
+
+const queueing = defineFlow({
+  settings: Queue,
+  trigger: Effect.map(Settings.read(Queue), (own) => [item(own.queue)]),
+  gate: Effect.flatMap(Settings.read(Queue), (own) =>
+    Effect.fail(new Skip({ reason: `holding ${own.queue}` })),
+  ),
+  workflow: () => Effect.void,
+});
+
+// The team shares a queue; bob's machine config gives queueing his own.
+const [bob] = repoAs(settings, [Option.some("bob")]).personas;
+
+const queues = {
+  ...repo,
+  personas: [
+    {
+      ...bob,
+      shared: { queue: "team-queue" },
+      flows: { queueing: { settings: { queue: "bobs" } } },
+    },
+  ],
+} as const;
+
 const quietLog = Layer.succeed(
   RunLog,
   RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
@@ -73,6 +100,7 @@ const flows = Layer.unwrap(
           flowHandle(repo, "checking", checking),
           flowHandle(repo, "hanging", hanging),
           flowHandle(repo, "failing", failing),
+          flowHandle(queues, "queueing", queueing),
         ],
         services: (_repo, persona) =>
           Option.liftPredicate(Effect.succeed(services), () => Option.contains(persona, "bob")),
@@ -96,6 +124,15 @@ describe("FlowsClientLive", () => {
       expect(yield* client.gate(as("finding"))).toEqual(
         Option.some("usage gate: over the ceiling"),
       );
+    }).pipe(Effect.provide(flows)),
+  );
+
+  effect("gives the trigger and the gate the flow's settings, as the persona runs it", () =>
+    Effect.gen(function* () {
+      const client = yield* FlowsClient;
+
+      expect((yield* client.trigger(as("queueing"))).map((found) => found.key)).toEqual(["bobs"]);
+      expect(yield* client.gate(as("queueing"))).toEqual(Option.some("holding bobs"));
     }).pipe(Effect.provide(flows)),
   );
 

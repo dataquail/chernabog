@@ -18,6 +18,7 @@ import {
   ReviewerSeat,
   Run,
   RunLog,
+  Settings,
   type SetupError,
   Skip,
   StepFailed,
@@ -529,6 +530,55 @@ describe("a run's subjects", () => {
       const { value } = yield* withEngine(runToEnd(item("one")));
       expect(value.subjects).toEqual([]);
       yield* Subjects.name("pr-1");
+    }),
+  );
+});
+
+describe("a flow's own settings", () => {
+  // A setting no other flow and nothing in core knows: which branch a release promotes from.
+  const Promote = Schema.Struct({ promoteFrom: Schema.String, dryRun: Schema.Boolean });
+
+  const promoting = defineFlow({
+    trigger: Effect.succeed([]),
+    settings: Promote,
+    workflow: () =>
+      Effect.map(
+        Settings.read(Promote),
+        (own) => `promote from ${own.promoteFrom}, dry run: ${String(own.dryRun)}`,
+      ),
+  });
+
+  // The team shares dryRun under settings:, and sets promoteFrom for promote alone.
+  const [own] = repo.personas;
+
+  const promoteHandle = flowHandle(
+    {
+      ...repo,
+      personas: [
+        {
+          ...own,
+          shared: { dryRun: true, promoteFrom: "main" },
+          flows: { promote: { settings: { promoteFrom: "develop" } } },
+        },
+      ],
+    },
+    "promote",
+    promoting,
+  );
+
+  effect("a run reads them typed, the flow's own over the shared ones", () =>
+    Effect.gen(function* () {
+      const { value: finished } = yield* withEngine(
+        startRun(promoteHandle, IMPLICIT, item("release")).pipe(
+          Effect.flatMap((outcome) => Effect.fromOption(outcome.run)),
+          Effect.orDie,
+          Effect.flatMap(toEnd),
+        ),
+        Effect.map(Layer.build(repoServices), forEveryPersona),
+        promoteHandle,
+      );
+
+      expect(summaryOf(finished)).toBe("promote from develop, dry run: true");
     }),
   );
 });
