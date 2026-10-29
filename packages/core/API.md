@@ -14,6 +14,7 @@ import * as Markers from "./run-markers.ts";
 import { GitHub, Run } from "./services.ts";
 export declare const issue: (number: number) => string;
 export declare const pullRequest: (number: number) => string;
+export declare const epic: (number: number) => string;
 export declare const refFor: (item: string) => string;
 export declare const leaseRefFor: (item: string, sha: string) => string;
 export declare const DEFAULT_LEASE_TTL: Duration.Duration;
@@ -618,6 +619,7 @@ export declare const Limits: Schema.Struct<{
     readonly ciTimeout: Schema.Duration;
     readonly planNodes: Schema.Finite;
     readonly planRounds: Schema.Finite;
+    readonly stackDepth: Schema.Finite;
 }>;
 export type Limits = typeof Limits.Type;
 export declare const LauncherCommands: Schema.Struct<{
@@ -705,6 +707,7 @@ export declare const RepoSettings: Schema.Struct<{
         readonly ciTimeout: Schema.Duration;
         readonly planNodes: Schema.Finite;
         readonly planRounds: Schema.Finite;
+        readonly stackDepth: Schema.Finite;
     }>;
     readonly env: Schema.$Record<Schema.String, Schema.String>;
     readonly configDir: Schema.String;
@@ -786,6 +789,7 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
         readonly ciTimeout: import("effect/Duration").Duration;
         readonly planNodes: number;
         readonly planRounds: number;
+        readonly stackDepth: number;
     };
     readonly env: {
         readonly [x: string]: string;

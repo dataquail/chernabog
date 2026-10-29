@@ -137,6 +137,7 @@ const LimitsFile = Schema.Struct({
   leaseRenewEvery: Schema.optionalKey(DurationText),
   planNodes: Schema.optionalKey(Schema.Int),
   planRounds: Schema.optionalKey(Schema.Int),
+  stackDepth: Schema.optionalKey(Schema.Int),
 });
 
 const Board = Schema.Struct({
@@ -299,6 +300,7 @@ export const DEFAULT_LIMITS: Limits = {
   ciTimeout: Duration.hours(2),
   planNodes: 12,
   planRounds: 2,
+  stackDepth: 4,
 };
 
 // A change a run here makes ticks the repo's flows; notifications wait until
@@ -720,6 +722,7 @@ const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
   ),
   planNodes: file?.planNodes ?? DEFAULT_LIMITS.planNodes,
   planRounds: file?.planRounds ?? DEFAULT_LIMITS.planRounds,
+  stackDepth: file?.stackDepth ?? DEFAULT_LIMITS.stackDepth,
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their

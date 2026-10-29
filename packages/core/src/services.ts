@@ -89,6 +89,9 @@ export const Limits = Schema.Struct({
   planNodes: Schema.Finite,
   // Times the agent is asked to fix a plan that fails its checks before a person takes over.
   planRounds: Schema.Finite,
+  // The most layers one stack may hold before the run stops starting new ones
+  // and waits for the bottom to merge.
+  stackDepth: Schema.Finite,
 });
 
 export type Limits = typeof Limits.Type;

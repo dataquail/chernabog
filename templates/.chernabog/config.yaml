@@ -79,3 +79,6 @@ limits:
   # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
   planNodes: 12
   planRounds: 2
+  # The most layers one stack of an epic's tasks may hold before the epic
+  # recipe waits for the bottom one to merge.
+  stackDepth: 4
