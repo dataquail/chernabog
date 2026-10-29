@@ -267,7 +267,7 @@ describe("the main view", () => {
     };
 
     expect(plain(view(model({ status: Option.some(elsewhere) })))).toMatch(
-      /implement\s+next in 17m\s+1 queued: issue-9 Add a flag · 2 assigned elsewhere/,
+      /implement\s+next in 17m\s+1 queued: issue-9 Add a flag · 2 left for others/,
     );
   });
 

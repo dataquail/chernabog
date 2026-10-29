@@ -1,115 +1,28 @@
-// Whose work a persona's flow starts on this machine: the work items whose
-// assignees and requested reviewers pass the filters the flow sets, as
-// GitHub's assignee: and review-requested: qualifiers do.
+// Whose work a persona's flow starts on this machine. Routing is the flow's:
+// its trigger leaves an item for another persona or machine by giving the
+// reason (`elsewhere`), as it holds one with `held`, and the engine starts
+// none of those unless a person names one. The claim, its lease and fencing
+// keep two runs off one item; routing only says who would rather start it.
 
 import * as Option from "effect/Option";
-
-import { actsAs } from "../../../../kernel/reviewer-pool.value-object.ts";
-
-// Whose work items a flow starts as a persona; anyone's without a filter.
-export type Routing = {
-  readonly assignee: Option.Option<ReadonlyArray<string>>;
-  readonly reviewRequested: Option.Option<ReadonlyArray<string>>;
-};
 
 // A work item, as far as routing reads it.
 export type Routable = {
   readonly key: string;
-  readonly assignees?: ReadonlyArray<string>;
-  readonly reviewers?: ReadonlyArray<string>;
+  readonly elsewhere?: string;
 };
 
-// Whether people match a filter, as GitHub's assignee: and review-requested:
-// do: none for nobody, @me for this machine's GitHub login, or a login. @me
-// matches no one when the login is unknown. Case-insensitive, as on GitHub.
-const matches = (
-  filter: ReadonlyArray<string>,
-  people: ReadonlyArray<string>,
-  login: Option.Option<string>,
-) =>
-  filter.some((who) => {
-    const wanted = who.toLowerCase();
+const leftElsewhere = (item: Routable) => Option.isSome(Option.fromUndefinedOr(item.elsewhere));
 
-    if (wanted === "none") {
-      return people.length === 0;
-    }
-
-    let resolved = Option.some(wanted);
-
-    if (wanted === "@me") {
-      resolved = Option.map(login, (self) => self.toLowerCase());
-    }
-
-    return Option.exists(resolved, (one) => people.some((person) => person.toLowerCase() === one));
-  });
-
-// A filter the flow doesn't set passes everyone.
-const passes = (
-  filter: Option.Option<ReadonlyArray<string>>,
-  people: ReadonlyArray<string>,
-  login: Option.Option<string>,
-) => Option.match(filter, { onNone: () => true, onSome: (who) => matches(who, people, login) });
-
-// Whether this machine may start an item: it passes every filter the flow sets.
-const startsHere = (item: Routable, routing: Routing, login: Option.Option<string>) =>
-  passes(routing.assignee, item.assignees ?? [], login) &&
-  passes(routing.reviewRequested, item.reviewers ?? [], login);
-
-// Splits a trigger's items into those this machine may start and those for others.
-export const routeItems = <Item extends Routable>(
-  items: ReadonlyArray<Item>,
-  routing: Routing,
-  login: Option.Option<string>,
-) => ({
-  mine: items.filter((item) => startsHere(item, routing, login)),
-  elsewhere: items.filter((item) => !startsHere(item, routing, login)),
+// Splits a trigger's items into those this machine may start and those its flow left for others.
+export const routeItems = <Item extends Routable>(items: ReadonlyArray<Item>) => ({
+  mine: items.filter((item) => !leftElsewhere(item)),
+  elsewhere: items.filter(leftElsewhere),
 });
 
-const people = (who: ReadonlyArray<string>) =>
-  Option.getOrElse(
-    Option.liftPredicate(who.join(", "), (text) => text.length > 0),
-    () => "none",
-  );
-
-// An item left for others, with whom it is for by the filters the flow sets.
-export const describeElsewhere = (routing: Routing) => (item: Routable) => {
-  const assignee = Option.map(routing.assignee, () => `assignee: ${people(item.assignees ?? [])}`);
-
-  const reviewers = Option.map(
-    routing.reviewRequested,
-    () => `review requested: ${people(item.reviewers ?? [])}`,
-  );
-
-  return `${item.key} (${[...Option.toArray(assignee), ...Option.toArray(reviewers)].join("; ")})`;
-};
-
-// Whether a filter names this machine's login, as @me.
-export const namesMe = (filter: Option.Option<ReadonlyArray<string>>) =>
-  Option.exists(filter, (who) => who.some((one) => one.toLowerCase() === "@me"));
-
-// The flow whose status lists the review requests no persona here serves,
-// which its trigger never finds.
-export const REVIEW_FLOW = "review";
-
-// An open pull request, as far as its review requests go.
-export type ReviewRequest = {
-  readonly number: number;
-  readonly requestedReviewers: ReadonlyArray<string>;
-};
-
-// Open pull requests waiting on a review from a login this machine doesn't
-// act as, as status lists them: "#73 waits on data-quail (not on this machine)".
-export const waitingElsewhere = (
-  pulls: ReadonlyArray<ReviewRequest>,
-  here: ReadonlyArray<string>,
-) =>
-  pulls.flatMap((pull) => {
-    const others = pull.requestedReviewers.filter((login) => !actsAs(here)(login));
-
-    return Option.toArray(
-      Option.liftPredicate(
-        `#${pull.number} waits on ${others.join(", ")} (not on this machine)`,
-        () => others.length > 0,
-      ),
-    );
+// An item left for others, with why, as its flow gave it: "issue-4 (assignee: alice)".
+export const describeElsewhere = (item: Routable) =>
+  Option.match(Option.fromUndefinedOr(item.elsewhere), {
+    onNone: () => item.key,
+    onSome: (why) => `${item.key} (${why})`,
   });

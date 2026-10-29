@@ -98,7 +98,7 @@ On the automated path, an `auto:ship` pull request, the approving reviewer merge
 A review request for a login this machine doesn't act as waits for the machine that does. Nothing fails, so chernabog says so instead:
 
 - `doctor` warns, for each persona that opens pull requests (it runs `implement`, `human-initiated`, or a flow that asks for a review), when no one in the pool but that persona is a login under `github:` here: `pull requests authored as alice go to data-quail, which this machine doesn't act as; they wait until another machine reviews them`. `enroll` notes the same when you choose those flows. It's a warning, since a teammate's machine may serve that login.
-- `status` lists, under the `review` flow, the open pull requests that wait on such a login: `assigned elsewhere: #73 waits on data-quail (not on this machine)`. One drops off once that review is in.
+- `status` lists, under the `review` flow, the open pull requests that wait on such a login: `left for others: #73 waits on data-quail (not on this machine)`. One drops off once that review is in.
 
 ```yaml
 # .chernabog/config.yaml
@@ -123,28 +123,32 @@ A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs wit
 
 ### Routing by assignee and reviewer
 
-`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` make a machine start only the work items for certain people. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
+Routing is a flow's choice, not the engine's: a flow's trigger may leave an item for another persona or machine, saying why, and the engine starts none of those here. Claims, not routing, keep two runs off one item; routing only says who would rather start what. A flow can route by anything it reads (a label, a path, a team, a board column) by setting the item's `elsewhere` to the reason. A flow that routes nothing starts every item its trigger reports.
 
-- `@me`: this machine's GitHub login, the one its `gh` token belongs to, or the [persona](#github-personas) the flow runs as
+The bundled recipes route with the SDK's `Routing` block, by the settings `assignee` and `reviewRequested` under `flows.<flow>.settings`. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
+
+- `@me`: the GitHub login of the [persona](#github-personas) the flow runs as, or for the implicit persona, whoever its `gh` token belongs to
 - a login, such as `alice`
 - `none`: nobody
 
-An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively. When the machine's login can't be looked up, `@me` matches no one.
+An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively.
 
-`implement` items carry the issue's assignees. `review` and `re-review` items carry the pull request's assignees and its requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, so they need no `reviewRequested`. `address-review` items carry the pull request's assignees; its trigger takes only pull requests the persona wrote. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
+`implement`, `plan` and `epic` route issues by their assignees. `review`, `re-review` and `address-review` route pull requests by their assignees and requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, or, for `address-review`, that it wrote, so they need no filter. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow routes with `Routing.route(item, { assignees, reviewers })` in its trigger, and declares `...Routing.Settings.fields` in its settings schema.
 
-Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
+Items a flow leaves are left for others. `status` lists them with the flow's reason (`left for others: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
 
 Whether the flow runs for a persona at all is decided first, by its [flows](#which-flows-run) in machine config. An issue assigned to someone the flow is off for waits until they turn it on. The claim branch still keeps two machines from implementing the same issue.
 
 ```yaml
 # .chernabog/config.yaml
 flows:
-  implement: { assignee: ["@me", none] }   # my issues, and unassigned ones
-  review: { reviewRequested: "@me" }       # pull requests requesting my review
+  implement:
+    settings: { assignee: ["@me", none] }   # my issues, and unassigned ones
+  review:
+    settings: { reviewRequested: "@me" }    # pull requests requesting my review
 ```
 
-Both can go in a flow's settings in machine config too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value.
+Both can go in a flow's settings in machine config too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value. The old `flows.<flow>.assignee` and `flows.<flow>.reviewRequested` keys are deprecated: until core's next major the binary gives them to the flow as these settings, and the flow's own settings win over them.
 
 ```yaml
 # .chernabog/config.yaml

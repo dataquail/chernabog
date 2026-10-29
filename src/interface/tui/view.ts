@@ -331,7 +331,7 @@ const queueText = (queued: ReadonlyArray<string>, elsewhere: ReadonlyArray<strin
     return queuedText(queued);
   }
 
-  return `${queuedText(queued)} · ${elsewhere.length} assigned elsewhere`;
+  return `${queuedText(queued)} · ${elsewhere.length} left for others`;
 };
 
 const plural = (count: number) => {

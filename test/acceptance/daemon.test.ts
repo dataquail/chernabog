@@ -199,7 +199,7 @@ describe("the daemon", () => {
       "a tick that leaves the issue to alice",
     );
     expect((await sandbox.runCli(["status"])).output).toContain(
-      `assigned elsewhere: issue-${issue} (assignee: alice)`,
+      `left for others: issue-${issue} (assignee: alice)`,
     );
     expect(sandbox.github.issue(issue).labels).toContain("auto:eligible");
   }, 45_000);

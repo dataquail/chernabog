@@ -79,8 +79,6 @@ const open: TickInput = {
     quietHours: Option.none(),
     activeHours: Option.none(),
   },
-  routing: { assignee: Option.none(), reviewRequested: Option.none() },
-  login: Option.some("bob"),
   here: ["bob"],
   concurrency: { flow: 1, machine: 4 },
 };
@@ -217,20 +215,22 @@ describe("planTickUseCase", () => {
 
   effect("leaves work for others to them, and no work already running", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, {
-        ...open,
-        routing: { assignee: Option.some(["@me"]), reviewRequested: Option.none() },
-      });
+      const plan = yield* planTickUseCase(review, open);
 
-      expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (assignee: alice)"));
+      expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (label: team-b)"));
+      expect(plan.routed).toEqual(Option.some({ queued: [], elsewhere: ["pr-1 (label: team-b)"] }));
       expect(plan.start).toEqual([]);
       expect(keys((yield* planTickUseCase({ ...review, flow: "busy" }, open)).start)).toEqual([]);
+
+      // A person who names it runs it here, whoever the flow left it for.
+      const named = yield* planTickUseCase(review, { ...open, item: Option.some("pr-1") });
+      expect(keys(named.start)).toEqual(["pr-1"]);
     }).pipe(
       Effect.provide(
         runtime(fakeEngine(), {
           runs: [run("busy", { flow: "busy" })],
           flows: {
-            "demo/review": { items: [item("pr-1", { assignees: ["alice"] })] },
+            "demo/review": { items: [item("pr-1", { elsewhere: "label: team-b" })] },
             "demo/busy": { items: [item("pr-1")] },
           },
         }),

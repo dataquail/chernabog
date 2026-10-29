@@ -58,8 +58,10 @@ act as the right one.
   `src/modules/runs/infrastructure/runtime/engine.ts`). Per-persona services
   are built by `repoServices(…, persona)` / `buildRepoContext(…, persona)`.
 - **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
-  A flow several personas run should filter with `assignee` or
-  `reviewRequested: "@me"`.
+  A flow several personas run should route its items (#204): its trigger
+  leaves one for others by setting `elsewhere` to why, as the SDK's
+  `Routing` does by `assignee` / `reviewRequested: "@me"` in the flow's
+  settings. The engine only reads the reason; claims keep runs apart.
   `review`, `re-review` and `address-review` filter in their triggers, by the
   persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run

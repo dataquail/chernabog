@@ -55,6 +55,7 @@ import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
+import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
 import { issueValidity } from "./still-valid.ts";
 
@@ -78,8 +79,12 @@ export const issueItem = (
     issue: issue.number,
     ...Option.match(label, { onNone: () => ({}), onSome: (queued) => ({ label: queued }) }),
   },
-  assignees: issue.assignees,
 });
+
+// The issue's work item, left for others when the flow's routing (Routing's
+// settings) says it isn't this persona's, by the issue's assignees.
+export const routed = (issue: Issue, item: WorkItem) =>
+  Routing.route(item, { assignees: issue.assignees });
 
 // The issue number a work item from `trigger` carries.
 export const issueOf = (item: WorkItem) =>
@@ -109,11 +114,13 @@ export const sessionIdFor = (runId: string, purpose: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 
-// Issues with a queue label, oldest first, each with its assignees. A flow
+// Issues with a queue label, oldest first, routed by their assignees. A flow
 // keyed by its own label pairs it with `claim(issue, queuedBy(item))`.
 export const triggerFor = (label: string) =>
   GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(
-    Effect.map((issues) => issues.map((issue) => issueItem(issue, Option.some(label)))),
+    Effect.flatMap((issues) =>
+      Effect.forEach(issues, (issue) => routed(issue, issueItem(issue, Option.some(label)))),
+    ),
     reportAs("trigger"),
   );
 
@@ -181,7 +188,8 @@ const whyWaiting = (issue: Issue, owned: ReadonlyMap<number, number>) =>
 // not eligible's. One that waits is held, saying why, so `chernabog status`
 // shows it: "waits on #12, #13" for the open issues that block it, as the
 // tasks of an epic start in the order its plan gave, or "belongs to the epic
-// run on #136" for a task of an epic an epic run holds.
+// run on #136" for a task of an epic an epic run holds. Each is routed by its
+// assignees.
 export const queued = (
   issues: ReadonlyArray<Issue>,
   label: Option.Option<string> = Option.none(),
@@ -195,7 +203,7 @@ export const queued = (
     const items: Array<WorkItem> = [];
 
     for (const issue of issues) {
-      const item = issueItem(issue, label);
+      const item = yield* routed(issue, issueItem(issue, label));
       items.push(
         Option.match(yield* whyWaiting(issue, owned), {
           onNone: () => item,
