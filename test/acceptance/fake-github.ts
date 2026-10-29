@@ -122,6 +122,7 @@ const GraphqlBody = Schema.Struct({
   variables: Schema.Struct({
     search: Schema.optionalKey(Schema.String),
     id: Schema.optionalKey(Schema.String),
+    number: Schema.optionalKey(Schema.Finite),
   }),
 });
 
@@ -380,6 +381,32 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       issues.delete(number);
 
       return json({ data: { deleteIssue: {} } });
+    }
+
+    // The open pull requests that close an issue: as on GitHub, by a closing keyword in their body.
+    if (body.query?.includes("closedByPullRequestsReferences") === true) {
+      const closes = new RegExp(
+        `\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #${body.variables.number ?? 0}\\b`,
+        "i",
+      );
+
+      const nodes = pulls
+        .values()
+        .filter((pull) => pull.state === "open" && closes.test(pull.body))
+        .map((pull) => ({
+          number: pull.number,
+          url: html("pull", pull.number),
+          state: "OPEN",
+          isDraft: false,
+          headRefName: pull.head,
+          baseRefName: pull.base,
+          isCrossRepository: false,
+        }))
+        .toArray();
+
+      return json({
+        data: { repository: { issue: { closedByPullRequestsReferences: { nodes } } } },
+      });
     }
 
     return searchIssues(args);
