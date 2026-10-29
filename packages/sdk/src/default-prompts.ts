@@ -100,3 +100,26 @@ It checks the worktree is clean, keeps the draft, and prints an \`AskUserQuestio
 
 A person merges it. If a review asks for changes, this session opens again, for the two of you to answer it.
 `;
+
+// Stack.refreshLayer, back in the author's session after the layer's base moved.
+export const REFRESH = `# The base of pull request #{{pullRequest}} moved
+
+\`{{base}}\`, the branch this pull request is built on, moved from \`{{oldBase}}\` to \`{{newBase}}\`, and Chernabog merged it into \`{{branch}}\`. You are back in the session that wrote this pull request, in the same worktree, unattended. Bring the pull request's own code up to date with what the base now has, commit, and give your final answer in the same format as before. Chernabog runs the local gate, pushes the branch and waits for CI.
+
+{{merge}}
+
+The base's change to the files this pull request changes too:
+
+\`\`\`diff
+{{diff}}
+\`\`\`
+
+The base's whole change is \`git diff {{oldBase}} {{newBase}}\`.
+
+- Resolve each conflicted file so it keeps both sides' intent: this pull request's change, applied on top of what the base now has. Make sure no conflict markers are left, then commit the merge with \`git commit --no-edit\`.
+- Adjust this pull request's own code to the base's change where it builds on what changed: a renamed or reshaped API, moved code, a behaviour it relies on. Where behaviour changes, write or update the test first, then the code.
+- Change nothing the base's move doesn't require. When nothing needs adjusting, commit nothing and say so. Either way, leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left.
+- Keep each commit to one change. Commit messages follow the repo's convention.
+- The ground rules of your first task still hold: never rebase, reset, amend, push or switch branches, never weaken a check to get green, and stop with \`needs-clarification\` only for the hard limits.
+- \`summary\`: what you resolved and adjusted, and why, for the reviewer.
+`;
