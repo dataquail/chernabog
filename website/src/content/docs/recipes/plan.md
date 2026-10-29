@@ -34,7 +34,7 @@ A task's `kind` decides its labels, and so which flow picks it up:
 
 | Kind | Label | Taken by |
 | ---- | ----- | -------- |
-| `auto` | `auto:eligible` | [`implement`](/chernabog/recipes/implement/), once nothing blocks it |
+| `auto` | `auto:eligible` | [`implement`](/chernabog/recipes/implement/), once nothing blocks it, or the [`epic`](/chernabog/recipes/epic/) run on the epic, stacked on the task it builds on |
 | `hybrid` | none | a person, with `chernabog start <issue>` |
 | `human` | `auto:needs-human` | a person, for a decision only they may make |
 
