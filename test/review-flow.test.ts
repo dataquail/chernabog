@@ -471,6 +471,25 @@ describe("address-review", () => {
   );
 
   effect(
+    "hands a fix that leaves edits uncommitted to a person, without pushing or asking again",
+    () =>
+      Effect.gen(function* () {
+        const fake = changesAsked();
+        implemented(fake);
+        // The author commits one change and leaves another in the worktree.
+        fake.git.uncommitted = [" M src/b.ts", "?? src/c.ts"];
+        const finished = yield* runToEnd(addressing, fake, addressWork);
+        expect(finished.status).toBe("needs-human");
+        expect(summaryOf(finished)).toContain(
+          "the author agent left changes it didn't commit in answer to review 1: `src/b.ts`, `src/c.ts`",
+        );
+        expect(fake.git.pushes).toBe(1);
+        expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+        expect(fake.people.requested).toEqual([]);
+      }),
+  );
+
+  effect(
     "hands a fix that touches humanOnlyPaths to a person, on a pull request nobody worked on",
     () =>
       Effect.gen(function* () {
