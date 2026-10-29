@@ -3,6 +3,7 @@
 import {
   type Board,
   type Comment,
+  type EnsureOptions,
   Git,
   GitError,
   GitHub,
@@ -35,6 +36,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -999,8 +1001,9 @@ export const WorktreeLive = (
       const exists = (path: string) => fs.exists(path).pipe(Effect.mapError(gitError));
       const makeRoot = fs.makeDirectory(root, { recursive: true }).pipe(Effect.mapError(gitError));
 
-      // The branch's remote-tracking ref, fetched over whatever an earlier run left there.
-      const fetchBranch = (branch: string) =>
+      // The branch's remote-tracking ref, fetched over whatever an earlier run
+      // left there; for a branch origin lacks, `from`'s, and with no `from`, an error.
+      const fetchBranch = (branch: string, from: Option.Option<string>) =>
         Effect.gen(function* () {
           const remote = yield* exec
             .run(
@@ -1019,9 +1022,15 @@ export const WorktreeLive = (
             return yield* new GitError({ message: remote.stderr.trim() });
           }
 
-          yield* git(["fetch", "--quiet", "origin", settings.baseBranch]);
+          if (Option.isNone(from)) {
+            return yield* new GitError({
+              message: `origin has no branch ${branch}, and no base was given to start it from`,
+            });
+          }
 
-          return `origin/${settings.baseBranch}`;
+          yield* git(["fetch", "--quiet", "origin", from.value]);
+
+          return `origin/${from.value}`;
         });
 
       // Which run last prepared a worktree, kept in its git directory.
@@ -1046,10 +1055,23 @@ export const WorktreeLive = (
             ),
         });
 
-      const ensure = (branch: string, runId?: string) =>
+      // A run id alone is how an SDK from before `from` calls ensure: its new
+      // branches start from the repo's baseBranch, as they did then.
+      const ensureOptions = (given: EnsureOptions | string): EnsureOptions => {
+        if (Predicate.isString(given)) {
+          return { runId: given, from: settings.baseBranch };
+        }
+
+        return given;
+      };
+
+      const ensure = (branch: string, given: EnsureOptions | string = {}) =>
         Effect.gen(function* () {
           const path = pathFor(branch);
+          const { from, runId } = ensureOptions(given);
+
           const run = Option.fromUndefinedOr(runId);
+          const base = Option.fromUndefinedOr(from);
 
           if (yield* exists(`${path}/.git`)) {
             // Reused as is without a run, or by the run that prepared it, whose
@@ -1062,7 +1084,7 @@ export const WorktreeLive = (
               return path;
             }
 
-            const start = yield* fetchBranch(branch);
+            const start = yield* fetchBranch(branch, base);
             yield* git(["checkout", "--quiet", "--force", "-B", branch, start], path);
             yield* git(["clean", "-fdq"], path);
 
@@ -1077,7 +1099,7 @@ export const WorktreeLive = (
 
           yield* makeRoot;
           yield* git(["worktree", "prune"]);
-          const start = yield* fetchBranch(branch);
+          const start = yield* fetchBranch(branch, base);
           yield* git(["worktree", "add", "--force", "-B", branch, path, start]);
 
           if (start === `origin/${branch}`) {
@@ -1133,7 +1155,7 @@ export const WorktreeLive = (
 
       return Worktree.of({
         pathFor,
-        ensure: (branch, runId) => guarded(ensure(branch, runId)),
+        ensure: (branch, given) => guarded(ensure(branch, given)),
         checkout: (name, ref) => guarded(checkout(name, ref)),
         remove: (branch) => guarded(remove(branch)),
       });

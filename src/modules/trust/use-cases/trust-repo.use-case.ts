@@ -8,20 +8,19 @@ import { TrustRecordsRepository } from "../domain/ports/repositories/trust-recor
 import { TrustRecordRootOps } from "../domain/trust-record/trust-record.root-ops.ts";
 import { TrustOutcome } from "./trust-outcome.result.ts";
 
-// A repo's checkout and the branch its .chernabog/ is trusted from.
+// A repo's checkout, whose .chernabog/ is trusted from GitHub's default branch.
 export type TrustTarget = {
   readonly repo: RepoSlug;
   readonly path: string;
-  readonly baseBranch: string;
 };
 
-// A person approves the .chernabog/ on a repo's base branch, so the daemon
+// A person approves the .chernabog/ on a repo's default branch, so the daemon
 // runs its flows: what changed since the tree trusted before comes back for
 // them to read. Only a person may do this, so no agent-facing adapter offers it.
 export const trustRepoUseCase = Effect.fn("trustRepoUseCase")(function* (target: TrustTarget) {
   const records = yield* TrustRecordsRepository;
   const trees = yield* ConfigTreeClient;
-  const tree = yield* trees.treeOf(target.path, target.baseBranch);
+  const tree = yield* trees.treeOf(target.path);
   const record = yield* records.findOne(target.repo);
   const previous = Option.map(record, (found) => found.tree);
 

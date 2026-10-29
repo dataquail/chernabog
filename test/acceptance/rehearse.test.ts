@@ -173,7 +173,6 @@ describe("chernabog rehearse --repo other, on the enrolled repo demo", () => {
         repo: "dataquail/other",
         name: "other",
         account: "work",
-        baseBranch: "main",
       });
     });
   });

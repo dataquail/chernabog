@@ -384,6 +384,7 @@ export declare const boardStatus: import("./run-markers.ts").Definition<{
 }>;
 export declare const claimBranch: import("./run-markers.ts").Definition<{
     readonly branch: string;
+    readonly base?: string | undefined;
 }>;
 export declare const builtIn: ReadonlyArray<Marker>;
 ```
@@ -1175,8 +1176,12 @@ export declare const GitCapability: Capabilities.Capability<{
 }, {
     push: (_cwd: string, branch: string) => Effect.Effect<void, GitError | PushRejected, never>;
 }>;
+export type EnsureOptions = {
+    readonly from?: string;
+    readonly runId?: string;
+};
 declare const Worktree_base: Context.ServiceClass<Worktree, "@chernabog/sdk/Worktree", {
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;
@@ -1184,7 +1189,7 @@ declare const Worktree_base: Context.ServiceClass<Worktree, "@chernabog/sdk/Work
 export declare class Worktree extends Worktree_base {
 }
 export declare const WorktreeCapability: Capabilities.Capability<{
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;

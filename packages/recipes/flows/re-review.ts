@@ -172,6 +172,7 @@ const workflow = (item: WorkItem) =>
 const settings = Schema.Struct({
   ...Routing.Settings.fields,
   ...Settings.Labels.fields,
+  ...Settings.Base.fields,
   ...Settings.Rules.fields,
   ...Settings.Reviewers.fields,
 });

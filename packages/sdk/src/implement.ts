@@ -240,12 +240,16 @@ const queueLabel = (options: QueueOptions) =>
   Effect.map(Settings.labels, (labels) => options.label ?? labels.eligible);
 
 // The branch an item's work builds on, and its pull request targets: the
-// repo's base branch unless given, such as another task's branch for a task
-// stacked on it. A flow passes claim's `base` on to the later blocks.
+// flow's integration base (Settings.base) unless given, such as another
+// task's branch for a task stacked on it. A flow passes claim's `base` on to
+// the later blocks.
 export type BaseOptions = { readonly base?: string };
 
 export const baseOf = (options: BaseOptions) =>
-  Repo.use((repo) => Effect.succeed(options.base ?? repo.baseBranch));
+  Option.match(Option.fromUndefinedOr(options.base), {
+    onNone: () => Settings.base,
+    onSome: Effect.succeed,
+  });
 
 // Tells apart two calls of a looping step in one run, such as the local gate
 // before the pull request opens and again after a review's fix: their
@@ -307,9 +311,8 @@ export const baseHead = (base: string) =>
   });
 
 // The base a run that already holds the claim recorded, which it keeps
-// whatever it is given now; the repo's base branch for a marker without one.
-export const claimedBase = (marker: ClaimMarker) =>
-  Repo.use((repo) => Effect.succeed(marker.base ?? repo.baseBranch));
+// whatever it is given now; the flow's integration base for a marker without one.
+export const claimedBase = (marker: ClaimMarker) => baseOf({ base: marker.base });
 
 // The account is the one machine config expects, and it has room for a task.
 export const gate = Effect.gen(function* () {
@@ -647,7 +650,7 @@ export const claim = (
           return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
       } else {
-        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
       }
 
       yield* markClaimed(issue);
@@ -695,15 +698,17 @@ export const shell = (command: string, cwd: string, env: Readonly<Record<string,
 const tail = (text: string, lines = 80) => text.trimEnd().split("\n").slice(-lines).join("\n");
 
 // The worktree for the claim branch, with dependencies installed. One an
-// earlier run left is brought to the claim first, so its work stays out of this run.
-export const prepareWorktree = (branch: string, options: RepeatOptions = {}) =>
+// earlier run left is brought to the claim first, so its work stays out of
+// this run. A branch origin lacks starts from `base` (see baseOf).
+export const prepareWorktree = (branch: string, options: RepeatOptions & BaseOptions = {}) =>
   activity(
     named(options, "prepare-worktree"),
     Effect.gen(function* () {
       const repo = yield* Repo;
       const { install } = yield* Settings.localGate;
       const run = yield* Run;
-      const path = yield* (yield* Worktree).ensure(branch, run.runId);
+      const from = yield* baseOf(options);
+      const path = yield* (yield* Worktree).ensure(branch, { runId: run.runId, from });
 
       if (Option.isSome(install)) {
         const installed = yield* shell(install.value, path, repo.env);

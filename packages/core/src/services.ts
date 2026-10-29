@@ -133,8 +133,11 @@ export const HEADLESS: ResolvedLauncher = {
 };
 
 // Everything a run knows about the repo it works on, merged from the repo's
-// committed config and the persona's settings in machine config. The
-// recipes' keys (reviewers, labels, install, localGate, humanOnly,
+// committed config and the persona's settings in machine config. baseBranch
+// is deprecated too: it is no longer the branch .chernabog/ is read from
+// (GitHub's default is), only the integration base a flow's `base` setting
+// falls back to, config.yaml's old baseBranch or else the repo's default
+// branch. The recipes' keys (reviewers, labels, install, localGate, humanOnly,
 // humanOnlyPaths, notes, board, reviewTrigger and limits) are deprecated:
 // a flow's own settings (Settings) hold them now, the binary fills these
 // from config.yaml's old keys for SDKs that still read them, and core's next
@@ -619,13 +622,21 @@ export const GitCapability = Capabilities.declare(
   },
 );
 
+// How Worktree.ensure prepares a branch. from: the branch a branch origin
+// lacks starts from, as origin/<from>; without it, such a branch fails rather
+// than guessing a base. runId: as ensure's second argument was before, which
+// a string there still means.
+export type EnsureOptions = { readonly from?: string; readonly runId?: string };
+
 export class Worktree extends Context.Service<
   Worktree,
   {
-    // The worktree for a branch, created from origin/<branch> (or origin/<base>) the first time
+    // The worktree for a branch, created from origin/<branch> (or origin/<from>) the first time
     // and reused after. With `runId`, one another run left is first reset to origin/<branch>;
-    // the run's own is reused as is, uncommitted work and all.
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    // the run's own is reused as is, uncommitted work and all. A string in place of the
+    // options is the run id, deprecated: a branch origin lacks then starts from the repo's
+    // baseBranch, as it did before `from`, until core's next major (ADR 0005).
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     // A detached worktree named `name`, reset to `ref` (fetched first) every call: for reading, such as a review.

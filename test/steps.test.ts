@@ -42,6 +42,7 @@ import {
   type RunsServices,
   runToEnd as runFlowToEnd,
   runUntil as runFlowUntil,
+  stackOn,
   summaryOf,
   triggered,
 } from "./sdk-fakes.ts";
@@ -323,9 +324,34 @@ describe("a base branch per item", () => {
           createdFrom: ["base1234"],
           targets: ["main"],
           checkedAgainst: ["main", "main"],
+          compared: [],
         });
         expect(fake.requests[0]?.prompt).toContain("cut from `main`");
         expect(claimedOn(fake)).toEqual(["main"]);
+      }),
+  );
+
+  effect(
+    "the flow's base setting, such as develop in git flow, is what they build on and target",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.remote.heads.set("develop", "develop1234");
+
+        const onDevelop = flowHandle(
+          { ...repo, personas: [{ ...repo.personas[0], shared: { base: "develop" } }] },
+          "demo",
+          flow,
+        );
+
+        expect((yield* runFlowToEnd(onDevelop, fake, item("on-repo-base"))).status).toBe("done");
+        expect(fake.based).toEqual({
+          createdFrom: ["develop1234"],
+          targets: ["develop"],
+          checkedAgainst: ["develop", "develop"],
+          compared: [],
+        });
+        expect(claimedOn(fake)).toEqual(["develop"]);
       }),
   );
 
@@ -341,6 +367,7 @@ describe("a base branch per item", () => {
           targets: [STACKED],
           // The no-commits check and the humanOnlyPaths check: the task's own diff, not the task below's.
           checkedAgainst: [STACKED, STACKED],
+          compared: [],
         });
         expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
         expect(claimedOn(fake)).toEqual([STACKED]);
@@ -357,6 +384,7 @@ describe("a base branch per item", () => {
         targets: [STACKED],
         // With a person in the session, only the no-commits check runs.
         checkedAgainst: [STACKED],
+        compared: [],
       });
       expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
       expect(claimedOn(fake)).toEqual([STACKED]);
@@ -590,9 +618,9 @@ describe("PullRequest.merge", () => {
       "a layer of a stack",
       (fake) => {
         approved(fake);
-        fake.stack.base = "auto/issue-2";
+        stackOn(fake, "auto/issue-2");
       },
-      "stacked on auto/issue-2; it merges after the layer below",
+      "stacked on auto/issue-2 (#2); it merges after the layer below",
     ],
     [
       "GitHub refuses",

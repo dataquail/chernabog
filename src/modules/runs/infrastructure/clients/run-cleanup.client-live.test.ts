@@ -48,13 +48,14 @@ const run = (itemKey: string) =>
     finishedAt: Option.some("2026-10-24T01:00:00.000Z"),
   });
 
-// What the fake GitHub is asked, and what it has: the claim comment on #7, the
-// run its claim ref names, if it has one, the pull request opened from a
-// branch, and how far a branch is ahead of main.
+// What the fake GitHub is asked, and what it has: the claim comment on #7 and
+// the base it records, the run its claim ref names, if it has one, the pull
+// request opened from a branch, and how far a branch is ahead of its base.
 type GitHubState = {
   readonly calls: Array<string>;
   readonly bodies: Array<Option.Option<Json>>;
   claimedBy: string;
+  claimedFrom: Option.Option<string>;
   refHolder: Option.Option<string>;
   pullFrom: Option.Option<number>;
   ahead: number;
@@ -70,7 +71,15 @@ const github = (state: GitHubState) =>
           author: "bob",
           createdAt: "t",
           trusted: true,
-          body: `Claimed.\n\n${claimMarker.write({ runId: state.claimedBy, claimedAt: "t", branch: "auto/issue-7" })}`,
+          body: `Claimed.\n\n${claimMarker.write({
+            runId: state.claimedBy,
+            claimedAt: "t",
+            branch: "auto/issue-7",
+            ...Option.match(state.claimedFrom, {
+              onNone: () => ({}),
+              onSome: (base) => ({ base }),
+            }),
+          })}`,
         },
       ]),
     removeLabel: (number, label) =>
@@ -200,6 +209,7 @@ const freshState = (): GitHubState => ({
   calls: [],
   bodies: [],
   claimedBy: "run-1",
+  claimedFrom: Option.none(),
   refHolder: Option.none(),
   pullFrom: Option.none(),
   ahead: 0,
@@ -298,6 +308,29 @@ describe("RunCleanupClientLive", () => {
         "delete-branch auto/issue-7",
       ]);
       expect(state.bodies[0]).toEqual(Option.some({ assignees: ["bob"] }));
+    }),
+  );
+
+  effect("compares a claim branch with the base its claim recorded, such as develop", () =>
+    Effect.gen(function* () {
+      const empty = { ...freshState(), claimedFrom: Option.some("develop") };
+      const ahead = { ...freshState(), claimedFrom: Option.some("develop"), ahead: 1 };
+      const released = [];
+
+      for (const state of [empty, ahead]) {
+        const { client } = yield* opened(state);
+        released.push(yield* client.releaseClaim(run("issue-7"), 7));
+        expect(state.calls).toContain("GET /repos/dataquail/demo/compare/develop...auto%2Fissue-7");
+      }
+
+      expect(empty.calls).toContain("delete-branch auto/issue-7");
+      expect(released).toEqual([
+        Option.some({ branch: "auto/issue-7", kept: Option.none() }),
+        Option.some({
+          branch: "auto/issue-7",
+          kept: Option.some("it has 1 commit not on develop"),
+        }),
+      ]);
     }),
   );
 

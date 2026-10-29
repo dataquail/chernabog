@@ -33,7 +33,7 @@ import {
 import { findTrustedTreeUseCase } from "../../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
 import { type Backup, listBackups } from "../../../platform/backups.ts";
 import { IncompatibleConfig } from "../../../platform/config-error.ts";
-import { configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
+import { configBranch, configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { Exec, type ExecResult } from "../../../platform/exec.ts";
 import {
@@ -205,9 +205,9 @@ const checkPersonas = (
     }
   });
 
-// The labels a repo's flows declare, from its base branch; none when they don't load.
-const declaredOn = (machine: MachineConfig, repo: EnrolledRepo, baseBranch: string) =>
-  Effect.flatMap(snapshotConfig(repo.path, baseBranch, false), (snapshot) =>
+// The labels a repo's flows declare, from its config branch; none when they don't load.
+const declaredOn = (machine: MachineConfig, repo: EnrolledRepo) =>
+  Effect.flatMap(snapshotConfig(repo.path, false), (snapshot) =>
     Effect.flatMap(
       Effect.all({
         effective: loadRepo(machine, repo, snapshot.configDir),
@@ -252,7 +252,7 @@ export const doctor = Effect.gen(function* () {
   check(
     machine.repos.length > 0,
     `${machine.repos.length} repo(s) enrolled`,
-    "chernabog enroll, in a repo with .chernabog/ on its base branch",
+    "chernabog enroll, in a repo with .chernabog/ on its default branch",
   );
 
   for (const account of accountsInUse(machine)) {
@@ -432,10 +432,10 @@ export const doctor = Effect.gen(function* () {
     });
 
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
-  const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
+  const checkLauncher = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
       const loaded = yield* Effect.result(
-        Effect.flatMap(snapshotConfig(repo.path, baseBranch, false), (snapshot) =>
+        Effect.flatMap(snapshotConfig(repo.path, false), (snapshot) =>
           loadRepo(machine, repo, snapshot.configDir),
         ),
       );
@@ -490,9 +490,9 @@ export const doctor = Effect.gen(function* () {
     });
 
   // Whether an editor types the repo's flows against this binary's SDK and effect. A snapshot that fails is checkLauncher's to report.
-  const checkPins = (repo: EnrolledRepo, name: string, baseBranch: string) =>
+  const checkPins = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
-      const snapshot = yield* Effect.result(snapshotConfig(repo.path, baseBranch, false));
+      const snapshot = yield* Effect.result(snapshotConfig(repo.path, false));
 
       if (Result.isFailure(snapshot)) {
         if (Schema.is(IncompatibleConfig)(snapshot.failure)) {
@@ -526,7 +526,7 @@ export const doctor = Effect.gen(function* () {
         check(
           false,
           `${name}: ${manifest.failure.message}`,
-          "fix .chernabog/package.json on the base branch",
+          "fix .chernabog/package.json on the default branch",
         );
 
         return;
@@ -567,7 +567,6 @@ export const doctor = Effect.gen(function* () {
 
   for (const repo of machine.repos) {
     const name = repoNameOf(repo);
-    const baseBranch = repo.baseBranch ?? "main";
 
     if (!(yield* fs.exists(repo.path).pipe(Effect.orElseSucceed(() => false)))) {
       check(
@@ -578,12 +577,14 @@ export const doctor = Effect.gen(function* () {
       continue;
     }
 
-    const tree = yield* Effect.result(configTree(repo.path, baseBranch));
+    // Asked of the remote, as the daemon's snapshots do; the checks below read what this recorded.
+    const branch = yield* configBranch(repo.path);
+    const tree = yield* Effect.result(configTree(repo.path));
 
     if (Result.isFailure(tree)) {
       check(
         false,
-        `${name}: .chernabog/ is on ${baseBranch}`,
+        `${name}: .chernabog/ is on ${branch}, GitHub's default branch`,
         "chernabog init, then commit and merge .chernabog/",
       );
       continue;
@@ -595,8 +596,8 @@ export const doctor = Effect.gen(function* () {
       `chernabog trust ${name}`,
     );
 
-    yield* checkLauncher(repo, name, baseBranch);
-    yield* checkPins(repo, name, baseBranch);
+    yield* checkLauncher(repo, name);
+    yield* checkPins(repo, name);
 
     const labels = yield* githubGetAllPages(
       `/repos/${repo.repo}/labels?per_page=100`,
@@ -610,7 +611,7 @@ export const doctor = Effect.gen(function* () {
     }
 
     // A repo whose flows don't load says so above, and has no labels to check.
-    const missing = Option.match(yield* declaredOn(machine, repo, baseBranch), {
+    const missing = Option.match(yield* declaredOn(machine, repo), {
       onNone: () => [],
       onSome: (declared) =>
         planLabelSync(labels.value, declared).filter((change) => change.action === "create"),

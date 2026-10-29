@@ -552,6 +552,40 @@ describe("WorktreeLive", () => {
       }).pipe(Effect.provide(gitRepo)),
   );
 
+  atHome("a branch origin lacks starts from the base it is given, such as develop", () =>
+    Effect.gen(function* () {
+      const { checkout, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      yield* git(checkout, "commit", "--quiet", "--allow-empty", "-m", "on develop");
+      yield* git(checkout, "push", "--quiet", "origin", "HEAD:refs/heads/develop");
+      const develop = yield* git(origin, "rev-parse", "develop");
+
+      const path = yield* worktree.ensure("feature/x", { runId: "run-1", from: "develop" });
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(develop);
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  atHome("a branch origin lacks, with no base given, fails rather than guessing one", () =>
+    Effect.gen(function* () {
+      const worktree = yield* Worktree;
+      const refused = yield* Effect.flip(worktree.ensure("feature/x", { runId: "run-1" }));
+
+      expect(refused.message).toBe(
+        "origin has no branch feature/x, and no base was given to start it from",
+      );
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  atHome("a run id alone, as an SDK from before `from` gives it, starts from baseBranch", () =>
+    Effect.gen(function* () {
+      const { base } = yield* GitRepo;
+      const path = yield* (yield* Worktree).ensure("feature/x", "run-1");
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
   atHome("a run resuming its own worktree keeps its work", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
