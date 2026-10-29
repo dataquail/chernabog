@@ -43,11 +43,9 @@ import {
   MachineConfigFile,
   machineConfigFile,
   mergeRepoConfig,
-  needsLogin,
   normalizeMachineConfig,
   personasOf,
   RepoConfigFile,
-  routingOf,
   scheduleFor,
 } from "../src/repo-config.ts";
 import { effect, effectAtHome, effectAtHomeWith } from "./effect-test.ts";
@@ -342,7 +340,7 @@ describe("config layers", () => {
   );
 
   effect(
-    "a flow filters work by assignee or requested reviewer only when the team or the person says so",
+    "the old assignee and reviewRequested keys reach the flow as the settings the SDK's routing reads",
     () =>
       Effect.gen(function* () {
         const team = {
@@ -351,37 +349,32 @@ describe("config layers", () => {
 
         const merged = yield* merge(team, { flows: { implement: {}, review: {} } });
 
-        expect(routingOf(merged, "implement")).toEqual({
-          assignee: Option.some(["@me", "none"]),
-          reviewRequested: Option.none(),
-        });
-        expect(routingOf(merged, "review")).toEqual({
-          assignee: Option.none(),
-          reviewRequested: Option.some(["alice"]),
-        });
-        expect(routingOf(merged, "fix")).toEqual({
-          assignee: Option.none(),
-          reviewRequested: Option.none(),
-        });
-        expect(needsLogin(yield* mergeAll(team, { flows: { implement: {} } }))).toBe(true);
-        // Only a flow that runs needs the login.
-        expect(needsLogin(yield* mergeAll(team, { flows: { review: {} } }))).toBe(false);
-        expect(needsLogin(yield* mergeAll({}, {}))).toBe(false);
+        expect(flowSettingsInput(merged, "implement")).toEqual({ assignee: ["@me", "none"] });
+        expect(flowSettingsInput(merged, "review")).toEqual({ reviewRequested: ["alice"] });
+        expect(flowSettingsInput(merged, "fix")).toEqual({});
 
+        // The flow's own settings win over the old key.
+        expect(
+          flowSettingsInput(
+            yield* merge(
+              { flows: { implement: { assignee: "@me", settings: { assignee: "bob" } } } },
+              { flows: { implement: {} } },
+            ),
+            "implement",
+          ),
+        ).toEqual({ assignee: "bob" });
+
+        // null clears the team's, as it did.
         const cleared = yield* Schema.encodeEffect(Schema.OptionFromNullOr(Schema.String))(
           Option.none(),
         );
 
         expect(
-          routingOf(
+          flowSettingsInput(
             yield* merge(team, { flows: { implement: { assignee: cleared } } }),
             "implement",
-          ).assignee,
-        ).toEqual(Option.none());
-        expect(
-          routingOf(yield* merge({}, { flows: { review: { reviewRequested: "@me" } } }), "review")
-            .reviewRequested,
-        ).toEqual(Option.some(["@me"]));
+          ),
+        ).toEqual({ assignee: cleared });
       }),
   );
 

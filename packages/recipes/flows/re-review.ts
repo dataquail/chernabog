@@ -18,6 +18,7 @@ import {
   Repo,
   reportAs,
   Review,
+  Routing,
   Settings,
   Skip,
   type WorkItem,
@@ -28,17 +29,16 @@ import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona again after it reviewed them, one item
 // per request, unless a person has them (auto:needs-human): asking again
-// during a dispute doesn't restart the loop.
+// during a dispute doesn't restart the loop. Each is routed by its assignees and reviewers.
 const trigger = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
 
-  return (yield* Review.reviewRequests).flatMap(({ pull, reviewed }) =>
-    Option.toArray(
-      Option.liftPredicate(
-        Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`),
-        () => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
-      ),
+  return yield* Effect.forEach(
+    (yield* Review.reviewRequests).filter(
+      ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
     ),
+    ({ pull, reviewed }) =>
+      Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`)),
   );
 }).pipe(reportAs("trigger"));
 
@@ -170,6 +170,7 @@ const workflow = (item: WorkItem) =>
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.Rules.fields,

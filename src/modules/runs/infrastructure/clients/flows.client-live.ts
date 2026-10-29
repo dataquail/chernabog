@@ -30,7 +30,7 @@ import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
-import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
+import { type ReviewRequest } from "../../domain/review-requests/review-requests.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import {
   firstPullRequest,

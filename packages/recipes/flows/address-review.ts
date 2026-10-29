@@ -17,6 +17,7 @@ import {
   PullRequest,
   reportAs,
   Review,
+  Routing,
   Settings,
   Skip,
   type WorkItem,
@@ -29,7 +30,7 @@ import * as Schema from "effect/Schema";
 // Pull requests this persona wrote whose latest approval or request for
 // changes asks for changes on the current head, so nothing was pushed since.
 // A person has one labelled auto:needs-human, and a run of another flow one it
-// owns; both are left alone.
+// owns; both are left alone. Each is routed by its assignees and reviewers.
 const trigger = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
   const items: Array<WorkItem> = [];
@@ -56,7 +57,7 @@ const trigger = Effect.gen(function* () {
     }
 
     for (const review of Option.toArray(latest)) {
-      items.push(Review.addressItem(pull, review, decisive.length));
+      items.push(yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)));
     }
   }
 
@@ -142,6 +143,7 @@ const workflow = (item: WorkItem) =>
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.LocalGate.fields,

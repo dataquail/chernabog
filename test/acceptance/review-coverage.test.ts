@@ -144,7 +144,7 @@ describe("status, on review requests no persona here serves", () => {
     );
 
     expect(status.split("\n").find((line) => line.startsWith("  review as alice:"))).toContain(
-      `assigned elsewhere: ${waiting}`,
+      `left for others: ${waiting}`,
     );
 
     // bob reviews it from another machine; GitHub drops the request.

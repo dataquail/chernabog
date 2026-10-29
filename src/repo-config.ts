@@ -43,7 +43,6 @@ import {
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   DEFAULT_LEASE_LIMITS,
@@ -66,8 +65,6 @@ import { checkRunnable } from "./platform/flow-deps.ts";
 import { type PackageOverrides } from "./platform/flow-loader.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
-
-export type { Routing };
 
 export { FLOW_TURNED_OFF };
 
@@ -442,37 +439,6 @@ export const namesRunners = (repo: RepoConfigFile, flows: ReadonlyArray<string>)
   Option.isSome(Option.fromUndefinedOr(repo.runners)) ||
   flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
 
-const listOf = (who: Option.Option<string | ReadonlyArray<string>>) =>
-  Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
-
-// Whose work items a flow starts as this persona; anyone's without a filter.
-export const routingOf = (repo: PersonaRepo, flow: string): Routing => {
-  const settings = Record.get(repo.flows, flow);
-
-  return {
-    assignee: Option.flatMap(settings, (found) =>
-      listOf(Option.flatten(Option.fromUndefinedOr(found.assignee))),
-    ),
-    reviewRequested: Option.flatMap(settings, (found) =>
-      listOf(Option.flatten(Option.fromUndefinedOr(found.reviewRequested))),
-    ),
-  };
-};
-
-// Whether the daemon must know this machine's GitHub login for the repo: for
-// a flow the implicit persona runs that starts only work for @me. A named
-// persona's login is its own.
-export const needsLogin = (repo: EffectiveRepo) =>
-  repo.personas.some(
-    (own) =>
-      Option.isNone(own.persona) &&
-      own.chosen.some((flow) => {
-        const routing = routingOf(own, flow);
-
-        return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
-      }),
-  );
-
 // When a persona's flow ticks: the flow's own setting for the persona in
 // machine config, then the persona's default, then the team's: the flow's
 // setting in config.yaml, the flow module's, the repo's. `index` of `count`
@@ -706,16 +672,31 @@ export const mergeSettings = (under: Settings.Input, over: Settings.Input): Sett
   ...Record.map(over, (value, key) => overSetting(Record.get(under, key), value)),
 });
 
-// What a persona's flow decodes its settings from: the team's shared
-// settings, then the flow's in config.yaml, then the persona's in machine config.
-export const flowSettingsInput = (repo: PersonaRepo, flow: string) =>
-  mergeSettings(
-    repo.shared,
-    Record.get(repo.flows, flow).pipe(
-      Option.flatMap((found) => Option.fromUndefinedOr(found.settings)),
-      Option.getOrElse(() => ({})),
+// The old flows.<name>.assignee and reviewRequested, as the settings the
+// SDK's Routing reads, until core's next major (ADR 0005). null clears the
+// team's filter, as it did.
+const oldRouting = (settings: FlowSettings): Settings.Input =>
+  Record.getSomes({
+    assignee: Option.map(Option.fromUndefinedOr(settings.assignee), (who) =>
+      Option.getOrNull(Option.map(who, (found): Json => [found].flat())),
     ),
-  );
+    reviewRequested: Option.map(Option.fromUndefinedOr(settings.reviewRequested), (who) =>
+      Option.getOrNull(Option.map(who, (found): Json => [found].flat())),
+    ),
+  });
+
+// What a persona's flow decodes its settings from: the team's shared
+// settings, then the flow's in config.yaml, then the persona's in machine
+// config, with the old routing keys under the flow's own.
+export const flowSettingsInput = (repo: PersonaRepo, flow: string) =>
+  Option.match(Record.get(repo.flows, flow), {
+    onNone: () => repo.shared,
+    onSome: (found) =>
+      mergeSettings(
+        mergeSettings(repo.shared, oldRouting(found)),
+        Option.getOrElse(Option.fromUndefinedOr(found.settings), () => ({})),
+      ),
+  });
 
 // Decodes each flow's settings with the schema it declares, as each persona
 // runs it: a setting the schema refuses fails the repo when it loads.

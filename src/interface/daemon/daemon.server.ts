@@ -100,7 +100,6 @@ import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trust
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
-import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
@@ -114,10 +113,8 @@ import {
   loadMachineConfig,
   loadRepo,
   type MachineConfig,
-  needsLogin,
   type PersonaRepo,
   repoNameOf,
-  routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
 import {
@@ -153,8 +150,8 @@ type FlowSchedule = {
   pending: Option.Option<PendingTick>;
   lastEventTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
-  // What the last tick left for other machines, by flows.<flow>.assignee and
-  // reviewRequested, and for the review flow, review requests no persona here serves.
+  // What the last tick's trigger left for others, with why, and for the
+  // review flow, review requests no persona here serves.
   elsewhere: ReadonlyArray<string>;
 };
 
@@ -478,49 +475,8 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
-  // Who the implicit persona is on GitHub, for repos that name their flows'
-  // runners or start only work assigned to it. A persona's login is its own.
-  let login = Option.none<string>();
-
-  if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
-    const found = yield* Effect.result(viewerLogin);
-    login = Result.getSuccess(found);
-    yield* log(
-      Result.match(found, {
-        onSuccess: (self) => `this machine is ${self} on GitHub`,
-        onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}`,
-      }),
-    );
-  }
-
   if (machine.github.length > 0) {
     yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
-  }
-
-  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
-
-  // Several personas on one flow each see all its work unless @me tells them apart.
-  for (const repo of repos) {
-    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const running = repo.flows.filter(
-        (schedule) =>
-          schedule.handle.name === flow &&
-          schedule.handle.flow.ownWork !== true &&
-          Option.isNone(flowOff(schedule.own, flow)),
-      );
-
-      const unrouted = running.some(
-        (schedule) =>
-          Option.isNone(routingOf(schedule.own, flow).assignee) &&
-          Option.isNone(routingOf(schedule.own, flow).reviewRequested),
-      );
-
-      if (running.length > 1 && unrouted) {
-        yield* log(
-          `${repo.name}/${flow}: runs as ${running.flatMap((schedule) => Option.toArray(schedule.persona)).join(", ")} with no assignee or reviewRequested, so each takes any of its work`,
-        );
-      }
-    }
   }
 
   const busy = yield* Ref.make(0);
@@ -896,8 +852,6 @@ export const runDaemon = Effect.gen(function* () {
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
             },
-            routing: routingOf(settings, handle.name),
-            login: loginFor(persona),
             here: machine.github,
             concurrency: {
               flow: Option.getOrElse(

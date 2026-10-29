@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { issueItem, issueOf } from "./implement.ts";
+import { issueItem, issueOf, routed } from "./implement.ts";
 import { type Kind, VERIFY } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import * as Settings from "./settings.ts";
@@ -533,7 +533,8 @@ export const LAYER_CHANGED = "layer-changed";
 // Open epics (auto:epic) with an open sub-issue, oldest first, as work items
 // keyed by the epic's issue; each whose fingerprint differs from its status
 // comment's carries LAYER_CHANGED, which wakes its parked run. An epic whose
-// last task closed since is reported only to wake its run, to end it.
+// last task closed since is reported only to wake its run, to end it. Each is
+// routed by its assignees.
 export const queued = Effect.gen(function* () {
   const github = yield* GitHub;
   const items: Array<WorkItem> = [];
@@ -552,7 +553,7 @@ export const queued = Effect.gen(function* () {
     const changed =
       Option.isSome(recorded) && recorded.value.fingerprint !== (yield* fingerprint(epic.number));
 
-    const item = issueItem(epic);
+    const item = yield* routed(epic, issueItem(epic));
 
     if (changed && open) {
       items.push({ ...item, signals: [LAYER_CHANGED] });

@@ -31,6 +31,7 @@ import {
   type PullRequestClosed,
   type PushRejected,
   reportAs,
+  Routing,
   Settings,
   Skip,
 } from "@chernabog/sdk";
@@ -67,6 +68,7 @@ const READY_WITHIN = "14 days";
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.Board.fields,

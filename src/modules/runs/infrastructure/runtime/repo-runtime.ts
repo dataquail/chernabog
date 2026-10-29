@@ -20,7 +20,6 @@ import { type Persona, samePersona } from "../../../../kernel/persona.value-obje
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
-import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
   checkFlowSettings,
   checkManualSchedules,
@@ -28,7 +27,6 @@ import {
   type EnrolledRepo,
   loadRepo,
   type MachineConfig,
-  needsLogin,
   type PersonaRepo,
 } from "../../../../repo-config.ts";
 import { adoptImplicitRunsUseCase } from "../../use-cases/adopt-implicit-runs.use-case.ts";
@@ -210,20 +208,6 @@ export const adoptRuns = (repo: EffectiveRepo) =>
   Option.match(defaultPersona(repo), {
     onNone: () => Effect.void,
     onSome: (login) => adoptImplicitRunsUseCase(repo.settings.name, login).pipe(Effect.asVoid),
-  });
-
-// Who @me and runners mean for a persona: its own login, or, for the implicit
-// persona, whoever this machine is on GitHub, asked only when it matters.
-export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
-  Option.match(persona, {
-    onSome: (login) => Effect.succeedSome(login),
-    onNone: () => {
-      if (!needsLogin(repo)) {
-        return Effect.succeed(Option.none<string>());
-      }
-
-      return Effect.option(viewerLogin);
-    },
   });
 
 // The item a person named that the trigger didn't report, when the flow can

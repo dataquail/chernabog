@@ -7,7 +7,7 @@ import * as Record from "effect/Record";
 import type * as Schema from "effect/Schema";
 
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
-import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
+import { type ReviewRequest } from "../../domain/review-requests/review-requests.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import {
   type FlowRef,

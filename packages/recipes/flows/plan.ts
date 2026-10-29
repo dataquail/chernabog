@@ -20,6 +20,7 @@ import {
   NeedsHuman,
   Plan,
   reportAs,
+  Routing,
   Settings,
   Skip,
   type WorkItem,
@@ -33,17 +34,18 @@ import * as Schema from "effect/Schema";
 const ANSWER_WITHIN = "14 days";
 
 // Specs labelled auto:plan, oldest first, as work to start; with a board,
-// only those whose Status is its readyStatus. Then specs whose posted plan a
-// person has answered, which wake the run waiting on it.
+// only those whose Status is its readyStatus, routed by their assignees. Then
+// specs whose posted plan a person has answered, which wake the run waiting on it.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const queued = yield* github.queuedIssuesLabelled(Plan.LABELS.plan);
   const answered = yield* Plan.answers;
 
-  return [
-    ...queued.map((issue) => Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
-    ...answered,
-  ];
+  const specs = yield* Effect.forEach(queued, (issue) =>
+    Implement.routed(issue, Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
+  );
+
+  return [...specs, ...answered];
 }).pipe(reportAs("trigger"));
 
 // Drafts, checks and proposes the plan, and waits for a person's answer,
@@ -124,6 +126,7 @@ const workflow = (item: WorkItem) =>
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.Board.fields,

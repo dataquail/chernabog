@@ -40,7 +40,10 @@ import { loadScenarioUseCase } from "../../../modules/rehearsals/use-cases/load-
 import { planRehearsalUseCase } from "../../../modules/rehearsals/use-cases/plan-rehearsal.use-case.ts";
 import { type LoadedScenario } from "../../../modules/rehearsals/use-cases/scenario.result.ts";
 import { seedScenarioUseCase } from "../../../modules/rehearsals/use-cases/seed-scenario.use-case.ts";
-import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import {
+  describeElsewhere,
+  routeItems,
+} from "../../../modules/runs/domain/routing/routing.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   runAnswers,
@@ -56,7 +59,6 @@ import {
 import { declaredLabels, syncLabels } from "../../../modules/runs/infrastructure/runtime/labels.ts";
 import {
   buildPersonaContexts,
-  loginOf,
   openRepo,
   type RepoContext,
   servicesFrom,
@@ -84,7 +86,6 @@ import {
   personaOf,
   type PersonaRepo,
   repoNameOf,
-  routingOf,
 } from "../../../repo-config.ts";
 import { fail } from "../cli.output.ts";
 import { repoFlag } from "../repo.arguments.ts";
@@ -305,9 +306,7 @@ const pickItem = (
       } satisfies Picked;
     }
 
-    const login = yield* loginOf(handle.repo, persona);
-    const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
-    const routed = routeItems(ours, routingOf(own, handle.name), login);
+    const routed = routeItems(ours);
 
     return Option.match(Arr.head(routed.elsewhere), {
       onNone: (): Picked => ({
@@ -321,7 +320,7 @@ const pickItem = (
       onSome: (): Picked => ({
         item: Arr.head(routed.mine),
         unseen: false,
-        why: `routing leaves ${routed.elsewhere.map((item) => item.key).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
+        why: `the flow leaves ${routed.elsewhere.map(describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
       }),
     });
   });

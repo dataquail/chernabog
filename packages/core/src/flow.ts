@@ -139,7 +139,7 @@ type FlowCommon = {
     ReadonlyArray<FlowLabel> | Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
   // Whether the trigger finds only the work of the persona it runs as, as
   // review's does by its review requests, so several personas can run the
-  // flow without assignee or reviewRequested to tell them apart.
+  // flow without routing (an item's elsewhere) to tell them apart.
   readonly ownWork?: boolean;
   // Whether a run's work item is still there to work on. The engine checks
   // every run in flight on an interval (limits.validityEvery), before a

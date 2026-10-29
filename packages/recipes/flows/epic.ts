@@ -32,6 +32,7 @@ import {
   Implement,
   Plan,
   reportAs,
+  Routing,
   Run,
   Settings,
   Stack,
@@ -415,6 +416,7 @@ const workThrough = (epic: number) =>
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.Board.fields,

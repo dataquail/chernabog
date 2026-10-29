@@ -19,6 +19,7 @@ import {
   Repo,
   reportAs,
   Review,
+  Routing,
   Settings,
   Skip,
   type WorkItem,
@@ -28,13 +29,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona for a review, which it hasn't reviewed
-// yet. Reading review requests needs the persona's seat in the reviewer pool,
+// yet, routed by their assignees and reviewers. Reading review requests needs the persona's seat in the reviewer pool,
 // which chernabog checks before the flow runs.
-const trigger = Effect.map(Review.reviewRequests, (found) =>
-  found.flatMap(({ pull, reviewed }) =>
-    Option.toArray(
-      Option.liftPredicate(Review.reviewItem(pull, `pr-${pull.number}`), () => reviewed === 0),
-    ),
+const trigger = Effect.flatMap(Review.reviewRequests, (found) =>
+  Effect.forEach(
+    found.filter(({ reviewed }) => reviewed === 0),
+    ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
   ),
 ).pipe(reportAs("trigger"));
 
@@ -106,6 +106,7 @@ const workflow = (item: WorkItem) =>
 
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
+  ...Routing.Settings.fields,
   ...Settings.Labels.fields,
   ...Settings.Base.fields,
   ...Settings.Rules.fields,
