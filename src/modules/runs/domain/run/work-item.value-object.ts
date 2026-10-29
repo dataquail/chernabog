@@ -19,9 +19,9 @@ export const WorkItem = Schema.Struct({
   wakeOnly: Schema.optionalKey(Schema.Boolean),
   // Why the trigger won't start it yet; it starts no run, but still wakes one.
   held: Schema.optionalKey(Schema.String),
-  // GitHub logins assigned to it, and asked to review it, which routing reads.
-  assignees: Schema.optionalKey(Schema.Array(Schema.String)),
-  reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
+  // Why the trigger left it for another persona or machine: it starts no run
+  // unless a person names it, and status lists it with the reason.
+  elsewhere: Schema.optionalKey(Schema.String),
 });
 
 export type WorkItem = typeof WorkItem.Type;

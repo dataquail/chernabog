@@ -4,7 +4,7 @@ import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
-import { type ReviewRequest } from "../../routing/routing.value-object.ts";
+import { type ReviewRequest } from "../../review-requests/review-requests.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../../run/run.errors.ts";
 import {
   type FlowRef,

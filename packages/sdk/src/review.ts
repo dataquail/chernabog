@@ -40,6 +40,7 @@ import { RECHECK } from "./default-prompts.ts";
 import { ADOPTED_LABEL, sessionIdFor } from "./implement.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
+import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
 import { pullRequestValidity } from "./still-valid.ts";
 
@@ -94,9 +95,13 @@ export const reviewItem = (pull: PullRequest, key: string): WorkItem => ({
     headRef: pull.headRef,
     agentWritten: isAgentBranch(pull.headRef),
   },
-  assignees: pull.assignees,
-  reviewers: pull.requestedReviewers,
 });
+
+// A work item of the pull request, left for others when the flow's routing
+// (Routing's settings) says it isn't this persona's, by the pull request's
+// assignees and requested reviewers.
+export const routed = (pull: PullRequest, item: WorkItem) =>
+  Routing.route(item, { assignees: pull.assignees, reviewers: pull.requestedReviewers });
 
 // Whether a run of another flow owns the pull request, by its claim ref; the standalone flows leave it alone.
 export const ownedByARun = (pull: PullRequest) =>
@@ -543,7 +548,6 @@ export const addressItem = (
     reviewer: review.author,
     reviewedSha: review.commitSha,
   },
-  assignees: pull.assignees,
 });
 
 // baseRef: the pull request's base, which a layer of a stack has as the

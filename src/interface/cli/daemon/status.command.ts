@@ -147,7 +147,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
       onSome: (cause) => `, last ${relative(flow.lastTick, now)} (${cause})`,
     });
 
-    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;
+    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; left for others: ${elsewhere.join(", ")}`)}`;
   };
 
   return [
