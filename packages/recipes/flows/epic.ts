@@ -19,7 +19,16 @@
 // version. The names of its steps ("claim-epic", "epic-tasks-1") are the keys
 // a run in flight resumes by, so renaming one restarts that step.
 
-import { awaitSignal, Claims, defineFlow, Epic, Implement, Plan, reportAs } from "@chernabog/sdk";
+import {
+  activity,
+  awaitSignal,
+  Claims,
+  defineFlow,
+  Epic,
+  Implement,
+  Plan,
+  reportAs,
+} from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -30,18 +39,33 @@ const AT_ONCE = 2;
 // for what changes no layer: a person's task closed, say.
 const LOOK_AGAIN_AFTER = "1 day";
 
+// The id a task's steps carry on an attempt: `task-12` the first time,
+// `task-12-2` once a person has handed it back.
+const attemptId = (issue: number, attempt: number) => {
+  if (attempt === 1) {
+    return `task-${issue}`;
+  }
+
+  return `task-${issue}-${attempt}`;
+};
+
+// Lets the task's claim go once its attempt ends with a person, as a step of
+// the attempt's own, so a later attempt lets it go again.
+const releaseTask = (issue: number, id: string) =>
+  activity(`release-claim#${id}`, Claims.release(Claims.issue(issue)));
+
 // Implements one ready task as implement does, on its base, with its own
 // steps and session. A task that needs a person is handed to one, and lets
 // its claim go; the run carries on with the rest either way.
-const implementTask = (epic: number, task: Epic.Layer) =>
+const implementTask = (epic: number, task: Epic.Layer, attempt: number) =>
   Effect.gen(function* () {
     const issue = task.number;
-    const id = `task-${issue}`;
+    const id = attemptId(issue, attempt);
     let pullRequest = Option.none<number>();
 
     const toPerson = (reason: string) =>
       Implement.handToHuman(issue, reason, pullRequest, { id }).pipe(
-        Claims.releasing(Claims.issue(issue)),
+        Effect.tap(() => releaseTask(issue, id)),
       );
 
     return yield* Effect.gen(function* () {
@@ -53,7 +77,7 @@ const implementTask = (epic: number, task: Epic.Layer) =>
 
       if (outcome.status === "needs-clarification") {
         return yield* Implement.askForClarification(issue, outcome, { id }).pipe(
-          Claims.releasing(Claims.issue(issue)),
+          Effect.tap(() => releaseTask(issue, id)),
         );
       }
 
@@ -94,11 +118,16 @@ const implementTask = (epic: number, task: Epic.Layer) =>
   });
 
 // Round after round: read where the epic stands, write its status comment,
-// start every ready task this run hasn't, and with none left to start, park
-// until a layer changes. A task is attempted once a run.
+// start every ready task, and with none left to start, park until a layer
+// changes. A task the run attempted starts again only once it has read as
+// something other than ready since, as one a person handed back with
+// auto:eligible after its questions or a hand-off has; one still ready
+// after its attempt, as one another run holds, waits. The counts are rebuilt
+// from the rounds' saved results whenever the run resumes.
 const workThrough = (epic: number) =>
   Effect.gen(function* () {
-    const attempted = new Set<number>();
+    const attempts = new Map<number, number>();
+    const handedBack = new Set<number>();
 
     for (let round = 1; ; round++) {
       const progress = yield* Epic.progress(epic, round);
@@ -108,14 +137,26 @@ const workThrough = (epic: number) =>
         return `#${epic}: every task is closed`;
       }
 
-      const ready = Epic.startable(progress).filter((task) => !attempted.has(task.number));
+      for (const layer of progress.layers) {
+        if (attempts.has(layer.number) && layer.state !== "ready") {
+          handedBack.add(layer.number);
+        }
+      }
+
+      const ready = Epic.startable(progress).filter(
+        (task) => !attempts.has(task.number) || handedBack.has(task.number),
+      );
 
       if (ready.length > 0) {
-        for (const task of ready) {
-          attempted.add(task.number);
-        }
+        const starts = ready.map((task) => {
+          const attempt = (attempts.get(task.number) ?? 0) + 1;
+          attempts.set(task.number, attempt);
+          handedBack.delete(task.number);
 
-        yield* Effect.forEach(ready, (task) => implementTask(epic, task), {
+          return { task, attempt };
+        });
+
+        yield* Effect.forEach(starts, (start) => implementTask(epic, start.task, start.attempt), {
           concurrency: AT_ONCE,
           discard: true,
         });

@@ -216,7 +216,14 @@ export const makeFake = (
 
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
-  const author = { consider: "address", resolve: "resolved", closes: false };
+  // `asks` are worktrees whose next implement session answers with questions.
+  const author = {
+    consider: "address",
+    resolve: "resolved",
+    closes: false,
+    asks: new Array<string>(),
+  };
+
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
   const agent = { hangs: false };
   // The issue's Status on the repo's board, once a step moved it.
@@ -331,6 +338,14 @@ export const makeFake = (
     }
 
     if (schema.includes("needs-clarification")) {
+      const asking = author.asks.indexOf(request.cwd);
+
+      if (asking >= 0) {
+        author.asks.splice(asking, 1);
+
+        return { status: "needs-clarification", summary: "Which way?", title: "", body: "" };
+      }
+
       git.commits += 1;
 
       return {

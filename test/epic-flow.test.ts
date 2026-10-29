@@ -227,6 +227,50 @@ describe("epic", () => {
       }),
   );
 
+  effect(
+    "starts a task again, as a new attempt, once a person hands it back with auto:eligible",
+    () =>
+      Effect.gen(function* () {
+        const fake = epicFake();
+        // #12's agent answers with questions the first time.
+        fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
+
+        const { run, snapshots } = yield* workWith(fake, [
+          // A person answers, and hands #12 back.
+          (changed) => {
+            changed.setLabels(12, [DEFAULT_LABELS.eligible]);
+          },
+          (changed) => {
+            for (const number of [10, 11, 12, 13]) {
+              merge(changed, number);
+            }
+          },
+        ]);
+
+        expect(run.status).toBe("done");
+
+        // Parked with #12 waiting for answers, and no pull request for it.
+        const first = Option.getOrElse(Arr.get(snapshots, 0), () => NOTHING);
+        const second = Option.getOrElse(Arr.get(snapshots, 1), () => NOTHING);
+        expect(first.status).toContain(
+          "#12 Task 12: a person's: waits for answers to its questions",
+        );
+        expect(first.bases["auto/issue-12"]).toBeUndefined();
+
+        // Handed back, it was implemented again, in steps and a session of its own.
+        expect(second.bases["auto/issue-12"]).toBe("main");
+        expect(second.status).toMatch(/#12 Task 12: in review: #\d+\n/);
+
+        const steps = new Set(fake.steps.flatMap(Option.toArray));
+        expect(
+          ["implement#task-12", "implement#task-12-2"].filter((step) => !steps.has(step)),
+        ).toEqual([]);
+        // #10, #11, #12 and #12's second attempt; #13 merged without the run.
+        expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
+        expect(fake.refs.size).toBe(0);
+      }),
+  );
+
   effect("signals a parked run only once a layer changes since its status", () =>
     Effect.gen(function* () {
       const fake = epicFake();
