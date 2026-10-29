@@ -28,7 +28,6 @@ export const trustCommand = Command.make("trust", { repo: optionalRepo }, ({ rep
       const outcome = yield* trustRepoUseCase({
         repo: target.repo,
         path: target.path,
-        baseBranch: target.baseBranch,
       });
 
       yield* Effect.forEach(describeTrust(target.name, outcome), (line) => Console.log(line), {

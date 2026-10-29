@@ -3,13 +3,17 @@
 # What work Chernabog does in this repo, and how. Committed, so the whole team
 # shares it. Each person's machine config (~/.config/chernabog/config.yaml)
 # decides which flows run for them, when, and with which agent.
-
-baseBranch: main
+#
+# Chernabog reads and trusts this directory from GitHub's default branch.
 
 # Settings every flow shares, read by the flows whose settings declare them.
 # flows.<name>.settings overrides them for one flow, key by key. Each flow's
 # own settings are described in config.schema.json once its recipe is added.
 settings:
+  # The branch new work starts from and pull requests target, such as develop
+  # in git flow. Unset: GitHub's default branch.
+  # base: develop
+
   # Run in a fresh worktree before the agent starts. null for none.
   install: pnpm install --frozen-lockfile
 

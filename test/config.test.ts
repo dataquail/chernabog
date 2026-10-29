@@ -29,6 +29,7 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
+import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
@@ -49,7 +50,7 @@ import {
   routingOf,
   scheduleFor,
 } from "../src/repo-config.ts";
-import { effect, effectAtHome } from "./effect-test.ts";
+import { effect, effectAtHome, effectAtHomeWith } from "./effect-test.ts";
 import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
 const machine = normalizeMachineConfig(
@@ -799,6 +800,9 @@ describe("init", () => {
   });
 });
 
+// loadRepo reads the checkout's default branch with git, for real.
+const effectWithGit = effectAtHomeWith(Exec.layer);
+
 describe("loading a repo", () => {
   const configDirWith = (files: Readonly<Record<string, string>>) =>
     Effect.gen(function* () {
@@ -832,7 +836,7 @@ describe("loading a repo", () => {
       onFailure: (failure) => Option.some([failure._tag, failure.message] as const),
     });
 
-  effectAtHome(
+  effectWithGit(
     "a .chernabog/ typed against a newer core is refused, before its config is read",
     () =>
       Effect.gen(function* () {
@@ -850,7 +854,7 @@ describe("loading a repo", () => {
       }),
   );
 
-  effectAtHome(
+  effectWithGit(
     "one typed against a core major this binary no longer provides is refused, naming the upgrade",
     () =>
       Effect.gen(function* () {
@@ -864,7 +868,7 @@ describe("loading a repo", () => {
       }),
   );
 
-  effectAtHome("engines.chernabog, and no SDK in dependencies, are refused, naming the fix", () =>
+  effectWithGit("engines.chernabog, and no SDK in dependencies, are refused, naming the fix", () =>
     Effect.gen(function* () {
       const manifests: ReadonlyArray<Readonly<Record<string, string>>> = [
         {
@@ -884,7 +888,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a flow that imports what core doesn't export is refused", () =>
+  effectWithGit("a flow that imports what core doesn't export is refused", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* configDirWith({ "package.json": pinning(BUNDLED_CORE) });
@@ -900,7 +904,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a key this binary does not know fails the repo instead of being dropped", () =>
+  effectWithGit("a key this binary does not know fails the repo instead of being dropped", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
         "package.json": pinning(BUNDLED_CORE),
@@ -913,7 +917,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a .chernabog/ whose SDK needs a core this binary provides loads", () =>
+  effectWithGit("a .chernabog/ whose SDK needs a core this binary provides loads", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
         "package.json": pinning(BUNDLED_CORE),

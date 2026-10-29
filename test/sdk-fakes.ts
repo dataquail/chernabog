@@ -245,11 +245,13 @@ export const makeFake = (
   const stack = { base: "main", below: new Array<string>() };
 
   // What the steps based their work on: the sha each branch was created from,
-  // the base each pull request targets, and the base each push was checked against.
+  // the base each pull request targets, the base each push was checked
+  // against, and the base each claim branch was compared with.
   const based = {
     createdFrom: new Array<string>(),
     targets: new Array<string>(),
     checkedAgainst: new Array<string>(),
+    compared: new Array<string>(),
   };
 
   // Whether a person closed the issue or closed (or merged) the pull request.
@@ -666,6 +668,12 @@ export const makeFake = (
 
           // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
           if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+            const [compared = ""] = path
+              .slice(`/repos/${settings.slug}/compare/`.length)
+              .split("...");
+
+            based.compared.push(decodeURIComponent(compared));
+
             return { ahead_by: git.pushes + git.commits };
           }
 
@@ -956,5 +964,25 @@ export const triggered = <E, R>(
 // What a flow's own trigger reports on the fake.
 export const flowTriggered = (fake: Fake, flow: Flow) =>
   Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
+
+// The pull request stacked on `below`, the head of another open pull request,
+// as a layer of an epic's stack is.
+export const stackOn = (fake: Fake, below: string) => {
+  fake.stack.base = below;
+  fake.branchPulls.set(below, {
+    number: 2,
+    title: "feat: the layer below",
+    body: "",
+    url: "https://github.com/dataquail/demo/pull/2",
+    state: "open",
+    headRef: below,
+    headSha: "below0000000",
+    baseRef: "main",
+    labels: [],
+    author: "chernabog-bot",
+    assignees: [],
+    requestedReviewers: [],
+  });
+};
 
 export const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");

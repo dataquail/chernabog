@@ -124,7 +124,6 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
         repo: SLUG,
         name: "demo",
         account: machine.account ?? "work",
-        baseBranch: "main",
         ...Option.match(Option.fromUndefinedOr(machine.flows), {
           onNone: () => ({}),
           onSome: (flows) => ({ flows }),

@@ -12,7 +12,7 @@ import { TrustRecordsRepositoryFake } from "../infrastructure/repositories/trust
 import { trustRepoUseCase } from "./trust-repo.use-case.ts";
 
 const repo = RepoSlug.make("dataquail/demo");
-const target = { repo, path: "/src/demo", baseBranch: "main" };
+const target = { repo, path: "/src/demo" };
 
 const trusting = (tree: string, records: ReadonlyArray<TrustRecordRoot>) =>
   Layer.mergeAll(ConfigTreeClientFake({ "/src/demo": tree }), TrustRecordsRepositoryFake(records));
@@ -63,12 +63,12 @@ describe("trustRepoUseCase", () => {
     }).pipe(Effect.provide(trusting("aaaa", [record("aaaa")]))),
   );
 
-  effect("fails, trusting nothing, when the base branch has no .chernabog/", () =>
+  effect("fails, trusting nothing, when the default branch has no .chernabog/", () =>
     Effect.gen(function* () {
       const refused = yield* Effect.flip(trustRepoUseCase({ ...target, path: "/src/elsewhere" }));
 
       expect(refused.message).toBe(
-        "/src/elsewhere: no .chernabog/ on main; run chernabog init and merge it first",
+        "/src/elsewhere: no .chernabog/ on the default branch; run chernabog init and merge it first",
       );
       expect(yield* (yield* TrustRecordsRepository).findOne(repo)).toEqual(Option.none());
     }).pipe(Effect.provide(trusting("aaaa", []))),

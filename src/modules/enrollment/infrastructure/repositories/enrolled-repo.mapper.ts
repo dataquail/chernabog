@@ -23,8 +23,6 @@ export const EnrolledRepoEntry = Schema.Struct({
   path: Schema.String,
   // A short name, which keeps two clones of one repo apart.
   name: Schema.optionalKey(Schema.String),
-  // The branch .chernabog/ is trusted from. Defaults to main.
-  baseBranch: Schema.optionalKey(Schema.String),
   ...PersonaChoices,
   // The GitHub personas, by login from machine config's github:, that run
   // this repo's flows, each with its own choices. Defaults to the only one;
@@ -35,7 +33,7 @@ export const EnrolledRepoEntry = Schema.Struct({
 export type EnrolledRepoEntry = typeof EnrolledRepoEntry.Type;
 
 // The keys of an entry that aren't the repo entry's own choices.
-const IDENTITY = ["repo", "path", "name", "baseBranch", "personas"] as const;
+const IDENTITY = ["repo", "path", "name", "personas"] as const;
 
 export const toRoot = (entry: EnrolledRepoEntry, paused: boolean) =>
   EnrolledRepoRoot.make({

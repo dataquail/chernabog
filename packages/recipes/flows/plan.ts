@@ -125,6 +125,7 @@ const workflow = (item: WorkItem) =>
 // What config.yaml may set for this flow, under settings: or flows.<name>.settings.
 const settings = Schema.Struct({
   ...Settings.Labels.fields,
+  ...Settings.Base.fields,
   ...Settings.Board.fields,
   ...Settings.Rules.fields,
   ...Settings.Plans.fields,

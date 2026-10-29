@@ -287,7 +287,6 @@ repos:
   - repo: you/my-app # the key: settings follow the repo, not the folder
     path: ~/code/my-app # where its checkout is now
     account: personal
-    baseBranch: main
     flows: # the flows that run here, and no others
       implement: {}
       review: { schedule: "*/20 * * * *" }

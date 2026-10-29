@@ -59,6 +59,7 @@ import {
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
 import { describeNewerStamp, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
+import { knownDefaultBranch } from "./platform/config-snapshot.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { FileBusy, updateFile } from "./platform/file-lock.ts";
 import { checkRunnable } from "./platform/flow-deps.ts";
@@ -188,7 +189,12 @@ const SharedSettings = Schema.Record(Schema.String, Schema.Json).annotate({
 
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
-  baseBranch: Schema.optionalKey(Schema.String),
+  baseBranch: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Deprecated: set base under settings: (every flow) or flows.<name>.settings, the branch a flow's work starts from and targets. It never chose the branch .chernabog/ is read from, which is GitHub's default. A flow's base wins over this.",
+    }),
+  ),
   settings: Schema.optionalKey(SharedSettings),
   install: Nullable(Schema.String.annotate({ description: deprecated("install") })),
   localGate: Schema.optionalKey(Strings.annotate({ description: deprecated("localGate") })),
@@ -989,7 +995,9 @@ const sharedSetting = <A, I>(repo: RepoConfigFile, key: string, schema: Schema.C
   );
 
 // Merges the layers for one persona of a repo. `configDir` is where its
-// .chernabog/ was read from; `env` is the extra environment its commands run with.
+// .chernabog/ was read from; `env` is the extra environment its commands run
+// with; `defaultBranch` is the repo's default branch, the integration base
+// when config.yaml's deprecated baseBranch doesn't name one.
 const mergePersona = (
   machine: MachineConfig,
   enrolled: EnrolledRepo,
@@ -997,6 +1005,7 @@ const mergePersona = (
   persona: Persona,
   configDir: string,
   env: Environment,
+  defaultBranch: string,
 ) =>
   Effect.gen(function* () {
     const failed = (message: string) =>
@@ -1040,7 +1049,7 @@ const mergePersona = (
       name: repoNameOf(enrolled),
       slug: enrolled.repo,
       path: enrolled.path,
-      baseBranch: repo.baseBranch ?? enrolled.baseBranch ?? "main",
+      baseBranch: repo.baseBranch ?? defaultBranch,
       account: agentAccounts[agent] ?? ownAccount(account),
       agent,
       agentAccounts,
@@ -1114,12 +1123,13 @@ export const mergeRepoConfig = (
   repo: RepoConfigFile,
   configDir: string,
   env: Environment,
+  defaultBranch = "main",
 ) =>
   Effect.gen(function* () {
     const [first, ...rest] = yield* personasOf(machine, enrolled);
 
     const merge = (persona: Persona) =>
-      mergePersona(machine, enrolled, repo, persona, configDir, env);
+      mergePersona(machine, enrolled, repo, persona, configDir, env, defaultBranch);
 
     const head = yield* merge(first);
     const tail = yield* Effect.forEach(rest, merge);
@@ -1195,6 +1205,7 @@ export const loadRepo = (
       repo,
       configDir,
       yield* repoEnvironment(enrolled.path),
+      yield* knownDefaultBranch(enrolled.path),
     );
   });
 

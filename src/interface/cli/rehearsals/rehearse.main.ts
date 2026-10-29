@@ -155,9 +155,10 @@ const rehearsing = (
 });
 
 // The scenario's install and local gate over every flow's settings too, for
-// the SDK's blocks that read them there (Settings), and the board none of them
-// gives, so the rehearsal's none stands.
-const rehearsalSettings = (loaded: LoadedScenario): Settings.Input => ({
+// the SDK's blocks that read them there (Settings), the clone's branch as
+// every flow's base, and the board none of them gives, so the rehearsal's none stands.
+const rehearsalSettings = (scratch: Scratch, loaded: LoadedScenario): Settings.Input => ({
+  base: scratch.base,
   ...Option.match(Option.fromUndefinedOr(loaded.scenario.install), {
     onNone: () => ({}),
     onSome: (install) => ({ install: Option.getOrNull(install) }),
@@ -173,7 +174,7 @@ const rehearsalRepo = (
   scratch: Scratch,
   loaded: LoadedScenario,
 ): EffectiveRepo => {
-  const over = rehearsalSettings(loaded);
+  const over = rehearsalSettings(scratch, loaded);
 
   const [first, ...rest] = repo.personas.map((own): PersonaRepo => ({
     ...own,

@@ -17,7 +17,6 @@ import {
   pathsMatching,
   type PullRequest,
   PullRequestClosed,
-  Repo,
   reviewMarker,
   Run,
   Runs,
@@ -288,12 +287,30 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
     );
   });
 
-// Merges the pull request, only when that is safe: it is open and based on
-// the repo's base branch, its required checks are green on the current head,
+// The open pull request whose head branch `pull` is based on, which makes
+// `pull` a layer stacked on it: none when its base is the flow's integration
+// base, or no open pull request comes from its base.
+const layerBelow = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    if (pull.baseRef === (yield* Settings.base)) {
+      return Option.none<PullRequest>();
+    }
+
+    return Option.filter(
+      yield* (yield* GitHub).pullRequestForBranch(pull.baseRef),
+      (below) => below.state === "open",
+    );
+  });
+
+// Merges the pull request, only when that is safe: it is open and not a
+// layer of a stack, its required checks are green on the current head,
 // the latest review approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
-// GitHub's rules for the repo allow it. A layer of a stack, based on the
-// branch of the one below, waits until it sits on the base branch.
+// GitHub's rules for the repo allow it. A pull request into any branch may
+// merge, such as develop in git flow. One whose base is the head branch of
+// another open pull request is a layer stacked on it, and waits until the
+// layer below merges, unless its base is the flow's integration base
+// (Settings.base), which is never a layer, whatever is open from it.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
@@ -301,7 +318,6 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     `merge-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
       const rules = yield* Settings.rules;
       const pull = yield* github.pullRequest(pullRequest);
 
@@ -314,10 +330,12 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* new PullRequestClosed({ pullRequest, state: "closed" });
       }
 
-      if (pull.baseRef !== repo.baseBranch) {
+      const below = yield* layerBelow(pull);
+
+      if (Option.isSome(below)) {
         return yield* refuse(
           pullRequest,
-          `stacked on ${pull.baseRef}; it merges after the layer below`,
+          `stacked on ${pull.baseRef} (#${below.value.number}); it merges after the layer below`,
         );
       }
 

@@ -53,16 +53,10 @@ export const ConfigTreeClientLive = Layer.effect(
     const services = yield* Effect.context<Exec>();
 
     return ConfigTreeClient.of({
-      treeOf: (path, baseBranch) =>
-        configTree(path, baseBranch).pipe(
-          Effect.mapError(unavailable),
-          Effect.provideContext(services),
-        ),
-      localTreeOf: (path, baseBranch) =>
-        configTree(path, baseBranch, false).pipe(
-          Effect.mapError(unavailable),
-          Effect.provideContext(services),
-        ),
+      treeOf: (path) =>
+        configTree(path).pipe(Effect.mapError(unavailable), Effect.provideContext(services)),
+      localTreeOf: (path) =>
+        configTree(path, false).pipe(Effect.mapError(unavailable), Effect.provideContext(services)),
       changesSince: (path, previous, tree) =>
         Option.match(previous, {
           onNone: () => listFiles(path, tree),

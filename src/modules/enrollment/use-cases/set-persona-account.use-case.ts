@@ -34,6 +34,5 @@ export const setPersonaAccountUseCase = Effect.fn("setPersonaAccountUseCase")(fu
     name: EnrolledRepoRootOps.nameOf(repo),
     repo: repo.repo,
     path: repo.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(repo),
   });
 });

@@ -75,13 +75,12 @@ describe("EnrolledReposRepositoryLive", () => {
           ...demo,
           repo: RepoSlug.make("dataquail/new"),
           path: "/src/new",
-          baseBranch: "trunk",
           defaults: { flows: { review: {} } },
         }),
       );
 
       expect(yield* fs.readFileString(paths.machineConfig)).toBe(
-        `${CONFIG}  - repo: dataquail/new\n    path: /src/new\n    baseBranch: trunk\n    flows:\n      review: {}\n`,
+        `${CONFIG}  - repo: dataquail/new\n    path: /src/new\n    flows:\n      review: {}\n`,
       );
     }),
   );

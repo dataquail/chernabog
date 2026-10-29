@@ -169,14 +169,12 @@ export type RepoState = {
   latestTree: Option.Option<string>;
 };
 
-const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? "main";
-
 const checkoutExists = (enrolled: EnrolledRepo) =>
   FileSystem.FileSystem.use((fs) => fs.exists(enrolled.path)).pipe(
     Effect.orElseSucceed(() => false),
   );
 
-// Snapshots a repo's .chernabog/ from its base branch and loads its flows,
+// Snapshots a repo's .chernabog/ from its default branch and loads its flows,
 // unless the snapshot is not the tree that was trusted. A repo whose checkout
 // is gone is paused, its settings kept, until the checkout is back or
 // chernabog init points it at the checkout's new place.
@@ -215,7 +213,7 @@ export const loadRepoState = (
       } satisfies RepoState;
     }
 
-    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path, baseBranchOf(enrolled)));
+    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path));
 
     if (Result.isFailure(snapshot)) {
       return failed(snapshot.failure, Option.none());
@@ -228,7 +226,7 @@ export const loadRepoState = (
       const message = Option.match(trusted, {
         onNone: () => `not trusted yet; run chernabog trust ${name}`,
         onSome: () =>
-          `.chernabog/ changed on the base branch; review it with chernabog trust ${name}`,
+          `.chernabog/ changed on the default branch; review it with chernabog trust ${name}`,
       });
 
       return {
@@ -390,7 +388,7 @@ const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTim
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
 
-// Running on an older tree than its base branch's, which isn't trusted yet.
+// Running on an older tree than its default branch's, which isn't trusted yet.
 const stale = (repo: RepoState) => repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
 
 // Waiting on trust: never loaded for it, or running on a tree since replaced.
@@ -966,7 +964,7 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // A repo whose flows may run: loaded, and its base branch still on the
+      // A repo whose flows may run: loaded, and its default branch still on the
       // trusted tree. Its services, as each persona.
       const runnable = (repo: RepoState) =>
         Option.filter(
@@ -1384,13 +1382,11 @@ export const runDaemon = Effect.gen(function* () {
           }
         });
 
-      // Notices a new .chernabog/ on a base branch: trusted, it restarts the
+      // Notices a new .chernabog/ on a config branch, GitHub's default: trusted, it restarts the
       // daemon on it once nothing is executing; untrusted, the repo starts no new runs.
       const checkConfig = Effect.gen(function* () {
         for (const repo of repos) {
-          const tree = yield* Effect.result(
-            configTree(repo.enrolled.path, baseBranchOf(repo.enrolled)),
-          );
+          const tree = yield* Effect.result(configTree(repo.enrolled.path));
 
           if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) {
             continue;
@@ -1605,7 +1601,7 @@ export const runDaemon = Effect.gen(function* () {
           ...status,
           status: "untrusted",
           message: Option.some(
-            `.chernabog/ changed on the base branch; review it with chernabog trust ${repo.name}`,
+            `.chernabog/ changed on the default branch; review it with chernabog trust ${repo.name}`,
           ),
         } satisfies RepoStatus;
       };
