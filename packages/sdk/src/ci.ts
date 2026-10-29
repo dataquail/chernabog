@@ -13,7 +13,8 @@ import * as Settings from "./settings.ts";
 
 export type Policy = {
   // The checks that must pass: the base branch's required ones (every check
-  // when it requires none, or GitHub won't say), or every check.
+  // when it requires none, or GitHub won't say), or every check, required
+  // ones that haven't reported included.
   readonly gates: "required" | "every";
   // Whether a failing check that doesn't gate still makes CI red, so a fix
   // can start before the slow checks finish, or is left alone.
@@ -27,10 +28,16 @@ const sorted = (names: ReadonlyArray<string>) => Arr.sort(Arr.dedupe(names), Ord
 // The checks' verdict: red when a check that counts failed, pending while a
 // gating check hasn't passed (or none has reported at all), green otherwise.
 export const verdict = (facts: CiChecks, policy: Policy): CiState => {
+  const reported = facts.checks.map((check) => check.name);
   let gating = facts.required;
 
-  if (policy.gates === "every" || gating.length === 0) {
-    gating = facts.checks.map((check) => check.name);
+  // Every check is at least the required ones, reported yet or not.
+  if (policy.gates === "every") {
+    gating = Arr.dedupe([...facts.required, ...reported]);
+  }
+
+  if (gating.length === 0) {
+    gating = reported;
   }
 
   const counts = (name: string) => policy.optionalFailures === "hold" || gating.includes(name);

@@ -1,7 +1,7 @@
 // The SDK's CI gate: green, red or pending from the checks GitHub reports on
 // a pull request's head, by the flow's policy.
 
-import { Ci, type CiCheck, type CiChecks, Repo, Settings } from "@chernabog/sdk";
+import { Ci, type CiCheck, type CiChecks, type CiState, Repo, Settings } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -47,6 +47,18 @@ describe("Ci.verdict", () => {
       expect(Ci.verdict(reading, Ci.DEFAULT_POLICY)).toEqual({ state: "green" });
       expect(Ci.verdict(reading, EVERY)).toEqual({ state: "pending", waitingOn: ["docs"] });
     }),
+  );
+
+  effect(
+    "waits on a required check that hasn't reported under every check, as under required",
+    () =>
+      Effect.sync(() => {
+        const reading = facts([check("test", "passed", false)], ["ci/jenkins"]);
+        const waiting: CiState = { state: "pending", waitingOn: ["ci/jenkins"] };
+
+        expect(Ci.verdict(reading, Ci.DEFAULT_POLICY)).toEqual(waiting);
+        expect(Ci.verdict(reading, EVERY)).toEqual(waiting);
+      }),
   );
 
   effect("counts every check when the base branch requires none", () =>
