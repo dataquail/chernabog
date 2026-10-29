@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -12,6 +13,7 @@ import {
   type WorkItem,
 } from "../../run/work-item.value-object.ts";
 import { type MarkerUnreleasable } from "../../run-marker/run-marker.errors.ts";
+import { type LeaseState } from "../../schedule/lease.value-object.ts";
 
 // A repo's flows, as loaded from its trusted .chernabog/, each run with its
 // persona's services: the work its trigger finds, an item it didn't report,
@@ -45,6 +47,15 @@ export type FlowsClientService = {
     name: string,
     args: Schema.Json,
   ) => Effect.Effect<void, FlowFailed | PersonaNotReady | MarkerUnreleasable>;
+  // The lease of the run's claim on `item`, as the persona with a timeout:
+  // renewed for `renew` from now when given (a compare-and-swap, which fails
+  // to another run that took it over first), else only read.
+  readonly lease: (
+    flow: FlowRef,
+    run: ValidityQuestion,
+    item: string,
+    renew: Option.Option<Duration.Duration>,
+  ) => Effect.Effect<LeaseState, FlowFailed | PersonaNotReady>;
   // Why the flow's gate holds its runs back, if it does.
   readonly gate: (flow: FlowRef) => Effect.Effect<Option.Option<string>>;
   // The repo's open pull requests and whom each asks to review, as the

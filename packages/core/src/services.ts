@@ -195,6 +195,9 @@ export const RunInfo = Schema.Struct({
   // The pull request the run opened or adopted for its item, as far as the
   // engine knows; given to a flow's stillValid, absent anywhere else.
   pullRequest: Schema.optionalKey(Schema.Finite),
+  // How long a claim the run makes lasts, in milliseconds, until the daemon
+  // renews it: the team's limits.leaseTtl. Claims' default when absent.
+  leaseTtl: Schema.optionalKey(Schema.Finite),
 });
 
 export type RunInfo = typeof RunInfo.Type;
@@ -361,6 +364,9 @@ export class GitHub extends Context.Service<
     ref(ref: string): Effect.Effect<Option.Option<RefCommit>, GitHubError>;
     // Deleting a ref GitHub doesn't have is not an error.
     deleteRef(ref: string): Effect.Effect<void, GitHubError>;
+    // Points a ref GitHub has at `sha`, forced: GitHub checks nothing for refs
+    // outside refs/heads/, so this is not a compare-and-swap.
+    updateRef(ref: string, sha: string): Effect.Effect<void, GitHubError>;
     pullRequest(number: number): Effect.Effect<PullRequest, NotFound | GitHubError>;
     pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
     pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;

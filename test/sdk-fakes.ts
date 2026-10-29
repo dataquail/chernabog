@@ -49,6 +49,7 @@ import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
+import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
@@ -122,6 +123,7 @@ export const repoAs = (
   personas: Arr.map(personas, (persona) => asPersona(repoSettings, persona)),
   eventTickMin: DEFAULT_EVENT_TICK_MIN,
   validityEvery: DEFAULT_VALIDITY_EVERY,
+  leases: DEFAULT_LEASE_LIMITS,
 });
 
 export const repo = repoAs(settings);
@@ -222,6 +224,11 @@ export const makeFake = (
   // The remote's branches: each one's head, the base's unless `heads` names
   // another, and those deleted from it.
   const remote = { heads: new Map<string, string>(), gone: new Set<string>() };
+
+  // The branch the pull request is based on: the repo's base branch, or the
+  // layer below's for a stacked one, whose files a diff against the repo's
+  // base branch takes in too.
+  const stack = { base: "main", below: new Array<string>() };
 
   // What the steps based their work on: the sha each branch was created from,
   // the base each pull request targets, and the base each push was checked against.
@@ -353,7 +360,7 @@ export const makeFake = (
     state: states.pull,
     headRef: `auto/issue-${ISSUE}`,
     headSha: git.head,
-    baseRef: "main",
+    baseRef: stack.base,
     labels: labelsOf(PULL),
     author: "chernabog-bot",
     assignees: [],
@@ -495,6 +502,10 @@ export const makeFake = (
         Effect.sync(() => {
           refs.delete(ref);
         }),
+      updateRef: (ref, sha) =>
+        Effect.sync(() => {
+          refs.set(ref, sha);
+        }),
       assignSelf: () =>
         Effect.sync(() => {
           people.assigned = [...people.assigned.filter((login) => login !== people.me), people.me];
@@ -617,7 +628,11 @@ export const makeFake = (
         Effect.sync(() => {
           based.checkedAgainst.push(base);
 
-          return merge.files;
+          if (base === stack.base) {
+            return merge.files;
+          }
+
+          return [...stack.below, ...merge.files];
         }),
       push: () =>
         Effect.suspend(() => {
@@ -682,6 +697,7 @@ export const makeFake = (
     agent,
     existing,
     remote,
+    stack,
     based,
     states,
     refs,

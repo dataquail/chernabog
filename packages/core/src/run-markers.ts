@@ -2,7 +2,7 @@
 // assignment, each with a named way to take it off. A run holds a marker by
 // its definition's name, with JSON arguments, and the engine records the hold
 // against the run. However the run ends (done, failed, needs-human,
-// cancelled, superseded), the engine releases each marker it still holds,
+// cancelled, superseded; not lost), the engine releases each marker it still holds,
 // newest first, by calling the definition's release with those arguments,
 // from the flow as the base branch has it then. A closure can't be journaled,
 // so a release is defined by name, at the top of a flow module, and listed in
@@ -33,7 +33,10 @@ import {
 } from "./services.ts";
 
 // How a run can end, for a marker that stays on some endings.
-export type Ending = "done" | "skipped" | "needs-human" | "failed" | "cancelled" | "superseded";
+// A run that lost its claim's lease to another run (lost) keeps every marker:
+// what it put on the item is the new holder's now.
+export type Ending =
+  "done" | "skipped" | "needs-human" | "failed" | "cancelled" | "superseded" | "lost";
 
 // What a release may use: a trigger's services (flow.ts' TriggerServices), as
 // the run's persona, and Run, naming the run that held the marker.

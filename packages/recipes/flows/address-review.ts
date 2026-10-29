@@ -100,14 +100,16 @@ const answerReview = (address: Review.AddressItem) =>
 
     yield* Review.checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
     yield* Implement.localGate(worktree, { id: `review-${round}`, session });
-    // Only a fix made in front of a person may touch humanOnlyPaths.
+    // Only a fix made in front of a person may touch humanOnlyPaths. A layer
+    // of a stack is checked against the layer below, so only its own commits count.
     yield* Implement.push(`push-review-${round}`, worktree, address.headRef, {
+      base: address.baseRef,
       withPerson: session.withPerson,
     });
     yield* Implement.waitForCi(
       address.pullRequest,
       worktree,
-      { ...session, branch: address.headRef },
+      { ...session, branch: address.headRef, base: address.baseRef },
       { id: `review-${round}` },
     );
     yield* Review.askAgain(address.pullRequest, round, address.reviewer, outcome.summary);

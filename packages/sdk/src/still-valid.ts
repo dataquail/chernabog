@@ -8,12 +8,16 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 // Gone when another run holds the claim on `item`; this run holding it, or
-// nobody, is fine: a run may not have claimed it yet, or has let it go.
+// nobody, is fine: a run may not have claimed it yet, or has let it go. A
+// claim whose lease expired is nobody's: the run may be taking it over.
 const claimValidity = (item: string, what: string) =>
   Effect.gen(function* () {
     const run = yield* Run;
 
-    const other = Option.filter(yield* Claims.holder(item), (found) => found.runId !== run.runId);
+    const other = Option.filter(
+      yield* Claims.liveHolder(item),
+      (found) => found.runId !== run.runId,
+    );
 
     return Option.match(other, {
       onNone: (): Validity => valid,

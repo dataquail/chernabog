@@ -26,6 +26,7 @@ import {
   Worktree,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -58,7 +59,10 @@ export const own = (pullRequest: number) =>
 
       yield* (yield* GitHub).comment(
         pullRequest,
-        `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
+        [
+          ...Option.toArray(Option.map(claimed.takenOver, Claims.describeTakeover)),
+          `The \`${run.flow}\` run owns this pull request until it ends. ${marker}`,
+        ].join(" "),
       );
     }),
   );
@@ -146,13 +150,19 @@ export const ownerOf = (bodies: ReadonlyArray<string>) =>
 export type Owner = { readonly flow: string; readonly runId: string };
 
 // The run that owns the pull request: the holder of its claim ref, none when
-// this machine knows that run has ended. Migration: while runs that owned a
+// this machine knows that run has ended, or its lease expired, so another run
+// may take it over. Migration: while runs that owned a
 // pull request by comment alone may be in flight, one with no claim ref falls
 // back to the latest owner marker that names no ref (ownerOf). Drop the
 // fallback a release after owners became claim refs.
 export const owner = (pullRequest: number) =>
   Effect.gen(function* () {
     const held = yield* Claims.holder(Claims.pullRequest(pullRequest));
+    const now = yield* DateTime.now;
+
+    if (Option.exists(held, (found) => Claims.expired(found, now))) {
+      return Option.none<Owner>();
+    }
 
     if (Option.isSome(held)) {
       if (yield* knownEnded(held.value.runId)) {
@@ -270,10 +280,12 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
     );
   });
 
-// Merges the pull request, only when that is safe: it is open, its required
-// checks are green on the current head, the latest review approved that very
-// head or one the head has only merged its base into since (onlyMergedBase),
-// it touches no humanOnlyPaths, and GitHub's rules for the repo allow it.
+// Merges the pull request, only when that is safe: it is open and based on
+// the repo's base branch, its required checks are green on the current head,
+// the latest review approved that very head or one the head has only merged
+// its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
+// GitHub's rules for the repo allow it. A layer of a stack, based on the
+// branch of the one below, waits until it sits on the base branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
@@ -291,6 +303,13 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
 
       if (pull.state === "closed") {
         return yield* new PullRequestClosed({ pullRequest, state: "closed" });
+      }
+
+      if (pull.baseRef !== repo.baseBranch) {
+        return yield* refuse(
+          pullRequest,
+          `stacked on ${pull.baseRef}; it merges after the layer below`,
+        );
       }
 
       const ci = yield* github.ciState(pullRequest);
