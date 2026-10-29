@@ -24,7 +24,8 @@ export const RunColumns = Schema.Struct({
   item_url: Maybe,
   item: ItemColumn,
   execution_id: Maybe,
-  pull_request: Schema.OptionFromNullOr(Schema.Finite),
+  // A JSON array, which the query builds from om_run_subjects.
+  subjects: Schema.fromJsonString(Schema.Array(Schema.String)),
   status: RunStatus,
   current_step: Maybe,
   summary: Maybe,
@@ -47,7 +48,7 @@ export const toRoot = (row: RunColumns) =>
     itemUrl: row.item_url,
     item: row.item,
     executionId: row.execution_id,
-    pullRequest: row.pull_request,
+    subjects: row.subjects,
     status: row.status,
     currentStep: row.current_step,
     summary: row.summary,
@@ -57,7 +58,8 @@ export const toRoot = (row: RunColumns) =>
     finishedAt: row.finished_at,
   });
 
-// The run's values, in the columns' order, as SQL parameters.
+// The run's values as SQL parameters, in om_runs' columns' order, with its
+// subjects, which om_run_subjects keeps, after its execution.
 export const toParameters = (run: RunRoot) =>
   [
     run.id,
@@ -69,7 +71,7 @@ export const toParameters = (run: RunRoot) =>
     Option.getOrNull(run.itemUrl),
     encodeItem(run.item),
     Option.getOrNull(run.executionId),
-    Option.getOrNull(run.pullRequest),
+    run.subjects,
     run.status,
     Option.getOrNull(run.currentStep),
     Option.getOrNull(run.summary),

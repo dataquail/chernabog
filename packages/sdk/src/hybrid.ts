@@ -23,6 +23,7 @@ import {
   sessionMarker,
   Skip,
   StepFailed,
+  Subjects,
   type WorkItem,
 } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
@@ -247,6 +248,7 @@ export const workWithPerson = (issue: number, worktree: string, options: BaseOpt
 // Opens the pull request for the branch, or finds the one already open, and
 // labels it hybrid for people reading GitHub. It never carries ship, so a
 // person merges it. It targets `base`, the repo's base branch unless given.
+// The run names the pull request as a subject.
 export const openPullRequest = (issue: number, finished: Finished, options: BaseOptions = {}) =>
   activity(
     "open-pull-request",
@@ -274,6 +276,7 @@ export const openPullRequest = (issue: number, finished: Finished, options: Base
           }),
       });
 
+      yield* Subjects.name(Claims.pullRequest(opened.number));
       yield* github.addLabel(opened.number, repo.labels.hybrid);
 
       return { number: opened.number, url: opened.url };

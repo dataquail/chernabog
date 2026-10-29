@@ -31,7 +31,11 @@ import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
 import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
-import { type FlowRef, type ValidityQuestion } from "../../domain/run/work-item.value-object.ts";
+import {
+  firstPullRequest,
+  type FlowRef,
+  type ValidityQuestion,
+} from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
@@ -217,7 +221,8 @@ const runInfo = (flow: FlowRef, question: ValidityQuestion) =>
     runId: question.runId,
     executionId: question.executionId,
     item: question.item,
-    ...Option.match(question.pullRequest, {
+    subjects: question.subjects,
+    ...Option.match(firstPullRequest(question.subjects), {
       onNone: () => ({}),
       onSome: (pullRequest) => ({ pullRequest }),
     }),

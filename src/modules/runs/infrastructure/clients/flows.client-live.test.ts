@@ -29,7 +29,11 @@ const checking = defineFlow({
       const run = yield* Run;
 
       if (work.key === "pr-closed") {
-        return gone(`${work.key} was closed under run ${run.runId} (#${run.pullRequest ?? 0})`);
+        const subjects = (run.subjects ?? []).join(", ");
+
+        return gone(
+          `${work.key} was closed under run ${run.runId} (${subjects}; #${run.pullRequest ?? 0})`,
+        );
       }
 
       return valid;
@@ -99,7 +103,7 @@ describe("FlowsClientLive", () => {
     runId: RunId.make("run-1"),
     executionId: "execution-1",
     item: item(key),
-    pullRequest: Option.some(9),
+    subjects: ["release-1.4", "pr-9", "pr-10"],
   });
 
   effect("asks a flow's stillValid about a run, as the run, and none of a flow without one", () =>
@@ -107,7 +111,10 @@ describe("FlowsClientLive", () => {
       const client = yield* FlowsClient;
 
       expect(yield* client.stillValid(as("checking"), question("pr-closed"))).toEqual(
-        Option.some({ valid: false, reason: "pr-closed was closed under run run-1 (#9)" }),
+        Option.some({
+          valid: false,
+          reason: "pr-closed was closed under run run-1 (release-1.4, pr-9, pr-10; #9)",
+        }),
       );
       expect(yield* client.stillValid(as("checking"), question("pr-open"))).toEqual(
         Option.some({ valid: true }),

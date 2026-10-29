@@ -22,6 +22,7 @@ import {
   Skip,
   StepFailed,
   StepRunner,
+  Subjects,
   Usage,
   type WorkItem,
   Worktree,
@@ -42,7 +43,6 @@ import {
   flowHandle,
   flowLayer,
   forEveryPersona,
-  linkingPullRequests,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
@@ -59,9 +59,7 @@ import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
   type EngineRun,
-  makeFake,
   pollRun,
-  PULL,
   repoAs,
   runtimeFor,
   startRun,
@@ -152,6 +150,13 @@ const flow = defineFlow({
 
       if (key === "wait") {
         return `woke by ${yield* awaitSignal(["pushed"], { id: "round-1", timeout: "1 hour" })}`;
+      }
+
+      if (key === "subjects") {
+        yield* Subjects.name("pr-40");
+        yield* activity("release", Subjects.name("release-1.4"));
+        yield* Subjects.name("pr-40");
+        yield* activity("second-pull", Subjects.name("pr-41"));
       }
 
       if (key === "seat") {
@@ -510,25 +515,21 @@ describe("a run and the .chernabog/ tree it started from", () => {
   );
 });
 
-describe("linking a run to its pull request", () => {
-  effect("links the pull request a run opens, or the open one it finds for its branch", () =>
+describe("a run's subjects", () => {
+  effect("records each subject a run names, once, in order", () =>
     Effect.gen(function* () {
-      const linked: Array<number> = [];
+      const { value } = yield* withEngine(runToEnd(item("subjects")));
+      expect(value.status).toBe("done");
+      expect(value.subjects).toEqual(["pr-40", "release-1.4", "pr-41"]);
+    }),
+  );
 
-      const context = linkingPullRequests(
-        yield* Layer.build(makeFake("approve").services),
-        (pullRequest) => Effect.sync(() => linked.push(pullRequest)),
-      );
-
-      const github = Context.get(context, GitHub);
-      // Nothing open for the branch yet: nothing to adopt.
-      yield* github.pullRequestForBranch("auto/issue-3");
-      expect(linked).toEqual([]);
-
-      yield* github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" });
-      yield* github.pullRequestForBranch("auto/issue-3");
-      expect(linked).toEqual([PULL, PULL]);
-    }).pipe(Effect.scoped),
+  effect("a run that names none has none, and Subjects.name outside a run does nothing", () =>
+    Effect.gen(function* () {
+      const { value } = yield* withEngine(runToEnd(item("one")));
+      expect(value.subjects).toEqual([]);
+      yield* Subjects.name("pr-1");
+    }),
   );
 });
 

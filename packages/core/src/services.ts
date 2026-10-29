@@ -199,8 +199,12 @@ export const RunInfo = Schema.Struct({
   runId: Schema.String,
   executionId: Schema.String,
   item: WorkItem,
-  // The pull request the run opened or adopted for its item, as far as the
-  // engine knows; given to a flow's stillValid, absent anywhere else.
+  // The work items the run named as its subjects (Subjects.name), such as
+  // `pr-40` for a pull request it opened; given to a flow's stillValid,
+  // absent anywhere else, and from a binary from before runs named them.
+  subjects: Schema.optionalKey(Schema.Array(Schema.String)),
+  // The first pull request among subjects, for SDKs from before subjects:
+  // read subjects instead. Goes in core's next major.
   pullRequest: Schema.optionalKey(Schema.Finite),
   // How long a claim the run makes lasts, in milliseconds, until the daemon
   // renews it: the team's limits.leaseTtl. Claims' default when absent.

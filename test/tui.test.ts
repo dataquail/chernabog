@@ -634,7 +634,7 @@ describe("work threads", () => {
       at("t3", "address-review", "pr-124-changes-1", "done"),
       at("other", "review", "pr-200", "done"),
       at("t2", "review", "pr-124", "done"),
-      at("t1", "human-initiated", "issue-123", "done", { pullRequest: Option.some(124) }),
+      at("t1", "human-initiated", "issue-123", "done", { subjects: ["pr-124"] }),
       at("t0", "implement", "issue-123", "needs-human"),
     ],
   };
@@ -676,6 +676,46 @@ describe("work threads", () => {
     const second = update(update(detail, { name: "down" }).model, { name: "return" });
     expect(second.action).toEqual({ kind: "open-run", run: "t2" });
     expect(second.model.threadIndex).toBe(0);
+  });
+
+  const leads = (from: DaemonStatus) =>
+    rows(model({ status: Option.some(from), width: 160 })).filter((line) =>
+      / (running|done|needs-human) /.test(line),
+    );
+
+  test("a run that opened two pull requests threads with the runs on both", () => {
+    const epic: DaemonStatus = {
+      ...status,
+      active: [],
+      recent: [
+        at("e3", "review", "pr-41", "done"),
+        at("e2", "review", "pr-40", "done"),
+        at("e1", "epic", "epic-7", "done", { subjects: ["pr-40", "pr-41"] }),
+        at("e0", "review", "pr-99", "done"),
+      ],
+    };
+
+    const shown = leads(epic);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toMatch(/PR 41 review \+2/);
+    expect(shown[1]).toMatch(/PR 99 review/);
+  });
+
+  test("a run that opened no pull request but cut a release threads with the release's runs", () => {
+    const release: DaemonStatus = {
+      ...status,
+      active: [],
+      recent: [
+        at("l2", "announce", "release-1.4", "done"),
+        at("l1", "cut-release", "nightly-1", "done", { subjects: ["release-1.4"] }),
+        at("l0", "cut-release", "nightly-0", "done"),
+      ],
+    };
+
+    const shown = leads(release);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toMatch(/announce\s+\+1/);
+    expect(shown[1]).toMatch(/nightly-0/);
   });
 });
 
