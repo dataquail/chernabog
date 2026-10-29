@@ -22,6 +22,7 @@ import {
   type SetupError,
   Signals,
   Skip,
+  Subjects,
   WorkItem,
 } from "@chernabog/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
@@ -59,8 +60,8 @@ import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
 import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
 import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
-import { linkPullRequestUseCase } from "../../use-cases/link-pull-request.use-case.ts";
 import { listRunMarkersUseCase } from "../../use-cases/list-run-markers.use-case.ts";
+import { nameSubjectUseCase } from "../../use-cases/name-subject.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
@@ -284,39 +285,6 @@ export const capturing = <Args extends ReadonlyArray<unknown>, A, E, R>(
       (...args: Args) =>
         Effect.provideContext(use(...args), context),
   );
-
-// The run's GitHub, which links the run to a pull request it opens, or to an
-// open one it finds for its branch and adopts: the only ways a flow takes a
-// pull request on for its work. Services without GitHub stay as they are.
-export const linkingPullRequests = <R>(
-  context: Context.Context<R>,
-  link: (pullRequest: number) => Effect.Effect<void>,
-): Context.Context<R> =>
-  Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(Effect.tap((opened) => link(opened.number))),
-          pullRequestForBranch: (branch) =>
-            github
-              .pullRequestForBranch(branch)
-              .pipe(
-                Effect.tap((found) =>
-                  Effect.forEach(
-                    Option.toArray(Option.filter(found, (pull) => pull.state === "open")),
-                    (pull) => link(pull.number),
-                    { discard: true },
-                  ),
-                ),
-              ),
-        }),
-      ),
-  });
 
 // The executions told to stop, by id. The engine's interrupt lands only
 // between activities, and an activity in progress, such as an agent step an
@@ -720,8 +688,9 @@ export const flowLayer = <R>(
 
       const park = yield* capturing(parkRunUseCase);
 
-      const link = yield* capturing((pullRequest: number) =>
-        linkPullRequestUseCase(runId, pullRequest).pipe(
+      // A subject named after its run ended changes nothing.
+      const nameSubject = yield* capturing((subject: string) =>
+        nameSubjectUseCase(runId, subject).pipe(
           Effect.catchTags({
             RunAlreadyFinished: () => Effect.void,
             RunNotFound: () => Effect.void,
@@ -766,10 +735,11 @@ export const flowLayer = <R>(
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideService(Markers.MarkerHolds, holds),
+        Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
         Effect.provideContext(
           stoppingWith(
             fencing(
-              reportingChanges(linkingPullRequests(context, link), (what, item) =>
+              reportingChanges(context, (what, item) =>
                 hooks.onChange(handle.repo.settings.name, localCause(what, item)),
               ),
               fence,

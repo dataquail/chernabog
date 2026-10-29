@@ -59,7 +59,7 @@ export const checkRunLeasesUseCase = Effect.fn("checkRunLeasesUseCase")(function
     runId: found.id,
     executionId: executing.value,
     item: Option.getOrElse(found.item, () => ({ key: found.itemKey, data: {} })),
-    pullRequest: found.pullRequest,
+    subjects: found.subjects,
   };
 
   const leases: Array<LeaseView> = [];

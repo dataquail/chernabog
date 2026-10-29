@@ -34,6 +34,7 @@ import {
   Skip,
   sleep,
   StepFailed,
+  Subjects,
   Usage,
   type WorkItem,
   Worktree,
@@ -505,8 +506,8 @@ const referToPerson = (issue: number, label: string, reason: string) =>
 // own, that already closes the issue: marks the issue claimed, labels it
 // awaiting-ready when the pull request is a draft, and records the adoption
 // in the claim marker. It leaves the pull request alone: hand-off makes it
-// the persona's (ADOPTED_LABEL). Finding the pull request by its branch links the run to
-// it, as one the run opened would be. None closing it is none to adopt;
+// the persona's (ADOPTED_LABEL). The run names it as a subject, as it would
+// one it opened. None closing it is none to adopt;
 // several, or one on a fork, go to a person (NeedsHuman), named. A run that
 // resumes inside claim keeps what its marker records.
 const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =>
@@ -555,7 +556,7 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
     }
 
     const adopted = { number: only.number, url: only.url, draft: only.isDraft };
-    yield* github.pullRequestForBranch(only.headRefName);
+    yield* Subjects.name(Claims.pullRequest(only.number));
     yield* markClaimed(issue);
     yield* github.removeLabel(issue, label);
 
@@ -1119,6 +1120,7 @@ const closes = (issue: number, options: PartOfOptions) =>
 // issue queued by ship (auto:ship) gives its pull request the label too, the
 // automated path, which merges once approved. It targets `base`, the repo's
 // base branch unless given. A task of an epic says so under its Closes line.
+// The run names the pull request as a subject.
 export const openPullRequest = (
   issue: number,
   outcome: ImplementOutcome,
@@ -1148,6 +1150,8 @@ export const openPullRequest = (
             body: `${closes(issue, options)}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
           }),
       });
+
+      yield* Subjects.name(Claims.pullRequest(opened.number));
 
       if (shipping) {
         yield* github.addLabel(opened.number, repo.labels.ship);

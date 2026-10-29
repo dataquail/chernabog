@@ -34,7 +34,7 @@ export const checkRunValidityUseCase = Effect.fn("checkRunValidityUseCase")(func
   const asking = Option.flatMap(run, (found) =>
     Option.map(Option.product(found.item, found.executionId), ([item, executionId]) => ({
       flow: { repo: found.repo, flow: found.flow, persona: found.persona },
-      question: { runId: found.id, executionId, item, pullRequest: found.pullRequest },
+      question: { runId: found.id, executionId, item, subjects: found.subjects },
     })),
   );
 

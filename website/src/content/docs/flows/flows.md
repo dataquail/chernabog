@@ -75,7 +75,7 @@ A run whose item is `Gone` ends as **`superseded`**, with the reason as its summ
 
 Before `stillValid`, the daemon checks the run's [lease](/chernabog/operate/daemon/#leases): a run whose claim another run took over, after its lease expired, ends as **`lost`** instead, leaving what it put on the item to that run.
 
-A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `pullRequest`, the one it opened.
+A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `subjects`, the work items it [named](/chernabog/flows/sdk/#subjects).
 
 The SDK's checks, which the recipes use:
 
@@ -185,6 +185,7 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
 - `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's, and hold it as a marker, so it goes however the run ends; `releasing` lets it go sooner.
 - `Markers` defines, holds and drops [markers](/chernabog/flows/sdk/#markers): what a run put on an item, which the daemon releases however the run ends.
+- `Subjects.name(key)` names a [subject](/chernabog/flows/sdk/#subjects): a work item the run touched besides its own, such as a pull request it opened.
 - `PullRequest.owning(pr)(effect)` holds the pull request's claim while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone. A pull request another run owns is skipped.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
