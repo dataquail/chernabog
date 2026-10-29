@@ -5,7 +5,16 @@ import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { fixture } from "../../../../../test/fixtures.ts";
-import { BranchRule, CheckRun, classifyChecks, describe, requiredChecksFrom } from "./ci.ts";
+import {
+  BranchRule,
+  CheckRun,
+  classifyBranch,
+  classifyChecks,
+  classifyCommit,
+  describe,
+  requiredChecksFrom,
+  type WorkflowRun,
+} from "./ci.ts";
 
 const Rules = Schema.Array(BranchRule);
 const CheckRunsPage = Schema.Struct({ check_runs: Schema.Array(CheckRun) });
@@ -130,4 +139,74 @@ test("the printed result is one word, then what it is about", () => {
   expect(describe({ state: "green" })).toBe("green");
   expect(describe({ state: "red", failedChecks: ["lint", "test"] })).toBe("red lint, test");
   expect(describe({ state: "pending", waitingOn: ["test"] })).toBe("pending test");
+});
+
+const workflowRun = (
+  id: number,
+  name: string,
+  status: string,
+  conclusion: Option.Option<string>,
+): WorkflowRun => ({
+  id,
+  name,
+  workflow_id: name.length,
+  event: "push",
+  status,
+  conclusion,
+  html_url: `https://github.com/o/r/actions/runs/${id}`,
+  check_suite_id: id,
+});
+
+test("a branch is red by its newest completed run, whatever runs after it", () => {
+  const reading = classifyBranch([
+    workflowRun(3, "CI", "in_progress", Option.none()),
+    workflowRun(2, "CI", "completed", Option.some("failure")),
+    workflowRun(1, "CI", "completed", Option.some("success")),
+  ]);
+
+  expect(reading).toMatchObject({ state: "red", failedChecks: ["CI"] });
+  expect(reading.failedRuns).toEqual([
+    {
+      name: "CI",
+      url: "https://github.com/o/r/actions/runs/2",
+      job: Option.none(),
+      workflowRun: Option.some(2),
+    },
+  ]);
+});
+
+test("a cancelled run decides nothing about its branch", () => {
+  expect(
+    classifyBranch([
+      workflowRun(2, "CI", "completed", Option.some("cancelled")),
+      workflowRun(1, "CI", "completed", Option.some("success")),
+    ]),
+  ).toEqual({ state: "green", failedRuns: [] });
+
+  expect(classifyBranch([workflowRun(1, "CI", "completed", Option.some("cancelled"))])).toEqual({
+    state: "pending",
+    waitingOn: ["CI"],
+    failedRuns: [],
+  });
+});
+
+test("a branch with no runs is pending on nothing", () => {
+  expect(classifyBranch([])).toEqual({ state: "pending", waitingOn: [], failedRuns: [] });
+});
+
+test("a commit links only the latest failed run of each check", () => {
+  const link = (url: string) => ({
+    name: "test",
+    url,
+    job: Option.none<number>(),
+    workflowRun: Option.none<number>(),
+  });
+
+  const reading = classifyCommit([
+    { check: run("test", "completed", Option.some("failure"), 2), link: link("second") },
+    { check: run("test", "completed", Option.some("failure"), 1), link: link("first") },
+  ]);
+
+  expect(reading).toMatchObject({ state: "red", failedChecks: ["test"] });
+  expect(reading.failedRuns.map((failed) => failed.url)).toEqual(["second"]);
 });

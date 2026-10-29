@@ -942,7 +942,7 @@ export type MergeRequest = {
 export type Merged = {
     readonly sha: string;
 };
-export type CiState = {
+export type CiState = ({
     state: "pending";
     waitingOn: Array<string>;
 } | {
@@ -950,6 +950,24 @@ export type CiState = {
 } | {
     state: "red";
     failedChecks: Array<string>;
+}) & {
+    readonly caveat?: string;
+};
+export type CiFailedRun = {
+    readonly name: string;
+    readonly url: string;
+    readonly job: Option.Option<number>;
+    readonly workflowRun: Option.Option<number>;
+};
+export type CiReport = CiState & {
+    readonly failedRuns: ReadonlyArray<CiFailedRun>;
+};
+export type CiFailureDetails = {
+    readonly url: string;
+    readonly logTail: Option.Option<string>;
+};
+export type CommitCiOptions = {
+    readonly event?: string;
 };
 declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub", {
     readonly queuedIssues: Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
@@ -987,6 +1005,9 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
+    commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
+    branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
+    ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
     closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     review(pullRequest: number, review: NewReview): Effect.Effect<void, PullRequestClosed | GitHubError>;

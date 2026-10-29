@@ -1,13 +1,14 @@
 // A small stand-in for the GitHub API, enough for the default flows: issues,
 // labels, comments, branches and other refs such as claims, and commits made
 // through the API (kept in a real bare repo, so git push works), pull
-// requests and check runs.
+// requests, and CI: check runs, commit statuses and Actions workflow runs.
 
 import { execFileSync, spawnSync } from "node:child_process";
 
 import { type Json, parseJson, printJson } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
 export type FakeIssue = {
@@ -86,7 +87,32 @@ const loginOf = (request: Request) =>
     () => BOT,
   );
 
-export type Checks = "green" | "red" | "pending";
+// The one check run every commit has, or none at all.
+export type Checks = "green" | "red" | "pending" | "none";
+
+// An Actions workflow run with one job of the same name. A commit with any of
+// these has their jobs as its check runs, in place of the `Checks` one.
+export type FakeWorkflowRun = {
+  // Also its check suite's.
+  id: number;
+  name: string;
+  workflowId: number;
+  event: string;
+  headSha: string;
+  branch: string;
+  status: "queued" | "in_progress" | "completed";
+  conclusion: Option.Option<string>;
+  // Its job's log.
+  log: string;
+};
+
+// A commit status, as an outside CI service sets one.
+export type FakeStatus = {
+  id: number;
+  context: string;
+  state: "pending" | "success" | "failure" | "error";
+  targetUrl: string;
+};
 
 // What the fake answers with, where GitHub's own JSON carries nulls.
 const PullJson = Schema.Struct({
@@ -112,6 +138,41 @@ const CheckRunsJson = Schema.Struct({
       conclusion: Schema.OptionFromNullOr(Schema.String),
       started_at: Schema.OptionFromNullOr(Schema.String),
       completed_at: Schema.OptionFromNullOr(Schema.String),
+      html_url: Schema.String,
+      check_suite: Schema.Struct({ id: Schema.Finite }),
+      app: Schema.Struct({ slug: Schema.String }),
+    }),
+  ),
+});
+
+const WorkflowRunJson = Schema.Struct({
+  id: Schema.Finite,
+  name: Schema.String,
+  workflow_id: Schema.Finite,
+  event: Schema.String,
+  head_sha: Schema.String,
+  head_branch: Schema.String,
+  status: Schema.String,
+  conclusion: Schema.OptionFromNullOr(Schema.String),
+  html_url: Schema.String,
+  check_suite_id: Schema.Finite,
+});
+
+const WorkflowRunsJson = Schema.Struct({
+  total_count: Schema.Finite,
+  workflow_runs: Schema.Array(WorkflowRunJson),
+});
+
+const JobsJson = Schema.Struct({
+  total_count: Schema.Finite,
+  jobs: Schema.Array(
+    Schema.Struct({
+      id: Schema.Finite,
+      run_id: Schema.Finite,
+      name: Schema.String,
+      status: Schema.String,
+      conclusion: Schema.OptionFromNullOr(Schema.String),
+      html_url: Schema.String,
     }),
   ),
 });
@@ -261,6 +322,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   let nextNumber = 1;
   let nextComment = 1;
   let checks: Checks = options.checks ?? "green";
+  const workflowRuns: Array<FakeWorkflowRun> = [];
+  const statuses = new Map<string, Array<FakeStatus>>();
+  // GitHub refuses the branch-rules endpoint on a private repo in a free-plan org.
+  let refuseBranchRules = false;
   const inAWhile = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 
   const usageOf = (fiveHour: number, sevenDay: number) => ({
@@ -805,13 +870,42 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         ),
     });
 
-  const checkRuns = () => {
+  // A workflow run's one job, which is also its check run.
+  const jobIdOf = (run: FakeWorkflowRun) => run.id * 10;
+
+  const runUrl = (run: FakeWorkflowRun) =>
+    `https://github.com/${options.slug}/actions/runs/${run.id}`;
+
+  const checkRuns = (args: Args) => {
     const run = {
       id: 1,
       name: "test",
       started_at: Option.none<string>(),
       completed_at: Option.none<string>(),
+      html_url: `https://github.com/${options.slug}/runs/1`,
+      check_suite: { id: 1 },
+      app: { slug: "github-actions" },
     };
+
+    const onSha = workflowRuns.filter((workflowRun) => workflowRun.headSha === args.params[0]);
+
+    if (onSha.length > 0) {
+      return encoded(CheckRunsJson, {
+        check_runs: onSha.map((workflowRun) => ({
+          ...run,
+          id: jobIdOf(workflowRun),
+          name: workflowRun.name,
+          status: workflowRun.status,
+          conclusion: workflowRun.conclusion,
+          html_url: `${runUrl(workflowRun)}/job/${jobIdOf(workflowRun)}`,
+          check_suite: { id: workflowRun.id },
+        })),
+      });
+    }
+
+    if (checks === "none") {
+      return encoded(CheckRunsJson, { check_runs: [] });
+    }
 
     if (checks === "pending") {
       return encoded(CheckRunsJson, {
@@ -827,6 +921,107 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     );
 
     return encoded(CheckRunsJson, { check_runs: [{ ...run, status: "completed", conclusion }] });
+  };
+
+  const workflowRunJson = (run: FakeWorkflowRun): typeof WorkflowRunJson.Type => ({
+    id: run.id,
+    name: run.name,
+    workflow_id: run.workflowId,
+    event: run.event,
+    head_sha: run.headSha,
+    head_branch: run.branch,
+    status: run.status,
+    conclusion: run.conclusion,
+    html_url: runUrl(run),
+    check_suite_id: run.id,
+  });
+
+  // Newest first, filtered by the query's head_sha, branch, event and status, as GitHub does.
+  const listWorkflowRuns = (args: Args) => {
+    const query = args.url.searchParams;
+
+    const matches = (run: FakeWorkflowRun) =>
+      [
+        ["head_sha", run.headSha],
+        ["branch", run.branch],
+        ["event", run.event],
+        ["status", run.status],
+      ].every(([key = "", value]) =>
+        Option.match(Option.fromNullishOr(query.get(key)), {
+          onNone: () => true,
+          onSome: (wanted) => wanted === value,
+        }),
+      );
+
+    const found = Arr.sort(
+      workflowRuns.filter(matches),
+      Order.mapInput(Order.flip(Order.Number), (run: FakeWorkflowRun) => run.id),
+    );
+
+    return encoded(WorkflowRunsJson, {
+      total_count: found.length,
+      workflow_runs: found.map(workflowRunJson),
+    });
+  };
+
+  const runJobs = (args: Args) =>
+    Option.match(
+      Arr.findFirst(workflowRuns, (run) => run.id === numberParam(args)),
+      {
+        onNone: notFound,
+        onSome: (run) =>
+          encoded(JobsJson, {
+            total_count: 1,
+            jobs: [
+              {
+                id: jobIdOf(run),
+                run_id: run.id,
+                name: run.name,
+                status: run.status,
+                conclusion: run.conclusion,
+                html_url: `${runUrl(run)}/job/${jobIdOf(run)}`,
+              },
+            ],
+          }),
+      },
+    );
+
+  // GitHub redirects to the log; the fake answers with it.
+  const jobLog = (args: Args) =>
+    Option.match(
+      Arr.findFirst(workflowRuns, (run) => jobIdOf(run) === numberParam(args)),
+      {
+        onNone: notFound,
+        onSome: (run) => new Response(run.log, { headers: { "content-type": "text/plain" } }),
+      },
+    );
+
+  const combinedStatus = (args: Args) => {
+    const set = statuses.get(args.params[0] ?? "") ?? [];
+
+    return json({
+      state: "pending",
+      statuses: set.map((status) => ({
+        id: status.id,
+        context: status.context,
+        state: status.state,
+        target_url: status.targetUrl,
+      })),
+    });
+  };
+
+  const branchRules = () => {
+    if (refuseBranchRules) {
+      return json(
+        {
+          message: "Upgrade to GitHub Pro or make this repository public to enable this feature.",
+          status: "403",
+        },
+        403,
+      );
+    }
+
+    return json([]);
   };
 
   const permissionOf = (login: string) =>
@@ -1016,12 +1211,20 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
           onSome: (pull) => encoded(PullJson, pullJson(pull)),
         }),
     },
-    { method: "GET", pattern: new RegExp(`^${repo}/rules/branches/`), handle: () => json([]) },
+    { method: "GET", pattern: new RegExp(`^${repo}/rules/branches/`), handle: branchRules },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/commits/([^/]+)/check-runs$`),
       handle: checkRuns,
     },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/commits/([^/]+)/status$`),
+      handle: combinedStatus,
+    },
+    { method: "GET", pattern: new RegExp(`^${repo}/actions/runs$`), handle: listWorkflowRuns },
+    { method: "GET", pattern: new RegExp(`^${repo}/actions/runs/(\\d+)/jobs$`), handle: runJobs },
+    { method: "GET", pattern: new RegExp(`^${repo}/actions/jobs/(\\d+)/logs$`), handle: jobLog },
   ];
 
   const handle = async (request: Request) => {
@@ -1136,6 +1339,17 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       commitTree({ message, tree: "4b825dc642cb6eb9a060e54bf8d69288fbee4904", parents }),
     setChecks: (state: Checks) => {
       checks = state;
+    },
+    workflowRuns,
+    // Sets a commit status on `sha`, replacing any with its context.
+    setStatus: (sha: string, status: FakeStatus) => {
+      statuses.set(sha, [
+        status,
+        ...(statuses.get(sha) ?? []).filter((set) => set.context !== status.context),
+      ]);
+    },
+    refuseBranchRules: () => {
+      refuseBranchRules = true;
     },
     setUsage: (fiveHour: number, sevenDay: number) => {
       usage = usageOf(fiveHour, sevenDay);
