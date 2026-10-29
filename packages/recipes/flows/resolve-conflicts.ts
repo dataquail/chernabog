@@ -11,7 +11,10 @@
 // re-review merges it if it's on the automated path: review and re-review
 // leave an approved pull request that can't merge for a conflict to this flow
 // rather than to a person. A pull request labelled auto:needs-human is a
-// person's and is left alone, as is one that a run of another flow owns.
+// person's and is left alone, as is one that a run of another flow owns. A
+// run owns the pull request itself, by its claim ref, so address-review
+// doesn't push to the branch while it does, and it waits for an
+// address-review run to finish before it starts.
 //
 // This file is chernabog's resolve-conflicts recipe, and this repo's to
 // change: `chernabog recipes diff` shows how it differs from the recipe's
@@ -224,7 +227,9 @@ const workflow = (item: WorkItem) =>
 
     const toPerson = (reason: string) => PullRequest.handToPerson(conflict.pullRequest, reason);
 
-    // Anything that stops it hands the pull request to a person, unless it closed meanwhile.
+    // Anything that stops it hands the pull request to a person, unless it
+    // closed meanwhile. It owns the pull request throughout, so no other run
+    // pushes to the branch under it; one another run owns is skipped.
     return yield* unstick(conflict).pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
@@ -235,6 +240,7 @@ const workflow = (item: WorkItem) =>
         CiTimedOut: (timedOut) => toPerson(timedOut.message),
         PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
       }),
+      PullRequest.owning(conflict.pullRequest),
     );
   });
 

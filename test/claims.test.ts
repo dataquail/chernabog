@@ -11,14 +11,17 @@ import {
   defineFlow,
   PullRequest,
   Review,
+  reviewMarker,
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
 import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
@@ -26,6 +29,7 @@ import { effect } from "./effect-test.ts";
 import {
   type Fake,
   flowTriggered,
+  HEAD,
   ISSUE,
   item,
   makeFake,
@@ -269,5 +273,135 @@ describe("owning a pull request", () => {
           `pr-${PULL}`,
         ]);
       }),
+  );
+});
+
+// address-review and resolve-conflicts both push to the pull request's branch,
+// so each owns it while it runs and leaves one the other owns alone.
+describe("the flows that push to a pull request", () => {
+  const addressing = flowHandle(repo, "address-review", addressReview);
+  const resolving = flowHandle(repo, "resolve-conflicts", resolveConflicts);
+
+  const RESOLVING: Claims.Holder = {
+    ...OTHER,
+    persona: "chernabog-bot",
+    flow: "resolve-conflicts",
+  };
+
+  const ADDRESSING: Claims.Holder = { ...OTHER, persona: "chernabog-bot", flow: "address-review" };
+
+  const conflictWork = item(`pr-${PULL}-${HEAD.slice(0, 7)}`, {
+    pullRequest: PULL,
+    headRef: "auto/issue-3",
+    baseRef: "main",
+  });
+
+  const addressWork = item(`pr-${PULL}-changes-1`, {
+    pullRequest: PULL,
+    headRef: "auto/issue-3",
+    agentWritten: true,
+    reviewer: "data-quail",
+    reviewedSha: HEAD,
+  });
+
+  // The persona's own pull request, which conflicts with its base.
+  const conflicting = () => {
+    const fake = makeFake("approve");
+    fake.setLabels(PULL, []);
+    fake.merge.state = "dirty";
+
+    return fake;
+  };
+
+  // The persona's own pull request, implemented by claude, whose latest review asks for changes on its head.
+  const changesAsked = () => {
+    const fake = makeFake("approve");
+    fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+    fake.comment(
+      reviewMarker.write({
+        sha: HEAD,
+        round: 1,
+        verdict: "request-changes",
+        reviewer: "data-quail",
+        sessionId: "review-session",
+        adapter: "codex",
+      }),
+    );
+    fake.comment(
+      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
+    );
+    fake.git.pushes = 1;
+
+    return fake;
+  };
+
+  const ownersOf = (fake: Fake) =>
+    claimsMade(fake).map((holder) => ({ flow: holder.flow, persona: holder.persona }));
+
+  effect("resolve-conflicts owns the pull request while it merges, and lets it go at the end", () =>
+    Effect.gen(function* () {
+      const fake = conflicting();
+      expect((yield* runToEnd(resolving, fake, conflictWork)).status).toBe("done");
+      expect(ownersOf(fake)).toEqual([{ flow: "resolve-conflicts", persona: "chernabog-bot" }]);
+      expect(fake.refs.has(PULL_REF)).toBe(false);
+    }),
+  );
+
+  effect("address-review owns the pull request while it answers, and lets it go at the end", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      expect((yield* runToEnd(addressing, fake, addressWork)).status).toBe("done");
+      expect(ownersOf(fake)).toEqual([{ flow: "address-review", persona: "chernabog-bot" }]);
+      expect(fake.refs.has(PULL_REF)).toBe(false);
+    }),
+  );
+
+  effect("lets the pull request go when it hands it to a person", () =>
+    Effect.gen(function* () {
+      const fake = conflicting();
+      fake.author.resolve = "needs-human";
+      expect((yield* runToEnd(resolving, fake, conflictWork)).status).toBe("needs-human");
+      expect(fake.refs.has(PULL_REF)).toBe(false);
+    }),
+  );
+
+  effect("resolve-conflicts leaves a pull request an address-review run owns, until it ends", () =>
+    Effect.gen(function* () {
+      const fake = conflicting();
+      heldBy(fake, PULL_REF, ADDRESSING);
+      expect(yield* flowTriggered(fake, resolveConflicts)).toEqual([]);
+
+      const skipped = yield* runToEnd(resolving, fake, conflictWork);
+      expect(skipped.status).toBe("skipped");
+      expect(summaryOf(skipped)).toContain(`#${PULL} is owned by another run`);
+      expect(fake.requests).toEqual([]);
+      expect(fake.git.pushes).toBe(0);
+      expect(holderOf(fake, PULL_REF)).toEqual(Option.some(ADDRESSING));
+
+      fake.knowRun(false);
+      expect((yield* flowTriggered(fake, resolveConflicts)).map((found) => found.key)).toEqual([
+        conflictWork.key,
+      ]);
+    }),
+  );
+
+  effect("address-review leaves a pull request a resolve-conflicts run owns, until it ends", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      heldBy(fake, PULL_REF, RESOLVING);
+      expect(yield* flowTriggered(fake, addressReview)).toEqual([]);
+
+      const skipped = yield* runToEnd(addressing, fake, addressWork);
+      expect(skipped.status).toBe("skipped");
+      expect(summaryOf(skipped)).toContain(`#${PULL} is owned by another run`);
+      expect(fake.requests).toEqual([]);
+      expect(fake.git.pushes).toBe(1);
+      expect(holderOf(fake, PULL_REF)).toEqual(Option.some(RESOLVING));
+
+      fake.knowRun(false);
+      expect((yield* flowTriggered(fake, addressReview)).map((found) => found.key)).toEqual([
+        addressWork.key,
+      ]);
+    }),
   );
 });

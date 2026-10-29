@@ -13,6 +13,8 @@ GitHub runs no CI on a pull request that conflicts with its base, and won't merg
 
 **Picks up** an open pull request the persona wrote whose `mergeable_state` on GitHub is `dirty`, a conflict with its base. It leaves alone a pull request labelled `auto:needs-human` or owned by another flow's run. A state of `unknown`, while GitHub hasn't worked it out yet, is skipped, and the next tick looks again. The work is keyed by the pull request and its head, `pr-<n>-<sha>`, so a conflict that comes back after a later push is new work. The trigger checks the persona's own login, and the flow sets `ownWork: true`.
 
+**Owns** the pull request while it runs, by its claim ref (`PullRequest.owning`), and lets it go however the run ends. [`address-review`](/chernabog/recipes/address-review/) owns it the same way, so the two never push to the branch at once: whichever starts second is skipped, and its trigger finds the pull request again once the first has finished.
+
 **Runs as** the persona that wrote the pull request, the one whose `implement` or `address-review` pushed it.
 
 **Ends with** the base merged in, a green push, and the approving reviewer asked again when the pull request was approved, or the pull request handed to a person with `auto:needs-human`.
