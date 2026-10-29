@@ -300,11 +300,12 @@ const carryUp = (round: number, progress: Epic.Progress, recorded: Map<number, s
 
 // Round after round: read where the epic stands, write its status comment,
 // carry each moved layer's change up its stack, start every ready task, and
-// with none left to start, park until a layer changes. A task the run attempted starts again only once it has read as
-// something other than ready since, as one a person handed back with
-// auto:eligible after its questions or a hand-off has; one still ready
-// after its attempt, as one another run holds, waits. The counts are rebuilt
-// from the rounds' saved results whenever the run resumes.
+// with none left to start, park until a layer changes. A task the run
+// attempted starts again only once it has read as something other than ready
+// since, as one a person handed back with auto:eligible after its questions
+// or a hand-off has; one still ready after its attempt, as one another run
+// holds, waits. The counts are rebuilt from the rounds' saved results
+// whenever the run resumes.
 const workThrough = (epic: number) =>
   Effect.gen(function* () {
     const attempts = new Map<number, number>();
