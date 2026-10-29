@@ -37,9 +37,10 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 const TITLE = "chernabog claim";
 
-// The claim on an issue, and on a pull request.
+// The claim on an issue, on a pull request, and on an epic, whose run works through its tasks.
 export const issue = (number: number) => `issue-${number}`;
 export const pullRequest = (number: number) => `pr-${number}`;
+export const epic = (number: number) => `epic-${number}`;
 
 export const refFor = (item: string) => `refs/chernabog/claims/${item}`;
 

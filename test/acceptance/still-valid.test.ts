@@ -131,6 +131,15 @@ describe("a run whose work item goes", () => {
     expect(Option.getOrElse(ended?.summary ?? Option.none(), () => "")).toMatch(
       new RegExp(`^#${issue} was closed; interrupted in await-`),
     );
+
+    // The daemon records the run's ending before it stops the workflow and
+    // lets go of what the run held, so the release can come a moment later.
+    await eventually(
+      async () =>
+        !sandbox.github.issue(issue).labels.includes("auto:in-progress") &&
+        Option.isNone(sandbox.github.refSha(`refs/chernabog/claims/issue-${issue}`)),
+      `run ${runId} to let go of #${issue}`,
+    );
     expect(sandbox.github.issue(issue).labels).not.toContain("auto:in-progress");
     expect(sandbox.github.refSha(`refs/chernabog/claims/issue-${issue}`)).toEqual(Option.none());
     expect((await sandbox.runCli(["status"])).output).toContain(`#${issue} was closed`);

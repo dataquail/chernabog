@@ -162,6 +162,14 @@ describe("config layers", () => {
     }),
   );
 
+  effect("limits.stackDepth reads from the repo's config, and is 4 when unset", () =>
+    Effect.gen(function* () {
+      expect(DEFAULT_LIMITS.stackDepth).toBe(4);
+      expect((yield* merge({}, {})).settings.limits.stackDepth).toBe(4);
+      expect((yield* merge({ limits: { stackDepth: 2 } }, {})).settings.limits.stackDepth).toBe(2);
+    }),
+  );
+
   effect("the persona's schedules beat the team's, a flow's own included", () =>
     Effect.gen(function* () {
       const scheduled = defineFlow({
