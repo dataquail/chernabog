@@ -35,7 +35,9 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
 import type { HostEnvironment } from "../../../../platform/environment.ts";
@@ -921,6 +923,34 @@ export const GitLive = (
     }),
   );
 
+// What git says when another git holds the repository's config, a ref or the
+// index: the work wasn't done, and is done once the lock is released.
+const LOCK_CONTENTION =
+  /could not lock config file|cannot lock ref|Unable to create '[^']+\.lock': File exists/;
+
+const isLockContention = (error: { readonly message: string }) =>
+  LOCK_CONTENTION.test(error.message);
+
+// Every worktree of a repository shares its checkout's .git (config, refs,
+// the worktree list), so its runs prepare worktrees one at a time (#212),
+// whichever persona's Worktree they go through.
+const repositoryLocks = new Map<string, Semaphore.Semaphore>();
+
+const repositoryLock = (path: string) => {
+  const held = repositoryLocks.get(path) ?? Semaphore.makeUnsafe(1);
+  repositoryLocks.set(path, held);
+
+  return Semaphore.withPermit(held);
+};
+
+// Another process's git, such as `chernabog run`'s, can still hold a lock
+// for a moment: the whole preparation runs again once it's released.
+const CONTENTION_RETRIES = {
+  while: isLockContention,
+  schedule: Schedule.exponential("100 millis"),
+  times: 6,
+};
+
 // Worktrees, fetched as `persona`. A branch has one worktree whoever works on
 // it, since git allows a branch only one, and a resumed agent session finds
 // its transcript by the worktree it ran in. A detached checkout, such as a
@@ -982,6 +1012,11 @@ export const WorktreeLive = (
 
           if (remote.exitCode === 0) {
             return `origin/${branch}`;
+          }
+
+          // A branch held up by a lock isn't a branch origin lacks.
+          if (isLockContention({ message: remote.stderr })) {
+            return yield* new GitError({ message: remote.stderr.trim() });
           }
 
           yield* git(["fetch", "--quiet", "origin", settings.baseBranch]);
@@ -1092,7 +1127,16 @@ export const WorktreeLive = (
             .pipe(Effect.ignore);
         });
 
-      return Worktree.of({ pathFor, ensure, checkout, remove });
+      // One preparation of this repository's worktrees at a time, again while git reports a lock held.
+      const guarded = <A>(effect: Effect.Effect<A, GitError>) =>
+        effect.pipe(Effect.retry(CONTENTION_RETRIES), repositoryLock(settings.path));
+
+      return Worktree.of({
+        pathFor,
+        ensure: (branch, runId) => guarded(ensure(branch, runId)),
+        checkout: (name, ref) => guarded(checkout(name, ref)),
+        remove: (branch) => guarded(remove(branch)),
+      });
     }),
   );
 

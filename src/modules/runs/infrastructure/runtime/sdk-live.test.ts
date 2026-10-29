@@ -568,4 +568,52 @@ describe("WorktreeLive", () => {
       expect(yield* fs.readFileString(`${path}/draft.txt`)).toBe("uncommitted\n");
     }).pipe(Effect.provide(gitRepo)),
   );
+
+  // #212: each run's worktree writes its branch's upstream into the checkout's
+  // one .git/config, and git refuses a second writer while the first holds its lock.
+  atHome("runs preparing worktrees at once all get them", () =>
+    Effect.gen(function* () {
+      const { base, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      const runs = 8;
+      const branches = Array.from({ length: runs }, (_, index) => `auto/issue-${index + 1}`);
+
+      for (const branch of branches) {
+        yield* git(origin, "update-ref", `refs/heads/${branch}`, base);
+      }
+
+      const paths = yield* Effect.forEach(
+        branches,
+        (branch, index) => worktree.ensure(branch, `run-${index + 1}`),
+        { concurrency: runs },
+      );
+
+      for (const path of paths) {
+        expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+      }
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  // Another process's git, such as `chernabog run`'s, holding a lock for a moment.
+  atHome("a worktree waits out a lock another git holds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { base, checkout, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      const branch = "auto/issue-7";
+      const lock = `${checkout}/.git/config.lock`;
+
+      yield* git(origin, "update-ref", `refs/heads/${branch}`, base);
+      yield* fs.writeFileString(lock, "");
+
+      const released = Effect.delay(fs.remove(lock), "300 millis");
+
+      const [path] = yield* Effect.all([worktree.ensure(branch, "run-1"), released], {
+        concurrency: "unbounded",
+      });
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+      expect(yield* git(path, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(`origin/${branch}`);
+    }).pipe(Effect.provide(gitRepo)),
+  );
 });
