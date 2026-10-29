@@ -191,7 +191,7 @@ describe("installing recipes", () => {
     Effect.gen(function* () {
       const found = yield* Effect.flip(bake(yield* checkout, "implement", "ship"));
       expect(found.message).toBe(
-        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, human-initiated)",
+        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, epic, human-initiated)",
       );
     }),
   );
@@ -239,10 +239,11 @@ describe("choosing recipes", () => {
           "address-review",
           "resolve-conflicts",
           "plan",
+          "epic",
           "human-initiated",
         ]);
         expect(offered.some((choice) => choice.selected === true)).toBe(false);
-        expect(offered[5]?.description).toContain(
+        expect(offered[6]?.description).toContain(
           "https://dataquail.github.io/chernabog/recipes/human-initiated/",
         );
       }),

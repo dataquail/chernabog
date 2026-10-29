@@ -64,6 +64,14 @@
         ],
         "docs": "https://dataquail.github.io/chernabog/recipes/plan/"
       },
+      "epic": {
+        "description": "Works through an auto:epic issue's tasks as pull requests, each stacked on the branch of the task it builds on, and parks between changes to its layers",
+        "flow": "flows/epic.ts",
+        "prompts": [
+          "prompts/implement.md"
+        ],
+        "docs": "https://dataquail.github.io/chernabog/recipes/epic/"
+      },
       "human-initiated": {
         "description": "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",
         "flow": "flows/human-initiated.ts",

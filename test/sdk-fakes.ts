@@ -153,6 +153,9 @@ export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] 
 // The body of a request that unassigns people from an issue.
 const Unassigning = Schema.Struct({ assignees: Schema.Array(Schema.String) });
 
+// The body of a request that edits a comment.
+const Editing = Schema.Struct({ body: Schema.String });
+
 // One issue and its pull request, and what the steps did to them. Reviews
 // answer `verdicts` in turn, the last one repeating.
 export const makeFake = (
@@ -214,7 +217,14 @@ export const makeFake = (
 
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
-  const author = { consider: "address", resolve: "resolved", closes: false };
+  // `asks` are worktrees whose next implement session answers with questions.
+  const author = {
+    consider: "address",
+    resolve: "resolved",
+    closes: false,
+    asks: new Array<string>(),
+  };
+
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
   const agent = { hangs: false };
   // The issue's Status on the repo's board, once a step moved it.
@@ -335,6 +345,14 @@ export const makeFake = (
     }
 
     if (schema.includes("needs-clarification")) {
+      const asking = author.asks.indexOf(request.cwd);
+
+      if (asking >= 0) {
+        author.asks.splice(asking, 1);
+
+        return { status: "needs-clarification", summary: "Which way?", title: "", body: "" };
+      }
+
       git.commits += 1;
 
       return {
@@ -540,10 +558,35 @@ export const makeFake = (
             Option.filter(Option.some(pull()), () => git.opened),
           ),
         ),
+      // The queued issue's pull request, or one of its own for another
+      // issue's branch, such as an epic's task.
       openPullRequest: (request) =>
         Effect.sync(() => {
-          git.opened = true;
           based.targets.push(request.base);
+
+          if (request.head !== `auto/issue-${ISSUE}`) {
+            const number = 200 + branchPulls.size;
+
+            const opened: PullRequest = {
+              ...pull(),
+              number,
+              title: request.title,
+              body: request.body,
+              url: `https://github.com/dataquail/demo/pull/${number}`,
+              state: "open",
+              headRef: request.head,
+              headSha: `head${number}`,
+              baseRef: request.base,
+              labels: [],
+              requestedReviewers: [],
+            };
+
+            branchPulls.set(request.head, opened);
+
+            return opened;
+          }
+
+          git.opened = true;
 
           return pull();
         }),
@@ -560,7 +603,15 @@ export const makeFake = (
           ];
         }),
       closedPullRequestsLabelled: () => Effect.succeed([]),
-      pullRequest: () => Effect.sync(pull),
+      pullRequest: (number) =>
+        Effect.sync(() =>
+          Option.getOrElse(
+            Option.fromUndefinedOr(
+              [...branchPulls.values()].find((found) => found.number === number),
+            ),
+            pull,
+          ),
+        ),
       ciState: () => Effect.sync(() => merge.ci),
       // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
       commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
@@ -590,6 +641,22 @@ export const makeFake = (
             });
 
             people.assigned = people.assigned.filter((login) => !leaving.includes(login));
+
+            return {};
+          }
+
+          // An edit of a comment, by its id.
+          const edited = Option.fromNullishOr(
+            path.match(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/(\d+)$/),
+          );
+
+          if (method === "PATCH" && Option.isSome(edited)) {
+            const index = comments.findIndex((found) => found.id === Number(edited.value[1]));
+            const edit = Option.flatMap(body, Schema.decodeUnknownOption(Editing));
+
+            if (index >= 0 && Option.isSome(edit)) {
+              comments[index] = { ...comments[index], body: edit.value.body };
+            }
 
             return {};
           }

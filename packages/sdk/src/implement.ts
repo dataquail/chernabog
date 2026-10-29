@@ -237,6 +237,29 @@ export type BaseOptions = { readonly base?: string };
 export const baseOf = (options: BaseOptions) =>
   Repo.use((repo) => Effect.succeed(options.base ?? repo.baseBranch));
 
+// Tells apart two calls of a looping step in one run, such as the local gate
+// before the pull request opens and again after a review's fix: their
+// activities are named like `local-gate-1#fix-1`, as `step` does with its id.
+// A run that works on several issues, as an epic run does on its tasks, gives
+// each issue's blocks its own id (`claim#task-12`), and each its own session.
+export type RepeatOptions = { readonly id?: string };
+
+const named = (options: RepeatOptions, name: string) =>
+  Option.match(Option.fromUndefinedOr(options.id), {
+    onNone: () => name,
+    onSome: (id) => `${name}#${id}`,
+  });
+
+// The agent session that implements an issue: this run's, or with an id, the
+// issue's own within the run, which implementWithAgent and handOff name too.
+export const sessionFor = (options: RepeatOptions) =>
+  Run.use((run) =>
+    Effect.succeed<AuthorSession>({
+      sessionId: Option.some(sessionIdFor(run.runId, named(options, "implement"))),
+      adapter: Option.none(),
+    }),
+  );
+
 // An open pull request a run took on for its issue, as claim adopted it.
 export const Adopted = Schema.Struct({
   number: Schema.Finite,
@@ -567,9 +590,12 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
 // the claim marker records the base, which a run that resumes keeps. With
 // `adopt`, an open pull request that already closes the issue is adopted
 // instead (see adopt): no branch is made, and `adopted` names it.
-export const claim = (issue: number, options: QueueOptions & BaseOptions & AdoptOptions = {}) =>
+export const claim = (
+  issue: number,
+  options: QueueOptions & BaseOptions & AdoptOptions & RepeatOptions = {},
+) =>
   activity(
-    "claim",
+    named(options, "claim"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const run = yield* Run;
@@ -657,9 +683,9 @@ const tail = (text: string, lines = 80) => text.trimEnd().split("\n").slice(-lin
 
 // The worktree for the claim branch, with dependencies installed. One an
 // earlier run left is brought to the claim first, so its work stays out of this run.
-export const prepareWorktree = (branch: string) =>
+export const prepareWorktree = (branch: string, options: RepeatOptions = {}) =>
   activity(
-    "prepare-worktree",
+    named(options, "prepare-worktree"),
     Effect.gen(function* () {
       const repo = yield* Repo;
       const run = yield* Run;
@@ -727,9 +753,13 @@ const decodeOutcome = (result: AgentResult) =>
 // .chernabog/prompts/implement.md. It answers done, with the pull request's
 // title and body, or needs-clarification, with its questions. The prompt's
 // `base` is the given one, the repo's base branch unless given.
-export const implementWithAgent = (issue: number, worktree: string, options: BaseOptions = {}) =>
+export const implementWithAgent = (
+  issue: number,
+  worktree: string,
+  options: BaseOptions & RepeatOptions = {},
+) =>
   activity(
-    "implement",
+    named(options, "implement"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
@@ -753,7 +783,7 @@ export const implementWithAgent = (issue: number, worktree: string, options: Bas
       const result = yield* (yield* Agent).run({
         cwd: worktree,
         prompt,
-        sessionId: sessionIdFor(run.runId, "implement"),
+        sessionId: sessionIdFor(run.runId, named(options, "implement")),
         resumePrompt: Option.some(RESUME_PROMPT),
         outputSchema: Option.some(implementOutcomeJsonSchema),
         adapter: Option.none(),
@@ -945,10 +975,10 @@ const requeueHint = (board: Option.Option<{ readonly readyStatus: string }>) =>
 export const askForClarification = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions = {},
+  options: QueueOptions & RepeatOptions = {},
 ) =>
   activity(
-    "needs-clarification",
+    named(options, "needs-clarification"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
@@ -974,19 +1004,8 @@ export const askForClarification = (
 
 const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.String });
 
-// Tells apart two calls of a looping step in one run, such as the local gate
-// before the pull request opens and again after a review's fix: their
-// activities are named like `local-gate-1#fix-1`, as `step` does with its id.
-export type RepeatOptions = { readonly id?: string };
-
 // The session the local gate sends the agent back to: this run's implement session unless given.
 export type LocalGateOptions = RepeatOptions & { readonly session?: AuthorSession };
-
-const named = (options: RepeatOptions, name: string) =>
-  Option.match(Option.fromUndefinedOr(options.id), {
-    onNone: () => name,
-    onSome: (id) => `${name}#${id}`,
-  });
 
 const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =>
   activity(
@@ -1087,17 +1106,26 @@ const footer = (shipping: boolean) => {
   return "Opened by Chernabog for an unattended run. A person merges.";
 };
 
+// The epic an issue is a task of, which its pull request names.
+export type PartOfOptions = { readonly partOf?: number };
+
+const closes = (issue: number, options: PartOfOptions) =>
+  Option.match(Option.fromUndefinedOr(options.partOf), {
+    onNone: () => `Closes #${issue}`,
+    onSome: (epic) => `Closes #${issue}\nPart of #${epic}`,
+  });
+
 // Opens the pull request for the branch, or finds the one already open. An
 // issue queued by ship (auto:ship) gives its pull request the label too, the
 // automated path, which merges once approved. It targets `base`, the repo's
-// base branch unless given.
+// base branch unless given. A task of an epic says so under its Closes line.
 export const openPullRequest = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions & BaseOptions = {},
+  options: QueueOptions & BaseOptions & RepeatOptions & PartOfOptions = {},
 ) =>
   activity(
-    "open-pull-request",
+    named(options, "open-pull-request"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
@@ -1117,7 +1145,7 @@ export const openPullRequest = (
             head: branch,
             base,
             title: outcome.title,
-            body: `Closes #${issue}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
+            body: `${closes(issue, options)}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
           }),
       });
 
@@ -1266,7 +1294,11 @@ const askForReview = (pullRequest: number, options: HandOffOptions) => {
 // Whether hand-off asks the team's reviewer pool for a review. A flow that
 // reviews the pull request itself says false. adoptedBranch: the pull request
 // is one claim adopted, on this branch, which no session of this run wrote.
-export type HandOffOptions = { readonly needsReview: boolean; readonly adoptedBranch?: string };
+// `id` as RepeatOptions.
+export type HandOffOptions = {
+  readonly needsReview: boolean;
+  readonly adoptedBranch?: string;
+} & RepeatOptions;
 
 // Hands the green pull request to review: the review trigger if the repo has
 // one, a review requested of one reviewer from the pool (needs-review for a
@@ -1279,7 +1311,7 @@ export const handOff = (
   options: HandOffOptions = { needsReview: true },
 ) =>
   activity(
-    "hand-off",
+    named(options, "hand-off"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
@@ -1293,7 +1325,7 @@ export const handOff = (
       // pull request it is one a CI fix started, or none yet.
       const session = {
         adapter: repo.agent,
-        sessionId: sessionIdFor(run.runId, "implement"),
+        sessionId: sessionIdFor(run.runId, named(options, "implement")),
         issue,
         branch: options.adoptedBranch ?? branchFor(issue),
       };
@@ -1378,9 +1410,14 @@ export const readied = Effect.gen(function* () {
 });
 
 // Labels the work item for a person and says why. No flow picks it up again.
-export const handToHuman = (issue: number, reason: string, pullRequest: Option.Option<number>) =>
+export const handToHuman = (
+  issue: number,
+  reason: string,
+  pullRequest: Option.Option<number>,
+  options: RepeatOptions = {},
+) =>
   activity(
-    "needs-human",
+    named(options, "needs-human"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;

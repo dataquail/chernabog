@@ -76,6 +76,7 @@ export default defineConfig({
             { slug: "recipes/address-review" },
             { slug: "recipes/resolve-conflicts" },
             { slug: "recipes/plan" },
+            { slug: "recipes/epic" },
             { slug: "recipes/human-initiated" },
             { slug: "recipes/packages" },
           ],
