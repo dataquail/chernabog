@@ -37,7 +37,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
-import { sessionIdFor } from "./implement.ts";
+import { ADOPTED_LABEL, sessionIdFor } from "./implement.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
 import { pullRequestValidity } from "./still-valid.ts";
@@ -500,12 +500,17 @@ export const latestOwnReview = (pullRequest: number) =>
     Schema.Option(ReviewResult),
   );
 
-// Open pull requests this persona wrote.
+// Open pull requests this persona wrote, and those it adopted for an issue
+// they close (Implement.ADOPTED_LABEL, with the persona assigned).
 export const authoredByMe = Effect.gen(function* () {
   const github = yield* GitHub;
   const me = yield* github.login;
 
-  return (yield* github.openPullRequests).filter((pull) => sameLogin(pull.author, me));
+  return (yield* github.openPullRequests).filter(
+    (pull) =>
+      sameLogin(pull.author, me) ||
+      (pull.labels.includes(ADOPTED_LABEL) && pull.assignees.some((login) => sameLogin(login, me))),
+  );
 });
 
 // The pull request's approvals and requests for changes, oldest first; comments don't count.
