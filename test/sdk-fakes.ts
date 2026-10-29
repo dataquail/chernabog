@@ -8,6 +8,7 @@ import {
   Agent,
   AgentError,
   type AgentRequest,
+  type CiReport,
   type CiState,
   type Comment,
   CurrentActivity,
@@ -40,6 +41,7 @@ import {
 import type { BunServices } from "@effect/platform-bun";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -270,6 +272,21 @@ export const makeFake = (
   const authored = { headRef: `auto/issue-${ISSUE}`, author: "chernabog-bot", draft: false };
   const closing: Array<Json> = [];
 
+  // The pull request once it merged: when, its merge commit and that commit's
+  // first parent. CI on a commit by its sha, the shas CI was read for, and
+  // the log tail of a failed run by its link.
+  const merged = {
+    at: DateTime.formatIso(DateTime.nowUnsafe()),
+    sha: "merge5678",
+    parent: "parent1234",
+  };
+
+  const commitCi = new Map<string, CiReport>();
+  const ciReads: Array<string> = [];
+  const logTails = new Map<string, string>();
+  // The issue's body, such as a follow-up's marker.
+  const issueText = { body: "" };
+
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
   const removed: Array<string> = [];
@@ -381,7 +398,7 @@ export const makeFake = (
   const issue = (): Issue => ({
     number: ISSUE,
     title: "A queued issue",
-    body: "",
+    body: issueText.body,
     url: `https://github.com/dataquail/demo/issues/${ISSUE}`,
     createdAt: "2026-10-20T00:00:00Z",
     labels: labelsOf(ISSUE),
@@ -562,10 +579,20 @@ export const makeFake = (
       closedPullRequestsLabelled: () => Effect.succeed([]),
       pullRequest: () => Effect.sync(pull),
       ciState: () => Effect.sync(() => merge.ci),
-      // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
-      commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      // A commit's CI is its own when a test sets it; otherwise it and a
+      // branch's read as the pull request's, with no links to failed runs.
+      commitCiState: (sha) =>
+        Effect.sync(() => {
+          ciReads.push(sha);
+
+          return commitCi.get(sha) ?? { ...merge.ci, failedRuns: [] };
+        }),
       branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
-      ciFailureDetails: (run) => Effect.succeed({ url: run.url, logTail: Option.none() }),
+      ciFailureDetails: (run) =>
+        Effect.sync(() => ({
+          url: run.url,
+          logTail: Option.fromUndefinedOr(logTails.get(run.url)),
+        })),
       pullRequestFiles: () => Effect.sync(() => merge.files),
       merge: (pullRequest, request) =>
         Effect.suspend(() => {
@@ -601,6 +628,31 @@ export const makeFake = (
 
           if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
             return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
+          }
+
+          // The pull requests closed lately: the one pull request, once it merged.
+          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
+            if (states.pull !== "merged") {
+              return [];
+            }
+
+            return [
+              {
+                number: PULL,
+                title: "feat: a change",
+                html_url: `https://github.com/dataquail/demo/pull/${PULL}`,
+                body: "",
+                user: { login: authored.author },
+                merged_at: merged.at,
+                merge_commit_sha: merged.sha,
+                base: { ref: stack.base },
+                head: { ref: authored.headRef },
+              },
+            ];
+          }
+
+          if (method === "GET" && path === `/repos/${settings.slug}/commits/${merged.sha}`) {
+            return { sha: merged.sha, parents: [{ sha: merged.parent }] };
           }
 
           if (method === "POST" && path === "/graphql") {
@@ -752,6 +804,11 @@ export const makeFake = (
     submitted,
     graph,
     branchPulls,
+    merged,
+    commitCi,
+    ciReads,
+    logTails,
+    issueText,
     authored,
     closing,
     plans,
