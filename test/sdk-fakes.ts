@@ -109,6 +109,7 @@ export const asPersona = (repoSettings: RepoSettings, persona: Persona): Persona
   schedule: { own: Option.none(), repo: Option.none() },
   activeHours: Option.none(),
   flows: {},
+  shared: {},
   chosen: [],
   own: {},
   teamFlows: {},

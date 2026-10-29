@@ -4,12 +4,22 @@
 
 import { fileURLToPath } from "node:url";
 
-import { Claims, DEFAULT_LABELS, Plan, printJson } from "@chernabog/sdk";
+import {
+  Claims,
+  DEFAULT_LABELS,
+  type Flow,
+  labelsOf,
+  Plan,
+  printJson,
+  Repo,
+  Settings,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import implement from "../packages/recipes/flows/implement.ts";
@@ -24,7 +34,7 @@ import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
-import { type Fake, flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, ISSUE, makeFake, settings } from "./sdk-fakes.ts";
 
 const PACKAGE = fileURLToPath(new URL("../packages/recipes", import.meta.url));
 
@@ -124,6 +134,43 @@ describe("the recipes", () => {
         expect(yield* recipeText(recipe.flow)).not.toMatch(
           /\b(Implement|Review)\.(workflow|reReviewWorkflow|addressWorkflow)\b/,
         );
+      }
+    }),
+  );
+
+  // Each recipe's flow, as its package exports it.
+  const flowOf = (recipe: (typeof RECIPES)[number]) =>
+    Effect.promise(
+      (): Promise<{ readonly default: Flow }> => import(`${PACKAGE}/${recipe.flow}`),
+    ).pipe(Effect.map((module) => module.default));
+
+  effect("each declares the SDK's settings it reads, and refuses a bad one when it loads", () =>
+    Effect.gen(function* () {
+      for (const recipe of RECIPES) {
+        const flow = yield* flowOf(recipe);
+        const declared = Option.getOrThrow(Option.fromUndefinedOr(flow.settings));
+
+        expect(Schema.decodeResult(declared)({}).pipe(Result.isSuccess)).toBe(true);
+        expect(
+          Schema.decodeResult(declared)({ labels: { needsHuman: 3 } }).pipe(Result.isFailure),
+        ).toBe(true);
+      }
+    }),
+  );
+
+  effect("each declares the labels it uses, under the names its settings give them", () =>
+    Effect.gen(function* () {
+      for (const recipe of RECIPES) {
+        const labels = yield* labelsOf(yield* flowOf(recipe)).pipe(
+          Effect.provideService(Repo, settings),
+          Effect.provideService(Settings.FlowSettings, {
+            input: { labels: { needsHuman: "team:needs-person" } },
+          }),
+        );
+
+        const names = labels.map((label) => label.name);
+        expect(names).toContain("team:needs-person");
+        expect(names).not.toContain(DEFAULT_LABELS.needsHuman);
       }
     }),
   );

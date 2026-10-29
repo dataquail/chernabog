@@ -1,11 +1,14 @@
+import { defineFlow } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { BUNDLED_CORE_VERSION } from "../../../../kernel/core-support.value-object.ts";
 import { BundleClient } from "../../domain/ports/clients/bundle.client.ts";
-import { BundleClientLive } from "./bundle.client-live.ts";
+import { BundleClientLive, configSchemaWith, scaffoldFiles } from "./bundle.client-live.ts";
 
 describe("BundleClientLive", () => {
   effect("bundles the scaffold with its generated schemas, and the pins", () =>
@@ -63,6 +66,61 @@ describe("BundleClientLive", () => {
           'import { Claims, defineFlow, fixTrigger, type Gone } from "@chernabog/core";\nClaims.vanished; Claims.releasing;\n',
         ),
       ).toEqual(["Claims.vanished", "fixTrigger"]);
+    }).pipe(Effect.provide(BundleClientLive)),
+  );
+
+  const promote = defineFlow({
+    trigger: Effect.succeed([]),
+    settings: Schema.Struct({
+      promoteFrom: Schema.String.annotate({ description: "The branch a release promotes from" }),
+    }),
+    workflow: () => Effect.void,
+  });
+
+  const Described = Schema.fromJsonString(
+    Schema.Struct({
+      properties: Schema.Struct({
+        settings: Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
+        flows: Schema.Struct({
+          properties: Schema.Record(
+            Schema.String,
+            Schema.Struct({
+              properties: Schema.Struct({
+                schedule: Schema.Json,
+                settings: Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Json) }),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  );
+
+  effect("describes each flow's settings from its schema, and all of them under settings:", () =>
+    Effect.gen(function* () {
+      const described = yield* Schema.decodeEffect(Described)(
+        configSchemaWith(new Map([["promote", promote]])),
+      );
+
+      const promoteFrom = { type: "string", description: "The branch a release promotes from" };
+      expect(described.properties.flows.properties.promote.properties.settings.properties).toEqual({
+        promoteFrom,
+      });
+      expect(described.properties.flows.properties.promote.properties.schedule).toEqual({
+        type: "string",
+      });
+      expect(described.properties.settings.properties).toEqual({ promoteFrom });
+    }),
+  );
+
+  effect("writes the config alone for a repo whose flows don't load", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-bundle-" });
+
+      expect(yield* (yield* BundleClient).configSchema(root)).toBe(
+        scaffoldFiles()["config.schema.json"],
+      );
     }).pipe(Effect.provide(BundleClientLive)),
   );
 });

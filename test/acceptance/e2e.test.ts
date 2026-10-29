@@ -284,7 +284,7 @@ describe("a loop cap", () => {
   let sandbox: Sandbox;
 
   beforeAll(() => {
-    sandbox = openSandbox({ localGate: ["false"], limits: { localGateRounds: 1 } });
+    sandbox = openSandbox({ settings: { localGate: ["false"], localGateRounds: 1 } });
   });
 
   afterAll(async () => {

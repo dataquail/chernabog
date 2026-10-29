@@ -24,10 +24,12 @@ import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-r
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   DEFAULT_LIMITS,
   EnrolledRepo,
   flowOff,
+  flowSettingsInput,
   loadRepo,
   MachineConfigFile,
   machineConfigFile,
@@ -583,6 +585,79 @@ const scaffold = (repo: string) =>
     ),
     Effect.provide(Layer.mergeAll(ChernabogDirClientLive, BundleClientLive)),
   );
+
+describe("a flow's own settings", () => {
+  effect("merge the team's shared settings, the flow's, then the persona's, key by key", () =>
+    Effect.gen(function* () {
+      const merged = yield* merge(
+        {
+          settings: {
+            reviewers: ["alice"],
+            labels: { eligible: "team:queued", ship: "team:ship" },
+          },
+          flows: { ship: { settings: { labels: { eligible: "ship:queued" }, ciRounds: 5 } } },
+        },
+        { flows: { ship: { settings: { ciRounds: 1 } } } },
+      );
+
+      expect(flowSettingsInput(merged, "ship")).toEqual({
+        reviewers: ["alice"],
+        labels: { eligible: "ship:queued", ship: "team:ship" },
+        ciRounds: 1,
+      });
+      expect(flowSettingsInput(merged, "other")).toEqual({
+        reviewers: ["alice"],
+        labels: { eligible: "team:queued", ship: "team:ship" },
+      });
+    }),
+  );
+
+  const promote = defineFlow({
+    trigger: Effect.succeed([]),
+    settings: Schema.Struct({ promoteFrom: Schema.String }),
+    workflow: () => Effect.void,
+  });
+
+  effect("decode by the flow's schema when it loads, and one it refuses is a config error", () =>
+    Effect.gen(function* () {
+      const flows = new Map([["promote", promote]]);
+
+      const good = yield* mergeAll(
+        { flows: { promote: { settings: { promoteFrom: "develop" } } } },
+        {},
+      );
+
+      yield* checkFlowSettings(good, flows);
+
+      const bad = yield* mergeAll({ flows: { promote: { settings: { promoteFrom: 3 } } } }, {});
+      const refused = yield* Effect.flip(checkFlowSettings(bad, flows));
+      expect(refused.message).toContain("demo: flows.promote.settings:");
+
+      const missing = yield* Effect.flip(checkFlowSettings(yield* mergeAll({}, {}), flows));
+      expect(missing.message).toContain("promoteFrom");
+    }),
+  );
+
+  effect("the reviewer pool and the board may be shared settings, for the engine to read too", () =>
+    Effect.gen(function* () {
+      const board = { projectNumber: 3, readyStatus: "Ready", inProgressStatus: "Doing" };
+      const shared = yield* merge({ settings: { reviewers: ["alice"], board } }, {});
+      expect(shared.settings.reviewers).toEqual(["alice"]);
+      expect(shared.settings.board).toEqual(Option.some(board));
+
+      const old = yield* merge({ reviewers: ["bob"], settings: { reviewers: ["alice"] } }, {});
+      expect(old.settings.reviewers).toEqual(["bob"]);
+    }),
+  );
+
+  effect("reviewTrigger still loads, and does nothing", () =>
+    Effect.gen(function* () {
+      expect((yield* merge({ reviewTrigger: "/review" }, {})).settings.reviewTrigger).toEqual(
+        Option.none(),
+      );
+    }),
+  );
+});
 
 describe("init", () => {
   effect(

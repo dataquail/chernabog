@@ -296,7 +296,7 @@ describe("re-review", () => {
     }),
   );
 
-  effect("stops past limits.reviewRounds, without another review", () =>
+  effect("stops past reviewRounds, without another review", () =>
     Effect.gen(function* () {
       const fake = asked(["approve"]);
       fake.comment(
@@ -321,9 +321,51 @@ describe("re-review", () => {
       );
 
       expect(finished.status).toBe("needs-human");
-      expect(summaryOf(finished)).toContain("after 1 re-review, and limits.reviewRounds is 1");
+      expect(summaryOf(finished)).toContain("after 1 re-review, and reviewRounds is 1");
       expect(fake.requests).toEqual([]);
       expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
+    }),
+  );
+
+  effect("reads reviewRounds from its own settings, over config.yaml's limits", () =>
+    Effect.gen(function* () {
+      const fake = asked(["approve"]);
+      fake.comment(
+        reviewMarker.write({
+          sha: HEAD,
+          round: 1,
+          verdict: "request-changes",
+          reviewer: "data-quail",
+          sessionId: "earlier-session",
+          adapter: "claude",
+        }),
+      );
+
+      // The team allows no re-review of a pull request for re-review alone.
+      const [own] = repo.personas;
+
+      const strict = flowHandle(
+        {
+          ...repo,
+          personas: [{ ...own, flows: { "re-review": { settings: { reviewRounds: 0 } } } }],
+        },
+        "re-review",
+        reReview,
+      );
+
+      const finished = yield* runToEnd(
+        strict,
+        fake,
+        item(`pr-${PULL}-review-2`, {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          agentWritten: true,
+        }),
+      );
+
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain("after 0 re-reviews, and reviewRounds is 0");
+      expect(fake.requests).toEqual([]);
     }),
   );
 });

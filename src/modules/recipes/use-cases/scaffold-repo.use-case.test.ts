@@ -76,4 +76,25 @@ describe("scaffoldRepoUseCase", () => {
       expect(Object.keys(tooNew.stored)).toEqual(["/repo/.chernabog/package.json"]);
     }).pipe(Effect.provide(tooNew.layer)),
   );
+
+  const withFlows = {
+    stored: { "/repo/.chernabog/config.schema.json": "{ old }\n" },
+    scaffold: { ...SCAFFOLD, files: { ...SCAFFOLD.files, "config.schema.json": "{flows}\n" } },
+  };
+
+  effect("writes config.schema.json describing the settings the repo's own flows declare", () =>
+    Effect.gen(function* () {
+      yield* scaffoldRepoUseCase("/repo");
+
+      expect(withFlows.stored["/repo/.chernabog/config.schema.json"]).toBe("{flows of /repo}\n");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ChernabogDirClientFake(withFlows.stored),
+          BundleClientFake(withFlows.scaffold),
+          TextDiffClientFake,
+        ),
+      ),
+    ),
+  );
 });
