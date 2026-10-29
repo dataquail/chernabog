@@ -210,8 +210,16 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
       `origin/${pull.headRef}`,
     );
 
+    // The head by its sha, not origin/<headRef>, so the walk checks the very
+    // commit merge asks GitHub to merge, even if the branch moved since.
     yield* git.run(
-      ["fetch", "--quiet", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`],
+      [
+        "fetch",
+        "--quiet",
+        "origin",
+        `+refs/heads/${base}:refs/remotes/origin/${base}`,
+        pull.headSha,
+      ],
       worktree,
     );
 
