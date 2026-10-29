@@ -324,8 +324,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   let checks: Checks = options.checks ?? "green";
   const workflowRuns: Array<FakeWorkflowRun> = [];
   const statuses = new Map<string, Array<FakeStatus>>();
-  // GitHub refuses the branch-rules endpoint on a private repo in a free-plan org.
-  let refuseBranchRules = false;
+  // The message of the 403 the branch-rules endpoint answers with, if it refuses.
+  let branchRulesRefusal = Option.none<string>();
   const inAWhile = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 
   const usageOf = (fiveHour: number, sevenDay: number) => ({
@@ -1010,19 +1010,11 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     });
   };
 
-  const branchRules = () => {
-    if (refuseBranchRules) {
-      return json(
-        {
-          message: "Upgrade to GitHub Pro or make this repository public to enable this feature.",
-          status: "403",
-        },
-        403,
-      );
-    }
-
-    return json([]);
-  };
+  const branchRules = () =>
+    Option.match(branchRulesRefusal, {
+      onNone: () => json([]),
+      onSome: (message) => json({ message, status: "403" }, 403),
+    });
 
   const permissionOf = (login: string) =>
     Option.getOrElse(
@@ -1348,8 +1340,12 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         ...(statuses.get(sha) ?? []).filter((set) => set.context !== status.context),
       ]);
     },
-    refuseBranchRules: () => {
-      refuseBranchRules = true;
+    // Refuses the branch-rules endpoint with a 403. By default it's GitHub's
+    // answer on a private repo in a free-plan org.
+    refuseBranchRules: (
+      message = "Upgrade to GitHub Pro or make this repository public to enable this feature.",
+    ) => {
+      branchRulesRefusal = Option.some(message);
     },
     setUsage: (fiveHour: number, sevenDay: number) => {
       usage = usageOf(fiveHour, sevenDay);

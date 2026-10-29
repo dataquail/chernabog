@@ -299,9 +299,29 @@ describe("ciState on a repo whose branch-rules endpoint answers 403", () => {
       const reading = yield* service.ciState(1);
       expect(reading).toMatchObject({ state: "green" });
       expect(reading.caveat).toContain("every check counts");
+      expect(reading.caveat).toContain("main");
 
       github.setChecks("red");
       expect(yield* service.ciState(1)).toMatchObject({ state: "red", failedChecks: ["test"] });
+    }),
+  );
+
+  atHome("still fails on any other 403, such as a rate limit or a token without access", () =>
+    Effect.gen(function* () {
+      const { github, service } = yield* ciRepo;
+      github.addPull("A change", "feature", "alice", []);
+
+      for (const message of [
+        "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+        "Resource not accessible by integration",
+      ]) {
+        github.refuseBranchRules(message);
+
+        const failure = yield* Effect.flip(service.ciState(1));
+        expect(failure._tag).toBe("GitHubError");
+        expect(failure.message).toContain("HTTP 403");
+        expect(failure.message).toContain(message);
+      }
     }),
   );
 

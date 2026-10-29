@@ -2,7 +2,14 @@
 // check fails, green once every check that gates it has passed, pending
 // otherwise. And what a failed run's log says.
 
-import type { CiFailedRun, CiFailureDetails, CiReport, CiState } from "@chernabog/core";
+import {
+  type CiFailedRun,
+  type CiFailureDetails,
+  type CiReport,
+  type CiState,
+  type Json,
+  printJson,
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -120,24 +127,41 @@ const CheckRunsPage = Schema.Struct({ check_runs: Schema.Array(CheckRun) });
 
 const Rules = Schema.Array(BranchRule);
 
+const ErrorMessage = Schema.Struct({ message: Schema.String });
+
+// GitHub's 403 for a feature the repo's plan doesn't have, such as branch
+// rules on a private repo in a free-plan org: "Upgrade to GitHub Pro or make
+// this repository public to enable this feature." A rate limit or a token
+// without access is a 403 too, and isn't this.
+const isPlanRefusal = (body: Option.Option<Json>) =>
+  Option.exists(Option.flatMap(body, Schema.decodeUnknownOption(ErrorMessage)), (error) =>
+    error.message.startsWith("Upgrade to GitHub Pro"),
+  );
+
 // The checks a branch requires, or why every check counts instead: GitHub
-// refuses the branch-rules endpoint (403) on a private repo in a free-plan org.
+// refuses the branch-rules endpoint on a private repo in a free-plan org. Any
+// other refusal fails, so required checks are never dropped silently.
 const requiredChecksOf = (repo: string, branch: string) =>
   Effect.gen(function* () {
     const path = `/repos/${repo}/rules/branches/${encodeURIComponent(branch)}?per_page=100`;
     const first = yield* githubRequest("GET", path);
 
-    if (first.status === 403) {
+    if (first.status === 403 && isPlanRefusal(first.body)) {
       return {
         required: [],
         caveat: Option.some(
-          `GitHub refused to say which checks ${branch} requires (HTTP 403), so every check counts`,
+          `GitHub's plan for this repo doesn't offer branch rules, so every check counts, not only the ones ${branch} requires`,
         ),
       };
     }
 
     if (first.status >= 300) {
-      return yield* new GitHubError({ message: `GET ${path} returned HTTP ${first.status}` });
+      return yield* new GitHubError({
+        message: `GET ${path} returned HTTP ${first.status}: ${Option.match(first.body, {
+          onNone: () => "no body",
+          onSome: printJson,
+        })}`,
+      });
     }
 
     const firstPage = yield* decodeBody(Rules, `GET ${path}`)(first.body);
