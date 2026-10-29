@@ -635,6 +635,7 @@ export declare const Limits: Schema.Struct<{
     readonly planNodes: Schema.Finite;
     readonly planRounds: Schema.Finite;
     readonly stackDepth: Schema.Finite;
+    readonly postMergeNoCiGrace: Schema.Duration;
 }>;
 export type Limits = typeof Limits.Type;
 export declare const LauncherCommands: Schema.Struct<{
@@ -723,6 +724,7 @@ export declare const RepoSettings: Schema.Struct<{
         readonly planNodes: Schema.Finite;
         readonly planRounds: Schema.Finite;
         readonly stackDepth: Schema.Finite;
+        readonly postMergeNoCiGrace: Schema.Duration;
     }>;
     readonly env: Schema.$Record<Schema.String, Schema.String>;
     readonly configDir: Schema.String;
@@ -805,6 +807,7 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
         readonly planNodes: number;
         readonly planRounds: number;
         readonly stackDepth: number;
+        readonly postMergeNoCiGrace: import("effect/Duration").Duration;
     };
     readonly env: {
         readonly [x: string]: string;

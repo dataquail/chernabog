@@ -138,6 +138,7 @@ const LimitsFile = Schema.Struct({
   planNodes: Schema.optionalKey(Schema.Int),
   planRounds: Schema.optionalKey(Schema.Int),
   stackDepth: Schema.optionalKey(Schema.Int),
+  postMergeNoCiGrace: Schema.optionalKey(DurationText),
 });
 
 const Board = Schema.Struct({
@@ -301,6 +302,7 @@ export const DEFAULT_LIMITS: Limits = {
   planNodes: 12,
   planRounds: 2,
   stackDepth: 4,
+  postMergeNoCiGrace: Duration.minutes(10),
 };
 
 // A change a run here makes ticks the repo's flows; notifications wait until
@@ -723,6 +725,10 @@ const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
   planNodes: file?.planNodes ?? DEFAULT_LIMITS.planNodes,
   planRounds: file?.planRounds ?? DEFAULT_LIMITS.planRounds,
   stackDepth: file?.stackDepth ?? DEFAULT_LIMITS.stackDepth,
+  postMergeNoCiGrace: Option.getOrElse(
+    Option.flatMap(Option.fromUndefinedOr(file?.postMergeNoCiGrace), parseDuration),
+    () => DEFAULT_LIMITS.postMergeNoCiGrace,
+  ),
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their

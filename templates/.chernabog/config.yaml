@@ -82,3 +82,6 @@ limits:
   # The most layers one stack of an epic's tasks may hold before the epic
   # recipe waits for the bottom one to merge.
   stackDepth: 4
+  # How long the post-merge recipe waits for any CI run to start on a merge
+  # commit before it takes the repo to run no CI for it.
+  postMergeNoCiGrace: 10 minutes

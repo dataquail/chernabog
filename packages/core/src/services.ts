@@ -92,6 +92,9 @@ export const Limits = Schema.Struct({
   // The most layers one stack may hold before the run stops starting new ones
   // and waits for the bottom to merge.
   stackDepth: Schema.Finite,
+  // How long a merge commit may go without any CI run starting before the
+  // post-merge recipe takes the repo to run no CI for it.
+  postMergeNoCiGrace: Schema.Duration,
 });
 
 export type Limits = typeof Limits.Type;

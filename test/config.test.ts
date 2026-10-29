@@ -1,5 +1,6 @@
 import { defineFlow, fillTemplate, globToRegExp, parseJson, pathsMatching } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -168,6 +169,23 @@ describe("config layers", () => {
       expect((yield* merge({}, {})).settings.limits.stackDepth).toBe(4);
       expect((yield* merge({ limits: { stackDepth: 2 } }, {})).settings.limits.stackDepth).toBe(2);
     }),
+  );
+
+  effect(
+    "limits.postMergeNoCiGrace reads from the repo's config, and is 10 minutes when unset",
+    () =>
+      Effect.gen(function* () {
+        expect(Duration.toMinutes(DEFAULT_LIMITS.postMergeNoCiGrace)).toBe(10);
+        expect(Duration.toMinutes((yield* merge({}, {})).settings.limits.postMergeNoCiGrace)).toBe(
+          10,
+        );
+        expect(
+          Duration.toMinutes(
+            (yield* merge({ limits: { postMergeNoCiGrace: "3 minutes" } }, {})).settings.limits
+              .postMergeNoCiGrace,
+          ),
+        ).toBe(3);
+      }),
   );
 
   effect("the persona's schedules beat the team's, a flow's own included", () =>

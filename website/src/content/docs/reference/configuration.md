@@ -46,6 +46,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
 | `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
 | `limits.stackDepth` | `4`                       | the most layers one stack of an epic's tasks may hold before the epic waits for its bottom to merge |
+| `limits.postMergeNoCiGrace` | `10 minutes`      | how long a merge commit may go with no CI run before [`post-merge`](/chernabog/recipes/post-merge/) takes the repo to run none for it |
 
 `launchers` is refused here: only machine config defines launcher commands.
 
