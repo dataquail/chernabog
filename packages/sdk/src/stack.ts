@@ -250,15 +250,18 @@ export const syncBase = (worktree: string, options: UpdateOptions = {}) =>
 // The layer a refresh brings up to date: its pull request and branch, the
 // base it is built on and the layer below's pull request, as updateFromBase
 // takes them, and baseSha, the head of the base the caller saw move, which
-// keys every step: a loop refreshes a layer once per base move. session: the
-// author's session to resume, the one the implementing run's marker on the
-// pull request names unless given.
+// keys every step: a loop refreshes a layer once per base move. attempt: the
+// caller's count of refreshes at that baseSha, which keys the steps too after
+// the first, so a refresh handed to a person and back runs again rather than
+// replaying the outcome it saved. session: the author's session to resume, the
+// one the implementing run's marker on the pull request names unless given.
 export type LayerRefresh = {
   readonly pullRequest: number;
   readonly branch: string;
   readonly base?: string;
   readonly lower?: number;
   readonly baseSha: string;
+  readonly attempt?: number;
   readonly session?: AuthorSession;
 };
 
@@ -420,12 +423,17 @@ const reviewAfterRefresh = (name: string, pullRequest: number, base: string, sai
 // and waits for CI. A head that only merged the base keeps its review;
 // otherwise the last reviewer is asked again. It writes no review marker, so
 // it never counts against limits.reviewRounds. Every step is keyed by the
-// pull request and baseSha. Fails as push and waitForCi do, and with
+// pull request and baseSha, and by the attempt after the first. Fails as push and waitForCi do, and with
 // NeedsHuman when the agent needs a person, leaves the merge unfinished, or
 // leaves edits uncommitted.
 export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
   Effect.gen(function* () {
-    const key = `${layer.pullRequest}-${layer.baseSha.slice(0, 12)}`;
+    const again = Option.match(
+      Option.filter(Option.fromUndefinedOr(layer.attempt), (attempt) => attempt > 1),
+      { onNone: () => "", onSome: (attempt) => `-${attempt}` },
+    );
+
+    const key = `${layer.pullRequest}-${layer.baseSha.slice(0, 12)}${again}`;
 
     const before = yield* activity(
       `refresh-head-${key}`,
