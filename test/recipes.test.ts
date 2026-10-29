@@ -4,7 +4,7 @@
 
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_LABELS, printJson } from "@chernabog/sdk";
+import { Claims, DEFAULT_LABELS, Plan, printJson } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,7 +24,7 @@ import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
-import { flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
 
 const PACKAGE = fileURLToPath(new URL("../packages/recipes", import.meta.url));
 
@@ -281,6 +281,104 @@ describe("the implement recipe's trigger", () => {
         fake.setLabels(ISSUE, []);
         expect(yield* flowTriggered(fake, implement)).toEqual([]);
       }),
+  );
+
+  // Another open or closed issue, labelled as given.
+  const other = (
+    fake: Fake,
+    number: number,
+    labels: Array<string> = [],
+    state: "open" | "closed" = "open",
+  ) => {
+    fake.graph.made.set(number, {
+      number,
+      title: `Issue ${number}`,
+      body: "",
+      url: `https://github.com/dataquail/demo/issues/${number}`,
+      createdAt: "2026-10-21T00:00:00Z",
+      labels: [],
+      assignees: [],
+      state,
+    });
+    fake.setLabels(number, labels);
+  };
+
+  // An epic, labelled auto:epic, whose tasks include the queued issue.
+  const epicOf = (fake: Fake, epic: number) => {
+    other(fake, epic, [Plan.LABELS.epic]);
+    fake.graph.subIssues.set(epic, [ISSUE]);
+  };
+
+  // The epic run's claim on `epic`.
+  const claimed = (fake: Fake, epic: number) => {
+    fake.commits.set(
+      "epic-claim",
+      Claims.messageOf({
+        runId: "epic-run",
+        persona: "data-quail",
+        flow: "epic",
+        claimedAt: "2026-10-26T14:00:00Z",
+        withPerson: false,
+      }),
+    );
+    fake.refs.set(Claims.refFor(Claims.epic(epic)), "epic-claim");
+  };
+
+  const triggeredWith = (fake: Fake) =>
+    flowTriggered(fake, implement).pipe(
+      Effect.map((work) =>
+        work.map((found) => ({ data: found.data, held: Option.fromUndefinedOr(found.held) })),
+      ),
+    );
+
+  effect("holds an issue open issues block, naming them, and starts one with none open", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+      other(fake, 12);
+      other(fake, 13);
+      other(fake, 14, [], "closed");
+      fake.graph.blockedBy.set(ISSUE, [12, 13, 14]);
+      expect(yield* triggeredWith(fake)).toEqual([
+        { data: { issue: ISSUE }, held: Option.some("waits on #12, #13") },
+      ]);
+
+      fake.graph.blockedBy.set(ISSUE, [14]);
+      expect(yield* triggeredWith(fake)).toEqual([{ data: { issue: ISSUE }, held: Option.none() }]);
+    }),
+  );
+
+  effect("holds an auto:ship issue an open issue blocks, too", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.ship]);
+      other(fake, 12);
+      fake.graph.blockedBy.set(ISSUE, [12]);
+      expect(yield* triggeredWith(fake)).toEqual([
+        { data: { issue: ISSUE, label: DEFAULT_LABELS.ship }, held: Option.some("waits on #12") },
+      ]);
+    }),
+  );
+
+  effect("leaves a task of an epic an epic run holds to that run", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+      epicOf(fake, 136);
+      claimed(fake, 136);
+      expect(yield* triggeredWith(fake)).toEqual([
+        { data: { issue: ISSUE }, held: Option.some("belongs to the epic run on #136") },
+      ]);
+    }),
+  );
+
+  effect("starts a task of an epic no epic run holds", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+      epicOf(fake, 136);
+      expect(yield* triggeredWith(fake)).toEqual([{ data: { issue: ISSUE }, held: Option.none() }]);
+    }),
   );
 });
 
