@@ -144,7 +144,7 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
           });
         }
       } else {
-        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
       }
 
       // A person's session that fails, as one they close does, leaves the

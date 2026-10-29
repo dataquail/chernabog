@@ -349,6 +349,19 @@ describe("the SDK's markers", () => {
     }),
   );
 
+  effect("a claim branch is compared with the base it was cut from, such as develop", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      const branch = `auto/issue-${ISSUE}`;
+
+      yield* asRun(fake, "run-1", Markers.claimBranch.releaseJson({ branch, base: "develop" }));
+      // One held before the claim recorded its base compares with the repo's.
+      yield* asRun(fake, "run-1", Markers.claimBranch.releaseJson({ branch }));
+
+      expect(fake.based.compared).toEqual(["develop", "main"]);
+    }),
+  );
+
   effect(
     "an implement run that's done keeps its assignment and lets the in-progress label go",
     () =>

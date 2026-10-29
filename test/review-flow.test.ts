@@ -21,6 +21,7 @@ import {
   PULL,
   repo,
   runToEnd,
+  stackOn,
   summaryOf,
   type Verdict,
 } from "./sdk-fakes.ts";
@@ -39,6 +40,12 @@ const asked = (verdicts: ReadonlyArray<Verdict>, labels: ReadonlyArray<string> =
   fake.setLabels(PULL, [...labels]);
 
   return fake;
+};
+
+// The review flows as a repo on git flow runs them: work targets develop.
+const onDevelop = {
+  ...repo,
+  personas: [{ ...repo.personas[0], shared: { base: "develop" } }] as const,
 };
 
 const askAgain = (fake: Fake) => {
@@ -131,14 +138,55 @@ describe("review", () => {
   effect("reviews a layer of a stack against the layer below, and leaves its merge for later", () =>
     Effect.gen(function* () {
       const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
-      fake.stack.base = "auto/issue-2";
+      stackOn(fake, "auto/issue-2");
       const finished = yield* runToEnd(reviewing, fake, work);
       expect(fake.requests[0]?.prompt).toContain("git diff origin/auto/issue-2...HEAD");
       expect(summaryOf(finished)).toContain(
-        "not merged: stacked on auto/issue-2; it merges after the layer below",
+        "not merged: stacked on auto/issue-2 (#2); it merges after the layer below",
       );
       expect(fake.merge.requests).toEqual([]);
     }),
+  );
+
+  effect(
+    "never merges a layer into the layer below that merged, while its branch stays and nothing retargets it",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(fake, "auto/issue-2", "merged");
+        const finished = yield* runToEnd(reviewing, fake, work);
+        expect(summaryOf(finished)).toContain(
+          "not merged: stacked on auto/issue-2, and the layer below (#2) merged; it waits to be retargeted onto main",
+        );
+        expect(fake.merge.requests).toEqual([]);
+      }),
+  );
+
+  effect("merges an approved pull request into a base no open pull request comes from", () =>
+    Effect.gen(function* () {
+      const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+      fake.stack.base = "develop";
+      const finished = yield* runToEnd(reviewing, fake, work);
+      expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+      expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  effect(
+    "merges into the flow's base, even while a pull request from it is open, as develop's promotion is",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(fake, "develop");
+        const finished = yield* runToEnd(flowHandle(onDevelop, "review", review), fake, work);
+        expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+
+        // Without the setting, develop's open pull request makes it a layer.
+        const other = asked(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(other, "develop");
+        const refused = yield* runToEnd(reviewing, other, work);
+        expect(summaryOf(refused)).toContain("not merged: stacked on develop (#2)");
+      }),
   );
 
   effect("requests changes as a real review, for the author to answer", () =>
@@ -217,7 +265,7 @@ describe("re-review", () => {
   effect("never merges an approved layer of a stack into the layer below", () =>
     Effect.gen(function* () {
       const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
-      fake.stack.base = "auto/issue-2";
+      stackOn(fake, "auto/issue-2");
 
       const finished = yield* runToEnd(
         reReviewing,
@@ -230,7 +278,7 @@ describe("re-review", () => {
       );
 
       expect(summaryOf(finished)).toContain(
-        "not merged: stacked on auto/issue-2; it merges after the layer below",
+        "not merged: stacked on auto/issue-2 (#2); it merges after the layer below",
       );
       expect(fake.merge.requests).toEqual([]);
     }),

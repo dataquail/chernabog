@@ -51,6 +51,7 @@ const Entry = Schema.Struct({
   repo: Schema.String,
   path: Schema.String,
   name: Schema.optionalKey(Schema.String),
+  baseBranch: Schema.optionalKey(Schema.Unknown),
   flows: Schema.optionalKey(Schema.Unknown),
   personas: Schema.optionalKey(Schema.Unknown),
 });
@@ -365,6 +366,14 @@ const migrateText = <E, R>(
       }
 
       const entry = decoded.value;
+
+      // .chernabog/ is read from GitHub's default branch since #203, asked of the remote.
+      if (Predicate.isNotUndefined(entry.baseBranch)) {
+        document.deleteIn(["repos", index, "baseBranch"]);
+        lines.push(
+          `${entry.repo}: baseBranch is gone; .chernabog/ is read from GitHub's default branch, and a flow's base setting names the branch its work targets`,
+        );
+      }
 
       let logins = Option.getOrElse(
         Option.map(Schema.decodeUnknownOption(PersonaMap)(entry.personas), Object.keys),

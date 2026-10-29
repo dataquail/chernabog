@@ -1,5 +1,5 @@
 // A repo as this process runs its flows: its config layers and flows, read
-// from the trusted tree on its base branch (or the working copy, to try a
+// from the trusted tree on its default branch (or the working copy, to try a
 // change), and each persona's services, built once and shared by every
 // trigger, gate and run of its flows as that persona.
 
@@ -44,7 +44,7 @@ export type OpenRepo = {
   readonly tree: Option.Option<string>;
 };
 
-// The trusted .chernabog/ comes from the base branch; `fromCheckout` reads the
+// The trusted .chernabog/ comes from the config branch, GitHub's default; `fromCheckout` reads the
 // working copy instead, for trying out a change before merging it.
 export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
   Effect.gen(function* () {
@@ -53,7 +53,7 @@ export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
     let configDir = `${enrolled.path}/.chernabog`;
 
     if (!fromCheckout) {
-      const snapshot = yield* snapshotConfig(enrolled.path, enrolled.baseBranch ?? "main");
+      const snapshot = yield* snapshotConfig(enrolled.path);
       tree = Option.some(snapshot.tree);
       configDir = snapshot.configDir;
     }

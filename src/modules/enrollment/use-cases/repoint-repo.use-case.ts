@@ -19,6 +19,5 @@ export const repointRepoUseCase = Effect.fn("repointRepoUseCase")(function* (
     name: EnrolledRepoRootOps.nameOf(moved),
     repo: moved.repo,
     path: moved.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(moved),
   });
 });

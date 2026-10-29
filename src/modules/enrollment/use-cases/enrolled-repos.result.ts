@@ -17,7 +17,6 @@ export class EnrolledRepoSummary extends Schema.Class<
   name: Schema.String,
   repo: RepoSlug,
   path: Schema.String,
-  baseBranch: Schema.String,
 }) {}
 
 export class EnrolledRepos extends Schema.Class<EnrolledRepos, { readonly brand: "EnrolledRepos" }>(

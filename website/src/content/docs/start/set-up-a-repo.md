@@ -8,7 +8,7 @@ chernabog install                   # once per machine: personas, accounts and t
 cd ~/code/my-app
 chernabog init                      # scaffold .chernabog/, copy the recipes you pick, and enroll the repo
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
-chernabog trust my-app              # approve the base branch's .chernabog/
+chernabog trust my-app              # approve the default branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
 chernabog doctor                    # check logins, gh scopes, labels, trust and the daemon
 ```
@@ -17,7 +17,7 @@ chernabog doctor                    # check logins, gh scopes, labels, trust and
 | -------- | -------------------------------------------------------------------------------------- |
 | `install`| [machine config](/chernabog/start/installation/#set-up-the-machine)'s personas and accounts, and a launchd agent or systemd user unit running `chernabog daemon` |
 | `init`   | `.chernabog/` (config, stages, schema, `package.json`), the flows and prompts of the [recipes](/chernabog/recipes/) you pick, a `.gitignore` entry for its `node_modules/`, and the repo's entry in `~/.config/chernabog/config.yaml` |
-| `trust`  | the tree hash of `.chernabog/` on the base branch                                      |
+| `trust`  | the tree hash of `.chernabog/` on GitHub's default branch                              |
 | `labels` | the ten [labels](/chernabog/work/flows/#labels) on GitHub                              |
 
 Re-running `init` rewrites only the generated schema and the [version pins](/chernabog/operate/versions/); it never overwrites any other file, and offers only the recipes the repo doesn't have yet. `chernabog enroll` enrolls a repo without scaffolding, such as one a teammate already set up, and choosing again is running it again.
@@ -63,7 +63,7 @@ chernabog run implement --repo my-app       # one run, skipping the gates
 
 ## Try changes before merging
 
-Two flags read the working copy's `.chernabog/` instead of the base branch's:
+Two flags read the working copy's `.chernabog/` instead of the default branch's:
 
 - `chernabog labels --from-checkout` creates the labels while the setup is still in review.
 - `chernabog run <flow> --repo <name> --from-checkout` runs in the foreground. It needs the daemon stopped, since only one process may run the workflow engine.

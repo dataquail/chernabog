@@ -38,7 +38,6 @@ export class EnrollmentPlan extends Schema.Class<
 >("EnrollmentPlan")({
   repo: RepoSlug,
   root: Schema.String,
-  baseBranch: Schema.String,
   logins: Schema.Array(Schema.String),
   currentPersonas: Schema.Option(Schema.Array(Schema.String)),
   personas: Schema.Array(PersonaPlan),
@@ -70,7 +69,6 @@ export class Enrolled extends Schema.Class<Enrolled, { readonly brand: "Enrolled
   name: Schema.String,
   repo: RepoSlug,
   path: Schema.String,
-  baseBranch: Schema.String,
   chosen: Schema.Array(PersonaChoice),
   unserved: Schema.Array(UnservedReviews),
 }) {}

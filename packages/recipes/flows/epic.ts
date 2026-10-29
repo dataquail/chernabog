@@ -82,7 +82,7 @@ const implementTask = (epic: number, task: Epic.Layer, attempt: number) =>
       const { base, branch } = yield* Implement.claim(issue, { base: task.base, id });
 
       const session = yield* Implement.sessionFor({ id });
-      const worktree = yield* Implement.prepareWorktree(branch, { id });
+      const worktree = yield* Implement.prepareWorktree(branch, { base, id });
       const outcome = yield* Implement.implementWithAgent(issue, worktree, { base, id });
 
       if (outcome.status === "needs-clarification") {
@@ -170,7 +170,7 @@ const refreshWorktree = (branch: string, key: string, attempt: number) =>
     Effect.gen(function* () {
       const run = yield* Run;
       const git = yield* Git;
-      const path = yield* (yield* Worktree).ensure(branch, run.runId);
+      const path = yield* (yield* Worktree).ensure(branch, { runId: run.runId });
 
       if (attempt > 1) {
         yield* git.run(["fetch", "--quiet", "origin", branch], path);
@@ -418,6 +418,7 @@ const workThrough = (epic: number) =>
 const settings = Schema.Struct({
   ...Routing.Settings.fields,
   ...Settings.Labels.fields,
+  ...Settings.Base.fields,
   ...Settings.Board.fields,
   ...Settings.LocalGate.fields,
   ...Settings.Rules.fields,

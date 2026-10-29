@@ -55,9 +55,11 @@ const Compare = Schema.Struct({ ahead_by: Schema.Finite });
 
 // The claim branch, deleted only while it holds no work: no pull request was
 // opened from it, and it has no commits its base doesn't, as `cancel` does.
+// `base` is the branch it was cut from; a marker held before it was recorded
+// compares against the repo's baseBranch.
 export const claimBranch = define(
   "chernabog/claim-branch",
-  Schema.Struct({ branch: Schema.String }),
+  Schema.Struct({ branch: Schema.String, base: Schema.optionalKey(Schema.String) }),
   (args) =>
     Effect.gen(function* () {
       const github = yield* GitHub;
@@ -73,7 +75,7 @@ export const claimBranch = define(
 
       const compared = yield* github.request(
         "GET",
-        `/repos/${repo.slug}/compare/${encodeURIComponent(repo.baseBranch)}...${encodeURIComponent(args.branch)}`,
+        `/repos/${repo.slug}/compare/${encodeURIComponent(args.base ?? repo.baseBranch)}...${encodeURIComponent(args.branch)}`,
         Option.none(),
       );
 
