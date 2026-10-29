@@ -121,7 +121,17 @@ const history = Effect.gen(function* () {
       return moved;
     });
 
-  return { root, origin, checkout, layer, reviewed, moveLower };
+  // The lower layer squash-merged into main, its branch left behind.
+  const squashLower = Effect.gen(function* () {
+    yield* git(clone, "checkout", "--quiet", "main");
+    yield* git(clone, "merge", "--quiet", "--squash", LOWER);
+    yield* git(clone, "commit", "--quiet", "-m", "lower (#2)");
+    yield* git(clone, "push", "--quiet", "origin", "main");
+
+    return yield* git(clone, "rev-parse", "HEAD");
+  });
+
+  return { root, origin, checkout, layer, reviewed, moveLower, squashLower };
 });
 
 type History = Effect.Success<typeof history>;
@@ -138,8 +148,14 @@ const commitIn = (cwd: string, file: string, text: string, ...args: ReadonlyArra
 
 // Refreshes the upper layer for the base at `baseSha`, under the engine, with
 // real git and the fake's API: the pull request approved by bob at its head,
-// and the session marker the implement run left.
-const refreshOn = (repoHistory: History, baseSha: string, author: Author = () => Effect.void) =>
+// and the session marker the implement run left. `squashed`: the lower layer's
+// pull request merged as that commit, and the upper one not yet retargeted.
+const refreshOn = (
+  repoHistory: History,
+  baseSha: string,
+  author: Author = () => Effect.void,
+  squashed?: string,
+) =>
   Effect.gen(function* () {
     const github = yield* Effect.acquireRelease(
       Effect.sync(() => startFakeGitHub({ slug: SLUG, bare: repoHistory.origin })),
@@ -177,6 +193,14 @@ const refreshOn = (repoHistory: History, baseSha: string, author: Author = () =>
     ]);
 
     github.submitReview(PULL, "bob", "APPROVED", "Looks right.");
+
+    const lower = Option.map(Option.fromUndefinedOr(squashed), (mergeCommit) => {
+      const number = github.addPull("The lower layer", LOWER, "chernabog-bot", []);
+      github.closePull(number);
+      github.pull(number).mergeCommit = mergeCommit;
+
+      return number;
+    });
 
     const repoSettings = { ...settings, slug: SLUG, path: repoHistory.checkout };
     const host = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
@@ -230,6 +254,7 @@ const refreshOn = (repoHistory: History, baseSha: string, author: Author = () =>
           pullRequest: PULL,
           branch: UPPER,
           base: LOWER,
+          ...Option.match(lower, { onNone: () => ({}), onSome: (number) => ({ lower: number }) }),
           baseSha,
         }).pipe(
           Effect.map((refreshed) =>
@@ -380,6 +405,44 @@ describe("Stack.refreshLayer", () => {
       expect(refreshed.pushed).toBe(repoHistory.reviewed);
       expect(refreshed.github.pull(PULL).reviewers).toEqual([]);
     }),
+  );
+
+  atHome("edits the agent leaves uncommitted go to a person, unpushed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const repoHistory = yield* history;
+      const moved = yield* repoHistory.moveLower({ "a.txt": aWith(1, "lower") });
+
+      const refreshed = yield* refreshOn(repoHistory, moved, (cwd) =>
+        fs.writeFileString(`${cwd}/upper.txt`, lines("upper, adjusted")),
+      );
+
+      expect(refreshed.finished.status).toBe("needs-human");
+      expect(summaryOf(refreshed.finished)).toContain("upper.txt");
+      expect(refreshed.pushed).toBe(repoHistory.reviewed);
+      expect(refreshed.github.pull(PULL).reviewers).toEqual([]);
+    }),
+  );
+
+  atHome(
+    "a squash-merged layer below keeps the approval before the pull request is retargeted",
+    () =>
+      Effect.gen(function* () {
+        const repoHistory = yield* history;
+        const squash = yield* repoHistory.squashLower;
+
+        const refreshed = yield* refreshOn(repoHistory, squash, () => Effect.void, squash);
+
+        expect(refreshed.finished.status).toBe("done");
+        expect(summaryOf(refreshed.finished)).toBe("adjusted: false, asked: nobody");
+        expect(refreshed.github.pull(PULL).base).toBe(LOWER);
+        expect(refreshed.pushed).toBe(refreshed.head);
+        expect(yield* parentsOf(repoHistory.layer, refreshed.head)).toEqual([
+          repoHistory.reviewed,
+          squash,
+        ]);
+        expect(refreshed.github.pull(PULL).reviewers).toEqual([]);
+      }),
   );
 
   atHome("a base it already holds needs nothing", () =>

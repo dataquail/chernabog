@@ -39,6 +39,8 @@ export type FakePull = {
   labels: Array<string>;
   reviewers: Array<string>;
   author: string;
+  // The commit a merge made on the base, for a test that merged it in git itself.
+  mergeCommit?: string;
 };
 
 const ReviewComment = Schema.Struct({
@@ -96,6 +98,7 @@ const PullJson = Schema.Struct({
   html_url: Schema.String,
   state: Schema.String,
   merged_at: Schema.OptionFromNullOr(Schema.String),
+  merge_commit_sha: Schema.OptionFromNullOr(Schema.String),
   head: Schema.Struct({ ref: Schema.String, sha: Schema.String }),
   base: Schema.Struct({ ref: Schema.String }),
   labels: Schema.Array(Schema.Struct({ name: Schema.String })),
@@ -326,6 +329,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     html_url: html("pull", pull.number),
     state: pull.state,
     merged_at: Option.liftPredicate(now(), () => pull.merged),
+    merge_commit_sha: Option.fromUndefinedOr(pull.mergeCommit),
     head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => "") },
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),

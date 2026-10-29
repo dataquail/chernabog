@@ -335,7 +335,8 @@ const describeMerge = (synced: Updated) => {
   ].join("\n");
 };
 
-// Fails with NeedsHuman when the agent left the merge uncommitted.
+// Fails with NeedsHuman when the agent left the merge uncommitted, or edits it
+// didn't commit, which the push would leave behind.
 const mergeCommitted = (name: string, worktree: string) =>
   activity(
     name,
@@ -350,7 +351,19 @@ const mergeCommitted = (name: string, worktree: string) =>
         );
 
       if (!inProgress) {
-        return;
+        const uncommitted = lines(
+          yield* git
+            .run(["status", "--porcelain"], worktree)
+            .pipe(Effect.catchTag("GitError", () => Effect.succeed(""))),
+        );
+
+        if (uncommitted.length === 0) {
+          return;
+        }
+
+        return yield* new NeedsHuman({
+          reason: `the author agent left changes it didn't commit: ${uncommitted.join(", ")}`,
+        });
       }
 
       const conflicts = lines(
@@ -367,8 +380,10 @@ const mergeCommitted = (name: string, worktree: string) =>
 
 // After the push: the latest approval or request for changes stands when the
 // new head only merged the base into the head it saw (PullRequest.onlyMergedBase),
-// and otherwise its reviewer is asked again. The reviewer, or none.
-const reviewAfterRefresh = (name: string, pullRequest: number, said: string) =>
+// and otherwise its reviewer is asked again. The reviewer, or none. Checked
+// against `base`, the branch the refresh merged in, not the base GitHub still
+// reports, which is the layer below's until the pull request is retargeted.
+const reviewAfterRefresh = (name: string, pullRequest: number, base: string, said: string) =>
   activity(
     name,
     Effect.gen(function* () {
@@ -379,7 +394,7 @@ const reviewAfterRefresh = (name: string, pullRequest: number, said: string) =>
       }
 
       const pull = yield* GitHub.use((github) => github.pullRequest(pullRequest));
-      const since = yield* onlyMergedBase(pull, latest.value.commitSha);
+      const since = yield* onlyMergedBase({ ...pull, baseRef: base }, latest.value.commitSha);
 
       if (since.only) {
         return Option.none<string>();
@@ -406,7 +421,8 @@ const reviewAfterRefresh = (name: string, pullRequest: number, said: string) =>
 // otherwise the last reviewer is asked again. It writes no review marker, so
 // it never counts against limits.reviewRounds. Every step is keyed by the
 // pull request and baseSha. Fails as push and waitForCi do, and with
-// NeedsHuman when the agent needs a person or leaves the merge unfinished.
+// NeedsHuman when the agent needs a person, leaves the merge unfinished, or
+// leaves edits uncommitted.
 export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
   Effect.gen(function* () {
     const key = `${layer.pullRequest}-${layer.baseSha.slice(0, 12)}`;
@@ -499,7 +515,12 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
       { id: `refresh-${key}` },
     );
 
-    const askedAgain = yield* reviewAfterRefresh(`refresh-review-${key}`, layer.pullRequest, said);
+    const askedAgain = yield* reviewAfterRefresh(
+      `refresh-review-${key}`,
+      layer.pullRequest,
+      synced.base,
+      said,
+    );
 
     return { upToDate: false, adjusted, askedAgain } satisfies Refreshed;
   });

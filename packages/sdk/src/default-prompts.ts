@@ -118,7 +118,7 @@ The base's whole change is \`git diff {{oldBase}} {{newBase}}\`.
 
 - Resolve each conflicted file so it keeps both sides' intent: this pull request's change, applied on top of what the base now has. Make sure no conflict markers are left, then commit the merge with \`git commit --no-edit\`.
 - Adjust this pull request's own code to the base's change where it builds on what changed: a renamed or reshaped API, moved code, a behaviour it relies on. Where behaviour changes, write or update the test first, then the code.
-- Change nothing the base's move doesn't require. When nothing needs adjusting, commit nothing and say so.
+- Change nothing the base's move doesn't require. When nothing needs adjusting, commit nothing and say so. Either way, leave nothing uncommitted: Chernabog stops for a person if the worktree has changes left.
 - Keep each commit to one change. Commit messages follow the repo's convention.
 - The ground rules of your first task still hold: never rebase, reset, amend, push or switch branches, never weaken a check to get green, and stop with \`needs-clarification\` only for the hard limits.
 - \`summary\`: what you resolved and adjusted, and why, for the reviewer.
