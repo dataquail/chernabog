@@ -31,8 +31,8 @@ import { epicValidity } from "./still-valid.ts";
 
 export type { Kind } from "./plan.ts";
 
-// A task that may start now, on `base`: the repo's base branch, or the work
-// branch of the task it stacks on.
+// A task that may start now, on `base`: the flow's integration base
+// (Settings.base), or the work branch of the task it stacks on.
 export type Ready = {
   readonly state: "ready";
   readonly base: string;
@@ -93,9 +93,9 @@ export type TasksOptions = { readonly started?: ReadonlyArray<number> };
 export const tasks = (epic: number, options: TasksOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
     const labelNames = yield* Settings.labels;
     const stackDepth = yield* Settings.stackDepth;
+    const base = yield* Settings.base;
     const open = (yield* github.subIssues(epic)).filter((issue) => issue.state === "open");
     const verify = open.find((issue) => isVerify(epic, issue));
     const work = open.filter((issue) => !isVerify(epic, issue));
@@ -167,7 +167,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
         );
 
         if (blockers.length === 0) {
-          return ready(repo.baseBranch, Option.none());
+          return ready(base, Option.none());
         }
 
         if (blockers.length > 1) {
@@ -210,7 +210,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
       const others = open.filter((other) => other.number !== issue.number);
 
       if (others.length === 0) {
-        return taskOf(issue, ready(repo.baseBranch, Option.none()));
+        return taskOf(issue, ready(base, Option.none()));
       }
 
       return taskOf(issue, held(waitsOn(others.map((other) => other.number))));

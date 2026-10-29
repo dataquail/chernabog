@@ -403,6 +403,7 @@ export declare const boardStatus: import("./run-markers.ts").Definition<{
 }>;
 export declare const claimBranch: import("./run-markers.ts").Definition<{
     readonly branch: string;
+    readonly base?: string | undefined;
 }>;
 export declare const builtIn: ReadonlyArray<Marker>;
 ```
@@ -1060,6 +1061,19 @@ export type CiState = ({
 }) & {
     readonly caveat?: string;
 };
+export type CiCheck = {
+    readonly name: string;
+    readonly kind: "check-run" | "status";
+    readonly state: "pending" | "passed" | "failed";
+    readonly required: boolean;
+    readonly url: string;
+};
+export type CiChecks = {
+    readonly headSha: string;
+    readonly checks: ReadonlyArray<CiCheck>;
+    readonly required: ReadonlyArray<string>;
+    readonly caveat: Option.Option<string>;
+};
 export type CiFailedRun = {
     readonly name: string;
     readonly url: string;
@@ -1111,6 +1125,7 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
@@ -1159,6 +1174,7 @@ export declare const GitHubCapability: Capabilities.Capability<{
     requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
@@ -1206,8 +1222,12 @@ export declare const GitCapability: Capabilities.Capability<{
 }, {
     push: (_cwd: string, branch: string) => Effect.Effect<void, GitError | PushRejected, never>;
 }>;
+export type EnsureOptions = {
+    readonly from?: string;
+    readonly runId?: string;
+};
 declare const Worktree_base: Context.ServiceClass<Worktree, "@chernabog/sdk/Worktree", {
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;
@@ -1215,7 +1235,7 @@ declare const Worktree_base: Context.ServiceClass<Worktree, "@chernabog/sdk/Work
 export declare class Worktree extends Worktree_base {
 }
 export declare const WorktreeCapability: Capabilities.Capability<{
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;

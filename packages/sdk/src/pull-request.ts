@@ -17,7 +17,6 @@ import {
   pathsMatching,
   type PullRequest,
   PullRequestClosed,
-  Repo,
   reviewMarker,
   Run,
   Runs,
@@ -32,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
 import * as Settings from "./settings.ts";
 
@@ -288,12 +288,43 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
     );
   });
 
-// Merges the pull request, only when that is safe: it is open and based on
-// the repo's base branch, its required checks are green on the current head,
-// the latest review approved that very head or one the head has only merged
+// The pull request whose head branch `pull` is based on, which makes `pull`
+// a layer stacked on it: one still open, or one that merged while its branch
+// stayed, which nothing retargets `pull` off, so a merge would land in that
+// branch and never reach the base below it. None when `pull`'s base is the
+// flow's integration base, or no open or merged pull request comes from it.
+const layerBelow = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    if (pull.baseRef === (yield* Settings.base)) {
+      return Option.none<PullRequest>();
+    }
+
+    return Option.filter(
+      yield* (yield* GitHub).pullRequestForBranch(pull.baseRef),
+      (below) => below.state === "open" || below.state === "merged",
+    );
+  });
+
+// Why a layer stacked on `below` waits.
+const waitsOn = (pull: PullRequest, below: PullRequest) => {
+  if (below.state === "merged") {
+    return `stacked on ${pull.baseRef}, and the layer below (#${below.number}) merged; it waits to be retargeted onto ${below.baseRef}`;
+  }
+
+  return `stacked on ${pull.baseRef} (#${below.number}); it merges after the layer below`;
+};
+
+// Merges the pull request, only when that is safe: it is open and not a
+// layer of a stack, its checks are green on the current head by the flow's
+// CI policy (Ci.verdict: by default, its required checks passed and no check
+// failed), the latest review approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
-// GitHub's rules for the repo allow it. A layer of a stack, based on the
-// branch of the one below, waits until it sits on the base branch.
+// GitHub's rules for the repo allow it. A pull request into any branch may
+// merge, such as develop in git flow. One whose base is the head branch of
+// another pull request is a layer stacked on it (layerBelow): it waits while
+// the layer below is open, and after it merges, until it is retargeted onto
+// the base below. A pull request based on the flow's integration base
+// (Settings.base) is never a layer, whatever came from that branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
@@ -301,7 +332,6 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     `merge-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
       const rules = yield* Settings.rules;
       const pull = yield* github.pullRequest(pullRequest);
 
@@ -314,14 +344,13 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* new PullRequestClosed({ pullRequest, state: "closed" });
       }
 
-      if (pull.baseRef !== repo.baseBranch) {
-        return yield* refuse(
-          pullRequest,
-          `stacked on ${pull.baseRef}; it merges after the layer below`,
-        );
+      const below = yield* layerBelow(pull);
+
+      if (Option.isSome(below)) {
+        return yield* refuse(pullRequest, waitsOn(pull, below.value));
       }
 
-      const ci = yield* github.ciState(pullRequest);
+      const ci = yield* Ci.pullRequestState(pullRequest);
 
       if (ci.state === "red") {
         return yield* refuse(pullRequest, `checks failed: ${ci.failedChecks.join(", ")}`);

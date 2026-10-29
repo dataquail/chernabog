@@ -24,6 +24,13 @@ const reading = <A, E>(
   );
 
 describe("the SDK's shared settings", () => {
+  effect("the integration base is the flow's base, else config.yaml's old baseBranch", () =>
+    Effect.gen(function* () {
+      expect(yield* reading(Settings.base, { base: "develop" })).toBe("develop");
+      expect(yield* reading(Settings.base, {}, { ...settings, baseBranch: "trunk" })).toBe("trunk");
+    }),
+  );
+
   effect("a flow's settings win over config.yaml's old keys, which fill what they leave out", () =>
     Effect.gen(function* () {
       const old = {

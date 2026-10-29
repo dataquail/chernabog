@@ -314,9 +314,7 @@ export const enrollHere = (root: string, flags: EnrollFlags) =>
       },
     );
 
-    yield* Console.log(
-      `${action} ${enrolled.repo} (${enrolled.path}, base ${enrolled.baseBranch}) in ${file}`,
-    );
+    yield* Console.log(`${action} ${enrolled.repo} (${enrolled.path}) in ${file}`);
     yield* printLines(lines);
     yield* daemonReload.pipe(Effect.ignore);
 

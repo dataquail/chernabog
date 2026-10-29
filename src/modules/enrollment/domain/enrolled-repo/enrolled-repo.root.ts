@@ -19,8 +19,6 @@ export class EnrolledRepoRoot extends Schema.Class<
   path: Schema.String,
   // A short name, which keeps two clones of one repo apart.
   name: Schema.optionalKey(Schema.String),
-  // The branch .chernabog/ is trusted from. Defaults to main.
-  baseBranch: Schema.optionalKey(Schema.String),
   defaults: PersonaEntry,
   // The GitHub personas, by login from machine config's github:, that run
   // this repo's flows, each with its own choices. Defaults to the only one;

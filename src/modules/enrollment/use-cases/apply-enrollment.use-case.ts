@@ -138,7 +138,6 @@ export const applyEnrollmentUseCase = Effect.fn("applyEnrollmentUseCase")(functi
     name: EnrolledRepoRootOps.nameOf(enrolled),
     repo: enrolled.repo,
     path: enrolled.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(enrolled),
     chosen,
   });
 });

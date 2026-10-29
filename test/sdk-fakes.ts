@@ -8,6 +8,8 @@ import {
   Agent,
   AgentError,
   type AgentRequest,
+  type CiCheck,
+  type CiChecks,
   type CiState,
   type Comment,
   CurrentActivity,
@@ -138,14 +140,40 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
   COMMENT: "COMMENTED",
 };
 
-// CI on the head, the files the pull request changes, its mergeable_state on
-// GitHub, whether GitHub refuses the merge, and the merges asked for.
+// CI on the head (the checks GitHub reports, or read from a verdict), the
+// files the pull request changes, its mergeable_state on GitHub, whether
+// GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
+  checks: Option.Option<CiChecks>;
   files: Array<string>;
   state: string;
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
+};
+
+// The checks a verdict stands for, every one required: green is one passing
+// check, red its failed checks, pending the checks it waits on.
+const checksOf = (ci: CiState, headSha: string): CiChecks => {
+  const required = (name: string, state: CiCheck["state"]): CiCheck => ({
+    name,
+    kind: "check-run",
+    state,
+    required: true,
+    url: `https://github.com/dataquail/demo/runs/${name}`,
+  });
+
+  let checks = [required("test", "passed")];
+
+  if (ci.state === "red") {
+    checks = ci.failedChecks.map((name) => required(name, "failed"));
+  }
+
+  if (ci.state === "pending") {
+    checks = ci.waitingOn.map((name) => required(name, "pending"));
+  }
+
+  return { headSha, checks, required: checks.map((check) => check.name), caveat: Option.none() };
 };
 
 // Whether a person closed the fake's issue, and closed or merged its pull request.
@@ -191,6 +219,7 @@ export const makeFake = (
 
   const merge: MergeFake = {
     ci: { state: "green" },
+    checks: Option.none(),
     files: ["src/a.ts"],
     state: "clean",
     refusal: Option.none(),
@@ -245,11 +274,13 @@ export const makeFake = (
   const stack = { base: "main", below: new Array<string>() };
 
   // What the steps based their work on: the sha each branch was created from,
-  // the base each pull request targets, and the base each push was checked against.
+  // the base each pull request targets, the base each push was checked
+  // against, and the base each claim branch was compared with.
   const based = {
     createdFrom: new Array<string>(),
     targets: new Array<string>(),
     checkedAgainst: new Array<string>(),
+    compared: new Array<string>(),
   };
 
   // Whether a person closed the issue or closed (or merged) the pull request.
@@ -616,6 +647,8 @@ export const makeFake = (
           ),
         ),
       ciState: () => Effect.sync(() => merge.ci),
+      ciChecks: () =>
+        Effect.sync(() => Option.getOrElse(merge.checks, () => checksOf(merge.ci, git.head))),
       // A commit's and a branch's CI read as the pull request's, with no links to failed runs.
       commitCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
       branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
@@ -666,6 +699,12 @@ export const makeFake = (
 
           // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
           if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+            const [compared = ""] = path
+              .slice(`/repos/${settings.slug}/compare/`.length)
+              .split("...");
+
+            based.compared.push(decodeURIComponent(compared));
+
             return { ahead_by: git.pushes + git.commits };
           }
 
@@ -956,5 +995,25 @@ export const triggered = <E, R>(
 // What a flow's own trigger reports on the fake.
 export const flowTriggered = (fake: Fake, flow: Flow) =>
   Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
+
+// The pull request stacked on `below`, the head of another pull request, as
+// a layer of an epic's stack is: open, or `state` as the layer below is now.
+export const stackOn = (fake: Fake, below: string, state: PullRequest["state"] = "open") => {
+  fake.stack.base = below;
+  fake.branchPulls.set(below, {
+    number: 2,
+    title: "feat: the layer below",
+    body: "",
+    url: "https://github.com/dataquail/demo/pull/2",
+    state,
+    headRef: below,
+    headSha: "below0000000",
+    baseRef: "main",
+    labels: [],
+    author: "chernabog-bot",
+    assignees: [],
+    requestedReviewers: [],
+  });
+};
 
 export const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");

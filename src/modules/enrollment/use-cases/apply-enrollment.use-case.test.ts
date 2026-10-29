@@ -25,7 +25,6 @@ const team = TeamFlows.make({
 const here = Checkout.make({
   root: "/src/demo",
   repo: demo,
-  baseBranch: "main",
   flows: ["fix", "implement", "review"],
   team,
 });

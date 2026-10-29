@@ -142,3 +142,24 @@ describe("stamping machine config", () => {
       }),
   );
 });
+
+describe("dropping a repo's baseBranch", () => {
+  effectAtHome("removes it, since .chernabog/ is read from GitHub's default branch", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const paths = homePaths((yield* Home).root);
+      yield* fs.writeFileString(
+        paths.machineConfig,
+        `chernabog: ${VERSION}\nrepos:\n  - repo: dataquail/demo\n    path: /src/demo\n    baseBranch: trunk\n    flows: {}\n`,
+      );
+
+      expect(yield* migrateMachineConfig).toEqual([
+        "dataquail/demo: baseBranch is gone; .chernabog/ is read from GitHub's default branch, and a flow's base setting names the branch its work targets",
+      ]);
+      expect(yield* fs.readFileString(paths.machineConfig)).toBe(
+        `chernabog: ${VERSION}\nrepos:\n  - repo: dataquail/demo\n    path: /src/demo\n    flows: {}\n`,
+      );
+      expect(yield* migrateMachineConfig).toEqual([]);
+    }),
+  );
+});

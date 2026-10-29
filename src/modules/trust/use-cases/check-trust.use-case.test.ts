@@ -20,7 +20,7 @@ const checking = (trees: Readonly<Record<string, string>>) =>
     ]),
   );
 
-const check = (path: string) => checkTrustUseCase({ repo, path, baseBranch: "main" });
+const check = (path: string) => checkTrustUseCase({ repo, path });
 
 describe("checkTrustUseCase", () => {
   effect("is trusted while the tree on the base branch is the one trusted", () =>

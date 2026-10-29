@@ -134,8 +134,9 @@ const releaseClaimRefs = (run: RunRoot, leftForPerson: Array<string>) =>
     return released;
   });
 
-// Releases a cancelled run's claim on its issue, if its item is one: the label
-// and assignment, and its branch unless the branch holds work, which is said.
+// Releases a cancelled run's claim on its issue, if its item is one: the
+// assignment, and its branch unless the branch holds work, which is said.
+// Labels are the flow's, and its markers release them.
 const releaseIssueClaim = (cancelled: RunRoot, leftForPerson: Array<string>) =>
   Effect.gen(function* () {
     const cleanup = yield* RunCleanupClient;

@@ -8,7 +8,6 @@ import { TeamFlows } from "./team-flows.value-object.ts";
 export class Checkout extends Schema.Class<Checkout, { readonly brand: "Checkout" }>("Checkout")({
   root: Schema.String,
   repo: RepoSlug,
-  baseBranch: Schema.String,
   flows: Schema.Array(Schema.String),
   team: TeamFlows,
 }) {}

@@ -14,6 +14,5 @@ export const unenrollRepoUseCase = Effect.fn("unenrollRepoUseCase")(function* (n
     name: EnrolledRepoRootOps.nameOf(repo),
     repo: repo.repo,
     path: repo.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(repo),
   });
 });

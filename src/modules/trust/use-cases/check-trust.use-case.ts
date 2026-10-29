@@ -12,11 +12,8 @@ import { TrustCheck } from "./trust-check.result.ts";
 export const checkTrustUseCase = Effect.fn("checkTrustUseCase")(function* (target: {
   readonly repo: RepoSlug;
   readonly path: string;
-  readonly baseBranch: string;
 }) {
-  const tree = yield* Effect.option(
-    (yield* ConfigTreeClient).localTreeOf(target.path, target.baseBranch),
-  );
+  const tree = yield* Effect.option((yield* ConfigTreeClient).localTreeOf(target.path));
 
   const record = yield* (yield* TrustRecordsRepository).findOne(target.repo);
 

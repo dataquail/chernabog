@@ -21,6 +21,5 @@ export const setPersonaFlowUseCase = Effect.fn("setPersonaFlowUseCase")(function
     name: EnrolledRepoRootOps.nameOf(repo),
     repo: repo.repo,
     path: repo.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(repo),
   });
 });

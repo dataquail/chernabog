@@ -71,6 +71,7 @@ const READY_WITHIN = "14 days";
 const settings = Schema.Struct({
   ...Routing.Settings.fields,
   ...Settings.Labels.fields,
+  ...Settings.Base.fields,
   ...Settings.Board.fields,
   ...Settings.LocalGate.fields,
   ...Settings.Rules.fields,
@@ -134,11 +135,15 @@ export default defineFlow({
             }
 
             // The worktree is made only for a fix.
-            yield* Implement.waitForCiMaking(adopted.number, Implement.prepareWorktree(branch), {
-              ...Implement.thisRunsSession,
-              branch,
-              base,
-            });
+            yield* Implement.waitForCiMaking(
+              adopted.number,
+              Implement.prepareWorktree(branch, { base }),
+              {
+                ...Implement.thisRunsSession,
+                branch,
+                base,
+              },
+            );
 
             return yield* Implement.handOff(issue, adopted, Implement.adoptedOutcome(adopted), {
               needsReview: true,
@@ -147,7 +152,7 @@ export default defineFlow({
           }).pipe(Effect.catchTags(forPerson));
         }
 
-        const worktree = yield* Implement.prepareWorktree(branch);
+        const worktree = yield* Implement.prepareWorktree(branch, { base });
         const outcome = yield* Implement.implementWithAgent(issue, worktree, { base });
 
         if (outcome.status === "needs-clarification") {

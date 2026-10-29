@@ -8,7 +8,7 @@
 // Until core's next major (ADR 0005), a setting the flow's settings leave
 // out falls back to config.yaml's old key, which the binary still gives
 // every flow as Repo's: `limits.ciRounds` for `ciRounds`, `labels` for
-// `labels`, and so on.
+// `labels`, `baseBranch` for `base`, and so on.
 
 import { type FlowLabel, Repo, type RepoSettings, Settings as CoreSettings } from "@chernabog/core";
 import * as Duration from "effect/Duration";
@@ -167,10 +167,49 @@ export const labelSet = (names: LabelNames): ReadonlyArray<FlowLabel> =>
 // For a flow's `labels`: the label set under the names its settings give.
 export const declaredLabels = Effect.map(labels, labelSet);
 
+export const Base = Schema.Struct({
+  base: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "The branch the flow's work starts from and its pull requests target, such as develop in git flow. Unset: the repo's default branch.",
+    }),
+  ),
+});
+
+// The integration base: the branch new work starts from and merges into. It
+// is the flow's to choose, never the branch .chernabog/ is read from, which
+// is GitHub's default; a flow that leaves it out targets that default (or
+// config.yaml's deprecated baseBranch).
+export const base = Effect.gen(function* () {
+  const repo = yield* Repo;
+  const own = yield* read(Base);
+
+  return own.base ?? repo.baseBranch;
+});
+
 export const Ci = Schema.Struct({
   ciRounds: Count("Pushes to fix red CI before a person takes over."),
   ciTimeout: DurationText('How long CI may stay pending before a person looks, such as "2 hours".'),
+  ciGates: Schema.optionalKey(
+    Schema.Literals(["required", "every"]).annotate({
+      description:
+        "The checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or every check.",
+    }),
+  ),
+  ciOptionalFailures: Schema.optionalKey(
+    Schema.Literals(["hold", "ignore"]).annotate({
+      description:
+        "Whether a failing check that doesn't gate still makes CI red (hold), or is left alone (ignore).",
+    }),
+  ),
 });
+
+// The CI gate's policy, for Ci.verdict: required checks gate, and any
+// failing check holds, unless the flow's settings say otherwise.
+export const ciGate = Effect.map(read(Ci), (own) => ({
+  gates: own.ciGates ?? "required",
+  optionalFailures: own.ciOptionalFailures ?? "hold",
+}));
 
 export const ci = Effect.gen(function* () {
   const repo = yield* Repo;

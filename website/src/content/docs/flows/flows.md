@@ -175,7 +175,7 @@ yield* Implement.push("push", worktree, branch).pipe(
 **Errors a flow can only report**, such as `GitHubError`, `GitError`, `AgentError` and `UsageError`, carry a message and nothing to decide on. An activity turns any of them into `StepFailed`, named for the activity. Outside an activity, as in a trigger, pipe the effect through `reportAs(step)` to do the same:
 
 ```ts
-const trigger = GitHub.use((github) => github.queuedIssues).pipe(
+const trigger = GitHub.use((github) => github.queuedIssuesLabelled("auto:eligible")).pipe(
   Effect.map((issues) => issues.map((issue) => Implement.issueItem(issue))),
   reportAs("trigger"),
 );
@@ -245,7 +245,8 @@ Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybr
 - its required checks are green on the current head;
 - the latest review approved that very head, or the head has only merged the base in since (`PullRequest.onlyMergedBase`: every commit on its first parents back to the reviewed one is a two-parent merge of a commit on the base branch, with exactly the tree a clean automatic merge gives, so a merge where someone resolved a conflict or added edits still needs a review);
 - it touches no `humanOnlyPaths`;
-- GitHub's rules for the repo allow it. The merge is of exactly the head it checked, so GitHub refuses it if the head moves in between.
+- GitHub's rules for the repo allow it. The merge is of exactly the head it checked, so GitHub refuses it if the head moves in between;
+- it isn't a layer of a stack: its base isn't the head branch of another pull request that is open, or that merged while its branch stayed (the layer then waits to be retargeted onto the base below, which GitHub does only when that branch is deleted), unless that base is the flow's `base` setting. A pull request into any other branch, such as `develop` in git flow, merges.
 
 Otherwise it fails with `MergeRefused`, giving the reason, or `PullRequestClosed` when the pull request was closed without merging, and merges nothing. A pull request merged already, as by a rerun, counts as merged. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
 

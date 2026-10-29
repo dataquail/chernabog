@@ -131,7 +131,11 @@ describe("chernabog cancel", () => {
     );
     expect(output).toContain(`removed worktree ${worktree(issue)}`);
     expect(existsSync(worktree(issue))).toBe(false);
-    expect(sandbox.github.issue(issue).labels).not.toContain("auto:in-progress");
+    // The label goes with the run's markers, which the daemon releases, not with cancel.
+    await waitFor(
+      () => !sandbox.github.issue(issue).labels.includes("auto:in-progress"),
+      "the in-progress label released by its marker",
+    );
     expect(sandbox.github.issue(issue).assignees).toEqual([]);
     expect(sandbox.git(sandbox.bare, "branch", "--list", `auto/issue-${issue}`).trim()).toBe("");
     // Nothing said on the issue beyond its claim.

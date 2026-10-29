@@ -414,7 +414,7 @@ const specPrompt = (spec: number) =>
       comments: comments
         .filter((comment) => !hasMarker(comment.body))
         .map((comment) => `${comment.author}: ${comment.body}`),
-      base: repo.baseBranch,
+      base: yield* Settings.base,
       planNodes: planLimits.nodes,
       humanOnly: rules.humanOnly,
       notes: rules.notes,
@@ -441,13 +441,12 @@ const askForPlan = <E, R>(name: string, spec: number, asking: Effect.Effect<Aski
   activity(
     name,
     Effect.gen(function* () {
-      const repo = yield* Repo;
       const run = yield* Run;
       const { prompt, resume } = yield* asking;
 
       const worktree = yield* (yield* Worktree).checkout(
         planCheckout(spec),
-        `origin/${repo.baseBranch}`,
+        `origin/${yield* Settings.base}`,
       );
 
       const result = yield* (yield* Agent).run({

@@ -6,6 +6,7 @@ import * as PullRequestSteps from "./pull-request.ts";
 // @chernabog/sdk: the blocks a recipe is written from, over core's ports and
 // nothing else, and core itself, so a flow imports from one package. A repo
 // pins its own version; the binary only provides core.
+export * as Ci from "./ci.ts";
 export * as Epic from "./epic.ts";
 export * as Hybrid from "./hybrid.ts";
 export * as Implement from "./implement.ts";
