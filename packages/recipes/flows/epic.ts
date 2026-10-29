@@ -32,6 +32,7 @@ import {
   Implement,
   Plan,
   reportAs,
+  Review,
   Routing,
   Run,
   Settings,
@@ -435,6 +436,8 @@ export default defineFlow({
     ...Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
   ]),
   settings,
+  // Doctor warns when no reviewer its pull requests may ask is a persona here.
+  doctor: [Review.poolCheck],
   // An epic closed, or claimed by another run, ends the run as superseded.
   stillValid: Epic.stillValid,
   // Its markers are the SDK's own: claim refs, labels, assignments, branches.

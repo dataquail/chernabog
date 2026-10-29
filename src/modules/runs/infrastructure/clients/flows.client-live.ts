@@ -6,7 +6,6 @@
 import {
   Claims,
   describeError,
-  GitHub,
   isSetupError,
   Markers,
   Run,
@@ -30,7 +29,6 @@ import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
-import { type ReviewRequest } from "../../domain/review-requests/review-requests.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import {
   firstPullRequest,
@@ -382,23 +380,6 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                 ),
             });
           }).pipe(Effect.provideContext(runs)),
-        reviewRequests: (flow) =>
-          Effect.gen(function* () {
-            const { services } = yield* loaded(flow);
-
-            const pulls = yield* withRepo(
-              services,
-              GitHub.use((github) => github.openPullRequests),
-            );
-
-            return pulls.map((pull): ReviewRequest => ({
-              number: pull.number,
-              requestedReviewers: pull.requestedReviewers,
-            }));
-          }).pipe(
-            Effect.orElseSucceed((): ReadonlyArray<ReviewRequest> => []),
-            Effect.provideContext(runs),
-          ),
       });
     }),
   );

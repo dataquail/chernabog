@@ -16,6 +16,8 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `stillValid`  | optional; `(item) => Effect<Valid \| Gone>`: whether a run's work item is still there to work on. The daemon ends a run whose item is `Gone` as `superseded`; see [Work that goes away](#work-that-goes-away) |
 | `markers`     | optional; the [markers](/chernabog/flows/sdk/#markers) its runs hold, each from `Markers.define`, so the daemon can release them by name however a run ends. The SDK's own need no listing |
 | `item`        | `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it. Optional, except on a manual flow |
+| `doctor`      | optional; checks `chernabog doctor` runs for the flow, each `(context) => Effect<ReadonlyArray<Warning>>`, given the machine's personas, the persona it runs as and the repo's flows, with that persona's settings. Each warning is `{ warning, fix }`; see [What doctor learns from flows](#what-doctor-learns-from-flows) |
+| `start`       | optional; `true` makes it the flow `chernabog start <issue>` runs. One per repo |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 `trigger`, `gate`, `item` and `workflow` may fail only with the flow's own outcomes, `Skip`, `NeedsHuman` and `StepFailed`. Any other error has to be handled before the flow compiles: see [Errors](#errors).
@@ -87,9 +89,25 @@ The SDK's checks, which the recipes use:
 
 Without `stillValid`, a run carries on until its workflow ends it, as before.
 
+## What doctor learns from flows
+
+`chernabog doctor` knows no flow. What it checks of a repo's flows beyond loading them, it learns from each flow's `doctor` checks, run once for each of the repo's personas on the machine with that persona's settings. A check gets the flow's name, the GitHub logins the machine acts as, the persona's login (none for the implicit account when gh can't say) and whether it runs the flow, and every flow of the repo with the logins that run it and the checks it contributes. Its warnings print as `!` lines with their fix, each once, and never fail doctor. A flow that contributes no checks gets no warnings.
+
+The SDK's reviewer-pool checks are `Review.poolCheck`, for a flow that asks the pool for reviews (`implement`, `human-initiated`, `epic`), and `Review.reviewerCheck`, for one that reviews (`review`, `re-review`). `poolCheck` counts a flow that includes `reviewerCheck` as one that reviews, so a repo that renames `review`, or writes its own, keeps the warnings.
+
+```ts
+import { defineFlow, Review } from "@chernabog/sdk";
+
+export default defineFlow({
+  trigger,
+  doctor: [Review.reviewerCheck],
+  workflow,
+});
+```
+
 ## Manual flows
 
-A flow with `item` and no `trigger` is manual: nothing finds its work, and it runs only when a person names an item, with `chernabog start <issue>` for [`human-initiated`](/chernabog/recipes/human-initiated/), or `chernabog run <flow> --item <key>` for any other. The daemon never ticks it on a schedule, and `status` shows it as `manual` in place of a schedule and its next tick.
+A flow with `item` and no `trigger` is manual: nothing finds its work, and it runs only when a person names an item, with `chernabog start <issue>` for the flow that declares itself start's entry point (`start: true`, as [`human-initiated`](/chernabog/recipes/human-initiated/) does; one per repo), or `chernabog run <flow> --item <key>` for any other. The daemon never ticks it on a schedule, and `status` shows it as `manual` in place of a schedule and its next tick.
 
 ```ts
 import { defineFlow, Hybrid } from "@chernabog/sdk";
@@ -99,6 +117,8 @@ export default defineFlow({
   workflow: (item) => /* … */,
 });
 ```
+
+`chernabog start` refuses a repo where no flow, or several, declare `start: true`, and names them.
 
 A manual flow must have `item`, since nothing else could start it, and can't have `schedule`. A `schedule` for it under `flows.<flow>`, in `config.yaml` or machine config, fails the repo's config with the flow's name; the repo's and the persona's default `schedule` don't apply to it. `run` and `trigger` without `--item` fail and say how to start it.
 
@@ -119,6 +139,8 @@ A manual flow must have `item`, since nothing else could start it, and can't hav
 Activity names are unique within a run, so one in a loop carries its round: `fix-ci-2`.
 
 **Signals.** A trigger reports signals in `WorkItem.signals`; a waiting run's `awaitSignal` wakes on them. Report an item with `wakeOnly` to wake a waiting run without starting a new one.
+
+**Work that waits on someone.** Report an item with `waitsOn: { who: "bob", why: "not on this machine" }` when it waits on a person or a login, such as a review request no persona here serves. Like held work, it starts no run and its signals still wake a waiting run; `chernabog status` lists it as `waiting: pr-73 waits on bob (not on this machine)`. A trigger knows the logins this machine acts as from the `Machine` service (`Effect.serviceOption(Machine)`, since an older binary provides none), as `Review.waitingElsewhere` reads them.
 
 **Held work.** Report an item with `held: "waits on #12, #13"` when the trigger won't start it yet. It starts no run, even with `wakeOnly` unset, its signals still wake a waiting run, and `chernabog status` and the live view list it with the reason, so an idle queue and a queue of blocked work look different.
 

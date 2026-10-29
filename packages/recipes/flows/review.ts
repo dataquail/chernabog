@@ -29,14 +29,20 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona for a review, which it hasn't reviewed
-// yet, routed by their assignees and reviewers. Reading review requests needs the persona's seat in the reviewer pool,
-// which chernabog checks before the flow runs.
-const trigger = Effect.flatMap(Review.reviewRequests, (found) =>
-  Effect.forEach(
+// yet, routed by their assignees and reviewers, and those waiting on a
+// reviewer no persona on this machine acts as, which status lists. Reading
+// review requests needs the persona's seat in the reviewer pool, which
+// chernabog checks before the flow runs.
+const trigger = Effect.gen(function* () {
+  const found = yield* Review.reviewRequests;
+
+  const mine = yield* Effect.forEach(
     found.filter(({ reviewed }) => reviewed === 0),
     ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
-  ),
-).pipe(reportAs("trigger"));
+  );
+
+  return [...mine, ...(yield* Review.waitingElsewhere)];
+}).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
 
@@ -119,6 +125,8 @@ export default defineFlow({
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.
   ownWork: true,
+  // Doctor warns when a reviewer this machine acts as doesn't run it.
+  doctor: [Review.reviewerCheck],
   // A pull request closed or merged ends the run as superseded.
   stillValid: Review.stillValid,
   workflow,

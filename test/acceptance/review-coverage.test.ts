@@ -1,6 +1,8 @@
 // Review requests no persona on this machine serves (#76): doctor warns when
 // a persona's pull requests can only go to reviewers it doesn't act as, and
-// status lists the pull requests waiting on them under the review flow.
+// status lists the pull requests waiting on them under the review flow. Both
+// come from the recipes (#208): their doctor checks, and the review trigger's
+// items that wait on someone.
 
 import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -74,7 +76,9 @@ describe("doctor, on a machine that acts only as the author", () => {
   test("warns that its pull requests go to a login this machine does not act as", async () => {
     const said = await doctor();
     expect(said).toContain(`! ${UNSERVED}`);
-    expect(said).toContain("fix: run review as one of bob on this machine");
+    expect(said).toContain(
+      "fix: run a flow that reviews, such as review, as one of bob on this machine",
+    );
   });
 });
 
@@ -135,7 +139,7 @@ describe("status, on review requests no persona here serves", () => {
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
 
-    const waiting = `#${number} waits on bob (not on this machine)`;
+    const waiting = `pr-${number} waits on bob (not on this machine)`;
 
     const status = await statusWhen(
       sandbox,
@@ -144,7 +148,7 @@ describe("status, on review requests no persona here serves", () => {
     );
 
     expect(status.split("\n").find((line) => line.startsWith("  review as alice:"))).toContain(
-      `left for others: ${waiting}`,
+      `waiting: ${waiting}`,
     );
 
     // bob reviews it from another machine; GitHub drops the request.

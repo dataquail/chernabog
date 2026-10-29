@@ -16,6 +16,7 @@ import {
   defineFlow,
   Hybrid,
   Implement,
+  Review,
   Settings,
   Skip,
   type WorkItem,
@@ -92,8 +93,12 @@ export default defineFlow({
   labels: Settings.declaredLabels,
   settings,
   item: Hybrid.itemFor,
+  // The flow `chernabog start <issue>` runs.
+  start: true,
   // No trigger finds work for several personas to share: each run is a person's.
   ownWork: true,
+  // Doctor warns when no reviewer its pull requests may ask is a persona here.
+  doctor: [Review.poolCheck],
   // An issue closed, or claimed by another run, ends the run as superseded.
   stillValid: Implement.stillValid,
   workflow,

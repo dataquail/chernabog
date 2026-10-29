@@ -11,10 +11,12 @@ import {
   activity,
   adapterFor,
   Agent,
+  type DoctorCheck,
   Git,
   GitHub,
   type Json,
   latestMarker,
+  Machine,
   NeedsHuman,
   type PullRequest,
   Repo,
@@ -140,6 +142,128 @@ export const reviewRequests = Effect.gen(function* () {
 
   return found;
 });
+
+// Whether this machine acts as the login, among the logins it acts as.
+const actsAs = (here: ReadonlyArray<string>, login: string) =>
+  here.some((own) => sameLogin(own, login));
+
+// Open pull requests that wait on a review from a login no persona on this
+// machine acts as, as work items that wait on those logins, for `chernabog
+// status` to list: this persona's trigger never finds them, and another
+// person's machine may serve them. One that asks this persona too is the
+// trigger's own work. None from a binary that doesn't say which logins it
+// acts as. It requires the persona's seat in the reviewer pool.
+export const waitingElsewhere = Effect.gen(function* () {
+  const machine = yield* Effect.serviceOption(Machine);
+
+  if (Option.isNone(machine)) {
+    return [];
+  }
+
+  const me = yield* reviewerLogin;
+  const pulls = yield* (yield* GitHub).openPullRequests;
+
+  return pulls.flatMap((pull): ReadonlyArray<WorkItem> => {
+    if (pull.requestedReviewers.some((login) => sameLogin(login, me))) {
+      return [];
+    }
+
+    const others = pull.requestedReviewers.filter(
+      (login) => !actsAs(machine.value.personas, login),
+    );
+
+    if (others.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        ...reviewItem(pull, `pr-${pull.number}`),
+        waitsOn: { who: others.join(", "), why: "not on this machine" },
+      },
+    ];
+  });
+});
+
+// Doctor's check for a flow that reviews the pull requests asked of its
+// persona, such as review: a persona that runs it holds a seat in the
+// reviewer pool, since no pull request asks one that doesn't. Its presence
+// also marks the flow as one that reviews, for the pool check of the flows
+// that ask for reviews.
+export const reviewerCheck: DoctorCheck = (context) =>
+  Effect.gen(function* () {
+    const { pool } = yield* Settings.reviewers;
+
+    const unseated = Option.filter(
+      context.login,
+      (login) => context.runs && pool.length > 0 && !actsAs(pool, login),
+    );
+
+    return Option.match(unseated, {
+      onNone: () => [],
+      onSome: (login) => [
+        {
+          warning: `${login} runs ${context.flow}, but the reviewer pool (${pool.join(", ")}) doesn't list it, so no pull request asks it to review`,
+          fix: `add ${login} to reviewers: in .chernabog/config.yaml, or turn ${context.flow} off for ${login}`,
+        },
+      ],
+    });
+  });
+
+// Doctor's check for a flow that asks the reviewer pool to review its pull
+// requests, such as implement: some reviewer the persona's pull requests may
+// ask (the pool, less the persona) is a persona on this machine, and runs a
+// flow that reviews here, one with reviewerCheck. A warning, since another
+// person's machine may serve that login.
+export const poolCheck: DoctorCheck = (context) =>
+  Effect.gen(function* () {
+    if (!context.runs) {
+      return [];
+    }
+
+    const { pool } = yield* Settings.reviewers;
+
+    const asked = pool.filter(
+      (login) => !Option.exists(context.login, (own) => sameLogin(own, login)),
+    );
+
+    if (asked.length === 0) {
+      return [];
+    }
+
+    const author = Option.getOrElse(context.login, () => "the implicit account");
+    const reviewers = asked.join(", ");
+
+    if (!asked.some((login) => actsAs(context.personas, login))) {
+      return [
+        {
+          warning: `pull requests authored as ${author} go to ${reviewers}, which this machine doesn't act as; they wait until another machine reviews them`,
+          fix: `run a flow that reviews, such as review, as one of ${reviewers} on this machine (chernabog setup, then chernabog enroll), or make sure another machine does`,
+        },
+      ];
+    }
+
+    const reviewing = context.flows.filter((flow) => flow.doctor.includes(reviewerCheck));
+
+    if (asked.some((login) => reviewing.some((flow) => actsAs(flow.runners, login)))) {
+      return [];
+    }
+
+    const flows = Option.getOrElse(
+      Option.liftPredicate(
+        reviewing.map((flow) => flow.name).join(", "),
+        (names) => names.length > 0,
+      ),
+      () => "such as review",
+    );
+
+    return [
+      {
+        warning: `pull requests authored as ${author} go to ${reviewers}, which no persona here reviews as: none of them runs a flow that reviews (${flows}) here`,
+        fix: `turn a flow that reviews on for one of ${reviewers} (chernabog enroll --persona <login> --flows ...), or make sure another machine reviews as them`,
+      },
+    ];
+  });
 
 export const Verdict = Schema.Struct({
   verdict: Schema.Literals(["approve", "request-changes"]),

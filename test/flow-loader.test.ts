@@ -6,13 +6,7 @@ import * as Option from "effect/Option";
 import { defineFlow, isManual } from "../packages/core/src/flow.ts";
 import { printJson } from "../packages/core/src/json.ts";
 import { BUNDLED_CORE, checkInstalled, RELEASED_SDK } from "../src/platform/flow-deps.ts";
-import {
-  describeSource,
-  flowNames,
-  flowSourceOf,
-  loadFlows,
-  reviewingFlows,
-} from "../src/platform/flow-loader.ts";
+import { describeSource, flowNames, flowSourceOf, loadFlows } from "../src/platform/flow-loader.ts";
 import { effect } from "./effect-test.ts";
 import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
@@ -176,21 +170,18 @@ describe("importing flows from a recipe package", () => {
     }),
   );
 
-  effect(
-    "names an imported flow, and reads the other flows' code, before its package is installed",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const configDir = yield* withPackage('flows:\n  ship:\n    from: "@globex/recipes/ship"\n');
-        yield* fs.makeDirectory(`${configDir}/flows`);
-        yield* fs.writeFileString(
-          `${configDir}/flows/review.ts`,
-          'import { Review } from "@chernabog/sdk";\nexport default { trigger: Review.trigger };\n',
-        );
+  effect("names an imported flow before its package is installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* withPackage('flows:\n  ship:\n    from: "@globex/recipes/ship"\n');
+      yield* fs.makeDirectory(`${configDir}/flows`);
+      yield* fs.writeFileString(
+        `${configDir}/flows/review.ts`,
+        'import { Review } from "@chernabog/sdk";\nexport default { trigger: Review.trigger };\n',
+      );
 
-        expect(yield* flowNames(configDir)).toEqual(["review", "ship"]);
-        expect(yield* reviewingFlows(configDir)).toEqual(["review"]);
-      }),
+      expect(yield* flowNames(configDir)).toEqual(["review", "ship"]);
+    }),
   );
 
   effect("refuses a from naming a package that isn't installed, or a recipe it hasn't", () =>

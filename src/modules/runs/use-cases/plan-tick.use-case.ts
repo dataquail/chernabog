@@ -12,14 +12,15 @@ import { HoldsRepository } from "../domain/ports/repositories/holds.repository.t
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
-import {
-  REVIEW_FLOW,
-  waitingElsewhere,
-} from "../domain/review-requests/review-requests.value-object.ts";
 import { describeElsewhere, routeItems } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { type FlowRef, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import {
+  describeWaiting,
+  type FlowRef,
+  mayStart,
+  type WorkItem,
+} from "../domain/run/work-item.value-object.ts";
 import {
   decideTick,
   freeSlots,
@@ -35,8 +36,6 @@ export type TickInput = {
   readonly gates: boolean;
   readonly item: Option.Option<string>;
   readonly conditions: Omit<TickConditions, "now">;
-  // The logins this machine acts as, the personas under github:.
-  readonly here: ReadonlyArray<string>;
   readonly concurrency: { readonly flow: number; readonly machine: number };
 };
 
@@ -60,7 +59,7 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
   const flows = yield* FlowsClient;
   const skips = yield* SkipsRepository;
 
-  const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed" | "unserved">) =>
+  const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed">) =>
     Effect.gen(function* () {
       yield* skips.save(
         SkipRoot.make({
@@ -80,28 +79,11 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
     const decision = decideTick({ ...input.conditions, now: yield* DateTime.now });
 
     if (!decision.go) {
-      return yield* skip(decision.reason, {
-        signalled: [],
-        routed: Option.none(),
-        unserved: Option.none(),
-      });
+      return yield* skip(decision.reason, { signalled: [], routed: Option.none() });
     }
   }
 
-  // Review requests no persona here serves, which the review flow's trigger
-  // never finds; looked up before it, so a tick that fails still lists them.
-  const unserved = yield* Option.match(
-    Option.liftPredicate(flow, () => flow.flow === REVIEW_FLOW),
-    {
-      onNone: () => Effect.succeedNone,
-      onSome: (review) =>
-        Effect.map(flows.reviewRequests(review), (pulls) =>
-          Option.some(waitingElsewhere(pulls, input.here)),
-        ),
-    },
-  );
-
-  const nothing = { signalled: [], routed: Option.none(), unserved };
+  const nothing = { signalled: [], routed: Option.none() };
 
   // A persona that can't run its flows says why itself, fix included.
   const failedReason = (what: string, failure: FlowFailed | PersonaNotReady) => {
@@ -185,8 +167,11 @@ export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
 
   const so = {
     signalled: items,
-    routed: Option.some({ queued: routed.mine.map(describeQueued), elsewhere }),
-    unserved,
+    routed: Option.some({
+      queued: routed.mine.map(describeQueued),
+      elsewhere,
+      waiting: items.flatMap((item) => Option.toArray(describeWaiting(item))),
+    }),
   };
 
   // A person who names a held item hears that it's held, and why.

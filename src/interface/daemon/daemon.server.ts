@@ -150,9 +150,10 @@ type FlowSchedule = {
   pending: Option.Option<PendingTick>;
   lastEventTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
-  // What the last tick's trigger left for others, with why, and for the
-  // review flow, review requests no persona here serves.
+  // What the last tick's trigger left for others, with why, and said waits
+  // on someone, with who and why.
   elsewhere: ReadonlyArray<string>;
+  waiting: ReadonlyArray<string>;
 };
 
 export type RepoState = {
@@ -292,6 +293,7 @@ export const loadRepoState = (
             lastEventTick: Option.none(),
             queued: [],
             elsewhere: [],
+            waiting: [],
           };
         });
       }),
@@ -854,7 +856,6 @@ export const runDaemon = Effect.gen(function* () {
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
             },
-            here: machine.github,
             concurrency: {
               flow: Option.getOrElse(
                 Option.flatMap(Record.get(settings.flows, handle.name), (found) =>
@@ -866,17 +867,12 @@ export const runDaemon = Effect.gen(function* () {
             },
           });
 
-          const unserved = Option.getOrElse(plan.unserved, (): ReadonlyArray<string> => []);
-
-          if (Option.isSome(plan.unserved)) {
-            schedule.elsewhere = unserved;
-          }
-
           for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
             schedule.lastCause = Option.some(options.cause);
             schedule.queued = routed.queued;
-            schedule.elsewhere = [...routed.elsewhere, ...unserved];
+            schedule.elsewhere = routed.elsewhere;
+            schedule.waiting = routed.waiting;
           }
 
           yield* deliverSignalsUseCase(ref, yield* stillWaking(ref, plan.signalled));
@@ -1501,7 +1497,9 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => ({}),
               onSome: (persona) => ({ persona }),
             }),
-            schedule: Option.getOrElse(flow.expression, () => manualSchedule(flow.handle.name)),
+            schedule: Option.getOrElse(flow.expression, () =>
+              manualSchedule(flow.handle.name, flow.handle.flow.start === true),
+            ),
             // A manual flow has no schedule, the team's or anyone's.
             ...Option.match(flow.teamExpression, {
               onNone: () => ({ manual: true }),
@@ -1535,6 +1533,14 @@ export const runDaemon = Effect.gen(function* () {
             }),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
+            ...Option.match(Option.liftPredicate(flow.waiting, Arr.isReadonlyArrayNonEmpty), {
+              onNone: () => ({}),
+              onSome: (waiting) => ({ waiting }),
+            }),
+            ...Option.match(Option.fromUndefinedOr(flow.handle.flow.start), {
+              onNone: () => ({}),
+              onSome: (start) => ({ start }),
+            }),
             ...Option.match(flowSourceOf(flow.handle.flow), {
               onNone: () => ({}),
               onSome: (source) => ({ source: describeSource(source) }),
@@ -1709,7 +1715,10 @@ export const runDaemon = Effect.gen(function* () {
 
           // Nothing finds a manual flow's work, so a person must name it.
           if (Option.isNone(schedule.expression) && Option.isNone(body.item)) {
-            return yield* refuse(400, nothingNamed(schedule.handle.name));
+            return yield* refuse(
+              400,
+              nothingNamed(schedule.handle.name, schedule.handle.flow.start === true),
+            );
           }
 
           return yield* HttpServerResponse.schemaJson(TickResult)(

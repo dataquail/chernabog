@@ -165,7 +165,7 @@ describe("enrolling a repo", () => {
   );
 
   effectWithLogins(
-    "notes when a persona's pull requests can only go to reviewers this machine doesn't act as",
+    "says nothing of the reviewer pool, whatever the flows are named: doctor asks the repo's flows",
     () =>
       Effect.gen(function* () {
         yield* writeMachine({ github: { alice: {} } });
@@ -177,24 +177,7 @@ describe("enrolling a repo", () => {
           options({ flows: Option.some(["implement"]) }),
         );
 
-        expect(lines).toEqual([
-          "demo as alice: flows implement",
-          "note: demo as alice: pull requests authored as alice go to bob, which this machine doesn't act as; they wait until another machine reviews them",
-        ]);
-
-        // A persona that opens no pull requests gets no note, nor one whose reviewer is here.
-        expect(
-          (yield* enrollAnswering(Asker.none, root, options({ flows: Option.some(["fix"]) })))
-            .lines,
-        ).toEqual(["demo as alice: flows fix"]);
-        yield* writeMachine({ github: { alice: {}, bob: {} } });
-        expect(
-          (yield* enrollAnswering(
-            Asker.none,
-            root,
-            options({ personas: Option.some(["alice"]), flows: Option.some(["implement"]) }),
-          )).lines,
-        ).toEqual(["demo as alice: flows implement"]);
+        expect(lines).toEqual(["demo as alice: flows implement"]);
       }),
   );
 

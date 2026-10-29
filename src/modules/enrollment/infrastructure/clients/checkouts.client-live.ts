@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
-import { authoringFlows, flowNames } from "../../../../platform/flow-loader.ts";
+import { flowNames } from "../../../../platform/flow-loader.ts";
 import { readYaml, RepoConfigFile } from "../../../../repo-config.ts";
 import { Checkout } from "../../domain/enrolled-repo/checkout.value-object.ts";
 import { CheckoutUnreadable } from "../../domain/enrolled-repo/enrolled-repo.errors.ts";
@@ -100,7 +100,6 @@ export const CheckoutsClientLive = Layer.effect(
           repo: RepoSlug.make(slug),
           baseBranch: head.replace(/^origin\//, ""),
           flows: yield* flowNames(`${root}/.chernabog`),
-          authoring: yield* authoringFlows(`${root}/.chernabog`),
           team: teamOf(yield* readYaml(RepoConfigFile, `${root}/.chernabog/config.yaml`)),
         });
       }).pipe(Effect.mapError(unreadable), Effect.provideContext(services));
