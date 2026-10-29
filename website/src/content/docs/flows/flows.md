@@ -153,7 +153,7 @@ yield* Implement.push("push", worktree, branch).pipe(
 **Errors a flow can only report**, such as `GitHubError`, `GitError`, `AgentError` and `UsageError`, carry a message and nothing to decide on. An activity turns any of them into `StepFailed`, named for the activity. Outside an activity, as in a trigger, pipe the effect through `reportAs(step)` to do the same:
 
 ```ts
-const trigger = GitHub.use((github) => github.queuedIssues).pipe(
+const trigger = GitHub.use((github) => github.queuedIssuesLabelled("auto:eligible")).pipe(
   Effect.map((issues) => issues.map((issue) => Implement.issueItem(issue))),
   reportAs("trigger"),
 );

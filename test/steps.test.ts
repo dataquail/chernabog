@@ -20,6 +20,7 @@ import {
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -207,6 +208,19 @@ const runUntil = (
 ) => runFlowUntil(handle, fake, item(key), until);
 
 const runToEnd = (fake: Fake, key: string) => runFlowToEnd(handle, fake, item(key));
+
+// The flow in a repo whose settings let a failing optional check through.
+const ignoringOptional = flowHandle(
+  {
+    ...repo,
+    personas: Arr.map(repo.personas, (persona) => ({
+      ...persona,
+      shared: { ciOptionalFailures: "ignore" },
+    })),
+  },
+  "demo",
+  flow,
+);
 
 describe("the review steps", () => {
   effect(
@@ -570,6 +584,41 @@ describe("PullRequest.merge", () => {
       expect(finished.status).toBe("done");
       expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
       expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  // A required check passing and an optional one failing on the head.
+  const optionalFailing = (fake: Fake) => {
+    approved(fake);
+    fake.merge.checks = Option.some({
+      headSha: HEAD,
+      checks: [
+        { name: "test", kind: "check-run", state: "passed", required: true, url: "" },
+        { name: "ci/docs", kind: "status", state: "failed", required: false, url: "" },
+      ],
+      required: ["test"],
+      caveat: Option.none(),
+    });
+  };
+
+  effect("merges on its required checks while an optional one fails, when the flow says so", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      optionalFailing(fake);
+      const finished = yield* runFlowToEnd(ignoringOptional, fake, item("merge"));
+      expect(finished.status).toBe("done");
+      expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  effect("holds the merge for a failing optional check by default", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      optionalFailing(fake);
+      const finished = yield* runToEnd(fake, "merge");
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain("checks failed: ci/docs");
+      expect(fake.merge.requests).toEqual([]);
     }),
   );
 

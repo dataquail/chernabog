@@ -59,7 +59,13 @@ import {
   type GitHubTokens,
 } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { readBranchCiState, readCiFailureDetails, readCiState, readCommitCiState } from "./ci.ts";
+import {
+  readBranchCiState,
+  readCiChecks,
+  readCiFailureDetails,
+  readCiState,
+  readCommitCiState,
+} from "./ci.ts";
 import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
 import {
   eligibleIssuesFrom,
@@ -780,6 +786,7 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
               }),
             ).pipe(Effect.map(toPullRequest)),
           ),
+        ciChecks: (pullRequest) => provide(readCiChecks(repo, pullRequest)),
         ciState: (pullRequest) => provide(readCiState(repo, pullRequest)),
         commitCiState: (sha, options = {}) =>
           provide(readCommitCiState(repo, sha, Option.fromUndefinedOr(options.event))),

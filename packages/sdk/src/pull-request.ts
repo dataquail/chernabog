@@ -31,6 +31,7 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
 import * as Settings from "./settings.ts";
 
@@ -314,8 +315,9 @@ const waitsOn = (pull: PullRequest, below: PullRequest) => {
 };
 
 // Merges the pull request, only when that is safe: it is open and not a
-// layer of a stack, its required checks are green on the current head,
-// the latest review approved that very head or one the head has only merged
+// layer of a stack, its checks are green on the current head by the flow's
+// CI policy (Ci.verdict: by default, its required checks passed and no check
+// failed), the latest review approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
 // GitHub's rules for the repo allow it. A pull request into any branch may
 // merge, such as develop in git flow. One whose base is the head branch of
@@ -348,7 +350,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* refuse(pullRequest, waitsOn(pull, below.value));
       }
 
-      const ci = yield* github.ciState(pullRequest);
+      const ci = yield* Ci.pullRequestState(pullRequest);
 
       if (ci.state === "red") {
         return yield* refuse(pullRequest, `checks failed: ${ci.failedChecks.join(", ")}`);

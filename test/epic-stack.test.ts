@@ -53,6 +53,10 @@ import {
 
 const SLUG = "dataquail/demo";
 
+// Each case runs three layers through real git and the fake GitHub, which
+// takes about five seconds alone: more than bun's default timeout.
+const STACK_TIMEOUT = 30_000;
+
 // git runs for real.
 const atHome = effectAtHomeWith(Exec.layer);
 
@@ -363,6 +367,7 @@ describe("epic: carrying a change up the stack", () => {
           expect(github.pull(pull).labels).not.toContain(DEFAULT_LABELS.needsHuman);
         }
       }),
+    STACK_TIMEOUT,
   );
 
   atHome(
@@ -430,5 +435,6 @@ describe("epic: carrying a change up the stack", () => {
         expect(github.pull(middle).labels).not.toContain(DEFAULT_LABELS.needsHuman);
         expect(github.pull(top).labels).not.toContain(DEFAULT_LABELS.needsHuman);
       }),
+    STACK_TIMEOUT,
   );
 });

@@ -445,6 +445,7 @@ const EVERY_MEMBER = {
   reviews: (github) => github.reviews(7),
   openPullRequest: (github) =>
     github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" }),
+  ciChecks: (github) => github.ciChecks(7),
   ciState: (github) => github.ciState(7),
   commitCiState: (github) => github.commitCiState("c1"),
   branchCiState: (github) => github.branchCiState("main"),

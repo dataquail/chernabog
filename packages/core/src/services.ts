@@ -354,6 +354,32 @@ export type CiState = (
   readonly caveat?: string;
 };
 
+// One check on a commit, as GitHub reports it: its newest check run or
+// commit status by name.
+export type CiCheck = {
+  readonly name: string;
+  // A check run (Actions, a GitHub App) or a commit status (Jenkins,
+  // CircleCI, Buildkite and the like).
+  readonly kind: "check-run" | "status";
+  // Passed covers success, neutral and skipped; failed, any other ending.
+  readonly state: "pending" | "passed" | "failed";
+  // Whether the base branch's rules require it.
+  readonly required: boolean;
+  readonly url: string;
+};
+
+// A pull request's CI on its head, as facts: every check, by name, and the
+// checks the base branch requires, some of which may not have reported yet.
+// `caveat` says why `required` is empty when GitHub won't say, as for a
+// private repo in a free-plan org. Which of them gate a merge is the flow's
+// decision.
+export type CiChecks = {
+  readonly headSha: string;
+  readonly checks: ReadonlyArray<CiCheck>;
+  readonly required: ReadonlyArray<string>;
+  readonly caveat: Option.Option<string>;
+};
+
 // A failed check, and where to read why.
 export type CiFailedRun = {
   readonly name: string;
@@ -384,9 +410,12 @@ export class GitHub extends Context.Service<
   GitHub,
   {
     // Open issues labelled eligible (and ready on the board, when the repo has one), oldest first.
+    // Deprecated: one recipe's queue. Call queuedIssuesLabelled with the flow's own label.
+    // Removed in core's next major (ADR 0005).
     readonly queuedIssues: Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     // Open issues with this label (and ready on the board, when the repo has one), oldest first.
     queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    // Deprecated with queuedIssues, its first issue.
     readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
     // Open issues with this label, whatever their status on the board, oldest first.
     issuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
@@ -442,9 +471,14 @@ export class GitHub extends Context.Service<
     // The reviews submitted on a pull request, oldest first.
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
-    // Red as soon as any check fails; green once every check the base branch
-    // requires has passed, or every check, when the branch requires none or
-    // GitHub won't say (then `caveat` says so).
+    // Every check run and commit status on the pull request's head, and
+    // which the base branch requires: facts, for a flow to decide from.
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
+    // Deprecated: a verdict made in the adapter. Read ciChecks and decide with
+    // a block, such as the SDK's Ci.verdict. Removed in core's next major
+    // (ADR 0005). Red as soon as any check or commit status fails; green once
+    // every check the base branch requires has passed, or every check, when
+    // the branch requires none or GitHub won't say (then `caveat` says so).
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     // A commit's check runs and commit statuses. A sha with none yet, such as
     // just after a push, is pending with nothing in waitingOn: telling "no CI
@@ -582,6 +616,7 @@ export const GitHubCapability = Capabilities.declare(
     pullRequestsLabelled: "read",
     openPullRequests: "read",
     reviews: "read",
+    ciChecks: "read",
     ciState: "read",
     commitCiState: "read",
     branchCiState: "read",
