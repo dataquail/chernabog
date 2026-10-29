@@ -7,11 +7,12 @@
 import {
   Agent,
   AgentError,
+  CAPABILITIES,
+  Capabilities,
   Claims,
   describeError,
   type Flow,
   FlowPackage,
-  Git,
   GitHub,
   isSetupError,
   Markers,
@@ -379,145 +380,34 @@ export const stoppingWith = <R>(
       ),
   });
 
-// The run's GitHub and Git, which report the changes other flows act on: pull
-// requests, pushes, reviews, merges, labels, statuses, comments and other API
-// writes, so no flow declares them. Branches made or deleted, Git.run, a
-// .chernabog/stages/ step's own process and the agent's own gh or git aren't
-// seen here; the run's end, or cron, catches those. A change is reported once
-// made; a failed one changed nothing to tick for.
+// The run's capabilities, which report the changes other flows act on: every
+// write a capability declares (pull requests, pushes, reviews, labels,
+// comments, other API writes…), so no flow declares them. What a port doesn't
+// declare a write (a claim, Git.run), a .chernabog/stages/ step's own process
+// and the agent's own gh or git aren't seen here; the run's end, or cron,
+// catches those. A change is reported once made; a failed one changed nothing
+// to tick for.
 export const reportingChanges = <R>(
   context: Context.Context<R>,
   changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const on =
-    (what: string, item: Option.Option<number> = Option.none()) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.tap(effect, () => changed(what, item));
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.tap(call, (result) => changed(write.done, write.item(result))),
+  );
 
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) =>
-            github.comment(number, body).pipe(on("commented", Option.some(number))),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(on(`labelled ${label}`, Option.some(number))),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(on(`unlabelled ${label}`, Option.some(number))),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(on(`moved to ${status}`, Option.some(number))),
-          assignSelf: (number) =>
-            github.assignSelf(number).pipe(on("assigned", Option.some(number))),
-          openPullRequest: (pullRequest) =>
-            github
-              .openPullRequest(pullRequest)
-              .pipe(
-                Effect.tap((opened) => changed("pull request opened", Option.some(opened.number))),
-              ),
-          requestReviewers: (pullRequest, logins) =>
-            github
-              .requestReviewers(pullRequest, logins)
-              .pipe(on("review requested", Option.some(pullRequest))),
-          review: (pullRequest, review) =>
-            github
-              .review(pullRequest, review)
-              .pipe(on("review submitted", Option.some(pullRequest))),
-          merge: (pullRequest, merge) =>
-            github.merge(pullRequest, merge).pipe(on("merged", Option.some(pullRequest))),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(on(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(on(`pushed ${branch}`)),
-        }),
-      ),
-  });
-};
-
-// The run's GitHub and Git, which check before each write another person or
-// run sees (comments, labels, assignments, statuses, pull requests, reviews,
-// merges, other API writes and pushes) that `fence` lets it through: that
-// every claim the run holds still names it. A run that lost one never gets
-// past the check. A small window between the check and the write remains.
+// The run's capabilities, which check before each write they declare, each
+// one another person or run sees, that `fence` lets it through: that every
+// claim the run holds still names it. A run that lost one never gets past
+// the check. A small window between the check and the write remains.
 export const fencing = <R>(
   context: Context.Context<R>,
   fence: (what: string) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const first =
-    (what: string) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.andThen(fence(what), effect);
-
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) => github.comment(number, body).pipe(first("commenting")),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(first(`labelling ${label}`)),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(first(`unlabelling ${label}`)),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(first(`moving to ${status}`)),
-          assignSelf: (number) => github.assignSelf(number).pipe(first("assigning")),
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(first("opening a pull request")),
-          requestReviewers: (pullRequest, logins) =>
-            github.requestReviewers(pullRequest, logins).pipe(first("requesting review")),
-          review: (pullRequest, review) =>
-            github.review(pullRequest, review).pipe(first("reviewing")),
-          merge: (pullRequest, merge) => github.merge(pullRequest, merge).pipe(first("merging")),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(first(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(first(`pushing ${branch}`)),
-        }),
-      ),
-  });
-};
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.andThen(fence(write.doing), call),
+  );
 
 // The fence a run's writes pass (fencing): every claim it holds, as its
 // claim-ref markers say, still names it. One that doesn't completes `lost`

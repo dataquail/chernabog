@@ -4,6 +4,7 @@
 // errors, the service ports, and the conventions the daemon itself acts on:
 // claims and markers, which it releases however a run ends, and subjects,
 // which it records. It only grows within a major (docs/adr/0004-core-abi.md).
+export * as Capabilities from "./capabilities.ts";
 export * as Claims from "./claims.ts";
 export * from "./errors.ts";
 export * from "./flow.ts";

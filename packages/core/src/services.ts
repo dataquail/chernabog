@@ -6,6 +6,7 @@ import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as Capabilities from "./capabilities.ts";
 import type {
   AgentError,
   GitError,
@@ -464,6 +465,114 @@ export class GitHub extends Context.Service<
   }
 >()("@chernabog/sdk/GitHub") {}
 
+// GitHub's writes, which the engine fences and reports, and why each other member isn't one.
+export const GitHubCapability = Capabilities.declare(
+  GitHub,
+  (github, guard) => ({
+    createIssue: guard(github.createIssue, () =>
+      Option.some({
+        doing: "creating an issue",
+        done: "issue created",
+        item: (created: Issue) => Option.some(created.number),
+      }),
+    ),
+    addSubIssue: guard(github.addSubIssue, (parent, child) =>
+      Capabilities.write(
+        `adding sub-issue #${child}`,
+        `sub-issue #${child} added`,
+        Option.some(parent),
+      ),
+    ),
+    addBlockedBy: guard(github.addBlockedBy, (issue, blocker) =>
+      Capabilities.write(
+        `marking blocked by #${blocker}`,
+        `blocked by #${blocker}`,
+        Option.some(issue),
+      ),
+    ),
+    removeBlockedBy: guard(github.removeBlockedBy, (issue, blocker) =>
+      Capabilities.write(
+        `unmarking blocked by #${blocker}`,
+        `no longer blocked by #${blocker}`,
+        Option.some(issue),
+      ),
+    ),
+    comment: guard(github.comment, (number) =>
+      Capabilities.write("commenting", "commented", Option.some(number)),
+    ),
+    addLabel: guard(github.addLabel, (number, label) =>
+      Capabilities.write(`labelling ${label}`, `labelled ${label}`, Option.some(number)),
+    ),
+    removeLabel: guard(github.removeLabel, (number, label) =>
+      Capabilities.write(`unlabelling ${label}`, `unlabelled ${label}`, Option.some(number)),
+    ),
+    moveToStatus: guard(github.moveToStatus, (number, status) =>
+      Capabilities.write(`moving to ${status}`, `moved to ${status}`, Option.some(number)),
+    ),
+    assignSelf: guard(github.assignSelf, (number) =>
+      Capabilities.write("assigning", "assigned", Option.some(number)),
+    ),
+    deleteBranch: guard(github.deleteBranch, (branch) =>
+      Capabilities.write(`deleting ${branch}`, `deleted ${branch}`),
+    ),
+    requestReviewers: guard(github.requestReviewers, (pullRequest) =>
+      Capabilities.write("requesting review", "review requested", Option.some(pullRequest)),
+    ),
+    openPullRequest: guard(github.openPullRequest, () =>
+      Option.some({
+        doing: "opening a pull request",
+        done: "pull request opened",
+        item: (opened: PullRequest) => Option.some(opened.number),
+      }),
+    ),
+    review: guard(github.review, (pullRequest) =>
+      Capabilities.write("reviewing", "review submitted", Option.some(pullRequest)),
+    ),
+    merge: guard(github.merge, (pullRequest) =>
+      Capabilities.write("merging", "merged", Option.some(pullRequest)),
+    ),
+    // Any method but GET writes.
+    request: guard(github.request, (method, path) =>
+      Option.flatMap(
+        Option.liftPredicate(method, (named) => named !== "GET"),
+        (writing) => Capabilities.write(`${writing} ${path}`, `${writing} ${path}`),
+      ),
+    ),
+  }),
+  {
+    queuedIssues: "read",
+    queuedIssuesLabelled: "read",
+    oldestQueued: "read",
+    issuesLabelled: "read",
+    issue: "read",
+    subIssues: "read",
+    blockedBy: "read",
+    trustedComments: "read",
+    comments: "read",
+    login: "read",
+    branchSha: "read",
+    // Whoever creates the branch first owns it.
+    createBranch: "claim",
+    createCommit: "local",
+    createRef: "claim",
+    ref: "read",
+    deleteRef: "claim",
+    updateRef: "claim",
+    pullRequest: "read",
+    pullRequestForBranch: "read",
+    pullRequestsLabelled: "read",
+    openPullRequests: "read",
+    reviews: "read",
+    ciState: "read",
+    commitCiState: "read",
+    branchCiState: "read",
+    ciFailureDetails: "read",
+    pullRequestFiles: "read",
+    closedPullRequestsLabelled: "read",
+    reviewComments: "read",
+  },
+);
+
 export class Git extends Context.Service<
   Git,
   {
@@ -477,6 +586,22 @@ export class Git extends Context.Service<
     pull(cwd: string, branch: string): Effect.Effect<void, GitError>;
   }
 >()("@chernabog/sdk/Git") {}
+
+export const GitCapability = Capabilities.declare(
+  Git,
+  (git, guard) => ({
+    push: guard(git.push, (_cwd, branch) =>
+      Capabilities.write(`pushing ${branch}`, `pushed ${branch}`),
+    ),
+  }),
+  {
+    run: "delegated",
+    headSha: "read",
+    commitsAhead: "read",
+    changedFiles: "read",
+    pull: "local",
+  },
+);
 
 export class Worktree extends Context.Service<
   Worktree,
@@ -492,6 +617,13 @@ export class Worktree extends Context.Service<
   }
 >()("@chernabog/sdk/Worktree") {}
 
+export const WorktreeCapability = Capabilities.declare(Worktree, () => ({}), {
+  ensure: "local",
+  pathFor: "read",
+  remove: "local",
+  checkout: "local",
+});
+
 export type LaunchDecision = { readonly launch: boolean; readonly reason: string };
 
 export class Usage extends Context.Service<
@@ -503,6 +635,11 @@ export class Usage extends Context.Service<
     readonly checkAccount: Effect.Effect<string, UsageError>;
   }
 >()("@chernabog/sdk/Usage") {}
+
+export const UsageCapability = Capabilities.declare(Usage, () => ({}), {
+  gate: "read",
+  checkAccount: "read",
+});
 
 export type AgentResult = {
   readonly sessionId: string;
@@ -539,6 +676,11 @@ export class Agent extends Context.Service<
   }
 >()("@chernabog/sdk/Agent") {}
 
+export const AgentCapability = Capabilities.declare(Agent, () => ({}), {
+  run: "delegated",
+  adapters: "read",
+});
+
 // The persona's seat in the team's reviewer pool: a login under github:, not
 // the implicit account, that the repo's reviewers list. Every block that
 // reviews requires it, so a flow that reviews does too. Chernabog checks it
@@ -552,6 +694,21 @@ export class ReviewerSeat extends Context.Service<
     readonly login: Effect.Effect<string>;
   }
 >()("@chernabog/sdk/ReviewerSeat") {}
+
+export const ReviewerSeatCapability = Capabilities.declare(ReviewerSeat, () => ({}), {
+  login: "read",
+});
+
+// The capability ports Chernabog provides a run, each declaring its writes:
+// the engine fences and reports what these declare. A new port joins them.
+export const CAPABILITIES: ReadonlyArray<Capabilities.Guarded> = [
+  GitHubCapability,
+  GitCapability,
+  WorktreeCapability,
+  UsageCapability,
+  AgentCapability,
+  ReviewerSeatCapability,
+];
 
 // What this machine knows of a run, by id: whether it is still going, or none
 // for a run it never had, such as one on another machine. Provided by Chernabog
