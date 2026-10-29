@@ -1,14 +1,14 @@
-// Creates a repo's labels, and corrects their colour or description where they
-// drifted. Labels it does not own are left alone.
+// Creates the labels a repo's flows declare, and corrects their colour or
+// description where they drifted. Labels no flow declares are left alone.
 
-import type { Flow, Labels } from "@chernabog/core";
+import { type Flow, type FlowLabel, labelsOf, Repo, Settings } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Struct from "effect/Struct";
 
 import { githubGetAllPages, githubSend } from "../../../../platform/github-api.ts";
+import { type EffectiveRepo, flowSettingsInput } from "../../../../repo-config.ts";
 
 export const Label = Schema.Struct({
   name: Schema.String,
@@ -26,63 +26,40 @@ export type DesiredLabel = {
 
 export type LabelChange = { readonly action: "create" | "update"; readonly label: DesiredLabel };
 
-const LOOK = {
-  eligible: { color: "0e8a16", description: "Queued for an unattended run; removed on claim" },
-  inProgress: { color: "fbca04", description: "An unattended run owns this issue" },
-  needsReview: {
-    color: "1d76db",
-    description: "PR is open and green; waiting for a person to review it",
-  },
-  changesRequested: { color: "e99695", description: "Review comments posted; waiting for a push" },
-  approved: { color: "0e8a16", description: "Approved by an agent review; a person merges" },
-  needsHuman: {
-    color: "b60205",
-    description: "A loop cap or a rule stopped the run; a person takes over",
-  },
-  needsClarification: {
-    color: "d876e3",
-    description: "Questions are on the issue; answer, then requeue",
-  },
-  stale: { color: "7f8c8d", description: "No push before the staleness timeout" },
-  ship: {
-    color: "5319e7",
-    description: "The automated path: chernabog implements, and merges once a review approves",
-  },
-  hybrid: {
-    color: "bfd4f2",
-    description: "The hybrid path: a person worked on it with an agent; a person merges",
-  },
-} satisfies Readonly<
-  Record<keyof Labels, { readonly color: string; readonly description: string }>
->;
-
-export const desiredLabels = (labels: Labels): ReadonlyArray<DesiredLabel> =>
-  Struct.keys(LOOK).map((key) => ({ name: labels[key], ...LOOK[key] }));
-
 const FLOW_LABEL_COLOR = "c5def5";
 
-// The labels the repo's flows declare, after the repo's own: a name already
-// there keeps the look it has.
-export const withFlowLabels = (
-  desired: ReadonlyArray<DesiredLabel>,
-  flows: Iterable<Flow>,
-): ReadonlyArray<DesiredLabel> => {
-  const all = [...desired];
+// The labels the flows declare, each once: the first flow to name one gives its look.
+export const desiredLabels = (labels: Iterable<FlowLabel>): ReadonlyArray<DesiredLabel> => {
+  const all: Array<DesiredLabel> = [];
 
-  for (const flow of flows) {
-    for (const label of flow.labels ?? []) {
-      if (!all.some((known) => known.name.toLowerCase() === label.name.toLowerCase())) {
-        all.push({
-          name: label.name,
-          color: label.color ?? FLOW_LABEL_COLOR,
-          description: label.description ?? "Declared by a Chernabog flow",
-        });
-      }
+  for (const label of labels) {
+    if (!all.some((known) => known.name.toLowerCase() === label.name.toLowerCase())) {
+      all.push({
+        name: label.name,
+        color: label.color ?? FLOW_LABEL_COLOR,
+        description: label.description ?? "Declared by a Chernabog flow",
+      });
     }
   }
 
   return all;
 };
+
+// The labels a repo's flows declare, as each persona's settings name them.
+export const declaredLabels = (repo: EffectiveRepo, flows: ReadonlyMap<string, Flow>) =>
+  Effect.map(
+    Effect.forEach(repo.personas, (own) =>
+      Effect.forEach([...flows], ([name, flow]) =>
+        labelsOf(flow).pipe(
+          Effect.provideService(Repo, own.settings),
+          Effect.provideService(Settings.FlowSettings, {
+            input: flowSettingsInput(own, name),
+          }),
+        ),
+      ),
+    ),
+    (found) => desiredLabels(found.flat(2)),
+  );
 
 const drifted = (current: Label, label: DesiredLabel) =>
   current.color.toLowerCase() !== label.color ||

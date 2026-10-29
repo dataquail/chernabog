@@ -9,6 +9,7 @@ import {
   HEADLESS,
   isManual,
   type RepoSettings,
+  type Settings,
   triggerOf,
   type WorkItem,
 } from "@chernabog/core";
@@ -24,6 +25,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
+import * as Record from "effect/Record";
 
 import { asSuffix, type Persona } from "../../../kernel/persona.value-object.ts";
 import { sameLogin } from "../../../kernel/reviewer-pool.value-object.ts";
@@ -51,11 +53,7 @@ import {
   flowLayer,
   runLogFile,
 } from "../../../modules/runs/infrastructure/runtime/engine.ts";
-import {
-  desiredLabels,
-  syncLabels,
-  withFlowLabels,
-} from "../../../modules/runs/infrastructure/runtime/labels.ts";
+import { declaredLabels, syncLabels } from "../../../modules/runs/infrastructure/runtime/labels.ts";
 import {
   buildPersonaContexts,
   loginOf,
@@ -156,14 +154,35 @@ const rehearsing = (
   launcher: HEADLESS,
 });
 
+// The scenario's install and local gate over every flow's settings too, for
+// the SDK's blocks that read them there (Settings), and the board none of them
+// gives, so the rehearsal's none stands.
+const rehearsalSettings = (loaded: LoadedScenario): Settings.Input => ({
+  ...Option.match(Option.fromUndefinedOr(loaded.scenario.install), {
+    onNone: () => ({}),
+    onSome: (install) => ({ install: Option.getOrNull(install) }),
+  }),
+  ...Option.match(Option.fromUndefinedOr(loaded.scenario.localGate), {
+    onNone: () => ({}),
+    onSome: (localGate) => ({ localGate }),
+  }),
+});
+
 const rehearsalRepo = (
   repo: EffectiveRepo,
   scratch: Scratch,
   loaded: LoadedScenario,
 ): EffectiveRepo => {
+  const over = rehearsalSettings(loaded);
+
   const [first, ...rest] = repo.personas.map((own): PersonaRepo => ({
     ...own,
     settings: rehearsing(own.settings, scratch, loaded),
+    shared: Record.remove({ ...own.shared, ...over }, "board"),
+    flows: Record.map(own.flows, (flow) => ({
+      ...flow,
+      settings: Record.remove({ ...flow.settings, ...over }, "board"),
+    })),
   }));
 
   return {
@@ -691,7 +710,7 @@ export const rehearse = (options: RehearseOptions) =>
 
         const labels = yield* syncLabels(
           loaded.scenario.repo,
-          withFlowLabels(desiredLabels(repo.settings.labels), flows.values()),
+          yield* declaredLabels(repo, flows),
         ).pipe(Effect.provideContext(yield* Layer.build(GitHubApi.layerFor(seedAs))));
 
         yield* Console.log(labels);

@@ -31,9 +31,9 @@ import {
   GitHub,
   Implement,
   Plan,
-  Repo,
   reportAs,
   Run,
+  Settings,
   Stack,
   Worktree,
 } from "@chernabog/sdk";
@@ -142,13 +142,13 @@ const readBase = (round: number, pullRequest: number) =>
     `stack-base-${round}#${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
       const pull = yield* github.pullRequest(pullRequest);
 
       return {
         base: pull.baseRef,
         baseSha: yield* github.branchSha(pull.baseRef),
-        withPerson: pull.labels.includes(repo.labels.needsHuman),
+        withPerson: pull.labels.includes(labelNames.needsHuman),
       };
     }).pipe(
       // A pull request gone under the run leaves nothing to bring up to date.
@@ -191,8 +191,8 @@ const refreshToPerson = (pullRequest: number, key: string, reason: string) =>
     `needs-human#refresh-${key}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(pullRequest, repo.labels.needsHuman);
+      const labelNames = yield* Settings.labels;
+      yield* github.addLabel(pullRequest, labelNames.needsHuman);
       yield* github.comment(
         pullRequest,
         `Chernabog stopped bringing this layer up to date with its base and needs a person: ${reason}`,
@@ -413,11 +413,26 @@ const workThrough = (epic: number) =>
     }
   });
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Board.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+  ...Settings.Reviewers.fields,
+  ...Settings.Stacks.fields,
+});
+
 export default defineFlow({
   trigger: Epic.queued.pipe(reportAs("trigger")),
   gate: Implement.gate,
   concurrency: 1,
-  labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
+  labels: Effect.map(Settings.declaredLabels, (set) => [
+    ...set,
+    ...Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
+  ]),
+  settings,
   // An epic closed, or claimed by another run, ends the run as superseded.
   stillValid: Epic.stillValid,
   // Its markers are the SDK's own: claim refs, labels, assignments, branches.

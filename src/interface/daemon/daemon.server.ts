@@ -105,6 +105,7 @@ import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   type EffectiveRepo,
   EnrolledRepo,
@@ -243,7 +244,10 @@ export const loadRepoState = (
       Effect.all({
         repo: loadRepo(machine, enrolled, configDir),
         flows: loadFlows(configDir),
-      }).pipe(Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows))),
+      }).pipe(
+        Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows)),
+        Effect.tap(({ flows, repo }) => checkFlowSettings(repo, flows)),
+      ),
     );
 
     if (Result.isFailure(loaded)) {

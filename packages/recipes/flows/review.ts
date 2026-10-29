@@ -19,6 +19,7 @@ import {
   Repo,
   reportAs,
   Review,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -103,7 +104,16 @@ const workflow = (item: WorkItem) =>
     }),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.

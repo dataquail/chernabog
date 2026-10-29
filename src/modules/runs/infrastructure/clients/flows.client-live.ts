@@ -11,6 +11,7 @@ import {
   Markers,
   Run,
   Runs,
+  Settings,
   type SetupError,
   triggerOf,
   type TriggerServices,
@@ -38,7 +39,7 @@ import {
 } from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
-import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
+import { capturing, type FlowHandle, flowSettingsFor, surfaceSetup } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
 const capturingRuns = capturing((runId: string) =>
@@ -254,10 +255,16 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                   message: `${flow.repo} has no services for ${flow.flow} as ${Option.getOrElse(flow.persona, () => "the implicit persona")}`,
                 }),
               ),
+            // The flow's settings, as the persona runs it, beside the persona's services.
             onSome: ([handle, build]) =>
-              Effect.map(build, (services) => ({ handle, services })).pipe(
-                Effect.mapError((error) => new PersonaNotReady({ message: error.message })),
-              ),
+              Effect.map(build, (services) => ({
+                handle,
+                services: Context.add(
+                  services,
+                  Settings.FlowSettings,
+                  flowSettingsFor(handle, flow.persona),
+                ),
+              })).pipe(Effect.mapError((error) => new PersonaNotReady({ message: error.message }))),
           },
         );
 

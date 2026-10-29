@@ -1,7 +1,7 @@
 // `chernabog doctor`: checks logins, gh scopes, labels, trust and the daemon,
 // and says how to fix what is wrong.
 
-import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from "@chernabog/core";
+import { type Account, type ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
@@ -18,7 +18,7 @@ import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts
 import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import {
-  desiredLabels,
+  declaredLabels,
   Label,
   planLabelSync,
 } from "../../../modules/runs/infrastructure/runtime/labels.ts";
@@ -49,6 +49,7 @@ import {
   flowNames,
   type FlowSource,
   flowSources,
+  loadFlows,
   reviewingFlows,
 } from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
@@ -203,6 +204,18 @@ const checkPersonas = (
       );
     }
   });
+
+// The labels a repo's flows declare, from its base branch; none when they don't load.
+const declaredOn = (machine: MachineConfig, repo: EnrolledRepo, baseBranch: string) =>
+  Effect.flatMap(snapshotConfig(repo.path, baseBranch, false), (snapshot) =>
+    Effect.flatMap(
+      Effect.all({
+        effective: loadRepo(machine, repo, snapshot.configDir),
+        flows: loadFlows(snapshot.configDir),
+      }),
+      ({ effective, flows }) => declaredLabels(effective, flows),
+    ),
+  ).pipe(Effect.option);
 
 export const doctor = Effect.gen(function* () {
   const exec = yield* Exec;
@@ -596,9 +609,12 @@ export const doctor = Effect.gen(function* () {
       continue;
     }
 
-    const missing = planLabelSync(labels.value, desiredLabels(DEFAULT_LABELS)).filter(
-      (change) => change.action === "create",
-    );
+    // A repo whose flows don't load says so above, and has no labels to check.
+    const missing = Option.match(yield* declaredOn(machine, repo, baseBranch), {
+      onNone: () => [],
+      onSome: (declared) =>
+        planLabelSync(labels.value, declared).filter((change) => change.action === "create"),
+    });
 
     check(
       missing.length === 0,

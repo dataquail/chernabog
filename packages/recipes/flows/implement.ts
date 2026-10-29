@@ -30,12 +30,13 @@ import {
   type NothingCommitted,
   type PullRequestClosed,
   type PushRejected,
-  Repo,
   reportAs,
+  Settings,
   Skip,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 // Issues labelled auto:eligible, then ones labelled auto:ship, the automated
 // path, whose pull request chernabog merges once it's approved. Oldest first;
@@ -46,17 +47,17 @@ import * as Option from "effect/Option";
 // author marked ready, which wake their run.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
-  const repo = yield* Repo;
+  const labelNames = yield* Settings.labels;
 
-  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
+  const eligible = yield* github.queuedIssuesLabelled(labelNames.eligible);
 
-  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter(
+  const shipping = (yield* github.queuedIssuesLabelled(labelNames.ship)).filter(
     (issue) => !eligible.some((queued) => queued.number === issue.number),
   );
 
   return [
     ...(yield* Implement.queued(eligible)),
-    ...(yield* Implement.queued(shipping, Option.some(repo.labels.ship))),
+    ...(yield* Implement.queued(shipping, Option.some(labelNames.ship))),
     ...(yield* Implement.readied),
   ];
 }).pipe(reportAs("trigger"));
@@ -64,11 +65,22 @@ const trigger = Effect.gen(function* () {
 // How long an adopted draft waits for its author to mark it ready.
 const READY_WITHIN = "14 days";
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Board.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
-  labels: Implement.adoptionLabels,
+  labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...Implement.adoptionLabels]),
+  settings,
   // An issue closed, or claimed by another run, ends the run as superseded.
   stillValid: Implement.stillValid,
   workflow: (item) =>

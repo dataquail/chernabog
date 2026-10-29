@@ -28,11 +28,7 @@ import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
-import {
-  desiredLabels,
-  syncLabels,
-  withFlowLabels,
-} from "../../modules/runs/infrastructure/runtime/labels.ts";
+import { declaredLabels, syncLabels } from "../../modules/runs/infrastructure/runtime/labels.ts";
 import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
@@ -48,7 +44,7 @@ import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
 import { VERSION } from "../../platform/version.ts";
-import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
+import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
@@ -353,19 +349,15 @@ const labels = Command.make(
 
       for (const enrolled of targets) {
         const { configDir } = yield* repoConfigDir(enrolled, fromCheckout);
-        const { settings } = yield* loadRepo(machine, enrolled, configDir);
+        const effective = yield* loadRepo(machine, enrolled, configDir);
         const flows = yield* loadFlows(configDir);
+        yield* checkFlowSettings(effective, flows);
         yield* Console.log(
-          yield* syncLabels(
-            enrolled.repo,
-            withFlowLabels(desiredLabels(settings.labels), flows.values()),
-          ),
+          yield* syncLabels(enrolled.repo, yield* declaredLabels(effective, flows)),
         );
       }
     }),
-).pipe(
-  Command.withDescription("Create or correct each repo's labels, and those its flows declare"),
-);
+).pipe(Command.withDescription("Create or correct the labels each repo's flows declare"));
 
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {

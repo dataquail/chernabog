@@ -13,6 +13,10 @@ export type BundleClientService = {
   // upgraded .chernabog/ is pinned to.
   readonly sdkVersion: string;
   readonly scaffold: Effect.Effect<Scaffold>;
+  // config.schema.json for the repo at `root`: this binary's config, with
+  // each flow's settings as the schema its .chernabog/ flows declare them by.
+  // The config alone when its flows don't load.
+  readonly configSchema: (root: string) => Effect.Effect<string>;
   // Fails when a .chernabog/package.json's flows are typed against a newer
   // core than this binary provides, so it must not rewrite them.
   readonly refuseNewer: (manifest: string) => Effect.Effect<void, ScaffoldRefused>;

@@ -8,6 +8,7 @@ export * as Capabilities from "./capabilities.ts";
 export * as Claims from "./claims.ts";
 export * from "./errors.ts";
 export * from "./flow.ts";
+export * as Settings from "./flow-settings.ts";
 export * from "./json.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";

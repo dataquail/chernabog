@@ -17,37 +17,62 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | Key                | Default                    | Meaning                                                                  |
 | ------------------ | -------------------------- | ------------------------------------------------------------------------ |
 | `baseBranch`       | `main`                     | branch flows are read from and pull requests target                       |
-| `install`          | none                       | command run in each fresh worktree; `null` for none                       |
-| `localGate`        | `[]`                       | commands a change must pass before its pull request opens                |
-| `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt                        |
-| `humanOnlyPaths`   | `[]`                       | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
-| `notes`            | `[]`                       | repo facts the agent should know                                          |
-| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
-| `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus` |
-| `reviewTrigger`    | none                       | comment posted on each new pull request, e.g. to summon a review bot      |
+| `settings`         | none                       | settings every flow shares, such as the reviewer pool or the local gate; see [Flow settings](#flow-settings) |
 | `schedule`         | spread across the hour     | cron for every flow but [manual ones](/chernabog/flows/flows/#manual-flows) |
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
-| `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers)          |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `flows.<flow>.settings` | —                     | the flow's own settings, over `settings`; see [Flow settings](#flow-settings) |
 | `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |
-| `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
-| `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
-| `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
-| `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
-| `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
 | `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person |
 | `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight |
-| `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
-| `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
-| `limits.stackDepth` | `4`                       | the most layers one stack of an epic's tasks may hold before the epic waits for its bottom to merge |
 
 `launchers` is refused here: only machine config defines launcher commands.
+
+### Flow settings
+
+The engine's settings are the ones above. Everything else is a flow's: each flow declares the settings it reads with a schema (`defineFlow({ settings })`), and the repo sets them under `settings:`, for every flow that declares a key, or under `flows.<flow>.settings`, for one flow. A person can override them for a persona in machine config, under the repo entry's (or the persona's) `flows.<flow>.settings`. The layers merge key by key, in that order, and a key two layers give as an object, such as `labels`, merges one level down. A flow's settings are checked against its schema when the flow loads, and one it refuses fails the repo, like any other config error. `config.schema.json` describes each flow's settings from its schema: `init` and `chernabog recipes add`, `update` and `upgrade` rewrite it.
+
+The SDK's blocks read these shared settings, which the recipes declare:
+
+| Setting            | Default                    | Meaning                                                                  |
+| ------------------ | -------------------------- | ------------------------------------------------------------------------ |
+| `install`          | none                       | command run in each fresh worktree; `null` for none                       |
+| `localGate`        | `[]`                       | commands a change must pass before its pull request opens                |
+| `localGateRounds`  | `2`                        | times the agent is sent back for a failing local gate                    |
+| `ciRounds`         | `3`                        | times it is sent back for red CI                                          |
+| `ciTimeout`        | `2 hours`                  | wait for CI to finish                                                     |
+| `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers). Set it under `settings:`, since the flows that ask for reviews and the ones that review share it |
+| `reviewRounds`     | `1`                        | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
+| `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt. A flow's add to the repo's and the machine's |
+| `humanOnlyPaths`   | `[".github/**"]`           | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
+| `notes`            | `[]`                       | repo facts the agent should know                                          |
+| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
+| `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus`. Set it under `settings:` |
+| `planNodes`        | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
+| `planRounds`       | `2`                        | times the agent is sent back for a plan that fails its checks             |
+| `stackDepth`       | `4`                        | the most layers one stack of an epic's tasks may hold before the epic waits for its bottom to merge |
+
+```yaml
+# .chernabog/config.yaml
+settings:
+  reviewers: [alice, data-quail]
+  localGate: [bun run check, bun test]
+flows:
+  implement:
+    settings: { ciRounds: 5 }
+  release:
+    settings: { promoteFrom: develop } # a setting of the repo's own release flow
+```
+
+A recipe of your own declares its settings beside the SDK's it uses, and reads them typed; see [Settings](/chernabog/flows/sdk/#settings).
+
+The keys these replaced still load until core's next major, and a flow's settings fall back to them: `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, `labels`, `board`, `reviewers` and `limits.localGateRounds`, `ciRounds`, `reviewRounds`, `staleAfter`, `ciTimeout`, `planNodes`, `planRounds` and `stackDepth` at the top of `config.yaml`. `reviewTrigger` still loads, and does nothing.
 
 ### Runners
 
@@ -64,7 +89,7 @@ flows:
 
 ### Reviewers
 
-`reviewers` names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
+`reviewers`, a [flow setting](#flow-settings), names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
 
 On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
 
@@ -75,7 +100,8 @@ A review request for a login this machine doesn't act as waits for the machine t
 
 ```yaml
 # .chernabog/config.yaml
-reviewers: [alice, data-quail]
+settings:
+  reviewers: [alice, data-quail]
 ```
 
 ### Agents by role

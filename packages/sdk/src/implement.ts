@@ -54,6 +54,7 @@ import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
+import * as Settings from "./settings.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // The work branch of an issue, as core's claims name it.
@@ -228,7 +229,7 @@ export const queuedBy = (item: WorkItem) =>
   );
 
 const queueLabel = (options: QueueOptions) =>
-  Repo.use((repo) => Effect.succeed(options.label ?? repo.labels.eligible));
+  Effect.map(Settings.labels, (labels) => options.label ?? labels.eligible);
 
 // The branch an item's work builds on, and its pull request targets: the
 // repo's base branch unless given, such as another task's branch for a task
@@ -441,20 +442,21 @@ export const legacyClaim = (latest: Option.Option<ClaimMarker>, runId: string) =
 export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labels = yield* Settings.labels;
+    const board = yield* Settings.board;
     const also = options.keepOn ?? [];
-    const inProgress = { number: issue, label: repo.labels.inProgress };
+    const inProgress = { number: issue, label: labels.inProgress };
 
     yield* Markers.hold(Markers.label, inProgress, { keepOn: also });
-    yield* github.addLabel(issue, repo.labels.inProgress);
+    yield* github.addLabel(issue, labels.inProgress);
 
-    if (Option.isSome(repo.board)) {
+    if (Option.isSome(board)) {
       yield* Markers.hold(
         Markers.boardStatus,
-        { number: issue, status: repo.board.value.readyStatus },
+        { number: issue, status: board.value.readyStatus },
         { keepOn: ["done", ...also] },
       );
-      yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
+      yield* github.moveToStatus(issue, board.value.inProgressStatus);
     }
 
     yield* Markers.hold(
@@ -467,7 +469,9 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
 
 // Takes the in-progress label off now, rather than when the run ends.
 export const dropInProgress = (issue: number) =>
-  Repo.use((repo) => Markers.drop(Markers.label, { number: issue, label: repo.labels.inProgress }));
+  Effect.flatMap(Settings.labels, (labels) =>
+    Markers.drop(Markers.label, { number: issue, label: labels.inProgress }),
+  );
 
 const describePull = (pull: { readonly number: number; readonly url: string }) =>
   `#${pull.number} (${pull.url})`;
@@ -494,9 +498,9 @@ export const adoptionComment = (claim: ClaimMarker, adopted: Adopted) =>
 const referToPerson = (issue: number, label: string, reason: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labels = yield* Settings.labels;
     yield* github.removeLabel(issue, label);
-    yield* github.addLabel(issue, repo.labels.needsHuman);
+    yield* github.addLabel(issue, labels.needsHuman);
     yield* github.comment(issue, `Chernabog didn't take this issue on: ${reason}`);
 
     return yield* new NeedsHuman({ reason });
@@ -689,11 +693,12 @@ export const prepareWorktree = (branch: string, options: RepeatOptions = {}) =>
     named(options, "prepare-worktree"),
     Effect.gen(function* () {
       const repo = yield* Repo;
+      const { install } = yield* Settings.localGate;
       const run = yield* Run;
       const path = yield* (yield* Worktree).ensure(branch, run.runId);
 
-      if (Option.isSome(repo.install)) {
-        const installed = yield* shell(repo.install.value, path, repo.env);
+      if (Option.isSome(install)) {
+        const installed = yield* shell(install.value, path, repo.env);
 
         if (installed.exitCode !== 0) {
           return yield* new StepFailed({ step: "install", message: tail(installed.output, 30) });
@@ -764,6 +769,8 @@ export const implementWithAgent = (
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const localGate = yield* Settings.localGate;
+      const rules = yield* Settings.rules;
       const run = yield* Run;
       const details = yield* github.issue(issue);
       const comments = yield* github.trustedComments(issue);
@@ -776,9 +783,9 @@ export const implementWithAgent = (
         comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
         branch: branchFor(issue),
         base: yield* baseOf(options),
-        localGate: repo.localGate.map((command) => `\`${command}\``),
-        humanOnly: repo.humanOnly,
-        notes: repo.notes,
+        localGate: localGate.commands.map((command) => `\`${command}\``),
+        humanOnly: rules.humanOnly,
+        notes: rules.notes,
       });
 
       const result = yield* (yield* Agent).run({
@@ -982,7 +989,8 @@ export const askForClarification = (
     named(options, "needs-clarification"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labels = yield* Settings.labels;
+      const board = yield* Settings.board;
       const label = yield* queueLabel(options);
       const questions = outcome.questions ?? outcome.summary;
       yield* github.comment(
@@ -990,10 +998,10 @@ export const askForClarification = (
         [
           questions,
           "",
-          `To requeue: answer the questions above, then ${requeueHint(repo.board)} \`${label}\` again.`,
+          `To requeue: answer the questions above, then ${requeueHint(board)} \`${label}\` again.`,
         ].join("\n"),
       );
-      yield* github.addLabel(issue, repo.labels.needsClarification);
+      yield* github.addLabel(issue, labels.needsClarification);
       yield* dropInProgress(issue);
       yield* github.deleteBranch(branchFor(issue));
       yield* (yield* Worktree).remove(branchFor(issue));
@@ -1013,9 +1021,10 @@ const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =
     named(options, `local-gate-${round}`),
     Effect.gen(function* () {
       const repo = yield* Repo;
+      const localGate = yield* Settings.localGate;
       const log = yield* RunLog;
 
-      for (const command of repo.localGate) {
+      for (const command of localGate.commands) {
         yield* log.log(`local gate: ${command}`);
         const result = yield* shell(command, worktree, repo.env);
 
@@ -1033,10 +1042,10 @@ const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =
   );
 
 // Runs the repo's local gate, and sends the agent back to fix what fails, up to
-// limits.localGateRounds times.
+// localGateRounds times.
 export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.localGate;
 
     for (let round = 1; ; round++) {
       const result = yield* runLocalGate(worktree, round, options);
@@ -1045,9 +1054,9 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
         return;
       }
 
-      if (round > repo.limits.localGateRounds) {
+      if (round > rounds) {
         return yield* new NeedsHuman({
-          reason: `the local gate still fails after ${repo.limits.localGateRounds} fix attempts:\n\n${result.failure}`,
+          reason: `the local gate still fails after ${rounds} fix attempts:\n\n${result.failure}`,
         });
       }
 
@@ -1074,7 +1083,7 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
     name,
     Effect.gen(function* () {
       const git = yield* Git;
-      const repo = yield* Repo;
+      const rules = yield* Settings.rules;
       const base = yield* baseOf(options);
 
       if ((yield* git.commitsAhead(worktree, base)) === 0) {
@@ -1082,7 +1091,10 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
       }
 
       if (options.withPerson !== true) {
-        const touched = pathsMatching(yield* git.changedFiles(worktree, base), repo.humanOnlyPaths);
+        const touched = pathsMatching(
+          yield* git.changedFiles(worktree, base),
+          rules.humanOnlyPaths,
+        );
 
         if (touched.length > 0) {
           return yield* new NeedsHuman({
@@ -1130,10 +1142,10 @@ export const openPullRequest = (
     named(options, "open-pull-request"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labels = yield* Settings.labels;
       const branch = branchFor(issue);
       const base = yield* baseOf(options);
-      const shipping = options.label === repo.labels.ship;
+      const shipping = options.label === labels.ship;
 
       const existing = Option.filter(
         yield* github.pullRequestForBranch(branch),
@@ -1154,7 +1166,7 @@ export const openPullRequest = (
       yield* Subjects.name(Claims.pullRequest(opened.number));
 
       if (shipping) {
-        yield* github.addLabel(opened.number, repo.labels.ship);
+        yield* github.addLabel(opened.number, labels.ship);
       }
 
       return { number: opened.number, url: opened.url };
@@ -1172,14 +1184,14 @@ const CiReading = Schema.Union([
 
 type CiReading = typeof CiReading.Type;
 
-// Polls the pull request's checks durably until they stop pending, or limits.ciTimeout passes.
+// Polls the pull request's checks durably until they stop pending, or ciTimeout passes.
 const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { timeout } = yield* Settings.ci;
 
     const maxPolls = Math.max(
       1,
-      Math.ceil(Duration.toMillis(repo.limits.ciTimeout) / Duration.toMillis(CI_POLL)),
+      Math.ceil(Duration.toMillis(timeout) / Duration.toMillis(CI_POLL)),
     );
 
     let reading: CiReading = { state: "pending", waitingOn: [] };
@@ -1188,7 +1200,7 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
       if (poll > maxPolls) {
         return yield* new CiTimedOut({
           pullRequest,
-          after: Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout)),
+          after: Duration.format(timeout),
         });
       }
 
@@ -1215,7 +1227,7 @@ const waitForCiIn = <E, R>(
   options: RepeatOptions,
 ) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.ci;
 
     for (let round = 1; ; round++) {
       const reading = yield* awaitChecks(pullRequest, round, options);
@@ -1226,9 +1238,9 @@ const waitForCiIn = <E, R>(
 
       const failed = reading.failedChecks.join(", ");
 
-      if (round > repo.limits.ciRounds) {
+      if (round > rounds) {
         return yield* new NeedsHuman({
-          reason: `CI is still red after ${repo.limits.ciRounds} fix attempts: ${failed}`,
+          reason: `CI is still red after ${rounds} fix attempts: ${failed}`,
         });
       }
 
@@ -1304,9 +1316,8 @@ export type HandOffOptions = {
   readonly adoptedBranch?: string;
 } & RepeatOptions;
 
-// Hands the green pull request to review: the review trigger if the repo has
-// one, a review requested of one reviewer from the pool (needs-review for a
-// person without one) unless the options leave it off, and a closing comment
+// Hands the green pull request to review: a review requested of one reviewer
+// from the pool (needs-review for a person without one) unless the options leave it off, and a closing comment
 // on the issue.
 export const handOff = (
   issue: number,
@@ -1320,10 +1331,6 @@ export const handOff = (
       const github = yield* GitHub;
       const repo = yield* Repo;
       const run = yield* Run;
-
-      if (Option.isSome(repo.reviewTrigger)) {
-        yield* github.comment(pullRequest.number, repo.reviewTrigger.value);
-      }
 
       // The fix flow resumes this session to answer a review. For an adopted
       // pull request it is one a CI fix started, or none yet.
@@ -1424,12 +1431,12 @@ export const handToHuman = (
     named(options, "needs-human"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(issue, repo.labels.needsHuman);
+      const labels = yield* Settings.labels;
+      yield* github.addLabel(issue, labels.needsHuman);
       yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
-        yield* github.addLabel(pullRequest.value, repo.labels.needsHuman);
+        yield* github.addLabel(pullRequest.value, labels.needsHuman);
       }
 
       yield* github.comment(

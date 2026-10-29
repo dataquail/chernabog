@@ -379,6 +379,43 @@ assignment, a board Status, a claim ref or branch), with a named release.
 - **Cancel still does its own cleanup** (claim ref, label, assignment, branch)
   for runs from before markers; markers' releases are safe to repeat after it.
 
+## Flow settings (#202)
+
+Core's settings are the engine's; everything else is a flow's
+(`docs/adr/0005-the-engine-knows-no-workflow.md`, decision 6).
+
+- **A flow declares its settings** with a schema, `defineFlow({ settings })`,
+  and reads them with `Settings.read(schema)` (core's
+  `packages/core/src/flow-settings.ts`), through the `FlowSettings` service
+  the engine provides: `flowLayer` for a run, `FlowsClientLive` for a
+  trigger, item, gate and stillValid, `declaredLabels` for `chernabog labels`.
+- **The input is merged** in `src/repo-config.ts`: config.yaml's `settings:`
+  (`PersonaRepo.shared`), then `flows.<name>.settings`, then the persona's
+  `flows.<name>.settings` in machine config (`mergeFlows`), key by key, an
+  object one level down (`mergeSettings`, `flowSettingsInput`).
+  `checkFlowSettings` decodes each flow's schema for each persona wherever a
+  repo's flows load beside its config, so a bad setting is a `ConfigError`.
+- **The SDK's shared settings** are `packages/sdk/src/settings.ts`: schemas a
+  recipe spreads into its own (`Settings.Ci.fields`, …) and readers its blocks
+  call (`Settings.ci`, `labels`, `localGate`, …). A reader falls back, key by
+  key, to Repo's deprecated fields, which config.yaml's old top-level keys
+  still fill. Each bundled recipe declares the blocks it reads and
+  `labels: Settings.declaredLabels`.
+- **Labels are the flows'.** `chernabog labels` and `doctor` create and check
+  what the loaded flows declare (`labelsOf`, which may work them out from
+  settings); `src/` has no label set of its own.
+- **Kept until core's next major** (core only grows within one, ADR 0004):
+  core's `Labels`, `DEFAULT_LABELS`, `Limits` and RepoSettings' recipe keys,
+  and config.yaml's old keys, which a flow's settings fall back to.
+  `reviewTrigger` still loads and does nothing. The engine still reads the
+  reviewer pool (`ReviewerSeat`) and the board (`queuedIssues`) from Repo,
+  which `mergePersona` fills from `settings.reviewers` and `settings.board`
+  when the old keys are unset.
+- **config.schema.json** describes each flow's settings from its schema
+  (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
+  `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and
+  `upgrade` run again once the flows changed.
+
 ## Rehearsals (#115)
 
 `chernabog rehearse <flow> --scenario <file>` runs a repo's own flow file down
@@ -512,15 +549,15 @@ Decisions that cut across them:
 
 ### Review flows (#53, #54)
 
-- `reviewers:` in the team's config is the pool. `Implement.handOff` calls
+- `settings.reviewers` in the team's config (once `reviewers:`) is the pool. `Implement.handOff` calls
   `PullRequest.requestReview`, which picks one at random, never the author,
   inside an activity so a replay asks the same login; no pool means
   `auto:needs-review` for a person.
 - `review` runs as a persona whose review is requested and who hasn't
   reviewed; `re-review` as one asked again, resuming
   its session with `Review.recheck` from the review marker (which records
-  reviewer, sessionId and adapter). `limits.reviewRounds` (default 1) caps
-  re-reviews.
+  reviewer, sessionId and adapter). The `reviewRounds` setting (default 1)
+  caps re-reviews.
 - Merging goes through `PullRequest.merge`'s safety checks, and only for what
   `PullRequest.ships` (carries `auto:ship`), read once per run with
   `PullRequest.shipping`; the recipes do this, and `PullRequest.mergeOrLeave`

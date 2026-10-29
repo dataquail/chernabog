@@ -29,6 +29,7 @@ import {
   UsageError,
   WorkError,
 } from "./errors.ts";
+import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
 import {
@@ -128,8 +129,14 @@ type FlowCommon = {
   readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
   // Runs of this flow in one repo at once. Defaults to 1; machine limits still apply.
   readonly concurrency?: number;
-  // Labels of the flow's own, for `chernabog labels` to create.
-  readonly labels?: ReadonlyArray<FlowLabel>;
+  // The flow's own settings, by a schema it declares: what config.yaml's
+  // shared `settings:` and `flows.<name>.settings` may set for it. The engine
+  // decodes them when the flow loads, and a flow reads them with Settings.read.
+  readonly settings?: SettingsSchema;
+  // The labels the flow uses, for `chernabog labels` to create: a list, or
+  // one worked out from its settings, as when a repo renames a label.
+  readonly labels?:
+    ReadonlyArray<FlowLabel> | Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
   // Whether the trigger finds only the work of the persona it runs as, as
   // review's does by its review requests, so several personas can run the
   // flow without assignee or reviewRequested to tell them apart.
@@ -169,6 +176,17 @@ export type ManualFlow = FlowCommon & {
 export type Flow = TriggeredFlow | ManualFlow;
 
 export const defineFlow = (flow: Flow): Flow => flow;
+
+// The labels a flow declares, worked out from its settings if it works them out.
+export const labelsOf = (
+  flow: Flow,
+): Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo> => {
+  if (Effect.isEffect(flow.labels)) {
+    return flow.labels;
+  }
+
+  return Effect.succeed(flow.labels ?? []);
+};
 
 // Whether a person starts each of the flow's runs, by naming its work.
 export const isManual = (flow: Flow): flow is ManualFlow => !Effect.isEffect(flow.trigger);

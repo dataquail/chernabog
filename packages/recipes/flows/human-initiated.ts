@@ -11,9 +11,18 @@
 // version. The names of its steps ("claim", "work-with-person") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { Claims, defineFlow, Hybrid, Implement, Skip, type WorkItem } from "@chernabog/sdk";
+import {
+  Claims,
+  defineFlow,
+  Hybrid,
+  Implement,
+  Settings,
+  Skip,
+  type WorkItem,
+} from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const work = (issue: number) =>
   Effect.gen(function* () {
@@ -69,7 +78,19 @@ const workflow = (item: WorkItem) =>
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Board.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   item: Hybrid.itemFor,
   // No trigger finds work for several personas to share: each run is a person's.
   ownWork: true,

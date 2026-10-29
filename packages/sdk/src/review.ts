@@ -40,6 +40,7 @@ import { RECHECK } from "./default-prompts.ts";
 import { ADOPTED_LABEL, sessionIdFor } from "./implement.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
+import * as Settings from "./settings.ts";
 import { pullRequestValidity } from "./still-valid.ts";
 
 export {
@@ -286,6 +287,7 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
   Effect.gen(function* () {
     const github = yield* GitHub;
     const repo = yield* Repo;
+    const rules = yield* Settings.rules;
     const run = yield* Run;
     const pull = yield* github.pullRequest(pullRequest);
 
@@ -304,8 +306,8 @@ const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<s
       base: pull.baseRef,
       round,
       earlier: earlier.map(describeNote),
-      humanOnly: repo.humanOnly,
-      notes: repo.notes,
+      humanOnly: rules.humanOnly,
+      notes: rules.notes,
     });
 
     const adapter = yield* adapterFor(role);

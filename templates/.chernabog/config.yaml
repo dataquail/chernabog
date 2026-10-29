@@ -6,21 +6,44 @@
 
 baseBranch: main
 
-# Run in a fresh worktree before the agent starts. null for none.
-install: pnpm install --frozen-lockfile
+# Settings every flow shares, read by the flows whose settings declare them.
+# flows.<name>.settings overrides them for one flow, key by key. Each flow's
+# own settings are described in config.schema.json once its recipe is added.
+settings:
+  # Run in a fresh worktree before the agent starts. null for none.
+  install: pnpm install --frozen-lockfile
 
-# Commands the change must pass before its pull request opens.
-localGate: []
+  # Commands the change must pass before its pull request opens.
+  localGate: []
 
-# Decisions the agent must stop for and leave to a person.
-humanOnly: []
+  # Decisions the agent must stop for and leave to a person.
+  humanOnly: []
 
-# Paths a change must not touch; one that does goes to a person instead of a pull request.
-humanOnlyPaths:
-  - .github/**
+  # Paths a change must not touch; one that does goes to a person instead of a pull request.
+  humanOnlyPaths:
+    - .github/**
 
-# Repo facts the agent should know.
-notes: []
+  # Repo facts the agent should know.
+  notes: []
+
+  # The reviewer pool, by GitHub login. A pull request with green CI asks one
+  # of them at random to review it, never its author; review runs as that
+  # persona, and re-review when it's asked again. On the automated path (an
+  # auto:ship pull request) the approving reviewer merges, so each needs write
+  # access to the repo. Unset: the pull request is labelled for a person to review.
+  # reviewers: [alice, bob]
+
+  localGateRounds: 2
+  ciRounds: 3
+  # Re-reviews of one pull request before a person takes over.
+  reviewRounds: 1
+  ciTimeout: 2 hours
+  # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
+  planNodes: 12
+  planRounds: 2
+  # The most layers one stack of an epic's tasks may hold before the epic
+  # recipe waits for the bottom one to merge.
+  stackDepth: 4
 
 # Default schedule for every flow, as cron. Unset spreads repos across the hour.
 # schedule: "17 * * * *"
@@ -30,22 +53,17 @@ notes: []
 # still pick them.
 # runners: [alice]
 
-# The reviewer pool, by GitHub login. A pull request with green CI asks one
-# of them at random to review it, never its author; review runs as that
-# persona, and re-review when it's asked again. On the automated path (an
-# auto:ship pull request) the approving reviewer merges, so each needs write
-# access to the repo. Unset: the pull request is labelled for a person to review.
-# reviewers: [alice, bob]
-
 # Per flow: schedule, concurrency, enabled (the default chernabog enroll
-# offers), agent, runners, assignee and reviewRequested. A reviewer on another agent than the one that wrote the code
-# avoids a model approving its own work; it runs under that agent's account in
-# machine config. assignee and reviewRequested work like GitHub's assignee: and
-# review-requested: qualifiers: "@me" (this machine's GitHub login), a login,
-# none, or a list. A machine starts only the work they match.
+# offers), agent, runners, assignee, reviewRequested and settings. A reviewer
+# on another agent than the one that wrote the code avoids a model approving
+# its own work; it runs under that agent's account in machine config. assignee
+# and reviewRequested work like GitHub's assignee: and review-requested:
+# qualifiers: "@me" (this machine's GitHub login), a login, none, or a list. A
+# machine starts only the work they match.
 # flows:
 #   implement:
 #     assignee: ["@me", none]
+#     settings: { ciRounds: 5 }
 #   review:
 #     agent: codex
 #     reviewRequested: "@me"
@@ -58,27 +76,16 @@ notes: []
 # launcher: orca
 # allowedLaunchers: [orca, tmux, headless]
 
-limits:
-  localGateRounds: 2
-  ciRounds: 3
-  # Re-reviews of one pull request before a person takes over.
-  reviewRounds: 1
-  staleAfter: 6 hours
-  ciTimeout: 2 hours
-  # The least time between two ticks events ask for, for one persona's flow.
-  # eventTickMin: 30 seconds
-  # How often the daemon checks that each run's issue or pull request is
-  # still there to work on, and ends a run whose item went as superseded.
-  # validityEvery: 5 minutes
-  # A run's claim on its issue or pull request is a lease its daemon renews:
-  # one not renewed for leaseTtl (parkedLeaseTtl while the run waits on
-  # review, CI or a person) expires, and another run may take the work over.
-  # leaseTtl: 12 hours
-  # parkedLeaseTtl: 3 days
-  # leaseRenewEvery: 30 minutes
-  # Tasks one plan may hold, and the plan recipe's attempts to fix one that fails its checks.
-  planNodes: 12
-  planRounds: 2
-  # The most layers one stack of an epic's tasks may hold before the epic
-  # recipe waits for the bottom one to merge.
-  stackDepth: 4
+# The engine's limits.
+# limits:
+#   # The least time between two ticks events ask for, for one persona's flow.
+#   eventTickMin: 30 seconds
+#   # How often the daemon checks that each run's issue or pull request is
+#   # still there to work on, and ends a run whose item went as superseded.
+#   validityEvery: 5 minutes
+#   # A run's claim on its issue or pull request is a lease its daemon renews:
+#   # one not renewed for leaseTtl (parkedLeaseTtl while the run waits on
+#   # review, CI or a person) expires, and another run may take the work over.
+#   leaseTtl: 12 hours
+#   parkedLeaseTtl: 3 days
+#   leaseRenewEvery: 30 minutes

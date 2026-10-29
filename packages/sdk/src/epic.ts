@@ -10,7 +10,6 @@ import {
   activity,
   Claims,
   GitHub,
-  type Labels,
   type LinkedIssue,
   planNodeMarker,
   type PullRequest,
@@ -27,6 +26,7 @@ import * as Schema from "effect/Schema";
 import { issueItem, issueOf } from "./implement.ts";
 import { type Kind, VERIFY } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
+import * as Settings from "./settings.ts";
 import { epicValidity } from "./still-valid.ts";
 
 export type { Kind } from "./plan.ts";
@@ -51,7 +51,7 @@ export type Tasks = { readonly tasks: ReadonlyArray<Task>; readonly verify: Opti
 
 // Who takes a task, by the labels the plan gave it: auto:needs-human for a
 // person, auto:eligible for an agent, and neither for a person with an agent.
-export const kindOf = (labels: ReadonlyArray<string>, names: Labels): Kind => {
+export const kindOf = (labels: ReadonlyArray<string>, names: Settings.LabelNames): Kind => {
   if (labels.includes(names.needsHuman)) {
     return "human";
   }
@@ -94,6 +94,8 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const repo = yield* Repo;
+    const labelNames = yield* Settings.labels;
+    const stackDepth = yield* Settings.stackDepth;
     const open = (yield* github.subIssues(epic)).filter((issue) => issue.state === "open");
     const verify = open.find((issue) => isVerify(epic, issue));
     const work = open.filter((issue) => !isVerify(epic, issue));
@@ -103,7 +105,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
       work
         .filter(
           (issue) =>
-            kindOf(issue.labels, repo.labels) === "auto" ||
+            kindOf(issue.labels, labelNames) === "auto" ||
             (options.started ?? []).includes(issue.number),
         )
         .map((issue) => issue.number),
@@ -184,7 +186,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
           return held(waitsOn([blocker.number]));
         }
 
-        if ((yield* depthOf(pull.value)) + 1 > repo.limits.stackDepth) {
+        if ((yield* depthOf(pull.value)) + 1 > stackDepth) {
           return held(`waits for #${blocker.number}'s stack to merge`);
         }
 
@@ -194,7 +196,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
     const taskOf = (issue: LinkedIssue, state: Ready | Held): Task => ({
       number: issue.number,
       title: issue.title,
-      kind: kindOf(issue.labels, repo.labels),
+      kind: kindOf(issue.labels, labelNames),
       ...state,
     });
 
@@ -302,7 +304,7 @@ export const describeLayer = (layer: Layer) => {
 
 // What a sub-issue the run doesn't implement waits on: answers to its
 // questions, a person, or a person with an agent.
-const personReason = (labels: ReadonlyArray<string>, names: Labels) => {
+const personReason = (labels: ReadonlyArray<string>, names: Settings.LabelNames) => {
   if (labels.includes(names.needsClarification)) {
     return "waits for answers to its questions";
   }
@@ -326,11 +328,11 @@ const digest = (text: string) => createHash("sha256").update(text).digest("hex")
 export const fingerprint = (epic: number) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labelNames = yield* Settings.labels;
     const parts: Array<string> = [];
 
     for (const issue of yield* github.subIssues(epic)) {
-      parts.push(`#${issue.number}:${issue.state}:${kindOf(issue.labels, repo.labels)}`);
+      parts.push(`#${issue.number}:${issue.state}:${kindOf(issue.labels, labelNames)}`);
 
       for (const pull of Option.toArray(yield* pullFor(issue.number))) {
         const reviews = yield* github.reviews(pull.number);
@@ -348,7 +350,7 @@ export const fingerprint = (epic: number) =>
 export const progressOf = (epic: number) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labelNames = yield* Settings.labels;
     const run = yield* Run;
     const all = yield* github.subIssues(epic);
     const started: Array<number> = [];
@@ -376,7 +378,7 @@ export const progressOf = (epic: number) =>
     const waiting = (issue: LinkedIssue, head: Pick<Layer, "number" | "title">) =>
       Option.map(Option.fromUndefinedOr(byNumber.get(issue.number)), (task): Layer => {
         if (task.kind !== "auto" && !started.includes(issue.number)) {
-          return { ...head, state: "person", reason: personReason(issue.labels, repo.labels) };
+          return { ...head, state: "person", reason: personReason(issue.labels, labelNames) };
         }
 
         if (task.state === "held") {
