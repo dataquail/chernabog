@@ -198,8 +198,13 @@ export const WorkItem = Schema.Struct({
   // no run, even with wakeOnly unset, and `chernabog status` shows the reason.
   // Its signals still wake a run waiting on it.
   held: Schema.optionalKey(Schema.String),
-  // GitHub logins assigned to the item, and asked to review it, which
-  // flows.<flow>.assignee and reviewRequested match to choose the machines it starts on.
+  // Why the trigger left it for another persona or machine, such as
+  // "assignee: alice": routing is the flow's, by anything it likes. It starts
+  // no run here unless a person names it, and `chernabog status` lists it
+  // with the reason. Its signals still wake a run waiting on it.
+  elsewhere: Schema.optionalKey(Schema.String),
+  // Deprecated: the engine reads neither, and they go in core's next major
+  // (ADR 0005). A flow routes by setting elsewhere, as the SDK's Routing does.
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
   reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
 });
