@@ -36,7 +36,7 @@ import {
   type MachineConfig,
   type PersonaRepo,
 } from "../../../../repo-config.ts";
-import { adoptImplicitRunsUseCase } from "../../use-cases/adopt-implicit-runs.use-case.ts";
+import { RunsCommands } from "../../runs.command-handlers.ts";
 import {
   defaultPersona,
   type FlowOrigin,
@@ -216,7 +216,10 @@ export const servicesFrom =
 export const adoptRuns = (repo: EffectiveRepo) =>
   Option.match(defaultPersona(repo), {
     onNone: () => Effect.void,
-    onSome: (login) => adoptImplicitRunsUseCase(repo.settings.name, login).pipe(Effect.asVoid),
+    onSome: (login) =>
+      RunsCommands.use((runs) =>
+        runs.AdoptImplicitRunsCommand({ repo: repo.settings.name, login }),
+      ).pipe(Effect.asVoid),
   });
 
 // The item a person named that the trigger didn't report, when the flow can

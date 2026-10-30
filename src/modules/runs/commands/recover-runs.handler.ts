@@ -8,18 +8,11 @@ import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts"
 import { type RunAlreadyFinished } from "../domain/run/run.errors.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { RecoveredRuns, RunView } from "./run.result.ts";
+import { RecoveredRuns, RunView } from "../domain/run/run-view.value-object.ts";
 
 const INTERRUPTED = "interrupted before its workflow started";
 
-// Finishes the starts a crash interrupted. A run is recorded before its
-// workflow executes, so a process killed in between leaves one running with no
-// execution, which nothing polls and which holds its item. Its workflow
-// executes now from the work item the run kept: an execution is keyed by its
-// run, so one that did start before the crash is the one attached, not a
-// second. A run with no item to execute ends, so its item can start again. A
-// run whose flow this process didn't load is left for one that has.
-export const recoverRunsUseCase = Effect.fn("recoverRunsUseCase")(function* () {
+export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
   const runs = yield* RunsRepository;
   const workflows = yield* WorkflowsClient;
 

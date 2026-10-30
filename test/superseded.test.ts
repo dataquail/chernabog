@@ -23,6 +23,7 @@ import * as Schedule from "effect/Schedule";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
 import { RunValidity } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
@@ -37,7 +38,6 @@ import {
   type CancelledRun,
   CancelTarget,
 } from "../src/modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -100,7 +100,8 @@ const withEngine = <A, E, R>(handle: FlowHandle, fake: Fake, body: Effect.Effect
   });
 
 const superseding = (run: EngineRun, reason: string) =>
-  cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+  cancelRunHandler({
+    target: CancelTarget.cases.ById.make({ asked: run.id }),
     by: "chernabog",
     closeSessions: false,
     endAs: Option.some({ ending: "superseded" as const, reason }),
@@ -223,7 +224,8 @@ describe("a run whose work item goes", () => {
       const fake = makeFake("approve", { reviewers: ["zach"] });
 
       const value = yield* endedMidStep(fake, (run) =>
-        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+        cancelRunHandler({
+          target: CancelTarget.cases.ById.make({ asked: run.id }),
           by: "alice",
           closeSessions: false,
           endAs: Option.none(),

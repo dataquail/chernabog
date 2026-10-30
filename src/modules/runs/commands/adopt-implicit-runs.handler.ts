@@ -3,14 +3,13 @@ import * as Option from "effect/Option";
 
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { AdoptedRuns } from "./run.result.ts";
+import { AdoptedRuns } from "../domain/run/run-view.value-object.ts";
+import { type AdoptImplicitRunsPayload } from "./adopt-implicit-runs.command.ts";
 
-// Once a repo has named personas, its runs from before them become the
-// persona's it runs as first, so they keep resuming and holding its slots.
-export const adoptImplicitRunsUseCase = Effect.fn("adoptImplicitRunsUseCase")(function* (
-  repo: string,
-  login: string,
-) {
+export const adoptImplicitRunsHandler = Effect.fn("adoptImplicitRunsHandler")(function* ({
+  login,
+  repo,
+}: AdoptImplicitRunsPayload) {
   const runs = yield* RunsRepository;
 
   const adopted = (yield* runs.findAll({ repo })).flatMap((run) =>

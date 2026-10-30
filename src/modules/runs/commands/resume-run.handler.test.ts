@@ -16,7 +16,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { resumeRunUseCase } from "./resume-run.use-case.ts";
+import { resumeRunHandler } from "./resume-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -55,13 +55,13 @@ const runtime = (
     WorkflowsClientFake(engine),
   );
 
-describe("resumeRunUseCase", () => {
+describe("resumeRunHandler", () => {
   const engine = fakeEngine();
 
   effect("resumes a running run's execution, and leaves one that ended alone", () =>
     Effect.gen(function* () {
-      yield* resumeRunUseCase(RunId.make("a"));
-      yield* resumeRunUseCase(RunId.make("done"));
+      yield* resumeRunHandler({ runId: RunId.make("a") });
+      yield* resumeRunHandler({ runId: RunId.make("done") });
 
       expect(engine.resumed).toEqual(["execution-a"]);
     }).pipe(

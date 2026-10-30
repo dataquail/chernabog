@@ -68,6 +68,7 @@ import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.
 import {
   RunFlowsCommands,
   RunFlowsCommandsLive,
+  RunsCommandsLive,
 } from "../../modules/runs/runs.command-handlers.ts";
 import {
   type FlowRegistry,
@@ -82,14 +83,12 @@ import {
   RunsQueriesLive,
 } from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
 import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
-import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
@@ -555,7 +554,9 @@ export const runDaemon = Effect.gen(function* () {
       Layer.provideMerge(
         RuntimeLayer(registry).pipe(
           Layer.provideMerge(
-            Layer.mergeAll(RunsQueriesLive, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+            Layer.mergeAll(RunsQueriesLive, RunsCommandsLive, ...flowLayers).pipe(
+              Layer.provideMerge(StateLive),
+            ),
           ),
         ),
       ),
@@ -567,11 +568,14 @@ export const runDaemon = Effect.gen(function* () {
       // Runs in flight that started under an SDK this binary doesn't run go
       // to a person, released as a cancel releases them, rather than resume.
       for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
-        const ended = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "needs-human", reason }),
-        }).pipe(Effect.result);
+        const ended = yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "needs-human", reason }),
+          }),
+        ).pipe(Effect.result);
 
         yield* log(
           Result.match(ended, {
@@ -593,7 +597,7 @@ export const runDaemon = Effect.gen(function* () {
       }
 
       // Starts that a crash interrupted, finished before anything ticks.
-      const recovered = yield* recoverRunsUseCase();
+      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
 
       for (const run of recovered.executed) {
         yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
@@ -633,11 +637,14 @@ export const runDaemon = Effect.gen(function* () {
       // Ends a run whose work item went as superseded, released as a cancel
       // releases it; its agent sessions stay open.
       const supersede = (run: ActiveRun, reason: string) =>
-        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "superseded", reason }),
-        }).pipe(
+        RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "superseded", reason }),
+          }),
+        ).pipe(
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -676,11 +683,14 @@ export const runDaemon = Effect.gen(function* () {
       // Ends a run whose claim another run took over as lost. What it left on
       // the item, worktree included, stays for the run that took it over.
       const loseRun = (run: ActiveRun, reason: string) =>
-        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "lost", reason }),
-        }).pipe(
+        RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "lost", reason }),
+          }),
+        ).pipe(
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -1768,11 +1778,14 @@ export const runDaemon = Effect.gen(function* () {
           }),
         });
 
-        const cancelled = yield* cancelRunUseCase(target, {
-          by: body.by,
-          closeSessions: body.closeSessions,
-          endAs: Option.none(),
-        }).pipe(Effect.result);
+        const cancelled = yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target,
+            by: body.by,
+            closeSessions: body.closeSessions,
+            endAs: Option.none(),
+          }),
+        ).pipe(Effect.result);
 
         if (Result.isFailure(cancelled)) {
           return yield* refuse(409, cancelled.failure.message);

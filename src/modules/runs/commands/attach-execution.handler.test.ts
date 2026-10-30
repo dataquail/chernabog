@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { attachExecutionUseCase } from "./attach-execution.use-case.ts";
+import { attachExecutionHandler } from "./attach-execution.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,10 +29,10 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("attachExecutionUseCase", () => {
+describe("attachExecutionHandler", () => {
   effect("records the run's workflow execution", () =>
     Effect.gen(function* () {
-      yield* attachExecutionUseCase(RunId.make("a"), "x");
+      yield* attachExecutionHandler({ runId: RunId.make("a"), executionId: "x" });
 
       expect(
         Option.flatMap(
@@ -45,9 +45,11 @@ describe("attachExecutionUseCase", () => {
 
   effect("fails for a run no one started", () =>
     Effect.gen(function* () {
-      expect((yield* Effect.flip(attachExecutionUseCase(RunId.make("nope"), "x")))._tag).toBe(
-        "RunNotFound",
-      );
+      expect(
+        (yield* Effect.flip(
+          attachExecutionHandler({ runId: RunId.make("nope"), executionId: "x" }),
+        ))._tag,
+      ).toBe("RunNotFound");
     }).pipe(Effect.provide(RunsRepositoryFake([]))),
   );
 });

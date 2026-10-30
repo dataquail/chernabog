@@ -18,7 +18,7 @@ import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { recoverRunsUseCase } from "./recover-runs.use-case.ts";
+import { recoverRunsHandler } from "./recover-runs.handler.ts";
 
 const item = (key: string, fields: Partial<WorkItem> = {}): WorkItem => ({
   key,
@@ -65,7 +65,7 @@ const runtime = (
 
 const ids = (runs: ReadonlyArray<{ readonly id: RunId }>) => runs.map((found) => String(found.id));
 
-describe("recoverRunsUseCase", () => {
+describe("recoverRunsHandler", () => {
   const engine = fakeEngine();
   engine.unloaded.push("demo/elsewhere");
 
@@ -73,7 +73,7 @@ describe("recoverRunsUseCase", () => {
     "executes a run a crash left without a workflow, ends one with no item, and leaves one it can't run",
     () =>
       Effect.gen(function* () {
-        const recovered = yield* recoverRunsUseCase();
+        const recovered = yield* recoverRunsHandler();
 
         expect(ids(recovered.executed)).toEqual(["kept"]);
         expect(recovered.executed.map((found) => found.executionId)).toEqual([
@@ -91,7 +91,7 @@ describe("recoverRunsUseCase", () => {
           "failed",
           Option.some("interrupted before its workflow started"),
         ]);
-        expect((yield* recoverRunsUseCase()).executed).toEqual([]);
+        expect((yield* recoverRunsHandler()).executed).toEqual([]);
       }).pipe(
         Effect.provide(
           runtime(engine, {

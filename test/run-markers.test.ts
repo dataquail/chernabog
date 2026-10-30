@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
 import {
   type FlowHandle,
   flowHandle,
@@ -37,7 +38,6 @@ import { listRunMarkersHandler } from "../src/modules/runs/queries/list-run-mark
 import { listUnreleasedMarkersHandler } from "../src/modules/runs/queries/list-unreleased-markers.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
@@ -234,7 +234,8 @@ describe("a flow's own marker", () => {
           const held = (yield* listRunMarkersHandler({ runId: started.id, name: Option.none() }))
             .markers;
 
-          yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: started.id }), {
+          yield* cancelRunHandler({
+            target: CancelTarget.cases.ById.make({ asked: started.id }),
             by: "alice",
             closeSessions: false,
             endAs: Option.none(),

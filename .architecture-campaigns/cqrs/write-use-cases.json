@@ -39,13 +39,10 @@
     "src/modules/runs": {
       "entered": "2026-10-30T16:22:31.073Z",
       "initial": 20,
-      "cleared": 5,
+      "cleared": 10,
       "closed": 0,
-      "lastCleared": "2026-10-30T20:25:20.290Z",
+      "lastCleared": "2026-10-30T20:41:18.780Z",
       "holdouts": [
-        "use-cases/adopt-implicit-runs.use-case.ts",
-        "use-cases/attach-execution.use-case.ts",
-        "use-cases/cancel-run.use-case.ts",
         "use-cases/deliver-signals.use-case.ts",
         "use-cases/forget-marker.use-case.ts",
         "use-cases/gate-flow.use-case.ts",
@@ -54,10 +51,8 @@
         "use-cases/poll-notifications.use-case.ts",
         "use-cases/poll-run.use-case.ts",
         "use-cases/record-skip.use-case.ts",
-        "use-cases/recover-runs.use-case.ts",
         "use-cases/release-markers.use-case.ts",
-        "use-cases/release-run-wait.use-case.ts",
-        "use-cases/resume-run.use-case.ts"
+        "use-cases/release-run-wait.use-case.ts"
       ]
     },
     "src/modules/machine": {

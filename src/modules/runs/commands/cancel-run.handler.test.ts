@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
+import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import {
@@ -22,8 +23,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { CancelTarget } from "./cancel-run.result.ts";
-import { cancelRunUseCase, type EndAs } from "./cancel-run.use-case.ts";
+import { cancelRunHandler } from "./cancel-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -92,13 +92,13 @@ const statusOf = (id: string) =>
     Effect.map((found) => Option.map(found.run, (one) => one.status)),
   );
 
-describe("cancelRunUseCase", () => {
+describe("cancelRunHandler", () => {
   const engine = stoppingEngine("a");
   const holdings = fakeHoldings();
 
   effect("ends a waiting run as cancelled, clears its waits and interrupts its workflow", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("a"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("a"), ...asAlice });
 
       expect(cancelled.run.status).toBe("cancelled");
       expect(Option.getOrThrow(cancelled.run.summary)).toMatch(
@@ -133,7 +133,9 @@ describe("cancelRunUseCase", () => {
       const failures = [];
 
       for (const asked of ["nope", "ab", "done-1", "done"]) {
-        failures.push((yield* Effect.flip(cancelRunUseCase(byId(asked), asAlice)))._tag);
+        failures.push(
+          (yield* Effect.flip(cancelRunHandler({ target: byId(asked), ...asAlice })))._tag,
+        );
       }
 
       expect(failures).toEqual([
@@ -157,7 +159,7 @@ describe("cancelRunUseCase", () => {
 
   effect("a prefix names the run in flight before finished ones", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("ab"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("ab"), ...asAlice });
 
       expect(cancelled.run.id).toBe(RunId.make("abc"));
     }).pipe(
@@ -180,13 +182,16 @@ describe("cancelRunUseCase", () => {
         persona: Option.none(),
       });
 
-      const several = yield* Effect.flip(cancelRunUseCase(target, asAlice));
-      const missing = yield* Effect.flip(cancelRunUseCase({ ...target, itemKey: "pr-9" }, asAlice));
+      const several = yield* Effect.flip(cancelRunHandler({ target, ...asAlice }));
 
-      const cancelled = yield* cancelRunUseCase(
-        { ...target, persona: Option.some("alice") },
-        asAlice,
+      const missing = yield* Effect.flip(
+        cancelRunHandler({ target: { ...target, itemKey: "pr-9" }, ...asAlice }),
       );
+
+      const cancelled = yield* cancelRunHandler({
+        target: { ...target, persona: Option.some("alice") },
+        ...asAlice,
+      });
 
       expect([several._tag, missing._tag]).toEqual(["SeveralRunsInFlight", "NoRunInFlight"]);
       expect(cancelled.run.id).toBe(RunId.make("mine"));
@@ -214,7 +219,7 @@ describe("cancelRunUseCase", () => {
 
   effect("releases an issue's claim and removes worktrees, leaving sessions open", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("i"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("i"), ...asAlice });
 
       expect(issueHoldings.released).toEqual([7]);
       expect(cancelled.removedWorktrees).toEqual(["/w/auto-issue-7"]);
@@ -244,7 +249,8 @@ describe("cancelRunUseCase", () => {
     "ends a run this binary can't resume as needing a person, cleaning up as a cancel does",
     () =>
       Effect.gen(function* () {
-        const ended = yield* cancelRunUseCase(byId("old"), {
+        const ended = yield* cancelRunHandler({
+          target: byId("old"),
           by: "chernabog",
           closeSessions: false,
           endAs: Option.some<EndAs>({
@@ -280,7 +286,8 @@ describe("cancelRunUseCase", () => {
     "ends a run whose item went as superseded, with why, releasing it as a cancel does and leaving its session open",
     () =>
       Effect.gen(function* () {
-        const ended = yield* cancelRunUseCase(byId("g"), {
+        const ended = yield* cancelRunHandler({
+          target: byId("g"),
           by: "chernabog",
           closeSessions: false,
           endAs: Option.some<EndAs>({ ending: "superseded", reason: "#7 was closed" }),
@@ -322,7 +329,8 @@ describe("cancelRunUseCase", () => {
 
   effect("closes sessions only when asked, and keeps a branch with work on it", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("i"), {
+      const cancelled = yield* cancelRunHandler({
+        target: byId("i"),
         by: "alice",
         closeSessions: true,
         endAs: Option.none(),
@@ -347,7 +355,7 @@ describe("cancelRunUseCase", () => {
 
   effect("cleanup that fails is left for a person, and the run stays cancelled", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("i"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("i"), ...asAlice });
 
       expect(cancelled.run.status).toBe("cancelled");
       expect(cancelled.leftForPerson).toEqual([
@@ -373,8 +381,8 @@ describe("cancelRunUseCase", () => {
 
   effect("deletes the claim ref a run holds, on an issue or a pull request", () =>
     Effect.gen(function* () {
-      const onIssue = yield* cancelRunUseCase(byId("issue-run"), asAlice);
-      const onPull = yield* cancelRunUseCase(byId("pr-run"), asAlice);
+      const onIssue = yield* cancelRunHandler({ target: byId("issue-run"), ...asAlice });
+      const onPull = yield* cancelRunHandler({ target: byId("pr-run"), ...asAlice });
 
       expect([onIssue.releasedClaims, onPull.releasedClaims]).toEqual([
         ["refs/chernabog/claims/issue-7"],
@@ -400,7 +408,7 @@ describe("cancelRunUseCase", () => {
     "a run that ended with its claim ref still held keeps its ending, and only lets the ref go",
     () =>
       Effect.gen(function* () {
-        const released = yield* cancelRunUseCase(byId("ended-1"), asAlice);
+        const released = yield* cancelRunHandler({ target: byId("ended-1"), ...asAlice });
 
         expect(released.alreadyEnded).toBe(true);
         expect(released.run.status).toBe("done");
@@ -410,7 +418,7 @@ describe("cancelRunUseCase", () => {
         expect(yield* statusOf("ended-1")).toEqual(Option.some("done"));
 
         // Once it is gone there is nothing left to let go of.
-        const again = yield* Effect.flip(cancelRunUseCase(byId("ended-1"), asAlice));
+        const again = yield* Effect.flip(cancelRunHandler({ target: byId("ended-1"), ...asAlice }));
         expect(again._tag).toBe("RunAlreadyFinished");
       }).pipe(
         Effect.provide(
@@ -436,7 +444,7 @@ describe("cancelRunUseCase", () => {
 
   effect("keeps the worktrees while another run in flight is on the same pull request", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("review"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("review"), ...asAlice });
 
       expect(cancelled.run.status).toBe("cancelled");
       expect(sharedHoldings.cleaned).toEqual([]);
@@ -458,7 +466,7 @@ describe("cancelRunUseCase", () => {
 
   effect("a run in flight on another pull request doesn't keep them", () =>
     Effect.gen(function* () {
-      yield* cancelRunUseCase(byId("review"), asAlice);
+      yield* cancelRunHandler({ target: byId("review"), ...asAlice });
 
       expect(apartHoldings.cleaned).toEqual(["review"]);
     }).pipe(
@@ -475,7 +483,7 @@ describe("cancelRunUseCase", () => {
 
   effect("a flow this process didn't load is interrupted without waiting on it", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("a"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("a"), ...asAlice });
 
       expect([cancelled.stopped, unloaded.interrupted]).toEqual([false, ["execution-a"]]);
     }).pipe(Effect.provide(runtime(unloaded, fakeHoldings(), { runs: [run("a")] }))),
@@ -485,7 +493,7 @@ describe("cancelRunUseCase", () => {
 
   effect("a run with no execution yet is cancelled with nothing to interrupt", () =>
     Effect.gen(function* () {
-      const cancelled = yield* cancelRunUseCase(byId("a"), asAlice);
+      const cancelled = yield* cancelRunHandler({ target: byId("a"), ...asAlice });
 
       expect([cancelled.stopped, unexecuted.interrupted]).toEqual([true, []]);
     }).pipe(

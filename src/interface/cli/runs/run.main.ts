@@ -39,14 +39,13 @@ import {
 import {
   RunFlowsCommands,
   RunFlowsCommandsLive,
+  RunsCommandsLive,
 } from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
-import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
-import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
@@ -190,7 +189,7 @@ const resume = (
     );
 
     if (!recovered) {
-      yield* resumeRunUseCase(unfinished.id);
+      yield* (yield* RunFlowsCommands).ResumeRunCommand({ runId: unfinished.id });
     }
 
     return Option.some(yield* followRun(handle, persona, unfinished, context));
@@ -310,7 +309,7 @@ export const runInForeground = (options: RunOptions) =>
     const program = Effect.gen(function* () {
       yield* adoptRuns(repo);
 
-      const recovered = yield* recoverRunsUseCase();
+      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
 
       for (const run of recovered.abandoned) {
         yield* Console.log(
@@ -347,9 +346,11 @@ export const runInForeground = (options: RunOptions) =>
             services: (_repo, one) => servicesFrom(contexts)(one),
           }).pipe(
             Layer.provideMerge(
-              Layer.mergeAll(flowLayer(handle, servicesFrom(contexts)), RunsQueriesLive).pipe(
-                Layer.provideMerge(StateLive),
-              ),
+              Layer.mergeAll(
+                flowLayer(handle, servicesFrom(contexts)),
+                RunsQueriesLive,
+                RunsCommandsLive,
+              ).pipe(Layer.provideMerge(StateLive)),
             ),
           ),
         ),

@@ -78,4 +78,37 @@ describe("RunsCommands", () => {
       ),
     ),
   );
+
+  effect("attaches a run's execution and adopts a repo's runs from before its personas", () =>
+    Effect.gen(function* () {
+      const commands = yield* RunsCommands;
+      const queries = yield* RunsQueries;
+      const runId = RunId.make("old");
+
+      yield* commands.StartRunCommand({
+        id: runId,
+        coreVersion: BUNDLED_CORE_VERSION,
+        repo: "demo",
+        persona: Option.none(),
+        flow: "review",
+        itemKey: "pr-1",
+        itemTitle: Option.none(),
+        itemUrl: Option.none(),
+        item: Option.none(),
+      });
+
+      const attached = yield* commands.AttachExecutionCommand({ runId, executionId: "x" });
+      const adopted = yield* commands.AdoptImplicitRunsCommand({ repo: "demo", login: "alice" });
+
+      expect(attached.executionId).toEqual(Option.some("x"));
+      expect(adopted.runs).toEqual([runId]);
+      expect(
+        Option.map((yield* queries.FindRunQuery({ runId })).run, (run) => run.persona),
+      ).toEqual(Option.some(Option.some("alice")));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(RunsCommandsLive, RunsQueriesLive).pipe(Layer.provideMerge(stores)),
+      ),
+    ),
+  );
 });
