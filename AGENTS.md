@@ -101,7 +101,7 @@ no longer read.
 ## Setup and enrollment (#51)
 
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
-(the machine module: `PlanSetupQuery`, then `applySetupUseCase`, with
+(the machine module: `PlanSetupQuery`, then `ApplySetupCommand`, with
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
@@ -299,7 +299,7 @@ transitive reach), the coverage floors and the baseline.
 - **The machine module** owns this machine's setup: `MachineSetupRoot`
   (`github:` personas and `accounts:`, edited in place in machine config),
   gh's logins, the account directories in the home, and the daemon as a
-  launchd or systemd service (`ServiceManagerClient`). `applySetupUseCase`
+  launchd or systemd service (`ServiceManagerClient`). `ApplySetupCommand`
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.

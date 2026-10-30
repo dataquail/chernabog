@@ -10,7 +10,7 @@ import { MachineSetupsRepository } from "../domain/ports/repositories/machine-se
 import { AccountDirsClientFake } from "../infrastructure/clients/account-dirs.client-fake.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryFake } from "../infrastructure/repositories/machine-setups.repository-fake.ts";
-import { applySetupUseCase } from "./apply-setup.use-case.ts";
+import { applySetupHandler } from "./apply-setup.handler.ts";
 
 const HOME = "/home/zw";
 
@@ -37,10 +37,10 @@ const stored = MachineSetupsRepository.use((repository) => repository.findOne);
 
 const none = { personas: Option.none(), accounts: Option.none(), inUse: [] };
 
-describe("applySetupUseCase", () => {
+describe("applySetupHandler", () => {
   effect("one gh login and one account found are chosen without asking, keeping work", () =>
     Effect.gen(function* () {
-      const outcome = yield* applySetupUseCase(none);
+      const outcome = yield* applySetupHandler(none);
       const setup = yield* stored;
 
       expect(outcome.personas).toEqual(Option.some(["alice"]));
@@ -55,7 +55,7 @@ describe("applySetupUseCase", () => {
     "the only gh login joins the personas there, and an account found isn't added to accounts written",
     () =>
       Effect.gen(function* () {
-        const outcome = yield* applySetupUseCase(none);
+        const outcome = yield* applySetupHandler(none);
 
         expect(outcome.personas).toEqual(Option.some(["bob", "alice"]));
         expect(outcome.added).toEqual([]);
@@ -64,7 +64,7 @@ describe("applySetupUseCase", () => {
 
   effect("several gh logins and none chosen leave the personas as they were", () =>
     Effect.gen(function* () {
-      const outcome = yield* applySetupUseCase(none);
+      const outcome = yield* applySetupHandler(none);
 
       expect([outcome.personas, outcome.before, outcome.loggedIn]).toEqual([
         Option.none(),
@@ -77,12 +77,12 @@ describe("applySetupUseCase", () => {
   effect("chosen personas and accounts replace and add, keeping a persona a repo runs as", () =>
     Effect.gen(function* () {
       const dropped = yield* Effect.flip(
-        applySetupUseCase({ ...none, personas: Option.some(["alice"]), inUse: ["bob"] }),
+        applySetupHandler({ ...none, personas: Option.some(["alice"]), inUse: ["bob"] }),
       );
 
       expect(dropped._tag).toBe("PersonaStillInUse");
 
-      yield* applySetupUseCase({
+      yield* applySetupHandler({
         personas: Option.some(["bob"]),
         accounts: Option.some(["~/.claude-personal", "~/elsewhere/.work-claude:claude"]),
         inUse: ["bob"],
@@ -109,11 +109,11 @@ describe("applySetupUseCase", () => {
   effect("an account directory that isn't there, or whose agent nothing says, is refused", () =>
     Effect.gen(function* () {
       const missing = yield* Effect.flip(
-        applySetupUseCase({ ...none, accounts: Option.some(["~/.claude-gone"]) }),
+        applySetupHandler({ ...none, accounts: Option.some(["~/.claude-gone"]) }),
       );
 
       const untold = yield* Effect.flip(
-        applySetupUseCase({ ...none, accounts: Option.some(["~/logins"]) }),
+        applySetupHandler({ ...none, accounts: Option.some(["~/logins"]) }),
       );
 
       expect(missing.message).toBe(

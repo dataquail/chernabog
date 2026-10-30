@@ -23,9 +23,12 @@ import { migrateMachineConfig } from "../../migrate.ts";
 import { EnrollmentCommandsLive } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
+import {
+  MachineCommands,
+  MachineCommandsLive,
+} from "../../modules/machine/machine.command-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { MachineQueriesLive } from "../../modules/machine/machine.query-handlers.ts";
-import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
 import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
 import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
@@ -114,7 +117,7 @@ const start = Command.make(
         return yield* startIssue(issue.value, repo, as);
       }
 
-      yield* startServiceUseCase();
+      yield* (yield* MachineCommands).StartServiceCommand();
       yield* Console.log("started");
     }),
 ).pipe(
@@ -475,6 +478,7 @@ const AppLive = Layer.mergeAll(
   RunLogsLayer,
   RunLogsQueriesLive,
   MachineLayer,
+  MachineCommandsLive,
   MachineQueriesLive,
   RecipesLayer,
   RecipesCommandsLive,
