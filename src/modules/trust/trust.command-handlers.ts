@@ -17,7 +17,8 @@ const TrustCommandHandlersLive = Command.handlersOf(trustCommandGroup, {
 
 // The trust module's slice of the write side, which the daemon and `trust`
 // dispatch. TrustRepoCommand is a security gate: only the CLI's `trust`
-// dispatches it, never an agent-facing adapter.
+// dispatches it, never an agent-facing adapter. It says RepoTrusted on the
+// EventBus the composition root provides.
 export class TrustCommands extends Context.Service<
   TrustCommands,
   Command.Dispatcher<typeof trustCommandGroup>

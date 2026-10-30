@@ -1,9 +1,11 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { ConfigTreeClient } from "../domain/ports/clients/config-tree.client.ts";
 import { TrustRecordsRepository } from "../domain/ports/repositories/trust-records.repository.ts";
+import { TrustEvents } from "../domain/trust-record/trust-record.events.ts";
 import { TrustRecordRootOps } from "../domain/trust-record/trust-record.root-ops.ts";
 import { TrustOutcome, type TrustRepoPayload } from "./trust-repo.command.ts";
 
@@ -33,6 +35,7 @@ export const trustRepoHandler = Effect.fn("trustRepoHandler")(function* (cmd: Tr
 
   const changes = yield* trees.changesSince(cmd.path, previous, tree);
   yield* records.save(approved.value);
+  yield* (yield* EventBus).dispatch([TrustEvents.trusted(approved.value, previous)]);
 
   return TrustOutcome.make({
     repo: cmd.repo,
