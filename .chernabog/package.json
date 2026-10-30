@@ -1,10 +1,11 @@
 {
   "private": true,
   "devDependencies": {
-    "@chernabog/sdk": "0.7.0",
-    "effect": "4.0.5"
+    "effect": "4.0.5",
+    "@chernabog/core": "1.0.0"
   },
   "dependencies": {
-    "@chernabog/recipes": "0.1.0"
+    "@chernabog/recipes": "0.2.0",
+    "@chernabog/sdk": "0.8.0"
   }
 }

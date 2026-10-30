@@ -1,3 +1,4 @@
+import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -18,17 +19,31 @@ export const WorkItem = Schema.Struct({
   wakeOnly: Schema.optionalKey(Schema.Boolean),
   // Why the trigger won't start it yet; it starts no run, but still wakes one.
   held: Schema.optionalKey(Schema.String),
-  // GitHub logins assigned to it, and asked to review it, which routing reads.
-  assignees: Schema.optionalKey(Schema.Array(Schema.String)),
-  reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
+  // Why the trigger left it for another persona or machine: it starts no run
+  // unless a person names it, and status lists it with the reason.
+  elsewhere: Schema.optionalKey(Schema.String),
+  // Who it waits on, and why: it starts no run, and status lists it as
+  // waiting on them. Its signals still wake a run waiting on it.
+  waitsOn: Schema.optionalKey(Schema.Struct({ who: Schema.String, why: Schema.String })),
 });
 
 export type WorkItem = typeof WorkItem.Type;
 
 // Whether a run may start for the item: not when it only wakes one, nor when
-// it's held, whatever else it says. Either way its signals still wake one.
+// it's held or waits on someone, whatever else it says. Either way its
+// signals still wake one.
 export const mayStart = (item: WorkItem) =>
-  item.wakeOnly !== true && Option.isNone(Option.fromUndefinedOr(item.held));
+  item.wakeOnly !== true &&
+  Option.isNone(Option.fromUndefinedOr(item.held)) &&
+  Option.isNone(Option.fromUndefinedOr(item.waitsOn));
+
+// An item its trigger says waits on someone, as status lists it: "pr-73
+// waits on bob (not on this machine)"; none for one that doesn't.
+export const describeWaiting = (item: WorkItem) =>
+  Option.map(
+    Option.fromUndefinedOr(item.waitsOn),
+    (waits) => `${item.key} waits on ${waits.who} (${waits.why})`,
+  );
 
 // Whether a run's work item is still there to work on, as its flow's
 // stillValid says: Gone, with why, ends the run as superseded.
@@ -36,12 +51,12 @@ export type ItemValidity =
   { readonly valid: true } | { readonly valid: false; readonly reason: string };
 
 // The run a flow's stillValid is asked about: its id and execution, the item
-// it works on, and the pull request it opened or adopted, if any.
+// it works on, and the work items it named as its subjects.
 export type ValidityQuestion = {
   readonly runId: RunId;
   readonly executionId: string;
   readonly item: WorkItem;
-  readonly pullRequest: Option.Option<number>;
+  readonly subjects: ReadonlyArray<string>;
 };
 
 // A flow as one persona runs it on this machine: the repo it's in, by the name
@@ -84,4 +99,14 @@ export const itemTarget = (key: string): Option.Option<ItemTarget> =>
         kind: "pull-request",
         number: Number(pull[1]),
       })),
+  );
+
+// The first pull request among a run's subjects, which Run's pullRequest
+// carries for SDKs from before subjects; none when it named none.
+export const firstPullRequest = (subjects: ReadonlyArray<string>) =>
+  Arr.findFirst(subjects, (subject) =>
+    Option.map(
+      Option.filter(itemTarget(subject), (target) => target.kind === "pull-request"),
+      (target) => target.number,
+    ),
   );

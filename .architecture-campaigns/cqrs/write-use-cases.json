@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "campaign": "cqrs",
+  "objective": "write-use-cases",
+  "created": "2026-10-30T05:15:22.531Z",
+  "sectors": {
+    "src/modules/trust": {
+      "entered": "2026-10-30T05:41:27.470Z",
+      "initial": 0,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:41:27.470Z",
+      "holdouts": []
+    }
+  },
+  "concessions": []
+}

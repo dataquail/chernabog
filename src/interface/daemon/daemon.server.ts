@@ -95,16 +95,16 @@ import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-mark
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
-import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
-import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
+import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
-import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   type EffectiveRepo,
   EnrolledRepo,
@@ -113,10 +113,8 @@ import {
   loadMachineConfig,
   loadRepo,
   type MachineConfig,
-  needsLogin,
   type PersonaRepo,
   repoNameOf,
-  routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
 import {
@@ -152,9 +150,10 @@ type FlowSchedule = {
   pending: Option.Option<PendingTick>;
   lastEventTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
-  // What the last tick left for other machines, by flows.<flow>.assignee and
-  // reviewRequested, and for the review flow, review requests no persona here serves.
+  // What the last tick's trigger left for others, with why, and said waits
+  // on someone, with who and why.
   elsewhere: ReadonlyArray<string>;
+  waiting: ReadonlyArray<string>;
 };
 
 export type RepoState = {
@@ -168,14 +167,12 @@ export type RepoState = {
   latestTree: Option.Option<string>;
 };
 
-const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? "main";
-
 const checkoutExists = (enrolled: EnrolledRepo) =>
   FileSystem.FileSystem.use((fs) => fs.exists(enrolled.path)).pipe(
     Effect.orElseSucceed(() => false),
   );
 
-// Snapshots a repo's .chernabog/ from its base branch and loads its flows,
+// Snapshots a repo's .chernabog/ from its default branch and loads its flows,
 // unless the snapshot is not the tree that was trusted. A repo whose checkout
 // is gone is paused, its settings kept, until the checkout is back or
 // chernabog init points it at the checkout's new place.
@@ -214,20 +211,23 @@ export const loadRepoState = (
       } satisfies RepoState;
     }
 
-    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path, baseBranchOf(enrolled)));
+    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path));
 
     if (Result.isFailure(snapshot)) {
       return failed(snapshot.failure, Option.none());
     }
 
     const { configDir, tree } = snapshot.success;
-    const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(enrolled.repo))).tree;
+
+    const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+      repo: RepoSlug.make(enrolled.repo),
+    })).tree;
 
     if (!Option.contains(trusted, tree)) {
       const message = Option.match(trusted, {
         onNone: () => `not trusted yet; run chernabog trust ${name}`,
         onSome: () =>
-          `.chernabog/ changed on the base branch; review it with chernabog trust ${name}`,
+          `.chernabog/ changed on the default branch; review it with chernabog trust ${name}`,
       });
 
       return {
@@ -243,7 +243,10 @@ export const loadRepoState = (
       Effect.all({
         repo: loadRepo(machine, enrolled, configDir),
         flows: loadFlows(configDir),
-      }).pipe(Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows))),
+      }).pipe(
+        Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows)),
+        Effect.tap(({ flows, repo }) => checkFlowSettings(repo, flows)),
+      ),
     );
 
     if (Result.isFailure(loaded)) {
@@ -291,6 +294,7 @@ export const loadRepoState = (
             lastEventTick: Option.none(),
             queued: [],
             elsewhere: [],
+            waiting: [],
           };
         });
       }),
@@ -386,7 +390,7 @@ const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTim
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
 
-// Running on an older tree than its base branch's, which isn't trusted yet.
+// Running on an older tree than its default branch's, which isn't trusted yet.
 const stale = (repo: RepoState) => repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
 
 // Waiting on trust: never loaded for it, or running on a tree since replaced.
@@ -476,49 +480,8 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
-  // Who the implicit persona is on GitHub, for repos that name their flows'
-  // runners or start only work assigned to it. A persona's login is its own.
-  let login = Option.none<string>();
-
-  if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
-    const found = yield* Effect.result(viewerLogin);
-    login = Result.getSuccess(found);
-    yield* log(
-      Result.match(found, {
-        onSuccess: (self) => `this machine is ${self} on GitHub`,
-        onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}`,
-      }),
-    );
-  }
-
   if (machine.github.length > 0) {
     yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
-  }
-
-  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
-
-  // Several personas on one flow each see all its work unless @me tells them apart.
-  for (const repo of repos) {
-    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const running = repo.flows.filter(
-        (schedule) =>
-          schedule.handle.name === flow &&
-          schedule.handle.flow.ownWork !== true &&
-          Option.isNone(flowOff(schedule.own, flow)),
-      );
-
-      const unrouted = running.some(
-        (schedule) =>
-          Option.isNone(routingOf(schedule.own, flow).assignee) &&
-          Option.isNone(routingOf(schedule.own, flow).reviewRequested),
-      );
-
-      if (running.length > 1 && unrouted) {
-        yield* log(
-          `${repo.name}/${flow}: runs as ${running.flatMap((schedule) => Option.toArray(schedule.persona)).join(", ")} with no assignee or reviewRequested, so each takes any of its work`,
-        );
-      }
-    }
   }
 
   const busy = yield* Ref.make(0);
@@ -894,9 +857,6 @@ export const runDaemon = Effect.gen(function* () {
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
             },
-            routing: routingOf(settings, handle.name),
-            login: loginFor(persona),
-            here: machine.github,
             concurrency: {
               flow: Option.getOrElse(
                 Option.flatMap(Record.get(settings.flows, handle.name), (found) =>
@@ -908,17 +868,12 @@ export const runDaemon = Effect.gen(function* () {
             },
           });
 
-          const unserved = Option.getOrElse(plan.unserved, (): ReadonlyArray<string> => []);
-
-          if (Option.isSome(plan.unserved)) {
-            schedule.elsewhere = unserved;
-          }
-
           for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
             schedule.lastCause = Option.some(options.cause);
             schedule.queued = routed.queued;
-            schedule.elsewhere = [...routed.elsewhere, ...unserved];
+            schedule.elsewhere = routed.elsewhere;
+            schedule.waiting = routed.waiting;
           }
 
           yield* deliverSignalsUseCase(ref, yield* stillWaking(ref, plan.signalled));
@@ -962,7 +917,7 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // A repo whose flows may run: loaded, and its base branch still on the
+      // A repo whose flows may run: loaded, and its default branch still on the
       // trusted tree. Its services, as each persona.
       const runnable = (repo: RepoState) =>
         Option.filter(
@@ -1373,20 +1328,21 @@ export const runDaemon = Effect.gen(function* () {
       // Restarts the daemon on a repo's trusted tree, only the first time it does.
       const reloadOn = (repo: RepoState, tree: string) =>
         Effect.gen(function* () {
-          const claim = yield* claimReloadUseCase(RepoSlug.make(repo.enrolled.repo), tree);
+          const claim = yield* (yield* TrustCommands).ClaimReloadCommand({
+            repo: RepoSlug.make(repo.enrolled.repo),
+            tree,
+          });
 
           if (claim.first) {
             yield* Ref.set(reloadPending, true);
           }
         });
 
-      // Notices a new .chernabog/ on a base branch: trusted, it restarts the
+      // Notices a new .chernabog/ on a config branch, GitHub's default: trusted, it restarts the
       // daemon on it once nothing is executing; untrusted, the repo starts no new runs.
       const checkConfig = Effect.gen(function* () {
         for (const repo of repos) {
-          const tree = yield* Effect.result(
-            configTree(repo.enrolled.path, baseBranchOf(repo.enrolled)),
-          );
+          const tree = yield* Effect.result(configTree(repo.enrolled.path));
 
           if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) {
             continue;
@@ -1395,7 +1351,9 @@ export const runDaemon = Effect.gen(function* () {
           repo.latestTree = Option.some(tree.success);
 
           const trusted = Option.contains(
-            (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree,
+            (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+              repo: RepoSlug.make(repo.enrolled.repo),
+            })).tree,
             tree.success,
           );
 
@@ -1415,7 +1373,9 @@ export const runDaemon = Effect.gen(function* () {
             continue;
           }
 
-          const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
+          const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+            repo: RepoSlug.make(repo.enrolled.repo),
+          })).tree;
 
           if (sameTree(trusted, repo.latestTree)) {
             yield* reloadOn(repo, repo.latestTree.value);
@@ -1543,7 +1503,9 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => ({}),
               onSome: (persona) => ({ persona }),
             }),
-            schedule: Option.getOrElse(flow.expression, () => manualSchedule(flow.handle.name)),
+            schedule: Option.getOrElse(flow.expression, () =>
+              manualSchedule(flow.handle.name, flow.handle.flow.start === true),
+            ),
             // A manual flow has no schedule, the team's or anyone's.
             ...Option.match(flow.teamExpression, {
               onNone: () => ({ manual: true }),
@@ -1577,6 +1539,14 @@ export const runDaemon = Effect.gen(function* () {
             }),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
+            ...Option.match(Option.liftPredicate(flow.waiting, Arr.isReadonlyArrayNonEmpty), {
+              onNone: () => ({}),
+              onSome: (waiting) => ({ waiting }),
+            }),
+            ...Option.match(Option.fromUndefinedOr(flow.handle.flow.start), {
+              onNone: () => ({}),
+              onSome: (start) => ({ start }),
+            }),
             ...Option.match(flowSourceOf(flow.handle.flow), {
               onNone: () => ({}),
               onSome: (source) => ({ source: describeSource(source) }),
@@ -1601,7 +1571,7 @@ export const runDaemon = Effect.gen(function* () {
           ...status,
           status: "untrusted",
           message: Option.some(
-            `.chernabog/ changed on the base branch; review it with chernabog trust ${repo.name}`,
+            `.chernabog/ changed on the default branch; review it with chernabog trust ${repo.name}`,
           ),
         } satisfies RepoStatus;
       };
@@ -1751,7 +1721,10 @@ export const runDaemon = Effect.gen(function* () {
 
           // Nothing finds a manual flow's work, so a person must name it.
           if (Option.isNone(schedule.expression) && Option.isNone(body.item)) {
-            return yield* refuse(400, nothingNamed(schedule.handle.name));
+            return yield* refuse(
+              400,
+              nothingNamed(schedule.handle.name, schedule.handle.flow.start === true),
+            );
           }
 
           return yield* HttpServerResponse.schemaJson(TickResult)(

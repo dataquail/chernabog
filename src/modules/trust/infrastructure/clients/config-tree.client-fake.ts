@@ -9,12 +9,12 @@ import { ConfigTreeUnavailable } from "../../domain/trust-record/trust-record.er
 // Each checkout's tree of .chernabog/, by path; a checkout not listed has none.
 // What changed reads as `<previous>..<tree>`, or `first trust` without a previous.
 export const ConfigTreeClientFake = (trees: Readonly<Record<string, string>>) => {
-  const treeOf = (path: string, baseBranch: string) =>
+  const treeOf = (path: string) =>
     Effect.fromOption(Record.get(trees, path)).pipe(
       Effect.mapError(
         () =>
           new ConfigTreeUnavailable({
-            message: `${path}: no .chernabog/ on ${baseBranch}; run chernabog init and merge it first`,
+            message: `${path}: no .chernabog/ on the default branch; run chernabog init and merge it first`,
           }),
       ),
     );

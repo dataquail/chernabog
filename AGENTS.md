@@ -63,8 +63,10 @@ act as the right one.
   `src/modules/runs/infrastructure/runtime/engine.ts`). Per-persona services
   are built by `repoServices(…, persona)` / `buildRepoContext(…, persona)`.
 - **The daemon schedules each (persona, flow)** and names it `repo/flow@login`.
-  A flow several personas run should filter with `assignee` or
-  `reviewRequested: "@me"`.
+  A flow several personas run should route its items (#204): its trigger
+  leaves one for others by setting `elsewhere` to why, as the SDK's
+  `Routing` does by `assignee` / `reviewRequested: "@me"` in the flow's
+  settings. The engine only reads the reason; claims keep runs apart.
   `review`, `re-review` and `address-review` filter in their triggers, by the
   persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
@@ -187,9 +189,15 @@ transitive reach), the coverage floors and the baseline.
   (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
   `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`),
   `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
-  values), `use-cases/` (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`,
-  its result schema in `.result.ts`), `infrastructure/{repositories,clients}/`
-  (`-live.ts`, `-fake.ts`, `.mapper.ts`) and `<module>.layer.ts`. Shared
+  values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
+  or `.query.ts` declaring it and its result schema, and a
+  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`), `use-cases/`
+  (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`, its result schema in
+  `.result.ts`, until each moves), `infrastructure/{repositories,clients}/`
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
+  `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
+  register the handlers over the layer and declare the module's dispatchers
+  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -197,7 +205,7 @@ transitive reach), the coverage floors and the baseline.
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
-- **Obligations.** A `.root-ops.ts` and a `.use-case.ts` each owe a sibling
+- **Obligations.** A `.root-ops.ts`, a `.use-case.ts` and a `.handler.ts` each owe a sibling
   `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
   `-live.test.ts`. The lint names what is missing.
 - **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
@@ -209,12 +217,14 @@ transitive reach), the coverage floors and the baseline.
 - **Trust is its own module**, apart from the config a person edits:
   `TrustRecordRoot` (the tree of `.chernabog/` a person approved, in
   `trust.json` by slug) behind `TrustRecordsRepository`, and git behind
-  `ConfigTreeClient`. `trustRepoUseCase` is a security gate, so only the CLI
-  offers it; never expose it to an agent-facing adapter such as MCP. The
-  daemon, `doctor` and `status` read trust through `findTrustedTreeUseCase`.
+  `ConfigTreeClient`. It is the CQRS worked example (ADR 6): adapters ask
+  `TrustQueries` and `TrustCommands`. `TrustRepoCommand` is a security gate,
+  so only the CLI dispatches it; never expose it to an agent-facing adapter
+  such as MCP. The daemon and `doctor` read trust through
+  `FindTrustedTreeQuery`, `status` through `CheckTrustQuery`.
   `ReloadRoot` (`reloaded.json`, by slug, behind `ReloadsRepository`) is the
   tree each repo last restarted the daemon on: the daemon restarts on a
-  trusted tree only when `claimReloadUseCase` says it's the first time, so a
+  trusted tree only when `ClaimReloadCommand` says it's the first time, so a
   trusted tree that fails to load restarts it once, not on every check.
 - **Runs are the runs module's.** `RunRoot` (`om_runs` in `state.db`) keeps
   its lifecycle in `RunRootOps`: it starts running, takes steps while it runs
@@ -222,10 +232,12 @@ transitive reach), the coverage floors and the baseline.
   `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
   `RunStepRoot` (`om_steps`) logs each step a run enters, which
   `enterStepUseCase` writes beside its current step; `SkipRoot` (`om_skips`)
-  logs why a tick started nothing. A run's `pullRequest` is the one it opened
-  or adopted, which `flowLayer` links by wrapping the run's `GitHub`
-  (`linkingPullRequests`); the live view threads an issue's runs with that
-  pull request's by it. The engine, the daemon and `chernabog run`
+  logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
+  are the work items it named with core's `Subjects.name`, such as the pull
+  request an SDK block opened or adopted; the engine records them through
+  `nameSubjectUseCase` and knows nothing of what they mean. The live view
+  threads runs that share a work item, as their own or as a subject, and a
+  flow's `stillValid` gets them as `Run`'s `subjects`. The engine, the daemon and `chernabog run`
   record and read them only through the module's use-cases
   (`startRunUseCase`, `enterStepUseCase`, `finishRunUseCase`, …); a run's
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
@@ -328,6 +340,15 @@ transitive reach), the coverage floors and the baseline.
   list: a fixed violation fails until its line is gone
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
+- **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
+  under way. `cqrs` moves each use-case to a command or query; its ledger in
+  `.architecture-campaigns/` lists the use-cases left, and may only shrink.
+  A change that moves one runs `bun run architecture:clear` and commits the
+  ledger with it; `bun run architecture:campaigns` shows what's left. Always
+  clear through the script: a bare `architecture objectives clear` walks
+  `packages/`, finds no module, and closes every holdout. Never
+  `objectives concede` to make the gate pass; a use-case the campaign counts
+  again is one a change brought back.
 - **Every rule carries a probe**, and the plugin refuses to load a rule that
   can't fire. To change the policy, edit `architecture.yaml` (the
   `yaml-language-server` schema completes and checks it), plant the violation
@@ -379,8 +400,56 @@ assignment, a board Status, a claim ref or branch), with a named release.
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
   The daemon runs it every few seconds, `chernabog run` once its run ends, and
   `status` shows `listUnreleasedMarkersUseCase`.
-- **Cancel still does its own cleanup** (claim ref, label, assignment, branch)
-  for runs from before markers; markers' releases are safe to repeat after it.
+- **Cancel still does its own cleanup** (claim ref, assignment, branch) for
+  runs from before markers; markers' releases are safe to repeat after it.
+  Labels are the flow's: cancel never removes one, and a run's label marker
+  releases it (#207).
+
+## Flow settings (#202)
+
+Core's settings are the engine's; everything else is a flow's
+(`docs/adr/0005-the-engine-knows-no-workflow.md`, decision 6).
+
+- **A flow declares its settings** with a schema, `defineFlow({ settings })`,
+  and reads them with `Settings.read(schema)` (core's
+  `packages/core/src/flow-settings.ts`), through the `FlowSettings` service
+  the engine provides: `flowLayer` for a run, `FlowsClientLive` for a
+  trigger, item, gate and stillValid, `declaredLabels` for `chernabog labels`.
+- **The input is merged** in `src/repo-config.ts`: config.yaml's `settings:`
+  (`PersonaRepo.shared`), then `flows.<name>.settings`, then the persona's
+  `flows.<name>.settings` in machine config (`mergeFlows`), key by key, an
+  object one level down (`mergeSettings`, `flowSettingsInput`).
+  `checkFlowSettings` decodes each flow's schema for each persona wherever a
+  repo's flows load beside its config, so a bad setting is a `ConfigError`.
+- **The SDK's shared settings** are `packages/sdk/src/settings.ts`: schemas a
+  recipe spreads into its own (`Settings.Ci.fields`, …) and readers its blocks
+  call (`Settings.ci`, `labels`, `localGate`, …). A reader falls back, key by
+  key, to Repo's deprecated fields, which config.yaml's old top-level keys
+  still fill. Each bundled recipe declares the blocks it reads and
+  `labels: Settings.declaredLabels`.
+- **Labels are the flows'.** `chernabog labels` and `doctor` create and check
+  what the loaded flows declare (`labelsOf`, which may work them out from
+  settings); `src/` has no label set of its own.
+- **Kept until core's next major** (core only grows within one, ADR 0004):
+  core's `Labels`, `DEFAULT_LABELS`, `Limits` and RepoSettings' recipe keys,
+  and config.yaml's old keys, which a flow's settings fall back to.
+  `reviewTrigger` still loads and does nothing. The engine still reads the
+  reviewer pool (`ReviewerSeat`), the board (`queuedIssuesLabelled`) and,
+  for the deprecated `queuedIssues` and `oldestQueued` alone, the label
+  names from Repo, which `mergePersona` fills from `settings.reviewers` and
+  `settings.board` when the old keys are unset, and from `settings.labels`
+  over the old `labels:`.
+- **CI is facts (#207).** `GitHub.ciChecks` reports every check run and
+  commit status on a pull request's head and whether its base requires it,
+  with no verdict; the SDK's `Ci.verdict` decides, by the flow's `ciGates`
+  and `ciOptionalFailures` (`Settings.Ci`, read by `Settings.ciGate`).
+  `ciState` (which now counts commit statuses too) and `commitCiState` keep
+  their verdicts, deprecated, until core's next major; no SDK block calls
+  `ciState`, `queuedIssues` or `oldestQueued`.
+- **config.schema.json** describes each flow's settings from its schema
+  (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
+  `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and
+  `upgrade` run again once the flows changed.
 
 ## Rehearsals (#115)
 
@@ -515,15 +584,15 @@ Decisions that cut across them:
 
 ### Review flows (#53, #54)
 
-- `reviewers:` in the team's config is the pool. `Implement.handOff` calls
+- `settings.reviewers` in the team's config (once `reviewers:`) is the pool. `Implement.handOff` calls
   `PullRequest.requestReview`, which picks one at random, never the author,
   inside an activity so a replay asks the same login; no pool means
   `auto:needs-review` for a person.
 - `review` runs as a persona whose review is requested and who hasn't
   reviewed; `re-review` as one asked again, resuming
   its session with `Review.recheck` from the review marker (which records
-  reviewer, sessionId and adapter). `limits.reviewRounds` (default 1) caps
-  re-reviews.
+  reviewer, sessionId and adapter). The `reviewRounds` setting (default 1)
+  caps re-reviews.
 - Merging goes through `PullRequest.merge`'s safety checks, and only for what
   `PullRequest.ships` (carries `auto:ship`), read once per run with
   `PullRequest.shipping`; the recipes do this, and `PullRequest.mergeOrLeave`
@@ -537,18 +606,23 @@ Decisions that cut across them:
   re-requests the reviewer who asked. `re-review` skips `auto:needs-human`, so
   re-requesting mid-dispute doesn't restart the loop.
 - A review request for a login no persona here acts as never fails; it
-  waits (#76). The pool's rules are the kernel's
-  (`src/kernel/reviewer-pool.value-object.ts`), since enrollment, runs and
-  doctor all read them. `doctor` warns (`!`, not a failure) per persona that
-  authors (runs `implement`, `human-initiated`, or a flow whose code mentions
-  `requestReview`/`handOff`, read by `authoringFlows` in
-  `src/platform/flow-loader.ts`) when the pool less that author has no login
-  under `github:`; `applyEnrollmentUseCase` returns the same as `unserved`,
-  which `enroll` prints as a note; and `planTickUseCase`, for the `review`
-  flow, reads `FlowsClient.reviewRequests` (one `openPullRequests` call,
-  before the trigger, which it leaves alone) and returns
-  `#n waits on <login> (not on this machine)` as `TickPlan.unserved`, which
-  the daemon adds to the schedule's `elsewhere`.
+  waits (#76). The binary knows nothing of it (#208): what doctor and
+  status say comes from the flows. `doctor` runs each flow's
+  `defineFlow({ doctor })` checks (`flowWarnings` in
+  `src/modules/runs/infrastructure/runtime/diagnostics.ts`) and prints their
+  warnings (`!`, not a failure); the recipes that ask for reviews include
+  `Review.poolCheck`, and the ones that review `Review.reviewerCheck`, which
+  also marks them as reviewing for `poolCheck`. The review recipe's trigger
+  reports each request no persona here serves as an item that `waitsOn` the
+  login (`Review.waitingElsewhere`, from core's `Machine` service, which
+  `buildRepoContext` provides); `planTickUseCase` starts none of those and
+  returns them in `TickPlan.routed.waiting`, which `status` lists.
+  `enroll` reads the untrusted checkout and imports no flow, so it says
+  nothing of the pool.
+- **`src/` names no recipe.** `local/no-recipe-names`
+  (`tools/oxlint/local/`, scoped to `src/` in `.oxlintrc.json`) refuses a
+  string that is a recipe's name and a regex over the SDK's vocabulary;
+  learn what a flow does from what it declares through core instead.
 - Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
   review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
   `fixWorkflow`, `FixItem`, the `fix` prompt), and the whole workflows and
@@ -592,8 +666,12 @@ Decisions that cut across them:
   for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
   check; a claim naming another run ends the run as `lost` (`cancelRunUseCase`
   with `endAs lost`, which removes nothing). In the run, `fencing` in the
-  engine checks `Claims.holds` before every GitHub write and push, and a lost
-  claim ends the workflow as `lost`. A lost run's markers are all kept: they
+  engine checks `Claims.holds` before every write a capability port declares
+  (`Capabilities.declare` beside each port in core's `services.ts`, listed in
+  `CAPABILITIES`; the claim refs' own writes are declared `claim` and never
+  fenced), and a lost claim ends the workflow as `lost`. `reportingChanges`
+  reports the same writes. The engine names no port method: a new write, or a
+  new port, is fenced and reported by declaring it. A lost run's markers are all kept: they
   are the taker's.
 - **Migration, to drop a release later:** a branch whose latest claim marker
   has no `ref: true` is an earlier version's claim (`Implement.legacyClaim`),
@@ -608,9 +686,10 @@ Decisions that cut across them:
   repo writes its own `human-initiated` flow from them, as this repo's
   `.chernabog/flows/human-initiated.ts` does (`ownWork: true`, no gate). Its
   trigger finds nothing on a schedule; `chernabog start <issue>`
-  (`src/interface/cli/runs/start.main.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
-  `issue-<n>` (failing with a link to the docs' `#the-hybrid-path` when the
-  repo has no such flow). The optional `Flow.item(key)` finds an item the
+  (`src/interface/cli/runs/start.main.ts`) asks the daemon to run on
+  `issue-<n>` the flow that declares `defineFlow({ start: true })`, as its
+  status reports it (`startFlowOf` in `src/kernel/manual-flow.value-object.ts`
+  refuses a repo with none or several, naming them). The optional `Flow.item(key)` finds an item the
   trigger doesn't report (`FlowsClient.find`, for the daemon
   and `run --item`). It then attaches to the session (`liveAttach`).
 - `Hybrid.claim` takes the issue's claim ref like `Implement.claim`, and

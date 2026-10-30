@@ -79,9 +79,6 @@ const open: TickInput = {
     quietHours: Option.none(),
     activeHours: Option.none(),
   },
-  routing: { assignee: Option.none(), reviewRequested: Option.none() },
-  login: Option.some("bob"),
-  here: ["bob"],
   concurrency: { flow: 1, machine: 4 },
 };
 
@@ -93,44 +90,34 @@ const keys = (items: ReadonlyArray<WorkItem>) => items.map((found) => found.key)
 
 describe("planTickUseCase", () => {
   effect(
-    "lists the review requests no persona here serves, for the review flow only, even when its trigger fails",
+    "lists the items its trigger says wait on someone, with who and why, whatever the flow's name, and starts none of them",
     () =>
       Effect.gen(function* () {
-        const reviewing = yield* planTickUseCase(review, open);
-        const failing = yield* planTickUseCase({ ...review, repo: "other" }, open);
-        const implementing = yield* planTickUseCase({ ...review, flow: "implement" }, open);
+        const reviewing = { ...review, flow: "pr-reviews" };
+        const plan = yield* planTickUseCase(reviewing, open);
+        const named = yield* planTickUseCase(reviewing, { ...open, item: Option.some("pr-73") });
 
-        const paused = yield* planTickUseCase(review, {
-          ...open,
-          conditions: { ...open.conditions, paused: true },
-        });
-
-        expect(reviewing.unserved).toEqual(
-          Option.some(["#73 waits on data-quail (not on this machine)"]),
+        expect(plan.routed).toEqual(
+          Option.some({
+            queued: ["pr-74"],
+            elsewhere: [],
+            waiting: ["pr-73 waits on data-quail (not on this machine)"],
+          }),
         );
-        expect(failing.skipped).toEqual(Option.some("trigger failed: rate limited"));
-        expect(failing.unserved).toEqual(Option.some(["#9 waits on carol (not on this machine)"]));
-        expect(implementing.unserved).toEqual(Option.none());
-        expect(paused.unserved).toEqual(Option.none());
+        expect(keys(plan.start)).toEqual(["pr-74"]);
+        expect(keys(plan.signalled)).toEqual(["pr-73", "pr-74"]);
+        expect(named.start).toEqual([]);
       }).pipe(
         Effect.provide(
           runtime(fakeEngine(), {
             flows: {
-              "demo/review": {
-                items: [],
-                reviewRequests: [
-                  { number: 73, requestedReviewers: ["data-quail"] },
-                  { number: 74, requestedReviewers: ["Bob"] },
+              "demo/pr-reviews": {
+                items: [
+                  item("pr-73", {
+                    waitsOn: { who: "data-quail", why: "not on this machine" },
+                  }),
+                  item("pr-74"),
                 ],
-              },
-              "other/review": {
-                items: [],
-                fails: "rate limited",
-                reviewRequests: [{ number: 9, requestedReviewers: ["carol"] }],
-              },
-              "demo/implement": {
-                items: [],
-                reviewRequests: [{ number: 9, requestedReviewers: ["carol"] }],
               },
             },
           }),
@@ -144,7 +131,9 @@ describe("planTickUseCase", () => {
 
       expect(keys(plan.start)).toEqual(["pr-1"]);
       expect(keys(plan.signalled)).toEqual(["pr-1", "pr-2"]);
-      expect(plan.routed).toEqual(Option.some({ queued: ["pr-1 One", "pr-2"], elsewhere: [] }));
+      expect(plan.routed).toEqual(
+        Option.some({ queued: ["pr-1 One", "pr-2"], elsewhere: [], waiting: [] }),
+      );
       expect(plan.skipped).toEqual(Option.none());
     }).pipe(
       Effect.provide(
@@ -217,20 +206,24 @@ describe("planTickUseCase", () => {
 
   effect("leaves work for others to them, and no work already running", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, {
-        ...open,
-        routing: { assignee: Option.some(["@me"]), reviewRequested: Option.none() },
-      });
+      const plan = yield* planTickUseCase(review, open);
 
-      expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (assignee: alice)"));
+      expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (label: team-b)"));
+      expect(plan.routed).toEqual(
+        Option.some({ queued: [], elsewhere: ["pr-1 (label: team-b)"], waiting: [] }),
+      );
       expect(plan.start).toEqual([]);
       expect(keys((yield* planTickUseCase({ ...review, flow: "busy" }, open)).start)).toEqual([]);
+
+      // A person who names it runs it here, whoever the flow left it for.
+      const named = yield* planTickUseCase(review, { ...open, item: Option.some("pr-1") });
+      expect(keys(named.start)).toEqual(["pr-1"]);
     }).pipe(
       Effect.provide(
         runtime(fakeEngine(), {
           runs: [run("busy", { flow: "busy" })],
           flows: {
-            "demo/review": { items: [item("pr-1", { assignees: ["alice"] })] },
+            "demo/review": { items: [item("pr-1", { elsewhere: "label: team-b" })] },
             "demo/busy": { items: [item("pr-1")] },
           },
         }),
@@ -266,7 +259,9 @@ describe("planTickUseCase", () => {
 
         expect(keys(plan.start)).toEqual(["issue-15"]);
         expect(keys(plan.signalled)).toEqual(["issue-14", "issue-15", "issue-16"]);
-        expect(plan.routed).toEqual(Option.some({ queued: ["issue-15"], elsewhere: [] }));
+        expect(plan.routed).toEqual(
+          Option.some({ queued: ["issue-15"], elsewhere: [], waiting: [] }),
+        );
 
         expect(
           (yield* listHoldsUseCase()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),

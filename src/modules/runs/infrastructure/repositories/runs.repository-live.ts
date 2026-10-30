@@ -67,15 +67,32 @@ export const RunsRepositoryLive = Layer.effect(
       yield* sql`ALTER TABLE om_runs ADD COLUMN config_tree TEXT`;
     }
 
-    // One from before runs kept the pull request they opened gains it; its rows have none.
-    if (!columns.some((column) => column.name === "pull_request")) {
-      yield* sql`ALTER TABLE om_runs ADD COLUMN pull_request INTEGER`;
+    // What each run named as its subjects, in the order it named them.
+    yield* sql`CREATE TABLE IF NOT EXISTS om_run_subjects (
+      run_id TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      PRIMARY KEY (run_id, subject)
+    )`;
+
+    // One from when runs kept the pull request they opened names it as the
+    // run's subject, and drops the column: the engine keeps no pull request.
+    if (columns.some((column) => column.name === "pull_request")) {
+      yield* sql`INSERT OR IGNORE INTO om_run_subjects (run_id, subject)
+        SELECT id, 'pr-' || pull_request FROM om_runs WHERE pull_request IS NOT NULL`;
+      yield* sql`ALTER TABLE om_runs DROP COLUMN pull_request`;
     }
 
     yield* sql`DROP INDEX IF EXISTS om_runs_active`;
     yield* sql`CREATE INDEX IF NOT EXISTS om_runs_active_by_persona ON om_runs (status, repo, persona, flow, item_key)`;
 
     // Queries this adapter wrote against its own table: a failure is a bug, not a condition.
+    // Every column of om_runs, and the run's subjects as a JSON array.
+    const SELECTED = sql`SELECT om_runs.*, (
+      SELECT json_group_array(subject) FROM (
+        SELECT subject FROM om_run_subjects WHERE run_id = om_runs.id ORDER BY rowid
+      )
+    ) AS subjects FROM om_runs`;
+
     const runs = <E>(query: Effect.Effect<ReadonlyArray<object>, E>) =>
       query.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(RunColumns))),
@@ -84,20 +101,20 @@ export const RunsRepositoryLive = Layer.effect(
       );
 
     const findOne = (id: RunId) =>
-      runs(sql`SELECT * FROM om_runs WHERE id = ${id}`).pipe(
+      runs(sql`${SELECTED} WHERE id = ${id}`).pipe(
         Effect.map((found) => Option.fromUndefinedOr(found[0])),
       );
 
     const findAll = (query: RunsQuery) => {
       if ("running" in query) {
-        return runs(sql`SELECT * FROM om_runs WHERE status = 'running' ORDER BY started_at`);
+        return runs(sql`${SELECTED} WHERE status = 'running' ORDER BY started_at`);
       }
 
       if ("latest" in query) {
-        return runs(sql`SELECT * FROM om_runs ORDER BY started_at DESC LIMIT ${query.latest}`);
+        return runs(sql`${SELECTED} ORDER BY started_at DESC LIMIT ${query.latest}`);
       }
 
-      return runs(sql`SELECT * FROM om_runs WHERE repo = ${query.repo} ORDER BY started_at`);
+      return runs(sql`${SELECTED} WHERE repo = ${query.repo} ORDER BY started_at`);
     };
 
     // A run that has ended is rewritten only by a save that carries the same
@@ -113,7 +130,7 @@ export const RunsRepositoryLive = Layer.effect(
         itemUrl,
         item,
         executionId,
-        pullRequest,
+        subjects,
         status,
         currentStep,
         summary,
@@ -123,17 +140,25 @@ export const RunsRepositoryLive = Layer.effect(
         finishedAt,
       ] = toParameters(run);
 
-      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, pull_request, status, current_step, summary, core_version, config_tree, started_at, finished_at)
-        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${pullRequest}, ${status}, ${currentStep}, ${summary}, ${coreVersion}, ${configTree}, ${startedAt}, ${finishedAt})
+      return sql`INSERT INTO om_runs (id, repo, persona, flow, item_key, item_title, item_url, item, execution_id, status, current_step, summary, core_version, config_tree, started_at, finished_at)
+        VALUES (${id}, ${repo}, ${persona}, ${flow}, ${itemKey}, ${itemTitle}, ${itemUrl}, ${item}, ${executionId}, ${status}, ${currentStep}, ${summary}, ${coreVersion}, ${configTree}, ${startedAt}, ${finishedAt})
         ON CONFLICT (id) DO UPDATE SET
           persona = excluded.persona,
           execution_id = excluded.execution_id,
-          pull_request = excluded.pull_request,
           status = excluded.status,
           current_step = excluded.current_step,
           summary = excluded.summary,
           finished_at = excluded.finished_at
         WHERE om_runs.finished_at IS NULL OR om_runs.finished_at = excluded.finished_at`.pipe(
+        // Subjects only grow, so a stale copy that names fewer drops none.
+        Effect.andThen(
+          Effect.forEach(
+            subjects,
+            (subject) =>
+              sql`INSERT OR IGNORE INTO om_run_subjects (run_id, subject) VALUES (${id}, ${subject})`,
+            { discard: true },
+          ),
+        ),
         Effect.asVoid,
         Effect.orDie,
       );

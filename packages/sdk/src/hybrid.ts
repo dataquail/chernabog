@@ -23,6 +23,7 @@ import {
   sessionMarker,
   Skip,
   StepFailed,
+  Subjects,
   type WorkItem,
 } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
@@ -49,6 +50,7 @@ import {
 } from "./implement.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
+import * as Settings from "./settings.ts";
 
 // Finds nothing, on whatever schedule it is given.
 /** @deprecated Leave `trigger` out instead: a flow with `item` and no trigger is manual, and runs only when a person names its work. */
@@ -112,7 +114,7 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
     "claim",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
       const run = yield* Run;
       const branch = branchFor(issue);
       const item = Claims.issue(issue);
@@ -142,14 +144,14 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
           });
         }
       } else {
-        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
       }
 
       // A person's session that fails, as one they close does, leaves the
       // issue in progress for their next start.
       yield* markClaimed(issue, { keepOn: ["failed"] });
 
-      for (const queued of [repo.labels.eligible, repo.labels.ship]) {
+      for (const queued of [labelNames.eligible, labelNames.ship]) {
         yield* github.removeLabel(issue, queued);
       }
 
@@ -205,6 +207,8 @@ export const workWithPerson = (issue: number, worktree: string, options: BaseOpt
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const rules = yield* Settings.rules;
+      const localGate = yield* Settings.localGate;
       const details = yield* github.issue(issue);
       const comments = yield* github.trustedComments(issue);
 
@@ -216,9 +220,9 @@ export const workWithPerson = (issue: number, worktree: string, options: BaseOpt
         comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
         branch: branchFor(issue),
         base: yield* baseOf(options),
-        localGate: repo.localGate.map((command) => `\`${command}\``),
-        humanOnly: repo.humanOnly,
-        notes: repo.notes,
+        localGate: localGate.commands.map((command) => `\`${command}\``),
+        humanOnly: rules.humanOnly,
+        notes: rules.notes,
       });
 
       const result = yield* (yield* Agent).run({
@@ -247,12 +251,14 @@ export const workWithPerson = (issue: number, worktree: string, options: BaseOpt
 // Opens the pull request for the branch, or finds the one already open, and
 // labels it hybrid for people reading GitHub. It never carries ship, so a
 // person merges it. It targets `base`, the repo's base branch unless given.
+// The run names the pull request as a subject.
 export const openPullRequest = (issue: number, finished: Finished, options: BaseOptions = {}) =>
   activity(
     "open-pull-request",
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
       const branch = branchFor(issue);
       const base = yield* baseOf(options);
 
@@ -274,7 +280,8 @@ export const openPullRequest = (issue: number, finished: Finished, options: Base
           }),
       });
 
-      yield* github.addLabel(opened.number, repo.labels.hybrid);
+      yield* Subjects.name(Claims.pullRequest(opened.number));
+      yield* github.addLabel(opened.number, labelNames.hybrid);
 
       return { number: opened.number, url: opened.url };
     }),
@@ -282,19 +289,14 @@ export const openPullRequest = (issue: number, finished: Finished, options: Base
   );
 
 // Hands the green pull request to review, as Implement.handOff does: the
-// session marker, so answering a review reopens the person's session, the
-// review trigger if the repo has one, a comment on the issue, and a review
-// asked of one reviewer from the pool.
+// session marker, so answering a review reopens the person's session, a
+// comment on the issue, and a review asked of one reviewer from the pool.
 export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Finished) =>
   activity(
     "hand-off",
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
-
-      if (Option.isSome(repo.reviewTrigger)) {
-        yield* github.comment(pullRequest.number, repo.reviewTrigger.value);
-      }
 
       const session = {
         adapter: repo.agent,

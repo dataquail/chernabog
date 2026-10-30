@@ -17,37 +17,64 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | Key                | Default                    | Meaning                                                                  |
 | ------------------ | -------------------------- | ------------------------------------------------------------------------ |
 | `baseBranch`       | `main`                     | branch flows are read from and pull requests target                       |
-| `install`          | none                       | command run in each fresh worktree; `null` for none                       |
-| `localGate`        | `[]`                       | commands a change must pass before its pull request opens                |
-| `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt                        |
-| `humanOnlyPaths`   | `[]`                       | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
-| `notes`            | `[]`                       | repo facts the agent should know                                          |
-| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels)                           |
-| `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus` |
-| `reviewTrigger`    | none                       | comment posted on each new pull request, e.g. to summon a review bot      |
+| `settings`         | none                       | settings every flow shares, such as the reviewer pool or the local gate; see [Flow settings](#flow-settings) |
 | `schedule`         | spread across the hour     | cron for every flow but [manual ones](/chernabog/flows/flows/#manual-flows) |
 | `agent`            | the account's              | adapter that implements                                                   |
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
-| `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers)          |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
+| `flows.<flow>.settings` | —                     | the flow's own settings, over `settings`; see [Flow settings](#flow-settings) |
 | `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |
-| `limits.localGateRounds` | `2`                  | times the agent is sent back for a failing local gate                    |
-| `limits.ciRounds`  | `3`                        | times it is sent back for red CI                                          |
-| `limits.reviewRounds` | `1`                     | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
-| `limits.staleAfter`| `6 hours`                  | a wait for flows of your own; the recipes don't read it         |
-| `limits.ciTimeout` | `2 hours`                  | wait for CI to finish                                                     |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
 | `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person |
 | `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight |
-| `limits.planNodes` | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
-| `limits.planRounds` | `2`                       | times the agent is sent back for a plan that fails its checks             |
-| `limits.stackDepth` | `4`                       | the most layers one stack of an epic's tasks may hold before the epic waits for its bottom to merge |
 
 `launchers` is refused here: only machine config defines launcher commands.
+
+### Flow settings
+
+The engine's settings are the ones above. Everything else is a flow's: each flow declares the settings it reads with a schema (`defineFlow({ settings })`), and the repo sets them under `settings:`, for every flow that declares a key, or under `flows.<flow>.settings`, for one flow. A person can override them for a persona in machine config, under the repo entry's (or the persona's) `flows.<flow>.settings`. The layers merge key by key, in that order, and a key two layers give as an object, such as `labels`, merges one level down. A flow's settings are checked against its schema when the flow loads, and one it refuses fails the repo, like any other config error. `config.schema.json` describes each flow's settings from its schema: `init` and `chernabog recipes add`, `update` and `upgrade` rewrite it.
+
+The SDK's blocks read these shared settings, which the recipes declare:
+
+| Setting            | Default                    | Meaning                                                                  |
+| ------------------ | -------------------------- | ------------------------------------------------------------------------ |
+| `install`          | none                       | command run in each fresh worktree; `null` for none                       |
+| `localGate`        | `[]`                       | commands a change must pass before its pull request opens                |
+| `localGateRounds`  | `2`                        | times the agent is sent back for a failing local gate                    |
+| `ciRounds`         | `3`                        | times it is sent back for red CI                                          |
+| `ciTimeout`        | `2 hours`                  | wait for CI to finish                                                     |
+| `ciGates`          | `required`                 | the checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or `every` check. Check runs and commit statuses alike |
+| `ciOptionalFailures` | `hold`                   | whether a failing check that doesn't gate still makes CI red, so a fix starts and nothing merges (`hold`), or is left alone (`ignore`) |
+| `reviewers`        | none                       | the reviewer pool, by GitHub login; see [Reviewers](#reviewers). Set it under `settings:`, since the flows that ask for reviews and the ones that review share it |
+| `reviewRounds`     | `1`                        | re-reviews of one pull request before `re-review` hands it to a person (`auto:needs-human`) |
+| `humanOnly`        | `[]`                       | decisions the agent must stop for; in every prompt. A flow's add to the repo's and the machine's |
+| `humanOnlyPaths`   | `[".github/**"]`           | globs an unattended run's change must not touch, which then goes to `auto:needs-human`; chernabog never merges a change to them. A person's [hybrid](/chernabog/recipes/human-initiated/) session may push one ([Trust](/chernabog/operate/trust/)) |
+| `notes`            | `[]`                       | repo facts the agent should know                                          |
+| `labels.<key>`     | `auto:*`, and `hybrid`     | rename a [label](/chernabog/work/flows/#labels). Set it under `settings:`, so every flow that shares a label uses one name |
+| `board`            | none                       | `{ projectNumber, readyStatus, inProgressStatus }`: queue only issues whose project Status is `readyStatus`. Set it under `settings:` |
+| `planNodes`        | `12`                       | tasks one plan may hold, its verify task aside ([`plan`](/chernabog/recipes/plan/)) |
+| `planRounds`       | `2`                        | times the agent is sent back for a plan that fails its checks             |
+| `stackDepth`       | `4`                        | the most layers one stack of an epic's tasks may hold before the epic waits for its bottom to merge |
+
+```yaml
+# .chernabog/config.yaml
+settings:
+  reviewers: [alice, data-quail]
+  localGate: [bun run check, bun test]
+flows:
+  implement:
+    settings: { ciRounds: 5 }
+  release:
+    settings: { promoteFrom: develop } # a setting of the repo's own release flow
+```
+
+A recipe of your own declares its settings beside the SDK's it uses, and reads them typed; see [Settings](/chernabog/flows/sdk/#settings).
+
+The keys these replaced still load until core's next major, and a flow's settings fall back to them: `install`, `localGate`, `humanOnly`, `humanOnlyPaths`, `notes`, `labels`, `board`, `reviewers` and `limits.localGateRounds`, `ciRounds`, `reviewRounds`, `ciTimeout`, `planNodes`, `planRounds` and `stackDepth` at the top of `config.yaml`. `limits.staleAfter` still loads too, but no SDK block reads it. `reviewTrigger` still loads, and does nothing.
 
 ### Runners
 
@@ -64,18 +91,19 @@ flows:
 
 ### Reviewers
 
-`reviewers` names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
+`reviewers`, a [flow setting](#flow-settings), names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
 
 On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
 
-A review request for a login this machine doesn't act as waits for the machine that does. Nothing fails, so chernabog says so instead:
+A review request for a login this machine doesn't act as waits for the machine that does. Nothing fails, so the recipes say so instead, through what a flow can tell chernabog; a flow of your own that tells it nothing gets no warnings:
 
-- `doctor` warns, for each persona that opens pull requests (it runs `implement`, `human-initiated`, or a flow that asks for a review), when no one in the pool but that persona is a login under `github:` here: `pull requests authored as alice go to data-quail, which this machine doesn't act as; they wait until another machine reviews them`. `enroll` notes the same when you choose those flows. It's a warning, since a teammate's machine may serve that login.
-- `status` lists, under the `review` flow, the open pull requests that wait on such a login: `assigned elsewhere: #73 waits on data-quail (not on this machine)`. One drops off once that review is in.
+- `doctor` warns, for each persona that runs a recipe that opens pull requests (`implement`, `human-initiated`, `epic`: they include the SDK's `Review.poolCheck`), when no one in the pool but that persona is a login under `github:` here: `pull requests authored as alice go to data-quail, which this machine doesn't act as; they wait until another machine reviews them`; or when those that are run no flow that reviews here (one that includes `Review.reviewerCheck`, as `review` and `re-review` do, whatever you name them). It also warns when a persona runs `review` without a seat in the pool. These are warnings, since a teammate's machine may serve that login.
+- `status` lists, under the `review` flow, the open pull requests its trigger says wait on such a login: `waiting: pr-73 waits on data-quail (not on this machine)`. One drops off once that review is in.
 
 ```yaml
 # .chernabog/config.yaml
-reviewers: [alice, data-quail]
+settings:
+  reviewers: [alice, data-quail]
 ```
 
 ### Agents by role
@@ -95,28 +123,32 @@ A step given a role, as in `Review.round(pr, 1, { role: "reviewer" })`, runs wit
 
 ### Routing by assignee and reviewer
 
-`flows.<flow>.assignee` and `flows.<flow>.reviewRequested` make a machine start only the work items for certain people. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
+Routing is a flow's choice, not the engine's: a flow's trigger may leave an item for another persona or machine, saying why, and the engine starts none of those here. Claims, not routing, keep two runs off one item; routing only says who would rather start what. A flow can route by anything it reads (a label, a path, a team, a board column) by setting the item's `elsewhere` to the reason. A flow that routes nothing starts every item its trigger reports.
 
-- `@me`: this machine's GitHub login, the one its `gh` token belongs to, or the [persona](#github-personas) the flow runs as
+The bundled recipes route with the SDK's `Routing` block, by the settings `assignee` and `reviewRequested` under `flows.<flow>.settings`. They work like GitHub's `assignee:` and `review-requested:` search qualifiers. Each takes one value or a list:
+
+- `@me`: the GitHub login of the [persona](#github-personas) the flow runs as, or for the implicit persona, whoever its `gh` token belongs to
 - a login, such as `alice`
 - `none`: nobody
 
-An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively. When the machine's login can't be looked up, `@me` matches no one.
+An item starts if anyone on the list matches. When a flow sets both filters, an item must pass both. Logins are compared case-insensitively.
 
-`implement` items carry the issue's assignees. `review` and `re-review` items carry the pull request's assignees and its requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, so they need no `reviewRequested`. `address-review` items carry the pull request's assignees; its trigger takes only pull requests the persona wrote. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow's items match only `none` unless its trigger sets `assignees` or `reviewers` on them.
+`implement`, `plan` and `epic` route issues by their assignees. `review`, `re-review` and `address-review` route pull requests by their assignees and requested reviewers; their triggers already take only pull requests that request the review of the persona they run as, or, for `address-review`, that it wrote, so they need no filter. Teams requested as reviewers don't count, so a pull request that only requests a team has no requested reviewers. A custom flow routes with `Routing.route(item, { assignees, reviewers })` in its trigger, and declares `...Routing.Settings.fields` in its settings schema.
 
-Items that don't match are left for other machines. `status` lists them (`assigned elsewhere: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
+Items a flow leaves are left for others. `status` lists them with the flow's reason (`left for others: issue-12 (assignee: alice)`) and the live view counts them. When nothing else is queued, the tick's skip reason is `only work for others: …`. A run already going still hears about its item. Naming an item, as in `chernabog run implement --item issue-12`, runs it here whoever it's for.
 
 Whether the flow runs for a persona at all is decided first, by its [flows](#which-flows-run) in machine config. An issue assigned to someone the flow is off for waits until they turn it on. The claim branch still keeps two machines from implementing the same issue.
 
 ```yaml
 # .chernabog/config.yaml
 flows:
-  implement: { assignee: ["@me", none] }   # my issues, and unassigned ones
-  review: { reviewRequested: "@me" }       # pull requests requesting my review
+  implement:
+    settings: { assignee: ["@me", none] }   # my issues, and unassigned ones
+  review:
+    settings: { reviewRequested: "@me" }    # pull requests requesting my review
 ```
 
-Both can go in a flow's settings in machine config too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value.
+Both can go in a flow's settings in machine config too. Use them to take only your own work, to cover for a teammate (`assignee: alice`), or set `null` to clear the team's filter. Quote `"@me"` in YAML, since a bare `@` can't start a value. The old `flows.<flow>.assignee` and `flows.<flow>.reviewRequested` keys are deprecated: until core's next major the binary gives them to the flow as these settings, and the flow's own settings win over them.
 
 ```yaml
 # .chernabog/config.yaml

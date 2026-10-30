@@ -7,11 +7,12 @@
 import {
   Agent,
   AgentError,
+  CAPABILITIES,
+  Capabilities,
   Claims,
   describeError,
   type Flow,
   FlowPackage,
-  Git,
   GitHub,
   isSetupError,
   Markers,
@@ -19,9 +20,11 @@ import {
   type RepoSettings,
   Run,
   RunLog,
+  Settings,
   type SetupError,
   Signals,
   Skip,
+  Subjects,
   WorkItem,
 } from "@chernabog/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
@@ -52,15 +55,15 @@ import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
-import type { EffectiveRepo } from "../../../../repo-config.ts";
+import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
 import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
 import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
-import { linkPullRequestUseCase } from "../../use-cases/link-pull-request.use-case.ts";
 import { listRunMarkersUseCase } from "../../use-cases/list-run-markers.use-case.ts";
+import { nameSubjectUseCase } from "../../use-cases/name-subject.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
@@ -285,39 +288,6 @@ export const capturing = <Args extends ReadonlyArray<unknown>, A, E, R>(
         Effect.provideContext(use(...args), context),
   );
 
-// The run's GitHub, which links the run to a pull request it opens, or to an
-// open one it finds for its branch and adopts: the only ways a flow takes a
-// pull request on for its work. Services without GitHub stay as they are.
-export const linkingPullRequests = <R>(
-  context: Context.Context<R>,
-  link: (pullRequest: number) => Effect.Effect<void>,
-): Context.Context<R> =>
-  Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(Effect.tap((opened) => link(opened.number))),
-          pullRequestForBranch: (branch) =>
-            github
-              .pullRequestForBranch(branch)
-              .pipe(
-                Effect.tap((found) =>
-                  Effect.forEach(
-                    Option.toArray(Option.filter(found, (pull) => pull.state === "open")),
-                    (pull) => link(pull.number),
-                    { discard: true },
-                  ),
-                ),
-              ),
-        }),
-      ),
-  });
-
 // The executions told to stop, by id. The engine's interrupt lands only
 // between activities, and an activity in progress, such as an agent step an
 // hour long, checks nothing. So a run told to stop ends its workflow at once,
@@ -411,145 +381,34 @@ export const stoppingWith = <R>(
       ),
   });
 
-// The run's GitHub and Git, which report the changes other flows act on: pull
-// requests, pushes, reviews, merges, labels, statuses, comments and other API
-// writes, so no flow declares them. Branches made or deleted, Git.run, a
-// .chernabog/stages/ step's own process and the agent's own gh or git aren't
-// seen here; the run's end, or cron, catches those. A change is reported once
-// made; a failed one changed nothing to tick for.
+// The run's capabilities, which report the changes other flows act on: every
+// write a capability declares (pull requests, pushes, reviews, labels,
+// comments, other API writes…), so no flow declares them. What a port doesn't
+// declare a write (a claim, Git.run), a .chernabog/stages/ step's own process
+// and the agent's own gh or git aren't seen here; the run's end, or cron,
+// catches those. A change is reported once made; a failed one changed nothing
+// to tick for.
 export const reportingChanges = <R>(
   context: Context.Context<R>,
   changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const on =
-    (what: string, item: Option.Option<number> = Option.none()) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.tap(effect, () => changed(what, item));
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.tap(call, (result) => changed(write.done, write.item(result))),
+  );
 
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) =>
-            github.comment(number, body).pipe(on("commented", Option.some(number))),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(on(`labelled ${label}`, Option.some(number))),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(on(`unlabelled ${label}`, Option.some(number))),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(on(`moved to ${status}`, Option.some(number))),
-          assignSelf: (number) =>
-            github.assignSelf(number).pipe(on("assigned", Option.some(number))),
-          openPullRequest: (pullRequest) =>
-            github
-              .openPullRequest(pullRequest)
-              .pipe(
-                Effect.tap((opened) => changed("pull request opened", Option.some(opened.number))),
-              ),
-          requestReviewers: (pullRequest, logins) =>
-            github
-              .requestReviewers(pullRequest, logins)
-              .pipe(on("review requested", Option.some(pullRequest))),
-          review: (pullRequest, review) =>
-            github
-              .review(pullRequest, review)
-              .pipe(on("review submitted", Option.some(pullRequest))),
-          merge: (pullRequest, merge) =>
-            github.merge(pullRequest, merge).pipe(on("merged", Option.some(pullRequest))),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(on(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(on(`pushed ${branch}`)),
-        }),
-      ),
-  });
-};
-
-// The run's GitHub and Git, which check before each write another person or
-// run sees (comments, labels, assignments, statuses, pull requests, reviews,
-// merges, other API writes and pushes) that `fence` lets it through: that
-// every claim the run holds still names it. A run that lost one never gets
-// past the check. A small window between the check and the write remains.
+// The run's capabilities, which check before each write they declare, each
+// one another person or run sees, that `fence` lets it through: that every
+// claim the run holds still names it. A run that lost one never gets past
+// the check. A small window between the check and the write remains.
 export const fencing = <R>(
   context: Context.Context<R>,
   fence: (what: string) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const first =
-    (what: string) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.andThen(fence(what), effect);
-
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) => github.comment(number, body).pipe(first("commenting")),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(first(`labelling ${label}`)),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(first(`unlabelling ${label}`)),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(first(`moving to ${status}`)),
-          assignSelf: (number) => github.assignSelf(number).pipe(first("assigning")),
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(first("opening a pull request")),
-          requestReviewers: (pullRequest, logins) =>
-            github.requestReviewers(pullRequest, logins).pipe(first("requesting review")),
-          review: (pullRequest, review) =>
-            github.review(pullRequest, review).pipe(first("reviewing")),
-          merge: (pullRequest, merge) => github.merge(pullRequest, merge).pipe(first("merging")),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(first(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(first(`pushing ${branch}`)),
-        }),
-      ),
-  });
-};
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.andThen(fence(write.doing), call),
+  );
 
 // The fence a run's writes pass (fencing): every claim it holds, as its
 // claim-ref markers say, still names it. One that doesn't completes `lost`
@@ -615,6 +474,15 @@ const provideFlowPackage =
           dir: source.dir,
         }),
     });
+
+// The flow's settings as `persona` runs it; none for a persona the repo no longer has.
+export const flowSettingsFor = (handle: FlowHandle, persona: Persona) =>
+  Settings.FlowSettings.of({
+    input: Option.match(personaOf(handle.repo, persona), {
+      onNone: () => ({}),
+      onSome: (own) => flowSettingsInput(own, handle.name),
+    }),
+  });
 
 // The markers a run holds, recorded against it for their release when it
 // ends. A marker neither the SDK nor the flow defines couldn't be released,
@@ -720,8 +588,9 @@ export const flowLayer = <R>(
 
       const park = yield* capturing(parkRunUseCase);
 
-      const link = yield* capturing((pullRequest: number) =>
-        linkPullRequestUseCase(runId, pullRequest).pipe(
+      // A subject named after its run ended changes nothing.
+      const nameSubject = yield* capturing((subject: string) =>
+        nameSubjectUseCase(runId, subject).pipe(
           Effect.catchTags({
             RunAlreadyFinished: () => Effect.void,
             RunNotFound: () => Effect.void,
@@ -766,10 +635,12 @@ export const flowLayer = <R>(
         Effect.provideService(RunLog, runLog),
         Effect.provideService(Signals, signals),
         Effect.provideService(Markers.MarkerHolds, holds),
+        Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
+        Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
         Effect.provideContext(
           stoppingWith(
             fencing(
-              reportingChanges(linkingPullRequests(context, link), (what, item) =>
+              reportingChanges(context, (what, item) =>
                 hooks.onChange(handle.repo.settings.name, localCause(what, item)),
               ),
               fence,

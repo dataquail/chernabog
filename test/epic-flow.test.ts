@@ -15,6 +15,7 @@ import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import epic from "../packages/recipes/flows/epic.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
@@ -36,6 +37,17 @@ import {
 const EPIC = 40;
 
 const working = flowHandle(repo, "epic", epic);
+
+// The epic flow with ship set, so its layers are on the automated path.
+const shipping = flowHandle(
+  {
+    ...repo,
+    personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared: { ship: true } })),
+  },
+  "epic",
+  epic,
+);
+
 const work = item(`issue-${EPIC}`, { issue: EPIC });
 
 const madeIssue = (number: number, title: string): LinkedIssue => ({
@@ -104,11 +116,15 @@ const NOTHING: Snapshot = { bases: {}, status: "" };
 // Runs the epic flow; each time it parks, records what the fake looks like,
 // makes the next change and delivers what the trigger then reports, as the
 // daemon's ticks would, until the run ends or no change is left.
-const workWith = (fake: Fake, changes: ReadonlyArray<(fake: Fake) => void>) => {
+const workWith = (
+  fake: Fake,
+  changes: ReadonlyArray<(fake: Fake) => void>,
+  handle: typeof working = working,
+) => {
   const snapshots: Array<Snapshot> = [];
   const answered = new Set<string>();
 
-  const run = runUntil(working, fake, work, (current) =>
+  const run = runUntil(handle, fake, work, (current) =>
     Effect.gen(function* () {
       if (current.status !== "running") {
         return true;
@@ -137,7 +153,7 @@ const workWith = (fake: Fake, changes: ReadonlyArray<(fake: Fake) => void>) => {
 
       const found = yield* triggered(fake, Epic.queued).pipe(Effect.orDie);
 
-      if ((yield* deliverSignals(working, IMPLICIT, found)) > 0) {
+      if ((yield* deliverSignals(handle, IMPLICIT, found)) > 0) {
         answered.add(parked.value.deferred);
       }
 
@@ -207,6 +223,11 @@ describe("epic", () => {
         const body = Option.map(pullOf(fake, 11), (pull: PullRequest) => pull.body);
         expect(Option.getOrElse(body, () => "")).toContain(`Closes #11\nPart of #${EPIC}`);
 
+        // Without ship, a person merges each layer.
+        for (const pull of fake.branchPulls.values()) {
+          expect(fake.labelsOf(pull.number)).not.toContain(DEFAULT_LABELS.ship);
+        }
+
         // One status comment, edited each round.
         expect(
           fake.comments.filter((comment) => Option.isSome(Epic.statusMarker.read(comment.body))),
@@ -269,6 +290,32 @@ describe("epic", () => {
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
         expect(fake.refs.size).toBe(0);
       }),
+  );
+
+  effect("with ship, labels each pull request it opens auto:ship, the automated path", () =>
+    Effect.gen(function* () {
+      const fake = epicFake();
+      const { snapshots } = yield* workWith(fake, [], shipping);
+      expect(snapshots).toHaveLength(1);
+      expect(fake.branchPulls.size).toBe(3);
+
+      for (const pull of fake.branchPulls.values()) {
+        expect(fake.labelsOf(pull.number)).toContain(DEFAULT_LABELS.ship);
+      }
+    }),
+  );
+
+  effect("declares atOnce and ship among its settings, so config.yaml may set them", () =>
+    Effect.gen(function* () {
+      const schema = Option.fromUndefinedOr(epic.settings);
+      expect(Option.isSome(schema)).toBe(true);
+
+      for (const found of Option.toArray(schema)) {
+        expect(yield* Schema.decodeEffect(found)({ atOnce: 5, ship: true })).toEqual(
+          expect.objectContaining({ atOnce: 5, ship: true }),
+        );
+      }
+    }),
   );
 
   effect("signals a parked run only once a layer changes since its status", () =>

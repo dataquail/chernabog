@@ -9,10 +9,10 @@ import { TrustRecordsRepository } from "../domain/ports/repositories/trust-recor
 import { TrustRecordRoot } from "../domain/trust-record/trust-record.root.ts";
 import { ConfigTreeClientFake } from "../infrastructure/clients/config-tree.client-fake.ts";
 import { TrustRecordsRepositoryFake } from "../infrastructure/repositories/trust-records.repository-fake.ts";
-import { trustRepoUseCase } from "./trust-repo.use-case.ts";
+import { trustRepoHandler } from "./trust-repo.handler.ts";
 
 const repo = RepoSlug.make("dataquail/demo");
-const target = { repo, path: "/src/demo", baseBranch: "main" };
+const target = { repo, path: "/src/demo" };
 
 const trusting = (tree: string, records: ReadonlyArray<TrustRecordRoot>) =>
   Layer.mergeAll(ConfigTreeClientFake({ "/src/demo": tree }), TrustRecordsRepositoryFake(records));
@@ -20,10 +20,10 @@ const trusting = (tree: string, records: ReadonlyArray<TrustRecordRoot>) =>
 const record = (tree: string) =>
   TrustRecordRoot.make({ repo, tree, at: "2026-10-01T00:00:00.000Z" });
 
-describe("trustRepoUseCase", () => {
+describe("trustRepoHandler", () => {
   effect("a first trust lists what .chernabog/ holds and records the tree", () =>
     Effect.gen(function* () {
-      const outcome = yield* trustRepoUseCase(target);
+      const outcome = yield* trustRepoHandler(target);
 
       expect([outcome.tree, outcome.previous, outcome.changes, outcome.trusted]).toEqual([
         "aaaa",
@@ -39,7 +39,7 @@ describe("trustRepoUseCase", () => {
 
   effect("a changed tree shows what changed since the one trusted before, then trusts it", () =>
     Effect.gen(function* () {
-      const outcome = yield* trustRepoUseCase(target);
+      const outcome = yield* trustRepoHandler(target);
 
       expect([outcome.previous, outcome.changes, outcome.trusted]).toEqual([
         Option.some("aaaa"),
@@ -54,7 +54,7 @@ describe("trustRepoUseCase", () => {
 
   effect("the tree already trusted changes nothing", () =>
     Effect.gen(function* () {
-      const outcome = yield* trustRepoUseCase(target);
+      const outcome = yield* trustRepoHandler(target);
 
       expect([outcome.changes, outcome.trusted]).toEqual([Option.none(), false]);
       expect(yield* (yield* TrustRecordsRepository).findOne(repo)).toEqual(
@@ -63,12 +63,12 @@ describe("trustRepoUseCase", () => {
     }).pipe(Effect.provide(trusting("aaaa", [record("aaaa")]))),
   );
 
-  effect("fails, trusting nothing, when the base branch has no .chernabog/", () =>
+  effect("fails, trusting nothing, when the default branch has no .chernabog/", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(trustRepoUseCase({ ...target, path: "/src/elsewhere" }));
+      const refused = yield* Effect.flip(trustRepoHandler({ ...target, path: "/src/elsewhere" }));
 
       expect(refused.message).toBe(
-        "/src/elsewhere: no .chernabog/ on main; run chernabog init and merge it first",
+        "/src/elsewhere: no .chernabog/ on the default branch; run chernabog init and merge it first",
       );
       expect(yield* (yield* TrustRecordsRepository).findOne(repo)).toEqual(Option.none());
     }).pipe(Effect.provide(trusting("aaaa", []))),

@@ -50,10 +50,9 @@ describe("CheckoutsClientLive", () => {
       const { checkouts, root } = yield* checkout;
       const read = yield* checkouts.inspect(yield* checkouts.rootOf(`${root}/src`));
 
-      expect([read.root, read.repo, read.baseBranch, read.flows]).toEqual([
+      expect([read.root, read.repo, read.flows]).toEqual([
         root,
         "dataquail/demo",
-        "main",
         ["implement", "review"],
       ]);
       expect([read.team.agent, read.team.flows]).toEqual([

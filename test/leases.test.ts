@@ -5,7 +5,16 @@
 // its branch and saying from whom; and a run that lost its claim ends as lost
 // before it pushes.
 
-import { activity, Claims, DEFAULT_LABELS, defineFlow, Git, Run, StepFailed } from "@chernabog/sdk";
+import {
+  activity,
+  Claims,
+  DEFAULT_LABELS,
+  defineFlow,
+  Git,
+  GitHub,
+  Run,
+  StepFailed,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -227,6 +236,45 @@ describe("renewing a lease", () => {
 
         expect(renewal.status).toBe("lost");
         // A reader finished the taker's move for it.
+        expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
+        expect(leaseRefs(fake)).toEqual([]);
+      }),
+  );
+
+  effect(
+    "a holder that read its claim before a taker replaced it, and asks after, leaves the taker's",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        heldBy(fake, FUTURE);
+
+        const github = yield* onFake(fake, GitHub);
+
+        // Between the holder's read and its lease ref, a taker replaces the
+        // claim commit and lets go of its own lease ref.
+        const takenMeanwhile = {
+          ...github,
+          createCommit: (commit: Parameters<typeof github.createCommit>[0]) =>
+            Effect.sync(() => {
+              fake.commits.set(
+                "taken000",
+                Claims.messageOf({ ...OTHER, runId: "taker", expiresAt: FUTURE }),
+              );
+              fake.refs.set(ISSUE_REF, "taken000");
+            }).pipe(Effect.andThen(github.createCommit(commit))),
+        };
+
+        const renewal = yield* asRun(
+          fake,
+          "another-run",
+          Effect.provideService(
+            Claims.renew(CLAIM, "another-run", Duration.hours(2)),
+            GitHub,
+            takenMeanwhile,
+          ),
+        );
+
+        expect(renewal.status).toBe("lost");
         expect(fake.refs.get(ISSUE_REF)).toBe("taken000");
         expect(leaseRefs(fake)).toEqual([]);
       }),

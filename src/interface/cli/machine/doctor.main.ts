@@ -1,7 +1,7 @@
 // `chernabog doctor`: checks logins, gh scopes, labels, trust and the daemon,
 // and says how to fix what is wrong.
 
-import { type Account, DEFAULT_LABELS, type ResolvedLauncher } from "@chernabog/core";
+import { type Account, type ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
@@ -14,11 +14,11 @@ import * as Schema from "effect/Schema";
 import { providedRange } from "../../../kernel/core-support.value-object.ts";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
-import { unservedReviewers } from "../../../kernel/reviewer-pool.value-object.ts";
 import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
+import { flowWarnings } from "../../../modules/runs/infrastructure/runtime/diagnostics.ts";
 import {
-  desiredLabels,
+  declaredLabels,
   Label,
   planLabelSync,
 } from "../../../modules/runs/infrastructure/runtime/labels.ts";
@@ -30,10 +30,10 @@ import {
   checkAccount,
   loggedInEmail,
 } from "../../../modules/runs/infrastructure/runtime/usage-gate.ts";
-import { findTrustedTreeUseCase } from "../../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
 import { type Backup, listBackups } from "../../../platform/backups.ts";
 import { IncompatibleConfig } from "../../../platform/config-error.ts";
-import { configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
+import { configBranch, configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { Exec, type ExecResult } from "../../../platform/exec.ts";
 import {
@@ -44,12 +44,11 @@ import {
   UPGRADE_COMMAND,
 } from "../../../platform/flow-deps.ts";
 import {
-  authoringFlows,
   describeSource,
   flowNames,
   type FlowSource,
   flowSources,
-  reviewingFlows,
+  loadFlows,
 } from "../../../platform/flow-loader.ts";
 import { canMerge, githubGetAllPages, viewerLoginAs } from "../../../platform/github-api.ts";
 import { Home } from "../../../platform/home.ts";
@@ -66,7 +65,6 @@ import {
 import { daemonStatus } from "../../daemon/daemon.client.ts";
 import { printJson, printLines } from "../cli.output.ts";
 import { jsonFlag } from "../output.arguments.ts";
-import { describeUnserved } from "../reviewer-pool.output.ts";
 
 // A warning passes, as doctor's exit code goes, but says what may need doing.
 export type Check = {
@@ -204,6 +202,18 @@ const checkPersonas = (
     }
   });
 
+// The labels a repo's flows declare, from its config branch; none when they don't load.
+const declaredOn = (machine: MachineConfig, repo: EnrolledRepo) =>
+  Effect.flatMap(snapshotConfig(repo.path, false), (snapshot) =>
+    Effect.flatMap(
+      Effect.all({
+        effective: loadRepo(machine, repo, snapshot.configDir),
+        flows: loadFlows(snapshot.configDir),
+      }),
+      ({ effective, flows }) => declaredLabels(effective, flows),
+    ),
+  ).pipe(Effect.option);
+
 export const doctor = Effect.gen(function* () {
   const exec = yield* Exec;
   const fs = yield* FileSystem.FileSystem;
@@ -239,7 +249,7 @@ export const doctor = Effect.gen(function* () {
   check(
     machine.repos.length > 0,
     `${machine.repos.length} repo(s) enrolled`,
-    "chernabog enroll, in a repo with .chernabog/ on its base branch",
+    "chernabog enroll, in a repo with .chernabog/ on its default branch",
   );
 
   for (const account of accountsInUse(machine)) {
@@ -372,57 +382,33 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
-  // Each persona that opens pull requests asking the pool for a review: some
-  // reviewer it may ask is a persona here. A warning, since another person's
-  // machine may serve that login. The implicit account authors as gh's login.
-  const checkReviewCoverage = (effective: EffectiveRepo, name: string, configDir: string) =>
+  // What the repo's flows check of this machine, each warning with its fix.
+  // A warning passes, since another person's machine may serve what this one
+  // doesn't. The implicit persona is whoever gh says. A repo whose flows
+  // don't load says so elsewhere.
+  const checkFlowDiagnostics = (effective: EffectiveRepo, name: string, configDir: string) =>
     Effect.gen(function* () {
-      const authoring = yield* authoringFlows(configDir);
-      const reviewing = yield* reviewingFlows(configDir);
-      const reviewers = effective.settings.reviewers ?? [];
+      const flows = yield* Effect.option(loadFlows(configDir));
 
-      // The logins of this repo's personas that run a flow that reviews.
-      const reviewingHere = effective.personas
-        .filter((candidate) => reviewing.some((flow) => Option.isNone(flowOff(candidate, flow))))
-        .flatMap((candidate) => Option.toArray(candidate.persona));
-
-      for (const own of effective.personas.filter((candidate) =>
-        authoring.some((flow) => Option.isNone(flowOff(candidate, flow))),
-      )) {
-        const author = yield* Option.match(own.persona, {
-          onSome: (login) => Effect.succeedSome(login),
-          onNone: () => Effect.option(viewerLoginAs(Option.none())),
-        });
-
-        const unserved = unservedReviewers(reviewers, author, machine.github);
-
-        for (const logins of Option.toArray(unserved)) {
-          warn(
-            `${name}${asSuffix(own.persona)}: ${describeUnserved(own.persona, logins)}`,
-            `run review as one of ${logins.join(", ")} on this machine (chernabog setup, then chernabog enroll), or make sure another machine does`,
-          );
-        }
-
-        // A reviewer this machine acts as still serves nothing unless its persona runs review here.
-        const notReviewing = Option.filter(
-          unservedReviewers(reviewers, author, reviewingHere),
-          () => Option.isNone(unserved),
+      for (const loaded of Option.toArray(flows)) {
+        const warnings = yield* flowWarnings(effective, loaded, machine.github, (persona) =>
+          Option.match(persona, {
+            onSome: (login) => Effect.succeedSome(login),
+            onNone: () => Effect.option(viewerLoginAs(Option.none())),
+          }),
         );
 
-        for (const logins of Option.toArray(notReviewing)) {
-          warn(
-            `${name}${asSuffix(own.persona)}: pull requests authored as ${Option.getOrElse(author, () => "the implicit account")} go to ${logins.join(", ")}, which no persona here reviews as: none of them runs a flow that reviews (such as review) on ${name}`,
-            `turn review on for one of ${logins.join(", ")} (chernabog enroll --persona <login> --flows ...), or make sure another machine reviews as them`,
-          );
+        for (const { persona, warning } of warnings) {
+          warn(`${name}${asSuffix(persona)}: ${warning.warning}`, warning.fix);
         }
       }
     });
 
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
-  const checkLauncher = (repo: EnrolledRepo, name: string, baseBranch: string) =>
+  const checkLauncher = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
       const loaded = yield* Effect.result(
-        Effect.flatMap(snapshotConfig(repo.path, baseBranch, false), (snapshot) =>
+        Effect.flatMap(snapshotConfig(repo.path, false), (snapshot) =>
           loadRepo(machine, repo, snapshot.configDir),
         ),
       );
@@ -444,7 +430,7 @@ export const doctor = Effect.gen(function* () {
 
       yield* checkFlows(loaded.success, name, loaded.success.settings.configDir);
       yield* checkReviewers(repo, name, loaded.success.settings.reviewers ?? []);
-      yield* checkReviewCoverage(loaded.success, name, loaded.success.settings.configDir);
+      yield* checkFlowDiagnostics(loaded.success, name, loaded.success.settings.configDir);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
@@ -477,9 +463,9 @@ export const doctor = Effect.gen(function* () {
     });
 
   // Whether an editor types the repo's flows against this binary's SDK and effect. A snapshot that fails is checkLauncher's to report.
-  const checkPins = (repo: EnrolledRepo, name: string, baseBranch: string) =>
+  const checkPins = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
-      const snapshot = yield* Effect.result(snapshotConfig(repo.path, baseBranch, false));
+      const snapshot = yield* Effect.result(snapshotConfig(repo.path, false));
 
       if (Result.isFailure(snapshot)) {
         if (Schema.is(IncompatibleConfig)(snapshot.failure)) {
@@ -513,7 +499,7 @@ export const doctor = Effect.gen(function* () {
         check(
           false,
           `${name}: ${manifest.failure.message}`,
-          "fix .chernabog/package.json on the base branch",
+          "fix .chernabog/package.json on the default branch",
         );
 
         return;
@@ -552,9 +538,10 @@ export const doctor = Effect.gen(function* () {
       );
     });
 
+  const trust = yield* TrustQueries;
+
   for (const repo of machine.repos) {
     const name = repoNameOf(repo);
-    const baseBranch = repo.baseBranch ?? "main";
 
     if (!(yield* fs.exists(repo.path).pipe(Effect.orElseSucceed(() => false)))) {
       check(
@@ -565,25 +552,30 @@ export const doctor = Effect.gen(function* () {
       continue;
     }
 
-    const tree = yield* Effect.result(configTree(repo.path, baseBranch));
+    // Asked of the remote, as the daemon's snapshots do; the checks below read what this recorded.
+    const branch = yield* configBranch(repo.path);
+    const tree = yield* Effect.result(configTree(repo.path));
 
     if (Result.isFailure(tree)) {
       check(
         false,
-        `${name}: .chernabog/ is on ${baseBranch}`,
+        `${name}: .chernabog/ is on ${branch}, GitHub's default branch`,
         "chernabog init, then commit and merge .chernabog/",
       );
       continue;
     }
 
     check(
-      Option.contains((yield* findTrustedTreeUseCase(RepoSlug.make(repo.repo))).tree, tree.success),
+      Option.contains(
+        (yield* trust.FindTrustedTreeQuery({ repo: RepoSlug.make(repo.repo) })).tree,
+        tree.success,
+      ),
       `${name}: .chernabog/ (${tree.success.slice(0, 8)}) is trusted`,
       `chernabog trust ${name}`,
     );
 
-    yield* checkLauncher(repo, name, baseBranch);
-    yield* checkPins(repo, name, baseBranch);
+    yield* checkLauncher(repo, name);
+    yield* checkPins(repo, name);
 
     const labels = yield* githubGetAllPages(
       `/repos/${repo.repo}/labels?per_page=100`,
@@ -596,9 +588,12 @@ export const doctor = Effect.gen(function* () {
       continue;
     }
 
-    const missing = planLabelSync(labels.value, desiredLabels(DEFAULT_LABELS)).filter(
-      (change) => change.action === "create",
-    );
+    // A repo whose flows don't load says so above, and has no labels to check.
+    const missing = Option.match(yield* declaredOn(machine, repo), {
+      onNone: () => [],
+      onSome: (declared) =>
+        planLabelSync(labels.value, declared).filter((change) => change.action === "create"),
+    });
 
     check(
       missing.length === 0,

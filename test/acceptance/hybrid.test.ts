@@ -146,8 +146,8 @@ describe("the hybrid path", () => {
   }, 150_000);
 });
 
-describe("a repo without a human-initiated flow", () => {
-  test("refuses chernabog start, pointing at the recipe that bakes one", async () => {
+describe("a repo with no flow that declares itself start's entry point", () => {
+  test("refuses chernabog start, saying what it needs", async () => {
     const sandbox = openSandbox();
     await sandbox.runCli(["trust", "demo"]);
     const daemon = sandbox.cli(["daemon"]);
@@ -156,9 +156,8 @@ describe("a repo without a human-initiated flow", () => {
 
     const refused = await sandbox.runCli(["start", "1"]);
     expect(refused.code).toBe(1);
-    expect(refused.output).toContain("demo has no human-initiated flow in .chernabog/flows/");
     expect(refused.output).toContain(
-      "chernabog recipes add human-initiated bakes it: https://dataquail.github.io/chernabog/recipes/human-initiated/",
+      "demo has no flow that chernabog start runs: none of its flows declares defineFlow({ start: true })",
     );
 
     daemon.kill("SIGTERM");

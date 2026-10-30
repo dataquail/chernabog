@@ -103,8 +103,8 @@ const workIn = (path: string) =>
 const Compare = Schema.Struct({ ahead_by: Schema.Finite });
 
 // Why the claim branch holds work, if it does: a pull request from it, or
-// commits its base doesn't have.
-const workOnBranch = (branch: string) =>
+// commits `base`, the branch it was cut from, doesn't have.
+const workOnBranch = (branch: string, base: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const repo = yield* Repo;
@@ -114,20 +114,29 @@ const workOnBranch = (branch: string) =>
       return Option.some(`pull request #${pull.value.number} was opened from it`);
     }
 
-    const compared = yield* github.request(
-      "GET",
-      `/repos/${repo.slug}/compare/${encodeURIComponent(repo.baseBranch)}...${encodeURIComponent(branch)}`,
-      Option.none(),
-    );
+    // A branch deleted since it was found has nothing on it to keep.
+    const compared = yield* github
+      .request(
+        "GET",
+        `/repos/${repo.slug}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}`,
+        Option.none(),
+      )
+      .pipe(
+        Effect.catchTag("GitHubError", (error) =>
+          Effect.flatMap(github.branchSha(branch), (sha) =>
+            Option.match(sha, {
+              onNone: () => Effect.succeed({ ahead_by: 0 }),
+              onSome: () => Effect.fail(error),
+            }),
+          ),
+        ),
+      );
 
     const ahead = (yield* Schema.decodeUnknownEffect(Compare)(compared).pipe(
       Effect.mapError(failed),
     )).ahead_by;
 
-    return Option.liftPredicate(
-      `it has ${commits(ahead)} not on ${repo.baseBranch}`,
-      () => ahead > 0,
-    );
+    return Option.liftPredicate(`it has ${commits(ahead)} not on ${base}`, () => ahead > 0);
   });
 
 export const RunCleanupClientLive = (services: CleanupServicesFor) =>
@@ -242,8 +251,8 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
                 return Option.none<ReleasedClaim>();
               }
 
+              // The claim's label is the flow's: its marker releases it.
               const { branch } = ours.value;
-              yield* github.removeLabel(issue, repo.labels.inProgress);
               const login = yield* github.login;
 
               yield* github.request(
@@ -256,7 +265,8 @@ export const RunCleanupClientLive = (services: CleanupServicesFor) =>
                 return Option.some<ReleasedClaim>({ branch, kept: Option.none() });
               }
 
-              const kept = yield* workOnBranch(branch);
+              // The base the claim recorded; the repo's, for one claimed before claims recorded it.
+              const kept = yield* workOnBranch(branch, ours.value.base ?? repo.baseBranch);
 
               if (Option.isNone(kept)) {
                 yield* github.deleteBranch(branch);

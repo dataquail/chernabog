@@ -18,6 +18,8 @@ import {
   Repo,
   reportAs,
   Review,
+  Routing,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -27,17 +29,16 @@ import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona again after it reviewed them, one item
 // per request, unless a person has them (auto:needs-human): asking again
-// during a dispute doesn't restart the loop.
+// during a dispute doesn't restart the loop. Each is routed by its assignees and reviewers.
 const trigger = Effect.gen(function* () {
-  const repo = yield* Repo;
+  const labelNames = yield* Settings.labels;
 
-  return (yield* Review.reviewRequests).flatMap(({ pull, reviewed }) =>
-    Option.toArray(
-      Option.liftPredicate(
-        Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`),
-        () => reviewed > 0 && !pull.labels.includes(repo.labels.needsHuman),
-      ),
+  return yield* Effect.forEach(
+    (yield* Review.reviewRequests).filter(
+      ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
     ),
+    ({ pull, reviewed }) =>
+      Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`)),
   );
 }).pipe(reportAs("trigger"));
 
@@ -65,13 +66,20 @@ const conflicts = (pullRequest: number) =>
   );
 
 // Chernabog merges only pull requests on the automated path (auto:ship), and
-// only when that's safe; a person merges any other. One refused because it
-// conflicts with its base is left to resolve-conflicts, which merges the base
-// in and asks for this review again.
+// only when that's safe; a person merges any other. A layer of a stack waits,
+// approved, for the layer below: the epic run merges it once it is on the
+// base. One refused because it conflicts with its base is left to
+// resolve-conflicts, which merges the base in and asks for this review again.
 const mergeIfShipping = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* PullRequest.shipping(pullRequest))) {
       return `#${pullRequest} approved; a person merges`;
+    }
+
+    const waiting = yield* PullRequest.waitingOnLayer(pullRequest);
+
+    if (Option.isSome(waiting)) {
+      return `#${pullRequest} approved; ${waiting.value}`;
     }
 
     return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
@@ -117,7 +125,7 @@ const reReviews = (count: number) => {
 
 const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.reviewers;
     const { pullRequest } = yield* Review.pullRequestOf(item);
     const earlier = yield* Review.latestOwnReview(pullRequest);
 
@@ -129,10 +137,10 @@ const workflow = (item: WorkItem) =>
     const round = earlier.value.round ?? 1;
     const done = round - 1;
 
-    if (done >= repo.limits.reviewRounds) {
+    if (done >= rounds) {
       return yield* PullRequest.handToPerson(
         pullRequest,
-        `asked to review again after ${reReviews(done)}, and limits.reviewRounds is ${repo.limits.reviewRounds}, so a person decides. Review ${round}'s findings are in its review above.`,
+        `asked to review again after ${reReviews(done)}, and reviewRounds is ${rounds}, so a person decides. Review ${round}'s findings are in its review above.`,
       );
     }
 
@@ -167,11 +175,24 @@ const workflow = (item: WorkItem) =>
     }),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Routing.Settings.fields,
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.
   ownWork: true,
+  // Doctor warns when a reviewer this machine acts as doesn't run it.
+  doctor: [Review.reviewerCheck],
   // A pull request closed or merged ends the run as superseded.
   stillValid: Review.stillValid,
   workflow,

@@ -1,4 +1,12 @@
-import { defineFlow, fillTemplate, globToRegExp, parseJson, pathsMatching } from "@chernabog/sdk";
+import {
+  defineFlow,
+  fillTemplate,
+  globToRegExp,
+  parseJson,
+  pathsMatching,
+  Repo,
+  Settings,
+} from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -21,25 +29,26 @@ import {
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
+import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   DEFAULT_LIMITS,
   EnrolledRepo,
   flowOff,
+  flowSettingsInput,
   loadRepo,
   MachineConfigFile,
   machineConfigFile,
   mergeRepoConfig,
-  needsLogin,
   normalizeMachineConfig,
   personasOf,
   RepoConfigFile,
-  routingOf,
   scheduleFor,
 } from "../src/repo-config.ts";
-import { effect, effectAtHome } from "./effect-test.ts";
+import { effect, effectAtHome, effectAtHomeWith } from "./effect-test.ts";
 import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
 const machine = normalizeMachineConfig(
@@ -223,7 +232,7 @@ describe("config layers", () => {
       const flows = new Map([
         [
           "human-initiated",
-          defineFlow({ item: () => Effect.succeedNone, workflow: () => Effect.void }),
+          defineFlow({ item: () => Effect.succeedNone, start: true, workflow: () => Effect.void }),
         ],
         ["implement", defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void })],
       ]);
@@ -331,7 +340,7 @@ describe("config layers", () => {
   );
 
   effect(
-    "a flow filters work by assignee or requested reviewer only when the team or the person says so",
+    "the old assignee and reviewRequested keys reach the flow as the settings the SDK's routing reads",
     () =>
       Effect.gen(function* () {
         const team = {
@@ -340,37 +349,32 @@ describe("config layers", () => {
 
         const merged = yield* merge(team, { flows: { implement: {}, review: {} } });
 
-        expect(routingOf(merged, "implement")).toEqual({
-          assignee: Option.some(["@me", "none"]),
-          reviewRequested: Option.none(),
-        });
-        expect(routingOf(merged, "review")).toEqual({
-          assignee: Option.none(),
-          reviewRequested: Option.some(["alice"]),
-        });
-        expect(routingOf(merged, "fix")).toEqual({
-          assignee: Option.none(),
-          reviewRequested: Option.none(),
-        });
-        expect(needsLogin(yield* mergeAll(team, { flows: { implement: {} } }))).toBe(true);
-        // Only a flow that runs needs the login.
-        expect(needsLogin(yield* mergeAll(team, { flows: { review: {} } }))).toBe(false);
-        expect(needsLogin(yield* mergeAll({}, {}))).toBe(false);
+        expect(flowSettingsInput(merged, "implement")).toEqual({ assignee: ["@me", "none"] });
+        expect(flowSettingsInput(merged, "review")).toEqual({ reviewRequested: ["alice"] });
+        expect(flowSettingsInput(merged, "fix")).toEqual({});
 
+        // The flow's own settings win over the old key.
+        expect(
+          flowSettingsInput(
+            yield* merge(
+              { flows: { implement: { assignee: "@me", settings: { assignee: "bob" } } } },
+              { flows: { implement: {} } },
+            ),
+            "implement",
+          ),
+        ).toEqual({ assignee: "bob" });
+
+        // null clears the team's, as it did.
         const cleared = yield* Schema.encodeEffect(Schema.OptionFromNullOr(Schema.String))(
           Option.none(),
         );
 
         expect(
-          routingOf(
+          flowSettingsInput(
             yield* merge(team, { flows: { implement: { assignee: cleared } } }),
             "implement",
-          ).assignee,
-        ).toEqual(Option.none());
-        expect(
-          routingOf(yield* merge({}, { flows: { review: { reviewRequested: "@me" } } }), "review")
-            .reviewRequested,
-        ).toEqual(Option.some(["@me"]));
+          ),
+        ).toEqual({ assignee: cleared });
       }),
   );
 
@@ -584,6 +588,107 @@ const scaffold = (repo: string) =>
     Effect.provide(Layer.mergeAll(ChernabogDirClientLive, BundleClientLive)),
   );
 
+describe("a flow's own settings", () => {
+  effect("merge the team's shared settings, the flow's, then the persona's, key by key", () =>
+    Effect.gen(function* () {
+      const merged = yield* merge(
+        {
+          settings: {
+            reviewers: ["alice"],
+            labels: { eligible: "team:queued", ship: "team:ship" },
+          },
+          flows: { ship: { settings: { labels: { eligible: "ship:queued" }, ciRounds: 5 } } },
+        },
+        { flows: { ship: { settings: { ciRounds: 1 } } } },
+      );
+
+      expect(flowSettingsInput(merged, "ship")).toEqual({
+        reviewers: ["alice"],
+        labels: { eligible: "ship:queued", ship: "team:ship" },
+        ciRounds: 1,
+      });
+      expect(flowSettingsInput(merged, "other")).toEqual({
+        reviewers: ["alice"],
+        labels: { eligible: "team:queued", ship: "team:ship" },
+      });
+    }),
+  );
+
+  const promote = defineFlow({
+    trigger: Effect.succeed([]),
+    settings: Schema.Struct({ promoteFrom: Schema.String }),
+    workflow: () => Effect.void,
+  });
+
+  effect("decode by the flow's schema when it loads, and one it refuses is a config error", () =>
+    Effect.gen(function* () {
+      const flows = new Map([["promote", promote]]);
+
+      const good = yield* mergeAll(
+        { flows: { promote: { settings: { promoteFrom: "develop" } } } },
+        {},
+      );
+
+      yield* checkFlowSettings(good, flows);
+
+      const bad = yield* mergeAll({ flows: { promote: { settings: { promoteFrom: 3 } } } }, {});
+      const refused = yield* Effect.flip(checkFlowSettings(bad, flows));
+      expect(refused.message).toContain("demo: flows.promote.settings:");
+
+      const missing = yield* Effect.flip(checkFlowSettings(yield* mergeAll({}, {}), flows));
+      expect(missing.message).toContain("promoteFrom");
+    }),
+  );
+
+  effect("the reviewer pool and the board may be shared settings, for the engine to read too", () =>
+    Effect.gen(function* () {
+      const board = { projectNumber: 3, readyStatus: "Ready", inProgressStatus: "Doing" };
+      const shared = yield* merge({ settings: { reviewers: ["alice"], board } }, {});
+      expect(shared.settings.reviewers).toEqual(["alice"]);
+      expect(shared.settings.board).toEqual(Option.some(board));
+
+      const old = yield* merge({ reviewers: ["bob"], settings: { reviewers: ["alice"] } }, {});
+      expect(old.settings.reviewers).toEqual(["bob"]);
+    }),
+  );
+
+  effect(
+    "label names under shared settings reach the engine too, so a claim and its release agree",
+    () =>
+      Effect.gen(function* () {
+        const merged = yield* merge(
+          {
+            labels: { inProgress: "old:wip", ship: "old:ship" },
+            settings: { labels: { inProgress: "wip" } },
+          },
+          {},
+        );
+
+        expect(merged.settings.labels.inProgress).toBe("wip");
+        expect(merged.settings.labels.ship).toBe("old:ship");
+
+        // What the SDK claims with, for any flow, is what the engine releases.
+        const claimed = yield* Settings.labels.pipe(
+          Effect.provideService(Repo, merged.settings),
+          Effect.provideService(Settings.FlowSettings, {
+            input: flowSettingsInput(merged, "implement"),
+          }),
+        );
+
+        expect(claimed.inProgress).toBe(merged.settings.labels.inProgress);
+        expect(claimed.ship).toBe(merged.settings.labels.ship);
+      }),
+  );
+
+  effect("reviewTrigger still loads, and does nothing", () =>
+    Effect.gen(function* () {
+      expect((yield* merge({ reviewTrigger: "/review" }, {})).settings.reviewTrigger).toEqual(
+        Option.none(),
+      );
+    }),
+  );
+});
+
 describe("init", () => {
   effect(
     "scaffolds .chernabog/ without flows, which come from recipes, and without overwriting",
@@ -688,6 +793,9 @@ describe("init", () => {
   });
 });
 
+// loadRepo reads the checkout's default branch with git, for real.
+const effectWithGit = effectAtHomeWith(Exec.layer);
+
 describe("loading a repo", () => {
   const configDirWith = (files: Readonly<Record<string, string>>) =>
     Effect.gen(function* () {
@@ -721,7 +829,7 @@ describe("loading a repo", () => {
       onFailure: (failure) => Option.some([failure._tag, failure.message] as const),
     });
 
-  effectAtHome(
+  effectWithGit(
     "a .chernabog/ typed against a newer core is refused, before its config is read",
     () =>
       Effect.gen(function* () {
@@ -739,7 +847,7 @@ describe("loading a repo", () => {
       }),
   );
 
-  effectAtHome(
+  effectWithGit(
     "one typed against a core major this binary no longer provides is refused, naming the upgrade",
     () =>
       Effect.gen(function* () {
@@ -753,7 +861,7 @@ describe("loading a repo", () => {
       }),
   );
 
-  effectAtHome("engines.chernabog, and no SDK in dependencies, are refused, naming the fix", () =>
+  effectWithGit("engines.chernabog, and no SDK in dependencies, are refused, naming the fix", () =>
     Effect.gen(function* () {
       const manifests: ReadonlyArray<Readonly<Record<string, string>>> = [
         {
@@ -773,7 +881,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a flow that imports what core doesn't export is refused", () =>
+  effectWithGit("a flow that imports what core doesn't export is refused", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* configDirWith({ "package.json": pinning(BUNDLED_CORE) });
@@ -789,7 +897,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a key this binary does not know fails the repo instead of being dropped", () =>
+  effectWithGit("a key this binary does not know fails the repo instead of being dropped", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
         "package.json": pinning(BUNDLED_CORE),
@@ -802,7 +910,7 @@ describe("loading a repo", () => {
     }),
   );
 
-  effectAtHome("a .chernabog/ whose SDK needs a core this binary provides loads", () =>
+  effectWithGit("a .chernabog/ whose SDK needs a core this binary provides loads", () =>
     Effect.gen(function* () {
       const loaded = yield* load({
         "package.json": pinning(BUNDLED_CORE),

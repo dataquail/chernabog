@@ -13,3 +13,5 @@ src/platform/effect-modules.ts
 packages/core/API.md
 # Extensionless TypeScript scripts, which Prettier reads as JavaScript from their shebang.
 test/fakebin/
+# Written by `bun run architecture:clear`, in goodbones' own format.
+.architecture-campaigns/

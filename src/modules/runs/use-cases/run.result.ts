@@ -18,10 +18,11 @@ const runFields = {
   itemTitle: Maybe,
   itemUrl: Maybe,
   executionId: Maybe,
-  // The pull request it opened or adopted; absent until it does, and from a
-  // daemon from before runs kept it.
-  pullRequest: Schema.OptionFromOptionalKey(Schema.Finite).pipe(
-    Schema.withConstructorDefault(Effect.succeedNone),
+  // The work items it named as its subjects, such as a pull request it
+  // opened; none from a daemon from before runs named them.
+  subjects: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed([])),
+    Schema.withConstructorDefault(Effect.succeed([])),
   ),
   status: RunStatus,
   currentStep: Maybe,

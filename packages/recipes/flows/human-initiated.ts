@@ -11,15 +11,25 @@
 // version. The names of its steps ("claim", "work-with-person") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
-import { Claims, defineFlow, Hybrid, Implement, Skip, type WorkItem } from "@chernabog/sdk";
+import {
+  Claims,
+  defineFlow,
+  Hybrid,
+  Implement,
+  Review,
+  Settings,
+  Skip,
+  type WorkItem,
+} from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const work = (issue: number) =>
   Effect.gen(function* () {
-    // The base the claim settled, the repo's base branch here, which the later steps build on.
+    // The base the claim settled, the flow's base setting here, which the later steps build on.
     const { base, branch } = yield* Hybrid.claim(issue);
-    const worktree = yield* Implement.prepareWorktree(branch);
+    const worktree = yield* Implement.prepareWorktree(branch, { base });
     // A session the person closes before open-pr fails the run, which lets
     // the claim go and keeps the issue in progress, so chernabog start on the
     // issue again picks the session back up.
@@ -69,10 +79,27 @@ const workflow = (item: WorkItem) =>
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.Board.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   item: Hybrid.itemFor,
+  // The flow `chernabog start <issue>` runs.
+  start: true,
   // No trigger finds work for several personas to share: each run is a person's.
   ownWork: true,
+  // Doctor warns when no reviewer its pull requests may ask is a persona here.
+  doctor: [Review.poolCheck],
   // An issue closed, or claimed by another run, ends the run as superseded.
   stillValid: Implement.stillValid,
   workflow,

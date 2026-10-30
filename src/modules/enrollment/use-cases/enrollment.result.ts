@@ -38,7 +38,6 @@ export class EnrollmentPlan extends Schema.Class<
 >("EnrollmentPlan")({
   repo: RepoSlug,
   root: Schema.String,
-  baseBranch: Schema.String,
   logins: Schema.Array(Schema.String),
   currentPersonas: Schema.Option(Schema.Array(Schema.String)),
   personas: Schema.Array(PersonaPlan),
@@ -56,23 +55,14 @@ export const PersonaChoice = Schema.Struct({
   accounts: Schema.Array(Schema.String),
 });
 
-// A persona that opens pull requests whose reviewers, the pool less it, are
-// none of them a persona here, so its pull requests wait on another machine.
-export const UnservedReviews = Schema.Struct({
-  persona: Schema.Option(Schema.String),
-  reviewers: Schema.Array(Schema.String),
-});
-
 // A repo as enrolling left it: whether its entry is new, what each persona
-// runs and spends, and whose pull requests wait on reviewers not here.
+// runs and spends.
 export class Enrolled extends Schema.Class<Enrolled, { readonly brand: "Enrolled" }>("Enrolled")({
   added: Schema.Boolean,
   name: Schema.String,
   repo: RepoSlug,
   path: Schema.String,
-  baseBranch: Schema.String,
   chosen: Schema.Array(PersonaChoice),
-  unserved: Schema.Array(UnservedReviews),
 }) {}
 
 // The root of the checkout a path is in.

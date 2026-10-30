@@ -11,7 +11,6 @@ const summaryOf = (repo: EnrolledRepoRoot) =>
     name: EnrolledRepoRootOps.nameOf(repo),
     repo: repo.repo,
     path: repo.path,
-    baseBranch: EnrolledRepoRootOps.baseBranchOf(repo),
   });
 
 // The repos a command acts on: the one a person names, or, with none named,

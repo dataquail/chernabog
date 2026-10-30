@@ -29,6 +29,7 @@ import {
   UsageError,
   WorkError,
 } from "./errors.ts";
+import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
 import {
@@ -122,17 +123,55 @@ export type StillValid = (
   item: WorkItem,
 ) => Effect.Effect<Validity, FlowError, TriggerServices | Run>;
 
+// A warning a flow's doctor check gives `chernabog doctor`, and how to fix it.
+export type Warning = { readonly warning: string; readonly fix: string };
+
+// One of the repo's flows, as a doctor check sees it: its name, the logins
+// here that run it in the repo, and the checks it contributes, so a check can
+// tell which other flows contribute a check it knows.
+export type DoctorFlow = {
+  readonly name: string;
+  readonly runners: ReadonlyArray<string>;
+  readonly doctor: ReadonlyArray<DoctorCheck>;
+};
+
+// What a flow's doctor check knows of this machine: the flow's name in the
+// repo, the GitHub logins this machine acts as (machine config's github:),
+// for the persona the check runs as its login (none when it is the implicit
+// account and gh can't say) and whether it runs the flow, and every flow of
+// the repo.
+export type DoctorContext = {
+  readonly flow: string;
+  readonly personas: ReadonlyArray<string>;
+  readonly login: Option.Option<string>;
+  readonly runs: boolean;
+  readonly flows: ReadonlyArray<DoctorFlow>;
+};
+
+// A check `chernabog doctor` runs for a flow, once for each of the repo's
+// personas on this machine, with that persona's settings: the warnings it
+// finds, each with its fix. A check that can't tell says nothing.
+export type DoctorCheck = (
+  context: DoctorContext,
+) => Effect.Effect<ReadonlyArray<Warning>, never, FlowSettings | Repo>;
+
 // What every flow has, whether a trigger finds its work or a person names it.
 type FlowCommon = {
   // Checked before each run starts; fail with Skip to hold the run back, such as on usage.
   readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
   // Runs of this flow in one repo at once. Defaults to 1; machine limits still apply.
   readonly concurrency?: number;
-  // Labels of the flow's own, for `chernabog labels` to create.
-  readonly labels?: ReadonlyArray<FlowLabel>;
+  // The flow's own settings, by a schema it declares: what config.yaml's
+  // shared `settings:` and `flows.<name>.settings` may set for it. The engine
+  // decodes them when the flow loads, and a flow reads them with Settings.read.
+  readonly settings?: SettingsSchema;
+  // The labels the flow uses, for `chernabog labels` to create: a list, or
+  // one worked out from its settings, as when a repo renames a label.
+  readonly labels?:
+    ReadonlyArray<FlowLabel> | Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
   // Whether the trigger finds only the work of the persona it runs as, as
   // review's does by its review requests, so several personas can run the
-  // flow without assignee or reviewRequested to tell them apart.
+  // flow without routing (an item's elsewhere) to tell them apart.
   readonly ownWork?: boolean;
   // Whether a run's work item is still there to work on. The engine checks
   // every run in flight on an interval (limits.validityEvery), before a
@@ -144,6 +183,14 @@ type FlowCommon = {
   // flow's module, so the engine can release them by name when a run ends.
   // The SDK's own (Markers.builtIn) are always known.
   readonly markers?: ReadonlyArray<Marker>;
+  // What `chernabog doctor` checks for the flow, beyond what it checks itself:
+  // what the flow needs of this machine, such as a reviewer to serve the pull
+  // requests it asks for reviews. The binary knows only what flows tell it.
+  readonly doctor?: ReadonlyArray<DoctorCheck>;
+  // Whether the flow is `chernabog start <issue>`'s: the one a person starts
+  // by naming an issue. One flow in a repo says so; start refuses a repo
+  // where none or several do.
+  readonly start?: boolean;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };
@@ -169,6 +216,17 @@ export type ManualFlow = FlowCommon & {
 export type Flow = TriggeredFlow | ManualFlow;
 
 export const defineFlow = (flow: Flow): Flow => flow;
+
+// The labels a flow declares, worked out from its settings if it works them out.
+export const labelsOf = (
+  flow: Flow,
+): Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo> => {
+  if (Effect.isEffect(flow.labels)) {
+    return flow.labels;
+  }
+
+  return Effect.succeed(flow.labels ?? []);
+};
 
 // Whether a person starts each of the flow's runs, by naming its work.
 export const isManual = (flow: Flow): flow is ManualFlow => !Effect.isEffect(flow.trigger);

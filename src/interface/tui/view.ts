@@ -331,7 +331,7 @@ const queueText = (queued: ReadonlyArray<string>, elsewhere: ReadonlyArray<strin
     return queuedText(queued);
   }
 
-  return `${queuedText(queued)} · ${elsewhere.length} assigned elsewhere`;
+  return `${queuedText(queued)} · ${elsewhere.length} left for others`;
 };
 
 const plural = (count: number) => {
@@ -458,61 +458,66 @@ export type RunRow = {
   readonly expanded: boolean;
 };
 
-const issueKey = (repo: string, issue: number) => `${repo} issue-${issue}`;
-
-// The pull request each issue's work went to, from the runs that opened or
-// adopted one, latest first.
-const issueLinks = (runs: ReadonlyArray<RunEntry>) => {
-  const links = new Map<string, number>();
-
-  for (const run of runs) {
-    const ref = itemRef(run.itemKey);
-
-    if (ref.kind === "issue" && Option.isSome(run.pullRequest)) {
-      const key = issueKey(run.repo, ref.number);
-      links.set(key, links.get(key) ?? run.pullRequest.value);
-    }
-  }
-
-  return links;
-};
-
-// The piece of work a run is part of: its pull request's, once there is one
-// (an issue's run that opened it, or a run on the pull request itself), else
-// its issue's, else its own item's.
-const threadOf = (run: RunEntry, links: ReadonlyMap<string, number>) => {
-  const ref = itemRef(run.itemKey);
-  let pullRequest = run.pullRequest;
+// A work item's key as a thread names it: `pr-<n>` for any key on a pull
+// request (`pr-124-changes-1` too), `issue-<n>` for an issue, else the key.
+const workKey = (key: string) => {
+  const ref = itemRef(key);
 
   if (ref.kind === "pr") {
-    pullRequest = Option.some(ref.number);
+    return `pr-${ref.number}`;
   }
 
   if (ref.kind === "issue") {
-    pullRequest = Option.orElse(pullRequest, () =>
-      Option.fromUndefinedOr(links.get(issueKey(run.repo, ref.number))),
-    );
+    return `issue-${ref.number}`;
   }
 
-  return Option.match(pullRequest, {
-    onSome: (number) => `${run.repo} pr-${number}`,
-    onNone: () => {
-      if (ref.kind === "issue") {
-        return issueKey(run.repo, ref.number);
-      }
+  return ref.key;
+};
 
-      return `${run.repo} ${run.itemKey}`;
-    },
-  });
+// The work items a run is part of: its own, then each subject it named.
+const workKeysOf = (run: RunEntry) =>
+  [run.itemKey, ...run.subjects].map((key) => `${run.repo} ${workKey(key)}`);
+
+// The piece of work each run is part of: runs that share a work item, as
+// their own or as a subject, directly or through other runs, are one thread,
+// named by the least of its work items' keys. So an issue's run that
+// opened two pull requests threads with the runs on both, and one that
+// released `release-1.4` with the runs on that.
+const threadsOf = (runs: ReadonlyArray<RunEntry>) => {
+  const parent = new Map<string, string>();
+
+  const root = (key: string): string => {
+    const above = parent.get(key) ?? key;
+
+    if (above === key) {
+      return key;
+    }
+
+    const found = root(above);
+    parent.set(key, found);
+
+    return found;
+  };
+
+  for (const run of runs) {
+    const [own, ...others] = workKeysOf(run);
+
+    for (const other of others) {
+      const [first, second] = [root(own), root(other)].toSorted();
+      parent.set(second, first);
+    }
+  }
+
+  return (run: RunEntry) => root(workKeysOf(run)[0]);
 };
 
 // Runs grouped by the piece of work they're part of, each latest first, in
 // the order of their latest runs.
-const threads = (runs: ReadonlyArray<RunEntry>, links: ReadonlyMap<string, number>) => {
+const threads = (runs: ReadonlyArray<RunEntry>, threadOf: (run: RunEntry) => string) => {
   const grouped = new Map<string, Array<RunEntry>>();
 
   for (const run of runs) {
-    const thread = threadOf(run, links);
+    const thread = threadOf(run);
     grouped.set(thread, [...(grouped.get(thread) ?? []), run]);
   }
 
@@ -525,7 +530,7 @@ export const runRows = (model: Model): ReadonlyArray<RunRow> => {
   const all = allRuns(model.status);
   const shown = all.filter((run) => passes(model, run.repo, run.persona));
 
-  return threads(shown, issueLinks(all))
+  return threads(shown, threadsOf(all))
     .slice(0, MAX_RUNS)
     .flatMap(([thread, runs]) => {
       const expanded = model.expanded.includes(thread);
@@ -545,16 +550,16 @@ export const runRows = (model: Model): ReadonlyArray<RunRow> => {
 // The other runs of the piece of work `runId` is part of, latest first.
 export const threadRuns = (model: Model, runId: string): ReadonlyArray<RunEntry> => {
   const all = allRuns(model.status);
-  const links = issueLinks(all);
+  const threadOf = threadsOf(all);
 
   return Option.match(
     Arr.findFirst(all, (run) => run.id === runId),
     {
       onNone: () => [],
       onSome: (found) => {
-        const thread = threadOf(found, links);
+        const thread = threadOf(found);
 
-        return all.filter((run) => run.id !== runId && threadOf(run, links) === thread);
+        return all.filter((run) => run.id !== runId && threadOf(run) === thread);
       },
     },
   );

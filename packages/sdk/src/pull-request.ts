@@ -8,7 +8,6 @@ import {
   Claims,
   Git,
   GitHub,
-  type Labels,
   latestMarker,
   type MergeMethod,
   MergeRefused,
@@ -18,7 +17,6 @@ import {
   pathsMatching,
   type PullRequest,
   PullRequestClosed,
-  Repo,
   reviewMarker,
   Run,
   Runs,
@@ -33,7 +31,9 @@ import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
 
+import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
+import * as Settings from "./settings.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
 export const own = (pullRequest: number) =>
@@ -181,7 +181,9 @@ export const owner = (pullRequest: number) =>
     );
   });
 
-export type MergeOptions = { readonly method: MergeMethod };
+// id: tells apart two tries at merging one pull request in a run, as an epic
+// run's rounds do (`merge-pr-12#land-3`); a refused try is saved like any step.
+export type MergeOptions = { readonly method: MergeMethod; readonly id?: string };
 
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
@@ -288,20 +290,54 @@ export const onlyMergedBase = (pull: PullRequest, reviewedSha: string) =>
     );
   });
 
-// Merges the pull request, only when that is safe: it is open and based on
-// the repo's base branch, its required checks are green on the current head,
-// the latest review approved that very head or one the head has only merged
+// The pull request whose head branch `pull` is based on, which makes `pull`
+// a layer stacked on it: one still open, or one that merged while its branch
+// stayed, which nothing retargets `pull` off, so a merge would land in that
+// branch and never reach the base below it. None when `pull`'s base is the
+// flow's integration base, or no open or merged pull request comes from it.
+const layerBelow = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    if (pull.baseRef === (yield* Settings.base)) {
+      return Option.none<PullRequest>();
+    }
+
+    return Option.filter(
+      yield* (yield* GitHub).pullRequestForBranch(pull.baseRef),
+      (below) => below.state === "open" || below.state === "merged",
+    );
+  });
+
+// Why a layer stacked on `below` waits.
+const waitsOn = (pull: PullRequest, below: PullRequest) => {
+  if (below.state === "merged") {
+    return `stacked on ${pull.baseRef}, and the layer below (#${below.number}) merged; it waits to be retargeted onto ${below.baseRef}`;
+  }
+
+  return `stacked on ${pull.baseRef} (#${below.number}); it merges after the layer below`;
+};
+
+// Merges the pull request, only when that is safe: it is open and not a
+// layer of a stack, its checks are green on the current head by the flow's
+// CI policy (Ci.verdict: by default, its required checks passed and no check
+// failed), the latest review approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
-// GitHub's rules for the repo allow it. A layer of a stack, based on the
-// branch of the one below, waits until it sits on the base branch.
+// GitHub's rules for the repo allow it. A pull request into any branch may
+// merge, such as develop in git flow. One whose base is the head branch of
+// another pull request is a layer stacked on it (layerBelow): it waits while
+// the layer below is open, and after it merges, until it is retargeted onto
+// the base below. A pull request based on the flow's integration base
+// (Settings.base) is never a layer, whatever came from that branch.
 // Otherwise it fails with MergeRefused, saying why, or PullRequestClosed for
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
   activity(
-    `merge-pr-${pullRequest}`,
+    Option.match(Option.fromUndefinedOr(options.id), {
+      onNone: () => `merge-pr-${pullRequest}`,
+      onSome: (id) => `merge-pr-${pullRequest}#${id}`,
+    }),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const rules = yield* Settings.rules;
       const pull = yield* github.pullRequest(pullRequest);
 
       // A rerun after a crash finds its own merge done.
@@ -313,14 +349,13 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* new PullRequestClosed({ pullRequest, state: "closed" });
       }
 
-      if (pull.baseRef !== repo.baseBranch) {
-        return yield* refuse(
-          pullRequest,
-          `stacked on ${pull.baseRef}; it merges after the layer below`,
-        );
+      const below = yield* layerBelow(pull);
+
+      if (Option.isSome(below)) {
+        return yield* refuse(pullRequest, waitsOn(pull, below.value));
       }
 
-      const ci = yield* github.ciState(pullRequest);
+      const ci = yield* Ci.pullRequestState(pullRequest);
 
       if (ci.state === "red") {
         return yield* refuse(pullRequest, `checks failed: ${ci.failedChecks.join(", ")}`);
@@ -356,7 +391,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
 
       const touched = pathsMatching(
         yield* github.pullRequestFiles(pullRequest),
-        repo.humanOnlyPaths,
+        rules.humanOnlyPaths,
       );
 
       if (touched.length > 0) {
@@ -387,14 +422,15 @@ export const requestReview = (pullRequest: number) =>
     `request-review-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const reviewerPool = (yield* Settings.reviewers).pool;
+      const labelNames = yield* Settings.labels;
       const pull = yield* github.pullRequest(pullRequest);
-      const pool = (repo.reviewers ?? []).filter((login) => !sameLogin(login, pull.author));
+      const pool = reviewerPool.filter((login) => !sameLogin(login, pull.author));
 
       if (pool.length === 0) {
-        yield* github.addLabel(pullRequest, repo.labels.needsReview);
+        yield* github.addLabel(pullRequest, labelNames.needsReview);
 
-        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${repo.labels.needsReview} for a person`;
+        return `#${pullRequest}: no reviewer in the pool but its author; labelled ${labelNames.needsReview} for a person`;
       }
 
       const reviewer = pool[yield* Random.nextIntBetween(0, pool.length, { halfOpen: true })];
@@ -408,7 +444,8 @@ export const requestReview = (pullRequest: number) =>
 // Whether chernabog may merge the pull request: only on the automated path,
 // one labelled ship (auto:ship). Anything else, a missing or misspelt label
 // included, is left for a person to merge. The one place that decides it.
-export const ships = (pull: PullRequest, labels: Labels) => pull.labels.includes(labels.ship);
+export const ships = (pull: PullRequest, labels: Settings.LabelNames) =>
+  pull.labels.includes(labels.ship);
 
 // Labels the pull request needs-human and says why; no flow picks it up again
 // until a person removes the label.
@@ -417,8 +454,8 @@ export const handToPerson = (pullRequest: number, reason: string) =>
     `needs-human-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(pullRequest, repo.labels.needsHuman);
+      const labelNames = yield* Settings.labels;
+      yield* github.addLabel(pullRequest, labelNames.needsHuman);
       yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
@@ -429,20 +466,43 @@ export const shipping = (pullRequest: number) =>
   activity(
     `ships-pr-${pullRequest}`,
     Effect.gen(function* () {
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
 
-      return ships(yield* (yield* GitHub).pullRequest(pullRequest), repo.labels);
+      return ships(yield* (yield* GitHub).pullRequest(pullRequest), labelNames);
     }),
     Schema.Boolean,
   );
 
+// Why the pull request, a layer of a stack, waits for the layer below rather
+// than merging (layerBelow), read once in an activity so a replay decides the
+// same; none for one on the flow's integration base. An approved layer that
+// waits is left approved, not handed to a person: the epic run that stacked
+// it merges it once the layer below has merged and it is on the base.
+export const waitingOnLayer = (pullRequest: number) =>
+  activity(
+    `layer-below-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const pull = yield* (yield* GitHub).pullRequest(pullRequest);
+
+      return Option.map(yield* layerBelow(pull), (below) => waitsOn(pull, below));
+    }),
+    Schema.Option(Schema.String),
+  );
+
 // After an approval: on the automated path, merges the pull request when that
-// is safe, and otherwise hands it to a person; any other pull request is left
-// for a person to merge, and one closed meanwhile is left alone.
+// is safe, and otherwise hands it to a person; a layer waiting for the one
+// below is left approved, any other pull request is left for a person to
+// merge, and one closed meanwhile is left alone.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* shipping(pullRequest))) {
       return `#${pullRequest} approved; a person merges`;
+    }
+
+    const waiting = yield* waitingOnLayer(pullRequest);
+
+    if (Option.isSome(waiting)) {
+      return `#${pullRequest} approved; ${waiting.value}`;
     }
 
     return yield* merge(pullRequest, { method: "squash" }).pipe(

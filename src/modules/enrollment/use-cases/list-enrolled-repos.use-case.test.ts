@@ -19,22 +19,19 @@ const repos = [
     repo: RepoSlug.make("dataquail/other"),
     name: "other-2",
     path: "/src/other",
-    baseBranch: "trunk",
     defaults: {},
     paused: false,
   }),
 ];
 
 describe("listEnrolledReposUseCase", () => {
-  effect("lists every enrolled repo, with the branch each is trusted from", () =>
+  effect("lists every enrolled repo", () =>
     Effect.gen(function* () {
       const listed = yield* listEnrolledReposUseCase(Option.none());
 
-      expect(
-        listed.repos.map((repo) => [repo.name, repo.repo, repo.path, repo.baseBranch]),
-      ).toEqual([
-        ["demo", "dataquail/demo", "/src/demo", "main"],
-        ["other-2", "dataquail/other", "/src/other", "trunk"],
+      expect(listed.repos.map((repo) => [repo.name, repo.repo, repo.path])).toEqual([
+        ["demo", "dataquail/demo", "/src/demo"],
+        ["other-2", "dataquail/other", "/src/other"],
       ]);
     }).pipe(Effect.provide(EnrolledReposRepositoryFake(repos))),
   );

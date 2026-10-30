@@ -20,6 +20,7 @@ import {
   type RecipesUpdated,
   type RepoUpgraded,
 } from "../../../modules/recipes/use-cases/recipe.result.ts";
+import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
 import {
   type Unrecorded,
   updateRecipesUseCase,
@@ -154,17 +155,34 @@ const importRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>
     return describeImported(yield* importRecipesUseCase(root, names));
   });
 
+// Brings .chernabog/'s generated schemas up to date, now that its flows may
+// declare other settings, and the lines that say what it rewrote.
+export const refreshSchemas = (root: string) =>
+  Effect.map(scaffoldRepoUseCase(root), (scaffolded) =>
+    scaffolded.changes.flatMap(({ change, path }) =>
+      Option.toArray(Option.liftPredicate(`wrote ${path} (updated)`, () => change === "updated")),
+    ),
+  );
+
 const addOrImport = (
   importing: boolean,
   root: string,
   named: Option.Option<ReadonlyArray<string>>,
 ) =>
   Effect.gen(function* () {
-    if (importing) {
-      return yield* importRecipes(root, named);
+    const lines = yield* Effect.suspend(() => {
+      if (importing) {
+        return importRecipes(root, named);
+      }
+
+      return bakeRecipes(root, named);
+    });
+
+    if (lines.length === 0) {
+      return lines;
     }
 
-    return yield* bakeRecipes(root, named);
+    return [...lines, ...(yield* refreshSchemas(root))];
   });
 
 const recipesAdd = Command.make(
@@ -340,9 +358,15 @@ const NOTHING_COMMITTED =
 
 const updateHere = (names: ReadonlyArray<string>, unrecorded: Unrecorded) =>
   Effect.gen(function* () {
-    const updated = yield* updateRecipesUseCase(yield* rootOf(Option.none()), names, unrecorded);
+    const root = yield* rootOf(Option.none());
+    const updated = yield* updateRecipesUseCase(root, names, unrecorded);
+    const lines = describeUpdate(updated);
 
-    return describeUpdate(updated);
+    if (lines.length === 0) {
+      return lines;
+    }
+
+    return [...lines, ...(yield* refreshSchemas(root))];
   });
 
 const recipesUpdate = Command.make(

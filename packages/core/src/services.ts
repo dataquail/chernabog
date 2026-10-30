@@ -6,6 +6,7 @@ import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as Capabilities from "./capabilities.ts";
 import type {
   AgentError,
   GitError,
@@ -18,6 +19,9 @@ import type {
 } from "./errors.ts";
 import type { Json } from "./json.ts";
 
+// The labels of the SDK's issue-to-pull-request recipes. Deprecated: they are
+// those recipes' settings now (the SDK's Settings.labels), and core's next
+// major drops these, DEFAULT_LABELS and RepoSettings.labels (ADR 0005).
 export const Labels = Schema.Struct({
   eligible: Schema.String,
   inProgress: Schema.String,
@@ -74,6 +78,9 @@ export const Account = Schema.Struct({
 
 export type Account = typeof Account.Type;
 
+// The SDK's recipes' limits. Deprecated: each is a setting of the SDK block
+// that reads it now (the SDK's Settings), and core's next major drops them
+// (ADR 0005). The engine's own limits (leases, ticks) were never here.
 export const Limits = Schema.Struct({
   // Agent attempts to get the local gate passing before a person takes over.
   localGateRounds: Schema.Finite,
@@ -126,7 +133,15 @@ export const HEADLESS: ResolvedLauncher = {
 };
 
 // Everything a run knows about the repo it works on, merged from the repo's
-// committed config and the persona's settings in machine config.
+// committed config and the persona's settings in machine config. baseBranch
+// is deprecated too: it is no longer the branch .chernabog/ is read from
+// (GitHub's default is), only the integration base a flow's `base` setting
+// falls back to, config.yaml's old baseBranch or else the repo's default
+// branch. The recipes' keys (reviewers, labels, install, localGate, humanOnly,
+// humanOnlyPaths, notes, board, reviewTrigger and limits) are deprecated:
+// a flow's own settings (Settings) hold them now, the binary fills these
+// from config.yaml's old keys for SDKs that still read them, and core's next
+// major drops them (ADR 0005). reviewTrigger is always none.
 export const RepoSettings = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
@@ -186,8 +201,18 @@ export const WorkItem = Schema.Struct({
   // no run, even with wakeOnly unset, and `chernabog status` shows the reason.
   // Its signals still wake a run waiting on it.
   held: Schema.optionalKey(Schema.String),
-  // GitHub logins assigned to the item, and asked to review it, which
-  // flows.<flow>.assignee and reviewRequested match to choose the machines it starts on.
+  // Why the trigger left it for another persona or machine, such as
+  // "assignee: alice": routing is the flow's, by anything it likes. It starts
+  // no run here unless a person names it, and `chernabog status` lists it
+  // with the reason. Its signals still wake a run waiting on it.
+  elsewhere: Schema.optionalKey(Schema.String),
+  // Who the item waits on, and why, such as a pull request asking a reviewer
+  // no persona on this machine acts as: { who: "bob", why: "not on this
+  // machine" }. It starts no run, and `chernabog status` lists it as waiting
+  // on them. Its signals still wake a run waiting on it.
+  waitsOn: Schema.optionalKey(Schema.Struct({ who: Schema.String, why: Schema.String })),
+  // Deprecated: the engine reads neither, and they go in core's next major
+  // (ADR 0005). A flow routes by setting elsewhere, as the SDK's Routing does.
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
   reviewers: Schema.optionalKey(Schema.Array(Schema.String)),
 });
@@ -199,8 +224,12 @@ export const RunInfo = Schema.Struct({
   runId: Schema.String,
   executionId: Schema.String,
   item: WorkItem,
-  // The pull request the run opened or adopted for its item, as far as the
-  // engine knows; given to a flow's stillValid, absent anywhere else.
+  // The work items the run named as its subjects (Subjects.name), such as
+  // `pr-40` for a pull request it opened; given to a flow's stillValid,
+  // absent anywhere else, and from a binary from before runs named them.
+  subjects: Schema.optionalKey(Schema.Array(Schema.String)),
+  // The first pull request among subjects, for SDKs from before subjects:
+  // read subjects instead. Goes in core's next major.
   pullRequest: Schema.optionalKey(Schema.Finite),
   // How long a claim the run makes lasts, in milliseconds, until the daemon
   // renews it: the team's limits.leaseTtl. Claims' default when absent.
@@ -330,6 +359,32 @@ export type CiState = (
   readonly caveat?: string;
 };
 
+// One check on a commit, as GitHub reports it: its newest check run or
+// commit status by name.
+export type CiCheck = {
+  readonly name: string;
+  // A check run (Actions, a GitHub App) or a commit status (Jenkins,
+  // CircleCI, Buildkite and the like).
+  readonly kind: "check-run" | "status";
+  // Passed covers success, neutral and skipped; failed, any other ending.
+  readonly state: "pending" | "passed" | "failed";
+  // Whether the base branch's rules require it.
+  readonly required: boolean;
+  readonly url: string;
+};
+
+// A pull request's CI on its head, as facts: every check, by name, and the
+// checks the base branch requires, some of which may not have reported yet.
+// `caveat` says why `required` is empty when GitHub won't say, as for a
+// private repo in a free-plan org. Which of them gate a merge is the flow's
+// decision.
+export type CiChecks = {
+  readonly headSha: string;
+  readonly checks: ReadonlyArray<CiCheck>;
+  readonly required: ReadonlyArray<string>;
+  readonly caveat: Option.Option<string>;
+};
+
 // A failed check, and where to read why.
 export type CiFailedRun = {
   readonly name: string;
@@ -360,9 +415,12 @@ export class GitHub extends Context.Service<
   GitHub,
   {
     // Open issues labelled eligible (and ready on the board, when the repo has one), oldest first.
+    // Deprecated: one recipe's queue. Call queuedIssuesLabelled with the flow's own label.
+    // Removed in core's next major (ADR 0005).
     readonly queuedIssues: Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
     // Open issues with this label (and ready on the board, when the repo has one), oldest first.
     queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    // Deprecated with queuedIssues, its first issue.
     readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
     // Open issues with this label, whatever their status on the board, oldest first.
     issuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
@@ -418,9 +476,14 @@ export class GitHub extends Context.Service<
     // The reviews submitted on a pull request, oldest first.
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
-    // Red as soon as any check fails; green once every check the base branch
-    // requires has passed, or every check, when the branch requires none or
-    // GitHub won't say (then `caveat` says so).
+    // Every check run and commit status on the pull request's head, and
+    // which the base branch requires: facts, for a flow to decide from.
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
+    // Deprecated: a verdict made in the adapter. Read ciChecks and decide with
+    // a block, such as the SDK's Ci.verdict. Removed in core's next major
+    // (ADR 0005). Red as soon as any check or commit status fails; green once
+    // every check the base branch requires has passed, or every check, when
+    // the branch requires none or GitHub won't say (then `caveat` says so).
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     // A commit's check runs and commit statuses. A sha with none yet, such as
     // just after a push, is pending with nothing in waitingOn: telling "no CI
@@ -460,6 +523,115 @@ export class GitHub extends Context.Service<
   }
 >()("@chernabog/sdk/GitHub") {}
 
+// GitHub's writes, which the engine fences and reports, and why each other member isn't one.
+export const GitHubCapability = Capabilities.declare(
+  GitHub,
+  (github, guard) => ({
+    createIssue: guard(github.createIssue, () =>
+      Option.some({
+        doing: "creating an issue",
+        done: "issue created",
+        item: (created: Issue) => Option.some(created.number),
+      }),
+    ),
+    addSubIssue: guard(github.addSubIssue, (parent, child) =>
+      Capabilities.write(
+        `adding sub-issue #${child}`,
+        `sub-issue #${child} added`,
+        Option.some(parent),
+      ),
+    ),
+    addBlockedBy: guard(github.addBlockedBy, (issue, blocker) =>
+      Capabilities.write(
+        `marking blocked by #${blocker}`,
+        `blocked by #${blocker}`,
+        Option.some(issue),
+      ),
+    ),
+    removeBlockedBy: guard(github.removeBlockedBy, (issue, blocker) =>
+      Capabilities.write(
+        `unmarking blocked by #${blocker}`,
+        `no longer blocked by #${blocker}`,
+        Option.some(issue),
+      ),
+    ),
+    comment: guard(github.comment, (number) =>
+      Capabilities.write("commenting", "commented", Option.some(number)),
+    ),
+    addLabel: guard(github.addLabel, (number, label) =>
+      Capabilities.write(`labelling ${label}`, `labelled ${label}`, Option.some(number)),
+    ),
+    removeLabel: guard(github.removeLabel, (number, label) =>
+      Capabilities.write(`unlabelling ${label}`, `unlabelled ${label}`, Option.some(number)),
+    ),
+    moveToStatus: guard(github.moveToStatus, (number, status) =>
+      Capabilities.write(`moving to ${status}`, `moved to ${status}`, Option.some(number)),
+    ),
+    assignSelf: guard(github.assignSelf, (number) =>
+      Capabilities.write("assigning", "assigned", Option.some(number)),
+    ),
+    deleteBranch: guard(github.deleteBranch, (branch) =>
+      Capabilities.write(`deleting ${branch}`, `deleted ${branch}`),
+    ),
+    requestReviewers: guard(github.requestReviewers, (pullRequest) =>
+      Capabilities.write("requesting review", "review requested", Option.some(pullRequest)),
+    ),
+    openPullRequest: guard(github.openPullRequest, () =>
+      Option.some({
+        doing: "opening a pull request",
+        done: "pull request opened",
+        item: (opened: PullRequest) => Option.some(opened.number),
+      }),
+    ),
+    review: guard(github.review, (pullRequest) =>
+      Capabilities.write("reviewing", "review submitted", Option.some(pullRequest)),
+    ),
+    merge: guard(github.merge, (pullRequest) =>
+      Capabilities.write("merging", "merged", Option.some(pullRequest)),
+    ),
+    // Any method but GET writes.
+    request: guard(github.request, (method, path) =>
+      Option.flatMap(
+        Option.liftPredicate(method, (named) => named !== "GET"),
+        (writing) => Capabilities.write(`${writing} ${path}`, `${writing} ${path}`),
+      ),
+    ),
+  }),
+  {
+    queuedIssues: "read",
+    queuedIssuesLabelled: "read",
+    oldestQueued: "read",
+    issuesLabelled: "read",
+    issue: "read",
+    subIssues: "read",
+    blockedBy: "read",
+    trustedComments: "read",
+    comments: "read",
+    login: "read",
+    branchSha: "read",
+    // Whoever creates the branch first owns it.
+    createBranch: "claim",
+    createCommit: "local",
+    createRef: "claim",
+    ref: "read",
+    deleteRef: "claim",
+    updateRef: "claim",
+    pullRequest: "read",
+    pullRequestForBranch: "read",
+    pullRequestsLabelled: "read",
+    openPullRequests: "read",
+    reviews: "read",
+    ciChecks: "read",
+    ciState: "read",
+    commitCiState: "read",
+    branchCiState: "read",
+    ciFailureDetails: "read",
+    pullRequestFiles: "read",
+    closedPullRequestsLabelled: "read",
+    reviewComments: "read",
+  },
+);
+
 export class Git extends Context.Service<
   Git,
   {
@@ -474,19 +646,50 @@ export class Git extends Context.Service<
   }
 >()("@chernabog/sdk/Git") {}
 
+export const GitCapability = Capabilities.declare(
+  Git,
+  (git, guard) => ({
+    push: guard(git.push, (_cwd, branch) =>
+      Capabilities.write(`pushing ${branch}`, `pushed ${branch}`),
+    ),
+  }),
+  {
+    run: "delegated",
+    headSha: "read",
+    commitsAhead: "read",
+    changedFiles: "read",
+    pull: "local",
+  },
+);
+
+// How Worktree.ensure prepares a branch. from: the branch a branch origin
+// lacks starts from, as origin/<from>; without it, such a branch fails rather
+// than guessing a base. runId: as ensure's second argument was before, which
+// a string there still means.
+export type EnsureOptions = { readonly from?: string; readonly runId?: string };
+
 export class Worktree extends Context.Service<
   Worktree,
   {
-    // The worktree for a branch, created from origin/<branch> (or origin/<base>) the first time
+    // The worktree for a branch, created from origin/<branch> (or origin/<from>) the first time
     // and reused after. With `runId`, one another run left is first reset to origin/<branch>;
-    // the run's own is reused as is, uncommitted work and all.
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    // the run's own is reused as is, uncommitted work and all. A string in place of the
+    // options is the run id, deprecated: a branch origin lacks then starts from the repo's
+    // baseBranch, as it did before `from`, until core's next major (ADR 0005).
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     // A detached worktree named `name`, reset to `ref` (fetched first) every call: for reading, such as a review.
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;
   }
 >()("@chernabog/sdk/Worktree") {}
+
+export const WorktreeCapability = Capabilities.declare(Worktree, () => ({}), {
+  ensure: "local",
+  pathFor: "read",
+  remove: "local",
+  checkout: "local",
+});
 
 export type LaunchDecision = { readonly launch: boolean; readonly reason: string };
 
@@ -499,6 +702,11 @@ export class Usage extends Context.Service<
     readonly checkAccount: Effect.Effect<string, UsageError>;
   }
 >()("@chernabog/sdk/Usage") {}
+
+export const UsageCapability = Capabilities.declare(Usage, () => ({}), {
+  gate: "read",
+  checkAccount: "read",
+});
 
 export type AgentResult = {
   readonly sessionId: string;
@@ -535,6 +743,11 @@ export class Agent extends Context.Service<
   }
 >()("@chernabog/sdk/Agent") {}
 
+export const AgentCapability = Capabilities.declare(Agent, () => ({}), {
+  run: "delegated",
+  adapters: "read",
+});
+
 // The persona's seat in the team's reviewer pool: a login under github:, not
 // the implicit account, that the repo's reviewers list. Every block that
 // reviews requires it, so a flow that reviews does too. Chernabog checks it
@@ -549,6 +762,21 @@ export class ReviewerSeat extends Context.Service<
   }
 >()("@chernabog/sdk/ReviewerSeat") {}
 
+export const ReviewerSeatCapability = Capabilities.declare(ReviewerSeat, () => ({}), {
+  login: "read",
+});
+
+// The capability ports Chernabog provides a run, each declaring its writes:
+// the engine fences and reports what these declare. A new port joins them.
+export const CAPABILITIES: ReadonlyArray<Capabilities.Guarded> = [
+  GitHubCapability,
+  GitCapability,
+  WorktreeCapability,
+  UsageCapability,
+  AgentCapability,
+  ReviewerSeatCapability,
+];
+
 // What this machine knows of a run, by id: whether it is still going, or none
 // for a run it never had, such as one on another machine. Provided by Chernabog
 // to triggers; a trigger reads it with Effect.serviceOption.
@@ -558,6 +786,17 @@ export class Runs extends Context.Service<
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
   }
 >()("@chernabog/sdk/Runs") {}
+
+// What this machine is: the GitHub logins it acts as, machine config's
+// github: (none when it acts only as the implicit account). Provided by
+// Chernabog to triggers; a trigger reads it with Effect.serviceOption, since a
+// binary from before it provides none.
+export class Machine extends Context.Service<
+  Machine,
+  {
+    readonly personas: ReadonlyArray<string>;
+  }
+>()("@chernabog/sdk/Machine") {}
 
 // Writes to the run's log file, which `chernabog logs <run>` prints.
 export class RunLog extends Context.Service<

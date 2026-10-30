@@ -8,8 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
-import { Exec, execOk } from "../../../../platform/exec.ts";
-import { authoringFlows, flowNames } from "../../../../platform/flow-loader.ts";
+import { type Exec, execOk } from "../../../../platform/exec.ts";
+import { flowNames } from "../../../../platform/flow-loader.ts";
 import { readYaml, RepoConfigFile } from "../../../../repo-config.ts";
 import { Checkout } from "../../domain/enrolled-repo/checkout.value-object.ts";
 import { CheckoutUnreadable } from "../../domain/enrolled-repo/enrolled-repo.errors.ts";
@@ -84,23 +84,10 @@ export const CheckoutsClientLive = Layer.effect(
           ),
         );
 
-        const head = yield* (yield* Exec)
-          .run("git", ["-C", root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-          .pipe(
-            Effect.map((result) =>
-              Option.getOrElse(
-                Option.liftPredicate(result.stdout.trim(), () => result.exitCode === 0),
-                () => "origin/main",
-              ),
-            ),
-          );
-
         return Checkout.make({
           root,
           repo: RepoSlug.make(slug),
-          baseBranch: head.replace(/^origin\//, ""),
           flows: yield* flowNames(`${root}/.chernabog`),
-          authoring: yield* authoringFlows(`${root}/.chernabog`),
           team: teamOf(yield* readYaml(RepoConfigFile, `${root}/.chernabog/config.yaml`)),
         });
       }).pipe(Effect.mapError(unreadable), Effect.provideContext(services));

@@ -8,7 +8,7 @@ import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { TrustRecordRoot } from "../domain/trust-record/trust-record.root.ts";
 import { ConfigTreeClientFake } from "../infrastructure/clients/config-tree.client-fake.ts";
 import { TrustRecordsRepositoryFake } from "../infrastructure/repositories/trust-records.repository-fake.ts";
-import { checkTrustUseCase } from "./check-trust.use-case.ts";
+import { checkTrustHandler } from "./check-trust.handler.ts";
 
 const repo = RepoSlug.make("dataquail/demo");
 
@@ -20,9 +20,9 @@ const checking = (trees: Readonly<Record<string, string>>) =>
     ]),
   );
 
-const check = (path: string) => checkTrustUseCase({ repo, path, baseBranch: "main" });
+const check = (path: string) => checkTrustHandler({ repo, path });
 
-describe("checkTrustUseCase", () => {
+describe("checkTrustHandler", () => {
   effect("is trusted while the tree on the base branch is the one trusted", () =>
     Effect.gen(function* () {
       const trusted = yield* check("/src/trusted");

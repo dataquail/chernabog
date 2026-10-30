@@ -277,9 +277,6 @@ const pause = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, pause
 
 const resume = (repo: EnrolledRepoRoot) => EnrolledRepoRoot.make({ ...repo, paused: false });
 
-// The branch the repo's .chernabog/ is trusted and run from.
-const baseBranchOf = (repo: EnrolledRepoRoot) => repo.baseBranch ?? "main";
-
 // Whether a login is one of a flow's runners. Logins are case-insensitive, as on GitHub.
 const isRunner = (runners: ReadonlyArray<string>, login: string) =>
   runners.some((runner) => runner.toLowerCase() === login.toLowerCase());
@@ -612,7 +609,6 @@ const enroll = (
     repo: checkout.repo,
     path: checkout.root,
     ...Option.match(name, { onNone: () => ({}), onSome: (label) => ({ name: label }) }),
-    baseBranch: checkout.baseBranch,
     defaults: {},
     paused: false,
   });
@@ -771,7 +767,6 @@ export const EnrolledRepoRootOps = {
   moved,
   checkSchedule,
   checkAccounts,
-  baseBranchOf,
   nameOf,
   choicesOf,
   entryFor,

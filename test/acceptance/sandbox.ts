@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import type { Json } from "@chernabog/sdk";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
@@ -84,13 +85,27 @@ const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
 
 export type CliResult = { readonly code: number; readonly output: string };
 
+const isSettings = (value: Json): value is Readonly<Record<string, Json>> =>
+  Predicate.isObject(value) && !Array.isArray(value);
+
+const sharedOf = (repoConfig: Readonly<Record<string, Json>>) =>
+  Option.getOrElse(
+    Option.filter(Option.fromUndefinedOr(repoConfig.settings), isSettings),
+    () => ({}),
+  );
+
 const repoConfigText = (template: string, repoConfig: Readonly<Record<string, Json>>) => {
   const document = YAML.parseDocument(template);
-  document.set("install", NO_INSTALL);
-  document.set("localGate", ['test -n "$(ls change-*.txt)"']);
+  document.setIn(["settings", "install"], NO_INSTALL);
+  document.setIn(["settings", "localGate"], ['test -n "$(ls change-*.txt)"']);
 
-  for (const [key, value] of Object.entries(repoConfig)) {
+  for (const [key, value] of Object.entries(repoConfig).filter(([name]) => name !== "settings")) {
     document.set(key, value);
+  }
+
+  // The shared settings a test gives go over the sandbox's own, key by key.
+  for (const [key, value] of Object.entries(sharedOf(repoConfig))) {
+    document.setIn(["settings", key], value);
   }
 
   return document.toString();
@@ -109,7 +124,6 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
         repo: SLUG,
         name: "demo",
         account: machine.account ?? "work",
-        baseBranch: "main",
         ...Option.match(Option.fromUndefinedOr(machine.flows), {
           onNone: () => ({}),
           onSome: (flows) => ({ flows }),

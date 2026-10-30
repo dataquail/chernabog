@@ -1,6 +1,6 @@
-// How a flow runs: its schedule, concurrency, agent, and whose work items it
-// starts. The team's .chernabog/config.yaml sets these per flow, and a person's
-// machine config overrides them for the flows each persona runs.
+// How a flow runs: its schedule, concurrency, agent, and the flow's own
+// settings. The team's .chernabog/config.yaml sets these per flow, and a
+// person's machine config overrides them for the flows each persona runs.
 
 import * as Schema from "effect/Schema";
 
@@ -8,14 +8,15 @@ import * as Schema from "effect/Schema";
 const Nullable = <S extends Schema.Constraint>(schema: S) =>
   Schema.optionalKey(Schema.OptionFromNullOr(schema));
 
-// Who a work item must be for, as in GitHub's assignee: and review-requested:
-// qualifiers: @me (this machine's GitHub login), a login, or none.
+// The old routing keys, which the binary gives the flow as its settings'
+// `assignee` and `reviewRequested`, the SDK's Routing's, until core's next
+// major (ADR 0005). The engine reads neither.
 const Who = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
 
-const whoFor = (qualifier: string) =>
+const whoFor = (key: string) =>
   Nullable(
     Who.annotate({
-      description: `Start only work items whose ${qualifier} include one of these: @me for this machine's GitHub login, a login, or none for nobody. null clears the team's.`,
+      description: `Deprecated: set ${key} under flows.<name>.settings, where the flows that route with the SDK's Routing read it. Given to the flow as that setting until then; its own settings win over this.`,
     }),
   );
 
@@ -34,8 +35,14 @@ export const FlowSettings = Schema.Struct({
         "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's.",
     }),
   ),
-  assignee: whoFor("assignees"),
-  reviewRequested: whoFor("requested reviewers"),
+  assignee: whoFor("assignee"),
+  reviewRequested: whoFor("reviewRequested"),
+  settings: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.Json).annotate({
+      description:
+        "The flow's own settings, which its settings schema declares, over the repo's shared settings: key by key.",
+    }),
+  ),
 });
 
 export type FlowSettings = typeof FlowSettings.Type;

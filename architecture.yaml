@@ -136,9 +136,13 @@ graph:
         - "@/platform/**"
     - name: use-cases-reach-no-adapter
       message: >-
-        A use-case transitively reaches an adapter. A use-case depends on its module's domain and
-        ports; the adapters are wired against them at a composition root, never beneath them.
-      from: "@/modules/*/use-cases/**"
+        A use-case transitively reaches an adapter. A use-case, command or query depends on its
+        module's domain and ports; the adapters are wired against them at a composition root, never
+        beneath them.
+      from:
+        - "@/modules/*/use-cases/**"
+        - "@/modules/*/commands/**"
+        - "@/modules/*/queries/**"
       fromNot: "**/*.test.ts"
       to:
         - "@/modules/*/infrastructure/**"
@@ -184,6 +188,16 @@ defs:
     match: "*UseCase"
     count: { min: 1, max: 1 }
 
+  # What a handler file exports: the one handler, named for its message.
+  one-handler-export:
+    message: >-
+      A handler file exports exactly one `<verbNoun>Handler`, for the message in its sibling
+      *.command.ts or *.query.ts. A second one is a second message that wants its own files; none
+      means this isn't a handler.
+    declares: [function, variable]
+    match: "*Handler"
+    count: { min: 1, max: 1 }
+
   # A port is a declaration: the service's shape and the Context.Service class
   # that names it. A value beside them is an implementation.
   port-declares-no-value:
@@ -192,18 +206,23 @@ defs:
       implementation belongs in infrastructure/ behind the port.
     declares: [function, variable]
 
-  # A port is consumed by its module's domain and use-cases, by the adapter
-  # that implements it and by the layer that wires the two.
+  # A port is consumed by its module's domain, use-cases, commands and queries,
+  # by the adapter that implements it and by the layer and maps that wire them.
   port-consumers:
     message: >-
-      A port is consumed by its module's use-cases, the infrastructure adapter that implements it
-      and the module's layer. An adapter in interface/ or another module reaching for one is
-      bypassing the use-case boundary: call a use-case instead.
+      A port is consumed by its module's use-cases, commands and queries, the infrastructure
+      adapter that implements it, and the module's layer and handler maps. An adapter in
+      interface/ or another module reaching for one is bypassing the module's boundary: dispatch
+      a command or query (or call a use-case not yet moved) instead.
     allow:
       - "@/modules/*/domain/**"
       - "@/modules/*/use-cases/**"
+      - "@/modules/*/commands/**"
+      - "@/modules/*/queries/**"
       - "@/modules/*/infrastructure/**"
       - "@/modules/*/*.layer.ts"
+      - "@/modules/*/*.command-handlers.ts"
+      - "@/modules/*/*.query-handlers.ts"
       - "**/*.test.ts"
 
   # A domain test names its subject and the kernel.
@@ -216,15 +235,25 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
 
-  # A use-case or adapter test runs its subject over the module's fakes, or
-  # the live adapter over a scratch home.
+  # A use-case or handler test runs its subject over the module's fakes.
   module-test-file:
     surface: [{ use: test-exports-nothing }]
     imports:
       reset: true
       message: >-
-        A use-case or adapter test names its module, the kernel, the platform adapters and the
-        shared test harness (test/*.ts) — the scratch home, scripted askers and fixtures.
+        A use-case or handler test names its module, the kernel and the shared test harness
+        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
+      external: [effect]
+      allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
+
+  # A repository adapter's test runs the live adapter over a scratch home.
+  adapter-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A repository adapter's test names its module, the kernel, the home and the shared test
+        harness (test/*.ts) — the scratch home and fixtures.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
 
@@ -270,6 +299,8 @@ defs:
         - "@/interface/**"
         - "@/modules/*/*.layer.ts"
         - "@/modules/*/use-cases/**"
+        - "@/modules/*/*.command-handlers.ts"
+        - "@/modules/*/*.query-handlers.ts"
         - "@/modules/runs/infrastructure/runtime/**"
         - "@/modules/runs/infrastructure/clients/flows.client-live.ts"
         - "@/modules/runs/domain/routing/routing.value-object.ts"
@@ -369,6 +400,10 @@ tree:
               allow:
                 - "@/kernel/**"
                 - "@/modules/*/use-cases/**"
+                - "@/modules/*/commands/*.command.ts"
+                - "@/modules/*/queries/*.query.ts"
+                - "@/modules/*/*.command-handlers.ts"
+                - "@/modules/*/*.query-handlers.ts"
                 - "@/interface/cli/**"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
@@ -455,6 +490,8 @@ tree:
                     - "@/platform/**"
                     - "@/interface/daemon/**"
                     - "@/modules/*/use-cases/**"
+                    - "@/modules/*/*.command-handlers.ts"
+                    - "@/modules/*/*.query-handlers.ts"
                     - "@/modules/*/*.layer.ts"
                     - "@/modules/runs/domain/schedule/*.value-object.ts"
                     - "~/core/src/**"
@@ -493,10 +530,26 @@ tree:
       "modules/{module}/":
         message: >-
           A module admits domain/ (its aggregates, their ops and errors, and its ports),
-          use-cases/ (what the adapters invoke), infrastructure/ (the adapters behind its ports)
-          and one <module>.layer.ts that builds the module's live Layer.
+          commands/ and queries/ (what the adapters dispatch), use-cases/ (what they still invoke,
+          until each moves), infrastructure/ (the adapters behind its ports), one
+          <module>.layer.ts that builds the module's live Layer, and <module>.command-handlers.ts
+          and <module>.query-handlers.ts, its slice of the buses.
         name: kebab-case
         children:
+          # The module's slice of each bus: its messages grouped, each mapped to
+          # its handler with the adapters it needs, and the dispatcher service
+          # the adapters ask, as the hexagon's <module>.command-handlers.ts does.
+          "*.command-handlers.ts | *.query-handlers.ts":
+            name: { like: "{module}" }
+            imports:
+              reset: true
+              message: >-
+                A module's handler map registers its messages' handlers on the bus with the live
+                adapters they need, from its layer. It names its own module, effect and the CQRS
+                library.
+              external: [effect, "@effect-server-utils/cqrs"]
+              allow: ["@/modules/{module}/**"]
+
           "*.layer.ts":
             name: { like: "{module}" }
             imports:
@@ -594,12 +647,14 @@ tree:
                     importedBy:
                       message: >-
                         *.root-ops.ts is the aggregate's mutation surface. Only its module's
-                        domain, its use-cases, its repository fakes and tests may call it; an
-                        adapter reaching for an op is bypassing the use-case that should own the
-                        change.
+                        domain, its use-cases, commands and queries (which ask its predicates),
+                        its repository fakes and tests may call it; an adapter reaching for an op
+                        is bypassing the command that should own the change.
                       allow:
                         - "@/modules/*/domain/**"
                         - "@/modules/*/use-cases/**"
+                        - "@/modules/*/commands/**"
+                        - "@/modules/*/queries/**"
                         - "**/*.repository-fake.ts"
                         - "**/*.test.ts"
                   "*.id.ts": {}
@@ -636,6 +691,61 @@ tree:
               "*.result.ts": {}
               "*.test.ts": { use: module-test-file }
 
+          "commands/":
+            message: >-
+              commands/ holds, per thing an adapter can ask the module to change, a
+              <verb-noun>.command.ts declaring the message (Command.make: payload, success,
+              failure) and a <verb-noun>.handler.ts carrying it out, and their tests. A shared
+              helper here is an aggregate op or a port that hasn't been written yet.
+            members: [{ use: no-talking }]
+            imports:
+              reset: true
+              message: >-
+                A command names effect, the CQRS library, the kernel, its own
+                module's domain (aggregates and ports) and its sibling commands. Never a query or
+                use-case (what two do together, the adapter that dispatches them composes),
+                never infrastructure (adapters are provided by the handler map), never
+                interface/, never another module's internals.
+              external: [effect, "@effect-server-utils/cqrs"]
+              allow:
+                - "@/kernel/**"
+                - "@/modules/{module}/domain/**"
+                - "@/modules/{module}/commands/**"
+            children:
+              "*.command.ts": {}
+              "*.handler.ts":
+                message: >-
+                  A command handler owes a sibling *.handler.test.ts, run over its ports' fakes.
+                requires: ["{base}.test.ts"]
+                surface: [{ use: one-handler-export }]
+              "*.test.ts": { use: module-test-file }
+
+          "queries/":
+            message: >-
+              queries/ holds, per thing an adapter can ask the module to tell it, a
+              <verb-noun>.query.ts declaring the message (Query.make: payload, success, failure)
+              and a <verb-noun>.handler.ts answering it, and their tests.
+            members: [{ use: no-talking }]
+            imports:
+              reset: true
+              message: >-
+                A query names effect, the CQRS library, the kernel, its own module's domain (to
+                read through its ports) and its sibling queries. Never a command or use-case,
+                never infrastructure, never interface/, never another module's internals.
+              external: [effect, "@effect-server-utils/cqrs"]
+              allow:
+                - "@/kernel/**"
+                - "@/modules/{module}/domain/**"
+                - "@/modules/{module}/queries/**"
+            children:
+              "*.query.ts": {}
+              "*.handler.ts":
+                message: >-
+                  A query handler owes a sibling *.handler.test.ts, run over its ports' fakes.
+                requires: ["{base}.test.ts"]
+                surface: [{ use: one-handler-export }]
+              "*.test.ts": { use: module-test-file }
+
           "infrastructure/":
             message: >-
               infrastructure/ is a container mirroring domain/ports/: repositories/ and clients/.
@@ -666,7 +776,7 @@ tree:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
-                  "*.test.ts": { use: module-test-file }
+                  "*.test.ts": { use: adapter-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and
               # usage, and the agents and launchers sessions run in. Adapters
@@ -845,3 +955,75 @@ tree:
             The release PR check reads the PR's body with release-please's parser, and names
             effect beside it.
           external: [release-please]
+
+# The moves the policy above has not finished making, each counted and held:
+# a ledger under .architecture-campaigns/ lists what is left, and only shrinks.
+# `bun run architecture:clear` records a change's progress in it, in the same
+# commit; `check` fails until it has.
+campaigns:
+  cqrs:
+    title: Use-cases become commands and queries
+    why: >-
+      The CLI, the TUI and the dashboard ask the modules through one command bus and one query
+      bus, so every adapter reaches a module the same way, each dispatch is traced once, and a
+      command's events reach the dashboard and the notifier without the engine knowing either
+      exists (@effect-server-utils/cqrs, as dataquail/functional-domain-driven-hexagon lays it out).
+    how: >-
+      Move the use-case to a <verb-noun>.query.ts (it only reads) or <verb-noun>.command.ts (it
+      changes something) in the module's queries/ or commands/, its body to a sibling
+      <verb-noun>.handler.ts and its test to <verb-noun>.handler.test.ts, register it in the
+      module's <module>.query-handlers.ts or <module>.command-handlers.ts, and have its callers
+      dispatch it. Then delete the use-case and run `bun run architecture:clear`.
+    owner: "@zacharyweidenbach"
+    scope: ["src/modules/**"]
+    perimeter: { glob: "src/modules/*/" }
+    onTouch: ratchet
+    staleAfter: 14d
+    phases:
+      - id: queries
+        intent: >-
+          Each use-case that only reads becomes a query. Classify it by what it does, not its
+          name: one named like a read that writes is a command. A handful per pull request.
+        objectives: [read-use-cases]
+      - id: commands
+        intent: >-
+          Each remaining use-case becomes a command, its unit of work declared once with
+          withUnitOfWork. A handful per pull request.
+        objectives: [write-use-cases]
+      - id: events
+        intent: >-
+          The module's commands dispatch its domain events, Schemas in its domain, only after
+          the durable step that makes each one true, each with an id from the run and the step
+          so a consumer can drop a repeat.
+
+    objectives:
+      read-use-cases:
+        intent: A read still behind a use-case is one the query bus can't answer.
+        holdout: file
+        match:
+          path:
+            file: "/use-cases/(list|find|read|check|inspect|resolve|follow|plan|load|choose|diff)-[^/]*\\.use-case\\.ts$"
+        probes:
+          fires:
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.ts
+          ignores:
+            - path: src/modules/runs/use-cases/start-run.use-case.ts
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.test.ts
+            - path: src/modules/runs/queries/list-recent-runs.query.ts
+
+      write-use-cases:
+        intent: A write still behind a use-case is one the command bus can't dispatch, and whose events no one hears.
+        holdout: file
+        match:
+          all:
+            - path: { file: "/use-cases/[^/]*\\.use-case\\.ts$" }
+            - not:
+                path:
+                  file: "/use-cases/(list|find|read|check|inspect|resolve|follow|plan|load|choose|diff)-[^/]*\\.use-case\\.ts$"
+        probes:
+          fires:
+            - path: src/modules/runs/use-cases/start-run.use-case.ts
+          ignores:
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.ts
+            - path: src/modules/runs/use-cases/start-run.use-case.test.ts
+            - path: src/modules/runs/commands/start-run.command.ts

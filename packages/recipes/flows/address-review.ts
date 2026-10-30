@@ -15,26 +15,28 @@ import {
   Implement,
   NeedsHuman,
   PullRequest,
-  Repo,
   reportAs,
   Review,
+  Routing,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 // Pull requests this persona wrote whose latest approval or request for
 // changes asks for changes on the current head, so nothing was pushed since.
 // A person has one labelled auto:needs-human, and a run of another flow one it
-// owns; both are left alone.
+// owns; both are left alone. Each is routed by its assignees and reviewers.
 const trigger = Effect.gen(function* () {
-  const repo = yield* Repo;
+  const labelNames = yield* Settings.labels;
   const items: Array<WorkItem> = [];
 
   for (const pull of yield* Review.authoredByMe) {
-    if (pull.labels.includes(repo.labels.needsHuman)) {
+    if (pull.labels.includes(labelNames.needsHuman)) {
       continue;
     }
 
@@ -55,7 +57,7 @@ const trigger = Effect.gen(function* () {
     }
 
     for (const review of Option.toArray(latest)) {
-      items.push(Review.addressItem(pull, review, decisive.length));
+      items.push(yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)));
     }
   }
 
@@ -139,7 +141,20 @@ const workflow = (item: WorkItem) =>
     );
   });
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Routing.Settings.fields,
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.LocalGate.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Ci.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   gate: Implement.gate,
   concurrency: 1,

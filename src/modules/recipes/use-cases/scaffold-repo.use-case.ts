@@ -14,7 +14,8 @@ type Change = (typeof Scaffolded.Type.changes)[number];
 
 // Writes the scaffold of .chernabog/ into the repo at `root`, never
 // overwriting a file that is there, except the generated schemas, which are
-// brought up to date. package.json is written for a new .chernabog/ and left
+// brought up to date: config.schema.json with the settings the repo's flows
+// declare, so running it again after adding a flow describes its settings. package.json is written for a new .chernabog/ and left
 // alone after that: its SDK pin says what the flows are written against, and
 // only moving the flows (upgradeRepoUseCase) moves it. A .chernabog/ written
 // against a newer SDK than this binary runs is refused, rather than moved back.
@@ -27,7 +28,13 @@ export const scaffoldRepoUseCase = Effect.fn("scaffoldRepoUseCase")(function* (r
     yield* bundle.refuseNewer(found);
   }
 
-  const scaffold = yield* bundle.scaffold;
+  const bundled = yield* bundle.scaffold;
+
+  const scaffold = {
+    ...bundled,
+    files: { ...bundled.files, "config.schema.json": yield* bundle.configSchema(root) },
+  };
+
   const present: Record<string, Option.Option<string>> = {};
 
   for (const file of Object.keys(scaffold.files)) {

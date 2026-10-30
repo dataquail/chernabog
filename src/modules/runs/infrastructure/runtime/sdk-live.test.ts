@@ -2,6 +2,7 @@ import {
   DEFAULT_LABELS,
   Git,
   GitHub,
+  GitHubCapability,
   GitHubError,
   HEADLESS,
   type Json,
@@ -17,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import { effect, effectAtHomeWith } from "../../../../../test/effect-test.ts";
 import { Exec, execOk } from "../../../../platform/exec.ts";
@@ -406,6 +408,118 @@ const gitRepo = Layer.unwrap(
   }).pipe(Effect.orDie),
 );
 
+// A call of every member of GitHub, so a test can see what each one asks of GitHub.
+const EVERY_MEMBER = {
+  queuedIssues: (github) => github.queuedIssues,
+  queuedIssuesLabelled: (github) => github.queuedIssuesLabelled("auto:eligible"),
+  oldestQueued: (github) => github.oldestQueued,
+  issuesLabelled: (github) => github.issuesLabelled("auto:eligible"),
+  issue: (github) => github.issue(3),
+  createIssue: (github) => github.createIssue({ title: "a task", body: "", labels: [] }),
+  subIssues: (github) => github.subIssues(3),
+  addSubIssue: (github) => github.addSubIssue(3, 5),
+  blockedBy: (github) => github.blockedBy(3),
+  addBlockedBy: (github) => github.addBlockedBy(3, 4),
+  removeBlockedBy: (github) => github.removeBlockedBy(3, 4),
+  trustedComments: (github) => github.trustedComments(3),
+  comments: (github) => github.comments(3),
+  comment: (github) => github.comment(3, "hello"),
+  addLabel: (github) => github.addLabel(3, "auto:eligible"),
+  removeLabel: (github) => github.removeLabel(3, "auto:eligible"),
+  moveToStatus: (github) => github.moveToStatus(3, "Done"),
+  assignSelf: (github) => github.assignSelf(3),
+  login: (github) => github.login,
+  branchSha: (github) => github.branchSha("auto/issue-3"),
+  createBranch: (github) => github.createBranch("auto/issue-3", "c1"),
+  deleteBranch: (github) => github.deleteBranch("auto/issue-3"),
+  createCommit: (github) => github.createCommit({ message: "m", tree: "t1", parents: [] }),
+  createRef: (github) => github.createRef(CLAIM, "c1"),
+  ref: (github) => github.ref(CLAIM),
+  deleteRef: (github) => github.deleteRef(CLAIM),
+  updateRef: (github) => github.updateRef(CLAIM, "c2"),
+  pullRequest: (github) => github.pullRequest(7),
+  pullRequestForBranch: (github) => github.pullRequestForBranch("auto/issue-3"),
+  pullRequestsLabelled: (github) => github.pullRequestsLabelled("auto:needs-review"),
+  openPullRequests: (github) => github.openPullRequests,
+  requestReviewers: (github) => github.requestReviewers(7, ["zach"]),
+  reviews: (github) => github.reviews(7),
+  openPullRequest: (github) =>
+    github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" }),
+  ciChecks: (github) => github.ciChecks(7),
+  ciState: (github) => github.ciState(7),
+  commitCiState: (github) => github.commitCiState("c1"),
+  branchCiState: (github) => github.branchCiState("main"),
+  ciFailureDetails: (github) =>
+    github.ciFailureDetails({
+      name: "test",
+      url: "https://github.com/dataquail/demo/actions/runs/1",
+      job: Option.some(1),
+      workflowRun: Option.some(1),
+    }),
+  pullRequestFiles: (github) => github.pullRequestFiles(7),
+  closedPullRequestsLabelled: (github) => github.closedPullRequestsLabelled("auto:stale"),
+  review: (github) =>
+    github.review(7, { body: "ok", commitSha: "c1", comments: [], event: "APPROVE" }),
+  reviewComments: (github) => github.reviewComments(7),
+  merge: (github) => github.merge(7, { method: "squash", sha: "c1" }),
+  request: (github) => github.request("GET", "/repos/dataquail/demo", Option.none()),
+} satisfies {
+  readonly [K in keyof GitHub["Service"]]: (
+    github: GitHub["Service"],
+  ) => Effect.Effect<unknown, unknown>;
+};
+
+const GraphqlRequest = Schema.Struct({ query: Schema.String });
+
+// A request that changes something on GitHub: a GraphQL mutation, or any other request but a GET.
+const writes = (request: {
+  readonly method: string;
+  readonly path: string;
+  readonly body: Option.Option<Json>;
+}) => {
+  if (request.path === "/graphql") {
+    return Option.exists(
+      Option.flatMap(request.body, Schema.decodeUnknownOption(GraphqlRequest)),
+      (sent) => sent.query.trimStart().startsWith("mutation"),
+    );
+  }
+
+  return request.method !== "GET";
+};
+
+effect("every member of GitHub that writes to it is declared a write, a claim, or local", () =>
+  Effect.gen(function* () {
+    const writing = yield* Effect.forEach(Object.entries(EVERY_MEMBER), ([name, call]) =>
+      Effect.gen(function* () {
+        const github = answering(200, Option.some({}));
+        yield* onGitHub(github, (service) => Effect.asVoid<unknown, unknown, never>(call(service)));
+
+        return { name, wrote: github.requests.some(writes) };
+      }),
+    ).pipe(Effect.map((found) => found.filter((member) => member.wrote).map(({ name }) => name)));
+
+    const declared = new Set(
+      Result.getOrElse(
+        yield* onGitHub(answering(200, Option.none()), (github) =>
+          Effect.succeed(Object.keys(GitHubCapability.writes(github, (method) => method))),
+        ),
+        () => [],
+      ),
+    );
+
+    const undeclared = writing.filter(
+      (name) =>
+        !declared.has(name) &&
+        !Object.entries(GitHubCapability.others).some(
+          ([other, kind]) => other === name && kind !== "read",
+        ),
+    );
+
+    expect(writing).toContain("comment");
+    expect(undeclared).toEqual([]);
+  }),
+);
+
 // git runs for real.
 const atHome = effectAtHomeWith(Exec.layer);
 
@@ -439,6 +553,40 @@ describe("WorktreeLive", () => {
       }).pipe(Effect.provide(gitRepo)),
   );
 
+  atHome("a branch origin lacks starts from the base it is given, such as develop", () =>
+    Effect.gen(function* () {
+      const { checkout, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      yield* git(checkout, "commit", "--quiet", "--allow-empty", "-m", "on develop");
+      yield* git(checkout, "push", "--quiet", "origin", "HEAD:refs/heads/develop");
+      const develop = yield* git(origin, "rev-parse", "develop");
+
+      const path = yield* worktree.ensure("feature/x", { runId: "run-1", from: "develop" });
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(develop);
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  atHome("a branch origin lacks, with no base given, fails rather than guessing one", () =>
+    Effect.gen(function* () {
+      const worktree = yield* Worktree;
+      const refused = yield* Effect.flip(worktree.ensure("feature/x", { runId: "run-1" }));
+
+      expect(refused.message).toBe(
+        "origin has no branch feature/x, and no base was given to start it from",
+      );
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  atHome("a run id alone, as an SDK from before `from` gives it, starts from baseBranch", () =>
+    Effect.gen(function* () {
+      const { base } = yield* GitRepo;
+      const path = yield* (yield* Worktree).ensure("feature/x", "run-1");
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
   atHome("a run resuming its own worktree keeps its work", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -453,6 +601,54 @@ describe("WorktreeLive", () => {
       expect(yield* worktree.ensure(branch, "run-1")).toBe(path);
       expect(yield* git(path, "rev-parse", "HEAD")).toBe(head);
       expect(yield* fs.readFileString(`${path}/draft.txt`)).toBe("uncommitted\n");
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  // #212: each run's worktree writes its branch's upstream into the checkout's
+  // one .git/config, and git refuses a second writer while the first holds its lock.
+  atHome("runs preparing worktrees at once all get them", () =>
+    Effect.gen(function* () {
+      const { base, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      const runs = 8;
+      const branches = Array.from({ length: runs }, (_, index) => `auto/issue-${index + 1}`);
+
+      for (const branch of branches) {
+        yield* git(origin, "update-ref", `refs/heads/${branch}`, base);
+      }
+
+      const paths = yield* Effect.forEach(
+        branches,
+        (branch, index) => worktree.ensure(branch, `run-${index + 1}`),
+        { concurrency: runs },
+      );
+
+      for (const path of paths) {
+        expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+      }
+    }).pipe(Effect.provide(gitRepo)),
+  );
+
+  // Another process's git, such as `chernabog run`'s, holding a lock for a moment.
+  atHome("a worktree waits out a lock another git holds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { base, checkout, origin } = yield* GitRepo;
+      const worktree = yield* Worktree;
+      const branch = "auto/issue-7";
+      const lock = `${checkout}/.git/config.lock`;
+
+      yield* git(origin, "update-ref", `refs/heads/${branch}`, base);
+      yield* fs.writeFileString(lock, "");
+
+      const released = Effect.delay(fs.remove(lock), "300 millis");
+
+      const [path] = yield* Effect.all([worktree.ensure(branch, "run-1"), released], {
+        concurrency: "unbounded",
+      });
+
+      expect(yield* git(path, "rev-parse", "HEAD")).toBe(base);
+      expect(yield* git(path, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe(`origin/${branch}`);
     }).pipe(Effect.provide(gitRepo)),
   );
 });

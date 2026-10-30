@@ -1,9 +1,16 @@
 // A repo as this process runs its flows: its config layers and flows, read
-// from the trusted tree on its base branch (or the working copy, to try a
+// from the trusted tree on its default branch (or the working copy, to try a
 // change), and each persona's services, built once and shared by every
 // trigger, gate and run of its flows as that persona.
 
-import { describeError, type Flow, RunLog, type SetupError, type WorkItem } from "@chernabog/core";
+import {
+  describeError,
+  type Flow,
+  Machine,
+  RunLog,
+  type SetupError,
+  type WorkItem,
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -20,14 +27,13 @@ import { type Persona, samePersona } from "../../../../kernel/persona.value-obje
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
-import { viewerLogin } from "../../../../platform/github-api.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   type EffectiveRepo,
   type EnrolledRepo,
   loadRepo,
   type MachineConfig,
-  needsLogin,
   type PersonaRepo,
 } from "../../../../repo-config.ts";
 import { adoptImplicitRunsUseCase } from "../../use-cases/adopt-implicit-runs.use-case.ts";
@@ -45,7 +51,7 @@ export type OpenRepo = {
   readonly tree: Option.Option<string>;
 };
 
-// The trusted .chernabog/ comes from the base branch; `fromCheckout` reads the
+// The trusted .chernabog/ comes from the config branch, GitHub's default; `fromCheckout` reads the
 // working copy instead, for trying out a change before merging it.
 export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
   Effect.gen(function* () {
@@ -54,7 +60,7 @@ export const repoConfigDir = (enrolled: EnrolledRepo, fromCheckout: boolean) =>
     let configDir = `${enrolled.path}/.chernabog`;
 
     if (!fromCheckout) {
-      const snapshot = yield* snapshotConfig(enrolled.path, enrolled.baseBranch ?? "main");
+      const snapshot = yield* snapshotConfig(enrolled.path);
       tree = Option.some(snapshot.tree);
       configDir = snapshot.configDir;
     }
@@ -118,6 +124,7 @@ export const openRepo = (
     const repo = yield* loadRepo(machine, enrolled, configDir, overrides);
     const flows = yield* loadFlows(configDir, overrides);
     yield* checkManualSchedules(repo, flows);
+    yield* checkFlowSettings(repo, flows);
 
     return { repo, flows, tree } satisfies OpenRepo;
   });
@@ -131,8 +138,9 @@ const consoleRunLog = RunLog.of({
 
 // One repo's services as one persona, with its account, agent and launcher,
 // built once at its composition point and shared by every trigger, gate and
-// run of its flows as that persona. Fails with the setup error that stops the
-// persona acting, such as a login gh doesn't have.
+// run of its flows as that persona, beside the logins this machine acts as.
+// Fails with the setup error that stops the persona acting, such as a login gh
+// doesn't have.
 export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<
@@ -143,6 +151,7 @@ export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
       Layer.mergeAll(
         repoServices(repo.settings, machine.usageGate, machine.agents, repo.persona),
         Layer.succeed(RunLog, consoleRunLog),
+        Layer.succeed(Machine, Machine.of({ personas: machine.github })),
       ),
     );
 
@@ -208,20 +217,6 @@ export const adoptRuns = (repo: EffectiveRepo) =>
   Option.match(defaultPersona(repo), {
     onNone: () => Effect.void,
     onSome: (login) => adoptImplicitRunsUseCase(repo.settings.name, login).pipe(Effect.asVoid),
-  });
-
-// Who @me and runners mean for a persona: its own login, or, for the implicit
-// persona, whoever this machine is on GitHub, asked only when it matters.
-export const loginOf = (repo: EffectiveRepo, persona: Persona) =>
-  Option.match(persona, {
-    onSome: (login) => Effect.succeedSome(login),
-    onNone: () => {
-      if (!needsLogin(repo)) {
-        return Effect.succeed(Option.none<string>());
-      }
-
-      return Effect.option(viewerLogin);
-    },
   });
 
 // The item a person named that the trigger didn't report, when the flow can

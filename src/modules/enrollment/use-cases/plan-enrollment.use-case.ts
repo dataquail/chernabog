@@ -41,7 +41,6 @@ export const planEnrollmentUseCase = Effect.fn("planEnrollmentUseCase")(function
   return EnrollmentPlan.make({
     repo: checkout.repo,
     root: checkout.root,
-    baseBranch: checkout.baseBranch,
     logins: machine.personas,
     currentPersonas: EnrolledRepoRootOps.currentPersonas(existing),
     personas: candidates.map((persona) => {

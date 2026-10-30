@@ -20,28 +20,32 @@ import {
   NeedsHuman,
   Plan,
   reportAs,
+  Routing,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 
 // How long a posted plan waits for a person before the run hands it back.
 const ANSWER_WITHIN = "14 days";
 
 // Specs labelled auto:plan, oldest first, as work to start; with a board,
-// only those whose Status is its readyStatus. Then specs whose posted plan a
-// person has answered, which wake the run waiting on it.
+// only those whose Status is its readyStatus, routed by their assignees. Then
+// specs whose posted plan a person has answered, which wake the run waiting on it.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const queued = yield* github.queuedIssuesLabelled(Plan.LABELS.plan);
   const answered = yield* Plan.answers;
 
-  return [
-    ...queued.map((issue) => Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
-    ...answered,
-  ];
+  const specs = yield* Effect.forEach(queued, (issue) =>
+    Implement.routed(issue, Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
+  );
+
+  return [...specs, ...answered];
 }).pipe(reportAs("trigger"));
 
 // Drafts, checks and proposes the plan, and waits for a person's answer,
@@ -120,11 +124,22 @@ const workflow = (item: WorkItem) =>
     Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Routing.Settings.fields,
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.Board.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Plans.fields,
+});
+
 export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
-  labels: Plan.flowLabels,
+  labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...Plan.flowLabels]),
+  settings,
   // A spec closed, or claimed by another run, ends the run as superseded.
   stillValid: Plan.stillValid,
   workflow,

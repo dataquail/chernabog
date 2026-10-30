@@ -15,7 +15,10 @@ import * as Option from "effect/Option";
 import { nothingNamed } from "../../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
-import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import {
+  describeElsewhere,
+  routeItems,
+} from "../../../modules/runs/domain/routing/routing.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   defaultPersona,
@@ -28,7 +31,6 @@ import {
   adoptRuns,
   buildPersonaContexts,
   flowOrigins,
-  loginOf,
   openRepo,
   type RepoContext,
   servicesFrom,
@@ -46,13 +48,7 @@ import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
-import {
-  type EffectiveRepo,
-  findEnrolled,
-  loadMachineConfig,
-  personaOf,
-  routingOf,
-} from "../../../repo-config.ts";
+import { type EffectiveRepo, findEnrolled, loadMachineConfig } from "../../../repo-config.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -197,16 +193,14 @@ const resume = (
     return Option.some(yield* followRun(handle, persona, unfinished, context));
   });
 
-// The first item this machine may start, unless the flow leaves work for others to them.
-const firstOf = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
+// The first item this machine may start, past the work the flow left for others.
+const firstOf = (items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    const login = yield* loginOf(handle.repo, persona);
-    const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
-    const routed = routeItems(items, routingOf(own, handle.name), login);
+    const routed = routeItems(items);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) {
       yield* Console.log(
-        `left for other machines: ${routed.elsewhere.map((item) => item.key).join(", ")}; name one with --item to run it here`,
+        `left for others: ${routed.elsewhere.map(describeElsewhere).join(", ")}; name one with --item to run it here`,
       );
     }
 
@@ -222,7 +216,9 @@ const startFirst = (
   Effect.gen(function* () {
     // Nothing finds a manual flow's work, so a person must name it.
     if (isManual(handle.flow) && Option.isNone(options.item)) {
-      return yield* new ConfigError({ message: nothingNamed(handle.name) });
+      return yield* new ConfigError({
+        message: nothingNamed(handle.name, handle.flow.start === true),
+      });
     }
 
     const reported = yield* withRepo(context, triggerOf(handle.flow));
@@ -233,7 +229,7 @@ const startFirst = (
     ].filter((candidate) => candidate.wakeOnly !== true);
 
     const found = yield* Option.match(options.item, {
-      onNone: () => firstOf(handle, persona, items),
+      onNone: () => firstOf(items),
       onSome: (key) =>
         Effect.succeed(Option.fromUndefinedOr(items.find((candidate) => candidate.key === key))),
     });

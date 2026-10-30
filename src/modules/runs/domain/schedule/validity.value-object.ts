@@ -36,10 +36,11 @@ export const noteCheckFailure = (
 });
 
 // Whether a run in flight is about the issue or pull request a notification
-// names: its item is that one, or it opened or adopted it as its pull request.
+// names: its item is that one, or it named that one as a subject.
 export const runIsAbout = (
-  run: { readonly itemKey: string; readonly pullRequest: Option.Option<number> },
+  run: { readonly itemKey: string; readonly subjects: ReadonlyArray<string> },
   number: number,
 ) =>
-  Option.exists(itemTarget(run.itemKey), (target) => target.number === number) ||
-  Option.contains(run.pullRequest, number);
+  [run.itemKey, ...run.subjects].some((key) =>
+    Option.exists(itemTarget(key), (target) => target.number === number),
+  );

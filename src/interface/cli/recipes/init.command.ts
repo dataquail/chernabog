@@ -18,7 +18,7 @@ import { daemonReload } from "../../daemon/daemon.client.ts";
 import { confirm } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { enrollFlags, enrollHere, rootOf } from "../enrollment/enroll.command.ts";
-import { bakeRecipes, recipesFlag } from "./recipes.command.ts";
+import { bakeRecipes, recipesFlag, refreshSchemas } from "./recipes.command.ts";
 
 const describeScaffold = (scaffolded: Scaffolded) =>
   Option.match(Option.liftPredicate(scaffolded.changes, Arr.isReadonlyArrayNonEmpty), {
@@ -91,6 +91,8 @@ export const initCommand = Command.make(
       // The recipes init offers.
       yield* printLines(describePackage(yield* addRecipePackageUseCase(root, OFFICIAL_PACKAGE)));
       yield* printLines(yield* bakeRecipes(root, recipes));
+      // config.schema.json again, describing the settings of the recipes it added.
+      yield* printLines(yield* refreshSchemas(root));
 
       // Enrolling would point a moved entry here after all, so a checkout that
       // isn't the moved one enrolls only under a name of its own.

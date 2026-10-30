@@ -7,7 +7,6 @@ import * as Record from "effect/Record";
 import type * as Schema from "effect/Schema";
 
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
-import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import {
   type FlowRef,
@@ -28,8 +27,6 @@ export type FakeFlow = {
   readonly notReady?: string;
   readonly findable?: ReadonlyArray<WorkItem>;
   readonly gate?: string;
-  // The open pull requests, and whom each asks to review.
-  readonly reviewRequests?: ReadonlyArray<ReviewRequest>;
   // What its stillValid answers, if it has one, or why it fails; and the
   // runs it was asked about, which the fake appends to.
   readonly validity?: ItemValidity;
@@ -136,11 +133,6 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
         flowOf(flow).pipe(
           Effect.map((found) => Option.fromUndefinedOr(found.gate)),
           Effect.orElseSucceed(() => Option.none<string>()),
-        ),
-      reviewRequests: (flow) =>
-        flowOf(flow).pipe(
-          Effect.map((found): ReadonlyArray<ReviewRequest> => found.reviewRequests ?? []),
-          Effect.orElseSucceed((): ReadonlyArray<ReviewRequest> => []),
         ),
     }),
   );
