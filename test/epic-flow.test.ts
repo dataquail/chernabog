@@ -15,6 +15,7 @@ import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import epic from "../packages/recipes/flows/epic.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
@@ -300,6 +301,19 @@ describe("epic", () => {
 
       for (const pull of fake.branchPulls.values()) {
         expect(fake.labelsOf(pull.number)).toContain(DEFAULT_LABELS.ship);
+      }
+    }),
+  );
+
+  effect("declares atOnce and ship among its settings, so config.yaml may set them", () =>
+    Effect.gen(function* () {
+      const schema = Option.fromUndefinedOr(epic.settings);
+      expect(Option.isSome(schema)).toBe(true);
+
+      for (const found of Option.toArray(schema)) {
+        expect(yield* Schema.decodeEffect(found)({ atOnce: 5, ship: true })).toEqual(
+          expect.objectContaining({ atOnce: 5, ship: true }),
+        );
       }
     }),
   );
