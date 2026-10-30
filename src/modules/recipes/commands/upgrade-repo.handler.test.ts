@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { jsonText, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { upgradeRepoUseCase } from "./upgrade-repo.use-case.ts";
+import { upgradeRepoHandler } from "./upgrade-repo.handler.ts";
 
 const OLD = jsonText({
   devDependencies: { "@chernabog/sdk": "0.5.0" },
@@ -12,7 +12,7 @@ const OLD = jsonText({
   },
 });
 
-describe("upgradeRepoUseCase", () => {
+describe("upgradeRepoHandler", () => {
   const old = recipeRepo({
     ".chernabog/package.json": OLD,
     ".chernabog/flows/review.ts": "old review\n",
@@ -22,7 +22,7 @@ describe("upgradeRepoUseCase", () => {
 
   effect("moves the pins, and lists what's hand-written, leaving the copies to update", () =>
     Effect.gen(function* () {
-      const { left, pinned } = yield* upgradeRepoUseCase("/repo");
+      const { left, pinned } = yield* upgradeRepoHandler({ root: "/repo" });
 
       expect(pinned).toBe(true);
       expect(old.stored["/repo/.chernabog/package.json"]).toBe(`${OLD}"pinned"\n`);
@@ -40,7 +40,7 @@ describe("upgradeRepoUseCase", () => {
 
   effect("changes nothing in a repo already on this chernabog", () =>
     Effect.gen(function* () {
-      const { left, pinned } = yield* upgradeRepoUseCase("/repo");
+      const { left, pinned } = yield* upgradeRepoHandler({ root: "/repo" });
 
       expect([pinned, left]).toEqual([false, []]);
     }).pipe(Effect.provide(current.layer)),
@@ -51,7 +51,7 @@ describe("upgradeRepoUseCase", () => {
   effect("writes package.json where there's none", () =>
     Effect.gen(function* () {
       delete bare.stored["/repo/.chernabog/package.json"];
-      const { pinned } = yield* upgradeRepoUseCase("/repo");
+      const { pinned } = yield* upgradeRepoHandler({ root: "/repo" });
 
       expect(pinned).toBe(true);
       expect(bare.stored["/repo/.chernabog/package.json"]).toBe('{ "pinned" }\n');
@@ -65,7 +65,7 @@ describe("upgradeRepoUseCase", () => {
 
   effect("refuses a .chernabog/ written against a newer SDK, writing nothing", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(upgradeRepoUseCase("/repo"));
+      const refused = yield* Effect.flip(upgradeRepoHandler({ root: "/repo" }));
 
       expect(refused._tag).toBe("ScaffoldRefused");
       expect(tooNew.stored["/repo/.chernabog/flows/review.ts"]).toBe("newer review\n");
