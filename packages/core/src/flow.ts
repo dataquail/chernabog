@@ -123,6 +123,38 @@ export type StillValid = (
   item: WorkItem,
 ) => Effect.Effect<Validity, FlowError, TriggerServices | Run>;
 
+// A warning a flow's doctor check gives `chernabog doctor`, and how to fix it.
+export type Warning = { readonly warning: string; readonly fix: string };
+
+// One of the repo's flows, as a doctor check sees it: its name, the logins
+// here that run it in the repo, and the checks it contributes, so a check can
+// tell which other flows contribute a check it knows.
+export type DoctorFlow = {
+  readonly name: string;
+  readonly runners: ReadonlyArray<string>;
+  readonly doctor: ReadonlyArray<DoctorCheck>;
+};
+
+// What a flow's doctor check knows of this machine: the flow's name in the
+// repo, the GitHub logins this machine acts as (machine config's github:),
+// for the persona the check runs as its login (none when it is the implicit
+// account and gh can't say) and whether it runs the flow, and every flow of
+// the repo.
+export type DoctorContext = {
+  readonly flow: string;
+  readonly personas: ReadonlyArray<string>;
+  readonly login: Option.Option<string>;
+  readonly runs: boolean;
+  readonly flows: ReadonlyArray<DoctorFlow>;
+};
+
+// A check `chernabog doctor` runs for a flow, once for each of the repo's
+// personas on this machine, with that persona's settings: the warnings it
+// finds, each with its fix. A check that can't tell says nothing.
+export type DoctorCheck = (
+  context: DoctorContext,
+) => Effect.Effect<ReadonlyArray<Warning>, never, FlowSettings | Repo>;
+
 // What every flow has, whether a trigger finds its work or a person names it.
 type FlowCommon = {
   // Checked before each run starts; fail with Skip to hold the run back, such as on usage.
@@ -151,6 +183,14 @@ type FlowCommon = {
   // flow's module, so the engine can release them by name when a run ends.
   // The SDK's own (Markers.builtIn) are always known.
   readonly markers?: ReadonlyArray<Marker>;
+  // What `chernabog doctor` checks for the flow, beyond what it checks itself:
+  // what the flow needs of this machine, such as a reviewer to serve the pull
+  // requests it asks for reviews. The binary knows only what flows tell it.
+  readonly doctor?: ReadonlyArray<DoctorCheck>;
+  // Whether the flow is `chernabog start <issue>`'s: the one a person starts
+  // by naming an issue. One flow in a repo says so; start refuses a repo
+  // where none or several do.
+  readonly start?: boolean;
   // The durable work for one item. Its result, if a string, is the run's summary.
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };

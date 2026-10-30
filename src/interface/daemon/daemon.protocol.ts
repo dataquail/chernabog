@@ -36,6 +36,11 @@ export const FlowStatus = Schema.Struct({
   queued: Schema.Array(Schema.String),
   // What its trigger left for other personas or machines, each with why.
   assignedElsewhere: Schema.optionalKey(Schema.Array(Schema.String)),
+  // What its trigger says waits on someone, each with who and why, such as
+  // "pr-73 waits on bob (not on this machine)".
+  waiting: Schema.optionalKey(Schema.Array(Schema.String)),
+  // Whether it is the flow `chernabog start <issue>` runs, as it declares.
+  start: Schema.optionalKey(Schema.Boolean),
   // For a flow imported from a recipe package, the package and its version,
   // as `@acme/recipes@2.1.0`; absent for a flow in the repo.
   source: Schema.optionalKey(Schema.String),

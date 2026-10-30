@@ -21,7 +21,6 @@ import { daemonReload } from "../../daemon/daemon.client.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { listed, listFlag } from "../list.arguments.ts";
-import { describeUnserved } from "../reviewer-pool.output.ts";
 
 export const enrollFlags = {
   account: listFlag(
@@ -229,20 +228,15 @@ const askedAbout = (plan: EnrollmentPlan, personas: Option.Option<ReadonlyArray<
       ),
   });
 
-const describeEnrolled = (enrolled: Enrolled) => [
-  ...enrolled.chosen.map(({ account, accounts, flows, persona }) => {
+const describeEnrolled = (enrolled: Enrolled) =>
+  enrolled.chosen.map(({ account, accounts, flows, persona }) => {
     const spends = Option.match(account, {
       onNone: () => "",
       onSome: (name) => `; account ${[name, ...accounts].join(", ")}`,
     });
 
     return `${enrolled.name} as ${who(persona)}: flows ${listed(flows)}${spends}`;
-  }),
-  ...enrolled.unserved.map(
-    ({ persona, reviewers }) =>
-      `note: ${enrolled.name} as ${who(persona)}: ${describeUnserved(persona, reviewers)}`,
-  ),
-];
+  });
 
 // Enrolls the checkout at `root`, asking in a terminal what the flags don't
 // say, and returns what it chose and the lines that say so.

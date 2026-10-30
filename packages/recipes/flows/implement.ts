@@ -31,6 +31,7 @@ import {
   type PullRequestClosed,
   type PushRejected,
   reportAs,
+  Review,
   Routing,
   Settings,
   Skip,
@@ -84,6 +85,8 @@ export default defineFlow({
   concurrency: 1,
   labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...Implement.adoptionLabels]),
   settings,
+  // Doctor warns when no reviewer its pull requests may ask is a persona here.
+  doctor: [Review.poolCheck],
   // An issue closed, or claimed by another run, ends the run as superseded.
   stillValid: Implement.stillValid,
   workflow: (item) =>

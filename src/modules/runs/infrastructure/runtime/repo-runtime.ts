@@ -3,7 +3,14 @@
 // change), and each persona's services, built once and shared by every
 // trigger, gate and run of its flows as that persona.
 
-import { describeError, type Flow, RunLog, type SetupError, type WorkItem } from "@chernabog/core";
+import {
+  describeError,
+  type Flow,
+  Machine,
+  RunLog,
+  type SetupError,
+  type WorkItem,
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -131,8 +138,9 @@ const consoleRunLog = RunLog.of({
 
 // One repo's services as one persona, with its account, agent and launcher,
 // built once at its composition point and shared by every trigger, gate and
-// run of its flows as that persona. Fails with the setup error that stops the
-// persona acting, such as a login gh doesn't have.
+// run of its flows as that persona, beside the logins this machine acts as.
+// Fails with the setup error that stops the persona acting, such as a login gh
+// doesn't have.
 export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
   Effect.gen(function* () {
     const platform = yield* Effect.context<
@@ -143,6 +151,7 @@ export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
       Layer.mergeAll(
         repoServices(repo.settings, machine.usageGate, machine.agents, repo.persona),
         Layer.succeed(RunLog, consoleRunLog),
+        Layer.succeed(Machine, Machine.of({ personas: machine.github })),
       ),
     );
 

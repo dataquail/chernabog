@@ -28,7 +28,6 @@ import * as Random from "effect/Random";
 import * as Record from "effect/Record";
 
 import { asSuffix, type Persona } from "../../../kernel/persona.value-object.ts";
-import { sameLogin } from "../../../kernel/reviewer-pool.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import { type Ending } from "../../../kernel/scenario.value-object.ts";
 import { pauseRepoUseCase } from "../../../modules/enrollment/use-cases/pause-repo.use-case.ts";
@@ -72,7 +71,7 @@ import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { execOk } from "../../../platform/exec.ts";
-import { packageOverride, reviewingFlows } from "../../../platform/flow-loader.ts";
+import { packageOverride } from "../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../platform/github-api.ts";
 import { execOptionsFor } from "../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
@@ -400,13 +399,9 @@ const follow = (
     return current;
   });
 
-// Who reviews as each login here: a persona of the repo that runs a flow that reviews.
-const reviewsHere = (repo: EffectiveRepo, reviewing: ReadonlyArray<string>, login: string) =>
-  repo.personas.some(
-    (own) =>
-      Option.exists(own.persona, (mine) => sameLogin(mine, login)) &&
-      reviewing.some((flow) => Option.isNone(flowOff(own, flow))),
-  );
+// Whether this machine acts as the login: one of its personas, as GitHub compares logins.
+const actsHere = (personas: ReadonlyArray<string>, login: string) =>
+  personas.some((own) => own.toLowerCase() === login.toLowerCase());
 
 const describeSeeded = (seeded: Seeded) =>
   listed(
@@ -500,11 +495,11 @@ const runRehearsal = (
 // What a rehearsal found, as lines, and whether it went as the scenario said.
 const report = (
   loaded: LoadedScenario,
-  repo: EffectiveRepo,
   seeded: Seeded,
   ended: RunView,
   standIns: StandIns,
   seedAs: Persona,
+  personas: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
     const ending: Ending = ended.status;
@@ -534,17 +529,15 @@ const report = (
       as: seedAs,
     });
 
-    const reviewing = yield* reviewingFlows(repo.settings.configDir);
-
     for (const asking of check.reviewRequests) {
       for (const login of asking.logins) {
-        if (reviewsHere(repo, reviewing, login)) {
+        if (actsHere(personas, login)) {
           yield* Console.log(
-            `#${asking.pullRequest} asks ${login} to review it; ${login} reviews here`,
+            `#${asking.pullRequest} asks ${login} to review it; ${login} is a persona here`,
           );
         } else {
           yield* Console.log(
-            `! #${asking.pullRequest} asks ${login} to review it, and no persona here reviews as ${login}: a real run would wait for another machine to review it`,
+            `! #${asking.pullRequest} asks ${login} to review it, and this machine doesn't act as ${login}: a real run would wait for another machine to review it`,
           );
         }
       }
@@ -746,7 +739,7 @@ export const rehearse = (options: RehearseOptions) =>
 
           return yield* Option.match(ended, {
             onNone: () => Effect.succeed(false),
-            onSome: (run) => report(loaded, repo, seeded, run, plan.standIns, seedAs),
+            onSome: (run) => report(loaded, seeded, run, plan.standIns, seedAs, machine.github),
           });
         });
 

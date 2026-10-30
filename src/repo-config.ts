@@ -494,13 +494,13 @@ const manualSchedules = (repo: EffectiveRepo, flowName: string) =>
 export const checkManualSchedules = (repo: EffectiveRepo, flows: ReadonlyMap<string, Flow>) =>
   Effect.forEach(
     [...flows].filter(([, flow]) => isManual(flow)),
-    ([flowName]) =>
+    ([flowName, flow]) =>
       Option.match(Arr.head(Arr.dedupe(manualSchedules(repo, flowName))), {
         onNone: () => Effect.void,
         onSome: (where) =>
           Effect.fail(
             new ConfigError({
-              message: `${repo.settings.name}: ${where} gives flows.${flowName} a schedule, but ${flowName} is a manual flow, started only with ${howToStart(flowName)}; remove the schedule`,
+              message: `${repo.settings.name}: ${where} gives flows.${flowName} a schedule, but ${flowName} is a manual flow, started only with ${howToStart(flowName, flow.start === true)}; remove the schedule`,
             }),
           ),
       }),

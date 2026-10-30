@@ -206,6 +206,11 @@ export const WorkItem = Schema.Struct({
   // no run here unless a person names it, and `chernabog status` lists it
   // with the reason. Its signals still wake a run waiting on it.
   elsewhere: Schema.optionalKey(Schema.String),
+  // Who the item waits on, and why, such as a pull request asking a reviewer
+  // no persona on this machine acts as: { who: "bob", why: "not on this
+  // machine" }. It starts no run, and `chernabog status` lists it as waiting
+  // on them. Its signals still wake a run waiting on it.
+  waitsOn: Schema.optionalKey(Schema.Struct({ who: Schema.String, why: Schema.String })),
   // Deprecated: the engine reads neither, and they go in core's next major
   // (ADR 0005). A flow routes by setting elsewhere, as the SDK's Routing does.
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -781,6 +786,17 @@ export class Runs extends Context.Service<
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
   }
 >()("@chernabog/sdk/Runs") {}
+
+// What this machine is: the GitHub logins it acts as, machine config's
+// github: (none when it acts only as the implicit account). Provided by
+// Chernabog to triggers; a trigger reads it with Effect.serviceOption, since a
+// binary from before it provides none.
+export class Machine extends Context.Service<
+  Machine,
+  {
+    readonly personas: ReadonlyArray<string>;
+  }
+>()("@chernabog/sdk/Machine") {}
 
 // Writes to the run's log file, which `chernabog logs <run>` prints.
 export class RunLog extends Context.Service<

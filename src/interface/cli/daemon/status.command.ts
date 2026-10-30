@@ -135,6 +135,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
     }
 
     const elsewhere = flow.assignedElsewhere ?? [];
+    const waiting = flow.waiting ?? [];
 
     // An event tick waiting to run is due now, whenever the rate cap lets it go.
     const next = Option.match(Option.fromUndefinedOr(flow.pending), {
@@ -147,7 +148,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
       onSome: (cause) => `, last ${relative(flow.lastTick, now)} (${cause})`,
     });
 
-    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; left for others: ${elsewhere.join(", ")}`)}`;
+    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; left for others: ${elsewhere.join(", ")}`)}${when(waiting.length > 0, `; waiting: ${waiting.join(", ")}`)}`;
   };
 
   return [

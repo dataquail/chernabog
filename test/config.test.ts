@@ -232,7 +232,7 @@ describe("config layers", () => {
       const flows = new Map([
         [
           "human-initiated",
-          defineFlow({ item: () => Effect.succeedNone, workflow: () => Effect.void }),
+          defineFlow({ item: () => Effect.succeedNone, start: true, workflow: () => Effect.void }),
         ],
         ["implement", defineFlow({ trigger: Effect.succeed([]), workflow: () => Effect.void })],
       ]);

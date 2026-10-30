@@ -76,8 +76,8 @@ describe("chernabog rehearse implement, as a single persona that authors", () =>
     expect(output).toContain("rehearsal: implement answered by its stand-in");
     expect(output).toContain("ended done: #1:");
     expect(output).toContain("✓ ended as the scenario expects");
-    // The pool less alice is bob, whom no persona here reviews as.
-    expect(output).toContain("asks bob to review it, and no persona here reviews as bob");
+    // The pool less alice is bob, whom this machine doesn't act as.
+    expect(output).toContain("asks bob to review it, and this machine doesn't act as bob");
     expect(code).toBe(0);
 
     expect(sandbox.claudeCalls()).toEqual([]);
@@ -268,7 +268,7 @@ describe("chernabog rehearse implement, where the other reviewer runs review her
 
     const { code, output } = await rehearse(sandbox, path);
 
-    expect(output).toContain("asks bob to review it; bob reviews here");
+    expect(output).toContain("asks bob to review it; bob is a persona here");
     expect(output).toContain("deleted issue #1");
     expect(code).toBe(0);
     expect(sandbox.github.issues.size).toBe(0);

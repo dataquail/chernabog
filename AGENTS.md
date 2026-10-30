@@ -584,18 +584,23 @@ Decisions that cut across them:
   re-requests the reviewer who asked. `re-review` skips `auto:needs-human`, so
   re-requesting mid-dispute doesn't restart the loop.
 - A review request for a login no persona here acts as never fails; it
-  waits (#76). The pool's rules are the kernel's
-  (`src/kernel/reviewer-pool.value-object.ts`), since enrollment, runs and
-  doctor all read them. `doctor` warns (`!`, not a failure) per persona that
-  authors (runs `implement`, `human-initiated`, or a flow whose code mentions
-  `requestReview`/`handOff`, read by `authoringFlows` in
-  `src/platform/flow-loader.ts`) when the pool less that author has no login
-  under `github:`; `applyEnrollmentUseCase` returns the same as `unserved`,
-  which `enroll` prints as a note; and `planTickUseCase`, for the `review`
-  flow, reads `FlowsClient.reviewRequests` (one `openPullRequests` call,
-  before the trigger, which it leaves alone) and returns
-  `#n waits on <login> (not on this machine)` as `TickPlan.unserved`, which
-  the daemon adds to the schedule's `elsewhere`.
+  waits (#76). The binary knows nothing of it (#208): what doctor and
+  status say comes from the flows. `doctor` runs each flow's
+  `defineFlow({ doctor })` checks (`flowWarnings` in
+  `src/modules/runs/infrastructure/runtime/diagnostics.ts`) and prints their
+  warnings (`!`, not a failure); the recipes that ask for reviews include
+  `Review.poolCheck`, and the ones that review `Review.reviewerCheck`, which
+  also marks them as reviewing for `poolCheck`. The review recipe's trigger
+  reports each request no persona here serves as an item that `waitsOn` the
+  login (`Review.waitingElsewhere`, from core's `Machine` service, which
+  `buildRepoContext` provides); `planTickUseCase` starts none of those and
+  returns them in `TickPlan.routed.waiting`, which `status` lists.
+  `enroll` reads the untrusted checkout and imports no flow, so it says
+  nothing of the pool.
+- **`src/` names no recipe.** `local/no-recipe-names`
+  (`tools/oxlint/local/`, scoped to `src/` in `.oxlintrc.json`) refuses a
+  string that is a recipe's name and a regex over the SDK's vocabulary;
+  learn what a flow does from what it declares through core instead.
 - Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
   review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
   `fixWorkflow`, `FixItem`, the `fix` prompt), and the whole workflows and
@@ -659,9 +664,10 @@ Decisions that cut across them:
   repo writes its own `human-initiated` flow from them, as this repo's
   `.chernabog/flows/human-initiated.ts` does (`ownWork: true`, no gate). Its
   trigger finds nothing on a schedule; `chernabog start <issue>`
-  (`src/interface/cli/runs/start.main.ts`, `START_FLOW`) asks the daemon to run `human-initiated` on
-  `issue-<n>` (failing with a link to the docs' `#the-hybrid-path` when the
-  repo has no such flow). The optional `Flow.item(key)` finds an item the
+  (`src/interface/cli/runs/start.main.ts`) asks the daemon to run on
+  `issue-<n>` the flow that declares `defineFlow({ start: true })`, as its
+  status reports it (`startFlowOf` in `src/kernel/manual-flow.value-object.ts`
+  refuses a repo with none or several, naming them). The optional `Flow.item(key)` finds an item the
   trigger doesn't report (`FlowsClient.find`, for the daemon
   and `run --item`). It then attaches to the session (`liveAttach`).
 - `Hybrid.claim` takes the issue's claim ref like `Implement.claim`, and

@@ -216,7 +216,9 @@ const startFirst = (
   Effect.gen(function* () {
     // Nothing finds a manual flow's work, so a person must name it.
     if (isManual(handle.flow) && Option.isNone(options.item)) {
-      return yield* new ConfigError({ message: nothingNamed(handle.name) });
+      return yield* new ConfigError({
+        message: nothingNamed(handle.name, handle.flow.start === true),
+      });
     }
 
     const reported = yield* withRepo(context, triggerOf(handle.flow));

@@ -184,6 +184,8 @@ export default defineFlow({
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.
   ownWork: true,
+  // Doctor warns when a reviewer this machine acts as doesn't run it.
+  doctor: [Review.reviewerCheck],
   // A pull request closed or merged ends the run as superseded.
   stillValid: Review.stillValid,
   workflow,

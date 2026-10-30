@@ -326,6 +326,23 @@ export declare const valid: Valid;
 export declare const gone: (reason: string) => Gone;
 export declare const isGone: (validity: Validity) => validity is Gone;
 export type StillValid = (item: WorkItem) => Effect.Effect<Validity, FlowError, TriggerServices | Run>;
+export type Warning = {
+    readonly warning: string;
+    readonly fix: string;
+};
+export type DoctorFlow = {
+    readonly name: string;
+    readonly runners: ReadonlyArray<string>;
+    readonly doctor: ReadonlyArray<DoctorCheck>;
+};
+export type DoctorContext = {
+    readonly flow: string;
+    readonly personas: ReadonlyArray<string>;
+    readonly login: Option.Option<string>;
+    readonly runs: boolean;
+    readonly flows: ReadonlyArray<DoctorFlow>;
+};
+export type DoctorCheck = (context: DoctorContext) => Effect.Effect<ReadonlyArray<Warning>, never, FlowSettings | Repo>;
 type FlowCommon = {
     readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
     readonly concurrency?: number;
@@ -334,6 +351,8 @@ type FlowCommon = {
     readonly ownWork?: boolean;
     readonly stillValid?: StillValid;
     readonly markers?: ReadonlyArray<Marker>;
+    readonly doctor?: ReadonlyArray<DoctorCheck>;
+    readonly start?: boolean;
     readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };
 export type TriggeredFlow = FlowCommon & {
@@ -879,6 +898,10 @@ export declare const WorkItem: Schema.Struct<{
     readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
     readonly held: Schema.optionalKey<Schema.String>;
     readonly elsewhere: Schema.optionalKey<Schema.String>;
+    readonly waitsOn: Schema.optionalKey<Schema.Struct<{
+        readonly who: Schema.String;
+        readonly why: Schema.String;
+    }>>;
     readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
 }>;
@@ -896,6 +919,10 @@ export declare const RunInfo: Schema.Struct<{
         readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
         readonly held: Schema.optionalKey<Schema.String>;
         readonly elsewhere: Schema.optionalKey<Schema.String>;
+        readonly waitsOn: Schema.optionalKey<Schema.Struct<{
+            readonly who: Schema.String;
+            readonly why: Schema.String;
+        }>>;
         readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     }>;
@@ -917,6 +944,10 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
         readonly wakeOnly?: boolean | undefined;
         readonly held?: string | undefined;
         readonly elsewhere?: string | undefined;
+        readonly waitsOn?: {
+            readonly who: string;
+            readonly why: string;
+        } | undefined;
         readonly assignees?: readonly string[] | undefined;
         readonly reviewers?: readonly string[] | undefined;
     };
@@ -1261,6 +1292,11 @@ declare const Runs_base: Context.ServiceClass<Runs, "@chernabog/sdk/Runs", {
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
 }>;
 export declare class Runs extends Runs_base {
+}
+declare const Machine_base: Context.ServiceClass<Machine, "@chernabog/sdk/Machine", {
+    readonly personas: ReadonlyArray<string>;
+}>;
+export declare class Machine extends Machine_base {
 }
 declare const RunLog_base: Context.ServiceClass<RunLog, "@chernabog/sdk/RunLog", {
     log(line: string): Effect.Effect<void>;

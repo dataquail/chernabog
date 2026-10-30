@@ -276,6 +276,28 @@
   },
   "overrides": [
     {
+      // The binary never recognizes a flow (docs/adr/0005, decision 9): src/
+      // names no recipe, and matches no flow's code for the SDK's blocks.
+      "files": ["src/**/*.ts"],
+      "rules": {
+        "local/no-recipe-names": [
+          "error",
+          {
+            "names": [
+              "implement",
+              "review",
+              "re-review",
+              "address-review",
+              "human-initiated",
+              "resolve-conflicts",
+              "epic"
+            ],
+            "vocabulary": ["Review", "Implement", "Hybrid", "Epic", "requestReview", "handOff"]
+          }
+        ]
+      }
+    },
+    {
       // The one platform adapter: Config reads one variable at a time, and a child
       // process's exact environment needs the whole set, which only the host can list.
       "files": ["src/platform/**/*.ts"],

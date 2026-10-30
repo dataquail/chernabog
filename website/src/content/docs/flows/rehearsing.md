@@ -77,10 +77,10 @@ agents:
 
 ## Your own machine config
 
-A rehearsal runs as your machine config sets things up: your personas, each persona's `flows`, the team's reviewer pool and routing. That's the point. When `implement` asks a reviewer whom no persona here reviews as, the rehearsal says so:
+A rehearsal runs as your machine config sets things up: your personas, each persona's `flows`, the team's reviewer pool and routing. That's the point. When `implement` asks a reviewer this machine doesn't act as, the rehearsal says so:
 
 ```
-! #41 asks bob to review it, and no persona here reviews as bob: a real run would wait for another machine to review it
+! #41 asks bob to review it, and this machine doesn't act as bob: a real run would wait for another machine to review it
 ```
 
 `chernabog doctor` warns about the same gap without a rehearsal.
