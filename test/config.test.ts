@@ -18,11 +18,11 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { providedRange } from "../src/kernel/core-support.value-object.ts";
+import { setFlowScheduleHandler } from "../src/modules/enrollment/commands/set-flow-schedule.handler.ts";
+import { setPersonaAccountHandler } from "../src/modules/enrollment/commands/set-persona-account.handler.ts";
+import { setPersonaFlowHandler } from "../src/modules/enrollment/commands/set-persona-flow.handler.ts";
 import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
 import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
-import { setFlowScheduleUseCase } from "../src/modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
-import { setPersonaAccountUseCase } from "../src/modules/enrollment/use-cases/set-persona-account.use-case.ts";
-import { setPersonaFlowUseCase } from "../src/modules/enrollment/use-cases/set-persona-flow.use-case.ts";
 import {
   BundleClientLive,
   scaffoldFiles,
@@ -1016,12 +1016,21 @@ describe("GitHub personas", () => {
   );
 });
 
-// The enrollment use-cases over machine config as it's stored.
-const setFlow = (...args: Parameters<typeof setPersonaFlowUseCase>) =>
-  setPersonaFlowUseCase(...args).pipe(Effect.provide(EnrolledReposRepositoryLive));
+// The enrollment commands' handlers over machine config as it's stored.
+const setFlow = (name: string, persona: Option.Option<string>, flow: string, enabled: boolean) =>
+  setPersonaFlowHandler({ name, persona, flow, enabled }).pipe(
+    Effect.provide(EnrolledReposRepositoryLive),
+  );
 
-const setSchedule = (...args: Parameters<typeof setFlowScheduleUseCase>) =>
-  setFlowScheduleUseCase(...args).pipe(Effect.provide(EnrolledReposRepositoryLive));
+const setSchedule = (
+  name: string,
+  persona: Option.Option<string>,
+  flow: string,
+  schedule: Option.Option<string>,
+) =>
+  setFlowScheduleHandler({ name, persona, flow, schedule }).pipe(
+    Effect.provide(EnrolledReposRepositoryLive),
+  );
 
 const OFFERED = {
   personas: [],
@@ -1038,7 +1047,7 @@ const setAccount = (
   role: Option.Option<string>,
   account: Option.Option<string>,
 ) =>
-  setPersonaAccountUseCase(name, persona, role, account, OFFERED).pipe(
+  setPersonaAccountHandler({ name, persona, role, account, offered: OFFERED }).pipe(
     Effect.provide(EnrolledReposRepositoryLive),
   );
 

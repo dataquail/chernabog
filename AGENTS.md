@@ -91,8 +91,8 @@ no longer read.
   never runtime gates.
 - **Missing checkout:** the daemon shows the repo as `missing` and keeps its
   settings; `init` offers to re-point an entry whose path is gone
-  (`ListMovedReposQuery`, `repointRepoUseCase`); `unenroll` removes one
-  (`unenrollRepoUseCase`).
+  (`ListMovedReposQuery`, `RepointRepoCommand`); `unenroll` removes one
+  (`UnenrollRepoCommand`).
 - **Migration** (`src/migrate.ts`) runs before any command reads machine
   config: persona lists become maps, and an entry that lists no flows gets the
   ones that ran before plus `local.yaml`'s settings. It prints what it
@@ -105,7 +105,7 @@ no longer read.
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
-persona its flows and then its accounts), then `applyEnrollmentUseCase`, which
+persona its flows and then its accounts), then `ApplyEnrollmentCommand`, which
 resolves what wasn't answered and writes the entry once. The machine's
 personas and accounts come in from the machine module's
 `readMachineSetupUseCase`.
@@ -470,7 +470,7 @@ a seeded repo, with no agent session.
   as `rehearsal.schema.json`) and seeds and cleans up GitHub
   (`ScratchRepoClient`). `rehearse.main.ts` composes it with the runtime: a
   clone of the scenario's repo, a journal of its own under
-  `rehearsals/<id>/`, and only seeded work items (`chooseSeededWorkUseCase`).
+  `rehearsals/<id>/`, and only seeded work items (`ChooseSeededWorkQuery`).
 - **An enrolled repo is refused** unless the scenario says `enrolled: true` or
   the person passes `--on-enrolled`; then it is paused on this machine
   meanwhile, and cloned from its own origin.

@@ -15,19 +15,18 @@
     "src/modules/enrollment": {
       "entered": "2026-10-30T06:14:45.008Z",
       "initial": 8,
+      "cleared": 8,
+      "closed": 0,
+      "lastCleared": "2026-10-30T14:12:37.810Z",
+      "holdouts": []
+    },
+    "src/modules/rehearsals": {
+      "entered": "2026-10-30T14:27:56.088Z",
+      "initial": 0,
       "cleared": 0,
       "closed": 0,
-      "lastCleared": "2026-10-30T06:14:45.008Z",
-      "holdouts": [
-        "use-cases/apply-enrollment.use-case.ts",
-        "use-cases/pause-repo.use-case.ts",
-        "use-cases/repoint-repo.use-case.ts",
-        "use-cases/resume-repo.use-case.ts",
-        "use-cases/set-flow-schedule.use-case.ts",
-        "use-cases/set-persona-account.use-case.ts",
-        "use-cases/set-persona-flow.use-case.ts",
-        "use-cases/unenroll-repo.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T14:27:56.088Z",
+      "holdouts": []
     },
     "src/modules/recipes": {
       "entered": "2026-10-30T14:29:25.654Z",

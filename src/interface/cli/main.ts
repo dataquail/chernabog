@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
+import { EnrollmentCommandsLive } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
@@ -27,7 +28,8 @@ import { startServiceUseCase } from "../../modules/machine/use-cases/start-servi
 import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
 import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
-import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
+import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
@@ -465,6 +467,7 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 // One GitHubTokens for the process, so each persona's token is looked up once.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
+  EnrollmentCommandsLive,
   EnrollmentQueriesLive,
   TrustCommandsLive,
   TrustQueriesLive,
@@ -473,7 +476,8 @@ const AppLive = Layer.mergeAll(
   RecipesLayer,
   RecipesCommandsLive,
   RecipesQueriesLive,
-  RehearsalsLayer,
+  RehearsalsCommandsLive,
+  RehearsalsQueriesLive,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
