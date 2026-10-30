@@ -68,13 +68,20 @@ const conflicts = (pullRequest: number) =>
   );
 
 // Chernabog merges only pull requests on the automated path (auto:ship), and
-// only when that's safe; a person merges any other. One refused because it
-// conflicts with its base is left to resolve-conflicts, which merges the base
-// in and asks for this review again.
+// only when that's safe; a person merges any other. A layer of a stack waits,
+// approved, for the layer below: the epic run merges it once it is on the
+// base. One refused because it conflicts with its base is left to
+// resolve-conflicts, which merges the base in and asks for this review again.
 const mergeIfShipping = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* PullRequest.shipping(pullRequest))) {
       return `#${pullRequest} approved; a person merges`;
+    }
+
+    const waiting = yield* PullRequest.waitingOnLayer(pullRequest);
+
+    if (Option.isSome(waiting)) {
+      return `#${pullRequest} approved; ${waiting.value}`;
     }
 
     return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(

@@ -135,17 +135,20 @@ describe("review", () => {
       }),
   );
 
-  effect("reviews a layer of a stack against the layer below, and leaves its merge for later", () =>
-    Effect.gen(function* () {
-      const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
-      stackOn(fake, "auto/issue-2");
-      const finished = yield* runToEnd(reviewing, fake, work);
-      expect(fake.requests[0]?.prompt).toContain("git diff origin/auto/issue-2...HEAD");
-      expect(summaryOf(finished)).toContain(
-        "not merged: stacked on auto/issue-2 (#2); it merges after the layer below",
-      );
-      expect(fake.merge.requests).toEqual([]);
-    }),
+  effect(
+    "reviews a layer of a stack against the layer below, and leaves it approved to merge later",
+    () =>
+      Effect.gen(function* () {
+        const fake = asked(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(fake, "auto/issue-2");
+        const finished = yield* runToEnd(reviewing, fake, work);
+        expect(fake.requests[0]?.prompt).toContain("git diff origin/auto/issue-2...HEAD");
+        expect(summaryOf(finished)).toContain(
+          `#${PULL} approved; stacked on auto/issue-2 (#2); it merges after the layer below`,
+        );
+        expect(fake.merge.requests).toEqual([]);
+        expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
   );
 
   effect(
@@ -156,9 +159,10 @@ describe("review", () => {
         stackOn(fake, "auto/issue-2", "merged");
         const finished = yield* runToEnd(reviewing, fake, work);
         expect(summaryOf(finished)).toContain(
-          "not merged: stacked on auto/issue-2, and the layer below (#2) merged; it waits to be retargeted onto main",
+          `#${PULL} approved; stacked on auto/issue-2, and the layer below (#2) merged; it waits to be retargeted onto main`,
         );
         expect(fake.merge.requests).toEqual([]);
+        expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
       }),
   );
 
@@ -185,7 +189,7 @@ describe("review", () => {
         const other = asked(["approve"], [DEFAULT_LABELS.ship]);
         stackOn(other, "develop");
         const refused = yield* runToEnd(reviewing, other, work);
-        expect(summaryOf(refused)).toContain("not merged: stacked on develop (#2)");
+        expect(summaryOf(refused)).toContain("approved; stacked on develop (#2)");
       }),
   );
 
@@ -262,26 +266,29 @@ describe("re-review", () => {
       }),
   );
 
-  effect("never merges an approved layer of a stack into the layer below", () =>
-    Effect.gen(function* () {
-      const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
-      stackOn(fake, "auto/issue-2");
+  effect(
+    "never merges an approved layer of a stack into the layer below, and leaves it approved",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* reviewedOnce(["approve"], [DEFAULT_LABELS.ship]);
+        stackOn(fake, "auto/issue-2");
 
-      const finished = yield* runToEnd(
-        reReviewing,
-        fake,
-        item(`pr-${PULL}-review-2`, {
-          pullRequest: PULL,
-          headRef: "auto/issue-3",
-          agentWritten: true,
-        }),
-      );
+        const finished = yield* runToEnd(
+          reReviewing,
+          fake,
+          item(`pr-${PULL}-review-2`, {
+            pullRequest: PULL,
+            headRef: "auto/issue-3",
+            agentWritten: true,
+          }),
+        );
 
-      expect(summaryOf(finished)).toContain(
-        "not merged: stacked on auto/issue-2 (#2); it merges after the layer below",
-      );
-      expect(fake.merge.requests).toEqual([]);
-    }),
+        expect(summaryOf(finished)).toContain(
+          `#${PULL} approved; stacked on auto/issue-2 (#2); it merges after the layer below`,
+        );
+        expect(fake.merge.requests).toEqual([]);
+        expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
   );
 
   // Approved on the re-review, with GitHub refusing the merge: `state` is the pull request's mergeable_state.

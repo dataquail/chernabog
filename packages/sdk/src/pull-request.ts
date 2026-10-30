@@ -468,13 +468,36 @@ export const shipping = (pullRequest: number) =>
     Schema.Boolean,
   );
 
+// Why the pull request, a layer of a stack, waits for the layer below rather
+// than merging (layerBelow), read once in an activity so a replay decides the
+// same; none for one on the flow's integration base. An approved layer that
+// waits is left approved, not handed to a person: the epic run that stacked
+// it merges it once the layer below has merged and it is on the base.
+export const waitingOnLayer = (pullRequest: number) =>
+  activity(
+    `layer-below-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const pull = yield* (yield* GitHub).pullRequest(pullRequest);
+
+      return Option.map(yield* layerBelow(pull), (below) => waitsOn(pull, below));
+    }),
+    Schema.Option(Schema.String),
+  );
+
 // After an approval: on the automated path, merges the pull request when that
-// is safe, and otherwise hands it to a person; any other pull request is left
-// for a person to merge, and one closed meanwhile is left alone.
+// is safe, and otherwise hands it to a person; a layer waiting for the one
+// below is left approved, any other pull request is left for a person to
+// merge, and one closed meanwhile is left alone.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* shipping(pullRequest))) {
       return `#${pullRequest} approved; a person merges`;
+    }
+
+    const waiting = yield* waitingOnLayer(pullRequest);
+
+    if (Option.isSome(waiting)) {
+      return `#${pullRequest} approved; ${waiting.value}`;
     }
 
     return yield* merge(pullRequest, { method: "squash" }).pipe(
