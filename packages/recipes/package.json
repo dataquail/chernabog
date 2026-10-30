@@ -1,6 +1,6 @@
 {
   "name": "@chernabog/recipes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "description": "Chernabog's recipes: complete flows a repo copies in, or imports, written from @chernabog/sdk",
   "repository": {
