@@ -39,16 +39,10 @@
     "src/modules/machine": {
       "entered": "2026-10-30T14:26:03.533Z",
       "initial": 5,
-      "cleared": 0,
+      "cleared": 5,
       "closed": 0,
-      "lastCleared": "2026-10-30T14:26:03.533Z",
-      "holdouts": [
-        "use-cases/apply-setup.use-case.ts",
-        "use-cases/install-service.use-case.ts",
-        "use-cases/start-service.use-case.ts",
-        "use-cases/stop-service.use-case.ts",
-        "use-cases/uninstall-service.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T18:11:49.942Z",
+      "holdouts": []
     }
   },
   "concessions": []

@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect";
 
+import { ServiceState } from "../domain/machine-setup/service-state.value-object.ts";
 import { ServiceManagerClient } from "../domain/ports/clients/service-manager.client.ts";
-import { ServiceState } from "./service.result.ts";
 
-// Starts the installed daemon. Fails when it isn't installed.
-export const startServiceUseCase = Effect.fn("startServiceUseCase")(function* () {
+export const startServiceHandler = Effect.fn("startServiceHandler")(function* () {
   yield* (yield* ServiceManagerClient).start;
 
   return ServiceState.make({ installed: true });

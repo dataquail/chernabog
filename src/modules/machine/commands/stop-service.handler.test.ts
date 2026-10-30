@@ -3,12 +3,12 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { ServiceManagerClientFake } from "../infrastructure/clients/service-manager.client-fake.ts";
-import { stopServiceUseCase } from "./stop-service.use-case.ts";
+import { stopServiceHandler } from "./stop-service.handler.ts";
 
-describe("stopServiceUseCase", () => {
+describe("stopServiceHandler", () => {
   effect("stops the daemon, leaving it installed", () =>
     Effect.gen(function* () {
-      expect((yield* stopServiceUseCase()).installed).toBe(true);
+      expect((yield* stopServiceHandler()).installed).toBe(true);
     }).pipe(Effect.provide(ServiceManagerClientFake(true))),
   );
 });

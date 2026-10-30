@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
+import { type SetupOutcome } from "../../../modules/machine/commands/apply-setup.command.ts";
+import { MachineCommands } from "../../../modules/machine/machine.command-handlers.ts";
 import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
 import { type SetupPlan } from "../../../modules/machine/queries/plan-setup.query.ts";
-import { applySetupUseCase } from "../../../modules/machine/use-cases/apply-setup.use-case.ts";
-import { type SetupOutcome } from "../../../modules/machine/use-cases/setup.result.ts";
 import { Asker } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { listed, listFlag } from "../list.arguments.ts";
@@ -139,7 +139,7 @@ export const setUpMachine = (flags: SetupFlags) =>
       onNone: () => askAccounts(plan),
     });
 
-    const outcome = yield* applySetupUseCase({
+    const outcome = yield* (yield* MachineCommands).ApplySetupCommand({
       personas,
       accounts,
       inUse: (yield* (yield* EnrollmentQueries).ListPersonasInUseQuery()).logins,

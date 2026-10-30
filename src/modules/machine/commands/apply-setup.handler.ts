@@ -12,20 +12,7 @@ import {
 import { AccountDirsClient } from "../domain/ports/clients/account-dirs.client.ts";
 import { GitHubLoginsClient } from "../domain/ports/clients/github-logins.client.ts";
 import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
-import { AddedAccount, SetupOutcome } from "./setup.result.ts";
-
-// What a person chose, where they chose: none leaves the choice to the
-// defaults, which are what a person would pick with nothing to weigh.
-export type SetupAnswers = {
-  // The GitHub logins to act as, replacing the ones there. None adds gh's
-  // only login, when it has one, and leaves them otherwise.
-  readonly personas: Option.Option<ReadonlyArray<string>>;
-  // Account directories to add, each dir or dir:agent, ~ for the home. None
-  // adds the one found, on a machine with no accounts yet, and none otherwise.
-  readonly accounts: Option.Option<ReadonlyArray<string>>;
-  // The logins enrolled repos run as, which the personas must keep.
-  readonly inUse: ReadonlyArray<string>;
-};
+import { AddedAccount, type ApplySetupPayload, SetupOutcome } from "./apply-setup.command.ts";
 
 const parseAccount = (spec: string, home: string) =>
   Effect.gen(function* () {
@@ -47,9 +34,9 @@ const parseAccount = (spec: string, home: string) =>
     return { dir, agent: agent.value } satisfies NewAccount;
   });
 
-// Sets up the machine as a person chose: the GitHub personas it acts as, and
-// the AI accounts its runs spend.
-export const applySetupUseCase = Effect.fn("applySetupUseCase")(function* (answers: SetupAnswers) {
+export const applySetupHandler = Effect.fn("applySetupHandler")(function* (
+  answers: ApplySetupPayload,
+) {
   const repository = yield* MachineSetupsRepository;
   const dirs = yield* AccountDirsClient;
   const home = yield* dirs.home;
