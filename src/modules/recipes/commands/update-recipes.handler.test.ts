@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { jsonText, manifestOf, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { updateRecipesUseCase } from "./update-recipes.use-case.ts";
+import { updateRecipesHandler } from "./update-recipes.handler.ts";
 
 const copied = (version: string) => ({ from: "@chernabog/recipes", version });
 
@@ -18,7 +18,7 @@ const manifest = jsonText({
   },
 });
 
-describe("updateRecipesUseCase", () => {
+describe("updateRecipesHandler", () => {
   const repo = recipeRepo({
     ".chernabog/package.json": manifest,
     // Edited here, on a line upstream didn't touch.
@@ -34,7 +34,11 @@ describe("updateRecipesUseCase", () => {
     "moves the package to the newest version for the repo's SDK, replaces unedited files, merges edited ones and adopts unrecorded ones",
     () =>
       Effect.gen(function* () {
-        const updated = yield* updateRecipesUseCase("/repo", [], "adopt");
+        const updated = yield* updateRecipesHandler({
+          root: "/repo",
+          names: [],
+          unrecorded: "adopt",
+        });
 
         expect(updated.packages).toEqual([
           { name: "@chernabog/recipes", from: "0.1.0", to: "0.2.0" },
@@ -56,7 +60,12 @@ describe("updateRecipesUseCase", () => {
         });
         expect(records.chernabog?.copied?.["prompts/review.md"]?.version).toBe("0.2.0");
 
-        const again = yield* updateRecipesUseCase("/repo", [], "adopt");
+        const again = yield* updateRecipesHandler({
+          root: "/repo",
+          names: [],
+          unrecorded: "adopt",
+        });
+
         expect(again.packages).toEqual([]);
         expect(again.changes).toEqual([]);
       }).pipe(Effect.provide(repo.layer)),
@@ -66,7 +75,11 @@ describe("updateRecipesUseCase", () => {
 
   effect("leaves a named recipe the repo hasn't copied for recipes add", () =>
     Effect.gen(function* () {
-      const updated = yield* updateRecipesUseCase("/repo", ["implement"], "adopt");
+      const updated = yield* updateRecipesHandler({
+        root: "/repo",
+        names: ["implement"],
+        unrecorded: "adopt",
+      });
 
       expect(updated.changes).toEqual([]);
       expect(uncopied.stored["/repo/.chernabog/flows/implement.ts"]).toBeUndefined();
@@ -79,7 +92,11 @@ describe("updateRecipesUseCase", () => {
     "replaces an unrecorded file that differs, when asked to, as moving to a new SDK does",
     () =>
       Effect.gen(function* () {
-        const updated = yield* updateRecipesUseCase("/repo", ["review"], "replace");
+        const updated = yield* updateRecipesHandler({
+          root: "/repo",
+          names: ["review"],
+          unrecorded: "replace",
+        });
 
         expect(updated.changes.map((change) => [change.file, change.change])).toEqual([
           [".chernabog/flows/review.ts", "replaced"],
@@ -94,7 +111,10 @@ describe("updateRecipesUseCase", () => {
   effect("fails, writing nothing, when the registry can't be reached", () =>
     Effect.gen(function* () {
       const before = { ...offline.stored };
-      const failed = yield* Effect.flip(updateRecipesUseCase("/repo", [], "adopt"));
+
+      const failed = yield* Effect.flip(
+        updateRecipesHandler({ root: "/repo", names: [], unrecorded: "adopt" }),
+      );
 
       expect(failed._tag).toBe("RecipePackageUnavailable");
       expect(offline.stored).toEqual(before);

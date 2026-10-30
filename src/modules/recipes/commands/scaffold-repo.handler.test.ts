@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { BundleClientFake } from "../infrastructure/clients/bundle.client-fake.ts";
 import { ChernabogDirClientFake } from "../infrastructure/clients/chernabog-dir.client-fake.ts";
 import { TextDiffClientFake } from "../infrastructure/clients/text-diff.client-fake.ts";
-import { scaffoldRepoUseCase } from "./scaffold-repo.use-case.ts";
+import { scaffoldRepoHandler } from "./scaffold-repo.handler.ts";
 
 const SCAFFOLD = {
   files: { "config.yaml": "flows: {}\n", "config.schema.json": "{ schema }\n" },
@@ -30,12 +30,12 @@ const repoWith = (files: Record<string, string>) => {
   };
 };
 
-describe("scaffoldRepoUseCase", () => {
+describe("scaffoldRepoHandler", () => {
   const fresh = repoWith({ ".gitignore": "dist" });
 
   effect("writes the scaffold and its manifest, and gitignores what .chernabog/ installs", () =>
     Effect.gen(function* () {
-      const { changes } = yield* scaffoldRepoUseCase("/repo");
+      const { changes } = yield* scaffoldRepoHandler({ root: "/repo" });
 
       expect(changes.map((change) => [change.path, change.change])).toEqual([
         [".chernabog/config.yaml", "written"],
@@ -56,7 +56,7 @@ describe("scaffoldRepoUseCase", () => {
 
   effect("updates a stale generated schema, and keeps the rest, pins included", () =>
     Effect.gen(function* () {
-      const { changes } = yield* scaffoldRepoUseCase("/repo");
+      const { changes } = yield* scaffoldRepoHandler({ root: "/repo" });
 
       expect(changes.map((change) => [change.path, change.change])).toEqual([
         [".chernabog/config.schema.json", "updated"],
@@ -70,7 +70,7 @@ describe("scaffoldRepoUseCase", () => {
 
   effect("refuses a .chernabog/ written against a newer SDK, writing nothing", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(scaffoldRepoUseCase("/repo"));
+      const refused = yield* Effect.flip(scaffoldRepoHandler({ root: "/repo" }));
 
       expect(refused._tag).toBe("ScaffoldRefused");
       expect(Object.keys(tooNew.stored)).toEqual(["/repo/.chernabog/package.json"]);
@@ -84,7 +84,7 @@ describe("scaffoldRepoUseCase", () => {
 
   effect("writes config.schema.json describing the settings the repo's own flows declare", () =>
     Effect.gen(function* () {
-      yield* scaffoldRepoUseCase("/repo");
+      yield* scaffoldRepoHandler({ root: "/repo" });
 
       expect(withFlows.stored["/repo/.chernabog/config.schema.json"]).toBe("{flows of /repo}\n");
     }).pipe(

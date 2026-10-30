@@ -5,15 +5,12 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { OFFICIAL_PACKAGE } from "../../../kernel/recipe-package.value-object.ts";
 import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import { type RecipePackageAdded } from "../../../modules/recipes/commands/add-recipe-package.command.ts";
+import { type Scaffolded } from "../../../modules/recipes/commands/scaffold-repo.command.ts";
 import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
-import {
-  OFFICIAL_PACKAGE,
-  type Scaffolded,
-} from "../../../modules/recipes/use-cases/recipe.result.ts";
-import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { confirm } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
@@ -88,7 +85,9 @@ export const initCommand = Command.make(
     Effect.gen(function* () {
       const root = yield* rootOf(path);
 
-      yield* printLines(describeScaffold(yield* scaffoldRepoUseCase(root)));
+      yield* printLines(
+        describeScaffold(yield* (yield* RecipesCommands).ScaffoldRepoCommand({ root })),
+      );
       // The recipes init offers.
       yield* printLines(
         describePackage(

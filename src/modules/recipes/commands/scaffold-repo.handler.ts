@@ -8,18 +8,14 @@ import {
   missingIgnores,
   scaffoldWrites,
 } from "../domain/scaffold/scaffold.value-object.ts";
-import { Scaffolded } from "./recipe.result.ts";
+import { Scaffolded, type ScaffoldRepoPayload } from "./scaffold-repo.command.ts";
 
 type Change = (typeof Scaffolded.Type.changes)[number];
 
-// Writes the scaffold of .chernabog/ into the repo at `root`, never
-// overwriting a file that is there, except the generated schemas, which are
-// brought up to date: config.schema.json with the settings the repo's flows
-// declare, so running it again after adding a flow describes its settings. package.json is written for a new .chernabog/ and left
-// alone after that: its SDK pin says what the flows are written against, and
-// only moving the flows (upgradeRepoUseCase) moves it. A .chernabog/ written
-// against a newer SDK than this binary runs is refused, rather than moved back.
-export const scaffoldRepoUseCase = Effect.fn("scaffoldRepoUseCase")(function* (root: string) {
+export const scaffoldRepoHandler = Effect.fn("scaffoldRepoHandler")(function* (
+  cmd: ScaffoldRepoPayload,
+) {
+  const { root } = cmd;
   const dir = yield* ChernabogDirClient;
   const bundle = yield* BundleClient;
   const manifest = yield* dir.read(root, ".chernabog/package.json");

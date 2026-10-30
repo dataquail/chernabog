@@ -12,7 +12,7 @@ import {
   dependencyKind,
   withoutDependency,
 } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipesImported } from "./recipe.result.ts";
+import { type ImportRecipesPayload, RecipesImported } from "./import-recipes.command.ts";
 
 type Imported = (typeof RecipesImported.Type.flows)[number];
 
@@ -20,15 +20,10 @@ const MANIFEST = ".chernabog/package.json";
 
 const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
-// Imports the recipes a person names into the repo at `root`: each runs from
-// its package, under its recipe's name, with config.yaml's
-// `flows.<name>.from`, and nothing is copied. A flow of that name already in
-// flows/, or imported from another recipe, is kept, never replaced. Each
-// package imported from moves to `dependencies`, which a snapshot installs.
-export const importRecipesUseCase = Effect.fn("importRecipesUseCase")(function* (
-  root: string,
-  names: ReadonlyArray<string>,
+export const importRecipesHandler = Effect.fn("importRecipesHandler")(function* (
+  cmd: ImportRecipesPayload,
 ) {
+  const { names, root } = cmd;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
   const imports = yield* FlowImportsRepository;

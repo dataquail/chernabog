@@ -8,21 +8,16 @@ import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client
 import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { copiedOf, decodeRepoManifest } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RepoUpgraded } from "./recipe.result.ts";
+import { RepoUpgraded, type UpgradeRepoPayload } from "./upgrade-repo.command.ts";
 
 type Left = (typeof RepoUpgraded.Type.left)[number];
 
 const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
-// Moves the repo at `root` onto the core this binary provides and the SDK
-// released with it, in its working tree, committing nothing (.chernabog/ is a
-// person's to merge): package.json's dev pins move to this binary's core and
-// effect, and its SDK to the released one, unless it lists a newer one. Its
-// copied recipes move with updateRecipesUseCase, which the command runs next.
-// Flows and steps from no recipe are left, each with what it imports straight
-// from core that this core doesn't have. A .chernabog/ typed against a newer
-// core than this binary provides is refused, rather than moved back.
-export const upgradeRepoUseCase = Effect.fn("upgradeRepoUseCase")(function* (root: string) {
+export const upgradeRepoHandler = Effect.fn("upgradeRepoHandler")(function* (
+  cmd: UpgradeRepoPayload,
+) {
+  const { root } = cmd;
   const dir = yield* ChernabogDirClient;
   const bundle = yield* BundleClient;
   const packages = yield* RecipePackagesClient;
