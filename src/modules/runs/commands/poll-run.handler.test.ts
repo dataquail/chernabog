@@ -16,7 +16,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { pollRunUseCase } from "./poll-run.use-case.ts";
+import { pollRunHandler } from "./poll-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -55,14 +55,14 @@ const runtime = (
     WorkflowsClientFake(engine),
   );
 
-describe("pollRunUseCase", () => {
+describe("pollRunHandler", () => {
   const engine = fakeEngine();
 
   effect("is the run while its workflow runs, and records how it ended once it has", () =>
     Effect.gen(function* () {
-      const still = yield* pollRunUseCase(RunId.make("a"));
+      const still = yield* pollRunHandler({ runId: RunId.make("a") });
       engine.outcomes["execution-a"] = { status: "done", summary: "merged" };
-      const ended = yield* pollRunUseCase(RunId.make("a"));
+      const ended = yield* pollRunHandler({ runId: RunId.make("a") });
 
       expect(Option.map(still.run, (found) => found.status)).toEqual(Option.some("running"));
       expect(Option.map(ended.run, (found) => [found.status, found.summary])).toEqual(

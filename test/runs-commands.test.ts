@@ -27,7 +27,7 @@ const stores = Layer.mergeAll(
 );
 
 describe("RunsCommands", () => {
-  effect("starts, steps, parks and finishes a run in the stores in state.db", () =>
+  effect("starts, steps, parks, releases and finishes a run in the stores in state.db", () =>
     Effect.gen(function* () {
       const commands = yield* RunsCommands;
       const queries = yield* RunsQueries;
@@ -54,6 +54,8 @@ describe("RunsCommands", () => {
         token: "t",
       });
 
+      const released = yield* commands.ReleaseRunWaitCommand({ wait: parked });
+
       const finished = yield* commands.FinishRunCommand({
         runId,
         status: "done",
@@ -65,6 +67,8 @@ describe("RunsCommands", () => {
         Option.some("review"),
         "pushed",
       ]);
+      expect(released.deferred).toBe("d1");
+      expect((yield* queries.ListRunWaitsQuery({ runId, signal: "pushed" })).waits).toEqual([]);
       expect([finished.status, finished.summary]).toEqual(["done", Option.some("approved")]);
       expect(Option.map((yield* queries.FindRunQuery({ runId })).run, (run) => run.status)).toEqual(
         Option.some("done"),

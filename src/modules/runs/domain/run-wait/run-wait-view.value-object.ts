@@ -15,3 +15,10 @@ export class RunWait extends Schema.Class<RunWait, { readonly brand: "RunWait" }
 export class RunWaits extends Schema.Class<RunWaits, { readonly brand: "RunWaits" }>("RunWaits")({
   waits: Schema.Array(RunWait),
 }) {}
+
+// How many of a run's waits the signals its flow's trigger reported woke.
+export class Delivered extends Schema.Class<Delivered, { readonly brand: "Delivered" }>(
+  "Delivered",
+)({
+  count: Schema.Int,
+}) {}

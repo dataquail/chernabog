@@ -12,3 +12,8 @@ export class SkipView extends Schema.Class<SkipView, { readonly brand: "SkipView
   reason: Schema.String,
   at: Schema.String,
 }) {}
+
+// Whether a flow's own gate holds its runs back, and why.
+export class Gated extends Schema.Class<Gated, { readonly brand: "Gated" }>("Gated")({
+  held: Schema.Option(Schema.String),
+}) {}

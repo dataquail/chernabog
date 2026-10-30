@@ -18,7 +18,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { deliverSignalsUseCase } from "./deliver-signals.use-case.ts";
+import { deliverSignalsHandler } from "./deliver-signals.handler.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
 
@@ -74,13 +74,20 @@ const wait = (signal: string, deferred: string) =>
     parkedAt: Option.none(),
   });
 
-describe("deliverSignalsUseCase", () => {
+describe("deliverSignalsHandler", () => {
   const engine = fakeEngine();
 
   effect("wakes the item's run on each signal it waits on, once", () =>
     Effect.gen(function* () {
-      const first = yield* deliverSignalsUseCase(review, [item("pr-1", { signals: ["pushed"] })]);
-      const again = yield* deliverSignalsUseCase(review, [item("pr-1", { signals: ["pushed"] })]);
+      const first = yield* deliverSignalsHandler({
+        flow: review,
+        items: [item("pr-1", { signals: ["pushed"] })],
+      });
+
+      const again = yield* deliverSignalsHandler({
+        flow: review,
+        items: [item("pr-1", { signals: ["pushed"] })],
+      });
 
       expect([first.count, again.count]).toEqual([1, 0]);
       expect(engine.woken).toEqual(["d1"]);
@@ -99,9 +106,10 @@ describe("deliverSignalsUseCase", () => {
 
   effect("a signal that wins a race of several clears the others in it, and wakes no loser", () =>
     Effect.gen(function* () {
-      const delivered = yield* deliverSignalsUseCase(review, [
-        item("pr-1", { signals: ["approved", "changes-requested"] }),
-      ]);
+      const delivered = yield* deliverSignalsHandler({
+        flow: review,
+        items: [item("pr-1", { signals: ["approved", "changes-requested"] })],
+      });
 
       expect(delivered.count).toBe(1);
       expect(racing.woken).toEqual(["approved:plan-1"]);

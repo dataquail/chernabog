@@ -7,15 +7,20 @@ import { effect } from "../../../../test/effect-test.ts";
 import { FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
 import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
-import { gateFlowUseCase } from "./gate-flow.use-case.ts";
+import { gateFlowHandler } from "./gate-flow.handler.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
 
-describe("gateFlowUseCase", () => {
+describe("gateFlowHandler", () => {
   effect("holds a run back when the flow's gate is closed, and records why", () =>
     Effect.gen(function* () {
-      const open = yield* gateFlowUseCase(review, "pr-1");
-      const closed = yield* gateFlowUseCase({ ...review, flow: "gated" }, "pr-2");
+      const open = yield* gateFlowHandler({ flow: review, itemKey: "pr-1" });
+
+      const closed = yield* gateFlowHandler({
+        flow: { ...review, flow: "gated" },
+        itemKey: "pr-2",
+      });
+
       const { skips } = yield* listRecentSkipsHandler({ latest: 5 });
 
       expect(open.held).toEqual(Option.none());

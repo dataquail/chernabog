@@ -5,17 +5,14 @@ import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { type FlowRef, type WorkItem } from "../domain/run/work-item.value-object.ts";
 import { RunWaitRootOps } from "../domain/run-wait/run-wait.root-ops.ts";
-import { Delivered } from "./flow.result.ts";
+import { Delivered } from "../domain/run-wait/run-wait-view.value-object.ts";
+import { type DeliverSignalsPayload } from "./deliver-signals.command.ts";
 
-// Wakes the persona's runs waiting on a signal its flow's trigger reported for
-// their item, each wait once. A wait that wins a race of several signals
-// takes the others in that race with it, so the run doesn't look parked after.
-export const deliverSignalsUseCase = Effect.fn("deliverSignalsUseCase")(function* (
-  flow: FlowRef,
-  items: ReadonlyArray<WorkItem>,
-) {
+export const deliverSignalsHandler = Effect.fn("deliverSignalsHandler")(function* ({
+  flow,
+  items,
+}: DeliverSignalsPayload) {
   const running = yield* (yield* RunsRepository).findAll({ running: true });
   const waits = yield* RunWaitsRepository;
   const workflows = yield* WorkflowsClient;
