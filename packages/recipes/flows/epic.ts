@@ -48,7 +48,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Tasks implemented at once.
+// Tasks implemented at once, unless the flow's atOnce setting says otherwise.
 const AT_ONCE = 2;
 
 // How long the run parks before it looks at the epic again with no signal,
@@ -56,7 +56,12 @@ const AT_ONCE = 2;
 const LOOK_AGAIN_AFTER = "1 day";
 
 // What config.yaml may set for this flow alone, under flows.<name>.settings.
-const Shipping = Schema.Struct({
+const Own = Schema.Struct({
+  atOnce: Schema.optionalKey(
+    Schema.Int.annotate({
+      description: `How many of the epic's ready tasks the run implements at once. Default: ${AT_ONCE}.`,
+    }),
+  ),
   ship: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
@@ -68,8 +73,15 @@ const Shipping = Schema.Struct({
 // Whether this run's layers ship, read once, so a replay decides the same.
 const shipsLayers = activity(
   "ships",
-  Effect.map(Settings.read(Shipping), (own) => own.ship === true),
+  Effect.map(Settings.read(Own), (own) => own.ship === true),
   Schema.Boolean,
+);
+
+// How many tasks the run implements at once, at least one, read once.
+const atOnce = activity(
+  "at-once",
+  Effect.map(Settings.read(Own), (own) => Math.max(1, own.atOnce ?? AT_ONCE)),
+  Schema.Int,
 );
 
 // The id a task's steps carry on an attempt: `task-12` the first time,
@@ -627,7 +639,7 @@ const land = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
 // or a hand-off has; one still ready after its attempt, as one another run
 // holds, waits. The counts are rebuilt from the rounds' saved results
 // whenever the run resumes.
-const workThrough = (epic: number, ships: boolean) =>
+const workThrough = (epic: number, ships: boolean, concurrency: number) =>
   Effect.gen(function* () {
     const attempts = new Map<number, number>();
     const handedBack = new Set<number>();
@@ -681,7 +693,7 @@ const workThrough = (epic: number, ships: boolean) =>
           starts,
           (start) => implementTask(epic, start.task, start.attempt, ships),
           {
-            concurrency: AT_ONCE,
+            concurrency,
             discard: true,
           },
         );
@@ -706,7 +718,7 @@ const settings = Schema.Struct({
   ...Settings.Ci.fields,
   ...Settings.Reviewers.fields,
   ...Settings.Stacks.fields,
-  ...Shipping.fields,
+  ...Own.fields,
 });
 
 export default defineFlow({
@@ -729,9 +741,10 @@ export default defineFlow({
       const epic = yield* Implement.issueOf(item);
       yield* Epic.claim(epic);
       const ships = yield* shipsLayers;
+      const concurrency = yield* atOnce;
 
       // However the run ends, its claim on the epic goes, and the engine lets
       // its tasks' claims go too; a run parked between rounds keeps them.
-      return yield* workThrough(epic, ships).pipe(Claims.releasing(Claims.epic(epic)));
+      return yield* workThrough(epic, ships, concurrency).pipe(Claims.releasing(Claims.epic(epic)));
     }),
 });
