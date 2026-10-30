@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "repo": {
+      "type": "string"
+    },
+    "flow": {
+      "type": "string"
+    },
+    "persona": {
+      "type": "string"
+    },
+    "enrolled": {
+      "type": "boolean"
+    },
+    "install": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "localGate": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "given": {
+      "type": "object",
+      "properties": {
+        "as": {
+          "type": "string"
+        },
+        "issues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "assignees": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["name", "title"],
+            "additionalProperties": true
+          }
+        },
+        "pullRequests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "base": {
+                "type": "string"
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "files": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": ["message", "files"],
+                  "additionalProperties": true
+                }
+              },
+              "reviewers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["name", "branch", "title", "commits"],
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "script": {
+                "type": "string"
+              }
+            },
+            "required": ["script"],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "fixture": {},
+              "commits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": ["fixture"],
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "expect": {
+      "type": "object",
+      "properties": {
+        "ends": {
+          "type": "string",
+          "enum": [
+            "done",
+            "needs-human",
+            "skipped",
+            "failed",
+            "cancelled",
+            "superseded",
+            "lost",
+            "running"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "required": ["repo"],
+  "additionalProperties": true,
+  "$defs": {}
+}

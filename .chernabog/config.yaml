@@ -13,6 +13,9 @@ install: bun install --frozen-lockfile
 localGate:
   - bun run check
   - bun run lint
+  # Includes the cqrs campaign: a change that moves a use-case commits its
+  # ledger (bun run architecture:clear), or this fails.
+  - bun run lint:architecture
   - bun test
 
 # Decisions the agent must stop for and leave to a person.
@@ -83,6 +86,15 @@ flows:
     from: "@chernabog/recipes/human-initiated"
   plan:
     from: "@chernabog/recipes/plan"
+  # The CQRS migration runs as an epic: five tasks at once, each module a stack,
+  # each approved layer merged bottom to top.
+  epic:
+    from: "@chernabog/recipes/epic"
+    settings:
+      atOnce: 5
+      ship: true
+  resolve-conflicts:
+    from: "@chernabog/recipes/resolve-conflicts"
 
 # Where interactive agent sessions run: orca, tmux, headless (claude -p) or a
 # launcher a person defines in their machine config. Each person can choose
@@ -96,6 +108,6 @@ limits:
   localGateRounds: 2
   ciRounds: 3
   # Re-reviews of one pull request before a person takes over.
-  reviewRounds: 1
+  reviewRounds: 2
   staleAfter: 6 hours
   ciTimeout: 2 hours
