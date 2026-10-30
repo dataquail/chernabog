@@ -146,6 +146,8 @@ describe("an issue an open pull request already closes", () => {
         expect(fake.requests[0]?.cwd).toBe(`/tmp/demo-worktrees/${BRANCH}`);
         expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
         expect(fake.requests[0]?.prompt).toContain(`--branch ${BRANCH}`);
+        // A failing title check is fixed on the pull request: an answer's title isn't applied again.
+        expect(fake.requests[0]?.prompt).toContain(`gh pr edit ${PULL} --title`);
         expect(fake.git.pushes).toBeGreaterThan(0);
       }),
   );
