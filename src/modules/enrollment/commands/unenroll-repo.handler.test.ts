@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Checkout } from "../domain/enrolled-repo/checkout.value-object.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
@@ -36,6 +37,7 @@ const stored = EnrolledReposRepository.use((repository) => repository.findAll);
 
 const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArray<string> = []) =>
   Layer.mergeAll(
+    RecordedEvents,
     EnrolledReposRepositoryFake(repos),
     CheckoutsClientFake([here], present),
     ViewerClientFake(Option.some("carol")),
@@ -48,6 +50,10 @@ describe("unenrollRepoHandler", () => {
 
       expect([removed.name, removed.path]).toEqual(["demo", "/src/demo"]);
       expect(yield* stored).toEqual([]);
+      const events = yield* DispatchedEvents;
+
+      expect(events.map((event) => event._tag)).toEqual(["RepoUnenrolled"]);
+      expect(events[0]?.eventId).toStartWith("dataquail/demo:unenrolled:");
       expect((yield* Effect.flip(unenrollRepoHandler({ name: "demo" })))._tag).toBe(
         "RepoNotEnrolled",
       );

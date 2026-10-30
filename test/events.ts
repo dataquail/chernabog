@@ -8,7 +8,7 @@ import * as Layer from "effect/Layer";
 
 export class DispatchedEvents extends Context.Service<
   DispatchedEvents,
-  // Every event the runs' commands dispatch carries its eventId.
+  // Every domain event a module's commands dispatch carries its eventId.
   Array<{ readonly _tag: string; readonly eventId?: string }>
 >()("test/DispatchedEvents") {}
 

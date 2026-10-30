@@ -1,12 +1,17 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
 import { pauseRepoHandler } from "./pause-repo.handler.ts";
+
+const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>) =>
+  Layer.mergeAll(RecordedEvents, EnrolledReposRepositoryFake(repos));
 
 const demo = EnrolledRepoRoot.make({
   repo: RepoSlug.make("dataquail/demo"),
@@ -27,7 +32,7 @@ describe("pauseRepoHandler", () => {
         ["demo", "dataquail/demo", true, false],
         ["demo", "dataquail/demo", true, false],
       ]);
-    }).pipe(Effect.provide(EnrolledReposRepositoryFake([demo]))),
+    }).pipe(Effect.provide(machineOf([demo]))),
   );
 
   effect("stores the repo paused, and pausing it again changes nothing", () =>
@@ -38,7 +43,8 @@ describe("pauseRepoHandler", () => {
 
       expect(again.changed).toBe(false);
       expect(stored.map((repo) => repo.paused)).toEqual([true]);
-    }).pipe(Effect.provide(EnrolledReposRepositoryFake([demo]))),
+      expect((yield* DispatchedEvents).map((event) => event._tag)).toEqual(["RepoPaused"]);
+    }).pipe(Effect.provide(machineOf([demo]))),
   );
 
   effect("fails naming the repos enrolled when none answers to the name", () =>
@@ -48,6 +54,7 @@ describe("pauseRepoHandler", () => {
       expect(refused.message).toBe(
         "no enrolled repo named nope (enrolled: demo); run chernabog enroll in it",
       );
-    }).pipe(Effect.provide(EnrolledReposRepositoryFake([demo]))),
+      expect(yield* DispatchedEvents).toEqual([]);
+    }).pipe(Effect.provide(machineOf([demo]))),
   );
 });
