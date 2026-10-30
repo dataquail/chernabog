@@ -1,3 +1,4 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,6 +21,7 @@ import {
   type EndAs,
 } from "../domain/run/cancelled-run.value-object.ts";
 import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
+import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
@@ -202,6 +204,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   );
 
   yield* runs.save(cancelled);
+  yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(cancelled)));
 
   const parked = yield* waits.findAll(Option.some(found.id));
 

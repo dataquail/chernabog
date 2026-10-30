@@ -1,3 +1,4 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -7,6 +8,7 @@ import * as Result from "effect/Result";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
+import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView, StartedRun } from "../domain/run/run-view.value-object.ts";
@@ -66,6 +68,7 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
   }
 
   yield* runs.save(started.success);
+  yield* (yield* EventBus).dispatch([RunEvents.started(started.success)]);
 
   const executionId = yield* workflows.execute(flow, started.success.id, item);
 

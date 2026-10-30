@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
@@ -56,6 +57,7 @@ const runtime = (
   } = {},
 ) =>
   Layer.mergeAll(
+    RecordedEvents,
     RunsRepositoryFake(stored.runs ?? []),
     RunWaitsRepositoryFake(stored.waits ?? []),
     SkipsRepositoryFake([]),
@@ -92,6 +94,9 @@ describe("recoverRunsHandler", () => {
           Option.some("interrupted before its workflow started"),
         ]);
         expect((yield* recoverRunsHandler()).executed).toEqual([]);
+        expect((yield* DispatchedEvents).map((event) => [event._tag, event.eventId])).toEqual([
+          ["RunFinished", "legacy:finished"],
+        ]);
       }).pipe(
         Effect.provide(
           runtime(engine, {

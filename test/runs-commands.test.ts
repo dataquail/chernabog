@@ -14,10 +14,12 @@ import { SkipsRepositoryFake } from "../src/modules/runs/infrastructure/reposito
 import { RunsCommands, RunsCommandsLive } from "../src/modules/runs/runs.command-handlers.ts";
 import { RunsQueries, RunsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effect } from "./effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "./events.ts";
 
-// The runs' stores in state.db, as the engine provides them beneath RunsCommands
-// and RunsQueries.
+// The runs' stores in state.db, and the bus their commands dispatch on, as the
+// engine provides them beneath RunsCommands and RunsQueries.
 const stores = Layer.mergeAll(
+  RecordedEvents,
   RunsRepositoryFake([]),
   RunMarkersRepositoryFake([]),
   RunStepsRepositoryFake([]),
@@ -76,6 +78,12 @@ describe("RunsCommands", () => {
       expect(
         (yield* queries.ReadRunHistoryQuery({ runId })).steps.map((found) => found.step),
       ).toEqual(["review"]);
+      expect((yield* DispatchedEvents).map((event) => [event._tag, event.eventId])).toEqual([
+        ["RunStarted", "a:started"],
+        ["RunEnteredStep", "a:step:review"],
+        ["RunNeedsAttention", "a:park:d1"],
+        ["RunFinished", "a:finished"],
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(RunsCommandsLive, RunsQueriesLive).pipe(Layer.provideMerge(stores)),

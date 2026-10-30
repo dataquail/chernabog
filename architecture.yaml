@@ -630,8 +630,9 @@ tree:
                 message: >-
                   An aggregate's folder admits its root (*.root.ts, a Schema.Class value), its
                   operations (*.root-ops.ts, pure functions returning Result), its id
-                  (*.id.ts), its value objects (*.value-object.ts) and its errors
-                  (*.errors.ts). A free-standing helper is an op that hasn't found its root.
+                  (*.id.ts), its value objects (*.value-object.ts), its errors (*.errors.ts) and
+                  its domain events (*.events.ts, the Schemas its commands dispatch). A
+                  free-standing helper is an op that hasn't found its root.
                 imports:
                   message: >-
                     An aggregate sees itself, the kernel and effect. It does not reach another
@@ -663,6 +664,7 @@ tree:
                   "*.id.ts": {}
                   "*.value-object.ts": {}
                   "*.errors.ts": {}
+                  "*.events.ts": {}
                   "*.test.ts": { use: unit-test-file }
 
           "use-cases/":
@@ -920,6 +922,7 @@ tree:
         - effect-bun-test
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
+        - "@effect-server-utils/cqrs"
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:

@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
@@ -48,6 +49,7 @@ const runtime = (
   } = {},
 ) =>
   Layer.mergeAll(
+    RecordedEvents,
     RunsRepositoryFake(stored.runs ?? []),
     RunWaitsRepositoryFake(stored.waits ?? []),
     SkipsRepositoryFake([]),
@@ -68,6 +70,10 @@ describe("pollRunHandler", () => {
       expect(Option.map(ended.run, (found) => [found.status, found.summary])).toEqual(
         Option.some(["done", Option.some("merged")]),
       );
+      yield* pollRunHandler({ runId: RunId.make("a") });
+      expect((yield* DispatchedEvents).map((event) => [event._tag, event.eventId])).toEqual([
+        ["RunFinished", "a:finished"],
+      ]);
     }).pipe(Effect.provide(runtime(engine, { runs: [run("a")] }))),
   );
 });
