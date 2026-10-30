@@ -91,7 +91,7 @@ no longer read.
   never runtime gates.
 - **Missing checkout:** the daemon shows the repo as `missing` and keeps its
   settings; `init` offers to re-point an entry whose path is gone
-  (`listMovedReposUseCase`, `repointRepoUseCase`); `unenroll` removes one
+  (`ListMovedReposQuery`, `repointRepoUseCase`); `unenroll` removes one
   (`unenrollRepoUseCase`).
 - **Migration** (`src/migrate.ts`) runs before any command reads machine
   config: persona lists become maps, and an entry that lists no flows gets the
@@ -103,7 +103,7 @@ no longer read.
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
 (the machine module: `planSetupUseCase`, then `applySetupUseCase`, with
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
-`enroll` run the enrollment wizard: `planEnrollmentUseCase`, the questions in
+`enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
 persona its flows and then its accounts), then `applyEnrollmentUseCase`, which
 resolves what wasn't answered and writes the entry once. The machine's
@@ -296,13 +296,13 @@ transitive reach), the coverage floors and the baseline.
   gh's logins, the account directories in the home, and the daemon as a
   launchd or systemd service (`ServiceManagerClient`). `applySetupUseCase`
   refuses to drop a persona an enrolled repo runs as; the CLI passes
-  enrollment's `listPersonasInUseUseCase` in, since modules don't read each
+  enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
 - **A use-case doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `use-cases/` and `domain/`.
 - **Modules don't reach into each other.** An adapter composes them: the
   `trust` command lists its targets with enrollment's
-  `listEnrolledReposUseCase`, then trusts each.
+  `ListEnrolledReposQuery`, then trusts each.
 - **The platform** (`src/platform/`) holds the technical adapters everything
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
   `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the

@@ -10,8 +10,8 @@ import * as Schema from "effect/Schema";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import { FLOW_TURNED_OFF } from "../../../modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { listEnrolledReposUseCase } from "../../../modules/enrollment/use-cases/list-enrolled-repos.use-case.ts";
 import { type RunMarkerView } from "../../../modules/runs/use-cases/run-marker.result.ts";
 import { type TrustCheck } from "../../../modules/trust/queries/check-trust.query.ts";
 import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
@@ -253,8 +253,9 @@ const offline = (unavailable: string, json: boolean) =>
       yield* Console.log(unavailable);
     }
 
-    const { repos } = yield* listEnrolledReposUseCase(Option.none());
+    const enrollment = yield* EnrollmentQueries;
     const trust = yield* TrustQueries;
+    const { repos } = yield* enrollment.ListEnrolledReposQuery({ name: Option.none() });
 
     const checked = yield* Effect.forEach(repos, (repo) =>
       trust

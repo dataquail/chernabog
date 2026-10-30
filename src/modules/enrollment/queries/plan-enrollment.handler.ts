@@ -7,16 +7,13 @@ import { MachineOffer } from "../domain/enrolled-repo/machine-offer.value-object
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
 import { ViewerClient } from "../domain/ports/clients/viewer.client.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { EnrollmentPlan, type Offered } from "./enrollment.result.ts";
+import { EnrollmentPlan, type PlanEnrollmentPayload } from "./plan-enrollment.query.ts";
 
-// What enrolling the checkout a path is in can choose, for each persona the
-// machine acts as: its flows, the defaults, and what it has now.
-export const planEnrollmentUseCase = Effect.fn("planEnrollmentUseCase")(function* (
-  path: string,
-  name: Option.Option<string>,
-  offered: Offered,
+export const planEnrollmentHandler = Effect.fn("planEnrollmentHandler")(function* (
+  query: PlanEnrollmentPayload,
 ) {
-  const machine = MachineOffer.make(offered);
+  const { name, path } = query;
+  const machine = MachineOffer.make(query.offered);
   const checkouts = yield* CheckoutsClient;
   const checkout = yield* checkouts.inspect(yield* checkouts.rootOf(path));
   const repos = yield* (yield* EnrolledReposRepository).findAll;

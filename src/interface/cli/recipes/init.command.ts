@@ -5,7 +5,7 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { listMovedReposUseCase } from "../../../modules/enrollment/use-cases/list-moved-repos.use-case.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import { repointRepoUseCase } from "../../../modules/enrollment/use-cases/repoint-repo.use-case.ts";
 import { addRecipePackageUseCase } from "../../../modules/recipes/use-cases/add-recipe-package.use-case.ts";
 import {
@@ -57,9 +57,10 @@ const suffix = (value: Option.Option<string>, prefix: string) =>
 // such entry was left where it was.
 const offerRepoint = (root: string) =>
   Effect.gen(function* () {
+    const { repos } = yield* (yield* EnrollmentQueries).ListMovedReposQuery({ root });
     let declined = false;
 
-    for (const entry of (yield* listMovedReposUseCase(root)).repos) {
+    for (const entry of repos) {
       if (
         !(yield* confirm(
           `${entry.name} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`,

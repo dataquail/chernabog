@@ -2,7 +2,7 @@ import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { listPersonasInUseUseCase } from "../../../modules/enrollment/use-cases/list-personas-in-use.use-case.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import { applySetupUseCase } from "../../../modules/machine/use-cases/apply-setup.use-case.ts";
 import { inspectAccountDirUseCase } from "../../../modules/machine/use-cases/inspect-account-dir.use-case.ts";
 import { planSetupUseCase } from "../../../modules/machine/use-cases/plan-setup.use-case.ts";
@@ -145,7 +145,7 @@ export const setUpMachine = (flags: SetupFlags) =>
     const outcome = yield* applySetupUseCase({
       personas,
       accounts,
-      inUse: (yield* listPersonasInUseUseCase()).logins,
+      inUse: (yield* (yield* EnrollmentQueries).ListPersonasInUseQuery()).logins,
     });
 
     return describeSetup(outcome);

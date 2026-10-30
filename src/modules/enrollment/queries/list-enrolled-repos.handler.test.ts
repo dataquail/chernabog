@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { listEnrolledReposUseCase } from "./list-enrolled-repos.use-case.ts";
+import { listEnrolledReposHandler } from "./list-enrolled-repos.handler.ts";
 
 const repos = [
   EnrolledRepoRoot.make({
@@ -24,10 +24,10 @@ const repos = [
   }),
 ];
 
-describe("listEnrolledReposUseCase", () => {
+describe("listEnrolledReposHandler", () => {
   effect("lists every enrolled repo", () =>
     Effect.gen(function* () {
-      const listed = yield* listEnrolledReposUseCase(Option.none());
+      const listed = yield* listEnrolledReposHandler({ name: Option.none() });
 
       expect(listed.repos.map((repo) => [repo.name, repo.repo, repo.path])).toEqual([
         ["demo", "dataquail/demo", "/src/demo"],
@@ -39,13 +39,13 @@ describe("listEnrolledReposUseCase", () => {
   effect("lists only the one named, and fails for a name no repo answers to", () =>
     Effect.gen(function* () {
       expect(
-        (yield* listEnrolledReposUseCase(Option.some("dataquail/other"))).repos.map(
+        (yield* listEnrolledReposHandler({ name: Option.some("dataquail/other") })).repos.map(
           (repo) => repo.name,
         ),
       ).toEqual(["other-2"]);
-      expect((yield* Effect.flip(listEnrolledReposUseCase(Option.some("nope"))))._tag).toBe(
-        "RepoNotEnrolled",
-      );
+      expect(
+        (yield* Effect.flip(listEnrolledReposHandler({ name: Option.some("nope") })))._tag,
+      ).toBe("RepoNotEnrolled");
     }).pipe(Effect.provide(EnrolledReposRepositoryFake(repos))),
   );
 });

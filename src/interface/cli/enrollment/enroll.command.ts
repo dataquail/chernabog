@@ -7,14 +7,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type Persona } from "../../../kernel/persona.value-object.ts";
-import { applyEnrollmentUseCase } from "../../../modules/enrollment/use-cases/apply-enrollment.use-case.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import {
-  type Enrolled,
   type EnrollmentPlan,
   type PersonaPlan,
-} from "../../../modules/enrollment/use-cases/enrollment.result.ts";
-import { findCheckoutRootUseCase } from "../../../modules/enrollment/use-cases/find-checkout-root.use-case.ts";
-import { planEnrollmentUseCase } from "../../../modules/enrollment/use-cases/plan-enrollment.use-case.ts";
+} from "../../../modules/enrollment/queries/plan-enrollment.query.ts";
+import { applyEnrollmentUseCase } from "../../../modules/enrollment/use-cases/apply-enrollment.use-case.ts";
+import { type Enrolled } from "../../../modules/enrollment/use-cases/enrollment.result.ts";
 import { readMachineSetupUseCase } from "../../../modules/machine/use-cases/read-machine-setup.use-case.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
@@ -244,7 +243,12 @@ export const enrollCheckout = (root: string, flags: EnrollFlags) =>
   Effect.gen(function* () {
     const asker = yield* Asker;
     const machine = yield* readMachineSetupUseCase();
-    const plan = yield* planEnrollmentUseCase(root, flags.name, machine);
+
+    const plan = yield* (yield* EnrollmentQueries).PlanEnrollmentQuery({
+      path: root,
+      name: flags.name,
+      offered: machine,
+    });
 
     const personas = yield* Option.match(flags.persona, {
       onSome: (named) => Effect.succeedSome(named),
@@ -323,9 +327,13 @@ export const enrollHere = (root: string, flags: EnrollFlags) =>
 
 // The repo a path is in; the working directory's when none is given.
 export const rootOf = (path: Option.Option<string>) =>
-  findCheckoutRootUseCase(Option.getOrElse(path, () => ".")).pipe(
-    Effect.map((found) => found.root),
-  );
+  Effect.gen(function* () {
+    const found = yield* (yield* EnrollmentQueries).FindCheckoutRootQuery({
+      path: Option.getOrElse(path, () => "."),
+    });
+
+    return found.root;
+  });
 
 export const enrollCommand = Command.make(
   "enroll",
