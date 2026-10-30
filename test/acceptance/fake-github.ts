@@ -758,16 +758,21 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   });
 
   // How far one branch is ahead of another, as git counts it in the bare repo.
+  // A branch git can't find (deleted meanwhile, say) is GitHub's 404.
   const compare = (args: Args) => {
     const [base = "", head = ""] = (args.params[0] ?? "").split("...").map(decodeURIComponent);
 
-    const ahead = Number(
-      execFileSync("git", ["--git-dir", options.bare, "rev-list", "--count", `${base}..${head}`], {
-        encoding: "utf8",
-      }).trim(),
+    const counted = spawnSync(
+      "git",
+      ["--git-dir", options.bare, "rev-list", "--count", `${base}..${head}`],
+      { encoding: "utf8" },
     );
 
-    return json({ ahead_by: ahead, behind_by: 0 });
+    if (counted.status !== 0) {
+      return json({ message: "Not Found" }, 404);
+    }
+
+    return json({ ahead_by: Number(counted.stdout.trim()), behind_by: 0 });
   };
 
   const createPull = withBody(NewPullBody, (body, args) => {
