@@ -881,6 +881,22 @@ export const pushRejection = (branch: string, said: string) => {
   );
 };
 
+// What git says when GitHub failed the push rather than refused it: a 5xx,
+// with or without a [remote rejected] line, or the connection dropping. The
+// push is worth trying again (#254).
+const SERVER_FAILURE =
+  /\((?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\)|returned error: 5\d\d|remote end hung up unexpectedly/;
+
+export const isServerFailure = (said: string) => SERVER_FAILURE.test(said);
+
+// A lease keeps a push from overwriting anyone's, so trying it again is safe:
+// about 30 seconds of tries.
+const SERVER_FAILURE_RETRIES = {
+  while: (error: GitError) => isServerFailure(error.message),
+  schedule: Schedule.exponential("2 seconds"),
+  times: 4,
+};
+
 // Git as one persona: a push authenticates with its token.
 export const GitLive = (
   persona: Persona,
@@ -916,6 +932,7 @@ export const GitLive = (
         // Only ever the run's own branch, so a lease is enough to never overwrite someone's push.
         push: (cwd, branch) =>
           run(["push", "--force-with-lease", "origin", `HEAD:refs/heads/${branch}`], cwd).pipe(
+            Effect.retry(SERVER_FAILURE_RETRIES),
             Effect.asVoid,
             Effect.catchTag("GitError", (error): Effect.Effect<never, GitError | PushRejected> =>
               Effect.fail(
