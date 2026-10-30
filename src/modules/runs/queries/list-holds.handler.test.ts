@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { HoldsRepositoryFake } from "../infrastructure/repositories/holds.repository-fake.ts";
-import { listHoldsUseCase } from "./list-holds.use-case.ts";
+import { listHoldsHandler } from "./list-holds.handler.ts";
 
 const holds = (flow: string, items: ReadonlyArray<{ itemKey: string; reason: string }>) =>
   HoldsRoot.make({
@@ -16,10 +16,10 @@ const holds = (flow: string, items: ReadonlyArray<{ itemKey: string; reason: str
     at: "2026-10-20T00:00:00.000Z",
   });
 
-describe("listHoldsUseCase", () => {
+describe("listHoldsHandler", () => {
   effect("lists each held item of every flow, with why", () =>
     Effect.gen(function* () {
-      const { holds: listed } = yield* listHoldsUseCase();
+      const { holds: listed } = yield* listHoldsHandler();
 
       expect(listed.map((hold) => `${hold.flow} ${hold.itemKey}: ${hold.reason}`)).toEqual([
         "implement issue-14: waits on #12, #13",

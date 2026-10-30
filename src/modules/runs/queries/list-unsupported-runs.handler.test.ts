@@ -7,7 +7,7 @@ import { BUNDLED_CORE_VERSION, providedRange } from "../../../kernel/core-suppor
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { listUnsupportedRunsUseCase } from "./list-unsupported-runs.use-case.ts";
+import { listUnsupportedRunsHandler } from "./list-unsupported-runs.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,10 +29,10 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("listUnsupportedRunsUseCase", () => {
+describe("listUnsupportedRunsHandler", () => {
   effect("lists the runs in flight under an SDK this binary doesn't run, naming both", () =>
     Effect.gen(function* () {
-      const { runs } = yield* listUnsupportedRunsUseCase();
+      const { runs } = yield* listUnsupportedRunsHandler();
 
       expect(runs.map((found) => [String(found.run.id), found.reason])).toEqual([
         [

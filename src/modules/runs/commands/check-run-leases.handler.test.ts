@@ -8,12 +8,11 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
-import { CLAIM_REF_MARKER } from "../domain/schedule/lease.value-object.ts";
+import { CLAIM_REF_MARKER, RunLeases } from "../domain/schedule/lease.value-object.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { RunLeases } from "./check-run-leases.result.ts";
-import { checkRunLeasesUseCase } from "./check-run-leases.use-case.ts";
+import { checkRunLeasesHandler } from "./check-run-leases.handler.ts";
 
 const work = { key: "issue-7", data: { issue: 7 } };
 
@@ -66,7 +65,7 @@ const runtime = (
   );
 
 const checking = (id: string, renew = Option.none<Duration.Duration>()) =>
-  checkRunLeasesUseCase(RunId.make(id), renew);
+  checkRunLeasesHandler({ runId: RunId.make(id), renew });
 
 const HELD = {
   status: "held",
@@ -74,7 +73,7 @@ const HELD = {
   renewedAt: Option.some("2026-10-20T12:00:00.000Z"),
 } as const;
 
-describe("checkRunLeasesUseCase", () => {
+describe("checkRunLeasesHandler", () => {
   const asks: NonNullable<FakeFlow["leaseAsks"]> = [];
 
   effect("renews each claim the run holds, as the run, for the time asked", () =>

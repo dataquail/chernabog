@@ -38,10 +38,10 @@ describe("coverage summary", () => {
     ]);
   });
 
-  test("totals are the mean of each file's fraction, as bun test gates on", () => {
+  test("totals are the mean of each file's fraction, functions without the modules that only declare", () => {
     const { functions, lines } = totals(files);
     expect(lines).toBeCloseTo((0.5 + 1 + 1) / 3);
-    expect(functions).toBeCloseTo((0.5 + 1 + 0) / 3);
+    expect(functions).toBeCloseTo((0.5 + 1) / 2);
   });
 
   test("a module whose every line ran but whose one function did not only declares", () => {
@@ -59,7 +59,7 @@ describe("coverage summary", () => {
         "| | Measured | Threshold | |",
         "| --- | ---: | ---: | --- |",
         "| Lines | 83.33% | 80.00% | ✅ |",
-        "| Functions | 50.00% | 50.00% | ✅ |",
+        "| Functions | 75.00% | 50.00% | ✅ |",
         "",
         "<details><summary>3 files</summary>",
         "",
@@ -69,7 +69,7 @@ describe("coverage summary", () => {
         "| `src/b.ts` | 50.00% | 50.00% |",
         "| `src/schema.ts` | 100.00% | n/a |",
         "",
-        "Functions is n/a for a module that only declares: Bun counts it one function that never ran, though every line did.",
+        "Functions is n/a for a module that only declares, and the total leaves it out: Bun counts it one function that never ran, though every line did.",
         "",
         "</details>",
         "",
@@ -80,7 +80,7 @@ describe("coverage summary", () => {
   test("marks a total below its threshold, and names it as a shortfall", () => {
     const summary = renderSummary(files, { lines: 0.9, functions: 0.5 });
     expect(summary).toContain("| Lines | 83.33% | 90.00% | ❌ |");
-    expect(summary).toContain("| Functions | 50.00% | 50.00% | ✅ |");
+    expect(summary).toContain("| Functions | 75.00% | 50.00% | ✅ |");
     expect(shortfalls(files, { lines: 0.9, functions: 0.5 })).toEqual([
       "lines coverage is 83.33%, below the floor of 90.00%",
     ]);

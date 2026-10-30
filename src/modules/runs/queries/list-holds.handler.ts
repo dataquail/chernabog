@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect";
 
+import { HoldList, HoldView } from "../domain/holds/hold-view.value-object.ts";
 import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
-import { HoldList, HoldView } from "./hold.result.ts";
 
-// The items every flow's latest tick held, and why, one view per item.
-export const listHoldsUseCase = Effect.fn("listHoldsUseCase")(function* () {
+export const listHoldsHandler = Effect.fn("listHoldsHandler")(function* () {
   const flows = yield* (yield* HoldsRepository).findAll;
 
   return HoldList.make({

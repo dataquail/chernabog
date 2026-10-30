@@ -21,7 +21,7 @@ import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type Fake,
@@ -233,7 +233,9 @@ describe("owning a pull request", () => {
       const waiting = makeFake("approve");
 
       const parked = yield* runUntil(owning, waiting, item("owning-waits"), (run) =>
-        listRunWaitsUseCase(run.id, "pushed").pipe(Effect.map(({ waits }) => waits.length > 0)),
+        listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+          Effect.map(({ waits }) => waits.length > 0),
+        ),
       );
 
       expect(Option.map(holderOf(waiting, PULL_REF), (holder) => holder.runId)).toEqual(

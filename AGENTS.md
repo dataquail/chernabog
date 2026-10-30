@@ -399,7 +399,7 @@ assignment, a board Status, a claim ref or branch), with a named release.
   definition, as the run's persona); keepOn endings are kept, a failure backs
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.
   The daemon runs it every few seconds, `chernabog run` once its run ends, and
-  `status` shows `listUnreleasedMarkersUseCase`.
+  `status` shows `ListUnreleasedMarkersQuery`.
 - **Cancel still does its own cleanup** (claim ref, assignment, branch) for
   runs from before markers; markers' releases are safe to repeat after it.
   Labels are the flow's: cancel never removes one, and a run's label marker
@@ -662,7 +662,7 @@ Decisions that cut across them:
   follow a lease ref a writer left. `acquire` holds the claim-ref marker only
   once it has won.
 - **The daemon renews** each run's claim-ref markers through
-  `checkRunLeasesUseCase` (`FlowsClient.lease`) every `limits.leaseRenewEvery`,
+  `CheckRunLeasesCommand` (`FlowsClient.lease`) every `limits.leaseRenewEvery`,
   for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
   check; a claim naming another run ends the run as `lost` (`cancelRunUseCase`
   with `endAs lost`, which removes nothing). In the run, `fencing` in the

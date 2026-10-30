@@ -5,9 +5,9 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
+import { listRunMarkersHandler } from "../queries/list-run-markers.handler.ts";
 import { forgetMarkerUseCase } from "./forget-marker.use-case.ts";
 import { holdMarkerUseCase } from "./hold-marker.use-case.ts";
-import { listRunMarkersUseCase } from "./list-run-markers.use-case.ts";
 
 const runId = RunId.make("a");
 const label = { runId, name: "chernabog/label", args: { number: 12, label: "x" }, keepOn: [] };
@@ -20,7 +20,9 @@ describe("holdMarkerUseCase", () => {
       expect(again).toEqual(first);
       expect(first.status).toBe("held");
 
-      expect((yield* listRunMarkersUseCase(runId, Option.none())).markers).toHaveLength(1);
+      expect((yield* listRunMarkersHandler({ runId, name: Option.none() })).markers).toHaveLength(
+        1,
+      );
     }).pipe(Effect.provide(RunMarkersRepositoryFake([]))),
   );
 
@@ -28,10 +30,12 @@ describe("holdMarkerUseCase", () => {
     Effect.gen(function* () {
       yield* holdMarkerUseCase(label);
       yield* forgetMarkerUseCase(label);
-      expect((yield* listRunMarkersUseCase(runId, Option.none())).markers).toEqual([]);
+      expect((yield* listRunMarkersHandler({ runId, name: Option.none() })).markers).toEqual([]);
 
       yield* holdMarkerUseCase(label);
-      expect((yield* listRunMarkersUseCase(runId, Option.none())).markers).toHaveLength(1);
+      expect((yield* listRunMarkersHandler({ runId, name: Option.none() })).markers).toHaveLength(
+        1,
+      );
     }).pipe(Effect.provide(RunMarkersRepositoryFake([]))),
   );
 });

@@ -19,7 +19,7 @@ import implement from "../packages/recipes/flows/implement.ts";
 import plan from "../packages/recipes/flows/plan.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -89,7 +89,7 @@ const planWith = (fake: Fake, answers: ReadonlyArray<Answer>) => {
         return true;
       }
 
-      const { waits } = yield* listRunWaitsUseCase(run.id, "approved");
+      const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "approved" });
       const parked = waits.some((wait) => wait.deferred === `approved:plan-${round + 1}`);
       const answer = Arr.get(answers, round);
 

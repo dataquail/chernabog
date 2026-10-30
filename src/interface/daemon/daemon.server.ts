@@ -40,6 +40,7 @@ import {
   DEFAULT_LEASE_LIMITS,
   leaseTtlFor,
   renewalDue,
+  RunLeases,
 } from "../../modules/runs/domain/schedule/lease.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
@@ -63,6 +64,7 @@ import {
   servicesFrom,
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
+import { RunsCommands, RunsCommandsLive } from "../../modules/runs/runs.command-handlers.ts";
 import {
   type FlowRegistry,
   NotificationsLayer,
@@ -72,15 +74,10 @@ import {
 import { RunsQueries, RunsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
-import { RunLeases } from "../../modules/runs/use-cases/check-run-leases.result.ts";
-import { checkRunLeasesUseCase } from "../../modules/runs/use-cases/check-run-leases.use-case.ts";
 import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
-import { listHoldsUseCase } from "../../modules/runs/use-cases/list-holds.use-case.ts";
-import { listUnreleasedMarkersUseCase } from "../../modules/runs/use-cases/list-unreleased-markers.use-case.ts";
-import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
 import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
 import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
@@ -550,9 +547,13 @@ export const runDaemon = Effect.gen(function* () {
   };
 
   const engine = yield* Layer.build(
-    RuntimeLayer(registry).pipe(
+    RunsCommandsLive.pipe(
       Layer.provideMerge(
-        Layer.mergeAll(RunsQueriesLive, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+        RuntimeLayer(registry).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(RunsQueriesLive, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+          ),
+        ),
       ),
     ),
   );
@@ -561,7 +562,7 @@ export const runDaemon = Effect.gen(function* () {
     Effect.gen(function* () {
       // Runs in flight that started under an SDK this binary doesn't run go
       // to a person, released as a cancel releases them, rather than resume.
-      for (const { reason, run } of (yield* listUnsupportedRunsUseCase()).runs) {
+      for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
         const ended = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
           by: "chernabog",
           closeSessions: false,
@@ -700,7 +701,11 @@ export const runDaemon = Effect.gen(function* () {
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
-          const found = yield* checkRunLeasesUseCase(run.id, renew);
+          const found = yield* (yield* RunsCommands).CheckRunLeasesCommand({
+            runId: run.id,
+            renew,
+          });
+
           const known = leaseNotes.get(run.id) ?? [];
 
           yield* RunLeases.match(found, {
@@ -1603,7 +1608,7 @@ export const runDaemon = Effect.gen(function* () {
           skips: (yield* runsQueries.ListRecentSkipsQuery({ latest: 20 })).skips,
           // Only a flow the daemon still schedules, and has on, holds anything:
           // an unenrolled repo's or a turned-off flow's last holds aren't current.
-          holds: (yield* listHoldsUseCase()).holds.filter((hold) =>
+          holds: (yield* runsQueries.ListHoldsQuery()).holds.filter((hold) =>
             repos.some(
               (repo) =>
                 repo.name === hold.repo &&
@@ -1634,7 +1639,7 @@ export const runDaemon = Effect.gen(function* () {
           leases: [...leaseNotes].flatMap(([runId, leases]) =>
             leases.map((lease) => ({ runId, ...lease })),
           ),
-          markers: (yield* listUnreleasedMarkersUseCase()).markers,
+          markers: (yield* runsQueries.ListUnreleasedMarkersQuery()).markers,
         } satisfies DaemonStatus;
       });
 

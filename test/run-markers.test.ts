@@ -33,11 +33,11 @@ import {
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { listRunMarkersHandler } from "../src/modules/runs/queries/list-run-markers.handler.ts";
+import { listUnreleasedMarkersHandler } from "../src/modules/runs/queries/list-unreleased-markers.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { listRunMarkersUseCase } from "../src/modules/runs/use-cases/list-run-markers.use-case.ts";
-import { listUnreleasedMarkersUseCase } from "../src/modules/runs/use-cases/list-unreleased-markers.use-case.ts";
 import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
@@ -230,7 +230,9 @@ describe("a flow's own marker", () => {
 
           // In flight, it keeps what it holds.
           const whileRunning = yield* releaseMarkersUseCase();
-          const held = (yield* listRunMarkersUseCase(started.id, Option.none())).markers;
+
+          const held = (yield* listRunMarkersHandler({ runId: started.id, name: Option.none() }))
+            .markers;
 
           yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: started.id }), {
             by: "alice",
@@ -283,7 +285,7 @@ describe("a flow's own marker", () => {
         makeFake("approve"),
         Effect.gen(function* () {
           const first = yield* runAndRelease(handle);
-          const shown = yield* listUnreleasedMarkersUseCase();
+          const shown = yield* listUnreleasedMarkersHandler();
 
           return { first, shown };
         }),

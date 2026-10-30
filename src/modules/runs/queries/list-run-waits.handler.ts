@@ -1,15 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunWait, RunWaits } from "./run-wait.result.ts";
+import { RunWait, RunWaits } from "../domain/run-wait/run-wait-view.value-object.ts";
+import { type ListRunWaitsPayload } from "./list-run-waits.query.ts";
 
-// What a run waits on for one signal: the deferreds the signal wakes.
-export const listRunWaitsUseCase = Effect.fn("listRunWaitsUseCase")(function* (
-  runId: RunId,
-  signal: string,
-) {
+export const listRunWaitsHandler = Effect.fn("listRunWaitsHandler")(function* ({
+  runId,
+  signal,
+}: ListRunWaitsPayload) {
   const waits = yield* (yield* RunWaitsRepository).findAll(Option.some(runId));
 
   return RunWaits.make({
