@@ -641,7 +641,16 @@ export const claim = (
       if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
         const latest = yield* latestClaim(issue);
 
+        // This run claimed it before, for an earlier attempt: the queue label
+        // comes off again, and a base the caller gives is the task's now,
+        // which may have moved since that claim (#249).
         if (Option.isSome(latest) && latest.value.runId === run.runId) {
+          yield* github.removeLabel(issue, label);
+
+          if (Option.isSome(Option.fromUndefinedOr(options.base))) {
+            return { branch, base };
+          }
+
           return { branch, base: yield* claimedBase(latest.value) };
         }
 
