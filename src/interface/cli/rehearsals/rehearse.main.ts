@@ -32,13 +32,8 @@ import { runLabel } from "../../../kernel/run-id.id.ts";
 import { type Ending } from "../../../kernel/scenario.value-object.ts";
 import { pauseRepoUseCase } from "../../../modules/enrollment/use-cases/pause-repo.use-case.ts";
 import { resumeRepoUseCase } from "../../../modules/enrollment/use-cases/resume-repo.use-case.ts";
-import { checkRehearsalUseCase } from "../../../modules/rehearsals/use-cases/check-rehearsal.use-case.ts";
-import { chooseSeededWorkUseCase } from "../../../modules/rehearsals/use-cases/choose-seeded-work.use-case.ts";
-import { cleanUpScenarioUseCase } from "../../../modules/rehearsals/use-cases/clean-up-scenario.use-case.ts";
-import { loadScenarioUseCase } from "../../../modules/rehearsals/use-cases/load-scenario.use-case.ts";
-import { planRehearsalUseCase } from "../../../modules/rehearsals/use-cases/plan-rehearsal.use-case.ts";
-import { type LoadedScenario } from "../../../modules/rehearsals/use-cases/scenario.result.ts";
-import { seedScenarioUseCase } from "../../../modules/rehearsals/use-cases/seed-scenario.use-case.ts";
+import { RehearsalsCommands } from "../../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueries } from "../../../modules/rehearsals/rehearsals.query-handlers.ts";
 import {
   describeElsewhere,
   routeItems,
@@ -90,11 +85,16 @@ import { fail } from "../cli.output.ts";
 import { repoFlag } from "../repo.arguments.ts";
 import { choosePersona, tailer } from "../runs/run.main.ts";
 
-// What seeding made, as its use-case answers.
-type Seeded = Effect.Success<ReturnType<typeof seedScenarioUseCase>>;
+// A scenario ready to rehearse, as loading answers it.
+type LoadedScenario = Effect.Success<ReturnType<RehearsalsQueries["Service"]["LoadScenarioQuery"]>>;
+
+// What seeding made, as its command answers.
+type Seeded = Effect.Success<ReturnType<RehearsalsCommands["Service"]["SeedScenarioCommand"]>>;
 
 // The stand-ins a rehearsal runs with, as planning answers them.
-type StandIns = Effect.Success<ReturnType<typeof planRehearsalUseCase>>["standIns"];
+type StandIns = Effect.Success<
+  ReturnType<RehearsalsQueries["Service"]["PlanRehearsalQuery"]>
+>["standIns"];
 
 // A list for a sentence, or `none` when it's empty.
 const listed = (items: ReadonlyArray<string>, none: string) =>
@@ -290,10 +290,10 @@ const pickItem = (
 
     const usable = found.filter((candidate) => candidate.wakeOnly !== true);
 
-    const seededKeys = yield* chooseSeededWorkUseCase(
+    const { keys: seededKeys } = yield* (yield* RehearsalsQueries).ChooseSeededWorkQuery({
       seeded,
-      usable.map((item) => item.key),
-    );
+      keys: usable.map((item) => item.key),
+    });
 
     const ours = usable.filter((item) => seededKeys.includes(item.key));
 
@@ -517,7 +517,7 @@ const report = (
       (answer) => answer.step,
     );
 
-    const check = yield* checkRehearsalUseCase({
+    const check = yield* (yield* RehearsalsQueries).CheckRehearsalQuery({
       scenario: loaded.scenario,
       seeded,
       item: ended.itemKey,
@@ -585,7 +585,7 @@ const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
-    const cleaned = yield* cleanUpScenarioUseCase({
+    const cleaned = yield* (yield* RehearsalsCommands).CleanUpScenarioCommand({
       repo: slug,
       seeded,
       branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
@@ -636,7 +636,7 @@ export const rehearse = (options: RehearseOptions) =>
     const machine = yield* loadMachineConfig;
     const enrolled = yield* findEnrolled(machine, options.repo);
 
-    const loaded = yield* loadScenarioUseCase({
+    const loaded = yield* (yield* RehearsalsQueries).LoadScenarioQuery({
       path: options.scenario,
       flow: options.flow,
       enrolled: machine.repos.map((entry) => entry.repo),
@@ -675,10 +675,10 @@ export const rehearse = (options: RehearseOptions) =>
       );
     }
 
-    const plan = yield* planRehearsalUseCase(
-      loaded.scenario,
-      yield* replayedAnswers(options.replay),
-    );
+    const plan = yield* (yield* RehearsalsQueries).PlanRehearsalQuery({
+      scenario: loaded.scenario,
+      replayed: yield* replayedAnswers(options.replay),
+    });
 
     const seedAs = Option.orElse(Option.fromUndefinedOr(loaded.scenario.given?.as), () => persona);
 
@@ -708,7 +708,12 @@ export const rehearse = (options: RehearseOptions) =>
 
         yield* Console.log(labels);
 
-        const seeding = yield* Effect.result(seedScenarioUseCase(loaded.scenario, seedAs));
+        const seeding = yield* Effect.result(
+          (yield* RehearsalsCommands).SeedScenarioCommand({
+            scenario: loaded.scenario,
+            as: seedAs,
+          }),
+        );
 
         // A seeding that fails partway still cleans up what it made.
         const seeded = yield* Effect.catchTag(

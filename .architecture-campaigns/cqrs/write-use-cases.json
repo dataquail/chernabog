@@ -28,6 +28,14 @@
         "use-cases/set-persona-flow.use-case.ts",
         "use-cases/unenroll-repo.use-case.ts"
       ]
+    },
+    "src/modules/rehearsals": {
+      "entered": "2026-10-30T14:27:56.088Z",
+      "initial": 0,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T14:27:56.088Z",
+      "holdouts": []
     }
   },
   "concessions": []

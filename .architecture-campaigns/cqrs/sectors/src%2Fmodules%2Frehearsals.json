@@ -2,8 +2,8 @@
   "version": 1,
   "campaign": "cqrs",
   "sector": "src/modules/rehearsals",
-  "reached": "queries",
-  "since": "2026-10-30T05:15:33.499Z",
+  "reached": "events",
+  "since": "2026-10-30T14:27:56.088Z",
   "attested": [],
   "notes": []
 }
