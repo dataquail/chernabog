@@ -1,21 +1,11 @@
 import * as Effect from "effect/Effect";
 
-import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { ScratchRepoClient } from "../domain/ports/clients/scratch-repo.client.ts";
-import { type Seeded } from "../domain/scenario/seeded.value-object.ts";
-import { CleanUp } from "./clean-up.result.ts";
+import { CleanUp, type CleanUpScenarioPayload } from "./clean-up-scenario.command.ts";
 
-// Removes what a rehearsal made on `repo`, as `as`: the seeded issues
-// (deleted, or closed where the persona may not delete), the seeded pull
-// requests and their branches, and the pull requests from `branches`, the
-// ones the flow made, and those branches. It carries on past what fails, and
-// says what that was.
-export const cleanUpScenarioUseCase = Effect.fn("cleanUpScenarioUseCase")(function* (request: {
-  readonly repo: string;
-  readonly seeded: Seeded;
-  readonly branches: ReadonlyArray<string>;
-  readonly as: Persona;
-}) {
+export const cleanUpScenarioHandler = Effect.fn("cleanUpScenarioHandler")(function* (
+  request: CleanUpScenarioPayload,
+) {
   const client = yield* ScratchRepoClient;
   const removed: Array<string> = [];
   const failed: Array<string> = [];

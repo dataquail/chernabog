@@ -2,20 +2,15 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { ScratchRepoClient } from "../domain/ports/clients/scratch-repo.client.ts";
 import { SeedingFailed } from "../domain/scenario/scenario.errors.ts";
-import { type ScenarioRoot } from "../domain/scenario/scenario.root.ts";
 import { NOTHING_SEEDED, type Seeded } from "../domain/scenario/seeded.value-object.ts";
+import { type SeedScenarioPayload } from "./seed-scenario.command.ts";
 
-// Seeds the scenario's given: state on its repo, as `as`: its issues, then
-// its pull requests, each from a new branch with its commits, on the repo's
-// default branch unless it names another. A seeding that fails partway says
-// what it made before, for cleanup to remove.
-export const seedScenarioUseCase = Effect.fn("seedScenarioUseCase")(function* (
-  scenario: ScenarioRoot,
-  as: Persona,
+export const seedScenarioHandler = Effect.fn("seedScenarioHandler")(function* (
+  cmd: SeedScenarioPayload,
 ) {
+  const { as, scenario } = cmd;
   const client = yield* ScratchRepoClient;
   const made = yield* Ref.make<Seeded>(NOTHING_SEEDED);
   const given = scenario.given ?? {};

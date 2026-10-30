@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { ScenarioRoot } from "../domain/scenario/scenario.root.ts";
 import { scratchRepoFake } from "../infrastructure/clients/scratch-repo.client-fake.ts";
-import { checkRehearsalUseCase } from "./check-rehearsal.use-case.ts";
+import { checkRehearsalHandler } from "./check-rehearsal.handler.ts";
 
 const scenario = ScenarioRoot.make({
   path: "/r/s.yaml",
@@ -14,7 +14,7 @@ const scenario = ScenarioRoot.make({
   expect: { ends: "done", labels: ["auto:needs-review"] },
 });
 
-describe("checkRehearsalUseCase", () => {
+describe("checkRehearsalHandler", () => {
   const github = scratchRepoFake({
     states: {
       12: { labels: [], reviewRequests: [] },
@@ -25,7 +25,7 @@ describe("checkRehearsalUseCase", () => {
 
   effect("reads back the item's labels and the review requests the run left", () =>
     Effect.gen(function* () {
-      const check = yield* checkRehearsalUseCase({
+      const check = yield* checkRehearsalHandler({
         scenario,
         seeded: { issues: [{ name: "bug", number: 12 }], pullRequests: [] },
         item: "issue-12",

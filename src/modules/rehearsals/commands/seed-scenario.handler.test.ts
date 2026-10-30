@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { ScenarioRoot } from "../domain/scenario/scenario.root.ts";
 import { scratchRepoFake } from "../infrastructure/clients/scratch-repo.client-fake.ts";
-import { seedScenarioUseCase } from "./seed-scenario.use-case.ts";
+import { seedScenarioHandler } from "./seed-scenario.handler.ts";
 
 const scenario = ScenarioRoot.make({
   path: "/r/s.yaml",
@@ -20,14 +20,14 @@ const scenario = ScenarioRoot.make({
   },
 });
 
-describe("seedScenarioUseCase", () => {
+describe("seedScenarioHandler", () => {
   const seeded = scratchRepoFake();
 
   effect(
     "seeds the issues, then the pull requests, on the default branch unless one names its own",
     () =>
       Effect.gen(function* () {
-        const made = yield* seedScenarioUseCase(scenario, Option.some("alice"));
+        const made = yield* seedScenarioHandler({ scenario, as: Option.some("alice") });
 
         expect(made).toEqual({
           issues: [{ name: "bug", number: 100 }],
@@ -48,7 +48,7 @@ describe("seedScenarioUseCase", () => {
 
   effect("a seeding that fails partway says what it made, for cleanup", () =>
     Effect.gen(function* () {
-      const failure = yield* Effect.flip(seedScenarioUseCase(scenario, Option.none()));
+      const failure = yield* Effect.flip(seedScenarioHandler({ scenario, as: Option.none() }));
 
       expect(failure.seeded).toEqual({
         issues: [{ name: "bug", number: 100 }],

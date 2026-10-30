@@ -2,9 +2,9 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
-import { chooseSeededWorkUseCase } from "./choose-seeded-work.use-case.ts";
+import { chooseSeededWorkHandler } from "./choose-seeded-work.handler.ts";
 
-describe("chooseSeededWorkUseCase", () => {
+describe("chooseSeededWorkHandler", () => {
   effect("keeps only the work about what seeding made", () =>
     Effect.gen(function* () {
       const seeded = {
@@ -12,9 +12,12 @@ describe("chooseSeededWorkUseCase", () => {
         pullRequests: [{ name: "fix", number: 7, branch: "rehearsal/fix" }],
       };
 
-      expect(
-        yield* chooseSeededWorkUseCase(seeded, ["issue-3", "issue-12", "pr-7-review-2", "pr-70"]),
-      ).toEqual(["issue-12", "pr-7-review-2"]);
+      const work = yield* chooseSeededWorkHandler({
+        seeded,
+        keys: ["issue-3", "issue-12", "pr-7-review-2", "pr-70"],
+      });
+
+      expect(work.keys).toEqual(["issue-12", "pr-7-review-2"]);
     }),
   );
 });

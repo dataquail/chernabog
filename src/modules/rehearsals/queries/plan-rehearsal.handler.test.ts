@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { ScenarioRoot } from "../domain/scenario/scenario.root.ts";
-import { planRehearsalUseCase } from "./plan-rehearsal.use-case.ts";
+import { planRehearsalHandler } from "./plan-rehearsal.handler.ts";
 
-describe("planRehearsalUseCase", () => {
+describe("planRehearsalHandler", () => {
   effect("stands in with a replay's answers, the scenario's own over them", () =>
     Effect.gen(function* () {
       const scenario = ScenarioRoot.make({
@@ -15,10 +15,13 @@ describe("planRehearsalUseCase", () => {
         agent: { implement: { script: "./implement.sh" } },
       });
 
-      const plan = yield* planRehearsalUseCase(scenario, [
-        { step: "implement", answer: { status: "done" }, commits: ["Do it"] },
-        { step: "fix-ci-1", answer: { status: "done" }, commits: [] },
-      ]);
+      const plan = yield* planRehearsalHandler({
+        scenario,
+        replayed: [
+          { step: "implement", answer: { status: "done" }, commits: ["Do it"] },
+          { step: "fix-ci-1", answer: { status: "done" }, commits: [] },
+        ],
+      });
 
       expect(plan.standIns).toEqual({
         implement: { script: "./implement.sh" },

@@ -39,15 +39,10 @@
     "src/modules/rehearsals": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 4,
-      "cleared": 0,
+      "cleared": 4,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
-      "holdouts": [
-        "use-cases/check-rehearsal.use-case.ts",
-        "use-cases/choose-seeded-work.use-case.ts",
-        "use-cases/load-scenario.use-case.ts",
-        "use-cases/plan-rehearsal.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T14:27:56.088Z",
+      "holdouts": []
     },
     "src/modules/runs": {
       "entered": "2026-10-30T05:15:33.499Z",
