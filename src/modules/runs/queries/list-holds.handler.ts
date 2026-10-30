@@ -1,8 +1,7 @@
 import * as Effect from "effect/Effect";
 
-import { HoldView } from "../domain/holds/hold-view.value-object.ts";
+import { HoldList, HoldView } from "../domain/holds/hold-view.value-object.ts";
 import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
-import { HoldList } from "./list-holds.query.ts";
 
 export const listHoldsHandler = Effect.fn("listHoldsHandler")(function* () {
   const flows = yield* (yield* HoldsRepository).findAll;

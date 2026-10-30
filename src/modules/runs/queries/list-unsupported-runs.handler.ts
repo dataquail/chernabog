@@ -3,8 +3,7 @@ import * as Option from "effect/Option";
 
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { RunView } from "../domain/run/run-view.value-object.ts";
-import { UnsupportedRuns } from "./list-unsupported-runs.query.ts";
+import { RunView, UnsupportedRuns } from "../domain/run/run-view.value-object.ts";
 
 export const listUnsupportedRunsHandler = Effect.fn("listUnsupportedRunsHandler")(function* () {
   const running = yield* (yield* RunsRepository).findAll({ running: true });

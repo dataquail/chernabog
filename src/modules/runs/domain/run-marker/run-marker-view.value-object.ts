@@ -25,3 +25,15 @@ export class RunMarkers extends Schema.Class<RunMarkers, { readonly brand: "RunM
 )({
   markers: Schema.Array(RunMarkerView),
 }) {}
+
+// What releasing ended runs' markers did: released, kept on the run's
+// ending, failed (to try again), and found unreleasable, for a person.
+export class MarkerReleases extends Schema.Class<
+  MarkerReleases,
+  { readonly brand: "MarkerReleases" }
+>("MarkerReleases")({
+  released: Schema.Array(RunMarkerView),
+  kept: Schema.Array(RunMarkerView),
+  failed: Schema.Array(RunMarkerView),
+  unreleasable: Schema.Array(RunMarkerView),
+}) {}

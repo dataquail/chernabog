@@ -9,3 +9,7 @@ export class HoldView extends Schema.Class<HoldView, { readonly brand: "HoldView
   reason: Schema.String,
   at: Schema.String,
 }) {}
+
+export class HoldList extends Schema.Class<HoldList, { readonly brand: "HoldList" }>("HoldList")({
+  holds: Schema.Array(HoldView),
+}) {}

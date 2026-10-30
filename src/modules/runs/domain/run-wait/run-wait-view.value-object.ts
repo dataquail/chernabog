@@ -11,3 +11,7 @@ export class RunWait extends Schema.Class<RunWait, { readonly brand: "RunWait" }
   token: Schema.String,
   parkedAt: Schema.OptionFromNullOr(Schema.String),
 }) {}
+
+export class RunWaits extends Schema.Class<RunWaits, { readonly brand: "RunWaits" }>("RunWaits")({
+  waits: Schema.Array(RunWait),
+}) {}
