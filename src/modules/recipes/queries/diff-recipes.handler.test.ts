@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { jsonText, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { diffRecipesUseCase } from "./diff-recipes.use-case.ts";
+import { diffRecipesHandler } from "./diff-recipes.handler.ts";
 
 const manifest = jsonText({
   devDependencies: { "@chernabog/sdk": "0.6.0", "@chernabog/recipes": "0.2.0" },
@@ -13,7 +13,7 @@ const manifest = jsonText({
   },
 });
 
-describe("diffRecipesUseCase", () => {
+describe("diffRecipesHandler", () => {
   const repo = recipeRepo({
     ".chernabog/package.json": manifest,
     ".chernabog/flows/review.ts": "review\nedited\n",
@@ -25,7 +25,7 @@ describe("diffRecipesUseCase", () => {
     "sets each copied file against the version it came from, else the one installed, and lists the flows from none",
     () =>
       Effect.gen(function* () {
-        const { files } = yield* diffRecipesUseCase("/repo", []);
+        const { files } = yield* diffRecipesHandler({ root: "/repo", names: [] });
 
         expect(files.map((file) => [file.file, file.state, file.version, file.recorded])).toEqual([
           [".chernabog/flows/review.ts", "differs", Option.some("@chernabog/recipes@0.1.0"), true],
@@ -38,7 +38,7 @@ describe("diffRecipesUseCase", () => {
 
   effect("with names, only those recipes, saying which files the repo lacks", () =>
     Effect.gen(function* () {
-      const { files } = yield* diffRecipesUseCase("/repo", ["implement"]);
+      const { files } = yield* diffRecipesHandler({ root: "/repo", names: ["implement"] });
 
       expect(files.map((file) => [file.file, file.state])).toEqual([
         [".chernabog/flows/implement.ts", "missing"],
