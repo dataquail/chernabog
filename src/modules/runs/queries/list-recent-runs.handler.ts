@@ -1,10 +1,12 @@
 import * as Effect from "effect/Effect";
 
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
-import { RunList, RunView } from "./run.result.ts";
+import { RunView } from "../domain/run/run-view.value-object.ts";
+import { type ListRecentRunsPayload, RunList } from "./list-recent-runs.query.ts";
 
-// The latest runs, newest first, finished or not.
-export const listRecentRunsUseCase = Effect.fn("listRecentRunsUseCase")(function* (latest: number) {
+export const listRecentRunsHandler = Effect.fn("listRecentRunsHandler")(function* ({
+  latest,
+}: ListRecentRunsPayload) {
   const runs = yield* (yield* RunsRepository).findAll({ latest });
 
   return RunList.make({ runs: runs.map((run) => RunView.make({ ...run })) });

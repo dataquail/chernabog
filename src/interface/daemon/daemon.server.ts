@@ -69,6 +69,7 @@ import {
   RuntimeLayer,
   StateLive,
 } from "../../modules/runs/runs.layer.ts";
+import { RunsQueries, RunsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
 import { RunLeases } from "../../modules/runs/use-cases/check-run-leases.result.ts";
@@ -76,12 +77,8 @@ import { checkRunLeasesUseCase } from "../../modules/runs/use-cases/check-run-le
 import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
-import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { listHoldsUseCase } from "../../modules/runs/use-cases/list-holds.use-case.ts";
-import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
-import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
 import { listUnreleasedMarkersUseCase } from "../../modules/runs/use-cases/list-unreleased-markers.use-case.ts";
 import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
@@ -555,7 +552,7 @@ export const runDaemon = Effect.gen(function* () {
   const engine = yield* Layer.build(
     RuntimeLayer(registry).pipe(
       Layer.provideMerge(
-        Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+        Layer.mergeAll(RunsQueriesLive, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
       ),
     ),
   );
@@ -620,7 +617,9 @@ export const runDaemon = Effect.gen(function* () {
 
       const reloaded = yield* Deferred.make<true>();
 
-      const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
+      const active = RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun)).pipe(
+        Effect.map((found) => found.runs),
+      );
 
       // Each run in flight whose stillValid keeps failing: how often in a
       // row, and why. Status shows them; the runs carry on.
@@ -1577,6 +1576,8 @@ export const runDaemon = Effect.gen(function* () {
       };
 
       const status = Effect.gen(function* () {
+        const runsQueries = yield* RunsQueries;
+
         return {
           pid: process.pid,
           startedAt: DateTime.formatIso(startedAt),
@@ -1598,8 +1599,8 @@ export const runDaemon = Effect.gen(function* () {
           active: yield* active,
           // Enough for the live view's project tabs and persona filter to
           // still have runs to show.
-          recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
-          skips: (yield* listRecentSkipsUseCase(20)).skips,
+          recent: (yield* runsQueries.ListRecentRunsQuery({ latest: RECENT_RUNS })).runs,
+          skips: (yield* runsQueries.ListRecentSkipsQuery({ latest: 20 })).skips,
           // Only a flow the daemon still schedules, and has on, holds anything:
           // an unenrolled repo's or a turned-off flow's last holds aren't current.
           holds: (yield* listHoldsUseCase()).holds.filter((hold) =>
@@ -1791,7 +1792,7 @@ export const runDaemon = Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
 
               return yield* HttpServerResponse.schemaJson(RunReply)(
-                (yield* findRunUseCase(id)).run,
+                (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId: id }))).run,
               );
             }),
           ),

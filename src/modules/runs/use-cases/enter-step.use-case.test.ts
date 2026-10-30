@@ -9,8 +9,8 @@ import { RunRoot } from "../domain/run/run.root.ts";
 import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { enterStepUseCase } from "./enter-step.use-case.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
 import { readRunHistoryUseCase } from "./read-run-history.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -64,7 +64,7 @@ describe("enterStepUseCase", () => {
 
       expect(refused._tag).toBe("RunAlreadyFinished");
       expect(
-        Option.map((yield* findRunUseCase(ended.id)).run, (found) => found.currentStep),
+        Option.map((yield* findRunHandler({ runId: ended.id })).run, (found) => found.currentStep),
       ).toEqual(Option.some(Option.none()));
       expect((yield* readRunHistoryUseCase(ended.id)).steps).toEqual([]);
     }).pipe(Effect.provide(steps([ended]))),

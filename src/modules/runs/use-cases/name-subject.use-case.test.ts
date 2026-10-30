@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { nameSubjectUseCase } from "./name-subject.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -36,9 +36,9 @@ describe("nameSubjectUseCase", () => {
       expect((yield* nameSubjectUseCase(a, "pr-124")).subjects).toEqual(["pr-124"]);
       yield* nameSubjectUseCase(a, "pr-125");
       yield* nameSubjectUseCase(a, "pr-124");
-      expect(Option.map((yield* findRunUseCase(a)).run, (found) => found.subjects)).toEqual(
-        Option.some(["pr-124", "pr-125"]),
-      );
+      expect(
+        Option.map((yield* findRunHandler({ runId: a })).run, (found) => found.subjects),
+      ).toEqual(Option.some(["pr-124", "pr-125"]));
     }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
   );
 

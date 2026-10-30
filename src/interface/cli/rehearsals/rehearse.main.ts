@@ -58,9 +58,9 @@ import {
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { RuntimeLayer, StateAt } from "../../../modules/runs/runs.layer.ts";
+import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
-import { resolveRunIdUseCase } from "../../../modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
@@ -419,7 +419,7 @@ const replayedAnswers = (replay: Option.Option<string>) =>
     onNone: () => Effect.succeed([]),
     onSome: (asked) =>
       Effect.gen(function* () {
-        const { runId } = yield* resolveRunIdUseCase(asked);
+        const { runId } = yield* (yield* RunLogsQueries).ResolveRunIdQuery({ asked });
         const answers = yield* runAnswers(runId);
 
         if (Option.isNone(answers)) {

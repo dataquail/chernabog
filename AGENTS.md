@@ -66,7 +66,7 @@ act as the right one.
   persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
   does and as whom; show runs with `runLabel` and `shortRunId`, and resolve user
-  input with `resolveRunId` (unique prefix).
+  input with `ResolveRunIdQuery` (unique prefix).
 - **Known gaps:** the commit author isn't set per persona (the pull request
   author is right, since the persona's token opens it), and ssh origins push
   with the person's own key, not the persona's token.
@@ -194,7 +194,10 @@ transitive reach), the coverage floors and the baseline.
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
-  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. Shared
+  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. The
+  runs module's stores share the engine's SQL client, so `RunsQueries` is
+  provided where state.db is (the daemon, a foreground run, `flowLayer`),
+  and `RunLogsQueries`, over run logs alone, in `AppLive`. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -283,7 +286,7 @@ transitive reach), the coverage floors and the baseline.
   `writeFileAtomic` (`src/platform/atomic-write.ts`). Use `updateFile` for any
   new state file; a repository adapter may not call `writeFileString`. An
   update isn't reentrant: never call one inside another on the same file.
-  Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
+  Run logs are behind `RunLogsClient`: `ResolveRunIdQuery` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows
   who to ask whether the run finished (the CLI asks the daemon).

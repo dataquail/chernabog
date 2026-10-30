@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { listRecentRunsUseCase } from "./list-recent-runs.use-case.ts";
+import { findRunHandler } from "./find-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -28,20 +28,15 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("listRecentRunsUseCase", () => {
-  effect("lists the latest runs, newest first, finished or not", () =>
+describe("findRunHandler", () => {
+  effect("is the run with the id, and none for an id no run has", () =>
     Effect.gen(function* () {
-      const { runs } = yield* listRecentRunsUseCase(2);
-
-      expect(runs.map((found) => String(found.id))).toEqual(["c", "b"]);
-    }).pipe(
-      Effect.provide(
-        RunsRepositoryFake([
-          run("a"),
-          run("b", { status: "done", startedAt: "2026-10-21T00:00:00.000Z" }),
-          run("c", { startedAt: "2026-10-22T00:00:00.000Z" }),
-        ]),
-      ),
-    ),
+      expect(
+        Option.map((yield* findRunHandler({ runId: RunId.make("a") })).run, (found) =>
+          String(found.id),
+        ),
+      ).toEqual(Option.some("a"));
+      expect((yield* findRunHandler({ runId: RunId.make("nope") })).run).toEqual(Option.none());
+    }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
   );
 });

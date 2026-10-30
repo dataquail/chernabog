@@ -21,9 +21,9 @@ import {
 } from "../infrastructure/clients/workflows.client-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { CancelTarget } from "./cancel-run.result.ts";
 import { cancelRunUseCase, type EndAs } from "./cancel-run.use-case.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -88,7 +88,7 @@ const byId = (asked: string) => CancelTarget.cases.ById.make({ asked });
 const asAlice = { by: "alice", closeSessions: false, endAs: Option.none<EndAs>() };
 
 const statusOf = (id: string) =>
-  findRunUseCase(RunId.make(id)).pipe(
+  findRunHandler({ runId: RunId.make(id) }).pipe(
     Effect.map((found) => Option.map(found.run, (one) => one.status)),
   );
 

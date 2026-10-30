@@ -787,16 +787,18 @@ tree:
                 imports:
                   message: >-
                     The runtime adapts the published SDK's services to the machine and reports a
-                    run's steps and waits back through its module's use-cases, as an inbound
-                    adapter would. It names the SDK, the platform, its module, and the legacy
-                    files that load a repo's config and flows (config.ts, repo-config.ts,
-                    loader.ts), until those move. Nothing of the interface or another module.
+                    run's steps and waits back through its module's use-cases, and asks after a
+                    run through its module's queries, as an inbound adapter would. It names the
+                    SDK, the platform, its module, and the legacy files that load a repo's config
+                    and flows (config.ts, repo-config.ts, loader.ts), until those move. Nothing
+                    of the interface or another module.
                   external: ["@effect/sql-sqlite-bun"]
                   allow:
                     - "node:**"
                     - "~/core/src/**"
                     - "@/platform/**"
                     - "@/modules/{module}/use-cases/**"
+                    - "@/modules/{module}/*.query-handlers.ts"
                     - "@/repo-config.ts"
                     - "test/*.ts"
                 children:
