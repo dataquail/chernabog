@@ -23,12 +23,12 @@ import { setPersonaAccountHandler } from "../src/modules/enrollment/commands/set
 import { setPersonaFlowHandler } from "../src/modules/enrollment/commands/set-persona-flow.handler.ts";
 import { slugFromRemote } from "../src/modules/enrollment/infrastructure/clients/checkouts.client-live.ts";
 import { EnrolledReposRepositoryLive } from "../src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts";
+import { scaffoldRepoHandler } from "../src/modules/recipes/commands/scaffold-repo.handler.ts";
 import {
   BundleClientLive,
   scaffoldFiles,
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
-import { scaffoldRepoUseCase } from "../src/modules/recipes/use-cases/scaffold-repo.use-case.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { VERSION } from "../src/platform/version.ts";
@@ -567,7 +567,7 @@ describe("config layers", () => {
 
 // Scaffolding a repo, and the files it says it wrote, as init says them.
 const scaffold = (repo: string) =>
-  scaffoldRepoUseCase(repo).pipe(
+  scaffoldRepoHandler({ root: repo }).pipe(
     Effect.map(({ changes }) =>
       changes.map(({ change, entries, path }) => {
         switch (change) {

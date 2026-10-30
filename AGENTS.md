@@ -140,10 +140,10 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
   `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
   and what the binary bundles (the scaffold, the pins) through `BundleClient`.
-  `init` dispatches `AddRecipePackageCommand`; `recipes` asks
-  `ListRecipesQuery` and `DiffRecipesQuery`, dispatches `AddRecipesCommand`
-  and `EjectRecipeCommand`, and runs the `import`, `update` and `upgrade`
-  use-cases.
+  `init` dispatches `ScaffoldRepoCommand` and `AddRecipePackageCommand`;
+  `recipes` asks `ListRecipesQuery` and `DiffRecipesQuery`, and dispatches
+  `AddRecipesCommand`, `ImportRecipesCommand`, `EjectRecipeCommand`,
+  `UpdateRecipesCommand` and `UpgradeRepoCommand`.
 - **Copied files record where they came from**, under `chernabog.copied` in
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).
@@ -445,7 +445,7 @@ Core's settings are the engine's; everything else is a flow's
   `ciState`, `queuedIssues` or `oldestQueued`.
 - **config.schema.json** describes each flow's settings from its schema
   (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
-  `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and
+  `ScaffoldRepoCommand`, which `init` and `recipes add`, `update` and
   `upgrade` run again once the flows changed.
 
 ## Rehearsals (#115)
@@ -501,7 +501,7 @@ docs/adr/0004-core-abi.md has the why.
   whose flows import from core what it lacks; `checkInstalled` refuses one
   whose installed SDK needs another core, or whose imported packages don't
   fit its SDK. Both fail with `IncompatibleConfig`; the daemon shows it as
-  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) moves a
+  `incompatible`. `UpgradeRepoCommand` (`chernabog recipes upgrade`) moves a
   repo to the SDK released with the binary (`RELEASED_SDK`) and pins core and
   effect.
 - **Core only grows within a major** (ADR 0004): add to a port, never change
