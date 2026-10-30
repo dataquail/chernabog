@@ -5,11 +5,8 @@ import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client
 import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
 import { FlowImportsRepository } from "../domain/ports/repositories/flow-imports.repository.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
-import { RecipeList } from "./recipe.result.ts";
+import { type ListRecipesPayload, RecipeList } from "./list-recipes.query.ts";
 
-// The recipes of every recipe package the repo at `root` has installed in its
-// .chernabog/, each with whether the repo copied it or imports it: what a
-// person chooses which to copy or import from.
 const stateOf = (copied: boolean, imported: boolean) => {
   if (imported) {
     return "imported" as const;
@@ -22,7 +19,10 @@ const stateOf = (copied: boolean, imported: boolean) => {
   return "available" as const;
 };
 
-export const listRecipesUseCase = Effect.fn("listRecipesUseCase")(function* (root: string) {
+export const listRecipesHandler = Effect.fn("listRecipesHandler")(function* (
+  query: ListRecipesPayload,
+) {
+  const { root } = query;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
 

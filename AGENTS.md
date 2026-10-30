@@ -140,8 +140,10 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
   `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
   and what the binary bundles (the scaffold, the pins) through `BundleClient`.
-  `init` runs `addRecipePackageUseCase`; `recipes` runs `list`, `add`,
-  `import`, `eject`, `diff`, `update` and `upgrade` use-cases.
+  `init` dispatches `AddRecipePackageCommand`; `recipes` asks
+  `ListRecipesQuery` and `DiffRecipesQuery`, dispatches `AddRecipesCommand`
+  and `EjectRecipeCommand`, and runs the `import`, `update` and `upgrade`
+  use-cases.
 - **Copied files record where they came from**, under `chernabog.copied` in
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).

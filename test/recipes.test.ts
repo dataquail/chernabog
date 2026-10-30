@@ -27,8 +27,12 @@ import RecipesPackage from "../packages/recipes/package.json" with { type: "json
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
 import { RecipePackageManifest } from "../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
+import { RecipesCommandsLive } from "../src/modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
-import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
+import {
+  RecipesQueries,
+  RecipesQueriesLive,
+} from "../src/modules/recipes/recipes.query-handlers.ts";
 import { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
@@ -69,7 +73,7 @@ const recipeText = (file: string) =>
   FileSystem.FileSystem.use((fs) => fs.readFileString(`${PACKAGE}/${file}`));
 
 const recipes = (layer: Layer.Layer<Asker>) =>
-  Layer.mergeAll(layer, RecipesLayer).pipe(
+  Layer.mergeAll(layer, RecipesLayer, RecipesQueriesLive, RecipesCommandsLive).pipe(
     Layer.provideMerge(Layer.mergeAll(Exec.layer, HostEnvironment.layer)),
   );
 
@@ -84,7 +88,7 @@ const bake = (repo: string, ...names: ReadonlyArray<string>) =>
   baking(Asker.none, repo, Option.some(names));
 
 const installed = (repo: string) =>
-  listRecipesUseCase(repo).pipe(
+  RecipesQueries.use((queries) => queries.ListRecipesQuery({ root: repo })).pipe(
     Effect.map(({ recipes: listed }) =>
       listed.filter((recipe) => recipe.state === "copied").map((recipe) => recipe.ref),
     ),

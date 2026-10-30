@@ -11,16 +11,12 @@ import {
   dependencyKind,
   sdkVersionOf,
 } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipePackageAdded } from "./recipe.result.ts";
+import { type AddRecipePackagePayload, RecipePackageAdded } from "./add-recipe-package.command.ts";
 
-// Makes sure the repo at `root` has a recipe package installed in its
-// .chernabog/, to copy recipes from: one it declares already is installed
-// as it's declared; otherwise it's added as a dev dependency, at the newest
-// version whose SDK range includes the repo's SDK pin.
-export const addRecipePackageUseCase = Effect.fn("addRecipePackageUseCase")(function* (
-  root: string,
-  name: string,
+export const addRecipePackageHandler = Effect.fn("addRecipePackageHandler")(function* (
+  cmd: AddRecipePackagePayload,
 ) {
+  const { name, root } = cmd;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
 

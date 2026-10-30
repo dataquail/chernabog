@@ -28,6 +28,19 @@
         "use-cases/set-persona-flow.use-case.ts",
         "use-cases/unenroll-repo.use-case.ts"
       ]
+    },
+    "src/modules/recipes": {
+      "entered": "2026-10-30T14:29:25.654Z",
+      "initial": 4,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T14:29:25.654Z",
+      "holdouts": [
+        "use-cases/import-recipes.use-case.ts",
+        "use-cases/scaffold-repo.use-case.ts",
+        "use-cases/update-recipes.use-case.ts",
+        "use-cases/upgrade-repo.use-case.ts"
+      ]
     }
   },
   "concessions": []

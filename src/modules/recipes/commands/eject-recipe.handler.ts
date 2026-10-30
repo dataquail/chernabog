@@ -7,19 +7,14 @@ import { FlowImportsRepository } from "../domain/ports/repositories/flow-imports
 import { FlowNotImported, RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { type CopiedRecord, withCopied } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipeEjected } from "./recipe.result.ts";
+import { type EjectRecipePayload, RecipeEjected } from "./eject-recipe.command.ts";
 
 const MANIFEST = ".chernabog/package.json";
 
-// Turns a flow the repo at `root` imports into one it owns: the flow, as
-// flows/<flow>, and its prompts and steps are copied in from the version of
-// the package installed and recorded as from it, and config.yaml's `from`
-// goes, so the flow runs under the same name and settings. A prompt or step
-// the repo has already, which overrode the package's, is kept.
-export const ejectRecipeUseCase = Effect.fn("ejectRecipeUseCase")(function* (
-  root: string,
-  flow: string,
+export const ejectRecipeHandler = Effect.fn("ejectRecipeHandler")(function* (
+  cmd: EjectRecipePayload,
 ) {
+  const { flow, root } = cmd;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
   const imports = yield* FlowImportsRepository;

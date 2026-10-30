@@ -9,19 +9,14 @@ import { type RecipeRoot } from "../domain/recipe/recipe.root.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { parseRecipeRef } from "../domain/recipe/recipe-package.value-object.ts";
 import { copiedOf, decodeRepoManifest } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipesDiff } from "./recipe.result.ts";
+import { type DiffRecipesPayload, RecipesDiff } from "./diff-recipes.query.ts";
 
 type Entry = (typeof RecipesDiff.Type.files)[number];
 
-// How the repo's copied flows, and the prompts and steps their recipes bring,
-// differ from the version of the recipe each was copied from, as recorded in
-// .chernabog/package.json: the repo's own edits. A file with no record is
-// compared with the installed version. With names, only those recipes';
-// without, each flow from no recipe is listed as such.
-export const diffRecipesUseCase = Effect.fn("diffRecipesUseCase")(function* (
-  root: string,
-  names: ReadonlyArray<string>,
+export const diffRecipesHandler = Effect.fn("diffRecipesHandler")(function* (
+  query: DiffRecipesPayload,
 ) {
+  const { names, root } = query;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
   const differ = yield* TextDiffClient;

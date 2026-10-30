@@ -6,20 +6,12 @@ import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.cl
 import { RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { type CopiedRecord, withCopied } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipesAdded } from "./recipe.result.ts";
+import { type AddRecipesPayload, RecipesAdded } from "./add-recipes.command.ts";
 
 const MANIFEST = ".chernabog/package.json";
 
-// Copies the recipes a person names, from the packages installed in the
-// repo's .chernabog/, into the repo at `root`, never overwriting a file that
-// is there: a flow of that name is the repo's own, and a prompt another
-// recipe brought is shared. Each file written is recorded in package.json with
-// the package version it came from. A name that isn't a recipe is refused
-// before anything is written.
-export const addRecipesUseCase = Effect.fn("addRecipesUseCase")(function* (
-  root: string,
-  names: ReadonlyArray<string>,
-) {
+export const addRecipesHandler = Effect.fn("addRecipesHandler")(function* (cmd: AddRecipesPayload) {
+  const { names, root } = cmd;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
 

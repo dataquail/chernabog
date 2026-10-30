@@ -50,9 +50,11 @@ describe("addRecipesHandler", () => {
     () =>
       Effect.gen(function* () {
         const before = { ...fresh.stored };
+
         const unknown = yield* Effect.flip(
           addRecipesHandler({ root: "/repo", names: ["implement", "ship"] }),
         );
+
         const missing = yield* Effect.flip(
           addRecipesHandler({ root: "/repo", names: ["@globex/recipes/ship"] }),
         );

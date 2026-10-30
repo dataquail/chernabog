@@ -2,8 +2,8 @@
   "version": 1,
   "campaign": "cqrs",
   "sector": "src/modules/recipes",
-  "reached": "queries",
-  "since": "2026-10-30T05:15:33.499Z",
+  "reached": "commands",
+  "since": "2026-10-30T14:29:25.654Z",
   "attested": [],
   "notes": []
 }
