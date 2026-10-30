@@ -184,13 +184,13 @@ transitive reach), the coverage floors and the baseline.
 
 - **The layout.** `src/modules/<module>/` holds `domain/<aggregate>/`
   (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
-  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`),
+  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`, and `.events.ts`, the
+  domain events its commands dispatch),
   `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
   values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
   or `.query.ts` declaring it and its result schema, and a
-  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`), `use-cases/`
-  (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`, its result schema in
-  `.result.ts`, until each moves), `infrastructure/{repositories,clients}/`
+  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
+  `infrastructure/{repositories,clients}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
@@ -203,11 +203,12 @@ transitive reach), the coverage floors and the baseline.
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
-  module's domain. A use-case adds its ports; it never names infrastructure or
+  module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
-  result an adapter renders. Only repository adapters (and the legacy tier)
+  result an adapter renders: a value object or event in the domain, which the
+  adapters and the daemon's protocol name directly. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
-- **Obligations.** A `.root-ops.ts`, a `.use-case.ts` and a `.handler.ts` each owe a sibling
+- **Obligations.** A `.root-ops.ts` and a `.handler.ts` each owe a sibling
   `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
   `-live.test.ts`. The lint names what is missing.
 - **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
@@ -314,8 +315,9 @@ transitive reach), the coverage floors and the baseline.
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
-- **A use-case doesn't talk.** The `no-talking` members rule reports a call to
-  `log`, `warn`, `exit`, `pick` or `choose` in `use-cases/` and `domain/`.
+- **A handler doesn't talk.** The `no-talking` members rule reports a call to
+  `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
+  `domain/`.
 - **Modules don't reach into each other.** An adapter composes them: the
   `trust` command lists its targets with enrollment's
   `ListEnrolledReposQuery`, then trusts each.

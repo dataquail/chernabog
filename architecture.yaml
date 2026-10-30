@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://dataquail.github.io/goodbones/schema/architecture.schema.json
 #
 # The architecture policy for chernabog, as one manifest. Its shape follows
-# dataquail/functional-domain-driven-hexagon's: use-cases over a domain of
-# aggregates, driven by inbound adapters, with persistence and external systems
+# dataquail/functional-domain-driven-hexagon's: commands and queries over a
+# domain of aggregates, driven by inbound adapters, with persistence and external systems
 # behind ports (docs/adr/0001-ddd-use-cases-and-ports.md). AGENTS.md says how
 # to run it and how to change it.
 #
@@ -134,13 +134,12 @@ graph:
         - "@/modules/*/infrastructure/**"
         - "@/interface/**"
         - "@/platform/**"
-    - name: use-cases-reach-no-adapter
+    - name: handlers-reach-no-adapter
       message: >-
-        A use-case transitively reaches an adapter. A use-case, command or query depends on its
+        A command or query transitively reaches an adapter. A command or query depends on its
         module's domain and ports; the adapters are wired against them at a composition root, never
         beneath them.
       from:
-        - "@/modules/*/use-cases/**"
         - "@/modules/*/commands/**"
         - "@/modules/*/queries/**"
       fromNot: "**/*.test.ts"
@@ -179,15 +178,6 @@ defs:
       see what a file offers. Re-export by name.
     kinds: [namespace]
 
-  # What a use-case file exports: the one use-case, named for it.
-  one-use-case-export:
-    message: >-
-      A use-case file exports exactly one `<verbNoun>UseCase`. A second one is a second use-case
-      that wants its own file; none means this isn't a use-case.
-    declares: [function, variable]
-    match: "*UseCase"
-    count: { min: 1, max: 1 }
-
   # What a handler file exports: the one handler, named for its message.
   one-handler-export:
     message: >-
@@ -206,17 +196,16 @@ defs:
       implementation belongs in infrastructure/ behind the port.
     declares: [function, variable]
 
-  # A port is consumed by its module's domain, use-cases, commands and queries,
+  # A port is consumed by its module's domain, commands and queries,
   # by the adapter that implements it and by the layer and maps that wire them.
   port-consumers:
     message: >-
-      A port is consumed by its module's use-cases, commands and queries, the infrastructure
-      adapter that implements it, and the module's layer and handler maps. An adapter in
-      interface/ or another module reaching for one is bypassing the module's boundary: dispatch
-      a command or query (or call a use-case not yet moved) instead.
+      A port is consumed by its module's commands and queries, the infrastructure adapter that
+      implements it, and the module's layer and handler maps. An adapter in interface/ or another
+      module reaching for one is bypassing the module's boundary: dispatch a command or query
+      instead.
     allow:
       - "@/modules/*/domain/**"
-      - "@/modules/*/use-cases/**"
       - "@/modules/*/commands/**"
       - "@/modules/*/queries/**"
       - "@/modules/*/infrastructure/**"
@@ -235,13 +224,13 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
 
-  # A use-case or handler test runs its subject over the module's fakes.
+  # A handler test runs its subject over the module's fakes.
   module-test-file:
     surface: [{ use: test-exports-nothing }]
     imports:
       reset: true
       message: >-
-        A use-case or handler test names its module, the kernel and the shared test harness
+        A handler test names its module, the kernel and the shared test harness
         (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
@@ -257,18 +246,18 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
 
-  # A use-case answers with its result; saying it, asking a person or ending
+  # A handler answers with its result; saying it, asking a person or ending
   # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
   # decisions 4 and 5).
   no-talking:
     message: >-
-      `{name}` talks to a person or ends the process. A use-case and the domain return a result
+      `{name}` talks to a person or ends the process. A handler and the domain return a result
       and fail with tagged errors; the adapter that called them prints, prompts and sets the exit
       code.
     subject: calls
     match: [log, warn, exit, pick, choose]
     probe:
-      source: 'export const zzUseCase = () => Console.log("done");'
+      source: 'export const zzHandler = () => Console.log("done");'
       name: log
 
   no-in-place-writes:
@@ -282,16 +271,16 @@ defs:
       source: 'export const zz = (fs: Fs) => fs.writeFileString("state.json", "{}");'
       name: writeFileString
 
-  # What a composition root of the CLI may name: the modules' layers and
-  # use-cases, the interface, the platform and the kernel, and, file by file,
-  # the runtime and legacy it still composes directly.
+  # What a composition root of the CLI may name: the modules' layers, buses and
+  # value objects, the interface, the platform and the kernel, and, file by
+  # file, the runtime and legacy it still composes directly.
   cli-root:
     imports:
       reset: true
       message: >-
-        A CLI composition root names the modules' layers and use-cases, the interface, the
-        platform and the kernel, and the runtime and legacy files it still composes directly,
-        each named here until it has a use-case.
+        A CLI composition root names the modules' layers, their buses and the value objects and
+        events those answer with, the interface, the platform and the kernel, and the runtime
+        and legacy files it still composes directly, each named here until a module owns it.
       # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
       external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
       allow:
@@ -299,7 +288,7 @@ defs:
         - "@/platform/**"
         - "@/interface/**"
         - "@/modules/*/*.layer.ts"
-        - "@/modules/*/use-cases/**"
+        - "@/modules/*/domain/*/*.value-object.ts"
         - "@/modules/*/*.command-handlers.ts"
         - "@/modules/*/*.query-handlers.ts"
         - "@/modules/runs/infrastructure/runtime/**"
@@ -325,8 +314,8 @@ defs:
 tree:
   "@/":
     message: >-
-      src/ holds the daemon and CLI. New code goes under modules/ (a module's domain, use-cases
-      and infrastructure), kernel/ (domain primitives every module shares) or interface/ (the
+      src/ holds the daemon and CLI. New code goes under modules/ (a module's domain, commands,
+      queries and infrastructure), kernel/ (domain primitives every module shares) or interface/ (the
       inbound adapters). The flat files beside them are the legacy tier the migration empties.
     imports:
       unrestricted: true
@@ -387,20 +376,21 @@ tree:
           "cli/":
             message: >-
               cli/ holds the shared arguments (*.arguments.ts) and output (*.output.ts) and, per
-              module, one <command>.command.ts per CLI command: its flags, the use-case it calls,
-              and how its result reads, beside the output its commands share.
+              module, one <command>.command.ts per CLI command: its flags, the command or query it
+              dispatches, and how its result reads, beside the output its commands share.
             imports:
               reset: true
               message: >-
-                A CLI command parses its arguments, calls a use-case and prints what the
-                use-case's result says. It names effect (its CLI and console), the kernel, the
-                modules' use-cases and their results, the shared arguments and output, and the
+                A CLI command parses its arguments, dispatches a command or query and prints what
+                its result says. It names effect (its CLI and console), the kernel, the modules'
+                messages and buses, the value objects and events they answer with, the shared
+                arguments and output, and the
                 daemon's client and protocol, to ask the daemon what it alone knows. Never a
                 repository, a domain op or an adapter: the composition root provides those.
               external: [effect]
               allow:
                 - "@/kernel/**"
-                - "@/modules/*/use-cases/**"
+                - "@/modules/*/domain/*/*.value-object.ts"
                 - "@/modules/*/commands/*.command.ts"
                 - "@/modules/*/queries/*.query.ts"
                 - "@/modules/*/*.command-handlers.ts"
@@ -438,10 +428,10 @@ tree:
             imports:
               reset: true
               message: >-
-                The TUI asks the daemon over its client, calls the modules' use-cases and
-                dispatches their queries and commands, and draws with @opentui. It names the
-                kernel, the platform and the legacy files it still reads, each named here until
-                it has a use-case.
+                The TUI asks the daemon over its client, dispatches the modules' queries and
+                commands, and draws with @opentui. It names the kernel, the platform, the value
+                objects and events the modules answer with, and the legacy files it still reads,
+                each named here until a module owns it.
               external: [effect, "@opentui/core"]
               allow:
                 - "@/kernel/**"
@@ -449,11 +439,9 @@ tree:
                 - "@/interface/tui/**"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
-                - "@/modules/*/use-cases/**"
+                - "@/modules/*/domain/*/*.value-object.ts"
                 - "@/modules/*/*.query-handlers.ts"
                 - "@/modules/*/*.command-handlers.ts"
-                # A schedule is checked as it's typed, before the use-case refuses it.
-                - "@/modules/runs/domain/schedule/schedule.value-object.ts"
                 - "@/modules/runs/infrastructure/runtime/agents.ts"
                 - "@/modules/runs/infrastructure/runtime/usage-gate.ts"
                 - "@/repo-config.ts"
@@ -468,11 +456,12 @@ tree:
               reset: true
               message: >-
                 The daemon's protocol is made of the modules' results, and its client reaches the
-                socket in the chernabog home. They name effect, the kernel, the modules' use-case
-                results, and config.ts for the home's paths.
+                socket in the chernabog home. They name effect, the value objects and events the
+                modules answer with, and home.ts for the home's paths.
               external: [effect]
               allow:
-                - "@/modules/*/use-cases/*.result.ts"
+                - "@/modules/*/domain/*/*.value-object.ts"
+                - "@/modules/*/domain/*/*.events.ts"
                 - "@/interface/daemon/**"
                 - "@/platform/home.ts"
             children:
@@ -484,20 +473,20 @@ tree:
                 imports:
                   reset: true
                   message: >-
-                    The daemon composes the modules' use-cases on a schedule and over its socket.
-                    It names effect and Bun's HTTP server, the kernel, the platform, its own
-                    protocol, the modules' use-cases and layers, and the legacy runtime it still
+                    The daemon dispatches the modules' commands and queries on a schedule and over
+                    its socket. It names effect and Bun's HTTP server, the kernel, the platform,
+                    its own protocol, the modules' buses, layers and value objects, and the legacy
+                    runtime it still
                     drives, each named here until it moves into the runs module.
                   external: [effect, "@effect/platform-bun"]
                   allow:
                     - "@/kernel/**"
                     - "@/platform/**"
                     - "@/interface/daemon/**"
-                    - "@/modules/*/use-cases/**"
+                    - "@/modules/*/domain/*/*.value-object.ts"
                     - "@/modules/*/*.command-handlers.ts"
                     - "@/modules/*/*.query-handlers.ts"
                     - "@/modules/*/*.layer.ts"
-                    - "@/modules/runs/domain/schedule/*.value-object.ts"
                     - "~/core/src/**"
                     - "@/modules/runs/infrastructure/runtime/engine.ts"
                     - "@/modules/runs/infrastructure/runtime/launchers.ts"
@@ -534,8 +523,8 @@ tree:
       "modules/{module}/":
         message: >-
           A module admits domain/ (its aggregates, their ops and errors, and its ports),
-          commands/ and queries/ (what the adapters dispatch), use-cases/ (what they still invoke,
-          until each moves), infrastructure/ (the adapters behind its ports), one
+          commands/ and queries/ (what the adapters dispatch), infrastructure/ (the adapters
+          behind its ports), one
           <module>.layer.ts that builds the module's live Layer, and <module>.command-handlers.ts
           and <module>.query-handlers.ts, its slice of the buses.
         name: kebab-case
@@ -567,7 +556,7 @@ tree:
           "domain/":
             message: >-
               domain/ is a container: one folder per aggregate (named for it), and ports/ for the
-              repositories and clients the use-cases depend on. No files live directly in
+              repositories and clients the handlers depend on. No files live directly in
               domain/.
             members: [{ use: no-talking }]
             imports:
@@ -599,7 +588,7 @@ tree:
                               Repository port method "{name}" is not in the persistence
                               vocabulary: findAll, findOne, save and remove. Read the aggregates
                               and let an op answer the question, or put the verb on the
-                              aggregate and have the use-case save the result.
+                              aggregate and have the handler save the result.
                             subject: members
                             declares: [type, interface]
                             in: "*Repository*"
@@ -637,7 +626,7 @@ tree:
                 imports:
                   message: >-
                     An aggregate sees itself, the kernel and effect. It does not reach another
-                    aggregate or the ports: composing aggregates is a use-case's job.
+                    aggregate or the ports: composing aggregates is a handler's job.
                   allow: ["@/modules/{module}/domain/{aggregate}/**"]
                 children:
                   # The folder is the aggregate, so its root carries the folder's name.
@@ -652,12 +641,11 @@ tree:
                     importedBy:
                       message: >-
                         *.root-ops.ts is the aggregate's mutation surface. Only its module's
-                        domain, its use-cases, commands and queries (which ask its predicates),
+                        domain, its commands and queries (which ask its predicates),
                         its repository fakes and tests may call it; an adapter reaching for an op
                         is bypassing the command that should own the change.
                       allow:
                         - "@/modules/*/domain/**"
-                        - "@/modules/*/use-cases/**"
                         - "@/modules/*/commands/**"
                         - "@/modules/*/queries/**"
                         - "**/*.repository-fake.ts"
@@ -667,32 +655,6 @@ tree:
                   "*.errors.ts": {}
                   "*.events.ts": {}
                   "*.test.ts": { use: unit-test-file }
-
-          "use-cases/":
-            message: >-
-              use-cases/ holds one <verb-noun>.use-case.ts per thing an adapter can ask the module
-              to do, the <verb-noun>.result.ts schema it answers with when that isn't inline, and
-              their tests. A shared helper here is an aggregate op or a port that hasn't been
-              written yet.
-            members: [{ use: no-talking }]
-            imports:
-              reset: true
-              message: >-
-                A use-case names effect, the kernel, its own module's domain (aggregates and
-                ports) and its sibling results. Never another use-case: what two use-cases do
-                together, the composition root that calls them composes (ADR 3). Never
-                infrastructure (adapters are provided at a composition root), never
-                interface/ (it doesn't know who called it), never another module's internals.
-              external: [effect]
-              allow:
-                - "@/modules/{module}/domain/**"
-            children:
-              "*.use-case.ts":
-                message: >-
-                  A use-case owes a sibling *.use-case.test.ts, run over its ports' fakes.
-                requires: ["{base}.test.ts"]
-                surface: [{ use: one-use-case-export }]
-              "*.result.ts": {}
 
           "commands/":
             message: >-
@@ -705,8 +667,8 @@ tree:
               reset: true
               message: >-
                 A command names effect, the CQRS library, the kernel, its own
-                module's domain (aggregates and ports) and its sibling commands. Never a query or
-                use-case (what two do together, the adapter that dispatches them composes),
+                module's domain (aggregates and ports) and its sibling commands. Never a query
+                (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
                 interface/, never another module's internals.
               external: [effect, "@effect-server-utils/cqrs"]
@@ -733,7 +695,7 @@ tree:
               reset: true
               message: >-
                 A query names effect, the CQRS library, the kernel, its own module's domain (to
-                read through its ports) and its sibling queries. Never a command or use-case,
+                read through its ports) and its sibling queries. Never a command,
                 never infrastructure, never interface/, never another module's internals.
               external: [effect, "@effect-server-utils/cqrs"]
               allow:

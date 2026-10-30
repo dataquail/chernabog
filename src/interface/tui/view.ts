@@ -7,9 +7,9 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
-import { FLOW_TURNED_OFF } from "../../modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { ActiveRun } from "../../modules/runs/use-cases/run.result.ts";
-import { type RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
+import { FLOW_TURNED_OFF } from "../../modules/enrollment/domain/enrolled-repo/team-flows.value-object.ts";
+import { ActiveRun } from "../../modules/runs/domain/run/run-view.value-object.ts";
+import { type RunHistory } from "../../modules/runs/domain/run-step/run-history.value-object.ts";
 import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
 
 export type Style =

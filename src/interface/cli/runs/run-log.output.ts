@@ -9,8 +9,8 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { type RunId } from "../../../kernel/run-id.id.ts";
+import { type RunView } from "../../../modules/runs/domain/run/run-view.value-object.ts";
 import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
-import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { daemonRunRow } from "../../daemon/daemon.client.ts";
 
 // How often a followed log is read again.

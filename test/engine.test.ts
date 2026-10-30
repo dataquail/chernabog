@@ -44,6 +44,7 @@ import { attachExecutionHandler } from "../src/modules/runs/commands/attach-exec
 import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
 import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
+import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
 import {
   flowHandle,
   flowLayer,
@@ -52,7 +53,6 @@ import {
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";

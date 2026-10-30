@@ -13,17 +13,20 @@ import { initialModel, readUsage } from "../src/interface/tui/app.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { HoldView } from "../src/modules/runs/domain/holds/hold-view.value-object.ts";
+import { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
+import {
+  RunHistory,
+  RunStep,
+} from "../src/modules/runs/domain/run-step/run-history.value-object.ts";
+import { RunWait } from "../src/modules/runs/domain/run-wait/run-wait-view.value-object.ts";
+import { SkipView } from "../src/modules/runs/domain/skip/skip-view.value-object.ts";
 import { attachCommand } from "../src/modules/runs/infrastructure/runtime/agents.ts";
 import {
   LaunchRecord,
   sessionFiles,
 } from "../src/modules/runs/infrastructure/runtime/agents/session-files.ts";
 import { rememberSession } from "../src/modules/runs/infrastructure/runtime/agents/sessions.ts";
-import { HoldView } from "../src/modules/runs/use-cases/hold.result.ts";
-import { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
-import { RunHistory, RunStep } from "../src/modules/runs/use-cases/run-history.result.ts";
-import { RunWait } from "../src/modules/runs/use-cases/run-wait.result.ts";
-import { SkipView } from "../src/modules/runs/use-cases/skip.result.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { Home } from "../src/platform/home.ts";
 import { effectAtHome, effectAtHomeWith } from "./effect-test.ts";

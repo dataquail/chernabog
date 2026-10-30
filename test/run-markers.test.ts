@@ -29,6 +29,7 @@ import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
 import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
+import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
 import {
   type FlowHandle,
   flowHandle,
@@ -38,7 +39,6 @@ import {
 import { listRunMarkersHandler } from "../src/modules/runs/queries/list-run-markers.handler.ts";
 import { listUnreleasedMarkersHandler } from "../src/modules/runs/queries/list-unreleased-markers.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
