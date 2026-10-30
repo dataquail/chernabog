@@ -13,8 +13,8 @@ import { runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
 import { FLOW_TURNED_OFF } from "../../../modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { listEnrolledReposUseCase } from "../../../modules/enrollment/use-cases/list-enrolled-repos.use-case.ts";
 import { type RunMarkerView } from "../../../modules/runs/use-cases/run-marker.result.ts";
-import { checkTrustUseCase } from "../../../modules/trust/use-cases/check-trust.use-case.ts";
-import { type TrustCheck } from "../../../modules/trust/use-cases/trust-check.result.ts";
+import { type TrustCheck } from "../../../modules/trust/queries/check-trust.query.ts";
+import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
 import { daemonStatus } from "../../daemon/daemon.client.ts";
 import { DaemonStatus } from "../../daemon/daemon.protocol.ts";
 import { printJson, printLines } from "../cli.output.ts";
@@ -254,9 +254,12 @@ const offline = (unavailable: string, json: boolean) =>
     }
 
     const { repos } = yield* listEnrolledReposUseCase(Option.none());
+    const trust = yield* TrustQueries;
 
     const checked = yield* Effect.forEach(repos, (repo) =>
-      checkTrustUseCase(repo).pipe(Effect.map((check) => ({ name: repo.name, check }))),
+      trust
+        .CheckTrustQuery({ repo: repo.repo, path: repo.path })
+        .pipe(Effect.map((check) => ({ name: repo.name, check }))),
     );
 
     if (json) {

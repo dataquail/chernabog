@@ -95,8 +95,8 @@ import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-mark
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
-import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
-import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
+import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
@@ -218,7 +218,10 @@ export const loadRepoState = (
     }
 
     const { configDir, tree } = snapshot.success;
-    const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(enrolled.repo))).tree;
+
+    const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+      repo: RepoSlug.make(enrolled.repo),
+    })).tree;
 
     if (!Option.contains(trusted, tree)) {
       const message = Option.match(trusted, {
@@ -1325,7 +1328,10 @@ export const runDaemon = Effect.gen(function* () {
       // Restarts the daemon on a repo's trusted tree, only the first time it does.
       const reloadOn = (repo: RepoState, tree: string) =>
         Effect.gen(function* () {
-          const claim = yield* claimReloadUseCase(RepoSlug.make(repo.enrolled.repo), tree);
+          const claim = yield* (yield* TrustCommands).ClaimReloadCommand({
+            repo: RepoSlug.make(repo.enrolled.repo),
+            tree,
+          });
 
           if (claim.first) {
             yield* Ref.set(reloadPending, true);
@@ -1345,7 +1351,9 @@ export const runDaemon = Effect.gen(function* () {
           repo.latestTree = Option.some(tree.success);
 
           const trusted = Option.contains(
-            (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree,
+            (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+              repo: RepoSlug.make(repo.enrolled.repo),
+            })).tree,
             tree.success,
           );
 
@@ -1365,7 +1373,9 @@ export const runDaemon = Effect.gen(function* () {
             continue;
           }
 
-          const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
+          const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+            repo: RepoSlug.make(repo.enrolled.repo),
+          })).tree;
 
           if (sameTree(trusted, repo.latestTree)) {
             yield* reloadOn(repo, repo.latestTree.value);

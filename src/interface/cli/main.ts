@@ -35,7 +35,8 @@ import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructur
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
 import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
-import { TrustLayer } from "../../modules/trust/trust.layer.ts";
+import { TrustCommandsLive } from "../../modules/trust/trust.command-handlers.ts";
+import { TrustQueriesLive } from "../../modules/trust/trust.query-handlers.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -461,7 +462,8 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 // One GitHubTokens for the process, so each persona's token is looked up once.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
-  TrustLayer,
+  TrustCommandsLive,
+  TrustQueriesLive,
   RunLogsLayer,
   MachineLayer,
   RecipesLayer,
