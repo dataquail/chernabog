@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { applyEnrollmentUseCase } from "./apply-enrollment.use-case.ts";
+import { applyEnrollmentHandler } from "./apply-enrollment.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -56,15 +56,15 @@ const unanswered = {
   asked: [],
 };
 
-describe("applyEnrollmentUseCase", () => {
+describe("applyEnrollmentHandler", () => {
   effect("enrolls a new checkout with the defaults, on the repo's entry, in one write", () =>
     Effect.gen(function* () {
-      const enrolled = yield* applyEnrollmentUseCase(
-        "/src/demo",
-        Option.none(),
-        offered([]),
-        unanswered,
-      );
+      const enrolled = yield* applyEnrollmentHandler({
+        path: "/src/demo",
+        name: Option.none(),
+        offered: offered([]),
+        answers: unanswered,
+      });
 
       expect([enrolled.added, enrolled.name, enrolled.chosen]).toEqual([
         true,
@@ -79,11 +79,16 @@ describe("applyEnrollmentUseCase", () => {
 
   effect("each of several personas gets its own entry, from what was asked of each", () =>
     Effect.gen(function* () {
-      yield* applyEnrollmentUseCase("/src/demo", Option.none(), offered(["alice", "bob"]), {
-        ...unanswered,
-        personas: Option.some(["alice", "bob"]),
-        flows: Option.some({ defaults: true }),
-        asked: [{ persona: Option.some("bob"), flows: Option.some(["fix"]), accounts: [] }],
+      yield* applyEnrollmentHandler({
+        path: "/src/demo",
+        name: Option.none(),
+        offered: offered(["alice", "bob"]),
+        answers: {
+          ...unanswered,
+          personas: Option.some(["alice", "bob"]),
+          flows: Option.some({ defaults: true }),
+          asked: [{ persona: Option.some("bob"), flows: Option.some(["fix"]), accounts: [] }],
+        },
       });
 
       expect((yield* stored)[0].personas).toEqual({
@@ -95,9 +100,11 @@ describe("applyEnrollmentUseCase", () => {
 
   effect("re-enrolling keeps the entry's settings and its listed flows' settings", () =>
     Effect.gen(function* () {
-      const enrolled = yield* applyEnrollmentUseCase("/src/demo", Option.none(), offered([]), {
-        ...unanswered,
-        flows: Option.some({ flows: ["implement", "fix"] }),
+      const enrolled = yield* applyEnrollmentHandler({
+        path: "/src/demo",
+        name: Option.none(),
+        offered: offered([]),
+        answers: { ...unanswered, flows: Option.some({ flows: ["implement", "fix"] }) },
       });
 
       expect(enrolled.added).toBe(false);
@@ -120,7 +127,12 @@ describe("applyEnrollmentUseCase", () => {
   effect("several personas and none chosen, nor any before, is refused", () =>
     Effect.gen(function* () {
       const refused = yield* Effect.flip(
-        applyEnrollmentUseCase("/src/demo", Option.none(), offered(["alice", "bob"]), unanswered),
+        applyEnrollmentHandler({
+          path: "/src/demo",
+          name: Option.none(),
+          offered: offered(["alice", "bob"]),
+          answers: unanswered,
+        }),
       );
 
       expect(refused.message).toBe(

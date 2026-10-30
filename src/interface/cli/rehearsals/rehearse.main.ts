@@ -30,8 +30,7 @@ import * as Record from "effect/Record";
 import { asSuffix, type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import { type Ending } from "../../../kernel/scenario.value-object.ts";
-import { pauseRepoUseCase } from "../../../modules/enrollment/use-cases/pause-repo.use-case.ts";
-import { resumeRepoUseCase } from "../../../modules/enrollment/use-cases/resume-repo.use-case.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { checkRehearsalUseCase } from "../../../modules/rehearsals/use-cases/check-rehearsal.use-case.ts";
 import { chooseSeededWorkUseCase } from "../../../modules/rehearsals/use-cases/choose-seeded-work.use-case.ts";
 import { cleanUpScenarioUseCase } from "../../../modules/rehearsals/use-cases/clean-up-scenario.use-case.ts";
@@ -618,7 +617,7 @@ const pausedMeanwhile = <A, E, R>(
 
       return Effect.acquireUseRelease(
         Effect.gen(function* () {
-          const paused = yield* pauseRepoUseCase(name);
+          const paused = yield* (yield* EnrollmentCommands).PauseRepoCommand({ name });
           yield* Console.log(
             `${entry.repo} is enrolled here as ${name}: paused it on this machine for the rehearsal; another machine's daemon may still pick up what is seeded`,
           );
@@ -626,7 +625,13 @@ const pausedMeanwhile = <A, E, R>(
           return paused.changed;
         }),
         () => effect,
-        (changed) => Effect.ignore(Effect.when(resumeRepoUseCase(name), Effect.succeed(changed))),
+        (changed) =>
+          Effect.ignore(
+            Effect.when(
+              EnrollmentCommands.use((enrollment) => enrollment.ResumeRepoCommand({ name })),
+              Effect.succeed(changed),
+            ),
+          ),
       );
     },
   });

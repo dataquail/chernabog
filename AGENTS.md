@@ -91,7 +91,7 @@ no longer read.
   never runtime gates.
 - **Missing checkout:** the daemon shows the repo as `missing` and keeps its
   settings; `init` offers to re-point an entry whose path is gone
-  (`ListMovedReposQuery`, `repointRepoUseCase`); `unenroll` removes one
+  (`ListMovedReposQuery`, `RepointRepoCommand`); `unenroll` removes one
   (`unenrollRepoUseCase`).
 - **Migration** (`src/migrate.ts`) runs before any command reads machine
   config: persona lists become maps, and an entry that lists no flows gets the
@@ -105,7 +105,7 @@ no longer read.
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
-persona its flows and then its accounts), then `applyEnrollmentUseCase`, which
+persona its flows and then its accounts), then `ApplyEnrollmentCommand`, which
 resolves what wasn't answered and writes the entry once. The machine's
 personas and accounts come in from the machine module's
 `readMachineSetupUseCase`.

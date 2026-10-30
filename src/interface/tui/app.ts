@@ -31,8 +31,7 @@ import * as Schedule from "effect/Schedule";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
-import { pauseRepoUseCase } from "../../modules/enrollment/use-cases/pause-repo.use-case.ts";
-import { resumeRepoUseCase } from "../../modules/enrollment/use-cases/resume-repo.use-case.ts";
+import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { setFlowScheduleUseCase } from "../../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
 import { setPersonaAccountUseCase } from "../../modules/enrollment/use-cases/set-persona-account.use-case.ts";
 import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
@@ -531,10 +530,11 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "pause": {
-          let toggle = resumeRepoUseCase(action.repo);
+          const enrollment = yield* EnrollmentCommands;
+          let toggle = enrollment.ResumeRepoCommand({ name: action.repo });
 
           if (action.paused) {
-            toggle = pauseRepoUseCase(action.repo);
+            toggle = enrollment.PauseRepoCommand({ name: action.repo });
           }
 
           const paused = yield* Effect.result(toggle);
