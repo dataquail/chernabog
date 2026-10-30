@@ -31,11 +31,7 @@ import * as Schedule from "effect/Schedule";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
-import { pauseRepoUseCase } from "../../modules/enrollment/use-cases/pause-repo.use-case.ts";
-import { resumeRepoUseCase } from "../../modules/enrollment/use-cases/resume-repo.use-case.ts";
-import { setFlowScheduleUseCase } from "../../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
-import { setPersonaAccountUseCase } from "../../modules/enrollment/use-cases/set-persona-account.use-case.ts";
-import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
+import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
@@ -213,7 +209,9 @@ const tickMessage = (
 // Records the choice for the persona in machine config; the daemon restarts on it once idle.
 const setFlowEnabled = (repo: string, flow: string, persona: Persona, enabled: boolean) =>
   Effect.gen(function* () {
-    yield* setPersonaFlowUseCase(repo, persona, flow, enabled);
+    yield* EnrollmentCommands.use((enrollment) =>
+      enrollment.SetPersonaFlowCommand({ name: repo, persona, flow, enabled }),
+    );
     yield* daemonReload.pipe(Effect.ignore);
   });
 
@@ -491,7 +489,14 @@ export const runTui = Effect.gen(function* () {
         case "set-schedule": {
           const written = yield* Effect.result(
             Effect.andThen(
-              setFlowScheduleUseCase(action.repo, action.persona, action.flow, action.schedule),
+              EnrollmentCommands.use((enrollment) =>
+                enrollment.SetFlowScheduleCommand({
+                  name: action.repo,
+                  persona: action.persona,
+                  flow: action.flow,
+                  schedule: action.schedule,
+                }),
+              ),
               daemonReload.pipe(Effect.ignore),
             ),
           );
@@ -511,12 +516,14 @@ export const runTui = Effect.gen(function* () {
               Effect.flatMap(
                 Effect.flatMap(MachineQueries, (queries) => queries.ReadMachineSetupQuery()),
                 (offered) =>
-                  setPersonaAccountUseCase(
-                    action.repo,
-                    action.persona,
-                    action.role,
-                    action.account,
-                    offered,
+                  EnrollmentCommands.use((enrollment) =>
+                    enrollment.SetPersonaAccountCommand({
+                      name: action.repo,
+                      persona: action.persona,
+                      role: action.role,
+                      account: action.account,
+                      offered,
+                    }),
                   ),
               ),
               daemonReload.pipe(Effect.ignore),
@@ -533,10 +540,11 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "pause": {
-          let toggle = resumeRepoUseCase(action.repo);
+          const enrollment = yield* EnrollmentCommands;
+          let toggle = enrollment.ResumeRepoCommand({ name: action.repo });
 
           if (action.paused) {
-            toggle = pauseRepoUseCase(action.repo);
+            toggle = enrollment.PauseRepoCommand({ name: action.repo });
           }
 
           const paused = yield* Effect.result(toggle);

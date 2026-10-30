@@ -5,12 +5,12 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { repointRepoUseCase } from "../../../modules/enrollment/use-cases/repoint-repo.use-case.ts";
-import { addRecipePackageUseCase } from "../../../modules/recipes/use-cases/add-recipe-package.use-case.ts";
+import { type RecipePackageAdded } from "../../../modules/recipes/commands/add-recipe-package.command.ts";
+import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
 import {
   OFFICIAL_PACKAGE,
-  type RecipePackageAdded,
   type Scaffolded,
 } from "../../../modules/recipes/use-cases/recipe.result.ts";
 import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
@@ -73,7 +73,7 @@ const offerRepoint = (root: string) =>
         continue;
       }
 
-      yield* repointRepoUseCase(entry.path, root);
+      yield* (yield* EnrollmentCommands).RepointRepoCommand({ name: entry.path, root });
       yield* Console.log(`pointed ${entry.name} at ${root}`);
       yield* daemonReload.pipe(Effect.ignore);
     }
@@ -90,7 +90,11 @@ export const initCommand = Command.make(
 
       yield* printLines(describeScaffold(yield* scaffoldRepoUseCase(root)));
       // The recipes init offers.
-      yield* printLines(describePackage(yield* addRecipePackageUseCase(root, OFFICIAL_PACKAGE)));
+      yield* printLines(
+        describePackage(
+          yield* (yield* RecipesCommands).AddRecipePackageCommand({ root, name: OFFICIAL_PACKAGE }),
+        ),
+      );
       yield* printLines(yield* bakeRecipes(root, recipes));
       // config.schema.json again, describing the settings of the recipes it added.
       yield* printLines(yield* refreshSchemas(root));

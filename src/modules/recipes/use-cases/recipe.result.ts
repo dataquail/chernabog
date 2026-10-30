@@ -3,43 +3,6 @@ import * as Schema from "effect/Schema";
 // The package init installs and a bare recipe name means.
 export { OFFICIAL_PACKAGE } from "../domain/recipe/recipe-package.value-object.ts";
 
-// A recipe as a person chooses it: which package and version it's from, what
-// it does, where it's documented, and whether the repo copied or imports it.
-export const RecipeEntry = Schema.Struct({
-  // How a person names it: bare for @chernabog/recipes, else <package>/<recipe>.
-  ref: Schema.String,
-  package: Schema.String,
-  version: Schema.String,
-  description: Schema.String,
-  docs: Schema.Option(Schema.String),
-  state: Schema.Literals(["copied", "imported", "available"]),
-});
-
-export const InstalledPackage = Schema.Struct({ name: Schema.String, version: Schema.String });
-
-export class RecipeList extends Schema.Class<RecipeList, { readonly brand: "RecipeList" }>(
-  "RecipeList",
-)({
-  // The recipe packages .chernabog/ has installed.
-  packages: Schema.Array(InstalledPackage),
-  recipes: Schema.Array(RecipeEntry),
-}) {}
-
-// One file copying recipes touched: written, or kept because the repo has
-// its own.
-export const RecipeWrite = Schema.Struct({
-  file: Schema.String,
-  recipe: Schema.String,
-  version: Schema.String,
-  outcome: Schema.Literals(["wrote", "kept"]),
-});
-
-export class RecipesAdded extends Schema.Class<RecipesAdded, { readonly brand: "RecipesAdded" }>(
-  "RecipesAdded",
-)({
-  files: Schema.Array(RecipeWrite),
-}) {}
-
 // One flow importing recipes touched: imported, already imported, or kept as
 // it was, because the repo has a flow of that name or imports it from
 // elsewhere.
@@ -59,51 +22,6 @@ export class RecipesImported extends Schema.Class<
   flows: Schema.Array(RecipeImport),
   // The packages moved to dependencies, which a snapshot installs.
   dependencies: Schema.Array(Schema.String),
-}) {}
-
-// An imported flow copied into the repo: the files written, and the ones it
-// kept because the repo has its own.
-export class RecipeEjected extends Schema.Class<RecipeEjected, { readonly brand: "RecipeEjected" }>(
-  "RecipeEjected",
-)({
-  flow: Schema.String,
-  recipe: Schema.String,
-  version: Schema.String,
-  files: Schema.Array(RecipeWrite),
-}) {}
-
-// A recipe package made sure of in .chernabog/: added at the newest version
-// for the repo's SDK, or already declared.
-export class RecipePackageAdded extends Schema.Class<
-  RecipePackageAdded,
-  { readonly brand: "RecipePackageAdded" }
->("RecipePackageAdded")({
-  package: Schema.String,
-  version: Schema.String,
-  change: Schema.Literals(["added", "present"]),
-}) {}
-
-// How one of the repo's .chernabog/ files stands against the recipe version
-// it came from: missing, the same, or different (with the diff); or from no
-// recipe. `version` is the package version compared with: the one recorded
-// for the file, or the one installed when nothing is recorded.
-export const RecipeDiffEntry = Schema.Struct({
-  file: Schema.String,
-  recipe: Schema.Option(Schema.String),
-  version: Schema.Option(Schema.String),
-  recorded: Schema.Boolean,
-  docs: Schema.Option(Schema.String),
-  state: Schema.Literals(["missing", "same", "differs", "unowned"]),
-  diff: Schema.Option(Schema.String),
-});
-
-export class RecipesDiff extends Schema.Class<RecipesDiff, { readonly brand: "RecipesDiff" }>(
-  "RecipesDiff",
-)({
-  files: Schema.Array(RecipeDiffEntry),
-  // Whether .chernabog/ has a recipe package installed to compare with: none
-  // in a repo whose recipes an earlier chernabog baked.
-  packagesInstalled: Schema.Boolean,
 }) {}
 
 // A recipe package moved to the newest version for the repo's SDK.

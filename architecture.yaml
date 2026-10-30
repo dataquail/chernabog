@@ -438,9 +438,9 @@ tree:
               reset: true
               message: >-
                 The TUI asks the daemon over its client, calls the modules' use-cases and
-                dispatches their queries, and draws with @opentui. It names the kernel, the
-                platform and the legacy files it still reads, each named here until it has a
-                use-case.
+                dispatches their queries and commands, and draws with @opentui. It names the
+                kernel, the platform and the legacy files it still reads, each named here until
+                it has a use-case.
               external: [effect, "@opentui/core"]
               allow:
                 - "@/kernel/**"
@@ -450,6 +450,7 @@ tree:
                 - "@/interface/daemon/*.protocol.ts"
                 - "@/modules/*/use-cases/**"
                 - "@/modules/*/*.query-handlers.ts"
+                - "@/modules/*/*.command-handlers.ts"
                 # A schedule is checked as it's typed, before the use-case refuses it.
                 - "@/modules/runs/domain/schedule/schedule.value-object.ts"
                 - "@/modules/runs/infrastructure/runtime/agents.ts"

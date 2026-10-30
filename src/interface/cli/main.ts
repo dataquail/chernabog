@@ -20,13 +20,17 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
+import { EnrollmentCommandsLive } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { MachineQueriesLive } from "../../modules/machine/machine.query-handlers.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
+import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
-import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
+import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
+import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
@@ -464,6 +468,7 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 // One GitHubTokens for the process, so each persona's token is looked up once.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
+  EnrollmentCommandsLive,
   EnrollmentQueriesLive,
   TrustCommandsLive,
   TrustQueriesLive,
@@ -471,7 +476,10 @@ const AppLive = Layer.mergeAll(
   MachineLayer,
   MachineQueriesLive,
   RecipesLayer,
-  RehearsalsLayer,
+  RecipesCommandsLive,
+  RecipesQueriesLive,
+  RehearsalsCommandsLive,
+  RehearsalsQueriesLive,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
