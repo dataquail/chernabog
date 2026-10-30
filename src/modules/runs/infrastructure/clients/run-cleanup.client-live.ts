@@ -114,11 +114,23 @@ const workOnBranch = (branch: string, base: string) =>
       return Option.some(`pull request #${pull.value.number} was opened from it`);
     }
 
-    const compared = yield* github.request(
-      "GET",
-      `/repos/${repo.slug}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}`,
-      Option.none(),
-    );
+    // A branch deleted since it was found has nothing on it to keep.
+    const compared = yield* github
+      .request(
+        "GET",
+        `/repos/${repo.slug}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}`,
+        Option.none(),
+      )
+      .pipe(
+        Effect.catchTag("GitHubError", (error) =>
+          Effect.flatMap(github.branchSha(branch), (sha) =>
+            Option.match(sha, {
+              onNone: () => Effect.succeed({ ahead_by: 0 }),
+              onSome: () => Effect.fail(error),
+            }),
+          ),
+        ),
+      );
 
     const ahead = (yield* Schema.decodeUnknownEffect(Compare)(compared).pipe(
       Effect.mapError(failed),
