@@ -5,8 +5,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { repointRepoUseCase } from "../../../modules/enrollment/use-cases/repoint-repo.use-case.ts";
 import { addRecipePackageUseCase } from "../../../modules/recipes/use-cases/add-recipe-package.use-case.ts";
 import {
   OFFICIAL_PACKAGE,
@@ -73,7 +73,7 @@ const offerRepoint = (root: string) =>
         continue;
       }
 
-      yield* repointRepoUseCase(entry.path, root);
+      yield* (yield* EnrollmentCommands).RepointRepoCommand({ name: entry.path, root });
       yield* Console.log(`pointed ${entry.name} at ${root}`);
       yield* daemonReload.pipe(Effect.ignore);
     }

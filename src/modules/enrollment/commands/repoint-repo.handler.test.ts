@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { repointRepoUseCase } from "./repoint-repo.use-case.ts";
+import { repointRepoHandler } from "./repoint-repo.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -41,10 +41,10 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     ViewerClientFake(Option.some("carol")),
   );
 
-describe("repointRepoUseCase", () => {
+describe("repointRepoHandler", () => {
   effect("points the entry at its checkout's new place, keeping its settings", () =>
     Effect.gen(function* () {
-      const moved = yield* repointRepoUseCase("/old/demo", "/src/demo");
+      const moved = yield* repointRepoHandler({ name: "/old/demo", root: "/src/demo" });
 
       expect(moved.path).toBe("/src/demo");
       expect((yield* stored).map((repo) => [repo.path, repo.defaults])).toEqual([
