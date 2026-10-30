@@ -354,14 +354,17 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way. `cqrs` moves each use-case to a command or query; its ledger in
-  `.architecture-campaigns/` lists the use-cases left, and may only shrink.
-  A change that moves one runs `bun run architecture:clear` and commits the
-  ledger with it; `bun run architecture:campaigns` shows what's left. Always
-  clear through the script: a bare `architecture objectives clear` walks
-  `packages/`, finds no module, and closes every holdout. Never
-  `objectives concede` to make the gate pass; a use-case the campaign counts
-  again is one a change brought back.
+  under way, none at present: `cqrs`, which moved every use-case to a command
+  or query and had the commands dispatch their domain events, is retired
+  (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
+  left and may only shrink. A change that moves one runs
+  `bun run architecture:clear` and commits the ledger with it;
+  `bun run architecture:campaigns` shows what's left. Always clear through
+  the script: a bare `architecture objectives clear` walks `packages/`, finds
+  no module, and closes every holdout. Never `objectives concede` to make the
+  gate pass. A phase no objective can see is `attested: true`, and each
+  sector leaves it by `architecture campaigns attest`, with its reason. To
+  retire a finished campaign, delete its entry and its ledger.
 - **Every rule carries a probe**, and the plugin refuses to load a rule that
   can't fire. To change the policy, edit `architecture.yaml` (the
   `yaml-language-server` schema completes and checks it), plant the violation
