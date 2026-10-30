@@ -19,8 +19,8 @@ import { HoldsRepositoryFake } from "../infrastructure/repositories/holds.reposi
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
+import { listHoldsHandler } from "../queries/list-holds.handler.ts";
 import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
-import { listHoldsUseCase } from "./list-holds.use-case.ts";
 import { planTickUseCase, type TickInput } from "./plan-tick.use-case.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
@@ -264,7 +264,7 @@ describe("planTickUseCase", () => {
         );
 
         expect(
-          (yield* listHoldsUseCase()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),
+          (yield* listHoldsHandler()).holds.map((hold) => [hold.flow, hold.itemKey, hold.reason]),
         ).toEqual([
           ["implement", "issue-14", "waits on #12, #13"],
           ["implement", "issue-16", "waits on #15"],
@@ -304,7 +304,7 @@ describe("planTickUseCase", () => {
       yield* planTickUseCase({ ...implement, repo: "next" }, open);
 
       expect(
-        (yield* listHoldsUseCase()).holds.map(
+        (yield* listHoldsHandler()).holds.map(
           (hold) => `${hold.repo}/${hold.flow} ${hold.itemKey}`,
         ),
       ).toEqual(["demo/review pr-1"]);

@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
-import { listRunWaitsUseCase } from "./list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "./list-run-waits.handler.ts";
 
 const wait = (runId: string, signal: string, deferred: string) =>
   RunWaitRoot.make({
@@ -17,10 +17,10 @@ const wait = (runId: string, signal: string, deferred: string) =>
     parkedAt: Option.none(),
   });
 
-describe("listRunWaitsUseCase", () => {
+describe("listRunWaitsHandler", () => {
   effect("lists the run's waits on the signal, not another signal's or run's", () =>
     Effect.gen(function* () {
-      const { waits } = yield* listRunWaitsUseCase(RunId.make("a"), "pushed");
+      const { waits } = yield* listRunWaitsHandler({ runId: RunId.make("a"), signal: "pushed" });
 
       expect(waits.map((found) => found.deferred)).toEqual(["d1"]);
     }).pipe(

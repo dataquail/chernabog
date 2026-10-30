@@ -44,18 +44,12 @@
     "src/modules/runs": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 17,
-      "cleared": 6,
+      "cleared": 12,
       "closed": 0,
-      "lastCleared": "2026-10-30T14:30:41.918Z",
+      "lastCleared": "2026-10-30T15:56:40.348Z",
       "holdouts": [
-        "use-cases/check-run-leases.use-case.ts",
         "use-cases/check-run-validity.use-case.ts",
         "use-cases/follow-run-log.use-case.ts",
-        "use-cases/list-holds.use-case.ts",
-        "use-cases/list-run-markers.use-case.ts",
-        "use-cases/list-run-waits.use-case.ts",
-        "use-cases/list-unreleased-markers.use-case.ts",
-        "use-cases/list-unsupported-runs.use-case.ts",
         "use-cases/plan-tick.use-case.ts",
         "use-cases/read-run-history.use-case.ts",
         "use-cases/read-run-log.use-case.ts"

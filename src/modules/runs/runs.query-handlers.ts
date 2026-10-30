@@ -9,10 +9,20 @@ import { findRunHandler } from "./queries/find-run.handler.ts";
 import { FindRunQuery } from "./queries/find-run.query.ts";
 import { listActiveRunsHandler } from "./queries/list-active-runs.handler.ts";
 import { ListActiveRunsQuery } from "./queries/list-active-runs.query.ts";
+import { listHoldsHandler } from "./queries/list-holds.handler.ts";
+import { ListHoldsQuery } from "./queries/list-holds.query.ts";
 import { listRecentRunsHandler } from "./queries/list-recent-runs.handler.ts";
 import { ListRecentRunsQuery } from "./queries/list-recent-runs.query.ts";
 import { listRecentSkipsHandler } from "./queries/list-recent-skips.handler.ts";
 import { ListRecentSkipsQuery } from "./queries/list-recent-skips.query.ts";
+import { listRunMarkersHandler } from "./queries/list-run-markers.handler.ts";
+import { ListRunMarkersQuery } from "./queries/list-run-markers.query.ts";
+import { listRunWaitsHandler } from "./queries/list-run-waits.handler.ts";
+import { ListRunWaitsQuery } from "./queries/list-run-waits.query.ts";
+import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.handler.ts";
+import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
+import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
+import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
 import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
 
@@ -24,16 +34,26 @@ export const runsQueryGroup = Query.group(
   FindActiveRunQuery,
   FindRunQuery,
   ListActiveRunsQuery,
+  ListHoldsQuery,
   ListRecentRunsQuery,
   ListRecentSkipsQuery,
+  ListRunMarkersQuery,
+  ListRunWaitsQuery,
+  ListUnreleasedMarkersQuery,
+  ListUnsupportedRunsQuery,
 );
 
 const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   FindActiveRunQuery: (payload) => findActiveRunHandler(payload),
   FindRunQuery: (payload) => findRunHandler(payload),
   ListActiveRunsQuery: (payload) => listActiveRunsHandler(payload),
+  ListHoldsQuery: () => listHoldsHandler(),
   ListRecentRunsQuery: (payload) => listRecentRunsHandler(payload),
   ListRecentSkipsQuery: (payload) => listRecentSkipsHandler(payload),
+  ListRunMarkersQuery: (payload) => listRunMarkersHandler(payload),
+  ListRunWaitsQuery: (payload) => listRunWaitsHandler(payload),
+  ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
+  ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
 });
 
 // The runs module's slice of the read side over state.db, which the daemon, a

@@ -20,7 +20,7 @@ import * as Schema from "effect/Schema";
 import epic from "../packages/recipes/flows/epic.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -130,7 +130,11 @@ const workWith = (
         return true;
       }
 
-      const { waits } = yield* listRunWaitsUseCase(current.id, Epic.LAYER_CHANGED);
+      const { waits } = yield* listRunWaitsHandler({
+        runId: current.id,
+        signal: Epic.LAYER_CHANGED,
+      });
+
       const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
 
       if (Option.isNone(parked)) {

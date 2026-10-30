@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
-import { listRunWaitsUseCase } from "./list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../queries/list-run-waits.handler.ts";
 import { releaseRunWaitUseCase } from "./release-run-wait.use-case.ts";
 
 const runId = RunId.make("a");
@@ -14,11 +14,13 @@ const runId = RunId.make("a");
 describe("releaseRunWaitUseCase", () => {
   effect("forgets the wait its signal woke, and keeps the run's others", () =>
     Effect.gen(function* () {
-      const [first] = (yield* listRunWaitsUseCase(runId, "pushed")).waits;
+      const [first] = (yield* listRunWaitsHandler({ runId, signal: "pushed" })).waits;
       yield* releaseRunWaitUseCase(first);
 
       expect(
-        (yield* listRunWaitsUseCase(runId, "pushed")).waits.map((wait) => wait.deferred),
+        (yield* listRunWaitsHandler({ runId, signal: "pushed" })).waits.map(
+          (wait) => wait.deferred,
+        ),
       ).toEqual(["d2"]);
     }).pipe(
       Effect.provide(

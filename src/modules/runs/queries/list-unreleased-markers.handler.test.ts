@@ -9,7 +9,7 @@ import { RunRoot, type RunStatus } from "../domain/run/run.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { listUnreleasedMarkersUseCase } from "./list-unreleased-markers.use-case.ts";
+import { listUnreleasedMarkersHandler } from "./list-unreleased-markers.handler.ts";
 
 const AT = "2026-10-20T00:00:00.000Z";
 
@@ -35,13 +35,13 @@ const run = (id: string, status: RunStatus) =>
 const marker = (runId: string, name: string) =>
   RunMarkerRootOps.hold({ runId: RunId.make(runId), name, args: {}, keepOn: [] }, AT);
 
-describe("listUnreleasedMarkersUseCase", () => {
+describe("listUnreleasedMarkersHandler", () => {
   effect(
     "lists what ended runs still hold, and what's unreleasable, not what runs in flight hold",
     () =>
       Effect.gen(function* () {
         expect(
-          (yield* listUnreleasedMarkersUseCase()).markers.map((found) => [found.runId, found.name]),
+          (yield* listUnreleasedMarkersHandler()).markers.map((found) => [found.runId, found.name]),
         ).toEqual([
           ["ended", "pending"],
           ["ended", "orphaned"],
