@@ -4,6 +4,13 @@
   "sector": "src/modules/machine",
   "reached": "events",
   "since": "2026-10-30T18:11:49.942Z",
-  "attested": [],
+  "attested": [
+    {
+      "phase": "events",
+      "reason": "No domain events. ApplySetup edits the machine's personas and accounts for the person running setup, and the service commands install, start, stop and remove the daemon itself, which the dashboard and notifier run inside, so there is no one left to tell.",
+      "at": "2026-10-30T23:53:57.655Z",
+      "by": "zweidenbach@gmail.com"
+    }
+  ],
   "notes": []
 }

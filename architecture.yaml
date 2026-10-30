@@ -959,6 +959,8 @@ campaigns:
           withUnitOfWork. A handful per pull request.
         objectives: [write-use-cases]
       - id: events
+        # No objective sees a domain event; each sector is attested with its pull request.
+        attested: true
         intent: >-
           The module's commands dispatch its domain events, Schemas in its domain, only after
           the durable step that makes each one true, each with an id from the run and the step

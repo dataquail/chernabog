@@ -4,6 +4,13 @@
   "sector": "src/modules/recipes",
   "reached": "events",
   "since": "2026-10-30T15:20:31.135Z",
-  "attested": [],
+  "attested": [
+    {
+      "phase": "events",
+      "reason": "No domain events. Every recipes command writes files in a checkout's .chernabog/ for a person to review and commit; none changes what the daemon runs until the commit is merged and trusted, which RepoTrusted announces (#275).",
+      "at": "2026-10-30T23:53:57.172Z",
+      "by": "zweidenbach@gmail.com"
+    }
+  ],
   "notes": []
 }

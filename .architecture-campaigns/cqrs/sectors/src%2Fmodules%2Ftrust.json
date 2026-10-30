@@ -4,6 +4,14 @@
   "sector": "src/modules/trust",
   "reached": "events",
   "since": "2026-10-30T05:41:27.470Z",
-  "attested": [],
+  "attested": [
+    {
+      "phase": "events",
+      "reason": "TrustRepoCommand dispatches RepoTrusted (trust-record.events.ts) once the record is saved, with an id from the repo, the tree and when (#275). ClaimReloadCommand announces nothing: it is the daemon's own bookkeeping.",
+      "evidence": "https://github.com/dataquail/chernabog/pull/275",
+      "at": "2026-10-30T23:53:56.286Z",
+      "by": "zweidenbach@gmail.com"
+    }
+  ],
   "notes": []
 }

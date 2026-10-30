@@ -4,6 +4,14 @@
   "sector": "src/modules/enrollment",
   "reached": "events",
   "since": "2026-10-30T14:12:37.810Z",
-  "attested": [],
+  "attested": [
+    {
+      "phase": "events",
+      "reason": "ApplyEnrollment, PauseRepo, ResumeRepo and UnenrollRepo dispatch RepoEnrolled, RepoPaused, RepoResumed and RepoUnenrolled (enrolled-repo.events.ts) after their write (#274). A change to a persona's flows, accounts or schedule, or a repointed checkout, announces nothing: the daemon rereads the entry on its next tick.",
+      "evidence": "https://github.com/dataquail/chernabog/pull/274",
+      "at": "2026-10-30T23:53:55.837Z",
+      "by": "zweidenbach@gmail.com"
+    }
+  ],
   "notes": []
 }
