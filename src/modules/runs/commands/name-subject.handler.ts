@@ -1,18 +1,16 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { RunView } from "./run.result.ts";
+import { RunView } from "../domain/run/run-view.value-object.ts";
+import { type NameSubjectPayload } from "./name-subject.command.ts";
 
-// A run naming a work item it touched, such as the pull request an issue's
-// run opened: what makes the runs that share a subject one piece of work.
-export const nameSubjectUseCase = Effect.fn("nameSubjectUseCase")(function* (
-  runId: RunId,
-  subject: string,
-) {
+export const nameSubjectHandler = Effect.fn("nameSubjectHandler")(function* ({
+  runId,
+  subject,
+}: NameSubjectPayload) {
   const runs = yield* RunsRepository;
   const found = yield* runs.findOne(runId);
 

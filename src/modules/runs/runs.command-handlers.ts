@@ -16,16 +16,26 @@ import { EnterStepCommand } from "./commands/enter-step.command.ts";
 import { enterStepHandler } from "./commands/enter-step.handler.ts";
 import { FinishRunCommand } from "./commands/finish-run.command.ts";
 import { finishRunHandler } from "./commands/finish-run.handler.ts";
+import { ForgetMarkerCommand } from "./commands/forget-marker.command.ts";
+import { forgetMarkerHandler } from "./commands/forget-marker.handler.ts";
 import { GateFlowCommand } from "./commands/gate-flow.command.ts";
 import { gateFlowHandler } from "./commands/gate-flow.handler.ts";
+import { HoldMarkerCommand } from "./commands/hold-marker.command.ts";
+import { holdMarkerHandler } from "./commands/hold-marker.handler.ts";
+import { NameSubjectCommand } from "./commands/name-subject.command.ts";
+import { nameSubjectHandler } from "./commands/name-subject.handler.ts";
 import { ParkRunCommand } from "./commands/park-run.command.ts";
 import { parkRunHandler } from "./commands/park-run.handler.ts";
 import { PlanTickCommand } from "./commands/plan-tick.command.ts";
 import { planTickHandler } from "./commands/plan-tick.handler.ts";
 import { PollRunCommand } from "./commands/poll-run.command.ts";
 import { pollRunHandler } from "./commands/poll-run.handler.ts";
+import { RecordSkipCommand } from "./commands/record-skip.command.ts";
+import { recordSkipHandler } from "./commands/record-skip.handler.ts";
 import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
 import { recoverRunsHandler } from "./commands/recover-runs.handler.ts";
+import { ReleaseMarkersCommand } from "./commands/release-markers.command.ts";
+import { releaseMarkersHandler } from "./commands/release-markers.handler.ts";
 import { ReleaseRunWaitCommand } from "./commands/release-run-wait.command.ts";
 import { releaseRunWaitHandler } from "./commands/release-run-wait.handler.ts";
 import { ResumeRunCommand } from "./commands/resume-run.command.ts";
@@ -43,7 +53,11 @@ export const runsCommandGroup = Command.group(
   AttachExecutionCommand,
   EnterStepCommand,
   FinishRunCommand,
+  ForgetMarkerCommand,
+  HoldMarkerCommand,
+  NameSubjectCommand,
   ParkRunCommand,
+  RecordSkipCommand,
   ReleaseRunWaitCommand,
   StartRunCommand,
 );
@@ -53,15 +67,20 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   AttachExecutionCommand: (payload) => attachExecutionHandler(payload),
   EnterStepCommand: (payload) => enterStepHandler(payload),
   FinishRunCommand: (payload) => finishRunHandler(payload),
+  ForgetMarkerCommand: (payload) => forgetMarkerHandler(payload),
+  HoldMarkerCommand: (payload) => holdMarkerHandler(payload),
+  NameSubjectCommand: (payload) => nameSubjectHandler(payload),
   ParkRunCommand: (payload) => parkRunHandler(payload),
+  RecordSkipCommand: (payload) => recordSkipHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
 });
 
 // The runs module's slice of the write side over state.db, which the engine
-// dispatches as a run takes its steps and parks on a signal, and the daemon
-// and `run` to adopt a repo's runs from before its personas and to forget a
-// wait its signal woke.
+// dispatches as a run takes its steps, parks on a signal, holds and forgets
+// its markers and names its subjects, and the daemon and `run` to adopt a
+// repo's runs from before its personas and to forget a wait its signal woke,
+// and the daemon to record why a tick started nothing.
 export class RunsCommands extends Context.Service<
   RunsCommands,
   Command.Dispatcher<typeof runsCommandGroup>
@@ -85,6 +104,7 @@ export const runFlowsCommandGroup = Command.group(
   PlanTickCommand,
   PollRunCommand,
   RecoverRunsCommand,
+  ReleaseMarkersCommand,
   ResumeRunCommand,
   StartFlowRunCommand,
 );
@@ -97,6 +117,7 @@ const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
   PlanTickCommand: (payload) => planTickHandler(payload),
   PollRunCommand: (payload) => pollRunHandler(payload),
   RecoverRunsCommand: () => recoverRunsHandler(),
+  ReleaseMarkersCommand: () => releaseMarkersHandler(),
   ResumeRunCommand: (payload) => resumeRunHandler(payload),
   StartFlowRunCommand: (payload) => startFlowRunHandler(payload),
 });
@@ -104,10 +125,10 @@ const RunFlowsCommandHandlersLive = Command.handlersOf(runFlowsCommandGroup, {
 // The runs module's slice of the write side over the loaded flows, which the
 // daemon dispatches to check and renew its runs' leases, to plan each tick of
 // a flow, to deliver its signals, to ask its gate, to start its runs, to poll
-// them until they end, to recover the starts a crash interrupted and to end a
-// run, `run` and `rehearse` to start one, deliver its signals and poll it
-// (and `run` to recover and resume one), and `cancel` to end one with the
-// daemon stopped.
+// them until they end, to recover the starts a crash interrupted, to release
+// the markers ended runs hold and to end a run, `run` and `rehearse` to start
+// one, deliver its signals and poll it (and `run` to recover and resume one
+// and release what it held), and `cancel` to end one with the daemon stopped.
 export class RunFlowsCommands extends Context.Service<
   RunFlowsCommands,
   Command.Dispatcher<typeof runFlowsCommandGroup>

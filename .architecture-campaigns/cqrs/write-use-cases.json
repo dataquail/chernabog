@@ -39,16 +39,10 @@
     "src/modules/runs": {
       "entered": "2026-10-30T16:22:31.073Z",
       "initial": 20,
-      "cleared": 15,
+      "cleared": 20,
       "closed": 0,
-      "lastCleared": "2026-10-30T22:13:30.365Z",
-      "holdouts": [
-        "use-cases/forget-marker.use-case.ts",
-        "use-cases/hold-marker.use-case.ts",
-        "use-cases/name-subject.use-case.ts",
-        "use-cases/record-skip.use-case.ts",
-        "use-cases/release-markers.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T22:26:02.086Z",
+      "holdouts": []
     },
     "src/modules/machine": {
       "entered": "2026-10-30T14:26:03.533Z",

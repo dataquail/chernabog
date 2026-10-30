@@ -14,7 +14,7 @@ import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { listUnreleasedMarkersHandler } from "../queries/list-unreleased-markers.handler.ts";
-import { releaseMarkersUseCase } from "./release-markers.use-case.ts";
+import { releaseMarkersHandler } from "./release-markers.handler.ts";
 
 const AT = "2026-10-20T00:00:00.000Z";
 
@@ -53,12 +53,12 @@ const runtime = (
 
 const names = (views: ReadonlyArray<{ readonly name: string }>) => views.map((view) => view.name);
 
-describe("releaseMarkersUseCase", () => {
+describe("releaseMarkersHandler", () => {
   effect("releases an ended run's markers newest first, and leaves a run in flight's", () => {
     const releases: Array<{ runId: string; name: string; args: Schema.Json }> = [];
 
     return Effect.gen(function* () {
-      const done = yield* releaseMarkersUseCase();
+      const done = yield* releaseMarkersHandler();
 
       expect(names(done.released)).toEqual(["second", "first"]);
       expect(releases.map((release) => [release.runId, release.name, release.args])).toEqual([
@@ -67,7 +67,7 @@ describe("releaseMarkersUseCase", () => {
       ]);
 
       // Released once: a second pass has nothing to do.
-      expect(names((yield* releaseMarkersUseCase()).released)).toEqual([]);
+      expect(names((yield* releaseMarkersHandler()).released)).toEqual([]);
       expect((yield* listUnreleasedMarkersHandler()).markers).toEqual([]);
     }).pipe(
       Effect.provide(
@@ -82,7 +82,7 @@ describe("releaseMarkersUseCase", () => {
 
   effect("keeps a marker on an ending its keepOn names, and releases it on any other", () =>
     Effect.gen(function* () {
-      const done = yield* releaseMarkersUseCase();
+      const done = yield* releaseMarkersHandler();
 
       expect(names(done.kept)).toEqual(["needs-person"]);
       expect(done.kept[0]?.runId).toBe(RunId.make("a"));
@@ -106,7 +106,7 @@ describe("releaseMarkersUseCase", () => {
     const releases: Array<{ runId: string; name: string; args: Schema.Json }> = [];
 
     return Effect.gen(function* () {
-      const first = yield* releaseMarkersUseCase();
+      const first = yield* releaseMarkersHandler();
       expect(first.failed.map((view) => [view.name, view.attempts, view.lastError])).toEqual([
         ["first", 1, Option.some("GitHub is down")],
       ]);
@@ -116,7 +116,7 @@ describe("releaseMarkersUseCase", () => {
 
       // Not due yet: nothing is tried.
       fails.length = 0;
-      expect(names((yield* releaseMarkersUseCase()).released)).toEqual([]);
+      expect(names((yield* releaseMarkersHandler()).released)).toEqual([]);
       expect(releases).toEqual([]);
     }).pipe(
       Effect.provide(
@@ -132,7 +132,7 @@ describe("releaseMarkersUseCase", () => {
 
   effect("tries a release that failed again once its backoff has passed", () =>
     Effect.gen(function* () {
-      const done = yield* releaseMarkersUseCase();
+      const done = yield* releaseMarkersHandler();
 
       expect(names(done.released)).toEqual(["first"]);
     }).pipe(
@@ -157,12 +157,12 @@ describe("releaseMarkersUseCase", () => {
     "marks a marker the flow no longer defines unreleasable, with its arguments, for a person",
     () =>
       Effect.gen(function* () {
-        const done = yield* releaseMarkersUseCase();
+        const done = yield* releaseMarkersHandler();
 
         expect(done.unreleasable.map((view) => [view.name, view.args, view.lastError])).toEqual([
           ["gone", { key: "gone" }, Option.some("implement no longer defines marker gone")],
         ]);
-        expect(names((yield* releaseMarkersUseCase()).unreleasable)).toEqual([]);
+        expect(names((yield* releaseMarkersHandler()).unreleasable)).toEqual([]);
         expect(
           (yield* listUnreleasedMarkersHandler()).markers.map((view) => [view.name, view.status]),
         ).toEqual([["gone", "unreleasable"]]);

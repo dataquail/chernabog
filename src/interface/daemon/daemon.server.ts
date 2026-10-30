@@ -68,6 +68,7 @@ import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.
 import {
   RunFlowsCommands,
   RunFlowsCommandsLive,
+  RunsCommands,
   RunsCommandsLive,
 } from "../../modules/runs/runs.command-handlers.ts";
 import {
@@ -86,8 +87,6 @@ import {
 } from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
-import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
-import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
@@ -858,7 +857,9 @@ export const runDaemon = Effect.gen(function* () {
 
           if (Result.isFailure(paused)) {
             const reason = `could not tell whether it is paused: ${paused.failure.message}`;
-            yield* recordSkipUseCase({ ...ref, itemKey: Option.none(), reason });
+            yield* RunsCommands.use((runs) =>
+              runs.RecordSkipCommand({ ...ref, itemKey: Option.none(), reason }),
+            );
 
             return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
@@ -992,7 +993,7 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            const releases = yield* releaseMarkersUseCase();
+            const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
 
             for (const marker of releases.released) {
               yield* log(`released ${marker.name} for ${marker.runId}`);

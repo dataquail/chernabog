@@ -60,9 +60,6 @@ import { type WorkflowOutcome } from "../../domain/ports/clients/workflows.clien
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsCommands, RunsCommandsLive } from "../../runs.command-handlers.ts";
 import { RunsQueries, RunsQueriesLive } from "../../runs.query-handlers.ts";
-import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
-import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
-import { nameSubjectUseCase } from "../../use-cases/name-subject.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
@@ -493,11 +490,11 @@ const markerHolds = (runId: RunId, flow: Flow) =>
 
     const hold = yield* capturing(
       (name: string, args: Schema.Json, keepOn: ReadonlyArray<string>) =>
-        holdMarkerUseCase({ runId, name, args, keepOn }),
+        RunsCommands.use((runs) => runs.HoldMarkerCommand({ runId, name, args, keepOn })),
     );
 
     const forget = yield* capturing((name: string, args: Schema.Json) =>
-      forgetMarkerUseCase({ runId, name, args }),
+      RunsCommands.use((runs) => runs.ForgetMarkerCommand({ runId, name, args })),
     );
 
     const held = yield* capturing((name: string) =>
@@ -592,7 +589,7 @@ export const flowLayer = <R>(
 
         // A subject named after its run ended changes nothing.
         const nameSubject = yield* capturing((subject: string) =>
-          nameSubjectUseCase(runId, subject).pipe(
+          RunsCommands.use((runs) => runs.NameSubjectCommand({ runId, subject })).pipe(
             Effect.catchTags({
               RunAlreadyFinished: () => Effect.void,
               RunNotFound: () => Effect.void,

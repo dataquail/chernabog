@@ -5,12 +5,12 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
 import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
-import { recordSkipUseCase } from "./record-skip.use-case.ts";
+import { recordSkipHandler } from "./record-skip.handler.ts";
 
-describe("recordSkipUseCase", () => {
+describe("recordSkipHandler", () => {
   effect("records why the tick skipped, and when", () =>
     Effect.gen(function* () {
-      const recorded = yield* recordSkipUseCase({
+      const recorded = yield* recordSkipHandler({
         repo: "demo",
         persona: Option.some("bob"),
         flow: "review",
