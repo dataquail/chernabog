@@ -43,7 +43,6 @@ import {
 } from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
-import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
@@ -120,7 +119,7 @@ const followRun = (
 
     // What the run held is released here, as the daemon would; a release
     // that fails is left to the daemon, or the next run, to try again.
-    const releases = yield* releaseMarkersUseCase();
+    const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
 
     for (const marker of [...releases.failed, ...releases.unreleasable]) {
       yield* Console.log(

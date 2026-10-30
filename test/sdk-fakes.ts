@@ -52,6 +52,7 @@ import * as Schema from "effect/Schema";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
 import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
+import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
 import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
@@ -62,7 +63,6 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
@@ -974,7 +974,7 @@ export const runUntil = (
       // A run that ended has its markers released, as the daemon releases them.
       Effect.tap((polled) =>
         Effect.when(
-          releaseMarkersUseCase(),
+          releaseMarkersHandler(),
           Effect.sync(() => !isRunning(polled)),
         ),
       ),

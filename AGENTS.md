@@ -237,7 +237,7 @@ transitive reach), the coverage floors and the baseline.
   logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
   are the work items it named with core's `Subjects.name`, such as the pull
   request an SDK block opened or adopted; the engine records them through
-  `nameSubjectUseCase` and knows nothing of what they mean. The live view
+  `NameSubjectCommand` and knows nothing of what they mean. The live view
   threads runs that share a work item, as their own or as a subject, and a
   flow's `stillValid` gets them as `Run`'s `subjects`. The engine, the daemon and `chernabog run`
   record and read them only through the module's queries, commands and
@@ -401,7 +401,7 @@ assignment, a board Status, a claim ref or branch), with a named release.
   marker's name and arguments' shape once runs hold it: a run in flight is
   released by them.
 - **The runs module** keeps holds as `RunMarkerRoot` (`om_markers`), one per
-  run, name and arguments. `releaseMarkersUseCase` releases what ended runs
+  run, name and arguments. `ReleaseMarkersCommand` releases what ended runs
   hold, newest first, through `FlowsClient.releaseMarker` (the loaded flow's
   definition, as the run's persona); keepOn endings are kept, a failure backs
   off (`RunMarkerRootOps.backoff`), and a missing definition is unreleasable.

@@ -115,4 +115,56 @@ describe("RunsCommands", () => {
       ),
     ),
   );
+  effect("holds and forgets a run's markers, names its subjects and records a skip", () =>
+    Effect.gen(function* () {
+      const commands = yield* RunsCommands;
+      const queries = yield* RunsQueries;
+      const runId = RunId.make("a");
+
+      yield* commands.StartRunCommand({
+        id: runId,
+        coreVersion: BUNDLED_CORE_VERSION,
+        repo: "demo",
+        persona: Option.some("bob"),
+        flow: "implement",
+        itemKey: "issue-1",
+        itemTitle: Option.none(),
+        itemUrl: Option.none(),
+        item: Option.none(),
+      });
+
+      const label = { runId, name: "chernabog/label", keepOn: [] };
+      const held = yield* commands.HoldMarkerCommand({ ...label, args: { number: 1 } });
+      yield* commands.HoldMarkerCommand({ ...label, args: { number: 2 } });
+      yield* commands.ForgetMarkerCommand({ runId, name: label.name, args: { number: 1 } });
+
+      const named = yield* commands.NameSubjectCommand({ runId, subject: "pr-2" });
+
+      const skipped = yield* commands.RecordSkipCommand({
+        repo: "demo",
+        persona: Option.some("bob"),
+        flow: "implement",
+        itemKey: Option.none(),
+        reason: "paused",
+      });
+
+      expect(held.status).toBe("held");
+      expect(
+        (yield* queries.ListRunMarkersQuery({ runId, name: Option.none() })).markers.map(
+          (marker) => marker.args,
+        ),
+      ).toEqual([{ number: 2 }]);
+      expect(named.subjects).toEqual(["pr-2"]);
+      expect((yield* queries.ListRecentSkipsQuery({ latest: 5 })).skips).toEqual([skipped]);
+      expect(
+        (yield* Effect.flip(
+          commands.NameSubjectCommand({ runId: RunId.make("gone"), subject: "pr-2" }),
+        ))._tag,
+      ).toBe("RunNotFound");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(RunsCommandsLive, RunsQueriesLive).pipe(Layer.provideMerge(stores)),
+      ),
+    ),
+  );
 });

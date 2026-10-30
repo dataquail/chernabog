@@ -682,9 +682,7 @@ tree:
                 interface/ (it doesn't know who called it), never another module's internals.
               external: [effect]
               allow:
-                - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
-                - "@/modules/{module}/use-cases/*.result.ts"
             children:
               "*.use-case.ts":
                 message: >-
@@ -692,7 +690,6 @@ tree:
                 requires: ["{base}.test.ts"]
                 surface: [{ use: one-use-case-export }]
               "*.result.ts": {}
-              "*.test.ts": { use: module-test-file }
 
           "commands/":
             message: >-
@@ -788,7 +785,7 @@ tree:
                 imports:
                   message: >-
                     The runtime adapts the published SDK's services to the machine and reports a
-                    run's steps and waits back through its module's commands and use-cases, and
+                    run's steps, waits, markers and subjects back through its module's commands, and
                     asks after a run through its module's queries, as an inbound adapter would. It names the
                     SDK, the platform, its module, and the legacy files that load a repo's config
                     and flows (config.ts, repo-config.ts, loader.ts), until those move. Nothing
@@ -798,7 +795,6 @@ tree:
                     - "node:**"
                     - "~/core/src/**"
                     - "@/platform/**"
-                    - "@/modules/{module}/use-cases/**"
                     - "@/modules/{module}/*.query-handlers.ts"
                     - "@/modules/{module}/*.command-handlers.ts"
                     - "@/repo-config.ts"

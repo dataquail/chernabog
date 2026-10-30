@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { nameSubjectUseCase } from "./name-subject.use-case.ts";
+import { nameSubjectHandler } from "./name-subject.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,13 +29,15 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("nameSubjectUseCase", () => {
+describe("nameSubjectHandler", () => {
   effect("records each subject a running run names, once", () =>
     Effect.gen(function* () {
       const a = RunId.make("a");
-      expect((yield* nameSubjectUseCase(a, "pr-124")).subjects).toEqual(["pr-124"]);
-      yield* nameSubjectUseCase(a, "pr-125");
-      yield* nameSubjectUseCase(a, "pr-124");
+      expect((yield* nameSubjectHandler({ runId: a, subject: "pr-124" })).subjects).toEqual([
+        "pr-124",
+      ]);
+      yield* nameSubjectHandler({ runId: a, subject: "pr-125" });
+      yield* nameSubjectHandler({ runId: a, subject: "pr-124" });
       expect(
         Option.map((yield* findRunHandler({ runId: a })).run, (found) => found.subjects),
       ).toEqual(Option.some(["pr-124", "pr-125"]));
@@ -50,12 +52,13 @@ describe("nameSubjectUseCase", () => {
         finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
       });
 
-      expect((yield* Effect.flip(nameSubjectUseCase(ended.id, "pr-9")))._tag).toBe(
-        "RunAlreadyFinished",
-      );
-      expect((yield* Effect.flip(nameSubjectUseCase(RunId.make("gone"), "pr-9")))._tag).toBe(
-        "RunNotFound",
-      );
+      expect(
+        (yield* Effect.flip(nameSubjectHandler({ runId: ended.id, subject: "pr-9" })))._tag,
+      ).toBe("RunAlreadyFinished");
+      expect(
+        (yield* Effect.flip(nameSubjectHandler({ runId: RunId.make("gone"), subject: "pr-9" })))
+          ._tag,
+      ).toBe("RunNotFound");
     }).pipe(
       Effect.provide(
         RunsRepositoryFake([

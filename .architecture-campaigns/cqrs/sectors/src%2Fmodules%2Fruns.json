@@ -2,8 +2,8 @@
   "version": 1,
   "campaign": "cqrs",
   "sector": "src/modules/runs",
-  "reached": "commands",
-  "since": "2026-10-30T16:22:31.073Z",
+  "reached": "events",
+  "since": "2026-10-30T22:26:02.086Z",
   "attested": [],
   "notes": []
 }

@@ -3,13 +3,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
-import { type Holding, RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
-import { RunMarkerView } from "./run-marker.result.ts";
+import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkerView } from "../domain/run-marker/run-marker-view.value-object.ts";
+import { type HoldMarkerPayload } from "./hold-marker.command.ts";
 
-// Records that a run holds a marker, for its release when the run ends. A
-// run holds a name and arguments once, so a run that resumes and holds it
-// again changes nothing; one it let go is held again.
-export const holdMarkerUseCase = Effect.fn("holdMarkerUseCase")(function* (holding: Holding) {
+export const holdMarkerHandler = Effect.fn("holdMarkerHandler")(function* (
+  holding: HoldMarkerPayload,
+) {
   const markers = yield* RunMarkersRepository;
 
   const existing = Option.fromUndefinedOr(

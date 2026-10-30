@@ -12,7 +12,10 @@ import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { type RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
-import { MarkerReleases, RunMarkerView } from "./run-marker.result.ts";
+import {
+  MarkerReleases,
+  RunMarkerView,
+} from "../domain/run-marker/run-marker-view.value-object.ts";
 
 // The run a release is asked about, as the flow's check would be: by its
 // item, or one made from its key for a run that kept none.
@@ -23,14 +26,7 @@ const questionOf = (run: RunRoot) => ({
   subjects: run.subjects,
 });
 
-// Releases what ended runs still hold, as each run's persona, through its
-// flow as this process loaded it (the base branch's): each run's markers
-// newest first, keeping those whose keepOn names the run's ending. A release
-// that fails stays held, to try again after a backoff; one the flow no
-// longer defines is unreleasable, for a person. A run in flight keeps its
-// markers, and a release not yet due waits. Safe to repeat: a release that
-// ran before a crash runs again.
-export const releaseMarkersUseCase = Effect.fn("releaseMarkersUseCase")(function* () {
+export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function* () {
   const markers = yield* RunMarkersRepository;
   const runs = yield* RunsRepository;
   const flows = yield* FlowsClient;
