@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
-import { listRunWaitsUseCase } from "./list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../queries/list-run-waits.handler.ts";
 import { parkRunUseCase } from "./park-run.use-case.ts";
 
 describe("parkRunUseCase", () => {
@@ -16,9 +16,9 @@ describe("parkRunUseCase", () => {
 
       expect(Option.isSome(parked.parkedAt)).toBe(true);
 
-      expect((yield* listRunWaitsUseCase(runId, "pushed")).waits.map((wait) => wait.token)).toEqual(
-        ["t"],
-      );
+      expect(
+        (yield* listRunWaitsHandler({ runId, signal: "pushed" })).waits.map((wait) => wait.token),
+      ).toEqual(["t"]);
     }).pipe(Effect.provide(RunWaitsRepositoryFake([]))),
   );
 });

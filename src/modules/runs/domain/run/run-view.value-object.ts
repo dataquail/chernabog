@@ -54,3 +54,11 @@ export class ActiveRun extends Schema.Class<ActiveRun, { readonly brand: "Active
 export class FoundRun extends Schema.Class<FoundRun, { readonly brand: "FoundRun" }>("FoundRun")({
   run: Schema.Option(RunView),
 }) {}
+
+// The runs in flight this binary mustn't resume, each with why.
+export class UnsupportedRuns extends Schema.Class<
+  UnsupportedRuns,
+  { readonly brand: "UnsupportedRuns" }
+>("UnsupportedRuns")({
+  runs: Schema.Array(Schema.Struct({ run: RunView, reason: Schema.String })),
+}) {}

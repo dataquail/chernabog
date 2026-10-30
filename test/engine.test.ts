@@ -46,11 +46,11 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
@@ -337,7 +337,7 @@ describe("the engine", () => {
         const run = yield* started(item("wait"));
 
         // Before the run registers its wait, there is nothing to deliver.
-        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
+        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,
@@ -359,7 +359,7 @@ describe("the engine", () => {
       const cancels = Effect.gen(function* () {
         const run = yield* started(item("wait"));
 
-        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
+        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,

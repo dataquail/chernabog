@@ -62,7 +62,6 @@ import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
 import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
 import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
 import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
-import { listRunMarkersUseCase } from "../../use-cases/list-run-markers.use-case.ts";
 import { nameSubjectUseCase } from "../../use-cases/name-subject.use-case.ts";
 import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
@@ -503,7 +502,7 @@ const markerHolds = (runId: RunId, flow: Flow) =>
     );
 
     const held = yield* capturing((name: string) =>
-      listRunMarkersUseCase(runId, Option.some(name)).pipe(
+      RunsQueries.use((runs) => runs.ListRunMarkersQuery({ runId, name: Option.some(name) })).pipe(
         Effect.map((found) => found.markers.map((marker) => marker.args)),
       ),
     );

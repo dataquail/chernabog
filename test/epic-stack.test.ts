@@ -33,7 +33,7 @@ import {
   GitLive,
   WorktreeLive,
 } from "../src/modules/runs/infrastructure/runtime/sdk-live.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import type { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec, execOk } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
@@ -310,7 +310,11 @@ const startEpic = (
                 return true;
               }
 
-              const { waits } = yield* listRunWaitsUseCase(current.id, Epic.LAYER_CHANGED);
+              const { waits } = yield* listRunWaitsHandler({
+                runId: current.id,
+                signal: Epic.LAYER_CHANGED,
+              });
+
               const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
 
               if (Option.isNone(parked)) {

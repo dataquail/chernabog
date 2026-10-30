@@ -21,7 +21,7 @@ import implement from "../packages/recipes/flows/implement.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -177,7 +177,7 @@ describe("an issue an open pull request already closes", () => {
               return true;
             }
 
-            const { waits } = yield* listRunWaitsUseCase(run.id, "ready");
+            const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "ready" });
 
             if (!waits.some((wait) => wait.deferred === `ready:draft-${PULL}`)) {
               return false;

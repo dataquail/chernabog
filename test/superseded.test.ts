@@ -29,6 +29,7 @@ import {
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import {
   type CancelledRun,
@@ -37,7 +38,6 @@ import {
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { RunValidity } from "../src/modules/runs/use-cases/check-run-validity.result.ts";
 import { checkRunValidityUseCase } from "../src/modules/runs/use-cases/check-run-validity.use-case.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -124,7 +124,7 @@ describe("a run whose work item goes", () => {
         Effect.gen(function* () {
           const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, pullWork)).run);
 
-          yield* listRunWaitsUseCase(started.id, "closed:approved").pipe(
+          yield* listRunWaitsHandler({ runId: started.id, signal: "closed:approved" }).pipe(
             Effect.repeat({ ...POLLS, until: ({ waits }) => waits.length > 0 }),
           );
 

@@ -13,7 +13,7 @@ import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { listUnreleasedMarkersUseCase } from "./list-unreleased-markers.use-case.ts";
+import { listUnreleasedMarkersHandler } from "../queries/list-unreleased-markers.handler.ts";
 import { releaseMarkersUseCase } from "./release-markers.use-case.ts";
 
 const AT = "2026-10-20T00:00:00.000Z";
@@ -68,7 +68,7 @@ describe("releaseMarkersUseCase", () => {
 
       // Released once: a second pass has nothing to do.
       expect(names((yield* releaseMarkersUseCase()).released)).toEqual([]);
-      expect((yield* listUnreleasedMarkersUseCase()).markers).toEqual([]);
+      expect((yield* listUnreleasedMarkersHandler()).markers).toEqual([]);
     }).pipe(
       Effect.provide(
         runtime(
@@ -112,7 +112,7 @@ describe("releaseMarkersUseCase", () => {
       ]);
 
       // Status shows it until it succeeds.
-      expect(names((yield* listUnreleasedMarkersUseCase()).markers)).toEqual(["first"]);
+      expect(names((yield* listUnreleasedMarkersHandler()).markers)).toEqual(["first"]);
 
       // Not due yet: nothing is tried.
       fails.length = 0;
@@ -164,7 +164,7 @@ describe("releaseMarkersUseCase", () => {
         ]);
         expect(names((yield* releaseMarkersUseCase()).unreleasable)).toEqual([]);
         expect(
-          (yield* listUnreleasedMarkersUseCase()).markers.map((view) => [view.name, view.status]),
+          (yield* listUnreleasedMarkersHandler()).markers.map((view) => [view.name, view.status]),
         ).toEqual([["gone", "unreleasable"]]);
       }).pipe(
         Effect.provide(

@@ -28,7 +28,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type EngineRun,
@@ -462,7 +462,9 @@ describe("owning a pull request", () => {
     Effect.gen(function* () {
       const fake = makeFake("approve");
       yield* runUntil(fake, "owning-waits", (run) =>
-        listRunWaitsUseCase(run.id, "pushed").pipe(Effect.map(({ waits }) => waits.length > 0)),
+        listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+          Effect.map(({ waits }) => waits.length > 0),
+        ),
       );
       expect(ownership(fake)).toEqual([false]);
     }),

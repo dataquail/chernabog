@@ -4,12 +4,9 @@ import * as Option from "effect/Option";
 import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { RunMarkers, RunMarkerView } from "./run-marker.result.ts";
+import { RunMarkers, RunMarkerView } from "../domain/run-marker/run-marker-view.value-object.ts";
 
-// What ended runs left on their items: markers still held, whose release is
-// pending or keeps failing, and markers no flow defines a release for any
-// more, for a person to take off. What a run in flight holds isn't listed.
-export const listUnreleasedMarkersUseCase = Effect.fn("listUnreleasedMarkersUseCase")(function* () {
+export const listUnreleasedMarkersHandler = Effect.fn("listUnreleasedMarkersHandler")(function* () {
   const markers = yield* RunMarkersRepository;
   const runs = yield* RunsRepository;
   const unreleased: Array<RunMarkerView> = [];
