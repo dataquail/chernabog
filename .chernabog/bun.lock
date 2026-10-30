@@ -4,18 +4,21 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@chernabog/recipes": "0.1.0",
+        "@chernabog/recipes": "0.2.0",
+        "@chernabog/sdk": "0.8.0",
       },
       "devDependencies": {
-        "@chernabog/sdk": "0.7.0",
+        "@chernabog/core": "1.0.0",
         "effect": "4.0.5",
       },
     },
   },
   "packages": {
-    "@chernabog/recipes": ["@chernabog/recipes@0.1.0", "", { "peerDependencies": { "@chernabog/sdk": ">=0.6.0 <0.8.0" } }, "sha512-KfFvzqgpSi1qP+ppebnlbuTwAbXikP2ADMPIEMGu9ihUzkfPJHmLbRPwm41WnyOw2U6lQp4mo4u5SPed13deOQ=="],
+    "@chernabog/core": ["@chernabog/core@1.0.0", "", { "peerDependencies": { "effect": "4.0.5" } }, "sha512-3DaRVAGJLZ+EUPbKPyLEPJa57d2HMqTh5W9BSAUF/bScKaWYnJQJQpIH/j39VFSYzrHyO45OaALoq9h64qLSAQ=="],
 
-    "@chernabog/sdk": ["@chernabog/sdk@0.7.0", "", { "peerDependencies": { "effect": "4.0.5" } }, "sha512-W6cFoWemUDefGPJ1zPvxW7h15Jz3cBll8SaiA0hfbvzwnj429SJTfbjJV3zkIcHiJPvoGokZlfIp0Eijny6bCA=="],
+    "@chernabog/recipes": ["@chernabog/recipes@0.2.0", "", { "peerDependencies": { "@chernabog/sdk": "^0.8.0" } }, "sha512-6fPBQNgYT9ld2ofWs9ufaWC9p/uN7w8ulu7WxVWMYtVECPCujVJ26pufOBvY7UEJvCJMqQVj6cjfJodqrsSUYw=="],
+
+    "@chernabog/sdk": ["@chernabog/sdk@0.8.0", "", { "peerDependencies": { "@chernabog/core": "^1.0.0", "effect": "4.0.5" } }, "sha512-Qnu4LoXs9cs6hlyi2xy65uZD7sMMI0AsT4f63Nm3te7/3plpy79wM9dJhpC6wV9mmQ4VfYWEoASxWG1Lj7Uwng=="],
 
     "effect": ["effect@4.0.5", "", {}, "sha512-BY4/28NlpOd99yzmV741xbVGmp+1U7tks4oB7F/Png64bTa5tm5eCA6W0RiXsnuLDDoJpjfVSo4Dnq4BZb/89Q=="],
   }
