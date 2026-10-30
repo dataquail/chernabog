@@ -15,7 +15,9 @@ import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setu
 import { EnrollmentCommandsLive } from "../src/modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../src/modules/enrollment/enrollment.query-handlers.ts";
+import { MachineCommandsLive } from "../src/modules/machine/machine.command-handlers.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
+import { MachineQueriesLive } from "../src/modules/machine/machine.query-handlers.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
 import { Home } from "../src/platform/home.ts";
@@ -148,6 +150,7 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
         Layer.fresh(EnrollmentCommandsLive),
         Layer.fresh(EnrollmentQueriesLive),
         Layer.fresh(MachineLayer),
+        Layer.fresh(MachineQueriesLive),
       ),
     ),
   );
@@ -158,6 +161,8 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
       Layer.mergeAll(
         layer,
         Layer.fresh(MachineLayer),
+        Layer.fresh(MachineCommandsLive),
+        Layer.fresh(MachineQueriesLive),
         Layer.fresh(EnrollmentLayer),
         Layer.fresh(EnrollmentCommandsLive),
         Layer.fresh(EnrollmentQueriesLive),

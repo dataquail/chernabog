@@ -8,22 +8,16 @@ import * as Option from "effect/Option";
 
 import { type RecipesAdded } from "../../../modules/recipes/commands/add-recipes.command.ts";
 import { type RecipeEjected } from "../../../modules/recipes/commands/eject-recipe.command.ts";
+import { type RecipesImported } from "../../../modules/recipes/commands/import-recipes.command.ts";
+import {
+  type RecipesUpdated,
+  type Unrecorded,
+} from "../../../modules/recipes/commands/update-recipes.command.ts";
+import { type RepoUpgraded } from "../../../modules/recipes/commands/upgrade-repo.command.ts";
 import { type RecipesDiff } from "../../../modules/recipes/queries/diff-recipes.query.ts";
 import { type RecipeList } from "../../../modules/recipes/queries/list-recipes.query.ts";
 import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesQueries } from "../../../modules/recipes/recipes.query-handlers.ts";
-import { importRecipesUseCase } from "../../../modules/recipes/use-cases/import-recipes.use-case.ts";
-import {
-  type RecipesImported,
-  type RecipesUpdated,
-  type RepoUpgraded,
-} from "../../../modules/recipes/use-cases/recipe.result.ts";
-import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
-import {
-  type Unrecorded,
-  updateRecipesUseCase,
-} from "../../../modules/recipes/use-cases/update-recipes.use-case.ts";
-import { upgradeRepoUseCase } from "../../../modules/recipes/use-cases/upgrade-repo.use-case.ts";
 import { VERSION } from "../../../platform/version.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
@@ -152,16 +146,18 @@ const importRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>
       return [];
     }
 
-    return describeImported(yield* importRecipesUseCase(root, names));
+    return describeImported(yield* (yield* RecipesCommands).ImportRecipesCommand({ root, names }));
   });
 
 // Brings .chernabog/'s generated schemas up to date, now that its flows may
 // declare other settings, and the lines that say what it rewrote.
 export const refreshSchemas = (root: string) =>
-  Effect.map(scaffoldRepoUseCase(root), (scaffolded) =>
-    scaffolded.changes.flatMap(({ change, path }) =>
-      Option.toArray(Option.liftPredicate(`wrote ${path} (updated)`, () => change === "updated")),
-    ),
+  Effect.map(
+    RecipesCommands.use((commands) => commands.ScaffoldRepoCommand({ root })),
+    (scaffolded) =>
+      scaffolded.changes.flatMap(({ change, path }) =>
+        Option.toArray(Option.liftPredicate(`wrote ${path} (updated)`, () => change === "updated")),
+      ),
   );
 
 // The lines importing, or else copying, the recipes chosen say.
@@ -371,7 +367,13 @@ const NOTHING_COMMITTED =
 const updateHere = (names: ReadonlyArray<string>, unrecorded: Unrecorded) =>
   Effect.gen(function* () {
     const root = yield* rootOf(Option.none());
-    const updated = yield* updateRecipesUseCase(root, names, unrecorded);
+
+    const updated = yield* (yield* RecipesCommands).UpdateRecipesCommand({
+      root,
+      names,
+      unrecorded,
+    });
+
     const lines = describeUpdate(updated);
 
     if (lines.length === 0) {
@@ -420,7 +422,8 @@ const describeUpgrade = (upgraded: RepoUpgraded) => [
 
 const recipesUpgrade = Command.make("upgrade", {}, () =>
   Effect.gen(function* () {
-    const upgraded = yield* upgradeRepoUseCase(yield* rootOf(Option.none()));
+    const root = yield* rootOf(Option.none());
+    const upgraded = yield* (yield* RecipesCommands).UpgradeRepoCommand({ root });
     const lines = [...describeUpgrade(upgraded), ...(yield* updateHere([], "replace"))];
 
     if (lines.length === 0) {

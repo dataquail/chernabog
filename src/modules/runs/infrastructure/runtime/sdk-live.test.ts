@@ -25,7 +25,7 @@ import { Exec, execOk } from "../../../../platform/exec.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { DEFAULT_LIMITS } from "../../../../repo-config.ts";
-import { GitHubLive, GitLive, pushRejection, WorktreeLive } from "./sdk-live.ts";
+import { GitHubLive, GitLive, isServerFailure, pushRejection, WorktreeLive } from "./sdk-live.ts";
 
 const settings: RepoSettings = {
   name: "demo",
@@ -136,7 +136,7 @@ effect(
 );
 
 effect(
-  "a push GitHub refuses for a token without the workflow scope is PushRejected, naming the scope; a moved branch is PushRejected without one",
+  "a push GitHub refuses for a token without the workflow scope is PushRejected, naming the scope; a moved branch is PushRejected without one; a push GitHub failed is tried again",
   () =>
     Effect.gen(function* () {
       const refused = [
@@ -176,6 +176,20 @@ effect(
           "exited 128: fatal: unable to access 'https://github.com/dataquail/demo.git/'",
         ),
       ).toEqual(Option.none());
+
+      // GitHub failing the push is tried again; a branch that moved is not.
+      expect(
+        isServerFailure(
+          "exited 1: To https://github.com/dataquail/demo.git\n ! [remote rejected] HEAD -> auto/issue-3 (Internal Server Error)",
+        ),
+      ).toBe(true);
+      expect(
+        isServerFailure(
+          "exited 128: fatal: unable to access 'https://github.com/dataquail/demo.git/': The requested URL returned error: 502",
+        ),
+      ).toBe(true);
+      expect(isServerFailure(stale.pipe(Option.getOrThrow).reason)).toBe(false);
+      expect(isServerFailure(refused)).toBe(false);
       yield* Effect.void;
     }),
 );

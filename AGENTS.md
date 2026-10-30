@@ -101,14 +101,14 @@ no longer read.
 ## Setup and enrollment (#51)
 
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
-(the machine module: `planSetupUseCase`, then `applySetupUseCase`, with
+(the machine module: `PlanSetupQuery`, then `ApplySetupCommand`, with
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
 persona its flows and then its accounts), then `ApplyEnrollmentCommand`, which
 resolves what wasn't answered and writes the entry once. The machine's
 personas and accounts come in from the machine module's
-`readMachineSetupUseCase`.
+`ReadMachineSetupQuery`.
 
 - **Every question goes through `Asker`**
   (`src/interface/cli/asker.prompt.ts`): `pick`, `choose`, `text`. Only an
@@ -140,10 +140,10 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
   `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
   and what the binary bundles (the scaffold, the pins) through `BundleClient`.
-  `init` dispatches `AddRecipePackageCommand`; `recipes` asks
-  `ListRecipesQuery` and `DiffRecipesQuery`, dispatches `AddRecipesCommand`
-  and `EjectRecipeCommand`, and runs the `import`, `update` and `upgrade`
-  use-cases.
+  `init` dispatches `ScaffoldRepoCommand` and `AddRecipePackageCommand`;
+  `recipes` asks `ListRecipesQuery` and `DiffRecipesQuery`, and dispatches
+  `AddRecipesCommand`, `ImportRecipesCommand`, `EjectRecipeCommand`,
+  `UpdateRecipesCommand` and `UpgradeRepoCommand`.
 - **Copied files record where they came from**, under `chernabog.copied` in
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).
@@ -303,7 +303,7 @@ transitive reach), the coverage floors and the baseline.
 - **The machine module** owns this machine's setup: `MachineSetupRoot`
   (`github:` personas and `accounts:`, edited in place in machine config),
   gh's logins, the account directories in the home, and the daemon as a
-  launchd or systemd service (`ServiceManagerClient`). `applySetupUseCase`
+  launchd or systemd service (`ServiceManagerClient`). `ApplySetupCommand`
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
@@ -452,7 +452,7 @@ Core's settings are the engine's; everything else is a flow's
   `ciState`, `queuedIssues` or `oldestQueued`.
 - **config.schema.json** describes each flow's settings from its schema
   (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
-  `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and
+  `ScaffoldRepoCommand`, which `init` and `recipes add`, `update` and
   `upgrade` run again once the flows changed.
 
 ## Rehearsals (#115)
@@ -508,7 +508,7 @@ docs/adr/0004-core-abi.md has the why.
   whose flows import from core what it lacks; `checkInstalled` refuses one
   whose installed SDK needs another core, or whose imported packages don't
   fit its SDK. Both fail with `IncompatibleConfig`; the daemon shows it as
-  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) moves a
+  `incompatible`. `UpgradeRepoCommand` (`chernabog recipes upgrade`) moves a
   repo to the SDK released with the binary (`RELEASED_SDK`) and pins core and
   effect.
 - **Core only grows within a major** (ADR 0004): add to a port, never change

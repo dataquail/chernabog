@@ -3,13 +3,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { applySetupUseCase } from "../../../modules/machine/use-cases/apply-setup.use-case.ts";
-import { inspectAccountDirUseCase } from "../../../modules/machine/use-cases/inspect-account-dir.use-case.ts";
-import { planSetupUseCase } from "../../../modules/machine/use-cases/plan-setup.use-case.ts";
-import {
-  type SetupOutcome,
-  type SetupPlan,
-} from "../../../modules/machine/use-cases/setup.result.ts";
+import { type SetupOutcome } from "../../../modules/machine/commands/apply-setup.command.ts";
+import { MachineCommands } from "../../../modules/machine/machine.command-handlers.ts";
+import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
+import { type SetupPlan } from "../../../modules/machine/queries/plan-setup.query.ts";
 import { Asker } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { listed, listFlag } from "../list.arguments.ts";
@@ -71,7 +68,7 @@ const askForMore = Effect.gen(function* () {
       return more;
     }
 
-    const found = yield* inspectAccountDirUseCase(answer);
+    const found = yield* (yield* MachineQueries).InspectAccountDirQuery({ typed: answer });
 
     const agent = yield* Option.match(found.agent, {
       onSome: Effect.succeed,
@@ -130,7 +127,7 @@ const describeSetup = (outcome: SetupOutcome) => [
 // don't, and says what it chose.
 export const setUpMachine = (flags: SetupFlags) =>
   Effect.gen(function* () {
-    const plan = yield* planSetupUseCase();
+    const plan = yield* (yield* MachineQueries).PlanSetupQuery();
 
     const personas = yield* Option.match(flags.persona, {
       onSome: (named) => Effect.succeedSome(named),
@@ -142,7 +139,7 @@ export const setUpMachine = (flags: SetupFlags) =>
       onNone: () => askAccounts(plan),
     });
 
-    const outcome = yield* applySetupUseCase({
+    const outcome = yield* (yield* MachineCommands).ApplySetupCommand({
       personas,
       accounts,
       inUse: (yield* (yield* EnrollmentQueries).ListPersonasInUseQuery()).logins,

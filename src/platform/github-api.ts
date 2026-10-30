@@ -113,7 +113,9 @@ export class GitHubApi extends Context.Service<
             Effect.mapError(
               (error) => new GitHubError({ message: `${method} ${pathOrUrl}: ${error.message}` }),
             ),
-            // GitHub answers a 5xx now and then; a network error or one of those is worth two more tries.
+            // GitHub answers a 5xx now and then, sometimes for a minute at a time (#254):
+            // a network error or one of those is tried again for about 30 seconds,
+            // rather than failing the step and the run with it.
             Effect.filterOrFail(
               (response) => response.status < 500,
               (response) =>
@@ -121,7 +123,7 @@ export class GitHubApi extends Context.Service<
                   message: `${method} ${pathOrUrl} returned HTTP ${response.status}`,
                 }),
             ),
-            Effect.retry({ schedule: Schedule.exponential("1 second"), times: 2 }),
+            Effect.retry({ schedule: Schedule.exponential("1 second"), times: 5 }),
           );
 
         return GitHubApi.of({ request });

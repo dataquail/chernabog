@@ -32,7 +32,7 @@ import * as Schedule from "effect/Schedule";
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-handlers.ts";
-import { readMachineSetupUseCase } from "../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
 import { RunLogsQueries } from "../../modules/runs/runs.query-handlers.ts";
@@ -513,16 +513,18 @@ export const runTui = Effect.gen(function* () {
         case "set-account": {
           const written = yield* Effect.result(
             Effect.andThen(
-              Effect.flatMap(readMachineSetupUseCase(), (offered) =>
-                EnrollmentCommands.use((enrollment) =>
-                  enrollment.SetPersonaAccountCommand({
-                    name: action.repo,
-                    persona: action.persona,
-                    role: action.role,
-                    account: action.account,
-                    offered,
-                  }),
-                ),
+              Effect.flatMap(
+                Effect.flatMap(MachineQueries, (queries) => queries.ReadMachineSetupQuery()),
+                (offered) =>
+                  EnrollmentCommands.use((enrollment) =>
+                    enrollment.SetPersonaAccountCommand({
+                      name: action.repo,
+                      persona: action.persona,
+                      role: action.role,
+                      account: action.account,
+                      offered,
+                    }),
+                  ),
               ),
               daemonReload.pipe(Effect.ignore),
             ),
