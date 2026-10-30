@@ -85,13 +85,10 @@
     "src/modules/trust": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 2,
-      "cleared": 0,
+      "cleared": 2,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
-      "holdouts": [
-        "use-cases/check-trust.use-case.ts",
-        "use-cases/find-trusted-tree.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T05:41:27.470Z",
+      "holdouts": []
     }
   },
   "concessions": []

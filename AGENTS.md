@@ -184,9 +184,15 @@ transitive reach), the coverage floors and the baseline.
   (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
   `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`),
   `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
-  values), `use-cases/` (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`,
-  its result schema in `.result.ts`), `infrastructure/{repositories,clients}/`
-  (`-live.ts`, `-fake.ts`, `.mapper.ts`) and `<module>.layer.ts`. Shared
+  values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
+  or `.query.ts` declaring it and its result schema, and a
+  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`), `use-cases/`
+  (one `<verbNoun>UseCase` per `<verb-noun>.use-case.ts`, its result schema in
+  `.result.ts`, until each moves), `infrastructure/{repositories,clients}/`
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
+  `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
+  register the handlers over the layer and declare the module's dispatchers
+  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -194,7 +200,7 @@ transitive reach), the coverage floors and the baseline.
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
-- **Obligations.** A `.root-ops.ts` and a `.use-case.ts` each owe a sibling
+- **Obligations.** A `.root-ops.ts`, a `.use-case.ts` and a `.handler.ts` each owe a sibling
   `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
   `-live.test.ts`. The lint names what is missing.
 - **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
@@ -206,12 +212,14 @@ transitive reach), the coverage floors and the baseline.
 - **Trust is its own module**, apart from the config a person edits:
   `TrustRecordRoot` (the tree of `.chernabog/` a person approved, in
   `trust.json` by slug) behind `TrustRecordsRepository`, and git behind
-  `ConfigTreeClient`. `trustRepoUseCase` is a security gate, so only the CLI
-  offers it; never expose it to an agent-facing adapter such as MCP. The
-  daemon, `doctor` and `status` read trust through `findTrustedTreeUseCase`.
+  `ConfigTreeClient`. It is the CQRS worked example (ADR 6): adapters ask
+  `TrustQueries` and `TrustCommands`. `TrustRepoCommand` is a security gate,
+  so only the CLI dispatches it; never expose it to an agent-facing adapter
+  such as MCP. The daemon and `doctor` read trust through
+  `FindTrustedTreeQuery`, `status` through `CheckTrustQuery`.
   `ReloadRoot` (`reloaded.json`, by slug, behind `ReloadsRepository`) is the
   tree each repo last restarted the daemon on: the daemon restarts on a
-  trusted tree only when `claimReloadUseCase` says it's the first time, so a
+  trusted tree only when `ClaimReloadCommand` says it's the first time, so a
   trusted tree that fails to load restarts it once, not on every check.
 - **Runs are the runs module's.** `RunRoot` (`om_runs` in `state.db`) keeps
   its lifecycle in `RunRootOps`: it starts running, takes steps while it runs

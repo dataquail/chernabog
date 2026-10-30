@@ -30,7 +30,7 @@ import {
   checkAccount,
   loggedInEmail,
 } from "../../../modules/runs/infrastructure/runtime/usage-gate.ts";
-import { findTrustedTreeUseCase } from "../../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
 import { type Backup, listBackups } from "../../../platform/backups.ts";
 import { IncompatibleConfig } from "../../../platform/config-error.ts";
 import { configBranch, configTree, snapshotConfig } from "../../../platform/config-snapshot.ts";
@@ -538,6 +538,8 @@ export const doctor = Effect.gen(function* () {
       );
     });
 
+  const trust = yield* TrustQueries;
+
   for (const repo of machine.repos) {
     const name = repoNameOf(repo);
 
@@ -564,7 +566,10 @@ export const doctor = Effect.gen(function* () {
     }
 
     check(
-      Option.contains((yield* findTrustedTreeUseCase(RepoSlug.make(repo.repo))).tree, tree.success),
+      Option.contains(
+        (yield* trust.FindTrustedTreeQuery({ repo: RepoSlug.make(repo.repo) })).tree,
+        tree.success,
+      ),
       `${name}: .chernabog/ (${tree.success.slice(0, 8)}) is trusted`,
       `chernabog trust ${name}`,
     );

@@ -6,6 +6,8 @@
       "name": "chernabog",
       "dependencies": {
         "@chernabog/core": "workspace:*",
+        "@effect-server-utils/cqrs": "0.1.0-beta.10",
+        "@effect-server-utils/unit-of-work": "0.1.0-beta.10",
         "@effect/platform-bun": "4.0.5",
         "@effect/sql-sqlite-bun": "4.0.5",
         "@opentui/core": "0.6.6",
@@ -78,6 +80,10 @@
     "@chernabog/sdk": ["@chernabog/sdk@workspace:packages/sdk"],
 
     "@conventional-commits/parser": ["@conventional-commits/parser@0.4.1", "", { "dependencies": { "unist-util-visit": "^2.0.3", "unist-util-visit-parents": "^3.1.1" } }, "sha512-H2ZmUVt6q+KBccXfMBhbBF14NlANeqHTXL4qCL6QGbMzrc4HDXyzWuxPxPNbz71f/5UkR5DrycP5VO9u7crahg=="],
+
+    "@effect-server-utils/cqrs": ["@effect-server-utils/cqrs@0.1.0-beta.10", "", { "peerDependencies": { "effect": "^4.0.2" } }, "sha512-jtJldk/Yoi2pfDdzp7pa4T9uEu2K/kO05JY6h7Ins6MF5pZhejAlcscR4H0miYOueS0E4g48LeP33xiXPvQ4ag=="],
+
+    "@effect-server-utils/unit-of-work": ["@effect-server-utils/unit-of-work@0.1.0-beta.10", "", { "peerDependencies": { "@effect-server-utils/cqrs": "^0.1.0-beta.10", "effect": "^4.0.2" } }, "sha512-+JDJXp13QJruEVYHKtVM6DlneFunv+yO20oJ6TZlUAfijou0U/2BzRN0XJUMrrkIplQwxlvoNlxLshDMFqvB9A=="],
 
     "@effect/platform-bun": ["@effect/platform-bun@4.0.5", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.5" }, "peerDependencies": { "effect": "^4.0.5" } }, "sha512-tB/GapZ/bVoCbwRgnojGP4TwopvkMoFoSCipXT1sf0guvG/2oRVhWzJW/1vkrYFEdLM7XyRnVVLrSJyqdok7DA=="],
 
