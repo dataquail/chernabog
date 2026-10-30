@@ -1,7 +1,9 @@
 # 3. Use-cases don't compose each other, and recovery over clean stops
 
 Status: accepted, 2026-10-23. Supersedes decision 1 of ADR 2 and amends its
-decision 3.
+decision 3. Decision 1 is amended by
+[ADR 6](0006-use-cases-become-commands-and-queries.md): it holds for commands
+and queries too, which never dispatch one another.
 
 ## Context
 
