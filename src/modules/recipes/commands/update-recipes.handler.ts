@@ -19,9 +19,7 @@ import {
   sdkVersionOf,
   withCopied,
 } from "../domain/recipe/repo-manifest.value-object.ts";
-import { RecipesUpdated } from "./recipe.result.ts";
-
-export type { Unrecorded };
+import { RecipesUpdated, type UpdateRecipesPayload } from "./update-recipes.command.ts";
 
 type Change = (typeof RecipesUpdated.Type.changes)[number];
 
@@ -173,18 +171,10 @@ const updateFile = (
     }
   });
 
-// Brings the repo's copied recipes up to the newest version of their packages
-// for the repo's SDK, in its working tree, committing nothing: each recipe
-// package moves to the newest version whose SDK range includes the repo's
-// pin, and each copied file takes that version's changes. A file unedited
-// since it was copied is replaced; an edited one is merged, 3-way, from the
-// version recorded for it, keeping the repo's edits and marking conflicts.
-// With names, only those recipes'.
-export const updateRecipesUseCase = Effect.fn("updateRecipesUseCase")(function* (
-  root: string,
-  names: ReadonlyArray<string>,
-  unrecorded: Unrecorded,
+export const updateRecipesHandler = Effect.fn("updateRecipesHandler")(function* (
+  cmd: UpdateRecipesPayload,
 ) {
+  const { names, root, unrecorded } = cmd;
   const dir = yield* ChernabogDirClient;
   const packages = yield* RecipePackagesClient;
 

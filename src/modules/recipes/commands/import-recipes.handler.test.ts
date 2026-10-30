@@ -4,9 +4,9 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestOf, manifestWith, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { importRecipesUseCase } from "./import-recipes.use-case.ts";
+import { importRecipesHandler } from "./import-recipes.handler.ts";
 
-describe("importRecipesUseCase", () => {
+describe("importRecipesHandler", () => {
   const repo = recipeRepo(
     {
       ".chernabog/package.json": manifestWith({
@@ -23,12 +23,10 @@ describe("importRecipesUseCase", () => {
     "writes each recipe's from, copying nothing, keeping a flow the repo has, and moves its package to dependencies",
     () =>
       Effect.gen(function* () {
-        const imported = yield* importRecipesUseCase("/repo", [
-          "review",
-          "implement",
-          "re-review",
-          "@acme/recipes/deploy",
-        ]);
+        const imported = yield* importRecipesHandler({
+          root: "/repo",
+          names: ["review", "implement", "re-review", "@acme/recipes/deploy"],
+        });
 
         expect(imported.flows.map((flow) => [flow.flow, flow.outcome, flow.keptFor])).toEqual([
           ["review", "imported", Option.none()],
@@ -51,7 +49,7 @@ describe("importRecipesUseCase", () => {
         });
         expect(manifest.devDependencies).toEqual({ "@chernabog/sdk": "0.6.0" });
 
-        const again = yield* importRecipesUseCase("/repo", ["review"]);
+        const again = yield* importRecipesHandler({ root: "/repo", names: ["review"] });
         expect(again.flows.map((flow) => flow.outcome)).toEqual(["present"]);
         expect(again.dependencies).toEqual([]);
       }).pipe(Effect.provide(repo.layer)),

@@ -66,7 +66,7 @@ act as the right one.
   persona's login.
 - **Run ids are random UUIDs.** The `om_runs` row is the record of what a run
   does and as whom; show runs with `runLabel` and `shortRunId`, and resolve user
-  input with `resolveRunId` (unique prefix).
+  input with `ResolveRunIdQuery` (unique prefix).
 - **Known gaps:** the commit author isn't set per persona (the pull request
   author is right, since the persona's token opens it), and ssh origins push
   with the person's own key, not the persona's token.
@@ -140,10 +140,10 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
   `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
   `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
   and what the binary bundles (the scaffold, the pins) through `BundleClient`.
-  `init` dispatches `AddRecipePackageCommand`; `recipes` asks
-  `ListRecipesQuery` and `DiffRecipesQuery`, dispatches `AddRecipesCommand`
-  and `EjectRecipeCommand`, and runs the `import`, `update` and `upgrade`
-  use-cases.
+  `init` dispatches `ScaffoldRepoCommand` and `AddRecipePackageCommand`;
+  `recipes` asks `ListRecipesQuery` and `DiffRecipesQuery`, and dispatches
+  `AddRecipesCommand`, `ImportRecipesCommand`, `EjectRecipeCommand`,
+  `UpdateRecipesCommand` and `UpgradeRepoCommand`.
 - **Copied files record where they came from**, under `chernabog.copied` in
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).
@@ -194,7 +194,10 @@ transitive reach), the coverage floors and the baseline.
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
-  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. Shared
+  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. The
+  runs module's stores share the engine's SQL client, so `RunsQueries` is
+  provided where state.db is (the daemon, a foreground run, `flowLayer`),
+  and `RunLogsQueries`, over run logs alone, in `AppLive`. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -283,7 +286,7 @@ transitive reach), the coverage floors and the baseline.
   `writeFileAtomic` (`src/platform/atomic-write.ts`). Use `updateFile` for any
   new state file; a repository adapter may not call `writeFileString`. An
   update isn't reentrant: never call one inside another on the same file.
-  Run logs are behind `RunLogsClient`: `resolveRunIdUseCase` names a run by
+  Run logs are behind `RunLogsClient`: `ResolveRunIdQuery` names a run by
   a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
   gains, ended by an effect the caller passes, since only the caller knows
   who to ask whether the run finished (the CLI asks the daemon).
@@ -445,7 +448,7 @@ Core's settings are the engine's; everything else is a flow's
   `ciState`, `queuedIssues` or `oldestQueued`.
 - **config.schema.json** describes each flow's settings from its schema
   (`configSchemaWith` in the recipes module's `BundleClientLive`), written by
-  `scaffoldRepoUseCase`, which `init` and `recipes add`, `update` and
+  `ScaffoldRepoCommand`, which `init` and `recipes add`, `update` and
   `upgrade` run again once the flows changed.
 
 ## Rehearsals (#115)
@@ -501,7 +504,7 @@ docs/adr/0004-core-abi.md has the why.
   whose flows import from core what it lacks; `checkInstalled` refuses one
   whose installed SDK needs another core, or whose imported packages don't
   fit its SDK. Both fail with `IncompatibleConfig`; the daemon shows it as
-  `incompatible`. `upgradeRepoUseCase` (`chernabog recipes upgrade`) moves a
+  `incompatible`. `UpgradeRepoCommand` (`chernabog recipes upgrade`) moves a
   repo to the SDK released with the binary (`RELEASED_SDK`) and pins core and
   effect.
 - **Core only grows within a major** (ADR 0004): add to a port, never change

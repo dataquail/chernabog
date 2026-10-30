@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { listRecentSkipsUseCase } from "./list-recent-skips.use-case.ts";
+import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
 import { recordSkipUseCase } from "./record-skip.use-case.ts";
 
 describe("recordSkipUseCase", () => {
@@ -19,7 +19,7 @@ describe("recordSkipUseCase", () => {
       });
 
       expect(recorded.at.length > 0).toBe(true);
-      expect((yield* listRecentSkipsUseCase(5)).skips).toEqual([recorded]);
+      expect((yield* listRecentSkipsHandler({ latest: 5 })).skips).toEqual([recorded]);
     }).pipe(Effect.provide(SkipsRepositoryFake([]))),
   );
 });

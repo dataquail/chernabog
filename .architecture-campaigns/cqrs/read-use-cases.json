@@ -39,27 +39,21 @@
     "src/modules/runs": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 17,
-      "cleared": 0,
+      "cleared": 6,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "lastCleared": "2026-10-30T14:30:41.918Z",
       "holdouts": [
         "use-cases/check-run-leases.use-case.ts",
         "use-cases/check-run-validity.use-case.ts",
-        "use-cases/find-active-run.use-case.ts",
-        "use-cases/find-run.use-case.ts",
         "use-cases/follow-run-log.use-case.ts",
-        "use-cases/list-active-runs.use-case.ts",
         "use-cases/list-holds.use-case.ts",
-        "use-cases/list-recent-runs.use-case.ts",
-        "use-cases/list-recent-skips.use-case.ts",
         "use-cases/list-run-markers.use-case.ts",
         "use-cases/list-run-waits.use-case.ts",
         "use-cases/list-unreleased-markers.use-case.ts",
         "use-cases/list-unsupported-runs.use-case.ts",
         "use-cases/plan-tick.use-case.ts",
         "use-cases/read-run-history.use-case.ts",
-        "use-cases/read-run-log.use-case.ts",
-        "use-cases/resolve-run-id.use-case.ts"
+        "use-cases/read-run-log.use-case.ts"
       ]
     },
     "src/modules/trust": {

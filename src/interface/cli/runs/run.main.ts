@@ -37,8 +37,8 @@ import {
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
+import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { listActiveRunsUseCase } from "../../../modules/runs/use-cases/list-active-runs.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
@@ -313,7 +313,7 @@ export const runInForeground = (options: RunOptions) =>
       }
 
       const unfinished = Arr.head(
-        (yield* listActiveRunsUseCase({
+        (yield* (yield* RunsQueries).ListActiveRunsQuery({
           repo: Option.some(repo.settings.name),
           persona: Option.some(persona),
           flow: Option.some(options.flow),
@@ -339,7 +339,9 @@ export const runInForeground = (options: RunOptions) =>
         services: (_repo, one) => servicesFrom(contexts)(one),
       }).pipe(
         Layer.provideMerge(
-          flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provideMerge(StateLive)),
+          Layer.mergeAll(flowLayer(handle, servicesFrom(contexts)), RunsQueriesLive).pipe(
+            Layer.provideMerge(StateLive),
+          ),
         ),
       ),
     );

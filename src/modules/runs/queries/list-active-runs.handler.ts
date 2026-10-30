@@ -1,25 +1,17 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type Persona, samePersona } from "../../../kernel/persona.value-object.ts";
+import { samePersona } from "../../../kernel/persona.value-object.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
-import { ActiveRun, ActiveRuns } from "./run.result.ts";
-
-// Which runs in flight to list: each set field narrows them.
-export type ActiveRunsFilter = {
-  readonly repo: Option.Option<string>;
-  readonly persona: Option.Option<Persona>;
-  readonly flow: Option.Option<string>;
-};
+import { ActiveRun } from "../domain/run/run-view.value-object.ts";
+import { ActiveRuns, type ListActiveRunsPayload } from "./list-active-runs.query.ts";
 
 const matches = (filter: Option.Option<string>, value: string) =>
   Option.match(filter, { onNone: () => true, onSome: (wanted) => wanted === value });
 
-// The runs in flight, oldest first, each with whether it's parked on a
-// signal, so it holds no slot.
-export const listActiveRunsUseCase = Effect.fn("listActiveRunsUseCase")(function* (
-  filter: ActiveRunsFilter,
+export const listActiveRunsHandler = Effect.fn("listActiveRunsHandler")(function* (
+  filter: ListActiveRunsPayload,
 ) {
   const running = yield* (yield* RunsRepository).findAll({ running: true });
   const waits = yield* (yield* RunWaitsRepository).findAll(Option.none());
