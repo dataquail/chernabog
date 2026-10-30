@@ -6,8 +6,8 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { adoptImplicitRunsUseCase } from "./adopt-implicit-runs.use-case.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -35,7 +35,7 @@ describe("adoptImplicitRunsUseCase", () => {
       const adopted = yield* adoptImplicitRunsUseCase("demo", "alice");
 
       const personaOf = (id: string) =>
-        findRunUseCase(RunId.make(id)).pipe(
+        findRunHandler({ runId: RunId.make(id) }).pipe(
           Effect.map((found) => Option.flatMap(found.run, (known) => known.persona)),
         );
 

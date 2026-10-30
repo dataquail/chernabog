@@ -4,8 +4,8 @@ import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
+import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
 import { readRunLogUseCase } from "../../../modules/runs/use-cases/read-run-log.use-case.ts";
-import { resolveRunIdUseCase } from "../../../modules/runs/use-cases/resolve-run-id.use-case.ts";
 import { RunLog } from "../../../modules/runs/use-cases/run-log.result.ts";
 import { fail, printJson } from "../cli.output.ts";
 import { jsonFlag } from "../output.arguments.ts";
@@ -20,7 +20,7 @@ export const logsCommand = Command.make(
   },
   ({ follow, json, run }) =>
     Effect.gen(function* () {
-      const { runId } = yield* resolveRunIdUseCase(run);
+      const { runId } = yield* (yield* RunLogsQueries).ResolveRunIdQuery({ asked: run });
       const log = yield* readRunLogUseCase(runId);
 
       if (follow) {

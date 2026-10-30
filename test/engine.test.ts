@@ -45,11 +45,11 @@ import {
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
 import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
@@ -644,7 +644,7 @@ describe("personas", () => {
             ),
           );
 
-          return yield* toEnd(Option.getOrThrow((yield* findRunUseCase(OLD)).run));
+          return yield* toEnd(Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run));
         });
 
         const { value: finished } = yield* withEngine(adopted, asAliceOrBob);
@@ -678,7 +678,9 @@ describe("personas", () => {
             ),
           );
 
-          return yield* pollRun(Option.getOrThrow((yield* findRunUseCase(OLD)).run)).pipe(
+          return yield* pollRun(
+            Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run),
+          ).pipe(
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
               while: isRunning,

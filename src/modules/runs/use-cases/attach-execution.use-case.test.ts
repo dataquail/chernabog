@@ -6,8 +6,8 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { attachExecutionUseCase } from "./attach-execution.use-case.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -35,7 +35,10 @@ describe("attachExecutionUseCase", () => {
       yield* attachExecutionUseCase(RunId.make("a"), "x");
 
       expect(
-        Option.flatMap((yield* findRunUseCase(RunId.make("a"))).run, (found) => found.executionId),
+        Option.flatMap(
+          (yield* findRunHandler({ runId: RunId.make("a") })).run,
+          (found) => found.executionId,
+        ),
       ).toEqual(Option.some("x"));
     }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
   );

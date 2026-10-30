@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { SkipRoot } from "../domain/skip/skip.root.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { listRecentSkipsUseCase } from "./list-recent-skips.use-case.ts";
+import { listRecentSkipsHandler } from "./list-recent-skips.handler.ts";
 
 const skip = (reason: string, at: string) =>
   SkipRoot.make({
@@ -17,10 +17,10 @@ const skip = (reason: string, at: string) =>
     at,
   });
 
-describe("listRecentSkipsUseCase", () => {
+describe("listRecentSkipsHandler", () => {
   effect("lists the latest skips, newest first", () =>
     Effect.gen(function* () {
-      const { skips } = yield* listRecentSkipsUseCase(2);
+      const { skips } = yield* listRecentSkipsHandler({ latest: 2 });
 
       expect(skips.map((found) => found.reason)).toEqual(["usage gate", "quiet hours"]);
     }).pipe(

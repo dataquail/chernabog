@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { findActiveRunUseCase } from "./find-active-run.use-case.ts";
+import { findActiveRunHandler } from "./find-active-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -30,14 +30,14 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
 
 const wanted = { repo: "demo", persona: Option.some("bob"), flow: "review", itemKey: "pr-1" };
 
-describe("findActiveRunUseCase", () => {
+describe("findActiveRunHandler", () => {
   effect("finds the persona's run in flight for the item, and none for another persona", () =>
     Effect.gen(function* () {
-      const found = yield* findActiveRunUseCase(wanted);
+      const found = yield* findActiveRunHandler(wanted);
 
       expect(Option.map(found.run, (active) => String(active.id))).toEqual(Option.some("b"));
       expect(
-        (yield* findActiveRunUseCase({ ...wanted, persona: Option.some("alice") })).run,
+        (yield* findActiveRunHandler({ ...wanted, persona: Option.some("alice") })).run,
       ).toEqual(Option.none());
     }).pipe(
       Effect.provide(

@@ -1,12 +1,12 @@
 import * as Effect from "effect/Effect";
 
 import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
-import { SkipList, SkipView } from "./skip.result.ts";
+import { SkipView } from "../domain/skip/skip-view.value-object.ts";
+import { type ListRecentSkipsPayload, SkipList } from "./list-recent-skips.query.ts";
 
-// The latest skips, newest first.
-export const listRecentSkipsUseCase = Effect.fn("listRecentSkipsUseCase")(function* (
-  latest: number,
-) {
+export const listRecentSkipsHandler = Effect.fn("listRecentSkipsHandler")(function* ({
+  latest,
+}: ListRecentSkipsPayload) {
   const skips = yield* (yield* SkipsRepository).findAll(latest);
 
   return SkipList.make({ skips: skips.map((skip) => SkipView.make({ ...skip })) });

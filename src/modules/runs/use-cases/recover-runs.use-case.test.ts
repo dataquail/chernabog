@@ -17,7 +17,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { recoverRunsUseCase } from "./recover-runs.use-case.ts";
 
 const item = (key: string, fields: Partial<WorkItem> = {}): WorkItem => ({
@@ -83,7 +83,9 @@ describe("recoverRunsUseCase", () => {
         expect(ids(recovered.left)).toEqual(["elsewhere"]);
         expect(engine.executed.map(String)).toEqual(["kept"]);
 
-        const legacy = Option.getOrThrow((yield* findRunUseCase(RunId.make("legacy"))).run);
+        const legacy = Option.getOrThrow(
+          (yield* findRunHandler({ runId: RunId.make("legacy") })).run,
+        );
 
         expect([legacy.status, legacy.summary]).toEqual([
           "failed",

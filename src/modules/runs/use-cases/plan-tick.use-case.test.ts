@@ -19,8 +19,8 @@ import { HoldsRepositoryFake } from "../infrastructure/repositories/holds.reposi
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
+import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
 import { listHoldsUseCase } from "./list-holds.use-case.ts";
-import { listRecentSkipsUseCase } from "./list-recent-skips.use-case.ts";
 import { planTickUseCase, type TickInput } from "./plan-tick.use-case.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
@@ -82,7 +82,7 @@ const open: TickInput = {
   concurrency: { flow: 1, machine: 4 },
 };
 
-const reasons = listRecentSkipsUseCase(5).pipe(
+const reasons = listRecentSkipsHandler({ latest: 5 }).pipe(
   Effect.map(({ skips }) => skips.map((skip) => skip.reason)),
 );
 

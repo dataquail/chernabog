@@ -34,7 +34,7 @@ import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/s
 import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
-import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
+import { RunLogsQueries, RunLogsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { TrustCommandsLive } from "../../modules/trust/trust.command-handlers.ts";
 import { TrustQueriesLive } from "../../modules/trust/trust.query-handlers.ts";
@@ -363,7 +363,7 @@ const labels = Command.make(
 
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {
-    const { runId } = yield* resolveRunIdUseCase(named);
+    const { runId } = yield* (yield* RunLogsQueries).ResolveRunIdQuery({ asked: named });
     const session = Arr.last(yield* runSessions(runId));
 
     if (Option.isNone(session)) {
@@ -467,6 +467,7 @@ const AppLive = Layer.mergeAll(
   TrustCommandsLive,
   TrustQueriesLive,
   RunLogsLayer,
+  RunLogsQueriesLive,
   MachineLayer,
   RecipesLayer,
   RehearsalsLayer,

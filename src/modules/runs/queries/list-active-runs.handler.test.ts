@@ -9,7 +9,8 @@ import { RunRoot } from "../domain/run/run.root.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { type ActiveRunsFilter, listActiveRunsUseCase } from "./list-active-runs.use-case.ts";
+import { listActiveRunsHandler } from "./list-active-runs.handler.ts";
+import { type ListActiveRunsPayload } from "./list-active-runs.query.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -31,7 +32,7 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-const every: ActiveRunsFilter = {
+const every: ListActiveRunsPayload = {
   repo: Option.none(),
   persona: Option.none(),
   flow: Option.none(),
@@ -55,10 +56,10 @@ const stores = Layer.mergeAll(
   ]),
 );
 
-describe("listActiveRunsUseCase", () => {
+describe("listActiveRunsHandler", () => {
   effect("lists the runs in flight, oldest first, saying which are parked", () =>
     Effect.gen(function* () {
-      const { runs } = yield* listActiveRunsUseCase(every);
+      const { runs } = yield* listActiveRunsHandler(every);
 
       expect(runs.map((active) => [String(active.id), active.parked])).toEqual([
         ["a", false],
@@ -71,7 +72,7 @@ describe("listActiveRunsUseCase", () => {
   effect("narrows them by repo, persona and flow", () =>
     Effect.gen(function* () {
       const ids = (filter: typeof every) =>
-        listActiveRunsUseCase(filter).pipe(
+        listActiveRunsHandler(filter).pipe(
           Effect.map(({ runs }) => runs.map((active) => String(active.id))),
         );
 

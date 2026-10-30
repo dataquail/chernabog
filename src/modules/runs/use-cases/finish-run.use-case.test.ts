@@ -6,7 +6,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { findRunUseCase } from "./find-run.use-case.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
 import { finishRunUseCase } from "./finish-run.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -48,7 +48,10 @@ describe("finishRunUseCase", () => {
       ]);
       expect(again._tag).toBe("RunAlreadyFinished");
       expect(
-        Option.map((yield* findRunUseCase(RunId.make("a"))).run, (found) => found.status),
+        Option.map(
+          (yield* findRunHandler({ runId: RunId.make("a") })).run,
+          (found) => found.status,
+        ),
       ).toEqual(Option.some("done"));
     }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
   );
