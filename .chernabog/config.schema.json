@@ -125,44 +125,6 @@
           "maximum": 9007199254740991,
           "description": "Re-reviews of one pull request before a person takes over."
         },
-        "board": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "projectNumber": {
-                  "type": "integer",
-                  "minimum": -9007199254740991,
-                  "maximum": 9007199254740991
-                },
-                "readyStatus": {
-                  "type": "string"
-                },
-                "inProgressStatus": {
-                  "type": "string"
-                }
-              },
-              "required": ["projectNumber", "readyStatus", "inProgressStatus"],
-              "additionalProperties": true,
-              "description": "The GitHub project board an issue moves across as it is claimed. null for none."
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "planNodes": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991,
-          "description": "The most tasks one plan may hold, its verify node aside."
-        },
-        "planRounds": {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991,
-          "description": "Times the agent is asked to fix a plan that fails its checks before a person takes over."
-        },
         "localGate": {
           "type": "array",
           "items": {
@@ -205,6 +167,60 @@
           "type": "string",
           "enum": ["hold", "ignore"],
           "description": "Whether a failing check that doesn't gate still makes CI red (hold), or is left alone (ignore)."
+        },
+        "board": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "projectNumber": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "readyStatus": {
+                  "type": "string"
+                },
+                "inProgressStatus": {
+                  "type": "string"
+                }
+              },
+              "required": ["projectNumber", "readyStatus", "inProgressStatus"],
+              "additionalProperties": true,
+              "description": "The GitHub project board an issue moves across as it is claimed. null for none."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planNodes": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "The most tasks one plan may hold, its verify node aside."
+        },
+        "planRounds": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Times the agent is asked to fix a plan that fails its checks before a person takes over."
+        },
+        "stackDepth": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "The most layers one stack may hold before the run stops starting new ones and waits for the bottom to merge."
+        },
+        "atOnce": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "How many of the epic's ready tasks the run implements at once. Default: 2."
+        },
+        "ship": {
+          "type": "boolean",
+          "description": "Whether the epic's layers are on the automated path: each pull request the run opens is labelled auto:ship, and the run merges each approved layer once the layers below it have merged."
         }
       }
     },
@@ -732,6 +748,293 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991,
                   "description": "Re-reviews of one pull request before a person takes over."
+                }
+              },
+              "additionalProperties": true
+            },
+            "runners": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config."
+            },
+            "from": {
+              "type": "string",
+              "description": "Runs this flow from a recipe package installed in .chernabog/ (its package.json's dependencies), instead of a file in flows/: \"<package>/<recipe>\", such as \"@chernabog/recipes/review\". The package's team owns it; a prompt in prompts/ overrides the package's. chernabog recipes eject copies it in."
+            }
+          },
+          "additionalProperties": true
+        },
+        "epic": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "agent": {
+              "type": "string",
+              "description": "The adapter this flow's agent steps run with, over the repo's agent."
+            },
+            "agents": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's."
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ],
+                  "description": "Deprecated: set assignee under flows.<name>.settings, where the flows that route with the SDK's Routing read it. Given to the flow as that setting until then; its own settings win over this."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reviewRequested": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ],
+                  "description": "Deprecated: set reviewRequested under flows.<name>.settings, where the flows that route with the SDK's Routing read it. Given to the flow as that setting until then; its own settings win over this."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "settings": {
+              "type": "object",
+              "properties": {
+                "assignee": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reviewRequested": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "labels": {
+                  "type": "object",
+                  "properties": {
+                    "eligible": {
+                      "type": "string"
+                    },
+                    "inProgress": {
+                      "type": "string"
+                    },
+                    "needsReview": {
+                      "type": "string"
+                    },
+                    "changesRequested": {
+                      "type": "string"
+                    },
+                    "approved": {
+                      "type": "string"
+                    },
+                    "needsHuman": {
+                      "type": "string"
+                    },
+                    "needsClarification": {
+                      "type": "string"
+                    },
+                    "stale": {
+                      "type": "string"
+                    },
+                    "ship": {
+                      "type": "string"
+                    },
+                    "hybrid": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true,
+                  "description": "The label names the SDK's blocks use, by what each means."
+                },
+                "base": {
+                  "type": "string",
+                  "description": "The branch the flow's work starts from and its pull requests target, such as develop in git flow. Unset: the repo's default branch."
+                },
+                "board": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "projectNumber": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "readyStatus": {
+                          "type": "string"
+                        },
+                        "inProgressStatus": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["projectNumber", "readyStatus", "inProgressStatus"],
+                      "additionalProperties": true,
+                      "description": "The GitHub project board an issue moves across as it is claimed. null for none."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "localGate": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Commands the change must pass before its pull request opens."
+                },
+                "localGateRounds": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "Agent attempts to get the local gate passing before a person takes over."
+                },
+                "install": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Run in a fresh worktree before the agent starts. null for none."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "humanOnly": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Decisions the agent must stop for and leave to a person, beyond the repo's and the machine's."
+                },
+                "humanOnlyPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Paths a change must not touch; one that does goes to a person instead of a pull request."
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Repo facts the agent should know."
+                },
+                "ciRounds": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "Pushes to fix red CI before a person takes over."
+                },
+                "ciTimeout": {
+                  "type": "string"
+                },
+                "ciGates": {
+                  "type": "string",
+                  "enum": ["required", "every"],
+                  "description": "The checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or every check."
+                },
+                "ciOptionalFailures": {
+                  "type": "string",
+                  "enum": ["hold", "ignore"],
+                  "description": "Whether a failing check that doesn't gate still makes CI red (hold), or is left alone (ignore)."
+                },
+                "reviewers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path."
+                },
+                "reviewRounds": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "Re-reviews of one pull request before a person takes over."
+                },
+                "stackDepth": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "The most layers one stack may hold before the run stops starting new ones and waits for the bottom to merge."
+                },
+                "atOnce": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "How many of the epic's ready tasks the run implements at once. Default: 2."
+                },
+                "ship": {
+                  "type": "boolean",
+                  "description": "Whether the epic's layers are on the automated path: each pull request the run opens is labelled auto:ship, and the run merges each approved layer once the layers below it have merged."
                 }
               },
               "additionalProperties": true
@@ -1663,6 +1966,198 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991,
                   "description": "Re-reviews of one pull request before a person takes over."
+                }
+              },
+              "additionalProperties": true
+            },
+            "runners": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "GitHub logins that run this by default: chernabog enroll offers it to them and not to others. Anyone's when unset. A person can still list the flow for themselves in machine config."
+            },
+            "from": {
+              "type": "string",
+              "description": "Runs this flow from a recipe package installed in .chernabog/ (its package.json's dependencies), instead of a file in flows/: \"<package>/<recipe>\", such as \"@chernabog/recipes/review\". The package's team owns it; a prompt in prompts/ overrides the package's. chernabog recipes eject copies it in."
+            }
+          },
+          "additionalProperties": true
+        },
+        "resolve-conflicts": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "schedule": {
+              "type": "string"
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "agent": {
+              "type": "string",
+              "description": "The adapter this flow's agent steps run with, over the repo's agent."
+            },
+            "agents": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Adapters by role, such as { reviewer: codex }: a step given { role } runs with that role's adapter, falling back to this flow's agent and then the repo's."
+            },
+            "assignee": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ],
+                  "description": "Deprecated: set assignee under flows.<name>.settings, where the flows that route with the SDK's Routing read it. Given to the flow as that setting until then; its own settings win over this."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reviewRequested": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  ],
+                  "description": "Deprecated: set reviewRequested under flows.<name>.settings, where the flows that route with the SDK's Routing read it. Given to the flow as that setting until then; its own settings win over this."
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "settings": {
+              "type": "object",
+              "properties": {
+                "labels": {
+                  "type": "object",
+                  "properties": {
+                    "eligible": {
+                      "type": "string"
+                    },
+                    "inProgress": {
+                      "type": "string"
+                    },
+                    "needsReview": {
+                      "type": "string"
+                    },
+                    "changesRequested": {
+                      "type": "string"
+                    },
+                    "approved": {
+                      "type": "string"
+                    },
+                    "needsHuman": {
+                      "type": "string"
+                    },
+                    "needsClarification": {
+                      "type": "string"
+                    },
+                    "stale": {
+                      "type": "string"
+                    },
+                    "ship": {
+                      "type": "string"
+                    },
+                    "hybrid": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": true,
+                  "description": "The label names the SDK's blocks use, by what each means."
+                },
+                "base": {
+                  "type": "string",
+                  "description": "The branch the flow's work starts from and its pull requests target, such as develop in git flow. Unset: the repo's default branch."
+                },
+                "localGate": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Commands the change must pass before its pull request opens."
+                },
+                "localGateRounds": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "Agent attempts to get the local gate passing before a person takes over."
+                },
+                "install": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Run in a fresh worktree before the agent starts. null for none."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "humanOnly": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Decisions the agent must stop for and leave to a person, beyond the repo's and the machine's."
+                },
+                "humanOnlyPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Paths a change must not touch; one that does goes to a person instead of a pull request."
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Repo facts the agent should know."
+                },
+                "ciRounds": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991,
+                  "description": "Pushes to fix red CI before a person takes over."
+                },
+                "ciTimeout": {
+                  "type": "string"
+                },
+                "ciGates": {
+                  "type": "string",
+                  "enum": ["required", "every"],
+                  "description": "The checks that must pass: those the base branch requires (every check when it requires none, or GitHub won't say), or every check."
+                },
+                "ciOptionalFailures": {
+                  "type": "string",
+                  "enum": ["hold", "ignore"],
+                  "description": "Whether a failing check that doesn't gate still makes CI red (hold), or is left alone (ignore)."
                 }
               },
               "additionalProperties": true

@@ -5,7 +5,7 @@
     "@chernabog/core": "1.0.0"
   },
   "dependencies": {
-    "@chernabog/recipes": "0.2.0",
-    "@chernabog/sdk": "0.8.0"
+    "@chernabog/recipes": "0.2.1",
+    "@chernabog/sdk": "0.8.1"
   }
 }
