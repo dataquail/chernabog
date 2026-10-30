@@ -10,6 +10,14 @@ import { RepointRepoCommand } from "./commands/repoint-repo.command.ts";
 import { repointRepoHandler } from "./commands/repoint-repo.handler.ts";
 import { ResumeRepoCommand } from "./commands/resume-repo.command.ts";
 import { resumeRepoHandler } from "./commands/resume-repo.handler.ts";
+import { SetFlowScheduleCommand } from "./commands/set-flow-schedule.command.ts";
+import { setFlowScheduleHandler } from "./commands/set-flow-schedule.handler.ts";
+import { SetPersonaAccountCommand } from "./commands/set-persona-account.command.ts";
+import { setPersonaAccountHandler } from "./commands/set-persona-account.handler.ts";
+import { SetPersonaFlowCommand } from "./commands/set-persona-flow.command.ts";
+import { setPersonaFlowHandler } from "./commands/set-persona-flow.handler.ts";
+import { UnenrollRepoCommand } from "./commands/unenroll-repo.command.ts";
+import { unenrollRepoHandler } from "./commands/unenroll-repo.handler.ts";
 import { EnrollmentLayer } from "./enrollment.layer.ts";
 
 export const enrollmentCommandGroup = Command.group(
@@ -17,6 +25,10 @@ export const enrollmentCommandGroup = Command.group(
   PauseRepoCommand,
   RepointRepoCommand,
   ResumeRepoCommand,
+  SetFlowScheduleCommand,
+  SetPersonaAccountCommand,
+  SetPersonaFlowCommand,
+  UnenrollRepoCommand,
 );
 
 const EnrollmentCommandHandlersLive = Command.handlersOf(enrollmentCommandGroup, {
@@ -24,10 +36,14 @@ const EnrollmentCommandHandlersLive = Command.handlersOf(enrollmentCommandGroup,
   PauseRepoCommand: (payload) => pauseRepoHandler(payload),
   RepointRepoCommand: (payload) => repointRepoHandler(payload),
   ResumeRepoCommand: (payload) => resumeRepoHandler(payload),
+  SetFlowScheduleCommand: (payload) => setFlowScheduleHandler(payload),
+  SetPersonaAccountCommand: (payload) => setPersonaAccountHandler(payload),
+  SetPersonaFlowCommand: (payload) => setPersonaFlowHandler(payload),
+  UnenrollRepoCommand: (payload) => unenrollRepoHandler(payload),
 }).pipe(Layer.provide(EnrollmentLayer));
 
 // The enrollment module's slice of the write side, which enroll, init, pause,
-// resume, rehearse and the TUI dispatch.
+// resume, unenroll, rehearse and the TUI dispatch.
 export class EnrollmentCommands extends Context.Service<
   EnrollmentCommands,
   Command.Dispatcher<typeof enrollmentCommandGroup>

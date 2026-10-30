@@ -1,13 +1,19 @@
 import * as Effect from "effect/Effect";
 
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { EnrolledRepoSummary } from "./enrolled-repos.result.ts";
+import { type UnenrollRepoPayload } from "./unenroll-repo.command.ts";
 
-// Removes the repo a person names from this machine, settings and all.
-export const unenrollRepoUseCase = Effect.fn("unenrollRepoUseCase")(function* (name: string) {
+export const unenrollRepoHandler = Effect.fn("unenrollRepoHandler")(function* (
+  cmd: UnenrollRepoPayload,
+) {
   const repository = yield* EnrolledReposRepository;
-  const repo = yield* Effect.fromResult(EnrolledRepoRootOps.named(yield* repository.findAll, name));
+
+  const repo = yield* Effect.fromResult(
+    EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+  );
+
   yield* repository.remove(repo);
 
   return EnrolledRepoSummary.make({
