@@ -92,7 +92,7 @@ no longer read.
 - **Missing checkout:** the daemon shows the repo as `missing` and keeps its
   settings; `init` offers to re-point an entry whose path is gone
   (`ListMovedReposQuery`, `RepointRepoCommand`); `unenroll` removes one
-  (`unenrollRepoUseCase`).
+  (`UnenrollRepoCommand`).
 - **Migration** (`src/migrate.ts`) runs before any command reads machine
   config: persona lists become maps, and an entry that lists no flows gets the
   ones that ran before plus `local.yaml`'s settings. It prints what it

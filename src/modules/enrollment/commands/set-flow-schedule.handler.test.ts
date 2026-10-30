@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { unenrollRepoUseCase } from "./unenroll-repo.use-case.ts";
+import { setFlowScheduleHandler } from "./set-flow-schedule.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -41,14 +41,32 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     ViewerClientFake(Option.some("carol")),
   );
 
-describe("unenrollRepoUseCase", () => {
-  effect("removes the repo named, settings and all, and says what it was", () =>
+describe("setFlowScheduleHandler", () => {
+  effect("overrides a flow's schedule, and refuses one that isn't a schedule", () =>
     Effect.gen(function* () {
-      const removed = yield* unenrollRepoUseCase("dataquail/demo");
+      yield* setFlowScheduleHandler({
+        name: "demo",
+        persona: Option.none(),
+        flow: "implement",
+        schedule: Option.some("*/20 * * * *"),
+      });
+      expect((yield* stored)[0].defaults.flows).toEqual({
+        implement: { schedule: "*/20 * * * *" },
+      });
 
-      expect([removed.name, removed.path]).toEqual(["demo", "/src/demo"]);
-      expect(yield* stored).toEqual([]);
-      expect((yield* Effect.flip(unenrollRepoUseCase("demo")))._tag).toBe("RepoNotEnrolled");
+      const refused = yield* Effect.flip(
+        setFlowScheduleHandler({
+          name: "demo",
+          persona: Option.none(),
+          flow: "implement",
+          schedule: Option.some("every hour"),
+        }),
+      );
+
+      expect(refused.message).toContain('"every hour" isn\'t a schedule');
+      expect((yield* stored)[0].defaults.flows).toEqual({
+        implement: { schedule: "*/20 * * * *" },
+      });
     }).pipe(Effect.provide(machineOf([entry({ defaults: { flows: { implement: {} } } })]))),
   );
 });

@@ -15,15 +15,10 @@
     "src/modules/enrollment": {
       "entered": "2026-10-30T06:14:45.008Z",
       "initial": 8,
-      "cleared": 4,
+      "cleared": 8,
       "closed": 0,
-      "lastCleared": "2026-10-30T14:00:32.158Z",
-      "holdouts": [
-        "use-cases/set-flow-schedule.use-case.ts",
-        "use-cases/set-persona-account.use-case.ts",
-        "use-cases/set-persona-flow.use-case.ts",
-        "use-cases/unenroll-repo.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T14:12:37.810Z",
+      "holdouts": []
     }
   },
   "concessions": []

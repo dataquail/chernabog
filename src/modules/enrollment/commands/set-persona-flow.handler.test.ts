@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { setPersonaFlowUseCase } from "./set-persona-flow.use-case.ts";
+import { setPersonaFlowHandler } from "./set-persona-flow.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -41,15 +41,25 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     ViewerClientFake(Option.some("carol")),
   );
 
-describe("setPersonaFlowUseCase", () => {
+describe("setPersonaFlowHandler", () => {
   effect("turns a flow off keeping its settings, and on again", () =>
     Effect.gen(function* () {
-      yield* setPersonaFlowUseCase("demo", Option.none(), "review", false);
+      yield* setPersonaFlowHandler({
+        name: "demo",
+        persona: Option.none(),
+        flow: "review",
+        enabled: false,
+      });
       expect((yield* stored)[0].defaults.flows).toEqual({
         review: { schedule: "5 * * * *", enabled: false },
       });
 
-      yield* setPersonaFlowUseCase("demo", Option.none(), "review", true);
+      yield* setPersonaFlowHandler({
+        name: "demo",
+        persona: Option.none(),
+        flow: "review",
+        enabled: true,
+      });
       expect((yield* stored)[0].defaults.flows).toEqual({ review: { schedule: "5 * * * *" } });
     }).pipe(
       Effect.provide(

@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { setFlowScheduleUseCase } from "./set-flow-schedule.use-case.ts";
+import { unenrollRepoHandler } from "./unenroll-repo.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -41,27 +41,16 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     ViewerClientFake(Option.some("carol")),
   );
 
-describe("setFlowScheduleUseCase", () => {
-  effect("overrides a flow's schedule, and refuses one that isn't a schedule", () =>
+describe("unenrollRepoHandler", () => {
+  effect("removes the repo named, settings and all, and says what it was", () =>
     Effect.gen(function* () {
-      yield* setFlowScheduleUseCase(
-        "demo",
-        Option.none(),
-        "implement",
-        Option.some("*/20 * * * *"),
-      );
-      expect((yield* stored)[0].defaults.flows).toEqual({
-        implement: { schedule: "*/20 * * * *" },
-      });
+      const removed = yield* unenrollRepoHandler({ name: "dataquail/demo" });
 
-      const refused = yield* Effect.flip(
-        setFlowScheduleUseCase("demo", Option.none(), "implement", Option.some("every hour")),
+      expect([removed.name, removed.path]).toEqual(["demo", "/src/demo"]);
+      expect(yield* stored).toEqual([]);
+      expect((yield* Effect.flip(unenrollRepoHandler({ name: "demo" })))._tag).toBe(
+        "RepoNotEnrolled",
       );
-
-      expect(refused.message).toContain('"every hour" isn\'t a schedule');
-      expect((yield* stored)[0].defaults.flows).toEqual({
-        implement: { schedule: "*/20 * * * *" },
-      });
     }).pipe(Effect.provide(machineOf([entry({ defaults: { flows: { implement: {} } } })]))),
   );
 });

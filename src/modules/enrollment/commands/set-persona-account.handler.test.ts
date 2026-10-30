@@ -12,7 +12,7 @@ import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-r
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { setPersonaAccountUseCase } from "./set-persona-account.use-case.ts";
+import { setPersonaAccountHandler } from "./set-persona-account.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -58,23 +58,23 @@ const accounts = offered(
   ],
 );
 
-describe("setPersonaAccountUseCase", () => {
+describe("setPersonaAccountHandler", () => {
   effect("picks a persona's account and a role's, and refuses ones that clash", () =>
     Effect.gen(function* () {
-      yield* setPersonaAccountUseCase(
-        "demo",
-        Option.none(),
-        Option.none(),
-        Option.some("personal"),
-        accounts,
-      );
-      yield* setPersonaAccountUseCase(
-        "demo",
-        Option.none(),
-        Option.some("reviewer"),
-        Option.some("codex"),
-        accounts,
-      );
+      yield* setPersonaAccountHandler({
+        name: "demo",
+        persona: Option.none(),
+        role: Option.none(),
+        account: Option.some("personal"),
+        offered: accounts,
+      });
+      yield* setPersonaAccountHandler({
+        name: "demo",
+        persona: Option.none(),
+        role: Option.some("reviewer"),
+        account: Option.some("codex"),
+        offered: accounts,
+      });
 
       expect((yield* stored)[0].defaults).toEqual({
         account: "personal",
@@ -82,13 +82,13 @@ describe("setPersonaAccountUseCase", () => {
       });
 
       const clash = yield* Effect.flip(
-        setPersonaAccountUseCase(
-          "demo",
-          Option.none(),
-          Option.some("author"),
-          Option.some("work"),
-          accounts,
-        ),
+        setPersonaAccountHandler({
+          name: "demo",
+          persona: Option.none(),
+          role: Option.some("author"),
+          account: Option.some("work"),
+          offered: accounts,
+        }),
       );
 
       expect(clash.message).toContain("a claude account like the persona's own (personal)");
