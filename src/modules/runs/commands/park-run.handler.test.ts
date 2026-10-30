@@ -6,13 +6,13 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { listRunWaitsHandler } from "../queries/list-run-waits.handler.ts";
-import { parkRunUseCase } from "./park-run.use-case.ts";
+import { parkRunHandler } from "./park-run.handler.ts";
 
-describe("parkRunUseCase", () => {
+describe("parkRunHandler", () => {
   effect("parks the run on its signal, until it's released, and keeps when it parked", () =>
     Effect.gen(function* () {
       const runId = RunId.make("a");
-      const parked = yield* parkRunUseCase({ runId, signal: "pushed", deferred: "d", token: "t" });
+      const parked = yield* parkRunHandler({ runId, signal: "pushed", deferred: "d", token: "t" });
 
       expect(Option.isSome(parked.parkedAt)).toBe(true);
 

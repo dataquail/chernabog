@@ -50,6 +50,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
+import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
@@ -63,7 +64,6 @@ import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-sig
 import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
 import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../src/modules/runs/use-cases/start-flow-run.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
@@ -904,7 +904,7 @@ export const runtimeFor = (handle: FlowHandle) =>
 
 // Starting, polling and waking runs as the daemon does, through the runs module.
 export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
-  startFlowRunUseCase(refOf(handle, persona), work);
+  startFlowRunHandler({ flow: refOf(handle, persona), item: work });
 
 export const pollRun = (run: EngineRun) =>
   pollRunUseCase(run.id).pipe(

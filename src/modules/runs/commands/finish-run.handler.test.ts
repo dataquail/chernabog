@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { finishRunUseCase } from "./finish-run.use-case.ts";
+import { finishRunHandler } from "./finish-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,16 +29,17 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("finishRunUseCase", () => {
+describe("finishRunHandler", () => {
   effect("records how the run ended, once", () =>
     Effect.gen(function* () {
-      const finished = yield* finishRunUseCase(RunId.make("a"), {
+      const finished = yield* finishRunHandler({
+        runId: RunId.make("a"),
         status: "done",
         summary: "merged",
       });
 
       const again = yield* Effect.flip(
-        finishRunUseCase(RunId.make("a"), { status: "failed", summary: "again" }),
+        finishRunHandler({ runId: RunId.make("a"), status: "failed", summary: "again" }),
       );
 
       expect([finished.status, finished.summary, Option.isSome(finished.finishedAt)]).toEqual([

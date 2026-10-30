@@ -17,7 +17,7 @@ import {
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
-import { startFlowRunUseCase } from "./start-flow-run.use-case.ts";
+import { startFlowRunHandler } from "./start-flow-run.handler.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
 
@@ -64,12 +64,16 @@ const runtime = (
     WorkflowsClientFake(engine),
   );
 
-describe("startFlowRunUseCase", () => {
+describe("startFlowRunHandler", () => {
   const engine = fakeEngine();
 
   effect("records a run and executes its workflow, attaching the execution", () =>
     Effect.gen(function* () {
-      const started = yield* startFlowRunUseCase(review, item("pr-2", { title: "Fix it" }));
+      const started = yield* startFlowRunHandler({
+        flow: review,
+        item: item("pr-2", { title: "Fix it" }),
+      });
+
       const recorded = Option.getOrThrow(started.run);
 
       expect([started.started, recorded.itemKey, recorded.itemTitle, recorded.status]).toEqual([
@@ -87,8 +91,12 @@ describe("startFlowRunUseCase", () => {
 
   effect("is the run already in flight for the item, and only wakes for a wake-only item", () =>
     Effect.gen(function* () {
-      const again = yield* startFlowRunUseCase(review, item("pr-1"));
-      const waking = yield* startFlowRunUseCase(review, item("pr-3", { wakeOnly: true }));
+      const again = yield* startFlowRunHandler({ flow: review, item: item("pr-1") });
+
+      const waking = yield* startFlowRunHandler({
+        flow: review,
+        item: item("pr-3", { wakeOnly: true }),
+      });
 
       expect([again.started, Option.map(again.run, (found) => String(found.id))]).toEqual([
         false,
@@ -103,14 +111,17 @@ describe("startFlowRunUseCase", () => {
 
   effect("starts no run for a held item, wake-only or not, and starts the one beside it", () =>
     Effect.gen(function* () {
-      const held = yield* startFlowRunUseCase(review, item("pr-4", { held: "waits on #3" }));
+      const held = yield* startFlowRunHandler({
+        flow: review,
+        item: item("pr-4", { held: "waits on #3" }),
+      });
 
-      const waking = yield* startFlowRunUseCase(
-        review,
-        item("pr-5", { held: "waits on #3", wakeOnly: true }),
-      );
+      const waking = yield* startFlowRunHandler({
+        flow: review,
+        item: item("pr-5", { held: "waits on #3", wakeOnly: true }),
+      });
 
-      const beside = yield* startFlowRunUseCase(review, item("pr-6"));
+      const beside = yield* startFlowRunHandler({ flow: review, item: item("pr-6") });
 
       expect([held.started, held.run]).toEqual([false, Option.none()]);
       expect([waking.started, waking.run]).toEqual([false, Option.none()]);

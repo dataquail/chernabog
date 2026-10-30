@@ -57,12 +57,15 @@ import {
   servicesFrom,
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+} from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateAt } from "../../../modules/runs/runs.layer.ts";
 import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
 import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { execOk } from "../../../platform/exec.ts";
 import { packageOverride } from "../../../platform/flow-loader.ts";
@@ -453,13 +456,17 @@ const runRehearsal = (
     );
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: (_repo, one) => servicesFrom(contexts)(one),
-      }).pipe(
+      RunFlowsCommandsLive.pipe(
         Layer.provideMerge(
-          flowLayer(handle, servicesFrom(contexts)).pipe(
-            Layer.provideMerge(StateAt(`${scratch.root}/state.db`)),
+          RuntimeLayer({
+            handles: [handle],
+            services: (_repo, one) => servicesFrom(contexts)(one),
+          }).pipe(
+            Layer.provideMerge(
+              flowLayer(handle, servicesFrom(contexts)).pipe(
+                Layer.provideMerge(StateAt(`${scratch.root}/state.db`)),
+              ),
+            ),
           ),
         ),
       ),
@@ -472,10 +479,10 @@ const runRehearsal = (
         return Option.none<RunView>();
       }
 
-      const { run } = yield* startFlowRunUseCase(
-        { repo: handle.repo.settings.name, flow: handle.name, persona },
-        item.value,
-      );
+      const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+        flow: { repo: handle.repo.settings.name, flow: handle.name, persona },
+        item: item.value,
+      });
 
       if (Option.isNone(run)) {
         return Option.none<RunView>();

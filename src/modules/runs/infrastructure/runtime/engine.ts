@@ -56,14 +56,13 @@ import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
 import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
+import { type WorkflowOutcome } from "../../domain/ports/clients/workflows.client.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
+import { RunsCommands, RunsCommandsLive } from "../../runs.command-handlers.ts";
 import { RunsQueries, RunsQueriesLive } from "../../runs.query-handlers.ts";
-import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
-import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
 import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
 import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
 import { nameSubjectUseCase } from "../../use-cases/name-subject.use-case.ts";
-import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
@@ -578,7 +577,7 @@ export const flowLayer = <R>(
 
         // A step reported after its run ended changes nothing.
         const enterStep = yield* capturing((step: string) =>
-          enterStepUseCase(runId, step).pipe(
+          RunsCommands.use((runs) => runs.EnterStepCommand({ runId, step })).pipe(
             Effect.catchTags({
               RunAlreadyFinished: () => Effect.void,
               RunNotFound: () => Effect.void,
@@ -586,7 +585,10 @@ export const flowLayer = <R>(
           ),
         );
 
-        const park = yield* capturing(parkRunUseCase);
+        const park = yield* capturing(
+          (parking: { signal: string; deferred: string; token: string }) =>
+            RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
+        );
 
         // A subject named after its run ended changes nothing.
         const nameSubject = yield* capturing((subject: string) =>
@@ -607,7 +609,7 @@ export const flowLayer = <R>(
 
         const signals = Signals.of({
           register: (signal, deferred, token) =>
-            park({ runId, signal, deferred, token }).pipe(Effect.asVoid),
+            park({ signal, deferred, token }).pipe(Effect.asVoid),
         });
 
         const flow = yield* flowOfRun(
@@ -668,9 +670,9 @@ export const flowLayer = <R>(
         return outcome;
       }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
     )
-    .pipe(Layer.provide(RunsQueriesLive));
+    .pipe(Layer.provide(Layer.mergeAll(RunsQueriesLive, RunsCommandsLive)));
 
-export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): RunOutcome => {
+export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): WorkflowOutcome => {
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }

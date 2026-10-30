@@ -233,15 +233,18 @@ transitive reach), the coverage floors and the baseline.
   and ends exactly once, and a persona has one run in flight per flow and item.
   `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
   `RunStepRoot` (`om_steps`) logs each step a run enters, which
-  `enterStepUseCase` writes beside its current step; `SkipRoot` (`om_skips`)
+  `EnterStepCommand` writes beside its current step; `SkipRoot` (`om_skips`)
   logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
   are the work items it named with core's `Subjects.name`, such as the pull
   request an SDK block opened or adopted; the engine records them through
   `nameSubjectUseCase` and knows nothing of what they mean. The live view
   threads runs that share a work item, as their own or as a subject, and a
   flow's `stillValid` gets them as `Run`'s `subjects`. The engine, the daemon and `chernabog run`
-  record and read them only through the module's use-cases
-  (`startRunUseCase`, `enterStepUseCase`, `finishRunUseCase`, …); a run's
+  record and read them only through the module's queries, commands and
+  use-cases (`StartRunCommand`, `EnterStepCommand`, `FinishRunCommand`, …): the
+  ones over state.db alone are `RunsQueries` and `RunsCommands`, and the ones
+  over the flows a process loaded `RunFlowsQueries` and `RunFlowsCommands`,
+  which the daemon, `run` and `rehearse` build over their runtime; a run's
   `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
   run that ended with another ending, so a stale copy can't revive it.
   `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
@@ -260,7 +263,7 @@ transitive reach), the coverage floors and the baseline.
   flight, and the work to start runs for. The daemon then delivers the
   signals (`deliverSignalsUseCase`) and, item by item, asks the flow's own
   gate (`gateFlowUseCase`, before every start, since a started run may close
-  it) and starts the run (`startFlowRunUseCase`). The daemon polls each
+  it) and starts the run (`StartFlowRunCommand`). The daemon polls each
   active run with `pollRunUseCase`. Flows run through `FlowsClient`
   (trigger, item lookup, gate) and workflows through `WorkflowsClient`
   (execute, poll, resume, wake, note); the daemon and `chernabog run` build
