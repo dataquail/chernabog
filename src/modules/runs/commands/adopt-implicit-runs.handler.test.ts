@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
-import { adoptImplicitRunsUseCase } from "./adopt-implicit-runs.use-case.ts";
+import { adoptImplicitRunsHandler } from "./adopt-implicit-runs.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -29,10 +29,10 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-describe("adoptImplicitRunsUseCase", () => {
+describe("adoptImplicitRunsHandler", () => {
   effect("gives a repo's runs from before personas the persona, and leaves others alone", () =>
     Effect.gen(function* () {
-      const adopted = yield* adoptImplicitRunsUseCase("demo", "alice");
+      const adopted = yield* adoptImplicitRunsHandler({ repo: "demo", login: "alice" });
 
       const personaOf = (id: string) =>
         findRunHandler({ runId: RunId.make(id) }).pipe(

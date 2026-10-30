@@ -14,34 +14,20 @@ import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
+import {
+  CancelledRun,
+  CancelTarget,
+  type EndAs,
+} from "../domain/run/cancelled-run.value-object.ts";
 import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunView } from "../domain/run/run-view.value-object.ts";
 import { claimOf, itemTarget } from "../domain/run/work-item.value-object.ts";
-import { CancelledRun, CancelTarget } from "./cancel-run.result.ts";
-import { RunView } from "./run.result.ts";
+import { type CancelRunPayload } from "./cancel-run.command.ts";
 
 // How long cancel waits for an interrupted workflow to stop: ten seconds.
 const STOPPING = { schedule: Schedule.spaced("250 millis"), times: 40 };
-
-export type CancelOptions = {
-  // Who cancels it, for its summary.
-  readonly by: string;
-  // Whether to close the agent sessions it left open, by their launcher's
-  // handle; otherwise they're left for the person.
-  readonly closeSessions: boolean;
-  // How it ends instead of cancelled, and why; none for a cancel.
-  readonly endAs: Option.Option<EndAs>;
-};
-
-// Ending a run in flight otherwise than as cancelled: needing a person, with
-// that summary (a run this binary can't resume); superseded, because its
-// work item went (closed, merged, claimed by another run); or lost, because
-// another run took its work item over once its claim's lease expired.
-export type EndAs = {
-  readonly ending: "needs-human" | "superseded" | "lost";
-  readonly reason: string;
-};
 
 const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
   if (endAs.ending === "needs-human") {
@@ -192,21 +178,10 @@ const releaseEnded = (found: RunRoot) =>
     });
   });
 
-// Ends a run in flight for good: records it cancelled, by whom and when (or
-// needing a person, and why, for a run this binary can't resume,
-// superseded, and why, for a run whose work item went, or lost, to the run
-// that took its item over, which keeps what it left),
-// before its workflow could record anything else; forgets its waits;
-// interrupts its workflow, which the engine keeps across a restart; and then
-// cleans up what it held: its worktrees, its claim ref, its claim on its
-// issue, and, if asked, its agent sessions. What cleaning up can't do is left
-// for a person, and said; it never undoes the cancel. Pull requests are never
-// touched. A run that has already ended only lets go of its claim ref
-// (releaseEnded).
-export const cancelRunUseCase = Effect.fn("cancelRunUseCase")(function* (
-  target: CancelTarget,
-  options: CancelOptions,
-) {
+export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
+  target,
+  ...options
+}: CancelRunPayload) {
   const runs = yield* RunsRepository;
   const waits = yield* RunWaitsRepository;
   const workflows = yield* WorkflowsClient;

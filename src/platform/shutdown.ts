@@ -3,7 +3,7 @@
 // a second signal. A person who pressed Ctrl-C won't wait long, and launchd
 // and systemd follow SIGTERM with SIGKILL anyway. Correctness doesn't depend on
 // a clean stop: a run's workflow is journaled and an interrupted start is
-// recovered at the next startup (recoverRunsUseCase). So a stop gets a
+// recovered at the next startup (RecoverRunsCommand). So a stop gets a
 // deadline, after which the process exits, and a second Ctrl-C exits at once.
 
 import * as Duration from "effect/Duration";

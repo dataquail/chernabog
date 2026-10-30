@@ -1,17 +1,16 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { RunView } from "./run.result.ts";
+import { RunView } from "../domain/run/run-view.value-object.ts";
+import { type AttachExecutionPayload } from "./attach-execution.command.ts";
 
-// The workflow execution the engine started for a run, recorded so it can be polled and resumed.
-export const attachExecutionUseCase = Effect.fn("attachExecutionUseCase")(function* (
-  runId: RunId,
-  executionId: string,
-) {
+export const attachExecutionHandler = Effect.fn("attachExecutionHandler")(function* ({
+  executionId,
+  runId,
+}: AttachExecutionPayload) {
   const runs = yield* RunsRepository;
   const found = yield* runs.findOne(runId);
 

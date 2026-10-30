@@ -272,7 +272,7 @@ transitive reach), the coverage floors and the baseline.
   repo is paused.
 - **A start survives a crash.** A run is recorded, with the work item it is
   for, before its workflow executes, so a process killed in between leaves a
-  run with no execution. `recoverRunsUseCase`, which the daemon and
+  run with no execution. `RecoverRunsCommand`, which the daemon and
   `chernabog run` call at startup, executes those from the item they kept and
   attaches the execution. An execution is keyed by its run, so one that had
   started is the one attached, never a second (`test/engine.test.ts` covers
@@ -531,7 +531,7 @@ docs/adr/0004-core-abi.md has the why.
   `om_runs.config_tree`). `flowLayer` never runs a flow for a run whose core
   this binary can't resume (`resumesRunsFrom`: the same major, at that
   version or later), and the daemon ends such runs at startup through
-  `cancelRunUseCase` with `needsHuman`. A run resumes against the snapshot of
+  `CancelRunCommand` with `endAs needs-human`. A run resumes against the snapshot of
   the tree it started from (`flowOrigins`, `snapshotTree`), so a merge or an
   SDK move never swaps its blocks. When its executable changes, the daemon
   drains: no ticks, `/run` refused, and a restart once no run is executing
@@ -671,7 +671,7 @@ Decisions that cut across them:
 - **The daemon renews** each run's claim-ref markers through
   `CheckRunLeasesCommand` (`FlowsClient.lease`) every `limits.leaseRenewEvery`,
   for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
-  check; a claim naming another run ends the run as `lost` (`cancelRunUseCase`
+  check; a claim naming another run ends the run as `lost` (`CancelRunCommand`
   with `endAs lost`, which removes nothing). In the run, `fencing` in the
   engine checks `Claims.holds` before every write a capability port declares
   (`Capabilities.declare` beside each port in core's `services.ts`, listed in

@@ -1,15 +1,15 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { FoundRun, RunView } from "./run.result.ts";
+import { FoundRun, RunView } from "../domain/run/run-view.value-object.ts";
+import { type ResumeRunPayload } from "./resume-run.command.ts";
 
-// Resumes a run in flight whose workflow a restart suspended, so it goes on
-// from its journal. A run that ended, or never got an execution, is left as is.
-export const resumeRunUseCase = Effect.fn("resumeRunUseCase")(function* (runId: RunId) {
+export const resumeRunHandler = Effect.fn("resumeRunHandler")(function* ({
+  runId,
+}: ResumeRunPayload) {
   const found = yield* (yield* RunsRepository).findOne(runId);
   const workflows = yield* WorkflowsClient;
 

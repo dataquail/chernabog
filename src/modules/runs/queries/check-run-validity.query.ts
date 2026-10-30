@@ -7,7 +7,7 @@ import { RunValidity } from "../domain/schedule/validity.value-object.ts";
 // persona, about the run, the item it kept and the pull request it opened.
 // A run that has ended, kept no item or has no execution yet, or whose flow
 // has no stillValid, isn't checked; a check that fails is CheckFailed, never
-// Gone. Ending a gone run is the caller's, through cancelRunUseCase.
+// Gone. Ending a gone run is the caller's, through CancelRunCommand.
 export const CheckRunValidityQuery = Query.make("CheckRunValidityQuery", {
   payload: { runId: RunId },
   success: RunValidity,

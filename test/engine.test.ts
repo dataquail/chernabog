@@ -40,6 +40,9 @@ import * as Schema from "effect/Schema";
 
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { attachExecutionHandler } from "../src/modules/runs/commands/attach-execution.handler.ts";
+import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
+import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
 import {
   flowHandle,
@@ -49,10 +52,7 @@ import {
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -367,7 +367,8 @@ describe("the engine", () => {
           }),
         );
 
-        const cancelled = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+        const cancelled = yield* cancelRunHandler({
+          target: CancelTarget.cases.ById.make({ asked: run.id }),
           by: "alice",
           closeSessions: false,
           endAs: Option.none(),
@@ -417,7 +418,7 @@ describe("the engine", () => {
             { discard: true },
           );
 
-          const recovered = yield* recoverRunsUseCase();
+          const recovered = yield* recoverRunsHandler();
           const ended = yield* Effect.forEach(recovered.executed, toEnd);
 
           return { execution, recovered, ended };
@@ -479,7 +480,7 @@ describe("a run and the .chernabog/ tree it started from", () => {
           yield* recorded("current-tree", Option.some("current"));
           yield* recorded("no-tree", Option.none());
 
-          const recovered = yield* recoverRunsUseCase();
+          const recovered = yield* recoverRunsHandler();
 
           return yield* Effect.forEach(recovered.executed, toEnd);
         });
@@ -636,13 +637,13 @@ describe("personas", () => {
             itemUrl: Option.none(),
             item: Option.none(),
           });
-          yield* attachExecutionUseCase(
-            OLD,
-            yield* handle.workflow.execute(
+          yield* attachExecutionHandler({
+            runId: OLD,
+            executionId: yield* handle.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
-          );
+          });
 
           return yield* toEnd(Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run));
         });
@@ -670,13 +671,13 @@ describe("personas", () => {
             itemUrl: Option.none(),
             item: Option.none(),
           });
-          yield* attachExecutionUseCase(
-            OLD,
-            yield* asPersonas.workflow.execute(
+          yield* attachExecutionHandler({
+            runId: OLD,
+            executionId: yield* asPersonas.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
-          );
+          });
 
           return yield* pollRun(
             Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run),
