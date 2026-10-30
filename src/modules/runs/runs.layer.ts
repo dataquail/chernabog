@@ -16,6 +16,7 @@ import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "./infrastructure/repositories/skips.repository-live.ts";
 import { EngineAt } from "./infrastructure/runtime/engine.ts";
+import { RunEventsLive } from "./runs.command-handlers.ts";
 
 // The runs module's live adapters over state.db, for a composition root to
 // provide with the SQL client the workflow engine journals to.
@@ -48,8 +49,10 @@ export const RuntimeLayer = (registry: FlowRegistry) =>
     RunCleanupClientLive(registry.services).pipe(Layer.provide(Exec.layer)),
   );
 
-// The workflow engine, and the runs' stores beside its journal, in `database`.
-export const StateAt = (database: string) => RunsLayer.pipe(Layer.provideMerge(EngineAt(database)));
+// The workflow engine, and the runs' stores beside its journal, in `database`,
+// with the bus the runs' commands dispatch their events on.
+export const StateAt = (database: string) =>
+  Layer.mergeAll(RunsLayer, RunEventsLive).pipe(Layer.provideMerge(EngineAt(database)));
 
 // The engine and the runs in this machine's state.db.
 export const StateLive = Layer.unwrap(

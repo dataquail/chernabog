@@ -1,7 +1,9 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
+import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 import { type StartRunPayload } from "./start-run.command.ts";
@@ -18,6 +20,7 @@ export const startRunHandler = Effect.fn("startRunHandler")(function* (run: Star
   );
 
   yield* runs.save(started);
+  yield* (yield* EventBus).dispatch([RunEvents.started(started)]);
 
   return RunView.make({ ...started });
 });

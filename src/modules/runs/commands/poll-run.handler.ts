@@ -1,3 +1,4 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -5,6 +6,7 @@ import * as Result from "effect/Result";
 
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
+import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { FoundRun, RunView } from "../domain/run/run-view.value-object.ts";
 import { type PollRunPayload } from "./poll-run.command.ts";
@@ -32,6 +34,7 @@ export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: 
         // A run another poll ended first stays as that one ended it.
         if (Result.isSuccess(finished)) {
           yield* runs.save(finished.success);
+          yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished.success)));
         }
       }
     }

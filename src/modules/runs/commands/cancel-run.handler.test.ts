@@ -4,9 +4,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
+import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import {
@@ -77,6 +79,7 @@ const runtime = (
   stored: { readonly runs: ReadonlyArray<RunRoot>; readonly waits?: ReadonlyArray<RunWaitRoot> },
 ) =>
   Layer.mergeAll(
+    RecordedEvents,
     RunsRepositoryFake(stored.runs),
     RunWaitsRepositoryFake(stored.waits ?? []),
     RunLogsClientFake(Object.fromEntries(stored.runs.map((one) => [one.id, ""]))),
@@ -113,6 +116,15 @@ describe("cancelRunHandler", () => {
       // A pull request's run holds no claim.
       expect([holdings.cleaned, holdings.released]).toEqual([["a"], []]);
       expect(yield* statusOf("a")).toEqual(Option.some("cancelled"));
+      expect(yield* DispatchedEvents).toEqual([
+        RunFinished.make({
+          eventId: "a:finished",
+          runId: RunId.make("a"),
+          status: "cancelled",
+          summary: Option.getOrThrow(cancelled.run.summary),
+          finishedAt: Option.getOrThrow(cancelled.run.finishedAt),
+        }),
+      ]);
     }).pipe(
       Effect.provide(
         runtime(engine, holdings, {

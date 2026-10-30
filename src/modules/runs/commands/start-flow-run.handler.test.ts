@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
@@ -57,6 +58,7 @@ const runtime = (
   } = {},
 ) =>
   Layer.mergeAll(
+    RecordedEvents,
     RunsRepositoryFake(stored.runs ?? []),
     RunWaitsRepositoryFake(stored.waits ?? []),
     SkipsRepositoryFake([]),
@@ -84,6 +86,9 @@ describe("startFlowRunHandler", () => {
       ]);
       expect(recorded.executionId).toEqual(Option.some(`execution-${recorded.id}`));
       expect(engine.executed).toEqual([recorded.id]);
+      expect((yield* DispatchedEvents).map((event) => [event._tag, event.eventId])).toEqual([
+        ["RunStarted", `${recorded.id}:started`],
+      ]);
     }).pipe(Effect.provide(runtime(engine))),
   );
 
@@ -104,6 +109,7 @@ describe("startFlowRunHandler", () => {
       ]);
       expect([waking.started, waking.run]).toEqual([false, Option.none()]);
       expect(busy.executed).toEqual([]);
+      expect(yield* DispatchedEvents).toEqual([]);
     }).pipe(Effect.provide(runtime(busy, { runs: [run("a")] }))),
   );
 

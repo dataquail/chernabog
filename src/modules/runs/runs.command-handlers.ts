@@ -1,4 +1,4 @@
-import { Command } from "@effect-server-utils/cqrs";
+import { Command, makeEventBus } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
@@ -44,6 +44,12 @@ import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
 import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
+
+// Where the runs' commands say what happened to a run (RunStarted,
+// RunEnteredStep, RunNeedsAttention, RunFinished, PullRequestOpened), for the
+// dashboard's /events stream and the notifier to hear. One per process, beside
+// the state.db its commands write.
+export const RunEventsLive = makeEventBus();
 
 // What changes the runs' stores in state.db alone. Those stores share the SQL
 // client the workflow engine journals to, so the handlers take them from the

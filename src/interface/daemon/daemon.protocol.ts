@@ -6,6 +6,13 @@ import * as Schema from "effect/Schema";
 import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { HoldView } from "../../modules/runs/use-cases/hold.result.ts";
 import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
+import {
+  PullRequestOpened,
+  RunEnteredStep,
+  RunFinished,
+  RunNeedsAttention,
+  RunStarted,
+} from "../../modules/runs/use-cases/run-event.result.ts";
 import { RunMarkerView } from "../../modules/runs/use-cases/run-marker.result.ts";
 import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
 
@@ -157,3 +164,16 @@ export const CancelRequest = Schema.Struct({
 });
 
 export type CancelRequest = typeof CancelRequest.Type;
+
+// What the dashboard's /events stream sends: what happened to a run, as the
+// runs' commands dispatch it. A resumed run can say one again, under the same
+// eventId, for a client to drop.
+export const DaemonEvent = Schema.Union([
+  RunStarted,
+  RunEnteredStep,
+  RunNeedsAttention,
+  RunFinished,
+  PullRequestOpened,
+]);
+
+export type DaemonEvent = typeof DaemonEvent.Type;

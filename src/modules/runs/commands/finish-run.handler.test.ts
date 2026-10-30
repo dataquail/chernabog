@@ -1,9 +1,12 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
@@ -54,6 +57,15 @@ describe("finishRunHandler", () => {
           (found) => found.status,
         ),
       ).toEqual(Option.some("done"));
-    }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
+      expect(yield* DispatchedEvents).toEqual([
+        RunFinished.make({
+          eventId: "a:finished",
+          runId: RunId.make("a"),
+          status: "done",
+          summary: "merged",
+          finishedAt: Option.getOrThrow(finished.finishedAt),
+        }),
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(RecordedEvents, RunsRepositoryFake([run("a")])))),
   );
 });
