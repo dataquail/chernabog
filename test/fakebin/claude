@@ -19,6 +19,12 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// Closing the session sends a hangup, often while the Stop hook it was waiting on
+// is still returning. A handler runs only between synchronous steps, so the call
+// in progress is logged before the session exits, as the default action would
+// not let it be.
+for (const signal of ['SIGHUP', 'SIGTERM'] as const) process.on(signal, () => process.exit(0));
+
 const args = process.argv.slice(2);
 if (args[0] === 'auth' && args[1] === 'status') {
   console.log(JSON.stringify({ loggedIn: true, email: process.env.FAKE_CLAUDE_EMAIL ?? 'dev@example.com' }));
