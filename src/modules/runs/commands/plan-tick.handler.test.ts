@@ -21,7 +21,8 @@ import { RunsRepositoryFake } from "../infrastructure/repositories/runs.reposito
 import { SkipsRepositoryFake } from "../infrastructure/repositories/skips.repository-fake.ts";
 import { listHoldsHandler } from "../queries/list-holds.handler.ts";
 import { listRecentSkipsHandler } from "../queries/list-recent-skips.handler.ts";
-import { planTickUseCase, type TickInput } from "./plan-tick.use-case.ts";
+import { type PlanTickPayload } from "./plan-tick.command.ts";
+import { planTickHandler } from "./plan-tick.handler.ts";
 
 const review = { repo: "demo", flow: "review", persona: Option.some("bob") };
 
@@ -69,7 +70,7 @@ const runtime = (
     WorkflowsClientFake(engine),
   );
 
-const open: TickInput = {
+const open: Omit<PlanTickPayload, "flow"> = {
   gates: true,
   item: Option.none(),
   conditions: {
@@ -86,16 +87,19 @@ const reasons = listRecentSkipsHandler({ latest: 5 }).pipe(
   Effect.map(({ skips }) => skips.map((skip) => skip.reason)),
 );
 
+const planning = (flow: PlanTickPayload["flow"], input: Omit<PlanTickPayload, "flow">) =>
+  planTickHandler({ flow, ...input });
+
 const keys = (items: ReadonlyArray<WorkItem>) => items.map((found) => found.key);
 
-describe("planTickUseCase", () => {
+describe("planTickHandler", () => {
   effect(
     "lists the items its trigger says wait on someone, with who and why, whatever the flow's name, and starts none of them",
     () =>
       Effect.gen(function* () {
         const reviewing = { ...review, flow: "pr-reviews" };
-        const plan = yield* planTickUseCase(reviewing, open);
-        const named = yield* planTickUseCase(reviewing, { ...open, item: Option.some("pr-73") });
+        const plan = yield* planning(reviewing, open);
+        const named = yield* planning(reviewing, { ...open, item: Option.some("pr-73") });
 
         expect(plan.routed).toEqual(
           Option.some({
@@ -127,7 +131,7 @@ describe("planTickUseCase", () => {
 
   effect("starts runs for the work its trigger finds, up to the flow's limit", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, open);
+      const plan = yield* planning(review, open);
 
       expect(keys(plan.start)).toEqual(["pr-1"]);
       expect(keys(plan.signalled)).toEqual(["pr-1", "pr-2"]);
@@ -148,14 +152,14 @@ describe("planTickUseCase", () => {
     "records why it starts nothing: the machine's gates, a failing trigger, a persona not ready, the limit",
     () =>
       Effect.gen(function* () {
-        const paused = yield* planTickUseCase(review, {
+        const paused = yield* planning(review, {
           ...open,
           conditions: { ...open.conditions, paused: true },
         });
 
-        yield* planTickUseCase({ ...review, flow: "broken" }, open);
-        yield* planTickUseCase({ ...review, flow: "logged-out" }, open);
-        const limited = yield* planTickUseCase(review, open);
+        yield* planning({ ...review, flow: "broken" }, open);
+        yield* planning({ ...review, flow: "logged-out" }, open);
+        const limited = yield* planning(review, open);
 
         expect(paused.signalled).toEqual([]);
         expect(limited.start).toEqual([]);
@@ -182,7 +186,7 @@ describe("planTickUseCase", () => {
 
   effect("doesn't count a run parked on a signal against the limits", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, open);
+      const plan = yield* planning(review, open);
 
       expect(keys(plan.start)).toEqual(["pr-1"]);
     }).pipe(
@@ -206,17 +210,17 @@ describe("planTickUseCase", () => {
 
   effect("leaves work for others to them, and no work already running", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, open);
+      const plan = yield* planning(review, open);
 
       expect(plan.skipped).toEqual(Option.some("only work for others: pr-1 (label: team-b)"));
       expect(plan.routed).toEqual(
         Option.some({ queued: [], elsewhere: ["pr-1 (label: team-b)"], waiting: [] }),
       );
       expect(plan.start).toEqual([]);
-      expect(keys((yield* planTickUseCase({ ...review, flow: "busy" }, open)).start)).toEqual([]);
+      expect(keys((yield* planning({ ...review, flow: "busy" }, open)).start)).toEqual([]);
 
       // A person who names it runs it here, whoever the flow left it for.
-      const named = yield* planTickUseCase(review, { ...open, item: Option.some("pr-1") });
+      const named = yield* planning(review, { ...open, item: Option.some("pr-1") });
       expect(keys(named.start)).toEqual(["pr-1"]);
     }).pipe(
       Effect.provide(
@@ -233,7 +237,7 @@ describe("planTickUseCase", () => {
 
   effect("a person running the flow now skips the gates, and finds the item they name", () =>
     Effect.gen(function* () {
-      const plan = yield* planTickUseCase(review, {
+      const plan = yield* planning(review, {
         ...open,
         gates: false,
         item: Option.some("issue-7"),
@@ -255,7 +259,7 @@ describe("planTickUseCase", () => {
     () =>
       Effect.gen(function* () {
         const implement = { ...review, flow: "implement" };
-        const plan = yield* planTickUseCase(implement, open);
+        const plan = yield* planning(implement, open);
 
         expect(keys(plan.start)).toEqual(["issue-15"]);
         expect(keys(plan.signalled)).toEqual(["issue-14", "issue-15", "issue-16"]);
@@ -271,7 +275,7 @@ describe("planTickUseCase", () => {
         ]);
 
         // Not even a person naming it starts it, and they hear why.
-        const named = yield* planTickUseCase(implement, {
+        const named = yield* planning(implement, {
           ...open,
           gates: false,
           item: Option.some("issue-14"),
@@ -299,9 +303,9 @@ describe("planTickUseCase", () => {
   effect("a tick's holds replace the flow's last, and leave other flows' alone", () =>
     Effect.gen(function* () {
       const implement = { ...review, flow: "implement" };
-      yield* planTickUseCase(review, open);
-      yield* planTickUseCase(implement, open);
-      yield* planTickUseCase({ ...implement, repo: "next" }, open);
+      yield* planning(review, open);
+      yield* planning(implement, open);
+      yield* planning({ ...implement, repo: "next" }, open);
 
       expect(
         (yield* listHoldsHandler()).holds.map(

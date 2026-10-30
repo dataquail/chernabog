@@ -3,10 +3,14 @@ import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
+import { checkRunValidityHandler } from "./queries/check-run-validity.handler.ts";
+import { CheckRunValidityQuery } from "./queries/check-run-validity.query.ts";
 import { findActiveRunHandler } from "./queries/find-active-run.handler.ts";
 import { FindActiveRunQuery } from "./queries/find-active-run.query.ts";
 import { findRunHandler } from "./queries/find-run.handler.ts";
 import { FindRunQuery } from "./queries/find-run.query.ts";
+import { followRunLogHandler } from "./queries/follow-run-log.handler.ts";
+import { FollowRunLogQuery } from "./queries/follow-run-log.query.ts";
 import { listActiveRunsHandler } from "./queries/list-active-runs.handler.ts";
 import { ListActiveRunsQuery } from "./queries/list-active-runs.query.ts";
 import { listHoldsHandler } from "./queries/list-holds.handler.ts";
@@ -23,6 +27,10 @@ import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.
 import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
 import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
 import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
+import { readRunHistoryHandler } from "./queries/read-run-history.handler.ts";
+import { ReadRunHistoryQuery } from "./queries/read-run-history.query.ts";
+import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
+import { ReadRunLogQuery } from "./queries/read-run-log.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
 import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
 
@@ -41,6 +49,7 @@ export const runsQueryGroup = Query.group(
   ListRunWaitsQuery,
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
+  ReadRunHistoryQuery,
 );
 
 const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
@@ -54,6 +63,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListRunWaitsQuery: (payload) => listRunWaitsHandler(payload),
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
+  ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
 });
 
 // The runs module's slice of the read side over state.db, which the daemon, a
@@ -67,22 +77,50 @@ export const RunsQueriesLive = Layer.effect(RunsQueries, Query.dispatcher(runsQu
   Layer.provideMerge(RunsQueryHandlersLive),
 );
 
+// What the flows a process loaded answer about its runs, over the stores in
+// state.db. The flows are built inside the engine, over those stores, so
+// this group is the daemon's to provide over its runtime, as the runs'
+// commands are, apart from the queries the engine itself asks.
+export const runFlowsQueryGroup = Query.group(CheckRunValidityQuery);
+
+const RunFlowsQueryHandlersLive = Query.handlersOf(runFlowsQueryGroup, {
+  CheckRunValidityQuery: (payload) => checkRunValidityHandler(payload),
+});
+
+// The runs module's slice of the read side over the loaded flows, which the
+// daemon asks whether a run's work item is still valid.
+export class RunFlowsQueries extends Context.Service<
+  RunFlowsQueries,
+  Query.Dispatcher<typeof runFlowsQueryGroup>
+>()("RunFlowsQueries") {}
+
+export const RunFlowsQueriesLive = Layer.effect(
+  RunFlowsQueries,
+  Query.dispatcher(runFlowsQueryGroup),
+).pipe(Layer.provideMerge(RunFlowsQueryHandlersLive));
+
 // What the runs' logs answer, which any process may read: the CLI reads them
 // while the daemon, which holds state.db, writes them.
-export const runLogsQueryGroup = Query.group(ResolveRunIdQuery);
+export const runLogsQueryGroup = Query.group(FollowRunLogQuery, ReadRunLogQuery, ResolveRunIdQuery);
 
 const RunLogsQueryHandlersLive = Query.handlersOf(runLogsQueryGroup, {
+  FollowRunLogQuery: (payload) => followRunLogHandler(payload),
+  ReadRunLogQuery: (payload) => readRunLogHandler(payload),
   ResolveRunIdQuery: (payload) => resolveRunIdHandler(payload),
-}).pipe(Layer.provide(RunLogsClientLive));
+});
 
 // The runs module's slice of the read side over run logs, which `logs`,
-// `attach` and `rehearse --replay` ask.
+// `attach`, `rehearse --replay` and the live view ask.
 export class RunLogsQueries extends Context.Service<
   RunLogsQueries,
   Query.Dispatcher<typeof runLogsQueryGroup>
 >()("RunLogsQueries") {}
 
-export const RunLogsQueriesLive = Layer.effect(
+// The dispatcher over whichever run logs its caller provides, such as a
+// test's in memory.
+export const RunLogsQueriesOver = Layer.effect(
   RunLogsQueries,
   Query.dispatcher(runLogsQueryGroup),
 ).pipe(Layer.provideMerge(RunLogsQueryHandlersLive));
+
+export const RunLogsQueriesLive = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientLive));

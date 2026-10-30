@@ -8,10 +8,12 @@ import { RunId } from "../src/kernel/run-id.id.ts";
 import { HoldsRoot } from "../src/modules/runs/domain/holds/holds.root.ts";
 import { RunRoot } from "../src/modules/runs/domain/run/run.root.ts";
 import { RunMarkerRootOps } from "../src/modules/runs/domain/run-marker/run-marker.root-ops.ts";
+import { RunStepRoot } from "../src/modules/runs/domain/run-step/run-step.root.ts";
 import { RunWaitRoot } from "../src/modules/runs/domain/run-wait/run-wait.root.ts";
 import { SkipRoot } from "../src/modules/runs/domain/skip/skip.root.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
+import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/skips.repository-fake.ts";
@@ -48,6 +50,9 @@ const stores = Layer.mergeAll(
   RunMarkersRepositoryFake([
     RunMarkerRootOps.hold({ runId: RunId.make("a"), name: "label", args: 1, keepOn: [] }, AT),
     RunMarkerRootOps.hold({ runId: ended.id, name: "label", args: 2, keepOn: [] }, AT),
+  ]),
+  RunStepsRepositoryFake([
+    RunStepRoot.make({ runId: RunId.make("a"), step: "claim", enteredAt: AT }),
   ]),
   RunWaitsRepositoryFake([
     RunWaitRoot.make({
@@ -114,6 +119,9 @@ describe("RunsQueries", () => {
       expect(
         (yield* runs.ListUnsupportedRunsQuery()).runs.map(({ run: found }) => String(found.id)),
       ).toEqual(["old"]);
+      expect(
+        (yield* runs.ReadRunHistoryQuery({ runId: a })).steps.map((found) => found.step),
+      ).toEqual(["claim"]);
     }).pipe(Effect.provide(RunsQueriesLive.pipe(Layer.provide(stores)))),
   );
 });

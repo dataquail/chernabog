@@ -23,12 +23,14 @@ import * as Schedule from "effect/Schedule";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { RunValidity } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
   flowHandle,
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { checkRunValidityHandler } from "../src/modules/runs/queries/check-run-validity.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import {
@@ -36,8 +38,6 @@ import {
   CancelTarget,
 } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { RunValidity } from "../src/modules/runs/use-cases/check-run-validity.result.ts";
-import { checkRunValidityUseCase } from "../src/modules/runs/use-cases/check-run-validity.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -128,10 +128,10 @@ describe("a run whose work item goes", () => {
             Effect.repeat({ ...POLLS, until: ({ waits }) => waits.length > 0 }),
           );
 
-          const before = yield* checkRunValidityUseCase(started.id);
+          const before = yield* checkRunValidityHandler({ runId: started.id });
           const held = fake.refs.has(Claims.refFor(Claims.pullRequest(PULL)));
           fake.states.pull = "closed";
-          const after = yield* checkRunValidityUseCase(started.id);
+          const after = yield* checkRunValidityHandler({ runId: started.id });
           const ended = yield* superseding(started, "#7 was closed");
           const polled = yield* pollRun(started);
 
@@ -197,7 +197,7 @@ describe("a run whose work item goes", () => {
         const value = yield* endedMidStep(fake, (run) =>
           Effect.gen(function* () {
             fake.states.issue = "closed";
-            const checked = yield* checkRunValidityUseCase(run.id);
+            const checked = yield* checkRunValidityHandler({ runId: run.id });
 
             expect(checked).toEqual(
               RunValidity.cases.Gone.make({ reason: `#${ISSUE} was closed` }),

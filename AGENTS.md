@@ -196,8 +196,10 @@ transitive reach), the coverage floors and the baseline.
   register the handlers over the layer and declare the module's dispatchers
   (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. The
   runs module's stores share the engine's SQL client, so `RunsQueries` is
-  provided where state.db is (the daemon, a foreground run, `flowLayer`),
-  and `RunLogsQueries`, over run logs alone, in `AppLive`. Shared
+  provided where state.db is (the daemon, a foreground run, `flowLayer`);
+  `RunsCommands` and `RunFlowsQueries`, which also ask the loaded flows, by
+  the daemon over its runtime; and `RunLogsQueries`, over run logs alone, in
+  `AppLive`. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -251,7 +253,7 @@ transitive reach), the coverage floors and the baseline.
   gate's decision).
 - **A tick is a plan, applied by the daemon.** A use-case never calls another
   use-case (`architecture.yaml` forbids it); what several do together, the
-  composition root that calls them composes. `planTickUseCase` is one tick of
+  composition root that calls them composes. `PlanTickCommand` is one tick of
   a persona's flow up to what it would do: the machine's gates, the trigger,
   routing and the concurrency limits, recording a skip when it would start
   nothing. It returns a `TickPlan`: the work whose signals go to runs in
@@ -287,9 +289,11 @@ transitive reach), the coverage floors and the baseline.
   new state file; a repository adapter may not call `writeFileString`. An
   update isn't reentrant: never call one inside another on the same file.
   Run logs are behind `RunLogsClient`: `ResolveRunIdQuery` names a run by
-  a prefix of its id, and `followRunLogUseCase` is a `Stream` of what a log
-  gains, ended by an effect the caller passes, since only the caller knows
-  who to ask whether the run finished (the CLI asks the daemon).
+  a prefix of its id, `ReadRunLogQuery` reads its log, and
+  `FollowRunLogQuery` reads what it gained from an offset. Following a log is
+  the CLI's (`followLog` in `src/interface/cli/runs/run-log.output.ts`): a
+  `Stream` of those reads, ended by an effect it passes, since only the
+  caller knows who to ask whether the run finished (the CLI asks the daemon).
 - **The daemon is an adapter too.** `src/interface/daemon/` holds its
   socket protocol (`daemon.protocol.ts`, made of the modules' results) and
   the client the CLI and TUI ask it with (`daemon.client.ts`). The CLI's
@@ -374,7 +378,7 @@ Errors split by who acts on them (`packages/core/src/errors.ts`).
   `src/platform/github-auth.ts`), never from a flow. Each persona's build
   result is kept (`buildPersonaContexts`) and a failed one is rebuilt when next
   asked for. `FlowsClient` reports one as `PersonaNotReady`, which
-  `planTickUseCase` records as the tick's skip reason as it stands, fix
+  `PlanTickCommand` records as the tick's skip reason as it stands, fix
   included.
 - **A capability's setup is a service.** `ReviewerSeat` is checked at build
   but raised only when a flow asks for it (as a defect `surfaceSetup` turns
@@ -615,7 +619,7 @@ Decisions that cut across them:
   also marks them as reviewing for `poolCheck`. The review recipe's trigger
   reports each request no persona here serves as an item that `waitsOn` the
   login (`Review.waitingElsewhere`, from core's `Machine` service, which
-  `buildRepoContext` provides); `planTickUseCase` starts none of those and
+  `buildRepoContext` provides); `PlanTickCommand` starts none of those and
   returns them in `TickPlan.routed.waiting`, which `status` lists.
   `enroll` reads the untrusted checkout and imports no flow, so it says
   nothing of the pool.

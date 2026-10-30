@@ -48,6 +48,7 @@ import {
   DEFAULT_VALIDITY_EVERY,
   noteCheckFailure,
   runIsAbout,
+  RunValidity,
   validityDue,
 } from "../../modules/runs/domain/schedule/validity.value-object.ts";
 import {
@@ -71,18 +72,19 @@ import {
   RuntimeLayer,
   StateLive,
 } from "../../modules/runs/runs.layer.ts";
-import { RunsQueries, RunsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
+import {
+  RunFlowsQueries,
+  RunFlowsQueriesLive,
+  RunsQueries,
+  RunsQueriesLive,
+} from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
-import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
-import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
 import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
 import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
-import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
 import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
 import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
-import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
 import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
@@ -547,7 +549,7 @@ export const runDaemon = Effect.gen(function* () {
   };
 
   const engine = yield* Layer.build(
-    RunsCommandsLive.pipe(
+    Layer.mergeAll(RunsCommandsLive, RunFlowsQueriesLive).pipe(
       Layer.provideMerge(
         RuntimeLayer(registry).pipe(
           Layer.provideMerge(
@@ -762,7 +764,7 @@ export const runDaemon = Effect.gen(function* () {
             return false;
           }
 
-          const found = yield* checkRunValidityUseCase(run.id);
+          const found = yield* (yield* RunFlowsQueries).CheckRunValidityQuery({ runId: run.id });
 
           if (!Predicate.isTagged(found, "CheckFailed")) {
             checkFailures.delete(run.id);
@@ -851,7 +853,8 @@ export const runDaemon = Effect.gen(function* () {
             return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
 
-          const plan = yield* planTickUseCase(ref, {
+          const plan = yield* (yield* RunsCommands).PlanTickCommand({
+            flow: ref,
             gates: options.gates,
             item: options.item,
             conditions: {
@@ -1810,7 +1813,7 @@ export const runDaemon = Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
 
               return yield* HttpServerResponse.schemaJson(RunHistory)(
-                yield* readRunHistoryUseCase(id),
+                yield* RunsQueries.use((runs) => runs.ReadRunHistoryQuery({ runId: id })),
               );
             }),
           ),

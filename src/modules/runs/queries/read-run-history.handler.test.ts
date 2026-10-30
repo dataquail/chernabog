@@ -9,23 +9,23 @@ import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
-import { readRunHistoryUseCase } from "./read-run-history.use-case.ts";
+import { readRunHistoryHandler } from "./read-run-history.handler.ts";
 
 const a = RunId.make("a");
 
 const step = (runId: RunId, name: string, enteredAt: string) =>
   RunStepRoot.make({ runId, step: name, enteredAt });
 
-describe("readRunHistoryUseCase", () => {
+describe("readRunHistoryHandler", () => {
   effect("reads a run's steps in order, and the signals it's parked on", () =>
     Effect.gen(function* () {
-      const history = yield* readRunHistoryUseCase(a);
+      const history = yield* readRunHistoryHandler({ runId: a });
 
       expect(history.steps.map((found) => found.step)).toEqual(["claim", "wait-for-push"]);
       expect(history.waits.map((wait) => [wait.signal, wait.parkedAt])).toEqual([
         ["pushed", Option.some("2026-10-20T00:02:00.000Z")],
       ]);
-      expect(yield* readRunHistoryUseCase(RunId.make("old"))).toMatchObject({
+      expect(yield* readRunHistoryHandler({ runId: RunId.make("old") })).toMatchObject({
         steps: [],
         waits: [],
       });
