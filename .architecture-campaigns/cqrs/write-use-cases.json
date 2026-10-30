@@ -36,6 +36,35 @@
       "lastCleared": "2026-10-30T15:20:31.135Z",
       "holdouts": []
     },
+    "src/modules/runs": {
+      "entered": "2026-10-30T16:22:31.073Z",
+      "initial": 20,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T16:22:31.073Z",
+      "holdouts": [
+        "use-cases/adopt-implicit-runs.use-case.ts",
+        "use-cases/attach-execution.use-case.ts",
+        "use-cases/cancel-run.use-case.ts",
+        "use-cases/deliver-signals.use-case.ts",
+        "use-cases/enter-step.use-case.ts",
+        "use-cases/finish-run.use-case.ts",
+        "use-cases/forget-marker.use-case.ts",
+        "use-cases/gate-flow.use-case.ts",
+        "use-cases/hold-marker.use-case.ts",
+        "use-cases/name-subject.use-case.ts",
+        "use-cases/park-run.use-case.ts",
+        "use-cases/poll-notifications.use-case.ts",
+        "use-cases/poll-run.use-case.ts",
+        "use-cases/record-skip.use-case.ts",
+        "use-cases/recover-runs.use-case.ts",
+        "use-cases/release-markers.use-case.ts",
+        "use-cases/release-run-wait.use-case.ts",
+        "use-cases/resume-run.use-case.ts",
+        "use-cases/start-flow-run.use-case.ts",
+        "use-cases/start-run.use-case.ts"
+      ]
+    },
     "src/modules/machine": {
       "entered": "2026-10-30T14:26:03.533Z",
       "initial": 5,

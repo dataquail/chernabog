@@ -10,8 +10,8 @@ import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
+import { readRunHistoryHandler } from "../queries/read-run-history.handler.ts";
 import { enterStepUseCase } from "./enter-step.use-case.ts";
-import { readRunHistoryUseCase } from "./read-run-history.use-case.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -50,11 +50,9 @@ describe("enterStepUseCase", () => {
       yield* enterStepUseCase(a, "ci");
 
       expect((yield* enterStepUseCase(a, "ci")).currentStep).toEqual(Option.some("ci"));
-      expect((yield* readRunHistoryUseCase(a)).steps.map((found) => found.step)).toEqual([
-        "claim",
-        "ci",
-        "ci",
-      ]);
+      expect((yield* readRunHistoryHandler({ runId: a })).steps.map((found) => found.step)).toEqual(
+        ["claim", "ci", "ci"],
+      );
     }).pipe(Effect.provide(steps([run("a")]))),
   );
 
@@ -66,7 +64,7 @@ describe("enterStepUseCase", () => {
       expect(
         Option.map((yield* findRunHandler({ runId: ended.id })).run, (found) => found.currentStep),
       ).toEqual(Option.some(Option.none()));
-      expect((yield* readRunHistoryUseCase(ended.id)).steps).toEqual([]);
+      expect((yield* readRunHistoryHandler({ runId: ended.id })).steps).toEqual([]);
     }).pipe(Effect.provide(steps([ended]))),
   );
 });

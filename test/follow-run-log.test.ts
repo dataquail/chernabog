@@ -2,24 +2,29 @@ import { describe, expect } from "bun:test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { effectOnTestClock } from "../../../../test/effect-test.ts";
-import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunLogsClientFake } from "../infrastructure/clients/run-logs.client-fake.ts";
-import { followRunLogUseCase } from "./follow-run-log.use-case.ts";
+import { followLog } from "../src/interface/cli/runs/run-log.output.ts";
+import { RunId } from "../src/kernel/run-id.id.ts";
+import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
+import { RunLogsQueriesOver } from "../src/modules/runs/runs.query-handlers.ts";
+import { effectOnTestClock } from "./effect-test.ts";
 
 const logs = { a: "started\n" };
 
-describe("followRunLogUseCase", () => {
+// RunLogsQueries as the CLI dispatches it, over logs in memory.
+const queries = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientFake(logs)));
+
+describe("followLog", () => {
   effectOnTestClock(
     "streams what the log holds, then what it gains, ending with the last once the run finishes",
     () =>
       Effect.gen(function* () {
         const finished = yield* Deferred.make<boolean>();
 
-        const followed = yield* followRunLogUseCase(RunId.make("a"), Deferred.await(finished)).pipe(
+        const followed = yield* followLog(RunId.make("a"), Deferred.await(finished)).pipe(
           Effect.flatMap(Stream.runCollect),
           Effect.forkChild,
         );
@@ -37,6 +42,6 @@ describe("followRunLogUseCase", () => {
           "step: implement",
           "finished: done",
         ]);
-      }).pipe(Effect.provide(RunLogsClientFake(logs))),
+      }).pipe(Effect.provide(queries)),
   );
 });

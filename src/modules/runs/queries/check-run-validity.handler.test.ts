@@ -7,10 +7,10 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type ValidityQuestion } from "../domain/run/work-item.value-object.ts";
+import { RunValidity } from "../domain/schedule/validity.value-object.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { RunValidity } from "./check-run-validity.result.ts";
-import { checkRunValidityUseCase } from "./check-run-validity.use-case.ts";
+import { checkRunValidityHandler } from "./check-run-validity.handler.ts";
 
 const work = { key: "pr-1", data: { pullRequest: 1 } };
 
@@ -37,9 +37,9 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
 const runtime = (runs: ReadonlyArray<RunRoot>, flow: FakeFlow) =>
   Layer.mergeAll(RunsRepositoryFake(runs), FlowsClientFake({ "demo/review": flow }));
 
-const checking = (id: string) => checkRunValidityUseCase(RunId.make(id));
+const checking = (id: string) => checkRunValidityHandler({ runId: RunId.make(id) });
 
-describe("checkRunValidityUseCase", () => {
+describe("checkRunValidityHandler", () => {
   const asked: Array<ValidityQuestion> = [];
 
   effect("asks the run's flow about its item, as the run, and says it's gone", () =>

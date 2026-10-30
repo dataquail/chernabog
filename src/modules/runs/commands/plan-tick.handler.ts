@@ -15,29 +15,10 @@ import { SkipsRepository } from "../domain/ports/repositories/skips.repository.t
 import { describeElsewhere, routeItems } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import {
-  describeWaiting,
-  type FlowRef,
-  mayStart,
-  type WorkItem,
-} from "../domain/run/work-item.value-object.ts";
-import {
-  decideTick,
-  freeSlots,
-  type TickConditions,
-} from "../domain/schedule/tick.value-object.ts";
+import { describeWaiting, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { decideTick, freeSlots, TickPlan } from "../domain/schedule/tick.value-object.ts";
 import { SkipRoot } from "../domain/skip/skip.root.ts";
-import { TickPlan } from "./flow.result.ts";
-
-// What a tick weighs besides the flow's own work: whether to apply the
-// machine's gates (a person running a flow now skips them), an item a person
-// named, the conditions the gates read, and the limits on runs at once.
-export type TickInput = {
-  readonly gates: boolean;
-  readonly item: Option.Option<string>;
-  readonly conditions: Omit<TickConditions, "now">;
-  readonly concurrency: { readonly flow: number; readonly machine: number };
-};
+import { type PlanTickPayload } from "./plan-tick.command.ts";
 
 const describeQueued = (item: WorkItem) =>
   Option.match(Option.fromUndefinedOr(item.title), {
@@ -45,17 +26,10 @@ const describeQueued = (item: WorkItem) =>
     onSome: (title) => `${item.key} ${title}`,
   });
 
-// One tick of a persona's flow, up to what it would do: unless the machine's
-// gates hold it back, runs the flow's trigger, and says which of the work it
-// found carries signals for runs in flight and which this machine may start
-// runs for, as many as the limits let it. Why it would start nothing, when it
-// wouldn't, is recorded as a skip; the items the trigger holds, and why,
-// replace the flow's holds, and start nothing. Delivering the signals, the flow's own gate
-// and starting the runs are left to the caller, one use-case each.
-export const planTickUseCase = Effect.fn("planTickUseCase")(function* (
-  flow: FlowRef,
-  input: TickInput,
-) {
+export const planTickHandler = Effect.fn("planTickHandler")(function* ({
+  flow,
+  ...input
+}: PlanTickPayload) {
   const flows = yield* FlowsClient;
   const skips = yield* SkipsRepository;
 

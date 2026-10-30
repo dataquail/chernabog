@@ -35,8 +35,8 @@ import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-
 import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
+import { RunLogsQueries } from "../../modules/runs/runs.query-handlers.ts";
 import { type CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { readRunLogUseCase } from "../../modules/runs/use-cases/read-run-log.use-case.ts";
 import { userName } from "../../platform/environment.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
@@ -115,7 +115,7 @@ export const readUsage = Effect.gen(function* () {
 const LOG_LINES = 2000;
 
 const readLog = (runId: string) =>
-  readRunLogUseCase(RunId.make(runId)).pipe(
+  RunLogsQueries.use((logs) => logs.ReadRunLogQuery({ runId: RunId.make(runId) })).pipe(
     Effect.map((log) => log.text.trimEnd().split("\n").slice(-LOG_LINES)),
     Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );

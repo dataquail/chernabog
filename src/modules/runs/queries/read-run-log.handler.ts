@@ -1,13 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { RunLogMissing } from "../domain/run/run.errors.ts";
-import { RunLog } from "./run-log.result.ts";
+import { type ReadRunLogPayload, RunLog } from "./read-run-log.query.ts";
 
-// A run's log as it is now. Fails when the run has written none.
-export const readRunLogUseCase = Effect.fn("readRunLogUseCase")(function* (runId: RunId) {
+export const readRunLogHandler = Effect.fn("readRunLogHandler")(function* ({
+  runId,
+}: ReadRunLogPayload) {
   const logs = yield* RunLogsClient;
   const path = yield* logs.pathOf(runId);
   const text = yield* logs.readFrom(runId, 0);

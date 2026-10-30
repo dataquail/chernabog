@@ -39,16 +39,10 @@
     "src/modules/runs": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 17,
-      "cleared": 12,
+      "cleared": 17,
       "closed": 0,
-      "lastCleared": "2026-10-30T15:56:40.348Z",
-      "holdouts": [
-        "use-cases/check-run-validity.use-case.ts",
-        "use-cases/follow-run-log.use-case.ts",
-        "use-cases/plan-tick.use-case.ts",
-        "use-cases/read-run-history.use-case.ts",
-        "use-cases/read-run-log.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T16:22:31.073Z",
+      "holdouts": []
     },
     "src/modules/trust": {
       "entered": "2026-10-30T05:15:33.499Z",
