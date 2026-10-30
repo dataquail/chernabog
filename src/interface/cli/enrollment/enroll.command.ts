@@ -14,7 +14,7 @@ import {
   type EnrollmentPlan,
   type PersonaPlan,
 } from "../../../modules/enrollment/queries/plan-enrollment.query.ts";
-import { readMachineSetupUseCase } from "../../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
@@ -242,7 +242,7 @@ const describeEnrolled = (enrolled: Enrolled) =>
 export const enrollCheckout = (root: string, flags: EnrollFlags) =>
   Effect.gen(function* () {
     const asker = yield* Asker;
-    const machine = yield* readMachineSetupUseCase();
+    const machine = yield* (yield* MachineQueries).ReadMachineSetupQuery();
 
     const plan = yield* (yield* EnrollmentQueries).PlanEnrollmentQuery({
       path: root,

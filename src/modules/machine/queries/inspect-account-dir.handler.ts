@@ -2,15 +2,13 @@ import * as Effect from "effect/Effect";
 
 import { MachineSetupRootOps } from "../domain/machine-setup/machine-setup.root-ops.ts";
 import { AccountDirsClient } from "../domain/ports/clients/account-dirs.client.ts";
-import { AccountDir } from "./setup.result.ts";
+import { AccountDir, type InspectAccountDirPayload } from "./inspect-account-dir.query.ts";
 
-// An account directory a person typed, ~ and all: where it is, and the agent
-// its name says it's for, if it says.
-export const inspectAccountDirUseCase = Effect.fn("inspectAccountDirUseCase")(function* (
-  typed: string,
+export const inspectAccountDirHandler = Effect.fn("inspectAccountDirHandler")(function* (
+  query: InspectAccountDirPayload,
 ) {
   const home = yield* (yield* AccountDirsClient).home;
-  const dir = MachineSetupRootOps.expandHome(typed.trim(), home);
+  const dir = MachineSetupRootOps.expandHome(query.typed.trim(), home);
 
   return AccountDir.make({
     dir,

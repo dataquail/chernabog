@@ -8,7 +8,7 @@ import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts"
 import { AccountDirsClientFake } from "../infrastructure/clients/account-dirs.client-fake.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryFake } from "../infrastructure/repositories/machine-setups.repository-fake.ts";
-import { readMachineSetupUseCase } from "./read-machine-setup.use-case.ts";
+import { readMachineSetupHandler } from "./read-machine-setup.handler.ts";
 
 const HOME = "/home/zw";
 
@@ -29,12 +29,12 @@ const machine = (
     ),
   );
 
-describe("readMachineSetupUseCase", () => {
+describe("readMachineSetupHandler", () => {
   effect(
     "lists the personas and accounts, and the default work account when none are written",
     () =>
       Effect.gen(function* () {
-        const view = yield* readMachineSetupUseCase();
+        const view = yield* readMachineSetupHandler();
 
         expect(view.personas).toEqual(["alice"]);
         expect(view.accounts).toEqual([{ name: "work", agent: "claude" }]);

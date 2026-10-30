@@ -8,7 +8,7 @@ import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts"
 import { AccountDirsClientFake } from "../infrastructure/clients/account-dirs.client-fake.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryFake } from "../infrastructure/repositories/machine-setups.repository-fake.ts";
-import { inspectAccountDirUseCase } from "./inspect-account-dir.use-case.ts";
+import { inspectAccountDirHandler } from "./inspect-account-dir.handler.ts";
 
 const HOME = "/home/zw";
 
@@ -29,11 +29,11 @@ const machine = (
     ),
   );
 
-describe("inspectAccountDirUseCase", () => {
+describe("inspectAccountDirHandler", () => {
   effect("reads ~ as the home, and says the agent when the name tells it", () =>
     Effect.gen(function* () {
-      const told = yield* inspectAccountDirUseCase(" ~/elsewhere/.claude-work ");
-      const untold = yield* inspectAccountDirUseCase("~/elsewhere/.work-claude");
+      const told = yield* inspectAccountDirHandler({ typed: " ~/elsewhere/.claude-work " });
+      const untold = yield* inspectAccountDirHandler({ typed: "~/elsewhere/.work-claude" });
 
       expect([told.dir, told.display, told.agent]).toEqual([
         "/home/zw/elsewhere/.claude-work",

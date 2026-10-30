@@ -9,7 +9,7 @@ import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts"
 import { AccountDirsClientFake } from "../infrastructure/clients/account-dirs.client-fake.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryFake } from "../infrastructure/repositories/machine-setups.repository-fake.ts";
-import { planSetupUseCase } from "./plan-setup.use-case.ts";
+import { planSetupHandler } from "./plan-setup.handler.ts";
 
 const HOME = "/home/zw";
 
@@ -32,10 +32,10 @@ const machine = (
     ),
   );
 
-describe("planSetupUseCase", () => {
+describe("planSetupHandler", () => {
   effect("offers gh's logins and the account directories no account names yet", () =>
     Effect.gen(function* () {
-      const plan = yield* planSetupUseCase();
+      const plan = yield* planSetupHandler();
 
       expect(plan.loggedIn).toEqual(["alice", "bob"]);
       expect(plan.personas).toEqual(["bob"]);

@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect";
 
+import { ServiceState } from "../domain/machine-setup/service-state.value-object.ts";
 import { ServiceManagerClient } from "../domain/ports/clients/service-manager.client.ts";
-import { ServiceState } from "./service.result.ts";
 
-// Whether the daemon is installed as a service.
-export const checkServiceUseCase = Effect.fn("checkServiceUseCase")(function* () {
+export const checkServiceHandler = Effect.fn("checkServiceHandler")(function* () {
   const installed = yield* (yield* ServiceManagerClient).installed;
 
   return ServiceState.make({ installed });

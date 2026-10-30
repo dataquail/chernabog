@@ -2,8 +2,8 @@ import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { ServiceManagerClient } from "../domain/ports/clients/service-manager.client.ts";
 import { ServiceManagerClientFake } from "../infrastructure/clients/service-manager.client-fake.ts";
-import { checkServiceUseCase } from "./check-service.use-case.ts";
 import { uninstallServiceUseCase } from "./uninstall-service.use-case.ts";
 
 describe("uninstallServiceUseCase", () => {
@@ -11,7 +11,7 @@ describe("uninstallServiceUseCase", () => {
     Effect.gen(function* () {
       yield* uninstallServiceUseCase();
 
-      expect((yield* checkServiceUseCase()).installed).toBe(false);
+      expect(yield* (yield* ServiceManagerClient).installed).toBe(false);
     }).pipe(Effect.provide(ServiceManagerClientFake(true))),
   );
 });
