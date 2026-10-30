@@ -181,7 +181,9 @@ export const owner = (pullRequest: number) =>
     );
   });
 
-export type MergeOptions = { readonly method: MergeMethod };
+// id: tells apart two tries at merging one pull request in a run, as an epic
+// run's rounds do (`merge-pr-12#land-3`); a refused try is saved like any step.
+export type MergeOptions = { readonly method: MergeMethod; readonly id?: string };
 
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
@@ -329,7 +331,10 @@ const waitsOn = (pull: PullRequest, below: PullRequest) => {
 // one closed without merging. Nothing merges unless a flow calls this.
 export const merge = (pullRequest: number, options: MergeOptions) =>
   activity(
-    `merge-pr-${pullRequest}`,
+    Option.match(Option.fromUndefinedOr(options.id), {
+      onNone: () => `merge-pr-${pullRequest}`,
+      onSome: (id) => `merge-pr-${pullRequest}#${id}`,
+    }),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const rules = yield* Settings.rules;

@@ -160,16 +160,31 @@ const history = (tasks: readonly [number, number, number], conflicting = false) 
       return yield* inClone("rev-parse", "HEAD");
     }).pipe(Effect.orDie);
 
-    return { origin, clone, checkout, heads, fixBottom, resolveMiddle };
+    // The bottom layer squash-merged into main, as GitHub merges it: the
+    // squash commit on main.
+    const squashBottom = Effect.gen(function* () {
+      yield* inClone("fetch", "--quiet", "origin");
+      yield* inClone("checkout", "--quiet", "main");
+      yield* inClone("merge", "--quiet", "--squash", `origin/auto/issue-${tasks[0]}`);
+      yield* inClone("commit", "--quiet", "-m", `Task ${tasks[0]} (#${tasks[0]})`);
+      yield* inClone("push", "--quiet", "origin", "main");
+
+      return yield* inClone("rev-parse", "HEAD");
+    }).pipe(Effect.orDie);
+
+    return { origin, clone, checkout, heads, fixBottom, resolveMiddle, squashBottom };
   });
 
 // The epic #1 over the three tasks, each a pull request on the branch of the
-// one below, run against the fake GitHub on `repoHistory` with git for real.
-// The agent answers `answer` to every request, each recorded in `asked`.
+// one below that closes its task, run against the fake GitHub on
+// `repoHistory` with git for real. The agent answers `answer` to every
+// request, each recorded in `asked`. ship: the epic's layers are on the
+// automated path, each labelled auto:ship.
 const startEpic = (
   tasks: readonly [number, number, number],
   repoHistory: Effect.Success<ReturnType<typeof history>>,
   answer: AgentResult["output"],
+  ship = false,
 ) =>
   Effect.gen(function* () {
     const github = yield* Effect.acquireRelease(
@@ -192,6 +207,14 @@ const startEpic = (
     const pulls = tasks.map((task) =>
       github.addPull(`Task ${task}`, `auto/issue-${task}`, "chernabog-bot", []),
     );
+
+    for (const [index, pull] of pulls.entries()) {
+      github.pull(pull).body = `Closes #${tasks[index]}\nPart of #${epicNumber}`;
+
+      if (ship) {
+        github.pull(pull).labels.push(DEFAULT_LABELS.ship);
+      }
+    }
 
     const [, middle, top] = pulls;
     github.pull(middle).base = "auto/issue-2";
@@ -240,7 +263,25 @@ const startEpic = (
 
     const base = makeFake("approve");
     const fake = { ...base, services: Layer.mergeAll(base.services, live, agent) };
-    const working = flowHandle(repoAs(repoSettings), "epic", epic);
+    const effective = repoAs(repoSettings);
+
+    const working = flowHandle(
+      {
+        ...effective,
+        personas: Arr.map(effective.personas, (persona) => ({
+          ...persona,
+          shared: Option.match(
+            Option.liftPredicate(ship, (on) => on),
+            {
+              onNone: () => ({}),
+              onSome: () => ({ ship: true }),
+            },
+          ),
+        })),
+      },
+      "epic",
+      epic,
+    );
 
     // Each branch's head on origin.
     const headOf = (branch: string) =>
@@ -434,6 +475,76 @@ describe("epic: carrying a change up the stack", () => {
         expect(asked).toHaveLength(1);
         expect(github.pull(middle).labels).not.toContain(DEFAULT_LABELS.needsHuman);
         expect(github.pull(top).labels).not.toContain(DEFAULT_LABELS.needsHuman);
+      }),
+    STACK_TIMEOUT,
+  );
+});
+
+describe("epic: landing layers that ship", () => {
+  atHome(
+    "once the bottom layer squash-merges, the approved middle layer is moved onto main, brought up to date and merged",
+    () =>
+      Effect.gen(function* () {
+        const tasks = [2, 3, 4] as const;
+        const repoHistory = yield* history(tasks);
+
+        const { asked, github, pulls, throughParks } = yield* startEpic(
+          tasks,
+          repoHistory,
+          { status: "done", summary: "Nothing to adjust." },
+          true,
+        );
+
+        const [bottom, middle, top] = pulls;
+
+        // Chernabog's review approved the middle layer as it was.
+        github.comments.set(middle, [
+          ...github.commentsOn(middle),
+          {
+            id: 9001,
+            body: reviewMarker.write({
+              sha: repoHistory.heads[1],
+              round: 1,
+              verdict: "approve",
+            }),
+            user: { login: "bob" },
+            author_association: "MEMBER",
+            created_at: "2026-10-29T00:00:00Z",
+          },
+        ]);
+
+        // After the first park, the bottom layer squash-merges into main, its
+        // branch left in place, so nothing has moved the middle layer yet.
+        const { run } = yield* throughParks([
+          repoHistory.squashBottom.pipe(
+            Effect.map((squash) => {
+              github.pull(bottom).mergeCommit = squash;
+              github.closePull(bottom);
+              github.issue(tasks[0]).closed = true;
+            }),
+          ),
+        ]);
+
+        expect(run.status).toBe("running");
+
+        // The run moved the middle layer onto main, reconciled the squash
+        // without asking bob again, and merged it: its approval stood.
+        expect(github.pull(middle).base).toBe("main");
+        expect(github.pull(middle).merged).toBe(true);
+        expect(github.merges.map((merged) => merged.number)).toEqual([middle]);
+        expect(github.pull(middle).reviewers).toEqual([]);
+        expect(github.issue(tasks[1]).closed).toBe(true);
+
+        // The top layer is moved onto main too, and waits for its review.
+        expect(github.pull(top).base).toBe("main");
+        expect(github.pull(top).merged).toBe(false);
+
+        // No agent was needed, and nothing went to a person.
+        expect(asked).toEqual([]);
+
+        for (const pull of [middle, top]) {
+          expect(github.pull(pull).labels).not.toContain(DEFAULT_LABELS.needsHuman);
+        }
       }),
     STACK_TIMEOUT,
   );
