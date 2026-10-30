@@ -36,7 +36,7 @@ import { resumeRepoUseCase } from "../../modules/enrollment/use-cases/resume-rep
 import { setFlowScheduleUseCase } from "../../modules/enrollment/use-cases/set-flow-schedule.use-case.ts";
 import { setPersonaAccountUseCase } from "../../modules/enrollment/use-cases/set-persona-account.use-case.ts";
 import { setPersonaFlowUseCase } from "../../modules/enrollment/use-cases/set-persona-flow.use-case.ts";
-import { readMachineSetupUseCase } from "../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
 import { type CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
@@ -508,14 +508,16 @@ export const runTui = Effect.gen(function* () {
         case "set-account": {
           const written = yield* Effect.result(
             Effect.andThen(
-              Effect.flatMap(readMachineSetupUseCase(), (offered) =>
-                setPersonaAccountUseCase(
-                  action.repo,
-                  action.persona,
-                  action.role,
-                  action.account,
-                  offered,
-                ),
+              Effect.flatMap(
+                Effect.flatMap(MachineQueries, (queries) => queries.ReadMachineSetupQuery()),
+                (offered) =>
+                  setPersonaAccountUseCase(
+                    action.repo,
+                    action.persona,
+                    action.role,
+                    action.account,
+                    offered,
+                  ),
               ),
               daemonReload.pipe(Effect.ignore),
             ),

@@ -101,14 +101,14 @@ no longer read.
 ## Setup and enrollment (#51)
 
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
-(the machine module: `planSetupUseCase`, then `applySetupUseCase`, with
+(the machine module: `PlanSetupQuery`, then `applySetupUseCase`, with
 `src/interface/cli/machine/setup.command.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
 `src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
 persona its flows and then its accounts), then `applyEnrollmentUseCase`, which
 resolves what wasn't answered and writes the entry once. The machine's
 personas and accounts come in from the machine module's
-`readMachineSetupUseCase`.
+`ReadMachineSetupQuery`.
 
 - **Every question goes through `Asker`**
   (`src/interface/cli/asker.prompt.ts`): `pick`, `choose`, `text`. Only an

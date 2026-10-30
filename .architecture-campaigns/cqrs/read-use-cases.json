@@ -15,15 +15,10 @@
     "src/modules/machine": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 4,
-      "cleared": 0,
+      "cleared": 4,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
-      "holdouts": [
-        "use-cases/check-service.use-case.ts",
-        "use-cases/inspect-account-dir.use-case.ts",
-        "use-cases/plan-setup.use-case.ts",
-        "use-cases/read-machine-setup.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T14:26:03.533Z",
+      "holdouts": []
     },
     "src/modules/recipes": {
       "entered": "2026-10-30T05:15:33.499Z",

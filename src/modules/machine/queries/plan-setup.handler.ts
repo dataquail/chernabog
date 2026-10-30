@@ -4,11 +4,10 @@ import { MachineSetupRootOps } from "../domain/machine-setup/machine-setup.root-
 import { AccountDirsClient } from "../domain/ports/clients/account-dirs.client.ts";
 import { GitHubLoginsClient } from "../domain/ports/clients/github-logins.client.ts";
 import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
-import { AccountDir, SetupPlan } from "./setup.result.ts";
+import { AccountDir } from "./inspect-account-dir.query.ts";
+import { SetupPlan } from "./plan-setup.query.ts";
 
-// What setting up the machine can choose from: gh's logins, and the agents'
-// account directories in the home that no account names yet.
-export const planSetupUseCase = Effect.fn("planSetupUseCase")(function* () {
+export const planSetupHandler = Effect.fn("planSetupHandler")(function* () {
   const setup = yield* (yield* MachineSetupsRepository).findOne;
   const dirs = yield* AccountDirsClient;
   const home = yield* dirs.home;

@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import { providedRange } from "../../../kernel/core-support.value-object.ts";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
-import { checkServiceUseCase } from "../../../modules/machine/use-cases/check-service.use-case.ts";
+import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
 import { checkCodexAccount } from "../../../modules/runs/infrastructure/runtime/codex-usage.ts";
 import { flowWarnings } from "../../../modules/runs/infrastructure/runtime/diagnostics.ts";
 import {
@@ -636,7 +636,7 @@ export const doctor = Effect.gen(function* () {
   }
 
   check(
-    (yield* checkServiceUseCase()).installed,
+    (yield* (yield* MachineQueries).CheckServiceQuery()).installed,
     "the daemon service is installed",
     "chernabog install",
   );
