@@ -110,10 +110,68 @@ const queuedAs = (ships: boolean) =>
 const releaseTask = (issue: number, id: string) =>
   activity(`release-claim#${id}`, Claims.release(Claims.issue(issue)));
 
+// Where a stacked task's pull request goes once its work is done, as the step
+// `task-base#<id>`: its base, or, when the layer below merged while the task
+// was implemented (and its branch was deleted with it), the branch that one
+// merged into, and as far down as the layers below it merged too (#249). The
+// work is brought up to date with the new base as a stack's layer is
+// (Stack.updateFromBase): a squash or rebase of the layer below is recorded as
+// already here, so its review shows only the task's change, and its edits of
+// lines that layer added are no conflict. A merge that conflicts is undone and
+// left to resolve-conflicts, as any conflict with its base is.
+const TaskBase = Schema.Struct({ base: Schema.String });
+
+const settleBase = (id: string, claimed: Option.Option<string>, worktree: string) =>
+  activity(
+    `task-base#${id}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const integration = yield* Settings.base;
+      const base = Option.getOrElse(claimed, () => integration);
+      let target = base;
+      // The merged pull request whose base is `target`.
+      let lower = Option.none<number>();
+
+      while (target !== integration) {
+        const below = Option.filter(
+          yield* github.pullRequestForBranch(target),
+          (pull) => pull.state === "merged",
+        );
+
+        if (Option.isNone(below)) {
+          break;
+        }
+
+        target = below.value.baseRef;
+        lower = Option.some(below.value.number);
+      }
+
+      if (Option.isNone(lower)) {
+        return { base };
+      }
+
+      const updated = yield* Stack.updateFromBase(worktree, { lower: lower.value });
+
+      if (!updated.clean) {
+        const git = yield* Git;
+        yield* git.run(["merge", "--abort"], worktree).pipe(Effect.ignore);
+      }
+
+      return { base: updated.base };
+    }),
+    TaskBase,
+  );
+
 // Implements one ready task as implement does, on its base, with its own
 // steps and session. A task that needs a person is handed to one, and lets
 // its claim go; the run carries on with the rest either way.
-const implementTask = (epic: number, task: Epic.Layer, attempt: number, ships: boolean) =>
+const implementTask = (
+  epic: number,
+  task: Epic.Layer,
+  attempt: number,
+  ships: boolean,
+  withPerson: Set<number>,
+) =>
   Effect.gen(function* () {
     const issue = task.number;
     const id = attemptId(issue, attempt);
@@ -122,6 +180,7 @@ const implementTask = (epic: number, task: Epic.Layer, attempt: number, ships: b
     const toPerson = (reason: string) =>
       Implement.handToHuman(issue, reason, pullRequest, { id }).pipe(
         Effect.tap(() => releaseTask(issue, id)),
+        Effect.tap(() => Effect.sync(() => withPerson.add(issue))),
       );
 
     return yield* Effect.gen(function* () {
@@ -139,10 +198,11 @@ const implementTask = (epic: number, task: Epic.Layer, attempt: number, ships: b
 
       return yield* Effect.gen(function* () {
         yield* Implement.localGate(worktree, { id, session });
-        yield* Implement.push(`push#${id}`, worktree, branch, { base });
+        const settled = yield* settleBase(id, Option.fromUndefinedOr(base), worktree);
+        yield* Implement.push(`push#${id}`, worktree, branch, { base: settled.base });
 
         const opened = yield* Implement.openPullRequest(issue, outcome, {
-          base,
+          base: settled.base,
           id,
           partOf: epic,
           ...(yield* queuedAs(ships)),
@@ -150,7 +210,12 @@ const implementTask = (epic: number, task: Epic.Layer, attempt: number, ships: b
 
         pullRequest = Option.some(opened.number);
 
-        yield* Implement.waitForCi(opened.number, worktree, { ...session, branch, base }, { id });
+        yield* Implement.waitForCi(
+          opened.number,
+          worktree,
+          { ...session, branch, base: settled.base },
+          { id },
+        );
 
         return yield* Implement.handOff(issue, opened, outcome, { needsReview: true, id });
       }).pipe(
@@ -637,12 +702,16 @@ const land = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
 // attempted starts again only once it has read as something other than ready
 // since, as one a person handed back with auto:eligible after its questions
 // or a hand-off has; one still ready after its attempt, as one another run
-// holds, waits. The counts are rebuilt from the rounds' saved results
-// whenever the run resumes.
+// holds, waits. An attempt that ended with a person counts as read so: a
+// round runs only once every task started with it ends, so a person may hand
+// the task back before any round reads it with them (#249). The counts are
+// rebuilt from the rounds' saved results whenever the run resumes.
 const workThrough = (epic: number, ships: boolean, concurrency: number) =>
   Effect.gen(function* () {
     const attempts = new Map<number, number>();
     const handedBack = new Set<number>();
+    // Tasks whose attempt ended with a person.
+    const withPerson = new Set<number>();
 
     const upkeep: Upkeep = {
       attempts: new Map(),
@@ -671,8 +740,12 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
       }
 
       for (const layer of progress.layers) {
-        if (attempts.has(layer.number) && layer.state !== "ready") {
+        if (
+          attempts.has(layer.number) &&
+          (layer.state !== "ready" || withPerson.has(layer.number))
+        ) {
           handedBack.add(layer.number);
+          withPerson.delete(layer.number);
         }
       }
 
@@ -691,7 +764,7 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
 
         yield* Effect.forEach(
           starts,
-          (start) => implementTask(epic, start.task, start.attempt, ships),
+          (start) => implementTask(epic, start.task, start.attempt, ships, withPerson),
           {
             concurrency,
             discard: true,

@@ -558,3 +558,172 @@ describe("epic: landing layers that ship", () => {
     STACK_TIMEOUT,
   );
 });
+
+// While task #3 is implemented on task #2's branch, #2 squash-merges into main
+// and GitHub deletes its branch. #3's agent writes `work`.
+const mergedBelowMidTask = (work: { readonly path: string; readonly contents: string }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-epic-merged-" });
+    const root = yield* fs.realPath(temporary);
+    const origin = `${root}/origin.git`;
+    const clone = `${root}/clone`;
+    const checkout = `${root}/checkout`;
+
+    yield* execOk("git", ["init", "--quiet", "--bare", "--initial-branch", "main", origin]);
+
+    for (const path of [clone, checkout]) {
+      yield* execOk("git", ["clone", "--quiet", origin, path]);
+      yield* git(path, "config", "user.email", "test@example.com");
+      yield* git(path, "config", "user.name", "Test");
+    }
+
+    // main, and task #2's layer on it, in review.
+    yield* git(clone, "checkout", "--quiet", "-b", "main");
+    yield* fs.writeFileString(`${clone}/a.txt`, "a\n");
+    yield* git(clone, "add", "--all");
+    yield* git(clone, "commit", "--quiet", "-m", "base");
+    yield* git(clone, "push", "--quiet", "origin", "main");
+    yield* git(clone, "checkout", "--quiet", "-b", "auto/issue-2");
+    yield* fs.writeFileString(`${clone}/task-2.txt`, "task 2\n");
+    yield* git(clone, "add", "--all");
+    yield* git(clone, "commit", "--quiet", "-m", "task 2");
+    yield* git(clone, "push", "--quiet", "origin", "auto/issue-2");
+
+    const github = yield* Effect.acquireRelease(
+      Effect.sync(() => startFakeGitHub({ slug: SLUG, bare: origin })),
+      (started) => Effect.promise(() => started.stop()),
+    );
+
+    const epicNumber = github.addIssue("An epic", [Plan.LABELS.epic]);
+    expect(github.addIssue("Task 2", [DEFAULT_LABELS.eligible])).toBe(2);
+    expect(github.addIssue("Task 3", [DEFAULT_LABELS.eligible])).toBe(3);
+    github.subIssues.set(epicNumber, [2, 3]);
+    github.blockers.set(3, [2]);
+
+    const bottom = github.addPull("Task 2", "auto/issue-2", "chernabog-bot", []);
+    github.pull(bottom).body = `Closes #2\nPart of #${epicNumber}`;
+
+    const exec = yield* Exec;
+
+    const inClone = (...args: ReadonlyArray<string>) =>
+      exec.run("git", ["-C", clone, ...args]).pipe(
+        Effect.tap((result) =>
+          Effect.when(
+            Effect.die(`git ${args.join(" ")}: ${result.stderr}`),
+            Effect.sync(() => result.exitCode !== 0),
+          ),
+        ),
+        Effect.map((result) => result.stdout.trim()),
+      );
+
+    // While task #3 is implemented on #2's branch, #2 squash-merges into
+    // main and GitHub deletes its branch.
+    let squash = "";
+
+    const agent = Layer.succeed(
+      Agent,
+      Agent.of({
+        adapters: ["claude"],
+        run: (request) =>
+          Effect.gen(function* () {
+            yield* fs.writeFileString(`${request.cwd}/${work.path}`, work.contents);
+            yield* exec.run("git", ["-C", request.cwd, "add", "--all"]);
+            yield* exec.run("git", [
+              "-C",
+              request.cwd,
+              "-c",
+              "user.email=agent@example.com",
+              "-c",
+              "user.name=Agent",
+              "commit",
+              "--quiet",
+              "-m",
+              "task 3",
+            ]);
+
+            yield* inClone("checkout", "--quiet", "main");
+            yield* inClone("merge", "--quiet", "--squash", "auto/issue-2");
+            yield* inClone("commit", "--quiet", "-m", "Task 2 (#2)");
+            yield* inClone("push", "--quiet", "origin", "main");
+            squash = yield* inClone("rev-parse", "HEAD");
+            github.pull(bottom).mergeCommit = squash;
+            github.closePull(bottom);
+            yield* inClone("push", "--quiet", "origin", "--delete", "auto/issue-2");
+            github.issue(2).closed = true;
+
+            return {
+              sessionId: request.sessionId,
+              output: {
+                status: "done",
+                summary: "Task 3.",
+                title: "feat: task 3",
+                body: "Task 3.",
+              },
+              costUsd: Option.none(),
+            };
+          }).pipe(Effect.orDie),
+      }),
+    );
+
+    const repoSettings = { ...settings, slug: SLUG, path: checkout };
+    const host = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
+
+    const api = GitHubApi.layerFor(IMPLICIT).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ CHERNABOG_GITHUB_API: github.url })),
+      ),
+    );
+
+    const live = Layer.mergeAll(
+      GitHubLive(repoSettings),
+      GitLive(IMPLICIT),
+      WorktreeLive(repoSettings, IMPLICIT),
+      Layer.succeed(Repo, Repo.of(repoSettings)),
+    ).pipe(
+      Layer.provide(api),
+      Layer.provide(Layer.merge(GitHubTokens.fixed("test-token"), Layer.succeedContext(host))),
+    );
+
+    const base = makeFake("approve");
+    const fake = { ...base, services: Layer.mergeAll(base.services, live, agent) };
+    const working = flowHandle(repoAs(repoSettings), "epic", epic);
+
+    const opened = () =>
+      Arr.findFirst([...github.pulls.values()], (pull) => pull.head === "auto/issue-3");
+
+    const run = yield* runUntil(
+      working,
+      fake,
+      item(`issue-${epicNumber}`, { issue: epicNumber }),
+      (current) => Effect.succeed(current.status !== "running" || Option.isSome(opened())),
+      STACK_POLLS,
+    );
+
+    expect(run.status).toBe("running");
+
+    // The pull request is on main, and its head has main's squash merged
+    // in, so its diff is task #3's alone.
+    const pull = Option.getOrThrow(opened());
+    expect(pull.base).toBe("main");
+    const head = Option.getOrElse(github.refSha("refs/heads/auto/issue-3"), () => "");
+    expect(yield* contains(origin, squash, head)).toBe(true);
+    const changed = yield* exec.run("git", ["-C", origin, "diff", "--name-only", squash, head]);
+    expect(changed.stdout.trim()).toBe(work.path);
+    expect(github.issue(3).labels).not.toContain(DEFAULT_LABELS.needsHuman);
+  });
+
+describe("epic: a layer below that merges while a task is implemented", () => {
+  atHome(
+    "the task's pull request opens on the branch that layer merged into, brought up to date with it",
+    () => mergedBelowMidTask({ path: "task-3.txt", contents: "task 3\n" }),
+    STACK_TIMEOUT,
+  );
+
+  atHome(
+    "a task that edits what that layer added has its squash reconciled, not left in conflict",
+    () => mergedBelowMidTask({ path: "task-2.txt", contents: "task 2, as task 3 needs it\n" }),
+    STACK_TIMEOUT,
+  );
+});
