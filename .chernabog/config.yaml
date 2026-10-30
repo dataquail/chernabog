@@ -18,7 +18,10 @@ localGate:
   - bun run lint:architecture
   # The repo's own test script: parallel, with the 15s timeout the suite needs.
   # Bare `bun test` runs serially at 5s and times out when several tasks gate at once.
-  - bun run test
+  # One suite at a time on the machine: several at once overload it and the
+  # daemon and acceptance tests time out. lockf waits for the lock, and the
+  # kernel lets it go if the holder dies.
+  - lockf -k /tmp/chernabog-test-gate.lock bun run test
 
 # Decisions the agent must stop for and leave to a person.
 humanOnly:
