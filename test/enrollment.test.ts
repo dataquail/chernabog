@@ -13,6 +13,7 @@ import {
 } from "../src/interface/cli/enrollment/enroll.command.ts";
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
+import { EnrollmentQueriesLive } from "../src/modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
@@ -139,12 +140,26 @@ const checkout = (teamConfig: string) =>
 // Enrolling, or setting up, with these answers: a script of them, or no one to ask.
 const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollFlags) =>
   enrollCheckout(root, given).pipe(
-    Effect.provide(Layer.mergeAll(layer, Layer.fresh(EnrollmentLayer), Layer.fresh(MachineLayer))),
+    Effect.provide(
+      Layer.mergeAll(
+        layer,
+        Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentQueriesLive),
+        Layer.fresh(MachineLayer),
+      ),
+    ),
   );
 
 const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
   setUpMachine(given).pipe(
-    Effect.provide(Layer.mergeAll(layer, Layer.fresh(MachineLayer), Layer.fresh(EnrollmentLayer))),
+    Effect.provide(
+      Layer.mergeAll(
+        layer,
+        Layer.fresh(MachineLayer),
+        Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentQueriesLive),
+      ),
+    ),
   );
 
 const TEAM = "flows:\n  fix:\n    enabled: false\n";

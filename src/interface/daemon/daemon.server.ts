@@ -27,7 +27,7 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
-import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import { EnrollmentQueries } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,
@@ -833,7 +833,7 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => Effect.succeed(Result.succeed(false)),
               onSome: () =>
                 Effect.result(
-                  listPausedReposUseCase().pipe(
+                  EnrollmentQueries.use((enrollment) => enrollment.ListPausedReposQuery()).pipe(
                     Effect.map((found) => found.repos.includes(RepoSlug.make(repo.enrolled.repo))),
                   ),
                 ),
@@ -1585,7 +1585,7 @@ export const runDaemon = Effect.gen(function* () {
           draining: yield* Ref.get(draining),
           repos: repos.map(
             repoStatus(
-              yield* listPausedReposUseCase().pipe(
+              yield* EnrollmentQueries.use((enrollment) => enrollment.ListPausedReposQuery()).pipe(
                 Effect.map((found) => found.repos),
                 Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => []),
               ),

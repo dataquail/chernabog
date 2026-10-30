@@ -6,12 +6,12 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Checkout } from "../domain/enrolled-repo/checkout.value-object.ts";
-import { type EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
+import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { TeamFlows } from "../domain/enrolled-repo/team-flows.value-object.ts";
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { findCheckoutRootUseCase } from "./find-checkout-root.use-case.ts";
+import { listMovedReposHandler } from "./list-moved-repos.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -28,6 +28,9 @@ const here = Checkout.make({
   team,
 });
 
+const entry = (fields: Partial<ConstructorParameters<typeof EnrolledRepoRoot>[0]> = {}) =>
+  EnrolledRepoRoot.make({ repo: demo, path: "/src/demo", defaults: {}, paused: false, ...fields });
+
 const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArray<string> = []) =>
   Layer.mergeAll(
     EnrolledReposRepositoryFake(repos),
@@ -35,11 +38,25 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     ViewerClientFake(Option.some("carol")),
   );
 
-describe("findCheckoutRootUseCase", () => {
-  effect("is the root of the checkout a path is in", () =>
+describe("listMovedReposHandler", () => {
+  effect("lists the repo's entries whose checkout is gone, with the name each was given", () =>
     Effect.gen(function* () {
-      expect((yield* findCheckoutRootUseCase("/src/demo/src/lib")).root).toBe("/src/demo");
-      expect((yield* Effect.flip(findCheckoutRootUseCase("/tmp")))._tag).toBe("CheckoutUnreadable");
-    }).pipe(Effect.provide(machineOf([]))),
+      const { repos } = yield* listMovedReposHandler({ root: "/src/demo" });
+
+      expect(repos.map((repo) => [repo.name, repo.named, repo.path])).toEqual([
+        ["old", Option.some("old"), "/old/demo"],
+      ]);
+    }).pipe(
+      Effect.provide(
+        machineOf(
+          [
+            entry({ path: "/old/demo", name: "old" }),
+            entry({ path: "/kept/demo", name: "kept" }),
+            entry({ repo: RepoSlug.make("dataquail/other"), path: "/gone/other" }),
+          ],
+          ["/kept/demo"],
+        ),
+      ),
+    ),
   );
 });

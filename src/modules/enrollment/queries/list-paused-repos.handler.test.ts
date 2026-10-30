@@ -5,15 +5,15 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { listPausedReposUseCase } from "./list-paused-repos.use-case.ts";
+import { listPausedReposHandler } from "./list-paused-repos.handler.ts";
 
 const repo = (slug: string, paused: boolean) =>
   EnrolledRepoRoot.make({ repo: RepoSlug.make(slug), path: `/src/${slug}`, defaults: {}, paused });
 
-describe("listPausedReposUseCase", () => {
+describe("listPausedReposHandler", () => {
   effect("lists the paused repos by slug", () =>
     Effect.gen(function* () {
-      const paused = yield* listPausedReposUseCase();
+      const paused = yield* listPausedReposHandler();
 
       expect(paused.repos).toEqual([RepoSlug.make("dataquail/demo")]);
     }).pipe(

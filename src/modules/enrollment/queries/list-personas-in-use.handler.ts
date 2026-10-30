@@ -2,11 +2,9 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { PersonasInUse } from "./personas-in-use.result.ts";
+import { PersonasInUse } from "./list-personas-in-use.query.ts";
 
-// The logins enrolled repos run as, each once: setting up the machine can't
-// drop one without stranding a repo.
-export const listPersonasInUseUseCase = Effect.fn("listPersonasInUseUseCase")(function* () {
+export const listPersonasInUseHandler = Effect.fn("listPersonasInUseHandler")(function* () {
   const repos = yield* (yield* EnrolledReposRepository).findAll;
 
   return PersonasInUse.make({

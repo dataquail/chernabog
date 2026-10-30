@@ -2,8 +2,8 @@
   "version": 1,
   "campaign": "cqrs",
   "sector": "src/modules/enrollment",
-  "reached": "queries",
-  "since": "2026-10-30T05:15:33.499Z",
+  "reached": "commands",
+  "since": "2026-10-30T06:14:45.008Z",
   "attested": [],
   "notes": []
 }

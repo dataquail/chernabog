@@ -4,12 +4,12 @@ import * as Option from "effect/Option";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { MovedRepo, MovedRepos } from "./enrollment.result.ts";
+import { type ListMovedReposPayload, MovedRepo, MovedRepos } from "./list-moved-repos.query.ts";
 
-// Entries of the repo a checkout is of whose checkout is gone: what a person
-// setting up a checkout at its new place may point there. None for a checkout
-// that isn't of a GitHub repo.
-export const listMovedReposUseCase = Effect.fn("listMovedReposUseCase")(function* (root: string) {
+export const listMovedReposHandler = Effect.fn("listMovedReposHandler")(function* (
+  query: ListMovedReposPayload,
+) {
+  const { root } = query;
   const checkouts = yield* CheckoutsClient;
   const checkout = yield* Effect.option(checkouts.inspect(root));
 

@@ -21,6 +21,7 @@ import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
+import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
@@ -462,6 +463,7 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 // One GitHubTokens for the process, so each persona's token is looked up once.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
+  EnrollmentQueriesLive,
   TrustCommandsLive,
   TrustQueriesLive,
   RunLogsLayer,
