@@ -1267,6 +1267,7 @@ const waitForCiIn = <E, R>(
           `CI failed on pull request #${pullRequest}: ${failed}.`,
           `Read why with \`gh run list --branch ${target.branch} --limit 5\` and \`gh run view <run id> --log-failed\`.`,
           "Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again.",
+          `A check on the pull request's title or body is fixed on the pull request, not in a commit: \`gh pr edit ${pullRequest} --title "<title>"\` (or \`--body-file\`). Your answer's title is not applied again.`,
         ].join("\n"),
         target,
       );
