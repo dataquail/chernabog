@@ -25,7 +25,9 @@ import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
+import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
+import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
 import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
 import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
@@ -472,6 +474,8 @@ const AppLive = Layer.mergeAll(
   RunLogsLayer,
   MachineLayer,
   RecipesLayer,
+  RecipesCommandsLive,
+  RecipesQueriesLive,
   RehearsalsCommandsLive,
   RehearsalsQueriesLive,
 ).pipe(

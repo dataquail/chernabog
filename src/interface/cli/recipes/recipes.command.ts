@@ -6,16 +6,14 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { addRecipesUseCase } from "../../../modules/recipes/use-cases/add-recipes.use-case.ts";
-import { diffRecipesUseCase } from "../../../modules/recipes/use-cases/diff-recipes.use-case.ts";
-import { ejectRecipeUseCase } from "../../../modules/recipes/use-cases/eject-recipe.use-case.ts";
+import { type RecipesAdded } from "../../../modules/recipes/commands/add-recipes.command.ts";
+import { type RecipeEjected } from "../../../modules/recipes/commands/eject-recipe.command.ts";
+import { type RecipesDiff } from "../../../modules/recipes/queries/diff-recipes.query.ts";
+import { type RecipeList } from "../../../modules/recipes/queries/list-recipes.query.ts";
+import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
+import { RecipesQueries } from "../../../modules/recipes/recipes.query-handlers.ts";
 import { importRecipesUseCase } from "../../../modules/recipes/use-cases/import-recipes.use-case.ts";
-import { listRecipesUseCase } from "../../../modules/recipes/use-cases/list-recipes.use-case.ts";
 import {
-  type RecipeEjected,
-  type RecipeList,
-  type RecipesAdded,
-  type RecipesDiff,
   type RecipesImported,
   type RecipesUpdated,
   type RepoUpgraded,
@@ -55,7 +53,7 @@ const chooseRecipes = (root: string, named: Option.Option<ReadonlyArray<string>>
       return [];
     }
 
-    const offered = (yield* listRecipesUseCase(root)).recipes.filter(
+    const offered = (yield* (yield* RecipesQueries).ListRecipesQuery({ root })).recipes.filter(
       (recipe) => recipe.state === "available",
     );
 
@@ -87,7 +85,7 @@ export const bakeRecipes = (root: string, named: Option.Option<ReadonlyArray<str
   Effect.gen(function* () {
     const names = yield* chooseRecipes(root, named);
 
-    return describeAdded(yield* addRecipesUseCase(root, names));
+    return describeAdded(yield* (yield* RecipesCommands).AddRecipesCommand({ root, names }));
   });
 
 const MARKS = { copied: "✓", imported: "→", available: " " } as const;
@@ -114,7 +112,9 @@ const recipesList = Command.make(
   { path: Argument.String("path").pipe(Argument.optional) },
   ({ path }) =>
     Effect.gen(function* () {
-      yield* printLines(describeList(yield* listRecipesUseCase(yield* rootOf(path))));
+      const root = yield* rootOf(path);
+
+      yield* printLines(describeList(yield* (yield* RecipesQueries).ListRecipesQuery({ root })));
     }),
 ).pipe(
   Command.withDescription(
@@ -164,19 +164,27 @@ export const refreshSchemas = (root: string) =>
     ),
   );
 
+// The lines importing, or else copying, the recipes chosen say.
+const addedOrImported = (
+  importing: boolean,
+  root: string,
+  named: Option.Option<ReadonlyArray<string>>,
+) =>
+  Effect.gen(function* () {
+    if (importing) {
+      return yield* importRecipes(root, named);
+    }
+
+    return yield* bakeRecipes(root, named);
+  });
+
 const addOrImport = (
   importing: boolean,
   root: string,
   named: Option.Option<ReadonlyArray<string>>,
 ) =>
   Effect.gen(function* () {
-    const lines = yield* Effect.suspend(() => {
-      if (importing) {
-        return importRecipes(root, named);
-      }
-
-      return bakeRecipes(root, named);
-    });
+    const lines = yield* addedOrImported(importing, root, named);
 
     if (lines.length === 0) {
       return lines;
@@ -245,8 +253,10 @@ const recipesEject = Command.make(
   },
   ({ flow }) =>
     Effect.gen(function* () {
+      const root = yield* rootOf(Option.none());
+
       yield* printLines(
-        describeEjected(yield* ejectRecipeUseCase(yield* rootOf(Option.none()), flow)),
+        describeEjected(yield* (yield* RecipesCommands).EjectRecipeCommand({ root, flow })),
       );
       yield* Console.log(
         "The flow is the repo's own now: edit it as you like. chernabog recipes diff shows your edits, and chernabog recipes update merges the package's later changes into them. Commit and merge it to the base branch, then chernabog trust the repo.",
@@ -313,7 +323,9 @@ const describeDiff = (diff: RecipesDiff) => {
 
 // How the repo at `root` differs from the recipes it copied, for a person.
 export const diffLines = (root: string, names: ReadonlyArray<string>) =>
-  diffRecipesUseCase(root, names).pipe(Effect.map(describeDiff));
+  RecipesQueries.use((queries) => queries.DiffRecipesQuery({ root, names })).pipe(
+    Effect.map(describeDiff),
+  );
 
 const recipeNames = (verb: string, none: string) =>
   Argument.String("recipe").pipe(

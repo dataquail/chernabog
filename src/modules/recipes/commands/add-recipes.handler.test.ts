@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestOf, manifestWith, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { addRecipesUseCase } from "./add-recipes.use-case.ts";
+import { addRecipesHandler } from "./add-recipes.handler.ts";
 
-describe("addRecipesUseCase", () => {
+describe("addRecipesHandler", () => {
   const repo = recipeRepo({
     ".chernabog/package.json": manifestWith({
       "@chernabog/recipes": "0.1.0",
@@ -18,11 +18,10 @@ describe("addRecipesUseCase", () => {
     "copies each recipe's files from its package, keeping the repo's own flow and a prompt already there, and records each version",
     () =>
       Effect.gen(function* () {
-        const added = yield* addRecipesUseCase("/repo", [
-          "review",
-          "re-review",
-          "@acme/recipes/deploy",
-        ]);
+        const added = yield* addRecipesHandler({
+          root: "/repo",
+          names: ["review", "re-review", "@acme/recipes/deploy"],
+        });
 
         expect(
           added.files.map((file) => [file.outcome, file.file, file.recipe, file.version]),
@@ -51,8 +50,14 @@ describe("addRecipesUseCase", () => {
     () =>
       Effect.gen(function* () {
         const before = { ...fresh.stored };
-        const unknown = yield* Effect.flip(addRecipesUseCase("/repo", ["implement", "ship"]));
-        const missing = yield* Effect.flip(addRecipesUseCase("/repo", ["@globex/recipes/ship"]));
+
+        const unknown = yield* Effect.flip(
+          addRecipesHandler({ root: "/repo", names: ["implement", "ship"] }),
+        );
+
+        const missing = yield* Effect.flip(
+          addRecipesHandler({ root: "/repo", names: ["@globex/recipes/ship"] }),
+        );
 
         expect(unknown._tag).toBe("UnknownRecipe");
         expect(missing.message).toContain("@globex/recipes isn't installed in .chernabog/");

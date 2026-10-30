@@ -28,13 +28,10 @@
     "src/modules/recipes": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 2,
-      "cleared": 0,
+      "cleared": 2,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
-      "holdouts": [
-        "use-cases/diff-recipes.use-case.ts",
-        "use-cases/list-recipes.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T14:29:25.654Z",
+      "holdouts": []
     },
     "src/modules/rehearsals": {
       "entered": "2026-10-30T05:15:33.499Z",

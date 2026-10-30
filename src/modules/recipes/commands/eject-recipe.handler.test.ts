@@ -3,9 +3,9 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestOf, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { ejectRecipeUseCase } from "./eject-recipe.use-case.ts";
+import { ejectRecipeHandler } from "./eject-recipe.handler.ts";
 
-describe("ejectRecipeUseCase", () => {
+describe("ejectRecipeHandler", () => {
   const repo = recipeRepo({ ".chernabog/prompts/implement.md": "our prompt\n" }, false, {
     ship: "implement",
     review: "@chernabog/recipes/review",
@@ -15,7 +15,7 @@ describe("ejectRecipeUseCase", () => {
     "copies an imported flow in under its own name, keeps a prompt that overrode the package's, records versions and drops the from",
     () =>
       Effect.gen(function* () {
-        const ejected = yield* ejectRecipeUseCase("/repo", "ship");
+        const ejected = yield* ejectRecipeHandler({ root: "/repo", flow: "ship" });
 
         expect(ejected.files.map((file) => [file.outcome, file.file])).toEqual([
           ["wrote", ".chernabog/flows/ship.ts"],
@@ -36,7 +36,7 @@ describe("ejectRecipeUseCase", () => {
 
   effect("refuses a flow the repo doesn't import, naming the ones it does", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(ejectRecipeUseCase("/repo", "deploy"));
+      const refused = yield* Effect.flip(ejectRecipeHandler({ root: "/repo", flow: "deploy" }));
 
       expect(refused.message).toBe(
         "config.yaml doesn't import a flow named deploy (it imports: review)",

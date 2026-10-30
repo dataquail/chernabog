@@ -4,9 +4,9 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestWith, recipeRepo } from "../../../../test/recipe-repo.ts";
-import { listRecipesUseCase } from "./list-recipes.use-case.ts";
+import { listRecipesHandler } from "./list-recipes.handler.ts";
 
-describe("listRecipesUseCase", () => {
+describe("listRecipesHandler", () => {
   const repo = recipeRepo({
     ".chernabog/package.json": manifestWith({
       "@chernabog/recipes": "0.1.0",
@@ -19,7 +19,7 @@ describe("listRecipesUseCase", () => {
     "lists the recipes of every installed package, the official first, with whether the repo copied each",
     () =>
       Effect.gen(function* () {
-        const { packages, recipes } = yield* listRecipesUseCase("/repo");
+        const { packages, recipes } = yield* listRecipesHandler({ root: "/repo" });
 
         expect(packages).toEqual([
           { name: "@chernabog/recipes", version: "0.1.0" },
