@@ -197,7 +197,11 @@ const NewIssueBody = Schema.Struct({
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const StateBody = Schema.Struct({ state: Schema.optionalKey(Schema.Literals(["open", "closed"])) });
+const StateBody = Schema.Struct({
+  state: Schema.optionalKey(Schema.Literals(["open", "closed"])),
+  base: Schema.optionalKey(Schema.String),
+});
+
 const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
@@ -515,6 +519,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       onNone: notFound,
       onSome: (pull) => {
         pull.state = body.state ?? pull.state;
+        pull.base = body.base ?? pull.base;
 
         return encoded(PullJson, pullJson(pull));
       },
@@ -858,7 +863,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     }),
   );
 
-  // Merges exactly the head asked for, as a squash onto the base.
+  // Merges exactly the head asked for, onto the base, by moving the base to it.
+  // As on GitHub, a merge into the default branch closes the issues the pull
+  // request's body closes.
   const mergePull = withBody(MergeBody, (body, args) =>
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
@@ -870,6 +877,18 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         git("update-ref", `refs/heads/${pull.base}`, body.sha);
         pull.state = "closed";
         pull.merged = true;
+        pull.mergeCommit = pull.mergeCommit ?? body.sha;
+
+        if (pull.base === "main") {
+          for (const closed of pull.body.matchAll(/Closes #(\d+)/g)) {
+            for (const issue of Option.toArray(
+              Option.fromUndefinedOr(issues.get(Number(closed[1]))),
+            )) {
+              issue.closed = true;
+            }
+          }
+        }
+
         merges.push({ number: pull.number, method: body.merge_method, by: args.login });
 
         return json({ sha: body.sha, merged: true });
