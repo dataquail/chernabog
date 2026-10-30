@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/dataquail/chernabog/compare/recipes-v0.2.0...recipes-v0.2.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **recipes:** a repo that checks its titles gets conventional commits, and CI fixes edit a failing title ([#247](https://github.com/dataquail/chernabog/issues/247)) ([6e7c51a](https://github.com/dataquail/chernabog/commit/6e7c51a9daf3aad93ea7dc3a66c8ddcf868ed7de))
+* **recipes:** an epic task whose layer below merges mid-task opens on the branch that layer merged into ([#265](https://github.com/dataquail/chernabog/issues/265)) ([114033d](https://github.com/dataquail/chernabog/commit/114033db536953a9c8a399bc13e0ef31c2aa684b))
+
 ## [0.2.0](https://github.com/dataquail/chernabog/compare/recipes-v0.1.0...recipes-v0.2.0) (2026-10-30)
 
 

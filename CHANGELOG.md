@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.1](https://github.com/dataquail/chernabog/compare/v0.11.0...v0.11.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* a GitHub 5xx is tried again for about 30 seconds, on the API and on a push, rather than ending the run or going to a person ([#260](https://github.com/dataquail/chernabog/issues/260)) ([6509a7e](https://github.com/dataquail/chernabog/commit/6509a7e4e36e7e3672363345856bb993b6eba815)), closes [#254](https://github.com/dataquail/chernabog/issues/254)
+* **recipes:** a repo that checks its titles gets conventional commits, and CI fixes edit a failing title ([#247](https://github.com/dataquail/chernabog/issues/247)) ([6e7c51a](https://github.com/dataquail/chernabog/commit/6e7c51a9daf3aad93ea7dc3a66c8ddcf868ed7de))
+* **recipes:** an epic task whose layer below merges mid-task opens on the branch that layer merged into ([#265](https://github.com/dataquail/chernabog/issues/265)) ([114033d](https://github.com/dataquail/chernabog/commit/114033db536953a9c8a399bc13e0ef31c2aa684b))
+* three tests no longer race the runner, and cleanup survives a claim branch deleted under it ([#223](https://github.com/dataquail/chernabog/issues/223)) ([130da9b](https://github.com/dataquail/chernabog/commit/130da9b8f5b7002291c65101b3c10273158bdcbc))
+
 ## [0.11.0](https://github.com/dataquail/chernabog/compare/v0.10.0...v0.11.0) (2026-10-30)
 
 
