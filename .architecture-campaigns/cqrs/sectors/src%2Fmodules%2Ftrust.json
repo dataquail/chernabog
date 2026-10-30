@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "campaign": "cqrs",
+  "sector": "src/modules/trust",
+  "reached": "queries",
+  "since": "2026-10-30T05:15:33.499Z",
+  "attested": [],
+  "notes": []
+}

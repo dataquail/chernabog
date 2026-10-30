@@ -15,6 +15,7 @@
       "devDependencies": {
         "@chernabog/sdk": "workspace:*",
         "@effect/tsgo": "0.53.0",
+        "@goodbones/campaigns": "0.1.1-beta.9",
         "@goodbones/cli": "0.1.0-beta.22",
         "@goodbones/core": "0.1.0-beta.18",
         "@goodbones/oxlint": "0.1.0-beta.22",
@@ -119,6 +120,8 @@
     "@eslint/object-schema": ["@eslint/object-schema@3.0.5", "", {}, "sha512-vqTaUEgxzm+YDSdElad6PiRoX4t8VGDjCtt05zn4nU810UIx/uNEV7/lZJ6KwFThKZOzOxzXy48da+No7HZaMw=="],
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.7.3", "", { "dependencies": { "@eslint/core": "^1.2.1", "levn": "^0.4.1" } }, "sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q=="],
+
+    "@goodbones/campaigns": ["@goodbones/campaigns@0.1.1-beta.9", "", { "dependencies": { "@goodbones/core": "0.1.0-beta.18", "effect": "4.0.5" } }, "sha512-pHcUwAU6UYHHUYDiA4H/iY7gNkJ2LiJ9INguK24OpFb0WUgC83nzNv5mUt3c7grhh60K1eA1LKrr+gbcqqXy1g=="],
 
     "@goodbones/cli": ["@goodbones/cli@0.1.0-beta.22", "", { "dependencies": { "@goodbones/core": "0.1.0-beta.18", "@goodbones/typescript": "0.1.0-beta.20", "effect": "4.0.5" }, "peerDependencies": { "@goodbones/ast-grep": "^0.1.3-beta.7", "@goodbones/campaigns": "^0.1.1-beta.9" }, "optionalPeers": ["@goodbones/ast-grep", "@goodbones/campaigns"], "bin": { "architecture": "build/esm/main.js" } }, "sha512-6ZPqFiwqvn6rbzGX7+tmOqc+rFLptgslid+Vk90TbmdBBMxaFIDCY+1n7zq8FOe86UDiOXQq5rxe6tEP4Y3wag=="],
 

@@ -845,3 +845,75 @@ tree:
             The release PR check reads the PR's body with release-please's parser, and names
             effect beside it.
           external: [release-please]
+
+# The moves the policy above has not finished making, each counted and held:
+# a ledger under .architecture-campaigns/ lists what is left, and only shrinks.
+# `bun run architecture:clear` records a change's progress in it, in the same
+# commit; `check` fails until it has.
+campaigns:
+  cqrs:
+    title: Use-cases become commands and queries
+    why: >-
+      The CLI, the TUI and the dashboard ask the modules through one command bus and one query
+      bus, so every adapter reaches a module the same way, each dispatch is traced once, and a
+      command's events reach the dashboard and the notifier without the engine knowing either
+      exists (@effect-server-utils/cqrs, as dataquail/functional-domain-driven-hexagon lays it out).
+    how: >-
+      Move the use-case to a <verb-noun>.query.ts (it only reads) or <verb-noun>.command.ts (it
+      changes something) in the module's queries/ or commands/, its body to a sibling
+      <verb-noun>.handler.ts and its test to <verb-noun>.handler.test.ts, register it in the
+      module's <module>.query-handlers.ts or <module>.command-handlers.ts, and have its callers
+      dispatch it. Then delete the use-case and run `bun run architecture:clear`.
+    owner: "@zacharyweidenbach"
+    scope: ["src/modules/**"]
+    perimeter: { glob: "src/modules/*/" }
+    onTouch: ratchet
+    staleAfter: 14d
+    phases:
+      - id: queries
+        intent: >-
+          Each use-case that only reads becomes a query. Classify it by what it does, not its
+          name: one named like a read that writes is a command. A handful per pull request.
+        objectives: [read-use-cases]
+      - id: commands
+        intent: >-
+          Each remaining use-case becomes a command, its unit of work declared once with
+          withUnitOfWork. A handful per pull request.
+        objectives: [write-use-cases]
+      - id: events
+        intent: >-
+          The module's commands dispatch its domain events, Schemas in its domain, only after
+          the durable step that makes each one true, each with an id from the run and the step
+          so a consumer can drop a repeat.
+
+    objectives:
+      read-use-cases:
+        intent: A read still behind a use-case is one the query bus can't answer.
+        holdout: file
+        match:
+          path:
+            file: "/use-cases/(list|find|read|check|inspect|resolve|follow|plan|load|choose|diff)-[^/]*\\.use-case\\.ts$"
+        probes:
+          fires:
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.ts
+          ignores:
+            - path: src/modules/runs/use-cases/start-run.use-case.ts
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.test.ts
+            - path: src/modules/runs/queries/list-recent-runs.query.ts
+
+      write-use-cases:
+        intent: A write still behind a use-case is one the command bus can't dispatch, and whose events no one hears.
+        holdout: file
+        match:
+          all:
+            - path: { file: "/use-cases/[^/]*\\.use-case\\.ts$" }
+            - not:
+                path:
+                  file: "/use-cases/(list|find|read|check|inspect|resolve|follow|plan|load|choose|diff)-[^/]*\\.use-case\\.ts$"
+        probes:
+          fires:
+            - path: src/modules/runs/use-cases/start-run.use-case.ts
+          ignores:
+            - path: src/modules/runs/use-cases/list-recent-runs.use-case.ts
+            - path: src/modules/runs/use-cases/start-run.use-case.test.ts
+            - path: src/modules/runs/commands/start-run.command.ts

@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "campaign": "cqrs",
+  "objective": "read-use-cases",
+  "created": "2026-10-30T05:15:22.531Z",
+  "sectors": {
+    "src/modules/enrollment": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 6,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/find-checkout-root.use-case.ts",
+        "use-cases/list-enrolled-repos.use-case.ts",
+        "use-cases/list-moved-repos.use-case.ts",
+        "use-cases/list-paused-repos.use-case.ts",
+        "use-cases/list-personas-in-use.use-case.ts",
+        "use-cases/plan-enrollment.use-case.ts"
+      ]
+    },
+    "src/modules/machine": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 4,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/check-service.use-case.ts",
+        "use-cases/inspect-account-dir.use-case.ts",
+        "use-cases/plan-setup.use-case.ts",
+        "use-cases/read-machine-setup.use-case.ts"
+      ]
+    },
+    "src/modules/recipes": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 2,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/diff-recipes.use-case.ts",
+        "use-cases/list-recipes.use-case.ts"
+      ]
+    },
+    "src/modules/rehearsals": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 4,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/check-rehearsal.use-case.ts",
+        "use-cases/choose-seeded-work.use-case.ts",
+        "use-cases/load-scenario.use-case.ts",
+        "use-cases/plan-rehearsal.use-case.ts"
+      ]
+    },
+    "src/modules/runs": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 17,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/check-run-leases.use-case.ts",
+        "use-cases/check-run-validity.use-case.ts",
+        "use-cases/find-active-run.use-case.ts",
+        "use-cases/find-run.use-case.ts",
+        "use-cases/follow-run-log.use-case.ts",
+        "use-cases/list-active-runs.use-case.ts",
+        "use-cases/list-holds.use-case.ts",
+        "use-cases/list-recent-runs.use-case.ts",
+        "use-cases/list-recent-skips.use-case.ts",
+        "use-cases/list-run-markers.use-case.ts",
+        "use-cases/list-run-waits.use-case.ts",
+        "use-cases/list-unreleased-markers.use-case.ts",
+        "use-cases/list-unsupported-runs.use-case.ts",
+        "use-cases/plan-tick.use-case.ts",
+        "use-cases/read-run-history.use-case.ts",
+        "use-cases/read-run-log.use-case.ts",
+        "use-cases/resolve-run-id.use-case.ts"
+      ]
+    },
+    "src/modules/trust": {
+      "entered": "2026-10-30T05:15:33.499Z",
+      "initial": 2,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:15:33.499Z",
+      "holdouts": [
+        "use-cases/check-trust.use-case.ts",
+        "use-cases/find-trusted-tree.use-case.ts"
+      ]
+    }
+  },
+  "concessions": []
+}
