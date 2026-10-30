@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { scratchRepoFake } from "../infrastructure/clients/scratch-repo.client-fake.ts";
-import { cleanUpScenarioUseCase } from "./clean-up-scenario.use-case.ts";
+import { cleanUpScenarioHandler } from "./clean-up-scenario.handler.ts";
 
 const seeded = {
   issues: [{ name: "bug", number: 12 }],
@@ -14,12 +14,12 @@ const seeded = {
   ],
 };
 
-describe("cleanUpScenarioUseCase", () => {
+describe("cleanUpScenarioHandler", () => {
   const github = scratchRepoFake({ admin: true, pullsFrom: { "auto/issue-12": [40] } });
 
   effect("removes what was seeded and what the flow made from it", () =>
     Effect.gen(function* () {
-      const cleaned = yield* cleanUpScenarioUseCase({
+      const cleaned = yield* cleanUpScenarioHandler({
         repo: "you/scratch",
         seeded,
         branches: ["auto/issue-12"],
@@ -42,7 +42,7 @@ describe("cleanUpScenarioUseCase", () => {
 
   effect("carries on past what fails, and says what that was", () =>
     Effect.gen(function* () {
-      const cleaned = yield* cleanUpScenarioUseCase({
+      const cleaned = yield* cleanUpScenarioHandler({
         repo: "you/scratch",
         seeded,
         branches: [],

@@ -468,7 +468,7 @@ a seeded repo, with no agent session.
   as `rehearsal.schema.json`) and seeds and cleans up GitHub
   (`ScratchRepoClient`). `rehearse.main.ts` composes it with the runtime: a
   clone of the scenario's repo, a journal of its own under
-  `rehearsals/<id>/`, and only seeded work items (`chooseSeededWorkUseCase`).
+  `rehearsals/<id>/`, and only seeded work items (`ChooseSeededWorkQuery`).
 - **An enrolled repo is refused** unless the scenario says `enrolled: true` or
   the person passes `--on-enrolled`; then it is paused on this machine
   meanwhile, and cloned from its own origin.

@@ -1,32 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type Persona } from "../../../kernel/persona.value-object.ts";
-import { type Ending } from "../../../kernel/scenario.value-object.ts";
-import { type StandIns } from "../../../kernel/stand-in.value-object.ts";
 import { ScratchRepoClient } from "../domain/ports/clients/scratch-repo.client.ts";
-import { type ScenarioRoot } from "../domain/scenario/scenario.root.ts";
 import { ScenarioRootOps } from "../domain/scenario/scenario.root-ops.ts";
-import { type Seeded } from "../domain/scenario/seeded.value-object.ts";
-import { RehearsalCheck } from "./rehearsal-check.result.ts";
+import { type CheckRehearsalPayload, RehearsalCheck } from "./check-rehearsal.query.ts";
 
-// Reads back what a rehearsal's run left on GitHub, as `as`, and compares it
-// with the scenario's expect:. `item` is the key of the work item it ran on;
-// `branches` are the ones the flow made for it, such as auto/issue-12, whose
-// pull requests are checked for review requests beside the seeded ones. A
-// stand-in no step used is reported: a replayed step the flow no longer has.
-export const checkRehearsalUseCase = Effect.fn("checkRehearsalUseCase")(function* (request: {
-  readonly scenario: ScenarioRoot;
-  readonly seeded: Seeded;
-  readonly item: string;
-  readonly ending: Ending;
-  readonly summary: string;
-  readonly branches: ReadonlyArray<string>;
-  // The stand-ins it ran with, and the steps that asked the agent.
-  readonly standIns: StandIns;
-  readonly asked: ReadonlyArray<string>;
-  readonly as: Persona;
-}) {
+export const checkRehearsalHandler = Effect.fn("checkRehearsalHandler")(function* (
+  request: CheckRehearsalPayload,
+) {
   const client = yield* ScratchRepoClient;
   const repo = request.scenario.repo;
 

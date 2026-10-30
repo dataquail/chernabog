@@ -26,7 +26,8 @@ import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
 import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
-import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
+import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
@@ -471,7 +472,8 @@ const AppLive = Layer.mergeAll(
   RunLogsLayer,
   MachineLayer,
   RecipesLayer,
-  RehearsalsLayer,
+  RehearsalsCommandsLive,
+  RehearsalsQueriesLive,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
