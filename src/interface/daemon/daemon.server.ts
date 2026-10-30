@@ -77,17 +77,15 @@ import {
   StateLive,
 } from "../../modules/runs/runs.layer.ts";
 import {
+  NotificationsQueries,
+  NotificationsQueriesOver,
   RunFlowsQueries,
   RunFlowsQueriesLive,
   RunsQueries,
   RunsQueriesLive,
 } from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
-import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
-import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
 import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
 import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
@@ -895,7 +893,10 @@ export const runDaemon = Effect.gen(function* () {
             schedule.waiting = routed.waiting;
           }
 
-          yield* deliverSignalsUseCase(ref, yield* stillWaking(ref, plan.signalled));
+          yield* (yield* RunFlowsCommands).DeliverSignalsCommand({
+            flow: ref,
+            items: yield* stillWaking(ref, plan.signalled),
+          });
 
           const started: Array<RunView> = [];
           let skipped = plan.skipped;
@@ -907,7 +908,9 @@ export const runDaemon = Effect.gen(function* () {
               {
                 onNone: () => Effect.succeedNone,
                 onSome: () =>
-                  gateFlowUseCase(ref, item.key).pipe(Effect.map((found) => found.held)),
+                  RunFlowsCommands.use((runs) =>
+                    runs.GateFlowCommand({ flow: ref, itemKey: item.key }),
+                  ).pipe(Effect.map((found) => found.held)),
               },
             );
 
@@ -958,7 +961,7 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             for (const running of yield* active) {
-              const polled = yield* pollRunUseCase(running.id);
+              const polled = yield* (yield* RunFlowsCommands).PollRunCommand({ runId: running.id });
               const ended = Option.filter(polled.run, (run) => run.status !== "running");
 
               for (const finished of Option.toArray(ended)) {
@@ -1303,7 +1306,11 @@ export const runDaemon = Effect.gen(function* () {
               .map((repo) => repo.enrolled.repo);
 
             const polled = yield* Effect.result(
-              pollNotificationsUseCase(persona, yield* Ref.get(cursor), slugs),
+              (yield* NotificationsQueries).PollNotificationsQuery({
+                persona,
+                cursor: yield* Ref.get(cursor),
+                repos: slugs,
+              }),
             );
 
             if (Result.isFailure(polled)) {
@@ -1341,7 +1348,7 @@ export const runDaemon = Effect.gen(function* () {
           });
 
           return yield* Effect.forever(pollOnce.pipe(Effect.flatMap(Effect.sleep)));
-        }).pipe(Effect.provide(NotificationsLayer));
+        }).pipe(Effect.provide(NotificationsQueriesOver.pipe(Layer.provide(NotificationsLayer))));
 
       for (const persona of notifiedPersonas(machine)) {
         yield* Effect.forkScoped(pollNotifications(persona));

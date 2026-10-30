@@ -50,6 +50,8 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
+import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
+import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
 import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
@@ -60,8 +62,6 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-signals.use-case.ts";
-import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
 import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
@@ -907,7 +907,7 @@ export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =
   startFlowRunHandler({ flow: refOf(handle, persona), item: work });
 
 export const pollRun = (run: EngineRun) =>
-  pollRunUseCase(run.id).pipe(
+  pollRunHandler({ runId: run.id }).pipe(
     Effect.map((found): EngineRun => Option.getOrElse(found.run, () => run)),
   );
 
@@ -915,7 +915,10 @@ export const deliverSignals = (
   handle: FlowHandle,
   persona: Persona,
   items: ReadonlyArray<WorkItem>,
-) => deliverSignalsUseCase(refOf(handle, persona), items).pipe(Effect.map(({ count }) => count));
+) =>
+  deliverSignalsHandler({ flow: refOf(handle, persona), items }).pipe(
+    Effect.map(({ count }) => count),
+  );
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(

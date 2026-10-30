@@ -27,6 +27,8 @@ import { listUnreleasedMarkersHandler } from "./queries/list-unreleased-markers.
 import { ListUnreleasedMarkersQuery } from "./queries/list-unreleased-markers.query.ts";
 import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.handler.ts";
 import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
+import { pollNotificationsHandler } from "./queries/poll-notifications.handler.ts";
+import { PollNotificationsQuery } from "./queries/poll-notifications.query.ts";
 import { readRunHistoryHandler } from "./queries/read-run-history.handler.ts";
 import { ReadRunHistoryQuery } from "./queries/read-run-history.query.ts";
 import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
@@ -124,3 +126,23 @@ export const RunLogsQueriesOver = Layer.effect(
 ).pipe(Layer.provideMerge(RunLogsQueryHandlersLive));
 
 export const RunLogsQueriesLive = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientLive));
+
+// What a persona's GitHub notifications answer, over whichever notifications
+// client its caller provides: the daemon's over GitHub, a test's in memory.
+export const notificationsQueryGroup = Query.group(PollNotificationsQuery);
+
+const NotificationsQueryHandlersLive = Query.handlersOf(notificationsQueryGroup, {
+  PollNotificationsQuery: (payload) => pollNotificationsHandler(payload),
+});
+
+// The runs module's slice of the read side over GitHub notifications, which
+// the daemon asks to tick sooner.
+export class NotificationsQueries extends Context.Service<
+  NotificationsQueries,
+  Query.Dispatcher<typeof notificationsQueryGroup>
+>()("NotificationsQueries") {}
+
+export const NotificationsQueriesOver = Layer.effect(
+  NotificationsQueries,
+  Query.dispatcher(notificationsQueryGroup),
+).pipe(Layer.provideMerge(NotificationsQueryHandlersLive));

@@ -43,8 +43,6 @@ import {
 } from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
-import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
 import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
@@ -98,7 +96,10 @@ const followRun = (
     while (current.status === "running") {
       yield* tail;
       yield* Effect.sleep("1 second");
-      current = Option.getOrElse((yield* pollRunUseCase(current.id)).run, () => current);
+      current = Option.getOrElse(
+        (yield* (yield* RunFlowsCommands).PollRunCommand({ runId: current.id })).run,
+        () => current,
+      );
       const now = yield* Clock.currentTimeMillis;
 
       if (now - lastSignalCheck > SIGNAL_EVERY_MS) {
@@ -108,7 +109,10 @@ const followRun = (
           Effect.orElseSucceed(() => []),
         );
 
-        yield* deliverSignalsUseCase(refOf(handle, persona), items);
+        yield* (yield* RunFlowsCommands).DeliverSignalsCommand({
+          flow: refOf(handle, persona),
+          items,
+        });
       }
     }
 

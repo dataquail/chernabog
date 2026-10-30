@@ -261,10 +261,10 @@ transitive reach), the coverage floors and the baseline.
   routing and the concurrency limits, recording a skip when it would start
   nothing. It returns a `TickPlan`: the work whose signals go to runs in
   flight, and the work to start runs for. The daemon then delivers the
-  signals (`deliverSignalsUseCase`) and, item by item, asks the flow's own
-  gate (`gateFlowUseCase`, before every start, since a started run may close
+  signals (`DeliverSignalsCommand`) and, item by item, asks the flow's own
+  gate (`GateFlowCommand`, before every start, since a started run may close
   it) and starts the run (`StartFlowRunCommand`). The daemon polls each
-  active run with `pollRunUseCase`. Flows run through `FlowsClient`
+  active run with `PollRunCommand`. Flows run through `FlowsClient`
   (trigger, item lookup, gate) and workflows through `WorkflowsClient`
   (execute, poll, resume, wake, note); the daemon and `chernabog run` build
   both from the flows they loaded (`RuntimeLayer(registry)` in
