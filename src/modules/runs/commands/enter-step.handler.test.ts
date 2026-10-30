@@ -11,7 +11,7 @@ import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
 import { readRunHistoryHandler } from "../queries/read-run-history.handler.ts";
-import { enterStepUseCase } from "./enter-step.use-case.ts";
+import { enterStepHandler } from "./enter-step.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -42,14 +42,16 @@ const ended = run("ended", {
 const steps = (runs: ReadonlyArray<RunRoot>) =>
   Layer.mergeAll(RunsRepositoryFake(runs), RunStepsRepositoryFake([]), RunWaitsRepositoryFake([]));
 
-describe("enterStepUseCase", () => {
+describe("enterStepHandler", () => {
   effect("records the step a running run is in, and each step it has entered", () =>
     Effect.gen(function* () {
       const a = RunId.make("a");
-      yield* enterStepUseCase(a, "claim");
-      yield* enterStepUseCase(a, "ci");
+      yield* enterStepHandler({ runId: a, step: "claim" });
+      yield* enterStepHandler({ runId: a, step: "ci" });
 
-      expect((yield* enterStepUseCase(a, "ci")).currentStep).toEqual(Option.some("ci"));
+      expect((yield* enterStepHandler({ runId: a, step: "ci" })).currentStep).toEqual(
+        Option.some("ci"),
+      );
       expect((yield* readRunHistoryHandler({ runId: a })).steps.map((found) => found.step)).toEqual(
         ["claim", "ci", "ci"],
       );
@@ -58,7 +60,7 @@ describe("enterStepUseCase", () => {
 
   effect("a run that ended takes no step, and stays as it ended", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(enterStepUseCase(ended.id, "late"));
+      const refused = yield* Effect.flip(enterStepHandler({ runId: ended.id, step: "late" }));
 
       expect(refused._tag).toBe("RunAlreadyFinished");
       expect(

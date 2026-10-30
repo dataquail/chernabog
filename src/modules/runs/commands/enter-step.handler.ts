@@ -2,20 +2,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RunId } from "../../../kernel/run-id.id.ts";
 import { RunStepsRepository } from "../domain/ports/repositories/run-steps.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunView } from "../domain/run/run-view.value-object.ts";
 import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
-import { RunView } from "./run.result.ts";
+import { type EnterStepPayload } from "./enter-step.command.ts";
 
-// A run entering a step, as its log reports it: its current step, and one
-// more on the path it has taken. A run that has ended takes no step.
-export const enterStepUseCase = Effect.fn("enterStepUseCase")(function* (
-  runId: RunId,
-  step: string,
-) {
+export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
+  runId,
+  step,
+}: EnterStepPayload) {
   const runs = yield* RunsRepository;
   const found = yield* runs.findOne(runId);
 

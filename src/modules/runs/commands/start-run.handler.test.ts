@@ -7,7 +7,7 @@ import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
-import { startRunUseCase } from "./start-run.use-case.ts";
+import { startRunHandler } from "./start-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
   RunRoot.make({
@@ -41,10 +41,10 @@ const starting = {
   item: Option.none(),
 };
 
-describe("startRunUseCase", () => {
+describe("startRunHandler", () => {
   effect("records the run running, and stores it", () =>
     Effect.gen(function* () {
-      const started = yield* startRunUseCase(starting);
+      const started = yield* startRunHandler(starting);
 
       expect([String(started.id), started.status, started.itemTitle]).toEqual([
         "new",
@@ -57,7 +57,7 @@ describe("startRunUseCase", () => {
 
   effect("fails naming the run already in flight for the persona's item, storing nothing", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(startRunUseCase(starting));
+      const refused = yield* Effect.flip(startRunHandler(starting));
 
       expect([refused._tag, String(refused.runId)]).toEqual(["RunAlreadyActive", "a"]);
       expect(yield* (yield* RunsRepository).findOne(RunId.make("new"))).toEqual(Option.none());

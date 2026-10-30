@@ -9,9 +9,9 @@ import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
-import { type FlowRef, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
-import { StartedRun } from "./flow.result.ts";
-import { RunView } from "./run.result.ts";
+import { RunView, StartedRun } from "../domain/run/run-view.value-object.ts";
+import { mayStart } from "../domain/run/work-item.value-object.ts";
+import { type StartFlowRunPayload } from "./start-flow-run.command.ts";
 
 // A run's id says nothing about it: its record says what it runs, and as whom.
 // Random rather than time-ordered, so a few characters of it name a run.
@@ -20,13 +20,10 @@ const newRunId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
   Effect.orDie,
 );
 
-// Starts one run of a persona's flow for one work item, unless the persona
-// already has one in flight for it: then that one is the run. An item
-// reported only to wake a run, or held, starts none.
-export const startFlowRunUseCase = Effect.fn("startFlowRunUseCase")(function* (
-  flow: FlowRef,
-  item: WorkItem,
-) {
+export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
+  flow,
+  item,
+}: StartFlowRunPayload) {
   const runs = yield* RunsRepository;
   const workflows = yield* WorkflowsClient;
   const wanted = { repo: flow.repo, persona: flow.persona, flow: flow.flow, itemKey: item.key };

@@ -40,6 +40,7 @@ import * as Schema from "effect/Schema";
 
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
 import {
   flowHandle,
   flowLayer,
@@ -52,7 +53,6 @@ import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-exe
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
 import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
-import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -393,7 +393,7 @@ describe("the engine", () => {
     () =>
       Effect.gen(function* () {
         const recorded = (key: string) =>
-          startRunUseCase({
+          startRunHandler({
             id: RunId.make(key),
             coreVersion: BUNDLED_CORE,
             repo: "demo",
@@ -461,7 +461,7 @@ describe("a run and the .chernabog/ tree it started from", () => {
     () =>
       Effect.gen(function* () {
         const recorded = (key: string, configTree: Option.Option<string>) =>
-          startRunUseCase({
+          startRunHandler({
             id: RunId.make(key),
             coreVersion: BUNDLED_CORE,
             configTree,
@@ -625,7 +625,7 @@ describe("personas", () => {
     () =>
       Effect.gen(function* () {
         const adopted = Effect.gen(function* () {
-          yield* startRunUseCase({
+          yield* startRunHandler({
             id: OLD,
             coreVersion: BUNDLED_CORE,
             repo: "demo",
@@ -659,7 +659,7 @@ describe("personas", () => {
         const asPersonas = flowHandle(repoAs(settings, [alice, bob]), "demo", flow);
 
         const unadopted = Effect.gen(function* () {
-          yield* startRunUseCase({
+          yield* startRunHandler({
             id: OLD,
             coreVersion: BUNDLED_CORE,
             repo: "demo",

@@ -65,7 +65,10 @@ import {
   servicesFrom,
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
-import { RunsCommands, RunsCommandsLive } from "../../modules/runs/runs.command-handlers.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+} from "../../modules/runs/runs.command-handlers.ts";
 import {
   type FlowRegistry,
   NotificationsLayer,
@@ -90,7 +93,6 @@ import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.us
 import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
-import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
 import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
@@ -549,7 +551,7 @@ export const runDaemon = Effect.gen(function* () {
   };
 
   const engine = yield* Layer.build(
-    Layer.mergeAll(RunsCommandsLive, RunFlowsQueriesLive).pipe(
+    Layer.mergeAll(RunFlowsCommandsLive, RunFlowsQueriesLive).pipe(
       Layer.provideMerge(
         RuntimeLayer(registry).pipe(
           Layer.provideMerge(
@@ -703,7 +705,7 @@ export const runDaemon = Effect.gen(function* () {
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
-          const found = yield* (yield* RunsCommands).CheckRunLeasesCommand({
+          const found = yield* (yield* RunFlowsCommands).CheckRunLeasesCommand({
             runId: run.id,
             renew,
           });
@@ -853,7 +855,7 @@ export const runDaemon = Effect.gen(function* () {
             return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
 
-          const plan = yield* (yield* RunsCommands).PlanTickCommand({
+          const plan = yield* (yield* RunFlowsCommands).PlanTickCommand({
             flow: ref,
             gates: options.gates,
             item: options.item,
@@ -904,7 +906,10 @@ export const runDaemon = Effect.gen(function* () {
               break;
             }
 
-            const outcome = yield* startFlowRunUseCase(ref, item);
+            const outcome = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+              flow: ref,
+              item,
+            });
 
             for (const run of Option.toArray(Option.filter(outcome.run, () => outcome.started))) {
               yield* log(`started ${run.id} (${runLabel(run)})`);

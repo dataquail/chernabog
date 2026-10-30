@@ -36,6 +36,10 @@ import {
   servicesFrom,
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+} from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
 import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
@@ -44,7 +48,6 @@ import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs
 import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
 import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
@@ -245,7 +248,10 @@ const startFirst = (
       return Option.none<RunView>();
     }
 
-    const { run } = yield* startFlowRunUseCase(refOf(handle, persona), found.value);
+    const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+      flow: refOf(handle, persona),
+      item: found.value,
+    });
 
     if (Option.isNone(run)) {
       return Option.none<RunView>();
@@ -334,13 +340,17 @@ export const runInForeground = (options: RunOptions) =>
     });
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: (_repo, one) => servicesFrom(contexts)(one),
-      }).pipe(
+      RunFlowsCommandsLive.pipe(
         Layer.provideMerge(
-          Layer.mergeAll(flowLayer(handle, servicesFrom(contexts)), RunsQueriesLive).pipe(
-            Layer.provideMerge(StateLive),
+          RuntimeLayer({
+            handles: [handle],
+            services: (_repo, one) => servicesFrom(contexts)(one),
+          }).pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(flowLayer(handle, servicesFrom(contexts)), RunsQueriesLive).pipe(
+                Layer.provideMerge(StateLive),
+              ),
+            ),
           ),
         ),
       ),
