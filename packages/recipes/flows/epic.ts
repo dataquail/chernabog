@@ -114,10 +114,12 @@ const releaseTask = (issue: number, id: string) =>
 // `task-base#<id>`: its base, or, when the layer below merged while the task
 // was implemented (and its branch was deleted with it), the branch that one
 // merged into, and as far down as the layers below it merged too (#249). The
-// work is brought up to date with the new base by a merge, so its review shows
-// only the task's change; a merge that conflicts is undone and left to
-// resolve-conflicts, as any conflict with its base is.
-const TaskBase = Schema.Struct({ base: Schema.String, moved: Schema.Boolean });
+// work is brought up to date with the new base as a stack's layer is
+// (Stack.updateFromBase): a squash or rebase of the layer below is recorded as
+// already here, so its review shows only the task's change, and its edits of
+// lines that layer added are no conflict. A merge that conflicts is undone and
+// left to resolve-conflicts, as any conflict with its base is.
+const TaskBase = Schema.Struct({ base: Schema.String });
 
 const settleBase = (id: string, claimed: Option.Option<string>, worktree: string) =>
   activity(
@@ -127,6 +129,8 @@ const settleBase = (id: string, claimed: Option.Option<string>, worktree: string
       const integration = yield* Settings.base;
       const base = Option.getOrElse(claimed, () => integration);
       let target = base;
+      // The merged pull request whose base is `target`.
+      let lower = Option.none<number>();
 
       while (target !== integration) {
         const below = Option.filter(
@@ -139,23 +143,21 @@ const settleBase = (id: string, claimed: Option.Option<string>, worktree: string
         }
 
         target = below.value.baseRef;
+        lower = Option.some(below.value.number);
       }
 
-      if (target === base) {
-        return { base, moved: false };
+      if (Option.isNone(lower)) {
+        return { base };
       }
 
-      const git = yield* Git;
-      yield* git.run(["fetch", "--quiet", "origin", target], worktree);
-      yield* git
-        .run(["merge", "--no-edit", `origin/${target}`], worktree)
-        .pipe(
-          Effect.catchTag("GitError", () =>
-            git.run(["merge", "--abort"], worktree).pipe(Effect.ignore),
-          ),
-        );
+      const updated = yield* Stack.updateFromBase(worktree, { lower: lower.value });
 
-      return { base: target, moved: true };
+      if (!updated.clean) {
+        const git = yield* Git;
+        yield* git.run(["merge", "--abort"], worktree).pipe(Effect.ignore);
+      }
+
+      return { base: updated.base };
     }),
     TaskBase,
   );

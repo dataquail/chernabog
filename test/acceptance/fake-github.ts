@@ -42,6 +42,8 @@ export type FakePull = {
   author: string;
   // The commit a merge made on the base, for a test that merged it in git itself.
   mergeCommit?: string;
+  // The head it merged at, which GitHub keeps once the branch is deleted.
+  mergedHead?: string;
 };
 
 const ReviewComment = Schema.Struct({
@@ -402,7 +404,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     state: pull.state,
     merged_at: Option.liftPredicate(now(), () => pull.merged),
     merge_commit_sha: Option.fromUndefinedOr(pull.mergeCommit),
-    head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => "") },
+    head: {
+      ref: pull.head,
+      sha: pull.mergedHead ?? Option.getOrElse(refSha(pull.head), () => ""),
+    },
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),
     user: { login: pull.author },
@@ -883,6 +888,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         pull.state = "closed";
         pull.merged = true;
         pull.mergeCommit = pull.mergeCommit ?? body.sha;
+        pull.mergedHead = body.sha;
 
         if (pull.base === "main") {
           for (const closed of pull.body.matchAll(/Closes #(\d+)/g)) {
@@ -1394,6 +1400,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
       pull.state = "closed";
       pull.merged = merged;
+
+      if (merged) {
+        pull.mergedHead = Option.getOrUndefined(refSha(pull.head));
+      }
     },
     requests,
     requestsBy,
