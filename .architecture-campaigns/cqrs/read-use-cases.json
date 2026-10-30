@@ -7,17 +7,10 @@
     "src/modules/enrollment": {
       "entered": "2026-10-30T05:15:33.499Z",
       "initial": 6,
-      "cleared": 0,
+      "cleared": 6,
       "closed": 0,
-      "lastCleared": "2026-10-30T05:15:33.499Z",
-      "holdouts": [
-        "use-cases/find-checkout-root.use-case.ts",
-        "use-cases/list-enrolled-repos.use-case.ts",
-        "use-cases/list-moved-repos.use-case.ts",
-        "use-cases/list-paused-repos.use-case.ts",
-        "use-cases/list-personas-in-use.use-case.ts",
-        "use-cases/plan-enrollment.use-case.ts"
-      ]
+      "lastCleared": "2026-10-30T06:14:45.008Z",
+      "holdouts": []
     },
     "src/modules/machine": {
       "entered": "2026-10-30T05:15:33.499Z",

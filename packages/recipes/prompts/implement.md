@@ -59,12 +59,12 @@ When the issue already lays out the work as separate pull requests (usually a ch
 
 A commit counts once `git log` shows it: when a pre-commit hook is still running, wait for it to finish before you answer. Leave nothing staged or uncommitted: Chernabog pushes only what is committed, and stops for a person when it finds no commit.
 
-Commit messages follow the repo's convention. When the repo has a `commitlint.config.*`, that means conventional commits, `type(scope): summary` with `Refs #{{issue}}` in the body; in a published library, pick the type for what the change does to the package's users, and never mark a commit breaking. Without commitlint, prefix commits `[#{{issue}}]`.
+Commit messages follow the repo's convention. A repo uses conventional commits, `type(scope): summary` with `Refs #{{issue}}` in the body, when it has a `commitlint.config.*`, a CI check on pull request titles, or release-please, or when the recent commits on its base branch follow it; in a published library, pick the type for what the change does to the package's users, and never mark a commit breaking. Only in a repo with none of those, prefix commits `[#{{issue}}]`.
 
 ## Your final answer
 
 - `status`: `done` when the work is committed and `git log` shows it, or `needs-clarification`.
-- `title`: the pull request title. Under commitlint it is a conventional commit, because a squash merge uses it; otherwise `[#{{issue}}] <summary>`.
+- `title`: the pull request title. In a repo that uses conventional commits it is one, with nothing before the type, because a squash merge makes it the commit; otherwise `[#{{issue}}] <summary>`.
 - `body`: the pull request body in Markdown: what changed and why, how it was tested (including anything you could not run locally), and **Decisions made without a person**. Chernabog adds the `Closes #{{issue}}` line.
 - `summary`: two or three sentences for the issue: what changed, how it was tested, and what a reviewer should look at first.
 - `questions`, for `needs-clarification` only: specific, numbered questions. Lead each with what you recommend and why, then what you would do under each answer. Add one line naming the document that would have let you decide this yourself.

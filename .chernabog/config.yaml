@@ -16,7 +16,12 @@ localGate:
   # Includes the cqrs campaign: a change that moves a use-case commits its
   # ledger (bun run architecture:clear), or this fails.
   - bun run lint:architecture
-  - bun test
+  # The repo's own test script: parallel, with the 15s timeout the suite needs.
+  # Bare `bun test` runs serially at 5s and times out when several tasks gate at once.
+  # One suite at a time on the machine: several at once overload it and the
+  # daemon and acceptance tests time out. lockf waits for the lock, and the
+  # kernel lets it go if the holder dies.
+  - lockf -k /tmp/chernabog-test-gate.lock bun run test
 
 # Decisions the agent must stop for and leave to a person.
 humanOnly:
@@ -86,12 +91,12 @@ flows:
     from: "@chernabog/recipes/human-initiated"
   plan:
     from: "@chernabog/recipes/plan"
-  # The CQRS migration runs as an epic: five tasks at once, each module a stack,
+  # The CQRS migration runs as an epic: three tasks at once, each module a stack,
   # each approved layer merged bottom to top.
   epic:
     from: "@chernabog/recipes/epic"
     settings:
-      atOnce: 5
+      atOnce: 3
       ship: true
   resolve-conflicts:
     from: "@chernabog/recipes/resolve-conflicts"

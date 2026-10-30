@@ -5,7 +5,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { listPersonasInUseUseCase } from "./list-personas-in-use.use-case.ts";
+import { listPersonasInUseHandler } from "./list-personas-in-use.handler.ts";
 
 const repo = (slug: string, personas: ReadonlyArray<string>) =>
   EnrolledRepoRoot.make({
@@ -16,10 +16,10 @@ const repo = (slug: string, personas: ReadonlyArray<string>) =>
     paused: false,
   });
 
-describe("listPersonasInUseUseCase", () => {
+describe("listPersonasInUseHandler", () => {
   effect("lists each login an enrolled repo runs as, once", () =>
     Effect.gen(function* () {
-      expect((yield* listPersonasInUseUseCase()).logins).toEqual(["bob", "alice"]);
+      expect((yield* listPersonasInUseHandler()).logins).toEqual(["bob", "alice"]);
     }).pipe(
       Effect.provide(
         EnrolledReposRepositoryFake([

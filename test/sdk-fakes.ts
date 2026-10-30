@@ -935,12 +935,14 @@ const quietLog = Layer.succeed(
   RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
 );
 
-// Starts a run of the flow on the fake, and polls until `until` says it has got far enough.
+// Starts a run of the flow on the fake, and polls until `until` says it has got far enough,
+// at most `polls` times, 25ms apart: about five seconds, unless a slower case asks for more.
 export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
   work: WorkItem,
   until: (run: EngineRun) => Effect.Effect<boolean, never, RuntimeServices>,
+  polls = 200,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -973,7 +975,7 @@ export const runUntil = (
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: (step) => step.done,
-            times: 200,
+            times: polls,
           }),
         ),
       ),

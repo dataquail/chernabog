@@ -11,7 +11,7 @@ import { TeamFlows } from "../domain/enrolled-repo/team-flows.value-object.ts";
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
-import { planEnrollmentUseCase } from "./plan-enrollment.use-case.ts";
+import { planEnrollmentHandler } from "./plan-enrollment.handler.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
 
@@ -46,16 +46,16 @@ const offered = (
   accounts,
 });
 
-describe("planEnrollmentUseCase", () => {
+describe("planEnrollmentHandler", () => {
   effect(
     "offers each persona the checkout's flows, with the team's defaults and its current ones",
     () =>
       Effect.gen(function* () {
-        const plan = yield* planEnrollmentUseCase(
-          "/src/demo/sub",
-          Option.none(),
-          offered(["alice", "bob"]),
-        );
+        const plan = yield* planEnrollmentHandler({
+          path: "/src/demo/sub",
+          name: Option.none(),
+          offered: offered(["alice", "bob"]),
+        });
 
         expect([plan.repo, plan.root, plan.logins, plan.currentPersonas]).toEqual([
           demo,
@@ -80,7 +80,11 @@ describe("planEnrollmentUseCase", () => {
 
   effect("without personas, asks GitHub who the implicit one is, for the team's runners", () =>
     Effect.gen(function* () {
-      const plan = yield* planEnrollmentUseCase("/src/demo", Option.none(), offered([]));
+      const plan = yield* planEnrollmentHandler({
+        path: "/src/demo",
+        name: Option.none(),
+        offered: offered([]),
+      });
 
       expect(plan.personas.map((own) => [own.persona, own.defaults])).toEqual([
         [Option.none(), ["implement"]],
@@ -94,7 +98,9 @@ describe("planEnrollmentUseCase", () => {
   effect("refuses a path that isn't in a checkout", () =>
     Effect.gen(function* () {
       expect(
-        (yield* Effect.flip(planEnrollmentUseCase("/tmp", Option.none(), offered([]))))._tag,
+        (yield* Effect.flip(
+          planEnrollmentHandler({ path: "/tmp", name: Option.none(), offered: offered([]) }),
+        ))._tag,
       ).toBe("CheckoutUnreadable");
     }).pipe(Effect.provide(machineOf([]))),
   );
