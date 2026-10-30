@@ -7,13 +7,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type Persona } from "../../../kernel/persona.value-object.ts";
+import { type Enrolled } from "../../../modules/enrollment/commands/apply-enrollment.command.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import {
   type EnrollmentPlan,
   type PersonaPlan,
 } from "../../../modules/enrollment/queries/plan-enrollment.query.ts";
-import { applyEnrollmentUseCase } from "../../../modules/enrollment/use-cases/apply-enrollment.use-case.ts";
-import { type Enrolled } from "../../../modules/enrollment/use-cases/enrollment.result.ts";
 import { readMachineSetupUseCase } from "../../../modules/machine/use-cases/read-machine-setup.use-case.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
@@ -290,14 +290,19 @@ export const enrollCheckout = (root: string, flags: EnrollFlags) =>
       }
     }
 
-    const enrolled = yield* applyEnrollmentUseCase(root, flags.name, machine, {
-      personas,
-      flows: Option.orElse(
-        Option.map(flags.flows, (flows) => ({ flows })),
-        () => Option.liftPredicate({ defaults: true } as const, () => flags.defaults),
-      ),
-      accounts: named,
-      asked,
+    const enrolled = yield* (yield* EnrollmentCommands).ApplyEnrollmentCommand({
+      path: root,
+      name: flags.name,
+      offered: machine,
+      answers: {
+        personas,
+        flows: Option.orElse(
+          Option.map(flags.flows, (flows) => ({ flows })),
+          () => Option.liftPredicate({ defaults: true } as const, () => flags.defaults),
+        ),
+        accounts: named,
+        asked,
+      },
     });
 
     return { enrolled, lines: describeEnrolled(enrolled) };

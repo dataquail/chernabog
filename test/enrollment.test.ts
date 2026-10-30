@@ -12,6 +12,7 @@ import {
   type EnrollFlags,
 } from "../src/interface/cli/enrollment/enroll.command.ts";
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
+import { EnrollmentCommandsLive } from "../src/modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
 import { EnrollmentQueriesLive } from "../src/modules/enrollment/enrollment.query-handlers.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
@@ -144,6 +145,7 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
       Layer.mergeAll(
         layer,
         Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentCommandsLive),
         Layer.fresh(EnrollmentQueriesLive),
         Layer.fresh(MachineLayer),
       ),
@@ -157,6 +159,7 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
         layer,
         Layer.fresh(MachineLayer),
         Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentCommandsLive),
         Layer.fresh(EnrollmentQueriesLive),
       ),
     ),

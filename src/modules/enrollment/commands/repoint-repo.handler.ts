@@ -1,18 +1,20 @@
 import * as Effect from "effect/Effect";
 
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { EnrolledRepoSummary } from "./enrolled-repos.result.ts";
+import { type RepointRepoPayload } from "./repoint-repo.command.ts";
 
-// Points the entry a person names at its checkout's new place, keeping every
-// setting.
-export const repointRepoUseCase = Effect.fn("repointRepoUseCase")(function* (
-  name: string,
-  root: string,
+export const repointRepoHandler = Effect.fn("repointRepoHandler")(function* (
+  cmd: RepointRepoPayload,
 ) {
   const repository = yield* EnrolledReposRepository;
-  const repo = yield* Effect.fromResult(EnrolledRepoRootOps.named(yield* repository.findAll, name));
-  const moved = EnrolledRepoRootOps.repoint(repo, root);
+
+  const repo = yield* Effect.fromResult(
+    EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+  );
+
+  const moved = EnrolledRepoRootOps.repoint(repo, cmd.root);
   yield* repository.save(moved);
 
   return EnrolledRepoSummary.make({

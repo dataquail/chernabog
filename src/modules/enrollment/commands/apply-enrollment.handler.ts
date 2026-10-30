@@ -2,7 +2,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type Persona, samePersona } from "../../../kernel/persona.value-object.ts";
+import { samePersona } from "../../../kernel/persona.value-object.ts";
 import {
   EnrolledRepoRootOps,
   type PersonaEnrolment,
@@ -11,39 +11,13 @@ import { MachineOffer } from "../domain/enrolled-repo/machine-offer.value-object
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
 import { ViewerClient } from "../domain/ports/clients/viewer.client.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
-import { Enrolled, type Offered } from "./enrollment.result.ts";
+import { type ApplyEnrollmentPayload, Enrolled } from "./apply-enrollment.command.ts";
 
-// How a person chose a persona's flows: the defaults, or these.
-export type FlowsAnswer = { readonly defaults: true } | { readonly flows: ReadonlyArray<string> };
-
-// What a person chose, as far as they did. An answer not given takes what the
-// repo has now, else the default.
-export type EnrollmentAnswers = {
-  // The personas that work in the repo; none is the machine's only one, else
-  // the ones the repo has.
-  readonly personas: Option.Option<ReadonlyArray<string>>;
-  // Flows for every persona, as flags give them.
-  readonly flows: Option.Option<FlowsAnswer>;
-  // Accounts for every persona, by name, as flags give them.
-  readonly accounts: ReadonlyArray<string>;
-  // Each persona's own answers, as a person was asked them.
-  readonly asked: ReadonlyArray<{
-    readonly persona: Persona;
-    readonly flows: Option.Option<ReadonlyArray<string>>;
-    readonly accounts: ReadonlyArray<string>;
-  }>;
-};
-
-// Enrolls the checkout a path is in, as a person chose: which personas work
-// in it, which flows each runs, and which accounts each spends. One write,
-// keeping every other setting the repo had.
-export const applyEnrollmentUseCase = Effect.fn("applyEnrollmentUseCase")(function* (
-  path: string,
-  name: Option.Option<string>,
-  offered: Offered,
-  answers: EnrollmentAnswers,
+export const applyEnrollmentHandler = Effect.fn("applyEnrollmentHandler")(function* (
+  cmd: ApplyEnrollmentPayload,
 ) {
-  const machine = MachineOffer.make(offered);
+  const { answers, name, path } = cmd;
+  const machine = MachineOffer.make(cmd.offered);
   const viewer = yield* ViewerClient;
   const repository = yield* EnrolledReposRepository;
   const checkouts = yield* CheckoutsClient;
