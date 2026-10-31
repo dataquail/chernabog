@@ -53,23 +53,29 @@ const cliSpans = (sandbox: Sandbox, pid: number) =>
 
 describe("a state-changing command", () => {
   let sandbox: Sandbox;
-  let daemon: ChildProcess;
+  // None until beforeAll starts it, so a beforeAll cut short stops nothing.
+  let daemon: Option.Option<ChildProcess> = Option.none();
+
+  const stopDaemon = async () => {
+    for (const running of Option.toArray(daemon)) {
+      if (Option.isNone(Option.fromNullishOr(running.exitCode))) {
+        running.kill("SIGTERM");
+        await closed(running);
+      }
+    }
+  };
 
   beforeAll(async () => {
     sandbox = openSandbox();
     await sandbox.runCli(["trust", "demo"]);
-    daemon = sandbox.cli(["daemon"]);
+    daemon = Option.some(sandbox.cli(["daemon"]));
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
-    if (Option.isNone(Option.fromNullishOr(daemon.exitCode))) {
-      daemon.kill("SIGTERM");
-      await closed(daemon);
-    }
-
+    await stopDaemon();
     await sandbox.github.stop();
-  });
+  }, 30_000);
 
   test("with the daemon running, pause dispatches RepoPaused on the daemon's bus", async () => {
     const paused = await sandbox.runCli(["pause", "demo"]);
@@ -104,8 +110,7 @@ describe("a state-changing command", () => {
   }, 30_000);
 
   test("with no daemon, pause pauses here", async () => {
-    daemon.kill("SIGTERM");
-    await closed(daemon);
+    await stopDaemon();
 
     const paused = await sandbox.runCli(["pause", "demo"]);
 
