@@ -158,7 +158,7 @@ Errors are split by who has to act on them.
 | `PullRequestClosed` | `GitHub.review`, `requestReviewers` and `merge`, `PullRequest.merge` | the pull request, and whether it's `closed` or `merged` |
 | `MergeRefused`      | `GitHub.merge`, `PullRequest.merge`                              | the reason |
 | `PushRejected`      | `Git.push`, `Implement.push`, `waitForCi`                        | the reason, and `missingScope` when the token lacks one, such as `workflow` for a change to `.github/workflows/`; its message says how to fix the token |
-| `NothingCommitted`  | `Implement.push`                                                 | the branch |
+| `NothingCommitted`  | `Implement.push`, when the branch has no commits and the worktree no changes (with changes, it fails with `NeedsHuman` naming them) | the branch |
 | `CiTimedOut`        | `Implement.waitForCi`, when CI stays pending past `ciTimeout` | the pull request, and how long |
 
 Handle them with `Effect.catchTag` or `Effect.catchTags`, usually by handing the work to a person:

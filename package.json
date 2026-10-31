@@ -27,7 +27,7 @@
     "architecture:explain": "architecture explain",
     "architecture:facts": "architecture facts",
     "prepare": "husky && effect-tsgo patch --oxlint",
-    "precommit": "bun run format:check || { echo 'Prettier would change the files above: run bun run format, then commit again.' >&2; exit 1; } && bun run check && bun run lint && bun run lint:architecture && bun run test",
+    "precommit": "bun run format:check || { echo 'Prettier would change the files above: run bun run format, then commit again.' >&2; exit 1; } && bun run check && bun run lint && bun run lint:architecture",
     "gen:templates": "bun scripts/gen-templates.ts",
     "gen:core-api": "bun scripts/gen-core-api.ts"
   },

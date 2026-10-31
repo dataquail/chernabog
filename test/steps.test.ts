@@ -745,3 +745,31 @@ describe("Implement.handOff", () => {
     }),
   );
 });
+
+describe("Implement.push", () => {
+  const implementing = flowHandle(repo, "implement", implement);
+
+  effect(
+    "hands an issue whose agent left its changes staged, with no commit, to a person, naming the files",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+        // The agent stages its work and answers before the commit lands.
+        fake.author.leaves = ["M  src/a.ts", "A  test/a.test.ts"];
+
+        const finished = yield* runFlowToEnd(
+          implementing,
+          fake,
+          item(`issue-${ISSUE}`, { issue: ISSUE }),
+        );
+
+        expect(finished.status).toBe("needs-human");
+        expect(summaryOf(finished)).toContain(
+          `the agent committed nothing on auto/issue-${ISSUE}, and left uncommitted: \`src/a.ts\`, \`test/a.test.ts\``,
+        );
+        expect(fake.git.pushes).toBe(0);
+        expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+      }),
+  );
+});
