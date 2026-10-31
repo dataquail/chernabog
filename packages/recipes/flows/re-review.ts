@@ -30,16 +30,19 @@ import * as Schema from "effect/Schema";
 // Pull requests that ask this persona again after it reviewed them, one item
 // per request, unless a person has them (auto:needs-human): asking again
 // during a dispute doesn't restart the loop. Each is routed by its assignees and reviewers.
+// And the runs holding a merge whose base branch is green again, to wake them.
 const trigger = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
 
-  return yield* Effect.forEach(
+  const asked = yield* Effect.forEach(
     (yield* Review.reviewRequests).filter(
       ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
     ),
     ({ pull, reviewed }) =>
       Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`)),
   );
+
+  return [...asked, ...(yield* PullRequest.baseTurnedGreen)];
 }).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
@@ -82,7 +85,8 @@ const mergeIfShipping = (pullRequest: number) =>
       return `#${pullRequest} approved; ${waiting.value}`;
     }
 
-    return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
+    // While CI on the base branch is red, the merge holds rather than going to a person.
+    return yield* PullRequest.mergeHolding(pullRequest, { method: "squash" }).pipe(
       Effect.catchTag("MergeRefused", (refused) =>
         Effect.gen(function* () {
           if (yield* conflicts(pullRequest)) {
@@ -182,6 +186,7 @@ const settings = Schema.Struct({
   ...Settings.Base.fields,
   ...Settings.Rules.fields,
   ...Settings.Reviewers.fields,
+  ...Settings.MergeHold.fields,
 });
 
 export default defineFlow({
