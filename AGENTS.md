@@ -384,8 +384,9 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   `domain/ports/acl/<question>.acl.ts` (owing `-live.ts`, `-fake.ts` and
   `-live.test.ts` in `infrastructure/acl/`), and its live adapter dispatches
   the grant and translates the answer. Its handlers ask the port; they never
-  name the other module or its messages. `main.ts`'s `AppLive` provides an
-  owner beneath its askers. Owners: enrollment the enrolled repos and their
+  name the other module or its messages. The asker's `<module>.module.ts`
+  provides the owner's `<module>.module.ts` beneath its ACL adapter (ADR 12),
+  as `enrollment.module.ts` does with recipes. Owners: enrollment the enrolled repos and their
   per-persona choices, machine the personas and accounts, recipes the team's
   `.chernabog/config.yaml` (`ReadTeamConfigQuery`). An adapter may still
   compose modules itself: the `trust` command lists its targets with

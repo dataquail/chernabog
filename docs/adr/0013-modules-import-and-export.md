@@ -76,11 +76,15 @@ takes from them.
    asks its module's ACL port, and that port's adapter dispatches the other
    module's published query. The handler names neither the other module nor
    the message.
-6. **The composition root provides an owner beneath its askers.** A module's
-   ACL adapter requires the owner's query registrations, so `main.ts`'s
-   `AppLive` provides the recipes module beneath the modules above it. The
-   reference's `<module>.module.ts` wiring plane, where a module provides the
-   modules it imports, waits for a second edge.
+6. **An asker wires its owner itself, on the wiring plane.** A module's ACL
+   adapter requires the owner's query registrations, so the asker's
+   `<module>.module.ts` provides the owner's `<module>.module.ts` beneath that
+   adapter ([ADR 12](0012-modules-wire-themselves.md)):
+   `enrollment.module.ts` wires `TeamFlowsAclLive.pipe(Layer.provide(RecipesModule.layer))`.
+   Coupling and wiring stay on separate planes: `imports.ts` takes the
+   owner's message grant, which only the ACL adapter reads, and `module.ts`
+   takes the owner's Layer, which only wiring reads. No composition root
+   orders the modules; Effect builds a module provided at several sites once.
 7. **The `repo-config` campaign counts what's left.** It holds each file
    under `src/` that imports `src/repo-config.ts` in a ledger that may only
    shrink. Each consumer moves onto an owner's repository or an ACL port of
@@ -91,7 +95,9 @@ takes from them.
 ## Enforcement
 
 - The module-wide deny refuses a module naming anything of another but its
-  `*.exports.ts`; `*.exports.ts`'s `importedBy` admits only a peer's
+  `*.exports.ts` (the coupling plane) and its `*.module.ts` (the wiring plane,
+  which ADR 12 admits only from a module's own `*.module.ts`);
+  `*.exports.ts`'s `importedBy` admits only a peer's
   `*.imports.ts` (and tests and the test harness); `*.imports.ts`'s admits
   only its module's ACL adapters.
 - `*.exports.ts` carries the naming rule and the no-re-export rule, each with
