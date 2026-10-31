@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -41,7 +42,7 @@ describe("seedScenarioHandler", () => {
           "open pull request rehearsal/fix on main",
           "open pull request rehearsal/docs on next",
         ]);
-      }).pipe(Effect.provide(seeded.layer)),
+      }).pipe(Effect.provide([seeded.layer, PassThroughUnitOfWork])),
   );
 
   const failing = scratchRepoFake({ failOn: "open pull request rehearsal/docs" });
@@ -57,6 +58,6 @@ describe("seedScenarioHandler", () => {
           { name: "docs", number: 0, branch: "rehearsal/docs" },
         ],
       });
-    }).pipe(Effect.provide(failing.layer)),
+    }).pipe(Effect.provide([failing.layer, PassThroughUnitOfWork])),
   );
 });

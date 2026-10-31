@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -23,7 +24,7 @@ describe("holdMarkerHandler", () => {
       expect((yield* listRunMarkersHandler({ runId, name: Option.none() })).markers).toHaveLength(
         1,
       );
-    }).pipe(Effect.provide(RunMarkersRepositoryFake([]))),
+    }).pipe(Effect.provide([RunMarkersRepositoryFake([]), PassThroughUnitOfWork])),
   );
 
   effect("holds one it forgot again", () =>
@@ -36,6 +37,6 @@ describe("holdMarkerHandler", () => {
       expect((yield* listRunMarkersHandler({ runId, name: Option.none() })).markers).toHaveLength(
         1,
       );
-    }).pipe(Effect.provide(RunMarkersRepositoryFake([]))),
+    }).pipe(Effect.provide([RunMarkersRepositoryFake([]), PassThroughUnitOfWork])),
   );
 });

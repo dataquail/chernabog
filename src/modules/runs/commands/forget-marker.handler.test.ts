@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -27,6 +28,6 @@ describe("forgetMarkerHandler", () => {
             (marker) => marker.args,
           ),
         ).toEqual([{ number: 2 }]);
-      }).pipe(Effect.provide(RunMarkersRepositoryFake([]))),
+      }).pipe(Effect.provide([RunMarkersRepositoryFake([]), PassThroughUnitOfWork])),
   );
 });

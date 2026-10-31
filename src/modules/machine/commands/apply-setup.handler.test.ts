@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -48,7 +49,12 @@ describe("applySetupHandler", () => {
         ["codex", "~/.codex", "codex"],
       ]);
       expect(setup.accounts.map((account) => account.name)).toEqual(["work", "codex"]);
-    }).pipe(Effect.provide(machine(setupOf([], []), ["alice"], [".codex", "code"]))),
+    }).pipe(
+      Effect.provide([
+        machine(setupOf([], []), ["alice"], [".codex", "code"]),
+        PassThroughUnitOfWork,
+      ]),
+    ),
   );
 
   effect(
@@ -59,7 +65,12 @@ describe("applySetupHandler", () => {
 
         expect(outcome.personas).toEqual(Option.some(["bob", "alice"]));
         expect(outcome.added).toEqual([]);
-      }).pipe(Effect.provide(machine(setupOf(["bob"], [work]), ["alice"], [".codex"]))),
+      }).pipe(
+        Effect.provide([
+          machine(setupOf(["bob"], [work]), ["alice"], [".codex"]),
+          PassThroughUnitOfWork,
+        ]),
+      ),
   );
 
   effect("several gh logins and none chosen leave the personas as they were", () =>
@@ -71,7 +82,12 @@ describe("applySetupHandler", () => {
         ["bob"],
         ["alice", "bob"],
       ]);
-    }).pipe(Effect.provide(machine(setupOf(["bob"], [work]), ["alice", "bob"], []))),
+    }).pipe(
+      Effect.provide([
+        machine(setupOf(["bob"], [work]), ["alice", "bob"], []),
+        PassThroughUnitOfWork,
+      ]),
+    ),
   );
 
   effect("chosen personas and accounts replace and add, keeping a persona a repo runs as", () =>
@@ -96,13 +112,14 @@ describe("applySetupHandler", () => {
         ["work-claude", Option.some("~/elsewhere/.work-claude")],
       ]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         machine(
           setupOf(["alice", "bob"], [work]),
           ["alice", "bob"],
           [".claude-personal", "elsewhere/.work-claude"],
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -122,6 +139,6 @@ describe("applySetupHandler", () => {
       expect(untold.message).toBe(
         "can't tell which agent ~/logins belongs to; name it as ~/logins:<agent>, such as ~/logins:claude",
       );
-    }).pipe(Effect.provide(machine(setupOf([], [work]), [], ["logins"]))),
+    }).pipe(Effect.provide([machine(setupOf([], [work]), [], ["logins"]), PassThroughUnitOfWork])),
   );
 });

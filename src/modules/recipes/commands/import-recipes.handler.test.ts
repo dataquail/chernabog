@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -52,6 +53,6 @@ describe("importRecipesHandler", () => {
         const again = yield* importRecipesHandler({ root: "/repo", names: ["review"] });
         expect(again.flows.map((flow) => flow.outcome)).toEqual(["present"]);
         expect(again.dependencies).toEqual([]);
-      }).pipe(Effect.provide(repo.layer)),
+      }).pipe(Effect.provide([repo.layer, PassThroughUnitOfWork])),
   );
 });

@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -93,6 +94,6 @@ describe("setPersonaAccountHandler", () => {
 
       expect(clash.message).toContain("a claude account like the persona's own (personal)");
       expect((yield* stored)[0].defaults.roles).toEqual({ reviewer: "codex" });
-    }).pipe(Effect.provide(machineOf([entry()]))),
+    }).pipe(Effect.provide([machineOf([entry()]), PassThroughUnitOfWork])),
   );
 });

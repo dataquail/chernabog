@@ -1,7 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { ApplyEnrollmentCommand } from "./commands/apply-enrollment.command.ts";
 import { applyEnrollmentHandler } from "./commands/apply-enrollment.handler.ts";
 import { PauseRepoCommand } from "./commands/pause-repo.command.ts";
@@ -53,5 +55,7 @@ export class EnrollmentCommands extends Context.Service<
 
 export const EnrollmentCommandsLive = Layer.effect(
   EnrollmentCommands,
-  Command.dispatcher(enrollmentCommandGroup),
+  Effect.flatMap(ownUnitOfWork, (own) =>
+    Command.dispatcher(enrollmentCommandGroup, { middleware: [own] }),
+  ),
 ).pipe(Layer.provideMerge(EnrollmentCommandHandlersLive));

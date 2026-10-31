@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,98 +21,106 @@ const MANIFEST = ".chernabog/package.json";
 
 const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
-export const importRecipesHandler = Effect.fn("importRecipesHandler")(function* (
-  cmd: ImportRecipesPayload,
-) {
-  const { names, root } = cmd;
-  const dir = yield* ChernabogDirClient;
-  const packages = yield* RecipePackagesClient;
-  const imports = yield* FlowImportsRepository;
+export const importRecipesHandler = Effect.fn("importRecipesHandler")(
+  function* (cmd: ImportRecipesPayload) {
+    const { names, root } = cmd;
+    const dir = yield* ChernabogDirClient;
+    const packages = yield* RecipePackagesClient;
+    const imports = yield* FlowImportsRepository;
 
-  yield* packages.restore(root);
+    yield* packages.restore(root);
 
-  const recipes = yield* Effect.fromResult(
-    RecipeRootOps.allNamed(yield* packages.installed(root), names),
-  );
-
-  const current = new Map(
-    [...(yield* imports.findAll(root))].map(
-      ([flow, from]) => [flow, RecipeRootOps.fullRef(from)] as const,
-    ),
-  );
-
-  const local = (yield* dir.list(root, ".chernabog/flows")).filter((file) => MODULE.test(file));
-  const flows: Array<Imported> = [];
-
-  for (const recipe of recipes) {
-    const from = `${recipe.package}/${recipe.name}`;
-
-    const said = {
-      flow: recipe.name,
-      recipe: RecipeRootOps.refOf(recipe),
-      version: recipe.version,
-    };
-
-    const file = Arr.findFirst(local, (each) => each.replace(MODULE, "") === recipe.name);
-
-    const other = Option.filter(
-      Option.fromUndefinedOr(current.get(recipe.name)),
-      (named) => named !== from,
+    const recipes = yield* Effect.fromResult(
+      RecipeRootOps.allNamed(yield* packages.installed(root), names),
     );
 
-    if (Option.isSome(file) || Option.isSome(other)) {
-      flows.push({
-        ...said,
-        outcome: "kept",
-        keptFor: Option.orElse(
-          Option.map(file, (found) => `.chernabog/flows/${found}`),
-          () => other,
-        ),
-      });
-      continue;
-    }
-
-    if (current.get(recipe.name) === from) {
-      flows.push({ ...said, outcome: "present", keptFor: Option.none() });
-      continue;
-    }
-
-    yield* imports.save(root, recipe.name, Option.some(from));
-    flows.push({ ...said, outcome: "imported", keptFor: Option.none() });
-  }
-
-  const dependencies: Array<string> = [];
-
-  for (const recipe of Arr.dedupeWith(
-    recipes.filter((each) =>
-      flows.some((flow) => flow.flow === each.name && flow.outcome === "imported"),
-    ),
-    (left, right) => left.package === right.package,
-  )) {
-    const text = yield* Effect.fromOption(yield* dir.read(root, MANIFEST)).pipe(
-      Effect.mapError(
-        () =>
-          new RecipeFilesFailed({ message: ".chernabog/ has no package.json; run chernabog init" }),
+    const current = new Map(
+      [...(yield* imports.findAll(root))].map(
+        ([flow, from]) => [flow, RecipeRootOps.fullRef(from)] as const,
       ),
     );
 
-    const kind = dependencyKind(yield* Effect.fromResult(decodeRepoManifest(text)), recipe.package);
+    const local = (yield* dir.list(root, ".chernabog/flows")).filter((file) => MODULE.test(file));
+    const flows: Array<Imported> = [];
 
-    if (Option.contains(kind, "dependencies")) {
-      continue;
-    }
+    for (const recipe of recipes) {
+      const from = `${recipe.package}/${recipe.name}`;
 
-    if (Option.contains(kind, "devDependencies")) {
-      yield* dir.write(
-        root,
-        MANIFEST,
-        yield* Effect.fromResult(withoutDependency(text, recipe.package, "devDependencies")),
+      const said = {
+        flow: recipe.name,
+        recipe: RecipeRootOps.refOf(recipe),
+        version: recipe.version,
+      };
+
+      const file = Arr.findFirst(local, (each) => each.replace(MODULE, "") === recipe.name);
+
+      const other = Option.filter(
+        Option.fromUndefinedOr(current.get(recipe.name)),
+        (named) => named !== from,
       );
+
+      if (Option.isSome(file) || Option.isSome(other)) {
+        flows.push({
+          ...said,
+          outcome: "kept",
+          keptFor: Option.orElse(
+            Option.map(file, (found) => `.chernabog/flows/${found}`),
+            () => other,
+          ),
+        });
+        continue;
+      }
+
+      if (current.get(recipe.name) === from) {
+        flows.push({ ...said, outcome: "present", keptFor: Option.none() });
+        continue;
+      }
+
+      yield* imports.save(root, recipe.name, Option.some(from));
+      flows.push({ ...said, outcome: "imported", keptFor: Option.none() });
     }
 
-    yield* packages.install(root, recipe.package, recipe.version, "dependencies");
-    dependencies.push(recipe.package);
-  }
+    const dependencies: Array<string> = [];
 
-  return RecipesImported.make({ flows, dependencies });
-});
+    for (const recipe of Arr.dedupeWith(
+      recipes.filter((each) =>
+        flows.some((flow) => flow.flow === each.name && flow.outcome === "imported"),
+      ),
+      (left, right) => left.package === right.package,
+    )) {
+      const text = yield* Effect.fromOption(yield* dir.read(root, MANIFEST)).pipe(
+        Effect.mapError(
+          () =>
+            new RecipeFilesFailed({
+              message: ".chernabog/ has no package.json; run chernabog init",
+            }),
+        ),
+      );
+
+      const kind = dependencyKind(
+        yield* Effect.fromResult(decodeRepoManifest(text)),
+        recipe.package,
+      );
+
+      if (Option.contains(kind, "dependencies")) {
+        continue;
+      }
+
+      if (Option.contains(kind, "devDependencies")) {
+        yield* dir.write(
+          root,
+          MANIFEST,
+          yield* Effect.fromResult(withoutDependency(text, recipe.package, "devDependencies")),
+        );
+      }
+
+      yield* packages.install(root, recipe.package, recipe.version, "dependencies");
+      dependencies.push(recipe.package);
+    }
+
+    return RecipesImported.make({ flows, dependencies });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

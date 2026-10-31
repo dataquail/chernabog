@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -93,7 +94,7 @@ describe("checkRunLeasesHandler", () => {
         { runId: "a", item: "pr-9", renew: Option.some(Duration.hours(2)) },
       ]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(
           [run("a")],
           [
@@ -103,7 +104,8 @@ describe("checkRunLeasesHandler", () => {
           ],
           { items: [], leases: { "issue-7": HELD, "pr-9": HELD }, leaseAsks: asks },
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -113,12 +115,13 @@ describe("checkRunLeasesHandler", () => {
         RunLeases.cases.Lost.make({ item: "issue-7", reason: "alice's run b took issue-7 over" }),
       );
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime([run("a")], [claimOf("a")], {
           items: [],
           leases: { "issue-7": { status: "lost", reason: "alice's run b took issue-7 over" } },
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -129,7 +132,7 @@ describe("checkRunLeasesHandler", () => {
         RunLeases.cases.CheckFailed.make({ message: "rate limited" }),
       );
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         Layer.mergeAll(
           RunsRepositoryFake([run("a"), run("b", { flow: "flaky" })]),
           RunMarkersRepositoryFake([claimOf("a"), claimOf("b")]),
@@ -138,7 +141,8 @@ describe("checkRunLeasesHandler", () => {
             "demo/flaky": { items: [], leaseFails: "rate limited" },
           }),
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -152,7 +156,7 @@ describe("checkRunLeasesHandler", () => {
 
       expect(tags).toEqual(["Unchecked", "Unchecked", "Unchecked", "Unchecked"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(
           [
             run("ended", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00Z") }),
@@ -162,7 +166,8 @@ describe("checkRunLeasesHandler", () => {
           [claimOf("ended"), claimOf("unexecuted"), claimOf("someone-else")],
           { items: [], leases: { "issue-7": HELD } },
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

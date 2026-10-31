@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -11,74 +12,79 @@ import { type EjectRecipePayload, RecipeEjected } from "./eject-recipe.command.t
 
 const MANIFEST = ".chernabog/package.json";
 
-export const ejectRecipeHandler = Effect.fn("ejectRecipeHandler")(function* (
-  cmd: EjectRecipePayload,
-) {
-  const { flow, root } = cmd;
-  const dir = yield* ChernabogDirClient;
-  const packages = yield* RecipePackagesClient;
-  const imports = yield* FlowImportsRepository;
-  const current = yield* imports.findAll(root);
+export const ejectRecipeHandler = Effect.fn("ejectRecipeHandler")(
+  function* (cmd: EjectRecipePayload) {
+    const { flow, root } = cmd;
+    const dir = yield* ChernabogDirClient;
+    const packages = yield* RecipePackagesClient;
+    const imports = yield* FlowImportsRepository;
+    const current = yield* imports.findAll(root);
 
-  const from = yield* Effect.fromOption(Option.fromUndefinedOr(current.get(flow))).pipe(
-    Effect.mapError(() => new FlowNotImported({ flow, imported: [...current.keys()] })),
-  );
-
-  yield* packages.restore(root);
-
-  const recipe = yield* Effect.fromResult(
-    RecipeRootOps.named(yield* packages.installed(root), from),
-  );
-
-  const extension = Option.getOrElse(
-    Option.fromNullishOr(/\.\w+$/.exec(recipe.flow)?.[0]),
-    () => ".ts",
-  );
-
-  const copies = [
-    [recipe.flow, `flows/${flow}${extension}`] as const,
-    ...[...recipe.prompts, ...recipe.stages].map((file) => [file, file] as const),
-  ];
-
-  const files: Array<(typeof RecipeEjected.Type.files)[number]> = [];
-  const records: Record<string, Option.Option<CopiedRecord>> = {};
-  const ref = RecipeRootOps.refOf(recipe);
-
-  for (const [source, target] of copies) {
-    const path = `.chernabog/${target}`;
-
-    if (Option.isSome(yield* dir.read(root, path))) {
-      files.push({ file: path, recipe: ref, version: recipe.version, outcome: "kept" });
-      continue;
-    }
-
-    const text = yield* Effect.fromOption(yield* packages.file(root, recipe.package, source)).pipe(
-      Effect.mapError(
-        () =>
-          new RecipeFilesFailed({
-            message: `${recipe.package}@${recipe.version} names ${source} for ${recipe.name}, and hasn't it`,
-          }),
-      ),
+    const from = yield* Effect.fromOption(Option.fromUndefinedOr(current.get(flow))).pipe(
+      Effect.mapError(() => new FlowNotImported({ flow, imported: [...current.keys()] })),
     );
 
-    yield* dir.write(root, path, text);
-    records[target] = Option.some({
-      from: `${recipe.package}/${recipe.name}`,
-      version: recipe.version,
-      ...Option.match(
-        Option.liftPredicate(source, (file) => file !== target),
-        {
-          onNone: () => ({}),
-          onSome: (file) => ({ file }),
-        },
-      ),
-    });
-    files.push({ file: path, recipe: ref, version: recipe.version, outcome: "wrote" });
-  }
+    yield* packages.restore(root);
 
-  const manifest = Option.getOrElse(yield* dir.read(root, MANIFEST), () => "{}\n");
-  yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(manifest, records)));
-  yield* imports.save(root, flow, Option.none());
+    const recipe = yield* Effect.fromResult(
+      RecipeRootOps.named(yield* packages.installed(root), from),
+    );
 
-  return RecipeEjected.make({ flow, recipe: ref, version: recipe.version, files });
-});
+    const extension = Option.getOrElse(
+      Option.fromNullishOr(/\.\w+$/.exec(recipe.flow)?.[0]),
+      () => ".ts",
+    );
+
+    const copies = [
+      [recipe.flow, `flows/${flow}${extension}`] as const,
+      ...[...recipe.prompts, ...recipe.stages].map((file) => [file, file] as const),
+    ];
+
+    const files: Array<(typeof RecipeEjected.Type.files)[number]> = [];
+    const records: Record<string, Option.Option<CopiedRecord>> = {};
+    const ref = RecipeRootOps.refOf(recipe);
+
+    for (const [source, target] of copies) {
+      const path = `.chernabog/${target}`;
+
+      if (Option.isSome(yield* dir.read(root, path))) {
+        files.push({ file: path, recipe: ref, version: recipe.version, outcome: "kept" });
+        continue;
+      }
+
+      const text = yield* Effect.fromOption(
+        yield* packages.file(root, recipe.package, source),
+      ).pipe(
+        Effect.mapError(
+          () =>
+            new RecipeFilesFailed({
+              message: `${recipe.package}@${recipe.version} names ${source} for ${recipe.name}, and hasn't it`,
+            }),
+        ),
+      );
+
+      yield* dir.write(root, path, text);
+      records[target] = Option.some({
+        from: `${recipe.package}/${recipe.name}`,
+        version: recipe.version,
+        ...Option.match(
+          Option.liftPredicate(source, (file) => file !== target),
+          {
+            onNone: () => ({}),
+            onSome: (file) => ({ file }),
+          },
+        ),
+      });
+      files.push({ file: path, recipe: ref, version: recipe.version, outcome: "wrote" });
+    }
+
+    const manifest = Option.getOrElse(yield* dir.read(root, MANIFEST), () => "{}\n");
+    yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(manifest, records)));
+    yield* imports.save(root, flow, Option.none());
+
+    return RecipeEjected.make({ flow, recipe: ref, version: recipe.version, files });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

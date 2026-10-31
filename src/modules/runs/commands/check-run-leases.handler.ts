@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -15,6 +16,17 @@ import {
 } from "../domain/schedule/lease.value-object.ts";
 import { type CheckRunLeasesPayload } from "./check-run-leases.command.ts";
 
+// The unit of work around this command's reads and writes in state.db alone.
+// What it asks of GitHub, git, a launcher or the engine stays outside it: a
+// transaction holds state.db's one connection, which the engine's journal
+// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    withUnitOfWork,
+    // state.db is a file on this machine: it has no outage to wait out.
+    Effect.catchTag("PersistenceUnavailable", Effect.die),
+  );
+
 const unchecked = RunLeases.cases.Unchecked.make({});
 
 export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function* ({
@@ -23,7 +35,11 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
 }: CheckRunLeasesPayload) {
   const flows = yield* FlowsClient;
 
-  const run = Option.filter(yield* (yield* RunsRepository).findOne(runId), RunRootOps.isRunning);
+  const run = Option.filter(
+    yield* RunsRepository.use((runs) => runs.findOne(runId)).pipe(inUnitOfWork),
+    RunRootOps.isRunning,
+  );
+
   const executing = Option.flatMap(run, (found) => found.executionId);
 
   if (Option.isNone(run) || Option.isNone(executing)) {
@@ -32,10 +48,9 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
 
   const found = run.value;
 
-  const held = yield* (yield* RunMarkersRepository).findAll({
-    runId: Option.some(found.id),
-    status: Option.some("held"),
-  });
+  const held = yield* RunMarkersRepository.use((markers) =>
+    markers.findAll({ runId: Option.some(found.id), status: Option.some("held") }),
+  ).pipe(inUnitOfWork);
 
   const items = held.flatMap((marker) =>
     Option.toArray(

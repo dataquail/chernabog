@@ -544,8 +544,8 @@ tree:
                 adapters they need, from its layer, and pins its dispatcher to the unit of work it
                 is built beside. It names its own module, effect, the CQRS and unit-of-work
                 libraries, and the platform's unit of work.
-              external: [effect, "@effect-server-utils/cqrs"]
-              allow: ["@/modules/{module}/**"]
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+              allow: ["@/modules/{module}/**", "@/platform/unit-of-work.ts"]
 
           "*.layer.ts":
             name: { like: "{module}" }
@@ -675,7 +675,7 @@ tree:
                 (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
                 interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
@@ -893,6 +893,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - "@effect-server-utils/cqrs"
+        - "@effect-server-utils/unit-of-work"
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:

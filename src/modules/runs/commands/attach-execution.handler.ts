@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -7,19 +8,21 @@ import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 import { type AttachExecutionPayload } from "./attach-execution.command.ts";
 
-export const attachExecutionHandler = Effect.fn("attachExecutionHandler")(function* ({
-  executionId,
-  runId,
-}: AttachExecutionPayload) {
-  const runs = yield* RunsRepository;
-  const found = yield* runs.findOne(runId);
+export const attachExecutionHandler = Effect.fn("attachExecutionHandler")(
+  function* ({ executionId, runId }: AttachExecutionPayload) {
+    const runs = yield* RunsRepository;
+    const found = yield* runs.findOne(runId);
 
-  if (Option.isNone(found)) {
-    return yield* new RunNotFound({ runId });
-  }
+    if (Option.isNone(found)) {
+      return yield* new RunNotFound({ runId });
+    }
 
-  const changed = yield* Effect.fromResult(RunRootOps.attachExecution(found.value, executionId));
-  yield* runs.save(changed);
+    const changed = yield* Effect.fromResult(RunRootOps.attachExecution(found.value, executionId));
+    yield* runs.save(changed);
 
-  return RunView.make({ ...changed });
-});
+    return RunView.make({ ...changed });
+  },
+  withUnitOfWork,
+  // state.db is a file on this machine: it has no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

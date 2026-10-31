@@ -1,7 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { CleanUpScenarioCommand } from "./commands/clean-up-scenario.command.ts";
 import { cleanUpScenarioHandler } from "./commands/clean-up-scenario.handler.ts";
 import { SeedScenarioCommand } from "./commands/seed-scenario.command.ts";
@@ -24,5 +26,7 @@ export class RehearsalsCommands extends Context.Service<
 
 export const RehearsalsCommandsLive = Layer.effect(
   RehearsalsCommands,
-  Command.dispatcher(rehearsalsCommandGroup),
+  Effect.flatMap(ownUnitOfWork, (own) =>
+    Command.dispatcher(rehearsalsCommandGroup, { middleware: [own] }),
+  ),
 ).pipe(Layer.provideMerge(RehearsalsCommandHandlersLive));

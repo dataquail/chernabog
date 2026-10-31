@@ -1,4 +1,5 @@
 import { EventBus } from "@effect-server-utils/cqrs";
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,17 @@ import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView, StartedRun } from "../domain/run/run-view.value-object.ts";
 import { mayStart } from "../domain/run/work-item.value-object.ts";
 import { type StartFlowRunPayload } from "./start-flow-run.command.ts";
+
+// The unit of work around this command's reads and writes in state.db alone.
+// What it asks of GitHub, git, a launcher or the engine stays outside it: a
+// transaction holds state.db's one connection, which the engine's journal
+// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    withUnitOfWork,
+    // state.db is a file on this machine: it has no outage to wait out.
+    Effect.catchTag("PersistenceUnavailable", Effect.die),
+  );
 
 // A run's id says nothing about it: its record says what it runs, and as whom.
 // Random rather than time-ordered, so a few characters of it name a run.
@@ -67,8 +79,12 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
     return yield* existing(Option.some({ id: started.failure.runId }));
   }
 
-  yield* runs.save(started.success);
-  yield* (yield* EventBus).dispatch([RunEvents.started(started.success)]);
+  // Recorded before its workflow executes, so a crash between leaves a run
+  // RecoverRunsCommand executes.
+  yield* Effect.gen(function* () {
+    yield* runs.save(started.success);
+    yield* (yield* EventBus).dispatch([RunEvents.started(started.success)]);
+  }).pipe(inUnitOfWork);
 
   const executionId = yield* workflows.execute(flow, started.success.id, item);
 
@@ -77,7 +93,7 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
     RunRootOps.attachExecution(started.success, executionId),
   ).pipe(Effect.orDie);
 
-  yield* runs.save(attached);
+  yield* runs.save(attached).pipe(inUnitOfWork);
 
   return StartedRun.make({ run: Option.some(RunView.make({ ...attached })), started: true });
 });

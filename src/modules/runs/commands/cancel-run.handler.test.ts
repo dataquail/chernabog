@@ -538,6 +538,7 @@ describe("cancelRunHandler", () => {
       RecordedEvents,
       RunsRepositoryLive,
       failingWaits,
+      // In place of the pass-through one RecordedEvents brings: a later layer wins.
       makeUnitOfWork().pipe(Layer.provide(StateDbTransactionDriverLive)),
       RunLogsClientFake({ a: "" }),
       WorkflowsClientFake(stopping),

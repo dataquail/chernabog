@@ -1,4 +1,5 @@
 import { EventBus } from "@effect-server-utils/cqrs";
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -10,28 +11,30 @@ import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 import { type FinishRunPayload } from "./finish-run.command.ts";
 
-export const finishRunHandler = Effect.fn("finishRunHandler")(function* ({
-  runId,
-  ...outcome
-}: FinishRunPayload) {
-  const runs = yield* RunsRepository;
-  const found = yield* runs.findOne(runId);
+export const finishRunHandler = Effect.fn("finishRunHandler")(
+  function* ({ runId, ...outcome }: FinishRunPayload) {
+    const runs = yield* RunsRepository;
+    const found = yield* runs.findOne(runId);
 
-  if (Option.isNone(found)) {
-    return yield* new RunNotFound({ runId });
-  }
+    if (Option.isNone(found)) {
+      return yield* new RunNotFound({ runId });
+    }
 
-  const finished = yield* Effect.fromResult(
-    RunRootOps.finish(
-      found.value,
-      outcome.status,
-      outcome.summary,
-      DateTime.formatIso(yield* DateTime.now),
-    ),
-  );
+    const finished = yield* Effect.fromResult(
+      RunRootOps.finish(
+        found.value,
+        outcome.status,
+        outcome.summary,
+        DateTime.formatIso(yield* DateTime.now),
+      ),
+    );
 
-  yield* runs.save(finished);
-  yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished)));
+    yield* runs.save(finished);
+    yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished)));
 
-  return RunView.make({ ...finished });
-});
+    return RunView.make({ ...finished });
+  },
+  withUnitOfWork,
+  // state.db is a file on this machine: it has no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

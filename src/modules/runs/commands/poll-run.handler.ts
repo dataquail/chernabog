@@ -1,4 +1,5 @@
 import { EventBus } from "@effect-server-utils/cqrs";
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -10,6 +11,17 @@ import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { FoundRun, RunView } from "../domain/run/run-view.value-object.ts";
 import { type PollRunPayload } from "./poll-run.command.ts";
+
+// The unit of work around this command's reads and writes in state.db alone.
+// What it asks of GitHub, git, a launcher or the engine stays outside it: a
+// transaction holds state.db's one connection, which the engine's journal
+// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    withUnitOfWork,
+    // state.db is a file on this machine: it has no outage to wait out.
+    Effect.catchTag("PersistenceUnavailable", Effect.die),
+  );
 
 export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: PollRunPayload) {
   const runs = yield* RunsRepository;
@@ -33,8 +45,10 @@ export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: 
 
         // A run another poll ended first stays as that one ended it.
         if (Result.isSuccess(finished)) {
-          yield* runs.save(finished.success);
-          yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished.success)));
+          yield* Effect.gen(function* () {
+            yield* runs.save(finished.success);
+            yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished.success)));
+          }).pipe(inUnitOfWork);
         }
       }
     }

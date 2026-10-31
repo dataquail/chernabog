@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -51,9 +52,10 @@ describe("repointRepoHandler", () => {
         ["/src/demo", { flows: { implement: {} } }],
       ]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         machineOf([entry({ path: "/old/demo", defaults: { flows: { implement: {} } } })]),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

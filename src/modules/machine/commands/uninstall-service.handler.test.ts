@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -12,6 +13,6 @@ describe("uninstallServiceHandler", () => {
       yield* uninstallServiceHandler();
 
       expect(yield* (yield* ServiceManagerClient).installed).toBe(false);
-    }).pipe(Effect.provide(ServiceManagerClientFake(true))),
+    }).pipe(Effect.provide([ServiceManagerClientFake(true), PassThroughUnitOfWork])),
   );
 });

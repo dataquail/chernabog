@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -62,9 +63,10 @@ describe("setPersonaFlowHandler", () => {
       });
       expect((yield* stored)[0].defaults.flows).toEqual({ review: { schedule: "5 * * * *" } });
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         machineOf([entry({ defaults: { flows: { review: { schedule: "5 * * * *" } } } })]),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

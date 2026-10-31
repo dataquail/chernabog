@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,17 @@ import {
   MarkerReleases,
   RunMarkerView,
 } from "../domain/run-marker/run-marker-view.value-object.ts";
+
+// The unit of work around this command's reads and writes in state.db alone.
+// What it asks of GitHub, git, a launcher or the engine stays outside it: a
+// transaction holds state.db's one connection, which the engine's journal
+// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    withUnitOfWork,
+    // state.db is a file on this machine: it has no outage to wait out.
+    Effect.catchTag("PersistenceUnavailable", Effect.die),
+  );
 
 // The run a release is asked about, as the flow's check would be: by its
 // item, or one made from its key for a run that kept none.
@@ -74,7 +86,7 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
 
       if (RunMarkerRootOps.keptOn(marker, run.status)) {
         const stays = RunMarkerRootOps.kept(marker, at);
-        yield* markers.save(stays);
+        yield* markers.save(stays).pipe(inUnitOfWork);
         kept.push(stays);
         continue;
       }
@@ -94,7 +106,7 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
         },
       });
 
-      yield* markers.save(settled);
+      yield* markers.save(settled).pipe(inUnitOfWork);
       sortedBy(settled).push(settled);
     }
   }
