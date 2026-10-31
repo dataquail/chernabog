@@ -37,7 +37,7 @@ export const expandHome = (path: string, home: string) => {
   return path;
 };
 
-// Machine config, state and logs, under the Chernabog home.
+// Machine config, state, logs and telemetry, under the Chernabog home.
 export const homePaths = (root: string) => ({
   machineConfig: `${root}/config.yaml`,
   state: `${root}/state.db`,
@@ -52,6 +52,8 @@ export const homePaths = (root: string) => ({
   sessions: `${root}/sessions`,
   snapshots: `${root}/snapshots`,
   rehearsals: `${root}/rehearsals`,
+  // Each process's spans and logs, a folder a day (FileTelemetry).
+  telemetry: `${root}/telemetry`,
   // Copies of machine config and state.db from before a newer chernabog migrated them.
   backups: `${root}/backups`,
   worktrees: (repo: string) => `${root}/worktrees/${repo}`,

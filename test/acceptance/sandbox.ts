@@ -83,7 +83,8 @@ export type MachineOptions = {
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
 
-export type CliResult = { readonly code: number; readonly output: string };
+// `pid` is the CLI process's own, which names the telemetry file it writes.
+export type CliResult = { readonly code: number; readonly output: string; readonly pid: number };
 
 const isSettings = (value: Json): value is Readonly<Record<string, Json>> =>
   Predicate.isObject(value) && !Array.isArray(value);
@@ -330,7 +331,7 @@ export const openSandbox = (
 
         // Killed by a signal, a child has no exit code.
         child.on("close", (code) => {
-          resolve({ code: code ?? -1, output });
+          resolve({ code: code ?? -1, output, pid: child.pid ?? -1 });
         });
       });
 

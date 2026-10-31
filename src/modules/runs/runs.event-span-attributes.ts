@@ -15,6 +15,7 @@ import {
   type RunNeedsAttention,
   type RunStarted,
 } from "./domain/run/run.events.ts";
+import { type RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 
 // A message or event about one run.
 const ofRun = (message: { readonly runId: RunId }) => ({ "run.id": message.runId });
@@ -78,6 +79,7 @@ export const runEventSpanAttributes = Event.spanAttributes({
   RunEnteredStep: (event: RunEnteredStep) => ofRun(event),
   RunNeedsAttention: (event: RunNeedsAttention) => ofRun(event),
   RunFinished: (event: RunFinished) => ofRun(event),
+  RunMarkersReleased: (event: RunMarkersReleased) => ofRun(event),
   PullRequestOpened: (event: PullRequestOpened) => ({
     "run.id": event.runId,
     "run.repo": event.repo,
