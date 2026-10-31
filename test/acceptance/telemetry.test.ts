@@ -89,28 +89,47 @@ describe("telemetry", () => {
     expect(code).toBe(0);
 
     const records = recordsOf(sandbox.home, "cli", pid);
-    const started = named(records, "command.StartRunCommand");
+
+    // The command that starts the run names its repo and flow, and the event
+    // it publishes names the run too, under the command's span.
+    const starting = named(records, "command.StartFlowRunCommand");
+    const started = named(records, "event.RunStarted");
     const runId = String(started.attributes?.["run.id"]);
 
-    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(started.attributes).toMatchObject({
-      "run.repo": "dataquail/demo",
+    expect(starting.attributes).toMatchObject({
+      "run.repo": "demo",
       "run.flow": "implement",
     });
+    expect(started.attributes).toMatchObject({
+      "run.repo": "demo",
+      "run.flow": "implement",
+    });
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(lineage(records, started)).toContain(String(starting.spanId));
 
-    // The commands after it, about the same run, say so on their spans too.
+    // The commands, queries and events about the run after it name it on their spans.
+    const aboutRun = (name: string) =>
+      spans(records).filter(
+        (record) => record.name === name && record.attributes?.["run.id"] === runId,
+      );
+
+    const unnamed = [
+      "command.EnterStepCommand",
+      "query.FindRunQuery",
+      "event.RunEnteredStep",
+      "event.RunFinished",
+      "event.RunMarkersReleased",
+    ].filter((name) => aboutRun(name).length === 0);
+
+    expect(unnamed).toEqual([]);
+
+    // A step's event is handled under the step's command.
+    const entered = aboutRun("event.RunEnteredStep")[0];
+    const entering = spans(records).filter((record) => record.name === "command.EnterStepCommand");
+
     expect(
-      spans(records).some(
-        (record) =>
-          record.name === "command.FinishRunCommand" && record.attributes?.["run.id"] === runId,
-      ),
+      entering.some((command) => lineage(records, entered).includes(String(command.spanId))),
     ).toBe(true);
-
-    // The event the command published is handled under the command's span.
-    const event = named(records, "event.RunStarted");
-
-    expect(event.attributes?.["run.id"]).toBe(runId);
-    expect(lineage(records, event)).toContain(String(started.spanId));
   }, 60_000);
 
   test("a command with nothing to trace writes no file, and prints as before", async () => {
