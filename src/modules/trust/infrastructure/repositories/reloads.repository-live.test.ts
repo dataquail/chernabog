@@ -6,8 +6,9 @@ import * as Option from "effect/Option";
 import { effectAtHome } from "../../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { ReloadsRepository } from "../../domain/ports/repositories/reloads.repository.ts";
 import { ReloadRoot } from "../../domain/reload/reload.root.ts";
+import { ReloadSpecifications } from "../../domain/reload/reload.specification.ts";
+import { ReloadsRepository } from "../../domain/reload/reloads.repository.ts";
 import { ReloadsRepositoryLive } from "./reloads.repository-live.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
@@ -24,11 +25,11 @@ describe("ReloadsRepositoryLive", () => {
   effectAtHome("saves a repo's tree by slug and reads it back, keeping the others", () =>
     Effect.gen(function* () {
       const { file, fs, reloads } = yield* opened;
-      yield* reloads.save(ReloadRoot.make({ repo: other, tree: "cccc" }));
-      yield* reloads.save(ReloadRoot.make({ repo: demo, tree: "aaaa" }));
-      yield* reloads.save(ReloadRoot.make({ repo: demo, tree: "bbbb" }));
+      yield* reloads.upsertOne(ReloadRoot.make({ repo: other, tree: "cccc" }));
+      yield* reloads.upsertOne(ReloadRoot.make({ repo: demo, tree: "aaaa" }));
+      yield* reloads.upsertOne(ReloadRoot.make({ repo: demo, tree: "bbbb" }));
 
-      expect(yield* reloads.findOne(demo)).toEqual(
+      expect(yield* reloads.findOne(ReloadSpecifications.forRepo(demo))).toEqual(
         Option.some(ReloadRoot.make({ repo: demo, tree: "bbbb" })),
       );
       expect(yield* fs.readFileString(file)).toBe(
@@ -41,10 +42,10 @@ describe("ReloadsRepositoryLive", () => {
     Effect.gen(function* () {
       const { file, fs, reloads } = yield* opened;
 
-      expect(yield* reloads.findOne(demo)).toEqual(Option.none());
+      expect(yield* reloads.findOne(ReloadSpecifications.forRepo(demo))).toEqual(Option.none());
 
       yield* fs.writeFileString(file, "{ not json");
-      expect(yield* reloads.findOne(demo)).toEqual(Option.none());
+      expect(yield* reloads.findOne(ReloadSpecifications.forRepo(demo))).toEqual(Option.none());
     }),
   );
 });

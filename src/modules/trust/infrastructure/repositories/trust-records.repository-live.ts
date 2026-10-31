@@ -2,6 +2,7 @@
 // a tree writes. Each read is afresh, since the CLI writes it and the daemon
 // reads it; a save rewrites the file with the one record replaced.
 
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,11 +11,11 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
-import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { type TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
+import { TrustRecordsRepository } from "../../domain/trust-record/trust-records.repository.ts";
 import { toEntry, toRoot, TrustFile } from "./trust-record.mapper.ts";
 
 export const TrustRecordsRepositoryLive = Layer.effect(
@@ -38,15 +39,18 @@ export const TrustRecordsRepositoryLive = Layer.effect(
       return recordsIn(Option.some(yield* fs.readFileString(file)));
     }).pipe(Effect.orElseSucceed(() => Record.empty<string, TrustFile[string]>()));
 
-    const findOne = (repo: RepoSlug) =>
+    const findOne = (spec: Specification<TrustRecordRoot>) =>
       readAll.pipe(
         Effect.map((records) =>
-          Option.map(Record.get(records, repo), (entry) => toRoot(repo, entry)),
+          Arr.findFirst(
+            Object.entries(records).map(([slug, entry]) => toRoot(slug, entry)),
+            spec,
+          ),
         ),
       );
 
     // Under trust.json's lock, so two repos trusted at once both stay trusted.
-    const save = (record: TrustRecordRoot) =>
+    const upsertOne = (record: TrustRecordRoot) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(home.root, { recursive: true });
         yield* updateFile(fs, file, "trusting a repo", (text) =>
@@ -65,6 +69,6 @@ export const TrustRecordsRepositoryLive = Layer.effect(
         ),
       );
 
-    return TrustRecordsRepository.of({ findOne, save });
+    return TrustRecordsRepository.of({ findOne, upsertOne });
   }),
 );

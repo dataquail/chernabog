@@ -2,15 +2,16 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { FoundRun, RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type ResumeRunPayload } from "./resume-run.command.ts";
 
 export const resumeRunHandler = Effect.fn("resumeRunHandler")(function* ({
   runId,
 }: ResumeRunPayload) {
-  const found = yield* (yield* RunsRepository).findOne(runId);
+  const found = yield* (yield* RunsRepository).findOne(RunSpecifications.withId(runId));
   const workflows = yield* WorkflowsClient;
 
   for (const run of Option.toArray(Option.filter(found, RunRootOps.isRunning))) {

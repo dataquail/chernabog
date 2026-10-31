@@ -6,8 +6,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
-import { SkipsRepository } from "../../domain/ports/repositories/skips.repository.ts";
 import { SkipRoot } from "../../domain/skip/skip.root.ts";
+import { SkipSpecifications } from "../../domain/skip/skip.specification.ts";
+import { SkipsRepository } from "../../domain/skip/skips.repository.ts";
 import { SkipsRepositoryLive } from "./skips.repository-live.ts";
 
 const skipsAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClient>) =>
@@ -24,26 +25,29 @@ const skip = (reason: string, at: string) =>
   });
 
 describe("SkipsRepositoryLive", () => {
-  effect("keeps every skip and reads back the latest, newest first", () =>
+  effect("keeps every skip and reads back those a spec holds of, newest first", () =>
     Effect.gen(function* () {
       const skips = yield* SkipsRepository;
-      yield* skips.save(skip("paused", "2026-10-20T00:00:00Z"));
-      yield* skips.save(skip("usage gate", "2026-10-22T00:00:00Z"));
-      yield* skips.save(skip("quiet hours", "2026-10-21T00:00:00Z"));
+      yield* skips.insertOne(skip("paused", "2026-10-20T00:00:00Z"));
+      yield* skips.insertOne(skip("usage gate", "2026-10-22T00:00:00Z"));
+      yield* skips.insertOne(skip("quiet hours", "2026-10-21T00:00:00Z"));
 
-      expect((yield* skips.findAll(2)).map((found) => found.reason)).toEqual([
+      expect((yield* skips.findMany(SkipSpecifications.all)).map((found) => found.reason)).toEqual([
         "usage gate",
         "quiet hours",
+        "paused",
       ]);
-      expect(yield* skips.findAll(1)).toEqual([skip("usage gate", "2026-10-22T00:00:00Z")]);
+      expect(yield* skips.findMany(SkipSpecifications.forFlow("demo", "other"))).toEqual([]);
     }).pipe(Effect.provide(skipsAfter(Effect.void))),
   );
 
   effect("a database from before personas gains the column, its skips the implicit persona", () =>
     Effect.gen(function* () {
-      expect((yield* (yield* SkipsRepository).findAll(5)).map((found) => found.persona)).toEqual([
-        Option.none(),
-      ]);
+      expect(
+        (yield* (yield* SkipsRepository).findMany(SkipSpecifications.all)).map(
+          (found) => found.persona,
+        ),
+      ).toEqual([Option.none()]);
     }).pipe(
       Effect.provide(
         skipsAfter(

@@ -2,9 +2,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
 import { RunMarkerView } from "../domain/run-marker/run-marker-view.value-object.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import { type HoldMarkerPayload } from "./hold-marker.command.ts";
 
 export const holdMarkerHandler = Effect.fn("holdMarkerHandler")(function* (
@@ -13,8 +14,8 @@ export const holdMarkerHandler = Effect.fn("holdMarkerHandler")(function* (
   const markers = yield* RunMarkersRepository;
 
   const existing = Option.fromUndefinedOr(
-    (yield* markers.findAll({ runId: Option.some(holding.runId), status: Option.none() })).find(
-      (marker) => RunMarkerRootOps.same(marker, holding),
+    (yield* markers.findMany(RunMarkerSpecifications.forRun(holding.runId))).find((marker) =>
+      RunMarkerRootOps.same(marker, holding),
     ),
   );
 
@@ -25,7 +26,7 @@ export const holdMarkerHandler = Effect.fn("holdMarkerHandler")(function* (
   );
 
   for (const marker of Option.toArray(held)) {
-    yield* markers.save(marker);
+    yield* markers.upsertOne(marker);
   }
 
   return RunMarkerView.make({ ...Option.getOrThrow(Option.orElse(held, () => existing)) });

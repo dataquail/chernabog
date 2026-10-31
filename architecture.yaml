@@ -178,6 +178,12 @@ defs:
       see what a file offers. Re-export by name.
     kinds: [namespace]
 
+  specification:
+    message: >-
+      A specification (*.specification.ts) is a named domain predicate over an aggregate, which
+      its repository's reads take; add the sibling *.specification.test.ts.
+    requires: ["{base}.test.ts"]
+
   # What a handler file exports: the one handler, named for its message.
   one-handler-export:
     message: >-
@@ -497,8 +503,9 @@ tree:
       "kernel/":
         message: >-
           kernel/ holds the domain primitives every module shares: branded ids (*.id.ts), value
-          objects (*.value-object.ts) and the errors they raise (*.errors.ts). Anything one
-          module owns belongs in that module's domain/.
+          objects (*.value-object.ts), the errors they raise (*.errors.ts) and the
+          specification kit (specification.ts). Anything one module owns belongs in that
+          module's domain/.
         name: kebab-case
         # A primitive every module's domain shares talks no more than the domain does.
         members: [{ use: no-talking }]
@@ -512,6 +519,8 @@ tree:
           "*.id.ts": {}
           "*.value-object.ts": {}
           "*.errors.ts": {}
+          # The specification kit every aggregate's predicates are built with.
+          "specification.ts": {}
           "*.test.ts":
             surface: [{ use: test-exports-nothing }]
             imports:
@@ -555,9 +564,9 @@ tree:
 
           "domain/":
             message: >-
-              domain/ is a container: one folder per aggregate (named for it), and ports/ for the
-              repositories and clients the handlers depend on. No files live directly in
-              domain/.
+              domain/ is a container: one folder per aggregate (named for it), holding its
+              repository port beside it, and ports/ for the clients the handlers depend on. No
+              files live directly in domain/.
             members: [{ use: no-talking }]
             imports:
               reset: true
@@ -570,37 +579,9 @@ tree:
             children:
               "ports/":
                 message: >-
-                  domain/ports/ is a container: repositories/ (the module's own stores) and
-                  clients/ (third-party systems such as gh, git or launchd).
+                  domain/ports/ is a container: clients/ (third-party systems such as gh, git or
+                  launchd). A repository port lives beside its aggregate, in domain/<aggregate>/.
                 children:
-                  "repositories/":
-                    children:
-                      "*.repository.ts":
-                        message: >-
-                          A repository port needs its live adapter, its fake and the live
-                          adapter's test in ../../../infrastructure/repositories/.
-                        surface: [{ use: port-declares-no-value }]
-                        # A repository stores aggregates and reads them back; what they mean
-                        # is the domain's. A finder that answers a question, or a verb, is a
-                        # rule that belongs on the aggregate's ops.
-                        members:
-                          - message: >-
-                              Repository port method "{name}" is not in the persistence
-                              vocabulary: findAll, findOne, save and remove. Read the aggregates
-                              and let an op answer the question, or put the verb on the
-                              aggregate and have the handler save the result.
-                            subject: members
-                            declares: [type, interface]
-                            in: "*Repository*"
-                            allow: [findAll, findOne, save, remove]
-                            probe:
-                              source: "export type ZzRepositoryService = ZzBase & { readonly pausedSlugs: () => void };"
-                              name: pausedSlugs
-                        requires:
-                          - "../../../infrastructure/repositories/{base}-live.ts"
-                          - "../../../infrastructure/repositories/{base}-fake.ts"
-                          - "../../../infrastructure/repositories/{base}-live.test.ts"
-                        importedBy: { use: port-consumers }
                   "clients/":
                     children:
                       "*.client.ts":
@@ -620,9 +601,11 @@ tree:
                 message: >-
                   An aggregate's folder admits its root (*.root.ts, a Schema.Class value), its
                   operations (*.root-ops.ts, pure functions returning Result), its id
-                  (*.id.ts), its value objects (*.value-object.ts), its errors (*.errors.ts) and
-                  its domain events (*.events.ts, the Schemas its commands dispatch). A
-                  free-standing helper is an op that hasn't found its root.
+                  (*.id.ts), its value objects (*.value-object.ts), its errors (*.errors.ts),
+                  its domain events (*.events.ts, the Schemas its commands dispatch), its
+                  specifications (*.specification.ts, the predicates it is read by) and its
+                  repository port (*.repository.ts). A free-standing helper is an op that
+                  hasn't found its root.
                 imports:
                   message: >-
                     An aggregate sees itself, the kernel and effect. It does not reach another
@@ -654,6 +637,60 @@ tree:
                   "*.value-object.ts": {}
                   "*.errors.ts": {}
                   "*.events.ts": {}
+                  "*.specification.ts": { use: specification }
+                  "*.repository.ts":
+                    message: >-
+                      A repository port needs its live adapter, its fake and the live adapter's
+                      test in ../../infrastructure/repositories/.
+                    surface: [{ use: port-declares-no-value }]
+                    requires:
+                      - "../../infrastructure/repositories/{base}-live.ts"
+                      - "../../infrastructure/repositories/{base}-fake.ts"
+                      - "../../infrastructure/repositories/{base}-live.test.ts"
+                    importedBy: { use: port-consumers }
+                    # A repository stores aggregates and reads them back; what they mean is
+                    # the domain's (docs/adr/0007-repository-vocabulary-and-specifications.md).
+                    # Both halves of the persistence vocabulary, each with the advice that
+                    # fits its half. The probes are written as an intersection, whose own
+                    # members the rule must still read under the alias's name.
+                    members:
+                      - message: >-
+                          Repository port method "{name}" is not in the persistence vocabulary
+                          (ADR 7). A read is only findOne/findMany taking a Specification: turn
+                          this lookup or variant into a Specification the caller composes (e.g.
+                          repo.findOne(RunSpecifications.withId(id))), so the rule lives in one
+                          place and the fake filters with the same object the live adapter
+                          does. There are no keyed or variant finders.
+                        subject: members
+                        declares: [type, interface]
+                        in: "*Repository*"
+                        match: "find*"
+                        allow: [findOne, findMany]
+                        probe:
+                          source: "export type ZzRepositoryService = ZzBase & { readonly findOneByRepo: () => void };"
+                          name: findOneByRepo
+                      - message: >-
+                          Repository port method "{name}" is not in the persistence vocabulary
+                          (ADR 7). It reads like a domain verb: put that behaviour on the
+                          aggregate's ops and have the handler store the result. A port declares
+                          only insertOne/insertMany, updateOne/updateMany, deleteOne/deleteMany,
+                          upsertOne/upsertMany, and findOne/findMany.
+                        subject: members
+                        declares: [type, interface]
+                        in: "*Repository*"
+                        matchNot: "find*"
+                        allow:
+                          - insertOne
+                          - insertMany
+                          - updateOne
+                          - updateMany
+                          - deleteOne
+                          - deleteMany
+                          - upsertOne
+                          - upsertMany
+                        probe:
+                          source: "export type ZzRepositoryService = ZzBase & { readonly pausedSlugs: () => void };"
+                          name: pausedSlugs
                   "*.test.ts": { use: unit-test-file }
 
           "commands/":
@@ -713,8 +750,9 @@ tree:
 
           "infrastructure/":
             message: >-
-              infrastructure/ is a container mirroring domain/ports/: repositories/ and clients/.
-              No files live directly in infrastructure/.
+              infrastructure/ is a container: repositories/ (behind the aggregates' repository
+              ports) and clients/ (behind domain/ports/clients/). No files live directly in
+              infrastructure/.
             imports:
               reset: true
               message: >-
@@ -741,6 +779,8 @@ tree:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
+                  # What a SQLite repository's reads compile their specification with.
+                  "criteria-to-sql.ts": {}
                   "*.test.ts": { use: adapter-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and

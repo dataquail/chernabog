@@ -3,9 +3,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
-import { ReloadsRepository } from "../../domain/ports/repositories/reloads.repository.ts";
 import { type ReloadRoot } from "../../domain/reload/reload.root.ts";
+import { ReloadsRepository } from "../../domain/reload/reloads.repository.ts";
 
 // Reloads in memory, starting from `records`.
 export const ReloadsRepositoryFake = (records: ReadonlyArray<ReloadRoot>) =>
@@ -15,13 +14,9 @@ export const ReloadsRepositoryFake = (records: ReadonlyArray<ReloadRoot>) =>
       const store = yield* Ref.make(records);
 
       return ReloadsRepository.of({
-        findOne: (repo: RepoSlug) =>
-          Ref.get(store).pipe(
-            Effect.map((stored) =>
-              Option.fromUndefinedOr(stored.find((record) => record.repo === repo)),
-            ),
-          ),
-        save: (record: ReloadRoot) =>
+        findOne: (spec) =>
+          Ref.get(store).pipe(Effect.map((stored) => Option.fromUndefinedOr(stored.find(spec)))),
+        upsertOne: (record: ReloadRoot) =>
           Ref.update(store, (stored) => [
             ...stored.filter((known) => known.repo !== record.repo),
             record,

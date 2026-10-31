@@ -5,16 +5,21 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { FoundRun, RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type PollRunPayload } from "./poll-run.command.ts";
 
 export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: PollRunPayload) {
   const runs = yield* RunsRepository;
   const workflows = yield* WorkflowsClient;
-  const found = Option.filter(yield* runs.findOne(runId), RunRootOps.isRunning);
+
+  const found = Option.filter(
+    yield* runs.findOne(RunSpecifications.withId(runId)),
+    RunRootOps.isRunning,
+  );
 
   for (const run of Option.toArray(found)) {
     for (const executionId of Option.toArray(run.executionId)) {
@@ -33,7 +38,7 @@ export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: 
 
         // A run another poll ended first stays as that one ended it.
         if (Result.isSuccess(finished)) {
-          yield* runs.save(finished.success);
+          yield* runs.upsertOne(finished.success);
           yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(finished.success)));
         }
       }
@@ -41,6 +46,8 @@ export const pollRunHandler = Effect.fn("pollRunHandler")(function* ({ runId }: 
   }
 
   return FoundRun.make({
-    run: Option.map(yield* runs.findOne(runId), (run) => RunView.make({ ...run })),
+    run: Option.map(yield* runs.findOne(RunSpecifications.withId(runId)), (run) =>
+      RunView.make({ ...run }),
+    ),
   });
 });

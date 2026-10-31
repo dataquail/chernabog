@@ -3,8 +3,8 @@
 // whether it's paused in paused.json, by slug, which only chernabog writes.
 //
 // The daemon, the CLI and the person's editor all write machine config, so
-// `findAll` reads both files afresh every time. The aggregate is one entry, the
-// file is the storage boundary: `save` edits the entry in place, keeping the
+// `findMany` reads both files afresh every time. The aggregate is one entry, the
+// file is the storage boundary: `upsertOne` edits the entry in place, keeping the
 // file's comments, and writes machine config only when the entry changed, so
 // pausing a repo never rewrites a hand-edited file.
 
@@ -18,11 +18,12 @@ import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
-import { EnrolledReposRepository } from "../../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { addEntry, applyEntry, sameEntry, toEntry, toRoot } from "./enrolled-repo.mapper.ts";
 
 const PausedFile = Schema.fromJsonString(Schema.Array(RepoSlug));
@@ -77,14 +78,15 @@ export const EnrolledReposRepositoryLive = Layer.effect(
         }),
       ).pipe(Effect.mapError(failed));
 
-    const findAll = Effect.gen(function* () {
-      const machine = yield* loadMachineConfig;
-      const paused = yield* readPaused;
+    const findMany = (spec: Specification<EnrolledRepoRoot>) =>
+      Effect.gen(function* () {
+        const machine = yield* loadMachineConfig;
+        const paused = yield* readPaused;
 
-      return machine.repos.map((entry) =>
-        toRoot(entry, paused.includes(RepoSlug.make(entry.repo))),
-      );
-    }).pipe(Effect.mapError(failed), Effect.provideContext(services));
+        return machine.repos
+          .map((entry) => toRoot(entry, paused.includes(RepoSlug.make(entry.repo))))
+          .filter(spec);
+      }).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
     const saveEntry = (repo: EnrolledRepoRoot) =>
       Effect.gen(function* () {
@@ -109,7 +111,7 @@ export const EnrolledReposRepositoryLive = Layer.effect(
         );
       }).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
-    const remove = (repo: EnrolledRepoRoot) =>
+    const deleteOne = (repo: EnrolledRepoRoot) =>
       editMachineConfig((document, current) =>
         Effect.gen(function* () {
           for (const { index } of Option.toArray(
@@ -120,12 +122,12 @@ export const EnrolledReposRepositoryLive = Layer.effect(
         }),
       ).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
-    const save = (repo: EnrolledRepoRoot) =>
+    const upsertOne = (repo: EnrolledRepoRoot) =>
       Effect.gen(function* () {
         yield* saveEntry(repo);
         yield* savePaused(repo);
       });
 
-    return EnrolledReposRepository.of({ findAll, save, remove });
+    return EnrolledReposRepository.of({ findMany, upsertOne, deleteOne });
   }),
 );

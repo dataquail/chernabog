@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 
+import { FlowImportRoot } from "../src/modules/recipes/domain/flow-import/flow-import.root.ts";
 import { decodeRepoManifest } from "../src/modules/recipes/domain/recipe/repo-manifest.value-object.ts";
 import { BundleClientFake } from "../src/modules/recipes/infrastructure/clients/bundle.client-fake.ts";
 import { ChernabogDirClientFake } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-fake.ts";
@@ -87,9 +88,9 @@ export const recipeRepo = (
   offline = false,
   imported: Readonly<Record<string, string>> = {},
 ) => {
-  // config.yaml's flows.<name>.from, by `/repo/<name>`.
-  const imports = new Map(
-    Object.entries(imported).map(([flow, from]) => [`/repo/${flow}`, from] as const),
+  // config.yaml's flows.<name>.from.
+  const imports = Object.entries(imported).map(([flow, from]) =>
+    FlowImportRoot.make({ root: "/repo", flow, from }),
   );
 
   const stored: Record<string, string> = Object.fromEntries(
@@ -101,7 +102,6 @@ export const recipeRepo = (
 
   return {
     stored,
-    imports,
     layer: Layer.mergeAll(
       FlowImportsRepositoryFake(imports),
       ChernabogDirClientFake(stored),

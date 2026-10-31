@@ -5,12 +5,13 @@ import * as Option from "effect/Option";
 import type * as Result from "effect/Result";
 
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { type RunAlreadyFinished } from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RecoveredRuns, RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 
 const INTERRUPTED = "interrupted before its workflow started";
 
@@ -19,7 +20,7 @@ export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
   const workflows = yield* WorkflowsClient;
   const events = yield* EventBus;
 
-  const interrupted = (yield* runs.findAll({ running: true })).flatMap((run) =>
+  const interrupted = (yield* runs.findMany(RunSpecifications.running)).flatMap((run) =>
     Option.toArray(RunRootOps.unexecuted(run)),
   );
 
@@ -29,7 +30,7 @@ export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
 
   // The ops can't fail here: every run recovered is still running.
   const saved = (change: Result.Result<RunRoot, RunAlreadyFinished>) =>
-    Effect.fromResult(change).pipe(Effect.orDie, Effect.tap(runs.save));
+    Effect.fromResult(change).pipe(Effect.orDie, Effect.tap(runs.upsertOne));
 
   for (const run of interrupted) {
     if (Option.isNone(run.item)) {

@@ -5,9 +5,9 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Ref from "effect/Ref";
 
-import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { type RunsQuery, RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { type RunRoot } from "../../domain/run/run.root.ts";
+import { RunsRepository } from "../../domain/run/runs.repository.ts";
 
 const byStart = Order.mapInput(Order.String, (run: RunRoot) => run.startedAt);
 
@@ -19,35 +19,17 @@ export const RunsRepositoryFake = (runs: ReadonlyArray<RunRoot>) =>
     Effect.gen(function* () {
       const store = yield* Ref.make(runs);
 
-      const findOne = (id: RunId) =>
-        Ref.get(store).pipe(Effect.map((stored) => Arr.findFirst(stored, (run) => run.id === id)));
+      // The runs a spec holds of, oldest first, as the live repository reads them.
+      const findMany = (spec: Specification<RunRoot>) =>
+        Ref.get(store).pipe(Effect.map((stored) => Arr.sort(stored.filter(spec), byStart)));
 
-      const findAll = (query: RunsQuery) =>
-        Ref.get(store).pipe(
-          Effect.map((stored) => {
-            if ("running" in query) {
-              return Arr.sort(
-                stored.filter((run) => run.status === "running"),
-                byStart,
-              );
-            }
-
-            if ("latest" in query) {
-              return Arr.take(Arr.sort(stored, Order.flip(byStart)), query.latest);
-            }
-
-            return Arr.sort(
-              stored.filter((run) => run.repo === query.repo),
-              byStart,
-            );
-          }),
-        );
+      const findOne = (spec: Specification<RunRoot>) => findMany(spec).pipe(Effect.map(Arr.head));
 
       const writable = (stored: RunRoot, run: RunRoot) =>
         Option.isNone(stored.finishedAt) ||
         Option.getOrNull(stored.finishedAt) === Option.getOrNull(run.finishedAt);
 
-      const save = (run: RunRoot) =>
+      const upsertOne = (run: RunRoot) =>
         Ref.update(store, (stored) => {
           const found = Arr.findFirst(stored, (known) => known.id === run.id);
 
@@ -62,6 +44,6 @@ export const RunsRepositoryFake = (runs: ReadonlyArray<RunRoot>) =>
           return [...stored.filter((known) => known.id !== run.id), run];
         });
 
-      return RunsRepository.of({ findOne, findAll, save });
+      return RunsRepository.of({ findOne, findMany, upsertOne });
     }),
   );

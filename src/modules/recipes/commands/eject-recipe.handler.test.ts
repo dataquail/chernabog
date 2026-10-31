@@ -3,7 +3,16 @@ import * as Effect from "effect/Effect";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestOf, recipeRepo } from "../../../../test/recipe-repo.ts";
+import { FlowImportSpecifications } from "../domain/flow-import/flow-import.specification.ts";
+import { FlowImportsRepository } from "../domain/flow-import/flow-imports.repository.ts";
 import { ejectRecipeHandler } from "./eject-recipe.handler.ts";
+
+// What the checkout imports, as `<root>/<flow>` and its from.
+const importedFlows = FlowImportsRepository.use((imports) =>
+  imports.findMany(FlowImportSpecifications.inCheckout("/repo")),
+).pipe(
+  Effect.map((found) => found.map((each) => [`${each.root}/${each.flow}`, each.from] as const)),
+);
 
 describe("ejectRecipeHandler", () => {
   const repo = recipeRepo({ ".chernabog/prompts/implement.md": "our prompt\n" }, false, {
@@ -30,7 +39,7 @@ describe("ejectRecipeHandler", () => {
             file: "flows/implement.ts",
           },
         });
-        expect([...repo.imports]).toEqual([["/repo/review", "@chernabog/recipes/review"]]);
+        expect(yield* importedFlows).toEqual([["/repo/review", "@chernabog/recipes/review"]]);
       }).pipe(Effect.provide(repo.layer)),
   );
 
@@ -39,7 +48,7 @@ describe("ejectRecipeHandler", () => {
       const refused = yield* Effect.flip(ejectRecipeHandler({ root: "/repo", flow: "deploy" }));
 
       expect(refused.message).toBe(
-        "config.yaml doesn't import a flow named deploy (it imports: review)",
+        "config.yaml doesn't import a flow named deploy (it imports: ship, review)",
       );
     }).pipe(Effect.provide(repo.layer)),
   );

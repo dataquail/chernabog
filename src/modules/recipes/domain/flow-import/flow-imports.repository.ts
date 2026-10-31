@@ -1,20 +1,21 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
 
-import { type RecipeFilesFailed } from "../../recipe/recipe.errors.ts";
+import { type PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
+import { type FlowImportRoot } from "./flow-import.root.ts";
 
-// The flows a checkout at `root` imports from recipe packages: config.yaml's
-// `flows.<name>.from`, as "<package>/<recipe>", by flow name.
+// The flows checkouts import from recipe packages. Each checkout keeps its own
+// in its .chernabog/config.yaml, so a read names the checkout: a spec pins
+// `root` (FlowImportSpecifications.inCheckout). `upsertOne` sets a flow's
+// `from`, and `deleteOne` removes it, keeping the flow's other settings and
+// the file's comments.
 export type FlowImportsRepositoryService = {
-  readonly findAll: (root: string) => Effect.Effect<ReadonlyMap<string, string>, RecipeFilesFailed>;
-  // Sets a flow's `from`, or with none removes it, keeping the flow's other
-  // settings and the file's comments.
-  readonly save: (
-    root: string,
-    flow: string,
-    from: Option.Option<string>,
-  ) => Effect.Effect<void, RecipeFilesFailed>;
+  readonly findMany: (
+    spec: Specification<FlowImportRoot>,
+  ) => Effect.Effect<ReadonlyArray<FlowImportRoot>, PersistenceFailed>;
+  readonly upsertOne: (flowImport: FlowImportRoot) => Effect.Effect<void, PersistenceFailed>;
+  readonly deleteOne: (flowImport: FlowImportRoot) => Effect.Effect<void, PersistenceFailed>;
 };
 
 export class FlowImportsRepository extends Context.Service<

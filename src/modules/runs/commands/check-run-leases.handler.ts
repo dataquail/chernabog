@@ -3,10 +3,13 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { Spec } from "../../../kernel/specification.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import {
   CLAIM_REF_MARKER,
   ClaimRefArgs,
@@ -23,7 +26,11 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
 }: CheckRunLeasesPayload) {
   const flows = yield* FlowsClient;
 
-  const run = Option.filter(yield* (yield* RunsRepository).findOne(runId), RunRootOps.isRunning);
+  const run = Option.filter(
+    yield* (yield* RunsRepository).findOne(RunSpecifications.withId(runId)),
+    RunRootOps.isRunning,
+  );
+
   const executing = Option.flatMap(run, (found) => found.executionId);
 
   if (Option.isNone(run) || Option.isNone(executing)) {
@@ -32,10 +39,9 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
 
   const found = run.value;
 
-  const held = yield* (yield* RunMarkersRepository).findAll({
-    runId: Option.some(found.id),
-    status: Option.some("held"),
-  });
+  const held = yield* (yield* RunMarkersRepository).findMany(
+    Spec.and(RunMarkerSpecifications.forRun(found.id), RunMarkerSpecifications.inStatus("held")),
+  );
 
   const items = held.flatMap((marker) =>
     Option.toArray(
