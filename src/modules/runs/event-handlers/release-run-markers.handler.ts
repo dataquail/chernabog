@@ -1,3 +1,4 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,8 +12,14 @@ import { type RunFinished } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
+import { RunMarkerEvents } from "../domain/run-marker/run-marker.events.ts";
+import { type RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
+import {
+  MarkerReleases,
+  RunMarkerView,
+} from "../domain/run-marker/run-marker-view.value-object.ts";
 import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 
 // The unit of work around each of this reaction's writes in state.db alone.
@@ -29,7 +36,8 @@ const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 // first, keeping those its ending's keepOn names. A release that fails stays
 // held, backing off, for ReleaseMarkersCommand's sweep to try again; so does
 // one a crash kept this reaction from running. A repeat of the event finds
-// nothing held, and releases nothing twice.
+// nothing held, and releases nothing twice. It says what it did
+// (RunMarkersReleased), for the daemon to log.
 export const releaseRunMarkersHandler = Effect.fn("releaseRunMarkersHandler")(function* (
   event: RunFinished,
 ) {
@@ -57,6 +65,11 @@ export const releaseRunMarkersHandler = Effect.fn("releaseRunMarkersHandler")(fu
       subjects: run.subjects,
     };
 
+    const released: Array<RunMarkerRoot> = [];
+    const kept: Array<RunMarkerRoot> = [];
+    const failed: Array<RunMarkerRoot> = [];
+    const unreleasable: Array<RunMarkerRoot> = [];
+
     for (const marker of RunMarkerRootOps.releaseOrder(held)) {
       const now = yield* DateTime.now;
       const at = DateTime.formatIso(now);
@@ -68,7 +81,9 @@ export const releaseRunMarkersHandler = Effect.fn("releaseRunMarkersHandler")(fu
       }
 
       if (RunMarkerRootOps.keptOn(marker, run.status)) {
-        yield* markers.upsertOne(RunMarkerRootOps.kept(marker, at)).pipe(inUnitOfWork);
+        const stays = RunMarkerRootOps.kept(marker, at);
+        yield* markers.upsertOne(stays).pipe(inUnitOfWork);
+        kept.push(stays);
         continue;
       }
 
@@ -88,6 +103,30 @@ export const releaseRunMarkersHandler = Effect.fn("releaseRunMarkersHandler")(fu
       });
 
       yield* markers.upsertOne(settled).pipe(inUnitOfWork);
+
+      if (settled.status === "released") {
+        released.push(settled);
+      } else if (settled.status === "unreleasable") {
+        unreleasable.push(settled);
+      } else {
+        failed.push(settled);
+      }
     }
+
+    const views = (found: ReadonlyArray<RunMarkerRoot>) =>
+      found.map((marker) => RunMarkerView.make({ ...marker }));
+
+    // What it did, for the daemon to log: once, since a repeat settles nothing.
+    const said = RunMarkerEvents.released(
+      run.id,
+      MarkerReleases.make({
+        released: views(released),
+        kept: views(kept),
+        failed: views(failed),
+        unreleasable: views(unreleasable),
+      }),
+    );
+
+    yield* EventBus.use((bus) => bus.dispatch(Option.toArray(said))).pipe(inUnitOfWork);
   }
 });

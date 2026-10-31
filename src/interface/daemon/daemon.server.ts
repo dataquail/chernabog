@@ -50,6 +50,7 @@ import {
   type FlowRegistry,
   leaseTtlFor,
   localCause,
+  type MarkerReleases,
   nextTick,
   noteCheckFailure,
   noteEvent,
@@ -102,6 +103,7 @@ import {
   RunRequest,
   TickResult,
 } from "./daemon.protocol.ts";
+import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
@@ -532,8 +534,33 @@ export const runDaemon = Effect.gen(function* () {
     engineRuntime({ registry, flows: flowLayers, engine: EngineLive }),
   );
 
+  // What releasing markers did, as the daemon logs it, whoever released them: a
+  // run's ending (release-run-markers) or the sweep. A failure is logged the
+  // first time it fails; status shows it until it succeeds.
+  const logReleases = (releases: MarkerReleases) =>
+    Effect.gen(function* () {
+      for (const marker of releases.released) {
+        yield* log(`released ${marker.name} for ${marker.runId}`);
+      }
+
+      for (const marker of releases.failed.filter((failed) => failed.attempts === 1)) {
+        yield* log(
+          `releasing ${marker.name} for ${marker.runId} failed: ${Option.getOrElse(marker.lastError, () => "")}; trying again`,
+        );
+      }
+
+      for (const marker of releases.unreleasable) {
+        yield* log(
+          `can't release ${marker.name} for ${marker.runId}, a person must take it off: ${Option.getOrElse(marker.lastError, () => "")}`,
+        );
+      }
+    });
+
   return yield* Effect.provideContext(
     Effect.gen(function* () {
+      // What each run's ending released, logged as the sweep's is.
+      yield* subscribeMarkerReleases(logReleases);
+
       // Every run that ends, however it ended, is logged, and one that didn't
       // finish its work leaves its own flow to cron, so a trigger whose item
       // fails fast retries no faster. Subscribed before anything here can end
@@ -965,30 +992,15 @@ export const runDaemon = Effect.gen(function* () {
       );
 
       // The sweep behind the markers' release on RunFinished
-      // (release-run-markers): tries releases that failed again once their
-      // backoff is up, and releases what an ending left held when a crash
-      // came between its commit and its reaction. A failure is logged the
-      // first time; status shows it until it succeeds.
+      // (release-run-markers), logged as that is: tries releases that failed
+      // again once their backoff is up, and releases what an ending left
+      // untried once the grace after it ended is up, as when a crash came
+      // between its commit and its reaction. It leaves an untried marker to
+      // its run's ending until then, so the two never release one at once.
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
-
-            for (const marker of releases.released) {
-              yield* log(`released ${marker.name} for ${marker.runId}`);
-            }
-
-            for (const marker of releases.failed.filter((failed) => failed.attempts === 1)) {
-              yield* log(
-                `releasing ${marker.name} for ${marker.runId} failed: ${Option.getOrElse(marker.lastError, () => "")}; trying again`,
-              );
-            }
-
-            for (const marker of releases.unreleasable) {
-              yield* log(
-                `can't release ${marker.name} for ${marker.runId}, a person must take it off: ${Option.getOrElse(marker.lastError, () => "")}`,
-              );
-            }
+            yield* logReleases(yield* (yield* RunFlowsCommands).ReleaseMarkersCommand());
 
             yield* Effect.sleep("5 seconds");
           }).pipe(

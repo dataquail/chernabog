@@ -24,7 +24,7 @@ export const RunTriggersLive = Layer.effectDiscard(
     // What the handlers need, from the module that built this slot rather
     // than from whichever fiber committed the ending.
     const own = yield* Effect.context<
-      FlowsClient | RunMarkersRepository | RunsRepository | UnitOfWork
+      EventBus | FlowsClient | RunMarkersRepository | RunsRepository | UnitOfWork
     >();
 
     // An ended run lets go of what it held at once (release-run-markers).
