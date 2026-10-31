@@ -264,6 +264,9 @@
     // exhaustive switch over a closed union returns on every path.
     "typescript/consistent-return": "off",
     "local/no-array-push-spread": "error",
+    // Spans are written to disk and kept for 30 days: an attribute is an ID or a
+    // name, never a secret or a prompt, body or environment.
+    "local/no-secret-span-attributes": "error",
     "no-use-before-define": "warn",
     // effect/cli, effect/workflow, effect/cluster, effect/sql and @effect/platform-bun are
     // this app's whole stack; the exact effect pin is what absorbs their instability.
