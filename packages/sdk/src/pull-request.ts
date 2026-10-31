@@ -546,9 +546,8 @@ const parkOnBase = (
     yield* activity(
       `hold-${id}`,
       Effect.gen(function* () {
-        yield* Signals.use((registry) => registry.register(BASE_GREEN, deferred.name, token));
-
-        // The step a parked run shows, as a person reads it.
+        // The step a parked run shows, as a person reads it, entered before
+        // it parks, so a run seen waiting already shows why.
         yield* Effect.serviceOption(RunLog).pipe(
           Effect.flatMap(
             Option.match({
@@ -557,6 +556,8 @@ const parkOnBase = (
             }),
           ),
         );
+
+        yield* Signals.use((registry) => registry.register(BASE_GREEN, deferred.name, token));
       }),
     );
 

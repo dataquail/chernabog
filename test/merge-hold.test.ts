@@ -44,6 +44,7 @@ const IMPLICIT = Option.none<string>();
 const SHIP = "auto:ship";
 const KEY = `pr-${PULL}`;
 const WORK = item("hold");
+const HELD_STEP = "holding merge: CI failing on main";
 
 const RED: CiState = { state: "red", failedChecks: ["test"] };
 const GREEN: CiState = { state: "green" };
@@ -137,11 +138,16 @@ describe("holding a merge on a red base branch", () => {
               return false;
             }
 
+            // The run as this poll saw it may predate the park: look again on the next one.
+            if (!held && !Option.contains(run.currentStep, HELD_STEP)) {
+              return false;
+            }
+
             if (!held) {
               held = true;
               expect(fake.merge.requests).toEqual([]);
               expect(fake.labelsOf(PULL)).toEqual([SHIP]);
-              expect(run.currentStep).toEqual(Option.some("holding merge: CI failing on main"));
+              expect(run.currentStep).toEqual(Option.some(HELD_STEP));
               expect(
                 fake.comments.some((found) =>
                   found.body.startsWith("Holding the merge: CI is failing on `main`."),
