@@ -63,7 +63,6 @@ import type { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
-import { type FlowRegistry } from "../src/modules/runs/infrastructure/clients/flows.client-live.ts";
 import { RunLogsClientLive } from "../src/modules/runs/infrastructure/clients/run-logs.client-live.ts";
 import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/holds.repository-live.ts";
 import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
@@ -78,8 +77,8 @@ import {
   forEveryPersona,
   type ServicesFor,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { RuntimeLayer } from "../src/modules/runs/infrastructure/runtime/flow-runtime.ts";
-import { RunsUnitOfWorkLive } from "../src/modules/runs/runs.command-handlers.ts";
+import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/flow-registry.ts";
+import { RunsModule } from "../src/modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
@@ -992,7 +991,7 @@ export const StateAt = (home: string) =>
     HoldsRepositoryLive,
     RunLogsClientLive,
     makeEventBus(),
-    RunsUnitOfWorkLive,
+    RunsModule.unitOfWork,
   ).pipe(
     Layer.provideMerge(EngineAt(homePaths(home).state)),
     Layer.provideMerge(Home.at(home, home)),
@@ -1013,7 +1012,10 @@ export const engineOver = <R>(
   Layer.mergeAll(
     applicationModules.engine,
     flowLayer(handle, servicesFor).pipe(Layer.provide(applicationModules.engine)),
-  ).pipe(Layer.provideMerge(RuntimeLayer(registry)), Layer.provideMerge(StateAt(home)));
+  ).pipe(
+    Layer.provideMerge(applicationModules.runtime(registry)),
+    Layer.provideMerge(StateAt(home)),
+  );
 
 // What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
 export type RuntimeServices = Layer.Success<ReturnType<typeof engineOver>>;

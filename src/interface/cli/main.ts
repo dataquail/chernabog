@@ -3,7 +3,6 @@
 
 import { describeError } from "@chernabog/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { makeEventBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
@@ -28,7 +27,6 @@ import {
   declaredLabels,
   questionHook,
   repoConfigDir,
-  runEventSpanAttributes,
   runLaunch,
   RunLogsQueries,
   runSessions,
@@ -45,10 +43,9 @@ import { GitHubApi } from "../../platform/github-api.ts";
 import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
-import { FileStoresUnitOfWork } from "../../platform/unit-of-work.ts";
 import { VERSION } from "../../platform/version.ts";
 import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
-import { applicationModules } from "../application-modules.ts";
+import { ApplicationLive } from "../application-runtime.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
@@ -462,19 +459,12 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-// Every module, over the CLI's own services: one GitHubTokens for the process,
-// so each persona's token is looked up once, one bus that the modules'
-// commands dispatch their events on, with what the runs' events say on their
-// spans, and the unit of work the commands over files declare.
-const AppLive = applicationModules.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      GitHubApi.layerFor(IMPLICIT),
-      Asker.layer,
-      makeEventBus({ spanAttributes: runEventSpanAttributes }),
-      FileStoresUnitOfWork,
-    ),
-  ),
+// The CLI's root, which the daemon runs under too: the shared runtime (every
+// module, the buses over them and the event bus) over the CLI's own services,
+// with one GitHubTokens for the process, so each persona's token is looked up
+// once.
+const AppLive = ApplicationLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

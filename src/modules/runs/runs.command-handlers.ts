@@ -1,5 +1,4 @@
 import { Command } from "@effect-server-utils/cqrs";
-import { makeUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -47,19 +46,10 @@ import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
 import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
-import { StateDbTransactionDriverLive } from "./infrastructure/repositories/state-db.transaction-driver-live.ts";
 import {
   runFlowsCommandSpanAttributes,
   runsCommandSpanAttributes,
 } from "./runs.event-span-attributes.ts";
-
-// The unit of work each of the runs' commands declares, over state.db: what a
-// command writes there commits together or not at all, and what it dispatches
-// on the bus is delivered once it has. The runs module provides it to its
-// dispatchers, which run their commands in it (docs/adr/0010-commands-declare-their-unit-of-work.md).
-export const RunsUnitOfWorkLive = makeUnitOfWork().pipe(
-  Layer.provide(StateDbTransactionDriverLive),
-);
 
 // What changes the runs' stores in state.db alone. Those stores share the SQL
 // client the workflow engine journals to, which the composition root that holds

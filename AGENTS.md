@@ -216,12 +216,16 @@ transitive reach), the coverage floors and the baseline.
   `docs/adr/0009-the-hexagons-remaining-stereotypes.md`. A module wires itself in its
   `<module>.module.ts` (`docs/adr/0012-modules-wire-themselves.md`):
   `<Module>Module.layer` is its dispatchers over the live adapters they
-  need. `src/interface/application-modules.ts` is the one list of modules
-  every root merges: `AppLive` merges its `layer`, and a root that runs the
-  engine (the daemon, `run`, `rehearse`, `cancel`) merges its `engine`, the
-  runs' dispatchers over state.db and the loaded flows, and provides the
-  engine (`EngineLive`) and its flows' runtime (`RuntimeLayer`) beneath it.
-  A service that differs between roots is the root's to provide. Shared
+  need, and `routes` the groups they answer, for the buses.
+  `src/interface/application-modules.ts` is the one list of modules, and
+  `src/interface/application-runtime.ts` the one place a runtime is
+  assembled (`docs/adr/0013-composition-roots.md`): `ApplicationLive` (every
+  module's `layer`, the merged `CommandBus` and `QueryBus`, the event bus),
+  which the CLI's `AppLive` adds its own services to, and `engineRuntime`,
+  which a root that runs the engine (the daemon, `run`, `rehearse`, `cancel`)
+  builds from its flows, its registry (`RunsModule.runtime`) and its engine
+  (`EngineLive`, `EngineAt`). A service that differs between roots is the
+  root's to provide. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -261,7 +265,7 @@ transitive reach), the coverage floors and the baseline.
   and the daemon's gate all go through. Enrolling, pausing, resuming and
   unenrolling a repo dispatch `RepoEnrolled`, `RepoPaused`, `RepoResumed` and
   `RepoUnenrolled` (`enrolled-repo.events.ts`) on the `EventBus` that
-  `main.ts`'s `AppLive` provides; a settings change dispatches nothing.
+  the shared runtime provides; a settings change dispatches nothing.
 - **Trust is its own module**, apart from the config a person edits:
   `TrustRecordRoot` (the tree of `.chernabog/` a person approved, in
   `trust.json` by slug) behind `TrustRecordsRepository`, and git behind
@@ -315,8 +319,8 @@ transitive reach), the coverage floors and the baseline.
   active run with `PollRunCommand`. Flows run through `FlowsClient`
   (trigger, item lookup, gate) and workflows through `WorkflowsClient`
   (execute, poll, resume, wake, note); the daemon and `chernabog run` build
-  both from the flows they loaded (`RuntimeLayer(registry)` in
-  `infrastructure/runtime/flow-runtime.ts`) and pass in what other modules know, such as whether the
+  both from the flows they loaded (`RunsModule.runtime(registry)`, the registry's
+  type in `infrastructure/runtime/flow-registry.ts`) and pass in what other modules know, such as whether the
   repo is paused.
 - **A start survives a crash.** A run is recorded, with the work item it is
   for, before its workflow executes, so a process killed in between leaves a
@@ -384,10 +388,18 @@ transitive reach), the coverage floors and the baseline.
   `templates.ts` and `effect-modules.ts`. It names effect, node, core, the
   kernel and itself, nothing else.
 - **The composition roots are adapters too**: the CLI's
-  `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
-  and the live view in `src/interface/tui/`. Each has its own allowlist in
-  `architecture.yaml`, which names, file by file, the legacy files it still
-  reads.
+  `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`,
+  the `*.main.ts` commands that build an engine, and the tests' harnesses.
+  Each has its own allowlist in `architecture.yaml`, which names, file by
+  file, the legacy files it still reads.
+- **Buses and Lives at the roots** (ADR 13). Only `application-runtime.ts`
+  (and tests) calls `makeEventBus`, `makeCommandBus`, `makeQueryBus` or
+  `mergeDispatchTables` (the `no-bus-factories` rule). A `*-live.ts` adapter
+  is named only by its module's `<module>.module.ts` and tests
+  (`lives-at-roots`); a helper adapters share goes in a file of its own. Each
+  bus is built with `declaredIn`, so a group nothing answers fails at
+  startup. A new message's schemas must cross JSON: each module's
+  `<module>.serializable.test.ts` checks its groups and events.
 - **A module publishes one surface** (`docs/adr/0007-module-gateways.md`):
   `<module>.platform.ts` re-exports, and only re-exports, what the inbound
   adapters name: its dispatchers, its `<Module>Module`, and the results,

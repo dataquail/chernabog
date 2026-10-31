@@ -2,7 +2,10 @@
 
 Status: accepted, 2026-10-31. Issue #286. Brings over the reference
 hexagon's wiring plane (`dataquail/functional-domain-driven-hexagon`,
-ADR 32).
+ADR 32). Decisions 1 and 4 are amended by [ADR 13](0013-composition-roots.md):
+the module record also carries its bus `routes`, the runs' flows' runtime is
+`RunsModule.runtime(registry)`, and every root assembles its runtime through
+`src/interface/application-runtime.ts`.
 
 ## Context
 
