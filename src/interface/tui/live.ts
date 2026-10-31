@@ -30,12 +30,55 @@ export type Fed = {
   readonly refetchIn: Option.Option<Duration.Duration>;
 };
 
-export const feed = (model: Model, live: Live, _message: Feed): Fed => ({
-  model,
-  live,
-  refetchIn: Option.none(),
-});
+// The status the daemon answered, over what the model showed. A daemon that
+// has restarted has picked up every flow turned on or off from here.
+export const withStatus = (model: Model, status: DaemonStatus): Model => {
+  const sameDaemon = Option.exists(
+    model.status,
+    (previous) => previous.startedAt === status.startedAt && previous.pid === status.pid,
+  );
 
-export const refetched = (live: Live): Live => live;
+  const pendingFlows = Option.getOrElse(
+    Option.liftPredicate(model.pendingFlows, () => sameDaemon),
+    () => ({}),
+  );
 
-export const reconnectDelay = (_attempt: number): Duration.Duration => Duration.zero;
+  return { ...model, status: Option.some(status), error: Option.none(), pendingFlows };
+};
+
+const unchanged = (model: Model, live: Live): Fed => ({ model, live, refetchIn: Option.none() });
+
+// What a message from the stream does. An event asks /status again
+// REFETCH_AT_MOST_EVERY from now, unless a refetch is already on its way,
+// which then answers for it too. A dropped stream keeps what the view knew
+// and says it is reconnecting.
+export const feed = (model: Model, live: Live, message: Feed): Fed => {
+  switch (message.kind) {
+    case "snapshot":
+      return unchanged({ ...withStatus(model, message.status), reconnecting: false }, live);
+    case "event":
+      if (live.refetching) {
+        return unchanged(model, live);
+      }
+
+      return { model, live: { refetching: true }, refetchIn: Option.some(REFETCH_AT_MOST_EVERY) };
+    case "dropped":
+      return unchanged(
+        {
+          ...model,
+          reconnecting: true,
+          error: Option.some(`${message.reason}. Reconnecting…`),
+        },
+        live,
+      );
+  }
+};
+
+// The refetch ran: the next event asks again.
+export const refetched = (_live: Live): Live => quiet;
+
+const BACKOFF = [Duration.seconds(1), Duration.seconds(2), Duration.seconds(4)];
+
+// How long to wait before the attempt'th reconnect in a row, from 0.
+export const reconnectDelay = (attempt: number): Duration.Duration =>
+  BACKOFF[attempt] ?? Duration.seconds(5);

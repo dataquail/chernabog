@@ -743,6 +743,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       `  daemon ${status.pid}, up ${ago(Option.some(status.startedAt), now).replace(" ago", "")}`,
       "dim",
     ),
+    ...onlyIf(model.reconnecting, [segment("  reconnecting to the daemon…", "yellow")]),
     ...onlyIf(status.busy > 0, [
       segment(`  ${status.busy} step${plural(status.busy)} executing`, "cyan"),
     ]),
