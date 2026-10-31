@@ -1,5 +1,8 @@
+import { EventBus } from "@effect-server-utils/cqrs";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import { EnrollmentEvents } from "../domain/enrolled-repo/enrolled-repo.events.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
@@ -15,6 +18,9 @@ export const unenrollRepoHandler = Effect.fn("unenrollRepoHandler")(function* (
   );
 
   yield* repository.remove(repo);
+  yield* (yield* EventBus).dispatch([
+    EnrollmentEvents.unenrolled(repo, DateTime.formatIso(yield* DateTime.now)),
+  ]);
 
   return EnrolledRepoSummary.make({
     name: EnrolledRepoRootOps.nameOf(repo),

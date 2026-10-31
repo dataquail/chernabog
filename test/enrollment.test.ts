@@ -1,3 +1,4 @@
+import { makeEventBus } from "@effect-server-utils/cqrs";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -147,7 +148,7 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
       Layer.mergeAll(
         layer,
         Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive),
+        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
         Layer.fresh(EnrollmentQueriesLive),
         Layer.fresh(MachineLayer),
         Layer.fresh(MachineQueriesLive),
@@ -164,7 +165,7 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
         Layer.fresh(MachineCommandsLive),
         Layer.fresh(MachineQueriesLive),
         Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive),
+        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
         Layer.fresh(EnrollmentQueriesLive),
       ),
     ),

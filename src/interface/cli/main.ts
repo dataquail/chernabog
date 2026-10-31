@@ -3,6 +3,7 @@
 
 import { describeError } from "@chernabog/core";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
+import { makeEventBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as Argument from "effect/cli/Argument";
 import * as Command from "effect/cli/Command";
@@ -468,7 +469,8 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-// One GitHubTokens for the process, so each persona's token is looked up once.
+// One GitHubTokens for the process, so each persona's token is looked up once,
+// and one bus that enrollment's and trust's commands dispatch their events on.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
   EnrollmentCommandsLive,
@@ -486,7 +488,7 @@ const AppLive = Layer.mergeAll(
   RehearsalsCommandsLive,
   RehearsalsQueriesLive,
 ).pipe(
-  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
+  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus())),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

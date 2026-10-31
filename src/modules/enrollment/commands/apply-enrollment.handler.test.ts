@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Checkout } from "../domain/enrolled-repo/checkout.value-object.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
@@ -36,6 +37,7 @@ const stored = EnrolledReposRepository.use((repository) => repository.findAll);
 
 const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArray<string> = []) =>
   Layer.mergeAll(
+    RecordedEvents,
     EnrolledReposRepositoryFake(repos),
     CheckoutsClientFake([here], present),
     ViewerClientFake(Option.some("carol")),
@@ -74,6 +76,10 @@ describe("applyEnrollmentHandler", () => {
       expect((yield* stored).map((repo) => [repo.path, repo.defaults])).toEqual([
         ["/src/demo", { flows: { implement: {} } }],
       ]);
+      const events = yield* DispatchedEvents;
+
+      expect(events.map((event) => event._tag)).toEqual(["RepoEnrolled"]);
+      expect(events[0]?.eventId).toStartWith("dataquail/demo:enrolled:");
     }).pipe(Effect.provide(machineOf([]))),
   );
 
@@ -139,6 +145,7 @@ describe("applyEnrollmentHandler", () => {
         "machine config has several GitHub personas (alice, bob); choose this repo's with --persona",
       );
       expect(yield* stored).toEqual([]);
+      expect(yield* DispatchedEvents).toEqual([]);
     }).pipe(Effect.provide(machineOf([]))),
   );
 });

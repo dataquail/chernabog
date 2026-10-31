@@ -1,5 +1,8 @@
+import { EventBus } from "@effect-server-utils/cqrs";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+import { EnrollmentEvents } from "../domain/enrolled-repo/enrolled-repo.events.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { type PauseRepoPayload, PauseState } from "./pause-repo.command.ts";
@@ -13,6 +16,9 @@ export const pauseRepoHandler = Effect.fn("pauseRepoHandler")(function* (cmd: Pa
 
   const paused = EnrolledRepoRootOps.pause(repo);
   yield* repository.save(paused);
+  yield* (yield* EventBus).dispatch(
+    EnrollmentEvents.pausedOrResumed(repo, paused, DateTime.formatIso(yield* DateTime.now)),
+  );
 
   return PauseState.make({
     name: EnrolledRepoRootOps.nameOf(paused),

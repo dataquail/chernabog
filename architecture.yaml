@@ -292,7 +292,8 @@ defs:
         A CLI composition root names the modules' layers and use-cases, the interface, the
         platform and the kernel, and the runtime and legacy files it still composes directly,
         each named here until it has a use-case.
-      external: [effect, "@effect/platform-bun"]
+      # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
+      external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
       allow:
         - "@/kernel/**"
         - "@/platform/**"

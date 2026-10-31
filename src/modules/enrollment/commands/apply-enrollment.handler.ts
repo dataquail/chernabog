@@ -1,8 +1,11 @@
+import { EventBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
+import { EnrollmentEvents } from "../domain/enrolled-repo/enrolled-repo.events.ts";
 import {
   EnrolledRepoRootOps,
   type PersonaEnrolment,
@@ -106,6 +109,9 @@ export const applyEnrollmentHandler = Effect.fn("applyEnrollmentHandler")(functi
 
   const enrolled = EnrolledRepoRootOps.enrolPersonas(repo, chosen, perPersona);
   yield* repository.save(enrolled);
+  yield* (yield* EventBus).dispatch([
+    EnrollmentEvents.enrolled(enrolled, added, DateTime.formatIso(yield* DateTime.now)),
+  ]);
 
   return Enrolled.make({
     added,

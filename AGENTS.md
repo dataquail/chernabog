@@ -215,7 +215,10 @@ transitive reach), the coverage floors and the baseline.
   kept, and written only when the entry changed) and whether it's paused
   (`paused.json`, by slug, so clones of one repo pause together). `pause` and
   `resume` are use-cases the CLI (`src/interface/cli/enrollment/`), the TUI
-  and the daemon's gate all go through.
+  and the daemon's gate all go through. Enrolling, pausing, resuming and
+  unenrolling a repo dispatch `RepoEnrolled`, `RepoPaused`, `RepoResumed` and
+  `RepoUnenrolled` (`enrolled-repo.events.ts`) on the `EventBus` that
+  `main.ts`'s `AppLive` provides; a settings change dispatches nothing.
 - **Trust is its own module**, apart from the config a person edits:
   `TrustRecordRoot` (the tree of `.chernabog/` a person approved, in
   `trust.json` by slug) behind `TrustRecordsRepository`, and git behind

@@ -43,7 +43,9 @@ const EnrollmentCommandHandlersLive = Command.handlersOf(enrollmentCommandGroup,
 }).pipe(Layer.provide(EnrollmentLayer));
 
 // The enrollment module's slice of the write side, which enroll, init, pause,
-// resume, unenroll, rehearse and the TUI dispatch.
+// resume, unenroll, rehearse and the TUI dispatch. Its commands say what
+// happened to a repo (RepoEnrolled, RepoPaused, RepoResumed, RepoUnenrolled)
+// on the EventBus the composition root provides.
 export class EnrollmentCommands extends Context.Service<
   EnrollmentCommands,
   Command.Dispatcher<typeof enrollmentCommandGroup>
