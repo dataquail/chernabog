@@ -44,12 +44,17 @@ import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
 import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
+import {
+  runEventSpanAttributes,
+  runFlowsCommandSpanAttributes,
+  runsCommandSpanAttributes,
+} from "./runs.event-span-attributes.ts";
 
 // Where the runs' commands say what happened to a run (RunStarted,
 // RunEnteredStep, RunNeedsAttention, RunFinished, PullRequestOpened), for the
 // dashboard's /events stream and the notifier to hear. One per process, beside
 // the state.db its commands write.
-export const RunEventsLive = makeEventBus();
+export const RunEventsLive = makeEventBus({ spanAttributes: runEventSpanAttributes });
 
 // What changes the runs' stores in state.db alone. Those stores share the SQL
 // client the workflow engine journals to, so the handlers take them from the
@@ -94,7 +99,7 @@ export class RunsCommands extends Context.Service<
 
 export const RunsCommandsLive = Layer.effect(
   RunsCommands,
-  Command.dispatcher(runsCommandGroup),
+  Command.dispatcher(runsCommandGroup, { spanAttributes: runsCommandSpanAttributes }),
 ).pipe(Layer.provideMerge(RunsCommandHandlersLive));
 
 // What changes the runs through the flows a process loaded and their
@@ -142,5 +147,5 @@ export class RunFlowsCommands extends Context.Service<
 
 export const RunFlowsCommandsLive = Layer.effect(
   RunFlowsCommands,
-  Command.dispatcher(runFlowsCommandGroup),
+  Command.dispatcher(runFlowsCommandGroup, { spanAttributes: runFlowsCommandSpanAttributes }),
 ).pipe(Layer.provideMerge(RunFlowsCommandHandlersLive));

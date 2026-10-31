@@ -611,7 +611,9 @@ tree:
           A module admits domain/ (its aggregates, their ops and errors, its domain services and
           its ports), commands/ and queries/ (what the adapters dispatch), infrastructure/ (the
           adapters behind its ports), one <module>.layer.ts that builds the module's live Layer,
-          and <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses.
+          <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
+          and <module>.event-span-attributes.ts, what its spans say about the messages and events
+          they carry.
         name: kebab-case
         children:
           # The module's slice of each bus: its messages grouped, each mapped to
@@ -627,6 +629,19 @@ tree:
                 library.
               external: [effect, "@effect-server-utils/cqrs"]
               allow: ["@/modules/{module}/**"]
+
+          # The span attribute extractors the module's dispatchers and event
+          # bus are built with, keyed by message and event tag.
+          "*.event-span-attributes.ts":
+            name: { like: "{module}" }
+            imports:
+              reset: true
+              message: >-
+                A module's span attributes read its messages and events: they name its own
+                module's domain, the kernel and the CQRS library's Event.spanAttributes.
+              external: ["@effect-server-utils/cqrs"]
+              allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
+          "*.event-span-attributes.test.ts": { use: module-test-file }
 
           "*.layer.ts":
             name: { like: "{module}" }
