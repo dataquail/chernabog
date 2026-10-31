@@ -193,6 +193,16 @@ const daemonDispatch = <M extends Command.Any>(
       return yield* Effect.fail(failure.value);
     }
 
+    // The route's own 404 always says why. A bare one is a daemon from before
+    // the route, between an upgrade and its restart: it can't dispatch the
+    // command, so it has refused nothing, and the command is dispatched here.
+    if (response.status === 404 && Option.isNone(refusal)) {
+      return yield* new DaemonUnavailable({
+        message:
+          "the running daemon predates this chernabog's /commands route; it restarts on this chernabog once its runs finish",
+      });
+    }
+
     return yield* refusedWith(response, refusal);
   });
 

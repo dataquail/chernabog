@@ -268,6 +268,19 @@ describe("POST /commands/:tag", () => {
   );
 });
 
+// A daemon from before /commands/:tag, on the home's socket: its router
+// answers any other path with a bare 404.
+const serveOld = Effect.gen(function* () {
+  const socket = homePaths((yield* Home).root).socket;
+
+  yield* Layer.build(
+    HttpRouter.serve(HttpRouter.add("GET", "/status", HttpServerResponse.text("old")), {
+      disableLogger: true,
+      disableListenLog: true,
+    }).pipe(Layer.provide(BunHttpServer.layer({ unix: socket }))),
+  );
+});
+
 describe("through the daemon first", () => {
   const here = (ran: { count: number }) =>
     Effect.sync(() => {
@@ -279,6 +292,28 @@ describe("through the daemon first", () => {
   effect("dispatches here only when no daemon answers", () =>
     Effect.gen(function* () {
       const ran = { count: 0 };
+
+      const paused = yield* throughDaemon(
+        DaemonEnrollmentCommands.PauseRepoCommand({ name: "demo" }),
+        here(ran),
+      );
+
+      expect(paused).toEqual(pauseState(true));
+      expect(ran.count).toBe(1);
+    }),
+  );
+
+  effect("dispatches here when the daemon predates /commands, whose 404 says nothing", () =>
+    Effect.gen(function* () {
+      yield* serveOld;
+      const ran = { count: 0 };
+
+      const failed = yield* Effect.flip(
+        DaemonEnrollmentCommands.PauseRepoCommand({ name: "demo" }),
+      );
+
+      expect(failed._tag).toBe("DaemonUnavailable");
+      expect(failed.message).toContain("predates");
 
       const paused = yield* throughDaemon(
         DaemonEnrollmentCommands.PauseRepoCommand({ name: "demo" }),

@@ -85,9 +85,16 @@ with a protocol type of its own beside the command's.
 - What a person changes from the CLI or the TUI is said on the daemon's bus
   while the daemon runs, so an event adapter or the dashboard's stream hears
   it without polling; with no daemon, nobody was listening anyway.
-- A daemon from before this route answers `/commands/:tag` with 404 and no
-  refusal of its own, which the CLI reports as refused rather than dispatching
-  here. The daemon restarts on a new chernabog once its runs finish, so the
-  window is an upgrade's.
+- A daemon from before this route answers `/commands/:tag` with the router's
+  bare 404. The route's own 404 always carries a `Refusal`. So the client
+  treats a 404 with no refusal as `DaemonUnavailable`: that daemon can't
+  dispatch the command and has refused nothing, so the command is dispatched
+  here, and the old daemon picks it up as it did before this route. That
+  covers the window between an upgrade and the old daemon's restart, which
+  waits for its runs to finish. A refusal from a current daemon is still never
+  retried here.
+- `DAEMON_COMMAND_LISTENERS` names the socket alone, and nothing reads it yet,
+  because the daemon has no other listener. The TCP listener #330 adds must
+  check it before it serves this route.
 - A command added to the allowlist needs no new route or protocol type, only
   its tag beside the others, and the check in decision 5.
