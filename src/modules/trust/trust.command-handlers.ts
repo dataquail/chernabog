@@ -1,7 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { ClaimReloadCommand } from "./commands/claim-reload.command.ts";
 import { claimReloadHandler } from "./commands/claim-reload.handler.ts";
 import { TrustRepoCommand } from "./commands/trust-repo.command.ts";
@@ -26,5 +28,7 @@ export class TrustCommands extends Context.Service<
 
 export const TrustCommandsLive = Layer.effect(
   TrustCommands,
-  Command.dispatcher(trustCommandGroup),
+  Effect.flatMap(ownUnitOfWork, (own) =>
+    Command.dispatcher(trustCommandGroup, { middleware: [own] }),
+  ),
 ).pipe(Layer.provideMerge(TrustCommandHandlersLive));

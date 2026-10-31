@@ -2,7 +2,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunStatus } from "./run.root.ts";
+import { RunStatus } from "./run-status.value-object.ts";
 
 // No run has this id.
 export class RunNotFound extends Schema.TaggedError<

@@ -63,20 +63,24 @@ deny:
   - match: "**/node_modules/yaml/**"
     except:
       - "**/infrastructure/repositories/**"
+      - "@/modules/*/queries/**"
       - "@/*.ts"
       - "test/**"
     message: >-
       The yaml package is how machine config is stored, not what it means. Only a repository
-      adapter (infrastructure/repositories/) reads or writes a YAML document; the domain and the
-      use cases see aggregates, never a Document.
+      adapter (infrastructure/repositories/) writes a YAML document, and only it and a query,
+      which reads its storage directly (docs/adr/0011-queries-read-their-storage.md), read one;
+      the domain and the commands see aggregates, never a Document.
   - match: "**/node_modules/@effect/sql*/**"
     except:
       - "@/modules/runs/infrastructure/**"
+      - "@/modules/runs/queries/**"
       - "test/**"
     message: >-
       SQLite is where runs and the workflow journal are stored. Only the runs module's
-      infrastructure and the engine name the SQL client; everything else reads and writes runs
-      through the Run repository.
+      infrastructure and the engine name the SQL client, and the runs module's queries, which
+      read state.db directly (docs/adr/0011-queries-read-their-storage.md); everything else
+      writes runs through the Run repository and reads them through a runs query.
   - match: "**/node_modules/@opentui/**"
     except: ["@/interface/tui/**"]
     message: >-
@@ -147,6 +151,9 @@ graph:
         - "@/modules/*/infrastructure/**"
         - "@/interface/**"
         - "@/platform/**"
+      # Where chernabog keeps its files, which a query reads directly
+      # (docs/adr/0011-queries-read-their-storage.md). It names no adapter.
+      toNot: ["@/platform/home.ts"]
     - name: packages-reach-no-daemon
       message: >-
         @chernabog/core and @chernabog/sdk are published and run inside a person's flows. A route
@@ -193,6 +200,78 @@ defs:
     declares: [function, variable]
     match: "*Handler"
     count: { min: 1, max: 1 }
+
+  # A handler's other value exports are named as it is (ADR-0024 in the
+  # hexagon; docs/adr/0009-the-hexagons-remaining-stereotypes.md).
+  camel-case-value-exports:
+    message: >-
+      A handler's value exports are camelCase: `{name}` is not. The handler is `<verbNoun>Handler`,
+      and a helper it publishes is named the same way.
+    declares: [function, variable]
+    convention: camelCase
+    probe:
+      source: "export const ZzHandler = () => 1;"
+
+  # The identifier carries its file's stereotype, so a call site says what it
+  # names: XRoot, XRootOps, XEntity, XId
+  # (docs/adr/0009-the-hexagons-remaining-stereotypes.md).
+  root-exports:
+    message: >-
+      An aggregate root file exports its root, named `<Aggregate>Root`: `{name}` is not. A status
+      or other value the root carries is a value object in its own *.value-object.ts.
+    declares: [function, class, variable, enum]
+    allow: ["*Root"]
+    probe:
+      source: "export const ZzStatus = 1;"
+
+  root-ops-exports:
+    message: >-
+      An aggregate's operations file exports one bag, `<Aggregate>RootOps`: `{name}` is not. An op
+      is a member of the bag, so a call site reads `XRootOps.op(…)`.
+    declares: [function, class, variable, enum]
+    allow: ["*RootOps"]
+    probe:
+      source: "export const zzOp = () => 1;"
+
+  aggregate-ops-exports:
+    message: >-
+      A constituent aggregate's operations file exports one bag, `<Name>AggregateOps`: `{name}` is
+      not.
+    declares: [function, class, variable, enum]
+    allow: ["*AggregateOps"]
+    probe:
+      source: "export const zzOp = () => 1;"
+
+  entity-exports:
+    message: >-
+      An entity file exports its entity, named `<Name>Entity`: `{name}` is not.
+    declares: [function, class, variable, enum]
+    allow: ["*Entity"]
+    probe:
+      source: "export class ZzStep {}"
+
+  id-exports:
+    message: >-
+      An id file's value exports are ids, named `<Name>Id`: `{name}` is not.
+    declares: [function, class, variable, enum]
+    allow: ["*Id"]
+    probe:
+      source: "export const ZzSlug = 1;"
+
+  # The constituent operations bags: invariant logic on an aggregate's
+  # internals, which only the domain composes, each owing a sibling test.
+  constituent-ops:
+    message: >-
+      A constituent operations bag (*.aggregate-ops.ts) is domain-private invariant logic; add the
+      sibling *.aggregate-ops.test.ts.
+    requires: ["{base}.test.ts"]
+    importedBy:
+      message: >-
+        A constituent operations bag encodes invariants on an aggregate's internals. It is
+        domain-private: only its module's own domain/ composes it, and nothing outside domain/
+        touches it. Change the aggregate through its root's ops: a command, query or adapter
+        reaching for a constituent op is bypassing the root.
+      allow: ["@/modules/*/domain/**", "**/*.test.ts"]
 
   # A port is a declaration: the service's shape and the Context.Service class
   # that names it. A value beside them is an implementation.
@@ -264,9 +343,24 @@ defs:
       reset: true
       message: >-
         A handler test names its module, the kernel and the shared test harness
-        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
-      external: [effect]
+        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes, in the
+        unit-of-work library's pass-through unit of work.
+      external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
+
+  # A mapper's test reads a stored row back as its aggregate, with no store.
+  mapper-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A mapper's test names its mapper, its module's domain, the kernel and effect. It runs no
+        store: a row is a value.
+      external: [effect]
+      allow:
+        - "@/kernel/**"
+        - "@/modules/{module}/domain/**"
+        - "@/modules/{module}/infrastructure/repositories/*.mapper.ts"
 
   # A query handler's test runs its subject over real storage: a scratch home or
   # checkout on the real filesystem, and a real SQLite state.db. Only the clients
@@ -305,6 +399,18 @@ defs:
         harness (test/*.ts) — the scratch home and fixtures.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
+
+  # state.db's transaction driver's test runs the unit-of-work library's unit
+  # of work over the driver, against a real SQLite database.
+  transaction-driver-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A transaction driver's test names its module, the shared test harness (test/*.ts) — a
+        scratch SQLite database — and the unit-of-work library it runs the driver under.
+      external: [effect, "@effect-server-utils/unit-of-work"]
+      allow: ["@/modules/{module}/**", "test/*.ts"]
 
   # A handler answers with its result; saying it, asking a person or ending
   # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
@@ -402,8 +508,9 @@ tree:
           message: >-
             A platform adapter wraps the machine. It names effect, node, the SDK (for its error
             descriptions and types), the kernel and its siblings, and chernabog's package.json for
-            its version; nothing of the modules, the interface or the legacy tier.
-          external: [effect]
+            its version; nothing of the modules, the interface or the legacy tier. The unit of
+            work the file stores' commands declare names the CQRS and unit-of-work libraries.
+          external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
           allow:
             - "node:**"
             - "~/core/src/**"
@@ -567,12 +674,13 @@ tree:
 
       "modules/{module}/":
         message: >-
-          A module admits domain/ (its aggregates, their ops and errors, and its ports),
-          commands/ and queries/ (what the adapters dispatch), infrastructure/ (the adapters
-          behind its ports), one <module>.layer.ts that builds the module's live Layer,
+          A module admits domain/ (its aggregates, their ops and errors, its domain services and
+          its ports), commands/ and queries/ (what the adapters dispatch), infrastructure/ (the
+          adapters behind its ports), one <module>.layer.ts that builds the module's live Layer,
           <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
-          <module>.platform.ts, the one surface it publishes to the composition roots, and,
-          when another module asks it or it asks another, <module>.exports.ts and
+          <module>.event-span-attributes.ts, what its spans say about the messages and events
+          they carry, <module>.platform.ts, the one surface it publishes to the composition
+          roots, and, when another module asks it or it asks another, <module>.exports.ts and
           <module>.imports.ts.
         name: kebab-case
         # A module is private except for what it publishes on purpose
@@ -731,10 +839,24 @@ tree:
               reset: true
               message: >-
                 A module's handler map registers its messages' handlers on the bus with the live
-                adapters they need, from its layer. It names its own module, effect and the CQRS
-                library.
-              external: [effect, "@effect-server-utils/cqrs"]
-              allow: ["@/modules/{module}/**"]
+                adapters they need, from its layer, and pins its dispatcher to the unit of work it
+                is built beside. It names its own module, effect, the CQRS and unit-of-work
+                libraries, and the platform's unit of work.
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+              allow: ["@/modules/{module}/**", "@/platform/unit-of-work.ts"]
+
+          # The span attribute extractors the module's dispatchers and event
+          # bus are built with, keyed by message and event tag.
+          "*.event-span-attributes.ts":
+            name: { like: "{module}" }
+            imports:
+              reset: true
+              message: >-
+                A module's span attributes read its messages and events: they name its own
+                module's domain, the kernel and the CQRS library's Event.spanAttributes.
+              external: ["@effect-server-utils/cqrs"]
+              allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
+          "*.event-span-attributes.test.ts": { use: module-test-file }
 
           "*.layer.ts":
             name: { like: "{module}" }
@@ -749,8 +871,9 @@ tree:
           "domain/":
             message: >-
               domain/ is a container: one folder per aggregate (named for it), holding its
-              repository port beside it, and ports/ for the clients the handlers depend on. No
-              files live directly in domain/.
+              repository port beside it, domain-services/ for domain logic no single aggregate
+              owns, and ports/ for the clients the handlers depend on. No files live directly in
+              domain/.
             members: [{ use: no-talking }]
             imports:
               reset: true
@@ -795,17 +918,38 @@ tree:
                           - "../../../infrastructure/clients/{base}-live.test.ts"
                         importedBy: { use: port-consumers }
 
-              # One folder per aggregate. ports/ above is matched first, so this
-              # catch-all is only ever an aggregate.
+              # Pure free-function bags for domain logic no single aggregate owns
+              # (the hexagon's ADR-0023): the one domain folder meant to compose
+              # several aggregates. Logic an aggregate owns stays on its ops.
+              "domain-services/":
+                message: >-
+                  domain/domain-services/ holds *.domain-service.ts files and their tests:
+                  stateless domain logic that no single aggregate owns, such as routing a
+                  trigger's items before any run exists. It is a pure free-function bag (like
+                  XRootOps, no Context.Service). Logic that reads or changes one aggregate
+                  belongs on that aggregate's *.root-ops.ts.
+                children:
+                  "*.domain-service.ts":
+                    message: >-
+                      A domain service is real domain logic, so it needs a sibling
+                      *.domain-service.test.ts.
+                    requires: ["{base}.test.ts"]
+                  "*.test.ts": { use: unit-test-file }
+
+              # One folder per aggregate. ports/ and domain-services/ above are
+              # matched first, so this catch-all is only ever an aggregate.
               "{aggregate}/":
                 message: >-
                   An aggregate's folder admits its root (*.root.ts, a Schema.Class value), its
-                  operations (*.root-ops.ts, pure functions returning Result), its id
-                  (*.id.ts), its value objects (*.value-object.ts), its errors (*.errors.ts),
-                  its domain events (*.events.ts, the Schemas its commands dispatch), its
-                  specifications (*.specification.ts, the predicates it is read by) and its
-                  repository port (*.repository.ts). A free-standing helper is an op that
-                  hasn't found its root.
+                  operations (*.root-ops.ts, pure functions returning Result), its entities
+                  (*.entity.ts, parts with an identity of their own), its constituent aggregates
+                  (*.aggregate.ts, parts that gather value objects but are not a consistency
+                  boundary) and their operations (*.aggregate-ops.ts), its id (*.id.ts), its value
+                  objects (*.value-object.ts), its errors (*.errors.ts), its domain events
+                  (*.events.ts, the Schemas its commands dispatch), its specifications
+                  (*.specification.ts, the predicates it is read by) and its repository port
+                  (*.repository.ts). A free-standing helper is an op that hasn't found its root,
+                  or a domain service.
                 imports:
                   message: >-
                     An aggregate sees itself, the kernel and effect. It does not reach another
@@ -815,8 +959,10 @@ tree:
                   # The folder is the aggregate, so its root carries the folder's name.
                   "*.root.ts":
                     name: { like: "{aggregate}" }
+                    surface: [{ use: root-exports }]
                   "*.root-ops.ts":
                     name: { like: "{aggregate}" }
+                    surface: [{ use: root-ops-exports }]
                     message: >-
                       An aggregate's operations own its invariants, so they carry the test
                       obligation: add the sibling *.root-ops.test.ts.
@@ -833,7 +979,14 @@ tree:
                         - "@/modules/*/queries/**"
                         - "**/*.repository-fake.ts"
                         - "**/*.test.ts"
-                  "*.id.ts": {}
+                  "*.entity.ts":
+                    surface: [{ use: entity-exports }]
+                  "*.aggregate.ts": {}
+                  "*.aggregate-ops.ts":
+                    use: constituent-ops
+                    surface: [{ use: aggregate-ops-exports }]
+                  "*.id.ts":
+                    surface: [{ use: id-exports }]
                   "*.value-object.ts": {}
                   "*.errors.ts": {}
                   "*.events.ts": {}
@@ -903,12 +1056,12 @@ tree:
             imports:
               reset: true
               message: >-
-                A command names effect, the CQRS library, the kernel, its own
+                A command names effect, the CQRS and unit-of-work libraries, the kernel, its own
                 module's domain (aggregates and ports) and its sibling commands. Never a query
                 (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
                 interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
@@ -919,7 +1072,7 @@ tree:
                 message: >-
                   A command handler owes a sibling *.handler.test.ts, run over its ports' fakes.
                 requires: ["{base}.test.ts"]
-                surface: [{ use: one-handler-export }]
+                surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.test.ts": { use: module-test-file }
 
           "queries/":
@@ -931,14 +1084,21 @@ tree:
             imports:
               reset: true
               message: >-
-                A query names effect, the CQRS library, the kernel, its own module's domain (to
-                read through its ports) and its sibling queries. Never a command,
-                never infrastructure, never interface/, never another module's internals.
+                A query reads its storage directly and answers with a read model it owns
+                (docs/adr/0011-queries-read-their-storage.md). It names effect (its FileSystem
+                among it), the CQRS library, the kernel, its sibling queries, its module's
+                storage/ (the file and row schemas it shares with the repositories), where
+                chernabog keeps its files (@/platform/home.ts), and its module's domain: its
+                branded ids and its client ports, and, until the `read-models` campaign is
+                done, the rest, which that campaign counts. Never a command, never
+                infrastructure, never interface/, never another module's internals.
               external: [effect, "@effect-server-utils/cqrs"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/queries/**"
+                - "@/modules/{module}/storage/**"
+                - "@/platform/home.ts"
             children:
               "*.query.ts": {}
               "*.handler.ts":
@@ -946,8 +1106,35 @@ tree:
                   A query handler owes a sibling *.handler.integration.test.ts, run over real
                   storage: a query reads what its repositories keep.
                 requires: ["{base}.integration.test.ts"]
-                surface: [{ use: one-handler-export }]
+                surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.integration.test.ts": { use: query-integration-test-file }
+
+          # How the module's stores keep things on disk, which its repositories
+          # write and its queries read directly: the hexagon's RowSchemas
+          # (docs/adr/0011-queries-read-their-storage.md). Only the format is
+          # shared; each side maps it to its own model.
+          "storage/":
+            message: >-
+              storage/ holds the module's storage formats, one <name>.schema.ts per file or table
+              its repositories write: the Schema of its rows or its document, and nothing else.
+              Turning one into an aggregate is the repository's mapper's job, and into a read
+              model the query's.
+            imports:
+              reset: true
+              message: >-
+                A storage format is a Schema over what's on disk: it names effect, never the
+                domain, whose meaning it doesn't carry.
+              external: [effect]
+              allow: []
+            importedBy:
+              message: >-
+                A storage format is shared by the module's repositories, which write it, and its
+                queries, which read it directly. Anything else reads the module through a query.
+              allow:
+                - "@/modules/*/infrastructure/repositories/**"
+                - "@/modules/*/queries/**"
+            children:
+              "*.schema.ts": {}
 
           "infrastructure/":
             message: >-
@@ -994,16 +1181,22 @@ tree:
                     machine config, JSON for runtime state. Until the machine
                     module owns machine config, a repository reads and edits it through the
                     legacy machinery in config.ts and repo-config.ts, and nothing else of the
-                    legacy tier.
-                  external: [yaml]
-                  allow: ["@/platform/**", "@/repo-config.ts"]
+                    legacy tier. state.db's transaction driver adapts the unit-of-work library's
+                    port to the SQL client the stores share.
+                  external: [yaml, "@effect-server-utils/unit-of-work"]
+                  allow: ["@/platform/**", "@/repo-config.ts", "@/modules/{module}/storage/**"]
                 children:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
+                  # The transaction a command's unit of work opens in the stores' database.
+                  "*.transaction-driver-live.ts": {}
+                  "*.transaction-driver-live.test.ts": { use: transaction-driver-test-file }
+                  "*.repository-live.test.ts": { use: adapter-test-file }
+                  "*.mapper.test.ts": { use: mapper-test-file }
                   # What a SQLite repository's reads compile their specification with.
                   "criteria-to-sql.ts": {}
-                  "*.test.ts": { use: adapter-test-file }
+                  "criteria-to-sql.test.ts": { use: adapter-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and
               # usage, and the agents and launchers sessions run in. Adapters
@@ -1148,6 +1341,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - "@effect-server-utils/cqrs"
+        - "@effect-server-utils/unit-of-work"
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
@@ -1238,3 +1432,85 @@ campaigns:
               source: 'import { recipesAccessQueries } from "../../enrollment.imports.ts";'
               edges:
                 "../../enrollment.imports.ts": src/modules/enrollment/enrollment.imports.ts
+
+  read-models:
+    title: Queries read their storage directly and never reach the domain
+    why: >-
+      A query that reads through a repository and asks a root's ops is bound to the write model:
+      every change to an aggregate ripples into what the CLI, the TUI and the daemon show, and a
+      read can't be shaped for the one who asks without reshaping the aggregate. A query reads its
+      storage itself and answers with a read model it owns, as queries-isolation holds in
+      dataquail/functional-domain-driven-hexagon (docs/adr/0011-queries-read-their-storage.md).
+    how: >-
+      Have the handler read the file with effect's FileSystem (and yaml for machine config) or, in
+      runs, state.db with SQL, decoding it with the Schema in the module's storage/ that its
+      repository writes with. Move the view it answers with, and its read-side errors, into its
+      *.query.ts; express any rule it asked a root's ops over the read model, or reclassify it as
+      ADR 11 records. Keep its integration test unchanged, then run `bun run architecture:clear`.
+    owner: "@zacharyweidenbach"
+    scope: ["src/modules/**"]
+    perimeter: { glob: "src/modules/*/" }
+    onTouch: ratchet
+    staleAfter: 14d
+    phases:
+      - id: isolate
+        intent: >-
+          Each query stops naming its module's roots, ops, repositories, specifications, value
+          objects, errors and events. A module or a handful of queries per pull request; when the
+          ledger is empty, the queries' allowlist drops the domain but for ids and client ports,
+          and port-consumers and root-ops' importedBy drop queries/.
+        objectives: [queries-reach-domain]
+
+    objectives:
+      queries-reach-domain:
+        intent: >-
+          A query that names the write model reads through it, so the aggregate's shape is what
+          every reader sees.
+        holdout: file
+        match:
+          all:
+            - path: { file: "/queries/[^/]*\\.ts$" }
+            - not:
+                path: { file: "\\.test\\.ts$" }
+            - any:
+                - imports: { resolves: "@/modules/*/domain/*/*.root.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.root-ops.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.repository.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.specification.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.value-object.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.errors.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.events.ts" }
+        probes:
+          fires:
+            - path: src/modules/trust/queries/find-trusted-tree.handler.ts
+              source: 'import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";'
+              edges:
+                "../domain/trust-record/trust-records.repository.ts": "src/modules/trust/domain/trust-record/trust-records.repository.ts"
+            - path: src/modules/runs/queries/list-recent-runs.query.ts
+              source: 'import { RunView } from "../domain/run/run-view.value-object.ts";'
+              edges:
+                "../domain/run/run-view.value-object.ts": "src/modules/runs/domain/run/run-view.value-object.ts"
+            - path: src/modules/runs/queries/resolve-run-id.handler.ts
+              source: 'import { RunRootOps } from "../domain/run/run.root-ops.ts";'
+              edges:
+                "../domain/run/run.root-ops.ts": "src/modules/runs/domain/run/run.root-ops.ts"
+          ignores:
+            - path: src/modules/trust/queries/check-trust.handler.ts
+              source: |-
+                import { ConfigTreeClient } from "../domain/ports/clients/config-tree.client.ts";
+                import { TrustFile } from "../storage/trust-file.schema.ts";
+              edges:
+                "../domain/ports/clients/config-tree.client.ts": "src/modules/trust/domain/ports/clients/config-tree.client.ts"
+                "../storage/trust-file.schema.ts": "src/modules/trust/storage/trust-file.schema.ts"
+            - path: src/modules/runs/queries/find-run.query.ts
+              source: 'import { RunId } from "../domain/run/run.id.ts";'
+              edges:
+                "../domain/run/run.id.ts": "src/modules/runs/domain/run/run.id.ts"
+            - path: src/modules/trust/queries/find-trusted-tree.handler.integration.test.ts
+              source: 'import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";'
+              edges:
+                "../domain/trust-record/trust-records.repository.ts": "src/modules/trust/domain/trust-record/trust-records.repository.ts"
+            - path: src/modules/runs/commands/finish-run.handler.ts
+              source: 'import { RunRootOps } from "../domain/run/run.root-ops.ts";'
+              edges:
+                "../domain/run/run.root-ops.ts": "src/modules/runs/domain/run/run.root-ops.ts"

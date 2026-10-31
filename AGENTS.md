@@ -188,19 +188,33 @@ policy, and [goodbones](https://dataquail.github.io/goodbones) enforces it: the
 transitive reach), the coverage floors and the baseline.
 
 - **The layout.** `src/modules/<module>/` holds `domain/<aggregate>/`
-  (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
-  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`, `.events.ts`, the
+  (`x.root.ts`, a `Schema.Class` exporting `XRoot`; `x.root-ops.ts`, the
+  `XRootOps` bag of pure functions returning `Result`; `.entity.ts`, an
+  `XEntity` with an identity inside the aggregate; `.aggregate.ts`, a
+  constituent aggregate, and its domain-private `.aggregate-ops.ts` bag;
+  `.id.ts` (`XId`), `.errors.ts`, `.value-object.ts`, `.events.ts`, the
   domain events its commands dispatch, `.specification.ts`, the predicates it
-  is read by, and `.repository.ts`, its repository port), `domain/ports/clients/`
-  (a port is a `Context.Service` and its shape, no values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
+  is read by, and `.repository.ts`, its repository port),
+  `domain/domain-services/` (`.domain-service.ts`, a pure free-function bag
+  for domain logic no single aggregate owns, such as `Routing`),
+  `domain/ports/clients/` (a port is a `Context.Service` and its shape, no
+  values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
   or `.query.ts` declaring it and its result schema, and a
-  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
-  `domain/ports/acl/` (what it asks another module), `infrastructure/{repositories,clients,acl}/`
-  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`,
+  `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`, its value
+  exports camelCase),
+  `domain/ports/acl/` (what it asks another module),
+  `infrastructure/{repositories,clients,acl}/`
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
+  format of a file or table its repositories write and its queries read),
+  `<module>.layer.ts`,
   `<module>.platform.ts` (what it publishes to the adapters), and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
-  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. The
+  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`, and
+  `<module>.event-span-attributes.ts`, what the dispatchers' and event bus's
+  spans say (the runs' name the run, its repo and its flow). Which of the
+  hexagon's stereotypes are here, and which aren't yet, is
+  `docs/adr/0009-the-hexagons-remaining-stereotypes.md`. The
   runs module's stores share the engine's SQL client, so `RunsQueries` is
   provided where state.db is (the daemon, a foreground run, `flowLayer`);
   `RunsCommands` and `RunFlowsQueries`, which also ask the loaded flows, by
@@ -212,11 +226,20 @@ transitive reach), the coverage floors and the baseline.
   module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders: a value object or event in the domain, which the
-  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters (and the legacy tier)
-  name `yaml`; only the runs module's infrastructure and the engine name SQL.
-- **Obligations.** A `.root-ops.ts`, a `.specification.ts` and a `.handler.ts`
-  each owe a sibling `.test.ts`; a repository or client port owes its
-  `-live.ts`, `-fake.ts` and `-live.test.ts`. The lint names what is missing.
+  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters, queries (and the legacy tier)
+  name `yaml`; only the runs module's infrastructure, its queries and the
+  engine name SQL.
+- **Queries read their storage directly** (ADR 11). A query reads its file
+  with `FileSystem` (or `state.db` with SQL, in runs), decodes it with the
+  Schema in its module's `storage/`, and answers with a read model declared in
+  its `*.query.ts`. From the domain it names only ids and client ports; never
+  a root, root-ops, repository, specification, value object, error or event.
+  A command never answers with a query's view: it returns less, and the
+  adapter asks the query.
+- **Obligations.** A `.root-ops.ts`, an `.aggregate-ops.ts`, a
+  `.domain-service.ts`, a `.specification.ts` and a `.handler.ts` each owe a
+  sibling `.test.ts`; a repository or client port owes its `-live.ts`,
+  `-fake.ts` and `-live.test.ts`. The lint names what is missing.
 - **Repositories speak the persistence vocabulary** (ADR 8). A port declares
   only `findOne`/`findMany`, each taking a `Specification` from the kernel
   kit (`src/kernel/specification.ts`), and the writes
@@ -254,7 +277,7 @@ transitive reach), the coverage floors and the baseline.
   its lifecycle in `RunRootOps`: it starts running, takes steps while it runs
   and ends exactly once, and a persona has one run in flight per flow and item.
   `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
-  `RunStepRoot` (`om_steps`) logs each step a run enters, which
+  `RunStepEntity` (`om_steps`, in `run/`) logs each step a run enters, which
   `EnterStepCommand` writes beside its current step; `SkipRoot` (`om_skips`)
   logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
   are the work items it named with core's `Subjects.name`, such as the pull
@@ -273,8 +296,9 @@ transitive reach), the coverage floors and the baseline.
   The flow rules the daemon decides by are the runs module's domain too, as
   value objects with their tests: `schedule/` (which cron expression a
   persona's flow ticks on, next ticks, active and quiet hours, and
-  `decideTick`/`freeSlots` in `tick.value-object.ts`), `routing/` (whose work
-  items a persona's flow starts here) and `usage/` (`decideLaunch`, the usage
+  `decideTick`/`freeSlots` in `tick.value-object.ts`), the `Routing` domain
+  service (`domain-services/routing.domain-service.ts`: whose work items a
+  persona's flow starts here) and `usage/` (`decideLaunch`, the usage
   gate's decision).
 - **A tick is a plan, applied by the daemon.** A use-case never calls another
   use-case (`architecture.yaml` forbids it); what several do together, the
@@ -332,6 +356,18 @@ transitive reach), the coverage floors and the baseline.
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
+- **Every command declares its unit of work** (ADR 10): its handler pipes
+  `withUnitOfWork` at the end of its `Effect.fn`, and demotes
+  `PersistenceUnavailable` to a defect beside it. The runs' commands open a
+  `state.db` transaction (`RunsUnitOfWorkLive`, provided by `StateAt`);
+  the file stores' a scope that opens nothing (`FileStoresUnitOfWork`, in
+  `AppLive`), and each dispatcher pins its own (`ownUnitOfWork`). A
+  transaction holds `state.db`'s one connection, which the engine's journal
+  waits on: never call GitHub, git, a launcher or the engine inside one. A
+  command that calls out declares the boundary around its `state.db` reads
+  and writes only. Events are dispatched inside the unit of work; a
+  dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`
+  with `RecordedEvents` (`test/events.ts`).
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
@@ -396,9 +432,11 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
   under way. `repo-config` counts the files under `src/` that still import
   `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
-  (ADR 9), and the file is deleted when none is left. `cqrs`, which moved
-  every use-case to a command or query and had the commands dispatch their
-  domain events, is retired (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
+  (ADR 9), and the file is deleted when none is left. `read-models` (ADR 11,
+  #283) counts the queries still reaching their module's domain. `cqrs`, which
+  moved every use-case to a command or query and had the commands dispatch
+  their domain events, is retired (#273). A campaign's ledger in
+  `.architecture-campaigns/` lists what is
   left and may only shrink. A change that moves one runs
   `bun run architecture:clear` and commits the ledger with it;
   `bun run architecture:campaigns` shows what's left. Always clear through

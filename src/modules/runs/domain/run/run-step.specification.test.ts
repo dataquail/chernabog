@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { Criteria } from "../../../../kernel/specification.ts";
-import { RunStepRoot } from "./run-step.root.ts";
+import { RunStepEntity } from "./run-step.entity.ts";
 import { RunStepSpecifications } from "./run-step.specification.ts";
 
 const step = (runId: string, name: string) =>
-  RunStepRoot.make({ runId: RunId.make(runId), step: name, enteredAt: "2026-10-20T00:00:00Z" });
+  RunStepEntity.make({ runId: RunId.make(runId), step: name, enteredAt: "2026-10-20T00:00:00Z" });
 
 describe("RunStepSpecifications", () => {
   test("forRun holds of one run's steps, as an Eq on runId", () => {

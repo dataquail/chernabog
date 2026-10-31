@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -112,7 +113,7 @@ describe("planTickHandler", () => {
         expect(keys(plan.signalled)).toEqual(["pr-73", "pr-74"]);
         expect(named.start).toEqual([]);
       }).pipe(
-        Effect.provide(
+        Effect.provide([
           runtime(fakeEngine(), {
             flows: {
               "demo/pr-reviews": {
@@ -125,7 +126,8 @@ describe("planTickHandler", () => {
               },
             },
           }),
-        ),
+          PassThroughUnitOfWork,
+        ]),
       ),
   );
 
@@ -140,11 +142,12 @@ describe("planTickHandler", () => {
       );
       expect(plan.skipped).toEqual(Option.none());
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(fakeEngine(), {
           flows: { "demo/review": { items: [item("pr-1", { title: "One" }), item("pr-2")] } },
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -171,7 +174,7 @@ describe("planTickHandler", () => {
           (yield* reasons).some((reason) => reason.startsWith("at the concurrency limit")),
         ).toBe(true);
       }).pipe(
-        Effect.provide(
+        Effect.provide([
           runtime(fakeEngine(), {
             runs: [run("busy", { itemKey: "pr-9" })],
             flows: {
@@ -180,7 +183,8 @@ describe("planTickHandler", () => {
               "demo/logged-out": { items: [], notReady: "bob is unavailable; run gh auth login" },
             },
           }),
-        ),
+          PassThroughUnitOfWork,
+        ]),
       ),
   );
 
@@ -190,7 +194,7 @@ describe("planTickHandler", () => {
 
       expect(keys(plan.start)).toEqual(["pr-1"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(fakeEngine(), {
           runs: [run("parked", { itemKey: "pr-9" })],
           waits: [
@@ -204,7 +208,8 @@ describe("planTickHandler", () => {
           ],
           flows: { "demo/review": { items: [item("pr-1")] } },
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -223,7 +228,7 @@ describe("planTickHandler", () => {
       const named = yield* planning(review, { ...open, item: Option.some("pr-1") });
       expect(keys(named.start)).toEqual(["pr-1"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(fakeEngine(), {
           runs: [run("busy", { flow: "busy" })],
           flows: {
@@ -231,7 +236,8 @@ describe("planTickHandler", () => {
             "demo/busy": { items: [item("pr-1")] },
           },
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -246,11 +252,12 @@ describe("planTickHandler", () => {
 
       expect(keys(plan.start)).toEqual(["issue-7"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(fakeEngine(), {
           flows: { "demo/review": { items: [], findable: [item("issue-7")] } },
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -284,7 +291,7 @@ describe("planTickHandler", () => {
         expect(named.start).toEqual([]);
         expect(named.skipped).toEqual(Option.some("issue-14 is held: waits on #12, #13"));
       }).pipe(
-        Effect.provide(
+        Effect.provide([
           runtime(fakeEngine(), {
             flows: {
               "demo/implement": {
@@ -296,7 +303,8 @@ describe("planTickHandler", () => {
               },
             },
           }),
-        ),
+          PassThroughUnitOfWork,
+        ]),
       ),
   );
 
@@ -313,7 +321,7 @@ describe("planTickHandler", () => {
         ),
       ).toEqual(["demo/review pr-1"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         Layer.mergeAll(
           RunsRepositoryFake([]),
           RunWaitsRepositoryFake([]),
@@ -334,7 +342,8 @@ describe("planTickHandler", () => {
           }),
           WorkflowsClientFake(fakeEngine()),
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

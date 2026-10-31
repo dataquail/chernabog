@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -35,7 +36,7 @@ describe("cleanUpScenarioHandler", () => {
         "delete branch auto/issue-12",
         "deleted issue #12",
       ]);
-    }).pipe(Effect.provide(github.layer)),
+    }).pipe(Effect.provide([github.layer, PassThroughUnitOfWork])),
   );
 
   const refusing = scratchRepoFake({ failOn: "delete branch rehearsal/fix" });
@@ -51,6 +52,6 @@ describe("cleanUpScenarioHandler", () => {
 
       expect(cleaned.failed).toEqual(["branch rehearsal/fix: failed: delete branch rehearsal/fix"]);
       expect(cleaned.removed).toContain("closed issue #12");
-    }).pipe(Effect.provide(refusing.layer)),
+    }).pipe(Effect.provide([refusing.layer, PassThroughUnitOfWork])),
   );
 });

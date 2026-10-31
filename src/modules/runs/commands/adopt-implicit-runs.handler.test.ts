@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -44,13 +45,14 @@ describe("adoptImplicitRunsHandler", () => {
       expect(yield* personaOf("other-repo")).toEqual(Option.none());
       expect(yield* personaOf("as-bob")).toEqual(Option.some("bob"));
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         RunsRepositoryFake([
           run("implicit", { persona: Option.none() }),
           run("other-repo", { persona: Option.none(), repo: "other" }),
           run("as-bob", { itemKey: "pr-2" }),
         ]),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

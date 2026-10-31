@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -9,6 +10,6 @@ describe("stopServiceHandler", () => {
   effect("stops the daemon, leaving it installed", () =>
     Effect.gen(function* () {
       expect((yield* stopServiceHandler()).installed).toBe(true);
-    }).pipe(Effect.provide(ServiceManagerClientFake(true))),
+    }).pipe(Effect.provide([ServiceManagerClientFake(true), PassThroughUnitOfWork])),
   );
 });

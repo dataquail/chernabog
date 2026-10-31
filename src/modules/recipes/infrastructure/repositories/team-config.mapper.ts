@@ -4,7 +4,8 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { TeamConfigRoot, TeamFlowConfig } from "../../domain/team-config/team-config.root.ts";
+import { TeamConfigRoot } from "../../domain/team-config/team-config.root.ts";
+import { TeamFlowConfig } from "../../domain/team-config/team-flow-config.value-object.ts";
 
 const Strings = Schema.Array(Schema.String);
 

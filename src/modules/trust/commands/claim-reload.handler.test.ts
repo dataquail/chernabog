@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -20,6 +21,6 @@ describe("claimReloadHandler", () => {
       expect(yield* first(other, "a")).toBe(true);
       expect(yield* first(demo, "b")).toBe(true);
       expect(yield* first(demo, "a")).toBe(true);
-    }).pipe(Effect.provide(ReloadsRepositoryFake([]))),
+    }).pipe(Effect.provide([ReloadsRepositoryFake([]), PassThroughUnitOfWork])),
   );
 });

@@ -35,6 +35,11 @@ import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
 import { ReadRunLogQuery } from "./queries/read-run-log.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
 import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
+import {
+  runFlowsQuerySpanAttributes,
+  runLogsQuerySpanAttributes,
+  runsQuerySpanAttributes,
+} from "./runs.event-span-attributes.ts";
 
 // What the runs' stores in state.db answer. Those stores share the SQL client
 // the workflow engine journals to, so the handlers take them from the
@@ -75,9 +80,10 @@ export class RunsQueries extends Context.Service<
   Query.Dispatcher<typeof runsQueryGroup>
 >()("RunsQueries") {}
 
-export const RunsQueriesLive = Layer.effect(RunsQueries, Query.dispatcher(runsQueryGroup)).pipe(
-  Layer.provideMerge(RunsQueryHandlersLive),
-);
+export const RunsQueriesLive = Layer.effect(
+  RunsQueries,
+  Query.dispatcher(runsQueryGroup, { spanAttributes: runsQuerySpanAttributes }),
+).pipe(Layer.provideMerge(RunsQueryHandlersLive));
 
 // What the flows a process loaded answer about its runs, over the stores in
 // state.db. The flows are built inside the engine, over those stores, so
@@ -98,7 +104,7 @@ export class RunFlowsQueries extends Context.Service<
 
 export const RunFlowsQueriesLive = Layer.effect(
   RunFlowsQueries,
-  Query.dispatcher(runFlowsQueryGroup),
+  Query.dispatcher(runFlowsQueryGroup, { spanAttributes: runFlowsQuerySpanAttributes }),
 ).pipe(Layer.provideMerge(RunFlowsQueryHandlersLive));
 
 // What the runs' logs answer, which any process may read: the CLI reads them
@@ -122,7 +128,7 @@ export class RunLogsQueries extends Context.Service<
 // test's in memory.
 export const RunLogsQueriesOver = Layer.effect(
   RunLogsQueries,
-  Query.dispatcher(runLogsQueryGroup),
+  Query.dispatcher(runLogsQueryGroup, { spanAttributes: runLogsQuerySpanAttributes }),
 ).pipe(Layer.provideMerge(RunLogsQueryHandlersLive));
 
 export const RunLogsQueriesLive = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientLive));

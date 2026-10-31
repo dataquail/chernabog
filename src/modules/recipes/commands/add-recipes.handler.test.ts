@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -40,7 +41,7 @@ describe("addRecipesHandler", () => {
             "prompts/review.md": { from: "@chernabog/recipes/review", version: "0.1.0" },
           },
         });
-      }).pipe(Effect.provide(repo.layer)),
+      }).pipe(Effect.provide([repo.layer, PassThroughUnitOfWork])),
   );
 
   const fresh = recipeRepo({});
@@ -62,6 +63,6 @@ describe("addRecipesHandler", () => {
         expect(unknown._tag).toBe("UnknownRecipe");
         expect(missing.message).toContain("@globex/recipes isn't installed in .chernabog/");
         expect(fresh.stored).toEqual(before);
-      }).pipe(Effect.provide(fresh.layer)),
+      }).pipe(Effect.provide([fresh.layer, PassThroughUnitOfWork])),
   );
 });

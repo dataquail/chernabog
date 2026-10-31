@@ -1,6 +1,7 @@
 import { type RunId } from "../../../../kernel/run-id.id.ts";
 import { Spec, type Specification } from "../../../../kernel/specification.ts";
-import { type MarkerStatus, type RunMarkerRoot } from "./run-marker.root.ts";
+import { type MarkerStatus } from "./marker-status.value-object.ts";
+import { type RunMarkerRoot } from "./run-marker.root.ts";
 
 // Every marker of every run.
 const all: Specification<RunMarkerRoot> = Spec.all<RunMarkerRoot>();

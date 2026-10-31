@@ -9,7 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
-import { RunHistory } from "../../src/modules/runs/domain/run-step/run-history.value-object.ts";
+import { RunHistory } from "../../src/modules/runs/domain/run/run-history.value-object.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 describe("the daemon", () => {
