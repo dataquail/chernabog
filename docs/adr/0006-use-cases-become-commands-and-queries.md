@@ -10,7 +10,7 @@ its settled question on folder names. Amends decision 1 of
 [ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md).
 Decision 5 is superseded by [ADR 10](0010-commands-declare-their-unit-of-work.md):
 every command declares its unit of work. Decision 3 is superseded by
-[ADR 13](0013-composition-roots.md): one merged `CommandBus` and `QueryBus`
+[ADR 15](0015-composition-roots.md): one merged `CommandBus` and `QueryBus`
 over every module, beside the per-module dispatchers. Its consequence that a query may call
 its aggregate's predicates is superseded by
 [ADR 11](0011-queries-read-their-storage.md).

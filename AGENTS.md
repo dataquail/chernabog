@@ -220,7 +220,7 @@ transitive reach), the coverage floors and the baseline.
   need, and `routes` the groups they answer, for the buses.
   `src/interface/application-modules.ts` is the one list of modules, and
   `src/interface/application-runtime.ts` the one place a runtime is
-  assembled (`docs/adr/0013-composition-roots.md`): `ApplicationLive` (every
+  assembled (`docs/adr/0015-composition-roots.md`): `ApplicationLive` (every
   module's `layer`, the merged `CommandBus` and `QueryBus`, the event bus),
   which the CLI's `AppLive` adds its own services to, and `engineRuntime`,
   which a root that runs the engine (the daemon, `run`, `rehearse`, `cancel`)
@@ -421,7 +421,7 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   the `*.main.ts` commands that build an engine, and the tests' harnesses.
   Each has its own allowlist in `architecture.yaml`, which names, file by
   file, the legacy files it still reads.
-- **Buses and Lives at the roots** (ADR 13). Only `application-runtime.ts`
+- **Buses and Lives at the roots** (ADR 15). Only `application-runtime.ts`
   (and tests) calls `makeEventBus`, `makeCommandBus`, `makeQueryBus` or
   `mergeDispatchTables` (the `no-bus-factories` rule). A `*-live.ts` adapter
   is named only by its module's `<module>.module.ts` and tests

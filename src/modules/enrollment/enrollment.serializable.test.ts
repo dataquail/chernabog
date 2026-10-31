@@ -13,7 +13,7 @@ import { enrollmentCommandGroup } from "./enrollment.command-handlers.ts";
 import { enrollmentQueryGroup } from "./enrollment.query-handlers.ts";
 
 // The daemon's protocol and the dashboard carry the enrollment module's messages and events
-// over JSON, so each must survive a round trip through it (ADR 13).
+// over JSON, so each must survive a round trip through it (ADR 15).
 describe("the enrollment module's messages and events", () => {
   effect("all cross JSON", () =>
     Effect.gen(function* () {

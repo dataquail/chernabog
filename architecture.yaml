@@ -452,14 +452,14 @@ defs:
       name: writeFileString
 
   # The bus factories are called only where a runtime is assembled
-  # (docs/adr/0013-composition-roots.md). A path rule can't say so: every
+  # (docs/adr/0015-composition-roots.md). A path rule can't say so: every
   # importer of the package barrel resolves to the same file, and the bus's
   # Tag, which any adapter may name, comes from it too. So the rule reads the
   # call.
   no-bus-factories:
     message: >-
       `{name}` builds a bus, which only the shared runtime does
-      (src/interface/application-runtime.ts, docs/adr/0013-composition-roots.md). A module
+      (src/interface/application-runtime.ts, docs/adr/0015-composition-roots.md). A module
       publishes its dispatchers and the groups they answer in its <module>.module.ts `routes`; an
       adapter dispatches through a module's dispatcher, or yields CommandBus, QueryBus or EventBus
       from its context.
@@ -470,7 +470,7 @@ defs:
       name: makeEventBus
 
   # A live adapter is chosen where a module is wired, never where it is used
-  # (docs/adr/0013-composition-roots.md): its module's <module>.module.ts names
+  # (docs/adr/0015-composition-roots.md): its module's <module>.module.ts names
   # it, and the tests. The roots reach a module only through its platform
   # surface, which publishes the module's Layers, so they name no Live either.
   lives-at-roots:
@@ -589,7 +589,7 @@ tree:
           in the module, under interface/.
         name: kebab-case
         children:
-          # The composition roots (docs/adr/0013-composition-roots.md):
+          # The composition roots (docs/adr/0015-composition-roots.md):
           #   - the CLI's cli/main.ts, whose AppLive every CLI command and the
           #     daemon run under;
           #   - the daemon's daemon/daemon.server.ts, and the *.main.ts commands
@@ -618,7 +618,7 @@ tree:
                 - "@/interface/application-runtime.ts"
                 - "test/**"
 
-          # The shared runtime slice (ADR 13, the reference hexagon's
+          # The shared runtime slice (ADR 15, the reference hexagon's
           # cqrs-runtime.ts): the modules, the one event bus, the merged
           # CommandBus and QueryBus, and the engine a root runs, assembled once.
           # The only file that calls a bus factory.
@@ -787,7 +787,7 @@ tree:
           <module>.imports.ts.
         name: kebab-case
         # No module builds a bus: the shared runtime does, over each module's
-        # routes (docs/adr/0013-composition-roots.md).
+        # routes (docs/adr/0015-composition-roots.md).
         members: [{ use: no-bus-factories }]
         # A module is private except for what it publishes on purpose
         # (docs/adr/0007-module-gateways.md).
@@ -978,7 +978,7 @@ tree:
           "*.event-span-attributes.test.ts": { use: module-test-file }
 
           # Every message and event the module declares crosses JSON, which the
-          # daemon's protocol and the dashboard carry them in (ADR 13).
+          # daemon's protocol and the dashboard carry them in (ADR 15).
           "*.serializable.test.ts":
             name: { like: "{module}" }
             use: serializable-test-file

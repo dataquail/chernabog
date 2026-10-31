@@ -66,7 +66,7 @@ const outcomeOf = <A, E>(exit: Exit.Exit<A, E>) =>
   Exit.match(exit, { onSuccess: () => "built", onFailure: (cause) => Cause.pretty(cause) });
 
 // The shared runtime builds one CommandBus and one QueryBus over every
-// module's dispatchers (ADR 13), and refuses to build one it can't route.
+// module's dispatchers (ADR 15), and refuses to build one it can't route.
 describe("the application's buses", () => {
   effect("route every group a module declares, each once", () =>
     Effect.gen(function* () {

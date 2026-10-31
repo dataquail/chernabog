@@ -19,7 +19,7 @@ import {
 } from "./runs.query-handlers.ts";
 
 // The daemon's protocol and the dashboard carry the runs module's messages and events
-// over JSON, so each must survive a round trip through it (ADR 13).
+// over JSON, so each must survive a round trip through it (ADR 15).
 describe("the runs module's messages and events", () => {
   effect("all cross JSON", () =>
     Effect.gen(function* () {

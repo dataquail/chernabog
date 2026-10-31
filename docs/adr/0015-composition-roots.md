@@ -1,4 +1,4 @@
-# 13. Lives and bus factories are named only at the composition roots
+# 15. Lives and bus factories are named only at the composition roots
 
 Status: accepted, 2026-10-31. Issue #287. Brings over the reference hexagon's
 composition-root restrictions (`dataquail/functional-domain-driven-hexagon`'s

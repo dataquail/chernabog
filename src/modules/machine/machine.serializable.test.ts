@@ -7,7 +7,7 @@ import { machineCommandGroup } from "./machine.command-handlers.ts";
 import { machineQueryGroup } from "./machine.query-handlers.ts";
 
 // The daemon's protocol and the dashboard carry the machine module's messages
-// over JSON, so each must survive a round trip through it (ADR 13).
+// over JSON, so each must survive a round trip through it (ADR 15).
 describe("the machine module's messages", () => {
   effect("all cross JSON", () =>
     Effect.gen(function* () {

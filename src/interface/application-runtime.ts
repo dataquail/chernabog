@@ -1,4 +1,4 @@
-// The runtime every composition root assembles, in one place (ADR 13): the
+// The runtime every composition root assembles, in one place (ADR 15): the
 // modules from the one list (application-modules.ts), the one event bus their
 // commands dispatch on, and the merged CommandBus and QueryBus over every
 // module's dispatchers; and, for a root that runs the workflow engine, the

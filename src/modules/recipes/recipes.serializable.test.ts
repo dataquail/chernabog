@@ -7,7 +7,7 @@ import { recipesCommandGroup } from "./recipes.command-handlers.ts";
 import { recipesQueryGroup } from "./recipes.query-handlers.ts";
 
 // The daemon's protocol and the dashboard carry the recipes module's messages
-// over JSON, so each must survive a round trip through it (ADR 13).
+// over JSON, so each must survive a round trip through it (ADR 15).
 describe("the recipes module's messages", () => {
   effect("all cross JSON", () =>
     Effect.gen(function* () {
