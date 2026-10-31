@@ -8,6 +8,7 @@
 import { Event } from "@effect-server-utils/cqrs";
 
 import { type RunId } from "../../kernel/run-id.id.ts";
+import { type RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 import {
   type PullRequestOpened,
   type RunEnteredStep,
@@ -78,6 +79,7 @@ export const runEventSpanAttributes = Event.spanAttributes({
   RunEnteredStep: (event: RunEnteredStep) => ofRun(event),
   RunNeedsAttention: (event: RunNeedsAttention) => ofRun(event),
   RunFinished: (event: RunFinished) => ofRun(event),
+  RunMarkersReleased: (event: RunMarkersReleased) => ofRun(event),
   PullRequestOpened: (event: PullRequestOpened) => ({
     "run.id": event.runId,
     "run.repo": event.repo,

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
 import { RunId } from "../../kernel/run-id.id.ts";
+import { MarkerReleases } from "./domain/run-marker/run-marker-view.value-object.ts";
+import { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 import { RunEvents } from "./domain/run/run.events.ts";
 import { runFlowsCommandGroup, runsCommandGroup } from "./runs.command-handlers.ts";
 import {
@@ -80,6 +82,15 @@ describe("the runs' span attributes", () => {
     expect(
       runEventSpanAttributes.RunEnteredStep(
         RunEvents.enteredStep(runId, "ci", "2026-10-31T00:01:00.000Z"),
+      ),
+    ).toEqual({ "run.id": runId });
+    expect(
+      runEventSpanAttributes.RunMarkersReleased(
+        RunMarkersReleased.make({
+          eventId: `${runId}:markers`,
+          runId,
+          releases: MarkerReleases.make({ released: [], kept: [], failed: [], unreleasable: [] }),
+        }),
       ),
     ).toEqual({ "run.id": runId });
   });
