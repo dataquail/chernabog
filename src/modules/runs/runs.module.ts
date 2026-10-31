@@ -1,6 +1,7 @@
 import * as Layer from "effect/Layer";
 
 import { GitHubApi } from "../../platform/github-api.ts";
+import { RunTriggersLive } from "./event-handlers/triggers/run.triggers.ts";
 import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.repository-live.ts";
@@ -52,4 +53,10 @@ export const RunsModule = {
     RunFlowsCommandsLive,
     RunFlowsQueriesLive,
   ).pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunLogsClientLive, RunsUnitOfWorkLive))),
+
+  // What reacts to the runs' events, subscribed on the bus the root provides:
+  // an ended run's markers released at once. It reacts to what the engine's
+  // commands dispatch, over the same stores and the flows the process loaded,
+  // so it is provided at the engine's depth.
+  events: RunTriggersLive.pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunsUnitOfWorkLive))),
 };

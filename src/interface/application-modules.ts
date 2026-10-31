@@ -17,7 +17,9 @@ import { TrustModule } from "../modules/trust/trust.platform.ts";
 // what every process has, beneath the CLI's commands. `engine` is what a
 // process that runs the workflow engine adds, inside that engine: it needs the
 // engine over state.db and the runtime of the flows the process loaded, which
-// differ between roots, so each root provides them.
+// differ between roots, so each root provides them. The modules' event
+// subscriptions (`events`) react to what the engine's commands dispatch, so
+// they join it there, on the bus the root provides.
 export const applicationModules = {
   layer: Layer.mergeAll(
     EnrollmentModule.layer,
@@ -27,5 +29,5 @@ export const applicationModules = {
     RunsModule.layer,
     TrustModule.layer,
   ),
-  engine: RunsModule.engine,
+  engine: Layer.mergeAll(RunsModule.engine, RunsModule.events),
 };

@@ -1,3 +1,4 @@
+import { Event } from "@effect-server-utils/cqrs";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -9,13 +10,14 @@ import { itemTarget } from "./work-item.value-object.ts";
 // dashboard's /events stream, the notifier. A resumed workflow re-executes
 // code, so a command dispatches one only after the write that makes it true,
 // and each carries an id from its run and the step it is about: a repeat has
-// the same id, for a consumer to drop.
+// the same id, for a consumer to drop. Each is declared for the bus
+// (Event.make), whose subscriptions route on its tag and seal it by its schema.
 
 // The id of an event about `step` of a run, such as "started" or "step:ci".
 export const runEventId = (runId: RunId, step: string) => `${runId}:${step}`;
 
 // A run recorded as starting, before its workflow does.
-export const RunStarted = Schema.TaggedStruct("RunStarted", {
+export const RunStarted = Event.make("RunStarted", {
   eventId: Schema.String,
   runId: RunId,
   repo: Schema.String,
@@ -29,7 +31,7 @@ export type RunStarted = typeof RunStarted.Type;
 
 // A run entering a step, the first time it does: a resumed run that enters a
 // step again tells no one.
-export const RunEnteredStep = Schema.TaggedStruct("RunEnteredStep", {
+export const RunEnteredStep = Event.make("RunEnteredStep", {
   eventId: Schema.String,
   runId: RunId,
   step: Schema.String,
@@ -40,7 +42,7 @@ export type RunEnteredStep = typeof RunEnteredStep.Type;
 
 // A run parked on a signal, such as a push to a review's pull request: it
 // waits on someone, and holds no slot until it wakes.
-export const RunNeedsAttention = Schema.TaggedStruct("RunNeedsAttention", {
+export const RunNeedsAttention = Event.make("RunNeedsAttention", {
   eventId: Schema.String,
   runId: RunId,
   signal: Schema.String,
@@ -51,7 +53,7 @@ export const RunNeedsAttention = Schema.TaggedStruct("RunNeedsAttention", {
 export type RunNeedsAttention = typeof RunNeedsAttention.Type;
 
 // A run ending, once, however it ended.
-export const RunFinished = Schema.TaggedStruct("RunFinished", {
+export const RunFinished = Event.make("RunFinished", {
   eventId: Schema.String,
   runId: RunId,
   status: RunStatus,
@@ -62,7 +64,7 @@ export const RunFinished = Schema.TaggedStruct("RunFinished", {
 export type RunFinished = typeof RunFinished.Type;
 
 // A run naming a pull request it opened as its subject, the first time it does.
-export const PullRequestOpened = Schema.TaggedStruct("PullRequestOpened", {
+export const PullRequestOpened = Event.make("PullRequestOpened", {
   eventId: Schema.String,
   runId: RunId,
   repo: Schema.String,

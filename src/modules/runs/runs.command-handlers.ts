@@ -1,10 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
-import { makeUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
+import { ownUnitOfWork, UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
 import { AdoptImplicitRunsCommand } from "./commands/adopt-implicit-runs.command.ts";
 import { adoptImplicitRunsHandler } from "./commands/adopt-implicit-runs.handler.ts";
 import { AttachExecutionCommand } from "./commands/attach-execution.command.ts";
@@ -57,7 +56,10 @@ import {
 // command writes there commits together or not at all, and what it dispatches
 // on the bus is delivered once it has. The runs module provides it to its
 // dispatchers, which run their commands in it (docs/adr/0010-commands-declare-their-unit-of-work.md).
-export const RunsUnitOfWorkLive = makeUnitOfWork().pipe(
+// Its after-commit reactions run outside any transaction, since a transaction
+// holds state.db's one connection and a reaction reaches GitHub, git or the
+// engine (docs/adr/0013-event-handlers.md).
+export const RunsUnitOfWorkLive = UnitOfWorkReactingAfterCommit.pipe(
   Layer.provide(StateDbTransactionDriverLive),
 );
 

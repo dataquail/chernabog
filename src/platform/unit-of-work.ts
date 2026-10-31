@@ -58,3 +58,7 @@ export const ownUnitOfWork = Effect.map(
     (payload) =>
       Effect.provideContext(dispatch(payload), own),
 );
+
+// The unit of work for a store whose transactions hold the one connection
+// every other statement waits on: not yet different.
+export const UnitOfWorkReactingAfterCommit = makeUnitOfWork();

@@ -170,11 +170,11 @@ export type CancelRequest = typeof CancelRequest.Type;
 // runs' commands dispatch it. A resumed run can say one again, under the same
 // eventId, for a client to drop.
 export const DaemonEvent = Schema.Union([
-  RunStarted,
-  RunEnteredStep,
-  RunNeedsAttention,
-  RunFinished,
-  PullRequestOpened,
+  RunStarted.schema,
+  RunEnteredStep.schema,
+  RunNeedsAttention.schema,
+  RunFinished.schema,
+  PullRequestOpened.schema,
 ]);
 
 export type DaemonEvent = typeof DaemonEvent.Type;
