@@ -5,13 +5,13 @@ import * as Layer from "effect/Layer";
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunStepRoot } from "../../domain/run-step/run-step.root.ts";
-import { RunStepSpecifications } from "../../domain/run-step/run-step.specification.ts";
-import { RunStepsRepository } from "../../domain/run-step/run-steps.repository.ts";
+import { RunStepEntity } from "../../domain/run/run-step.entity.ts";
+import { RunStepSpecifications } from "../../domain/run/run-step.specification.ts";
+import { RunStepsRepository } from "../../domain/run/run-steps.repository.ts";
 import { RunStepsRepositoryLive } from "./run-steps.repository-live.ts";
 
 const step = (runId: string, name: string, enteredAt: string) =>
-  RunStepRoot.make({ runId: RunId.make(runId), step: name, enteredAt });
+  RunStepEntity.make({ runId: RunId.make(runId), step: name, enteredAt });
 
 describe("RunStepsRepositoryLive", () => {
   effect("keeps each step a run enters, in the order it entered them, repeats included", () =>

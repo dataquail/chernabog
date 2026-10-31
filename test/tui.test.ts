@@ -14,11 +14,8 @@ import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { HoldView } from "../src/modules/runs/domain/holds/hold-view.value-object.ts";
+import { RunHistory, RunStep } from "../src/modules/runs/domain/run/run-history.value-object.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
-import {
-  RunHistory,
-  RunStep,
-} from "../src/modules/runs/domain/run-step/run-history.value-object.ts";
 import { RunWait } from "../src/modules/runs/domain/run-wait/run-wait-view.value-object.ts";
 import { SkipView } from "../src/modules/runs/domain/skip/skip-view.value-object.ts";
 import { attachCommand } from "../src/modules/runs/infrastructure/runtime/agents.ts";

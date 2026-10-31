@@ -3,7 +3,8 @@ import * as Option from "effect/Option";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { Criteria, Spec } from "../../../../kernel/specification.ts";
-import { type MarkerStatus, RunMarkerRoot } from "./run-marker.root.ts";
+import { type MarkerStatus } from "./marker-status.value-object.ts";
+import { RunMarkerRoot } from "./run-marker.root.ts";
 import { RunMarkerSpecifications } from "./run-marker.specification.ts";
 
 const marker = (runId: string, name: string, status: MarkerStatus) =>

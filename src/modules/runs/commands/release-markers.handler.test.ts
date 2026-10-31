@@ -7,7 +7,8 @@ import type * as Schema from "effect/Schema";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunRoot, type RunStatus } from "../domain/run/run.root.ts";
+import { RunRoot } from "../domain/run/run.root.ts";
+import { type RunStatus } from "../domain/run/run-status.value-object.ts";
 import { type RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
