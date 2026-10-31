@@ -1,0 +1,22 @@
+// The dashboard runs in a browser: it is typed against the DOM and writes JSX
+// for React, which the root tsconfig.json never sees, so DOM types never reach
+// src/. It decodes with the daemon's protocol, so that file and what it names
+// are checked here too, under these options. Bun's types are for its tests.
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["dom", "esnext"],
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["bun"],
+    // The daemon's protocol, which the dashboard decodes with. A path, not a
+    // package: it is the daemon's own file, bundled from this checkout.
+    "paths": { "#daemon/protocol": ["../../src/interface/daemon/daemon.protocol.ts"] }
+  },
+  "include": ["src"]
+}
