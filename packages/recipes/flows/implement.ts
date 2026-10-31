@@ -41,7 +41,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // Issues labelled auto:eligible, then ones labelled auto:ship, the automated
-// path, whose pull request chernabog merges once it's approved. Oldest first;
+// path, whose pull request chernabog merges once it's approved. Oldest first,
+// but a post-merge follow-up, the fix for red CI on the base, before the rest;
 // with a board, only those whose Status is its readyStatus. An issue another
 // open issue blocks waits for it, as the tasks of a plan's epic do, and a task
 // of an epic that an epic run holds is that run's to start; both are held,
@@ -57,9 +58,10 @@ const trigger = Effect.gen(function* () {
     (issue) => !eligible.some((queued) => queued.number === issue.number),
   );
 
+  // A follow-up fixing red CI on the base goes first, ahead of other work.
   return [
-    ...(yield* Implement.queued(eligible)),
-    ...(yield* Implement.queued(shipping, Option.some(labelNames.ship))),
+    ...(yield* Implement.queued(Implement.followUpsFirst(eligible))),
+    ...(yield* Implement.queued(Implement.followUpsFirst(shipping), Option.some(labelNames.ship))),
     ...(yield* Implement.readied),
   ];
 }).pipe(reportAs("trigger"));

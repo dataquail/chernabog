@@ -24,3 +24,7 @@ Bakes `.chernabog/flows/re-review.ts`, and `.chernabog/prompts/review.md` for a 
 5. An approval merges on the automated path, as `review` does: a merge GitHub refuses because the pull request conflicts with its base is left for [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/), and any other refusal goes to a person. Changes requested again hand the pull request to a person.
 
 A repo that baked `re-review` before this keeps handing a conflicting approval to a person until it brings the change over: `chernabog recipes diff re-review` shows it.
+
+## Holding merges on a red base
+
+With `holdMergesOnBrokenBase: true` in `config.yaml`'s `settings:`, an approved `auto:ship` pull request whose base branch's CI is red is held rather than merged or handed to a person. `PullRequest.holdWhileBaseRed` comments on the pull request, with a marker naming the run, and parks the run on a `base-green` signal; its step shows `holding merge: CI failing on main`. The trigger reports `base-green` (`PullRequest.baseTurnedGreen`) once the newest completed push runs on the base are no longer red, and the run looks again and merges with `PullRequest.merge`'s usual checks. The fix for a [`post-merge`](/chernabog/recipes/post-merge/) follow-up is never held. `mergeHoldTimeout` caps the wait; past it, the pull request goes to a person. A repo that baked this recipe before brings the change over with `chernabog recipes update`.
