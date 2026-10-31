@@ -64,13 +64,23 @@ workflow and waiting for it would deadlock on the journal it can't write.
    daemon's sweep, which retries a release that failed and is backing off and
    releases what a lost reaction left held, as the hexagon keeps
    `sweepOutbox`. A durable outbox in `state.db` is for when a reaction must
-   not be lost.
+   not be lost. The reaction and the sweep never take the same marker: an
+   ending releases only markers nothing has tried
+   (`RunMarkerRootOps.untried`), and the sweep takes a marker only once a
+   release of it has failed, or once 15 minutes (`SWEEP_GRACE`, longer than
+   a reaction's releases take) have passed since its run ended
+   (`RunMarkerRootOps.leftToSweep`). That holds across processes too, such as
+   a cancel from the CLI while the daemon sweeps.
 6. **An ended run's markers are released on `RunFinished`**
    (`release-run-markers.handler.ts`): newest first, keeping those its
-   ending's `keepOn` names, each due marker once. Every ending, polled,
+   ending's `keepOn` names, each untried marker once. Every ending, polled,
    cancelled, superseded, lost or abandoned by recovery, releases at once. A
    foreground `run` no longer releases after its poll loop; it lists what its
-   run left unreleased.
+   run left unreleased. The reaction says what it did in `RunMarkersReleased`
+   (released, kept, failed, unreleasable), once per run, and the daemon's
+   `marker-releases.event-adapter.ts` logs it with the lines it logs the
+   sweep's: each release, a failure the first time, and a marker a person
+   must take off.
 7. **The daemon learns of an ending from `RunFinished`.** An inbound event
    adapter, `src/interface/daemon/run-endings.event-adapter.ts`, subscribes
    the daemon before anything at startup can end a run, reads the run with
