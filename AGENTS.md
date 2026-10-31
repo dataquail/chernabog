@@ -196,7 +196,8 @@ transitive reach), the coverage floors and the baseline.
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
   `infrastructure/{repositories,clients}/`
-  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`, and
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`,
+  `<module>.platform.ts` (what it publishes to the adapters), and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
   (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`. The
@@ -211,7 +212,7 @@ transitive reach), the coverage floors and the baseline.
   module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders: a value object or event in the domain, which the
-  adapters and the daemon's protocol name directly. Only repository adapters (and the legacy tier)
+  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
 - **Obligations.** A `.root-ops.ts` and a `.handler.ts` each owe a sibling
   `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
@@ -336,8 +337,19 @@ transitive reach), the coverage floors and the baseline.
 - **The composition roots are adapters too**: the CLI's
   `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
   and the live view in `src/interface/tui/`. Each has its own allowlist in
-  `architecture.yaml`, which names, file by file, the legacy runtime it still
-  drives; moving a file into a module takes it off those lists.
+  `architecture.yaml`, which names, file by file, the legacy files it still
+  reads.
+- **A module publishes one surface** (`docs/adr/0007-module-gateways.md`):
+  `<module>.platform.ts` re-exports, and only re-exports, what the inbound
+  adapters name: its dispatchers and their Layers, its Layers, and the
+  results, value objects and events its messages answer with. Nothing
+  outside `src/modules/` but tests (and the legacy `repo-config.ts`) reaches
+  past it, and only `src/interface/` names it. To use something new from a
+  module, re-export it there. The runs module's runtime the roots still
+  compose is published from `runs.platform.ts` for now, in a section marked
+  interim. A module names another only through its `*.platform.ts`,
+  `*.exports.ts` or `*.module.ts`; the last two arrive with their first
+  consumer.
 - **The runtime** a run's flow executes in is the runs module's
   `infrastructure/runtime/`: the workflow engine and step runner, core's
   services over GitHub, git, worktrees and usage, and the agents and
