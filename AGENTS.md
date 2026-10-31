@@ -196,7 +196,9 @@ transitive reach), the coverage floors and the baseline.
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
   `infrastructure/{repositories,clients}/`
-  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`,
+  (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
+  format of a file or table its repositories write and its queries read),
+  `<module>.layer.ts`,
   `<module>.platform.ts` (what it publishes to the adapters), and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
@@ -212,8 +214,16 @@ transitive reach), the coverage floors and the baseline.
   module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders: a value object or event in the domain, which the
-  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters (and the legacy tier)
-  name `yaml`; only the runs module's infrastructure and the engine name SQL.
+  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters, queries (and the legacy tier)
+  name `yaml`; only the runs module's infrastructure, its queries and the
+  engine name SQL.
+- **Queries read their storage directly** (ADR 9). A query reads its file
+  with `FileSystem` (or `state.db` with SQL, in runs), decodes it with the
+  Schema in its module's `storage/`, and answers with a read model declared in
+  its `*.query.ts`. From the domain it names only ids and client ports; never
+  a root, root-ops, repository, specification, value object, error or event.
+  A command never answers with a query's view: it returns less, and the
+  adapter asks the query.
 - **Obligations.** A `.root-ops.ts`, a `.specification.ts` and a `.handler.ts`
   each owe a sibling `.test.ts`; a repository or client port owes its
   `-live.ts`, `-fake.ts` and `-live.test.ts`. The lint names what is missing.
@@ -382,7 +392,8 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way, none at present: `cqrs`, which moved every use-case to a command
+  under way. `read-models` (ADR 9, #283) counts the queries still reaching
+  their module's domain. `cqrs`, which moved every use-case to a command
   or query and had the commands dispatch their domain events, is retired
   (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
   left and may only shrink. A change that moves one runs
