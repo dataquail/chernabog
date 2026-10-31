@@ -31,7 +31,6 @@ import {
   RunFlowsCommands,
   runLogFile,
   RunsQueries,
-  RuntimeLayer,
   type RunView,
   servicesFrom,
   unreportedItem,
@@ -41,7 +40,7 @@ import { ConfigError } from "../../platform/config-error.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { type EffectiveRepo, findEnrolled, loadMachineConfig } from "../../repo-config.ts";
-import { applicationModules } from "../application-modules.ts";
+import { engineRuntime } from "../application-runtime.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -337,21 +336,15 @@ export const runInForeground = (options: RunOptions) =>
 
     // The modules a process with an engine adds, and the one flow it runs, over
     // this run's own runtime and the engine in this machine's state.db.
-    const modules = applicationModules.engine;
-
     const engine = yield* Layer.build(
-      Layer.mergeAll(
-        modules,
-        flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provide(modules)),
-      ).pipe(
-        Layer.provide(
-          RuntimeLayer({
-            handles: [handle],
-            services: (_repo, one) => servicesFrom(contexts)(one),
-          }),
-        ),
-        Layer.provideMerge(EngineLive),
-      ),
+      engineRuntime({
+        registry: {
+          handles: [handle],
+          services: (_repo, one) => servicesFrom(contexts)(one),
+        },
+        flows: [flowLayer(handle, servicesFrom(contexts))],
+        engine: EngineLive,
+      }),
     );
 
     return yield* Effect.provideContext(program, engine);

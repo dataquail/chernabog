@@ -350,6 +350,18 @@ defs:
       external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
+  # A module's serializability test checks its groups and events, which it
+  # names, through the shared harness (test/serializable.ts).
+  serializable-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A module's serializability test names its module's groups and events, effect and the
+        shared test harness (test/*.ts), which runs the CQRS library's checks over them.
+      external: [effect]
+      allow: ["@/modules/{module}/**", "test/*.ts"]
+
   # A mapper's test reads a stored row back as its aggregate, with no store.
   mapper-test-file:
     surface: [{ use: test-exports-nothing }]
@@ -439,6 +451,41 @@ defs:
       source: 'export const zz = (fs: Fs) => fs.writeFileString("state.json", "{}");'
       name: writeFileString
 
+  # The bus factories are called only where a runtime is assembled
+  # (docs/adr/0015-composition-roots.md). A path rule can't say so: every
+  # importer of the package barrel resolves to the same file, and the bus's
+  # Tag, which any adapter may name, comes from it too. So the rule reads the
+  # call.
+  no-bus-factories:
+    message: >-
+      `{name}` builds a bus, which only the shared runtime does
+      (src/interface/application-runtime.ts, docs/adr/0015-composition-roots.md). A module
+      publishes its dispatchers and the groups they answer in its <module>.module.ts `routes`; an
+      adapter dispatches through a module's dispatcher, or yields CommandBus, QueryBus or EventBus
+      from its context.
+    subject: calls
+    match: [makeEventBus, makeCommandBus, makeQueryBus, mergeDispatchTables]
+    probe:
+      source: "export const zzBus = makeEventBus();"
+      name: makeEventBus
+
+  # A live adapter is chosen where a module is wired, never where it is used
+  # (docs/adr/0015-composition-roots.md): a client's, a repository's, a
+  # transaction driver's or an ACL's *-live.ts is named by its module's
+  # <module>.module.ts, and the tests. The roots reach a module only through its platform
+  # surface, which publishes the module's Layers, so they name no Live either.
+  lives-at-roots:
+    message: >-
+      A live adapter (a client's, a repository's, a transaction driver's or an ACL's
+      *-live.ts) is named only by its module's <module>.module.ts, which wires it, and by tests.
+      Code that uses the adapter asks for its port; a helper several adapters share belongs in a
+      file of its own beside them, not in a Live.
+    # Another module's module.ts is already kept out by the module-wide barrel rule.
+    allow:
+      - "@/modules/*/*.module.ts"
+      - "**/*.test.ts"
+      - "test/**"
+
   # What a composition root of the CLI may name: each module's platform surface
   # (its layers, buses and value objects, and for runs the runtime it still
   # publishes), the interface, the platform and the kernel, and, file by file,
@@ -447,14 +494,13 @@ defs:
     imports:
       reset: true
       message: >-
-        A CLI composition root merges the modules through src/interface/application-modules.ts
+        A CLI composition root assembles its runtime through src/interface/application-runtime.ts
         and names each module through its <module>.platform.ts (its buses and the value objects
         and events those answer with, and the runtime the runs module still publishes) and its
         CLI endpoints through interface/cli/<module>.endpoint-groups.ts, the interface, the
         platform and the kernel, and the legacy files it still composes directly, each named here
         until a module owns it.
-      # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
-      external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
+      external: [effect, "@effect/platform-bun"]
       allow:
         - "@/kernel/**"
         - "@/platform/**"
@@ -508,6 +554,7 @@ tree:
           (flow-loader.ts), its tree on the base branch (config-snapshot.ts), its pins
           (flow-deps.ts), and the scaffold and recipes this binary bundles (templates.ts).
         name: kebab-case
+        members: [{ use: no-bus-factories }]
         imports:
           reset: true
           message: >-
@@ -544,9 +591,17 @@ tree:
           in the module, under interface/.
         name: kebab-case
         children:
-          # The one list of modules (ADR 12), which every composition root merges
-          # beneath its own services: the CLI's, the daemon's, the *.main.ts
-          # roots' and the tests'. A module added here is wired everywhere.
+          # The composition roots (docs/adr/0015-composition-roots.md):
+          #   - the CLI's cli/main.ts, whose AppLive every CLI command and the
+          #     daemon run under;
+          #   - the daemon's daemon/daemon.server.ts, and the *.main.ts commands
+          #     that build an engine of their own (run, rehearse, cancel);
+          #   - the tests' harnesses (test/sdk-fakes.ts, test/events.ts).
+          # Each assembles its runtime from the shared slice below, the only file
+          # that calls a bus factory, over the one list of modules.
+
+          # The one list of modules (ADR 12), which the shared runtime merges. A
+          # module added here is wired everywhere.
           "application-modules.ts":
             imports:
               reset: true
@@ -558,16 +613,43 @@ tree:
               allow: ["@/modules/*/*.platform.ts"]
             importedBy:
               message: >-
-                The list of modules is for the composition roots: the CLI's main.ts, a
-                *.main.ts that composes its own engine, the daemon's server and the tests. An
-                inbound adapter dispatches a module's commands and queries instead.
+                The list of modules is for the shared runtime (application-runtime.ts), which
+                assembles every root's, and the tests. A root assembles its runtime through that
+                slice; an inbound adapter dispatches a module's commands and queries instead.
+              allow:
+                - "@/interface/application-runtime.ts"
+                - "test/**"
+
+          # The shared runtime slice (ADR 15, the reference hexagon's
+          # cqrs-runtime.ts): the modules, the one event bus, the merged
+          # CommandBus and QueryBus, and the engine a root runs, assembled once.
+          # The only file that calls a bus factory.
+          "application-runtime.ts":
+            imports:
+              reset: true
+              message: >-
+                The shared runtime merges the list of modules and builds the buses over them. It
+                names effect, the CQRS library, the list of modules, each module's
+                <module>.platform.ts (for what the runs' events say on their spans, and the
+                registry of a root's flows) and the platform's unit of work.
+              external: [effect, "@effect-server-utils/cqrs"]
+              allow:
+                - "@/interface/application-modules.ts"
+                - "@/modules/*/*.platform.ts"
+                - "@/platform/unit-of-work.ts"
+            importedBy:
+              message: >-
+                The shared runtime is for the composition roots: the CLI's main.ts, a *.main.ts
+                that builds its own engine, the daemon's server and the tests. An inbound adapter
+                dispatches a module's commands and queries instead.
               allow:
                 - "@/interface/cli/main.ts"
                 - "@/interface/cli/*.main.ts"
                 - "@/interface/daemon/*.server.ts"
-                - "test/**"
+                - "**/*.test.ts"
 
           "cli/":
+            members: [{ use: no-bus-factories }]
             message: >-
               cli/ holds the CLI's composition roots and the framework every module's endpoints
               share: the arguments (*.arguments.ts), the output (*.output.ts) and the prompts
@@ -595,6 +677,7 @@ tree:
               "*.prompt.ts": {}
 
           "tui/":
+            members: [{ use: no-bus-factories }]
             message: >-
               tui/ is the live view chernabog opens in a terminal: the daemon's status, drawn
               with @opentui, and the settings a person changes from it; and `status`, the same
@@ -622,6 +705,7 @@ tree:
               "*.ts": {}
 
           "daemon/":
+            members: [{ use: no-bus-factories }]
             message: >-
               daemon/ is the daemon's adapter: the protocol it speaks over its local socket
               (*.protocol.ts), and the client the CLI and TUI ask it with (*.client.ts).
@@ -657,7 +741,7 @@ tree:
                     - "@/kernel/**"
                     - "@/platform/**"
                     - "@/interface/daemon/**"
-                    - "@/interface/application-modules.ts"
+                    - "@/interface/application-runtime.ts"
                     - "@/modules/*/*.platform.ts"
                     - "@/modules/*/interface/daemon/*.endpoint-groups.ts"
                     - "~/core/src/**"
@@ -704,6 +788,9 @@ tree:
           that serve it alone), and, when another module asks it or it asks another, <module>.exports.ts and
           <module>.imports.ts.
         name: kebab-case
+        # No module builds a bus: the shared runtime does, over each module's
+        # routes (docs/adr/0015-composition-roots.md).
+        members: [{ use: no-bus-factories }]
         # A module is private except for what it publishes on purpose
         # (docs/adr/0007-module-gateways.md).
         importedBy:
@@ -872,11 +959,11 @@ tree:
               reset: true
               message: >-
                 A module's handler map binds its messages to their handlers on the bus, and
-                provides them nothing: <module>.module.ts provides the live adapters they need. It
-                pins its dispatcher to the unit of work it is built beside. It names its own
-                module, effect, the CQRS and unit-of-work libraries, and the platform's unit of
-                work.
-              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+                provides them nothing: <module>.module.ts provides the live adapters they need, and
+                the unit of work its commands declare. It pins its dispatcher to the unit of work
+                it is built beside. It names its own module, effect, the CQRS library, and the
+                platform's unit of work.
+              external: [effect, "@effect-server-utils/cqrs"]
               allow: ["@/modules/{module}/**", "@/platform/unit-of-work.ts"]
 
           # The span attribute extractors the module's dispatchers and event
@@ -891,6 +978,12 @@ tree:
               external: ["@effect-server-utils/cqrs"]
               allow: ["@/kernel/**", "@/modules/{module}/domain/**"]
           "*.event-span-attributes.test.ts": { use: module-test-file }
+
+          # Every message and event the module declares crosses JSON, which the
+          # daemon's protocol and the dashboard carry them in (ADR 15).
+          "*.serializable.test.ts":
+            name: { like: "{module}" }
+            use: serializable-test-file
 
           # The wiring plane (ADR 12): the module assembled, as a record of Layers.
           # It provides the modules it needs with Layer.provide, which keeps
@@ -1302,7 +1395,7 @@ tree:
                     - "@/modules/{module}/domain/*/*.value-object.ts"
                     - "@/modules/{module}/domain/*/*.errors.ts"
                 children:
-                  "*.acl-live.ts": {}
+                  "*.acl-live.ts": { importedBy: { use: lives-at-roots } }
                   "*.acl-fake.ts": {}
                   "*.test.ts": { use: acl-test-file }
               "repositories/":
@@ -1317,11 +1410,13 @@ tree:
                   external: [yaml, "@effect-server-utils/unit-of-work"]
                   allow: ["@/platform/**", "@/repo-config.ts", "@/modules/{module}/storage/**"]
                 children:
-                  "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
+                  "*.repository-live.ts":
+                    members: [{ use: no-in-place-writes }]
+                    importedBy: { use: lives-at-roots }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
                   # The transaction a command's unit of work opens in the stores' database.
-                  "*.transaction-driver-live.ts": {}
+                  "*.transaction-driver-live.ts": { importedBy: { use: lives-at-roots } }
                   "*.transaction-driver-live.test.ts": { use: transaction-driver-test-file }
                   "*.repository-live.test.ts": { use: adapter-test-file }
                   "*.mapper.test.ts": { use: mapper-test-file }
@@ -1374,7 +1469,7 @@ tree:
                     - "@/repo-config.ts"
                     - "~/core/src/**"
                 children:
-                  "*.client-live.ts": {}
+                  "*.client-live.ts": { importedBy: { use: lives-at-roots } }
                   "*.client-fake.ts": {}
                   "*.test.ts":
                     surface: [{ use: test-exports-nothing }]

@@ -19,14 +19,13 @@ import {
   openRepo,
   type PersonaContext,
   RunFlowsCommands,
-  RuntimeLayer,
   servicesFrom,
 } from "../../modules/runs/runs.platform.ts";
 import { userName } from "../../platform/environment.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { loadMachineConfig, repoNameOf } from "../../repo-config.ts";
-import { applicationModules } from "../application-modules.ts";
+import { engineRuntime } from "../application-runtime.ts";
 import { daemonCancel } from "../daemon/daemon.client.ts";
 
 export type CancelArgs = {
@@ -89,17 +88,17 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
     // The modules a process with an engine adds, over a runtime that loads no
     // flow and the engine in this machine's state.db.
     const runtime = yield* Layer.build(
-      applicationModules.engine.pipe(
-        Layer.provide(
-          RuntimeLayer({
-            handles: [],
-            services: (repoName, persona) =>
-              Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
-                servicesFrom(personas)(persona),
-              ),
-          }),
-        ),
-        Layer.provideMerge(EngineLive),
+      engineRuntime({
+        registry: {
+          handles: [],
+          services: (repoName, persona) =>
+            Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
+              servicesFrom(personas)(persona),
+            ),
+        },
+        flows: [],
+        engine: EngineLive,
+      }).pipe(
         // The engine's storage loop warns, on every pass, of the messages it
         // keeps for workflows this process doesn't load, such as other runs'
         // and the interrupt just stored; the daemon delivers them.

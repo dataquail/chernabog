@@ -20,7 +20,7 @@ import {
   stopExecution,
   workflowNamed,
 } from "../runtime/engine.ts";
-import { handleOf } from "./flows.client-live.ts";
+import { handleOf } from "../runtime/flow-registry.ts";
 
 const decodeToken = Schema.decodeEffect(DurableDeferred.Token);
 

@@ -39,7 +39,6 @@ import {
 } from "../../../../repo-config.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
-import { withRepoOver } from "../clients/flows.client-live.ts";
 import {
   defaultPersona,
   type FlowOrigin,
@@ -47,6 +46,7 @@ import {
   RunFailed,
   type ServicesFor,
 } from "./engine.ts";
+import { withRepoOver } from "./flow-registry.ts";
 
 // Runs a flow's trigger with the repo's services, as the runtime does, for a
 // composition root that asks one itself (a foreground run, a rehearsal): it

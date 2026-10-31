@@ -1,8 +1,17 @@
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { RecipesModule } from "../recipes/recipes.module.ts";
-import { EnrollmentCommandsLive } from "./enrollment.command-handlers.ts";
-import { EnrollmentQueriesLive } from "./enrollment.query-handlers.ts";
+import {
+  enrollmentCommandGroup,
+  EnrollmentCommands,
+  EnrollmentCommandsLive,
+} from "./enrollment.command-handlers.ts";
+import {
+  EnrollmentQueries,
+  EnrollmentQueriesLive,
+  enrollmentQueryGroup,
+} from "./enrollment.query-handlers.ts";
 import { TeamFlowsAclLive } from "./infrastructure/acl/team-flows.acl-live.ts";
 import { CheckoutsClientLive } from "./infrastructure/clients/checkouts.client-live.ts";
 import { ViewerClientLive } from "./infrastructure/clients/viewer.client-live.ts";
@@ -24,4 +33,17 @@ export const EnrollmentModule = {
       ),
     ),
   ),
+
+  // The module's slice of the application's buses: the groups `layer`'s
+  // dispatchers answer, and those dispatchers, as the tables a bus routes by.
+  routes: {
+    commands: {
+      groups: [enrollmentCommandGroup],
+      tables: Effect.all([EnrollmentCommands.use(Effect.succeed)]),
+    },
+    queries: {
+      groups: [enrollmentQueryGroup],
+      tables: Effect.all([EnrollmentQueries.use(Effect.succeed)]),
+    },
+  },
 };
