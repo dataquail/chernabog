@@ -1,7 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { ApplySetupCommand } from "./commands/apply-setup.command.ts";
 import { applySetupHandler } from "./commands/apply-setup.handler.ts";
 import { InstallServiceCommand } from "./commands/install-service.command.ts";
@@ -38,5 +40,7 @@ export class MachineCommands extends Context.Service<
 
 export const MachineCommandsLive = Layer.effect(
   MachineCommands,
-  Command.dispatcher(machineCommandGroup),
+  Effect.flatMap(ownUnitOfWork, (own) =>
+    Command.dispatcher(machineCommandGroup, { middleware: [own] }),
+  ),
 ).pipe(Layer.provideMerge(MachineCommandHandlersLive));

@@ -1,7 +1,9 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { AddRecipePackageCommand } from "./commands/add-recipe-package.command.ts";
 import { addRecipePackageHandler } from "./commands/add-recipe-package.handler.ts";
 import { AddRecipesCommand } from "./commands/add-recipes.command.ts";
@@ -46,5 +48,7 @@ export class RecipesCommands extends Context.Service<
 
 export const RecipesCommandsLive = Layer.effect(
   RecipesCommands,
-  Command.dispatcher(recipesCommandGroup),
+  Effect.flatMap(ownUnitOfWork, (own) =>
+    Command.dispatcher(recipesCommandGroup, { middleware: [own] }),
+  ),
 ).pipe(Layer.provideMerge(RecipesCommandHandlersLive));

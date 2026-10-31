@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -40,7 +41,7 @@ describe("ejectRecipeHandler", () => {
           },
         });
         expect(yield* importedFlows).toEqual([["/repo/review", "@chernabog/recipes/review"]]);
-      }).pipe(Effect.provide(repo.layer)),
+      }).pipe(Effect.provide([repo.layer, PassThroughUnitOfWork])),
   );
 
   effect("refuses a flow the repo doesn't import, naming the ones it does", () =>
@@ -50,6 +51,6 @@ describe("ejectRecipeHandler", () => {
       expect(refused.message).toBe(
         "config.yaml doesn't import a flow named deploy (it imports: ship, review)",
       );
-    }).pipe(Effect.provide(repo.layer)),
+    }).pipe(Effect.provide([repo.layer, PassThroughUnitOfWork])),
   );
 });

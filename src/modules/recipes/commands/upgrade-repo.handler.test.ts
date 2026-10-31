@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -31,7 +32,7 @@ describe("upgradeRepoHandler", () => {
         { file: ".chernabog/flows/security.ts", missingImports: ["gone"] },
         { file: ".chernabog/stages/lint.ts", missingImports: [] },
       ]);
-    }).pipe(Effect.provide(old.layer)),
+    }).pipe(Effect.provide([old.layer, PassThroughUnitOfWork])),
   );
 
   const current = recipeRepo({
@@ -43,7 +44,7 @@ describe("upgradeRepoHandler", () => {
       const { left, pinned } = yield* upgradeRepoHandler({ root: "/repo" });
 
       expect([pinned, left]).toEqual([false, []]);
-    }).pipe(Effect.provide(current.layer)),
+    }).pipe(Effect.provide([current.layer, PassThroughUnitOfWork])),
   );
 
   const bare = recipeRepo({});
@@ -55,7 +56,7 @@ describe("upgradeRepoHandler", () => {
 
       expect(pinned).toBe(true);
       expect(bare.stored["/repo/.chernabog/package.json"]).toBe('{ "pinned" }\n');
-    }).pipe(Effect.provide(bare.layer)),
+    }).pipe(Effect.provide([bare.layer, PassThroughUnitOfWork])),
   );
 
   const tooNew = recipeRepo({
@@ -69,6 +70,6 @@ describe("upgradeRepoHandler", () => {
 
       expect(refused._tag).toBe("ScaffoldRefused");
       expect(tooNew.stored["/repo/.chernabog/flows/review.ts"]).toBe("newer review\n");
-    }).pipe(Effect.provide(tooNew.layer)),
+    }).pipe(Effect.provide([tooNew.layer, PassThroughUnitOfWork])),
   );
 });

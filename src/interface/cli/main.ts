@@ -28,6 +28,7 @@ import {
   declaredLabels,
   questionHook,
   repoConfigDir,
+  runEventSpanAttributes,
   runLaunch,
   RunLogsQueries,
   runSessions,
@@ -44,6 +45,7 @@ import { GitHubApi } from "../../platform/github-api.ts";
 import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
+import { FileStoresUnitOfWork } from "../../platform/unit-of-work.ts";
 import { VERSION } from "../../platform/version.ts";
 import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { applicationModules } from "../application-modules.ts";
@@ -461,10 +463,18 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // Every module, over the CLI's own services: one GitHubTokens for the process,
-// so each persona's token is looked up once, and one bus that the modules'
-// commands dispatch their events on.
+// so each persona's token is looked up once, one bus that the modules'
+// commands dispatch their events on, with what the runs' events say on their
+// spans, and the unit of work the commands over files declare.
 const AppLive = applicationModules.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus())),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      GitHubApi.layerFor(IMPLICIT),
+      Asker.layer,
+      makeEventBus({ spanAttributes: runEventSpanAttributes }),
+      FileStoresUnitOfWork,
+    ),
+  ),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

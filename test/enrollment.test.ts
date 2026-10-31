@@ -18,6 +18,7 @@ import { MachineModule } from "../src/modules/machine/machine.module.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
 import { Home } from "../src/platform/home.ts";
+import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
@@ -143,8 +144,10 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
     Effect.provide(
       Layer.mergeAll(
         layer,
-        Layer.fresh(EnrollmentModule.layer).pipe(Layer.provide(makeEventBus())),
-        Layer.fresh(MachineModule.layer),
+        Layer.fresh(EnrollmentModule.layer).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
+        ),
+        Layer.fresh(MachineModule.layer).pipe(Layer.provide(FileStoresUnitOfWork)),
       ),
     ),
   );
@@ -154,8 +157,10 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
     Effect.provide(
       Layer.mergeAll(
         layer,
-        Layer.fresh(MachineModule.layer),
-        Layer.fresh(EnrollmentModule.layer).pipe(Layer.provide(makeEventBus())),
+        Layer.fresh(MachineModule.layer).pipe(Layer.provide(FileStoresUnitOfWork)),
+        Layer.fresh(EnrollmentModule.layer).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
+        ),
       ),
     ),
   );

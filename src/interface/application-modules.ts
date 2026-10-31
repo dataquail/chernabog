@@ -7,7 +7,7 @@ import { RehearsalsModule } from "../modules/rehearsals/rehearsals.platform.ts";
 import { RunsModule } from "../modules/runs/runs.platform.ts";
 import { TrustModule } from "../modules/trust/trust.platform.ts";
 
-// Every module, once, for each composition root to merge (ADR 9): the CLI's,
+// Every module, once, for each composition root to merge (ADR 12): the CLI's,
 // the daemon's, a foreground run's, a rehearsal's and the tests'. A set, not a
 // sequence: each module's layer already provides what it closes over, and
 // Effect memoizes a layer by reference, so one provided at several sites is

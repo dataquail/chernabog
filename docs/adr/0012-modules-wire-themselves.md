@@ -1,4 +1,4 @@
-# 9. Each module wires itself in a `<module>.module.ts`
+# 12. Each module wires itself in a `<module>.module.ts`
 
 Status: accepted, 2026-10-31. Issue #286. Brings over the reference
 hexagon's wiring plane (`dataquail/functional-domain-driven-hexagon`,

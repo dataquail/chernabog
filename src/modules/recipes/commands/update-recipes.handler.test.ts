@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -68,7 +69,7 @@ describe("updateRecipesHandler", () => {
 
         expect(again.packages).toEqual([]);
         expect(again.changes).toEqual([]);
-      }).pipe(Effect.provide(repo.layer)),
+      }).pipe(Effect.provide([repo.layer, PassThroughUnitOfWork])),
   );
 
   const uncopied = recipeRepo({ ".chernabog/flows/review.ts": "review\n" });
@@ -83,7 +84,7 @@ describe("updateRecipesHandler", () => {
 
       expect(updated.changes).toEqual([]);
       expect(uncopied.stored["/repo/.chernabog/flows/implement.ts"]).toBeUndefined();
-    }).pipe(Effect.provide(uncopied.layer)),
+    }).pipe(Effect.provide([uncopied.layer, PassThroughUnitOfWork])),
   );
 
   const legacy = recipeRepo({ ".chernabog/flows/review.ts": "old review\n" });
@@ -103,7 +104,7 @@ describe("updateRecipesHandler", () => {
           [".chernabog/prompts/review.md", "written"],
         ]);
         expect(legacy.stored["/repo/.chernabog/flows/review.ts"]).toBe("review\nupstream fix\n");
-      }).pipe(Effect.provide(legacy.layer)),
+      }).pipe(Effect.provide([legacy.layer, PassThroughUnitOfWork])),
   );
 
   const offline = recipeRepo({ ".chernabog/flows/review.ts": "review\n" }, true);
@@ -118,6 +119,6 @@ describe("updateRecipesHandler", () => {
 
       expect(failed._tag).toBe("RecipePackageUnavailable");
       expect(offline.stored).toEqual(before);
-    }).pipe(Effect.provide(offline.layer)),
+    }).pipe(Effect.provide([offline.layer, PassThroughUnitOfWork])),
   );
 });

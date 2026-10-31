@@ -9,7 +9,7 @@ import { AmbiguousClone } from "./enrolled-repo.errors.ts";
 import { EnrolledRepoRoot } from "./enrolled-repo.root.ts";
 import { EnrolledRepoRootOps } from "./enrolled-repo.root-ops.ts";
 import { MachineOffer } from "./machine-offer.value-object.ts";
-import { type PersonaEntry } from "./persona-choices.value-object.ts";
+import { type PersonaEntry } from "./persona-choices.aggregate.ts";
 import { TeamFlows } from "./team-flows.value-object.ts";
 
 const slug = RepoSlug.make("acme/widgets");

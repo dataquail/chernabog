@@ -1,6 +1,8 @@
 // What a persona chooses for a repo. On the repo's entry these are the
 // defaults every persona inherits; on a persona's entry, its own, each key
-// replacing the repo entry's.
+// replacing the repo entry's. A constituent aggregate: the account, roles,
+// flows and schedule it gathers are a part of the enrolled repo, which is the
+// consistency boundary they're kept in, not a root of their own.
 
 import * as Schema from "effect/Schema";
 

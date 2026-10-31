@@ -1,14 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-
-// Where a hold is: held, until the run ends; released; kept, because the run
-// ended in one of its keepOn endings; or unreleasable, because the flow no
-// longer defines its release (or its arguments no longer fit), which is a
-// person's to take off.
-export const MarkerStatus = Schema.Literals(["held", "released", "kept", "unreleasable"]);
-
-export type MarkerStatus = typeof MarkerStatus.Type;
+import { MarkerStatus } from "./marker-status.value-object.ts";
 
 // A marker a run put on an item outside chernabog, such as a label, held by
 // its definition's name with the JSON arguments its release takes. A run

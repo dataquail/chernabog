@@ -9,7 +9,11 @@ import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "./infrastructure/repositories/skips.repository-live.ts";
-import { RunFlowsCommandsLive, RunsCommandsLive } from "./runs.command-handlers.ts";
+import {
+  RunFlowsCommandsLive,
+  RunsCommandsLive,
+  RunsUnitOfWorkLive,
+} from "./runs.command-handlers.ts";
 import {
   NotificationsQueriesLive,
   RunFlowsQueriesLive,
@@ -38,7 +42,8 @@ export const RunsModule = {
 
   // What a process that runs the workflow engine dispatches: the runs' commands
   // and queries over their stores in state.db, and those over the flows it
-  // loaded. The SQL client and the engine (EngineLive, EngineAt), and the
+  // loaded, with the unit of work its commands declare over state.db. The SQL
+  // client and the engine (EngineLive, EngineAt), and the
   // runtime of the flows the process loaded (RuntimeLayer), differ between
   // roots, so they stay in its requirements, for each root to provide.
   engine: Layer.mergeAll(
@@ -46,5 +51,5 @@ export const RunsModule = {
     RunsQueriesLive,
     RunFlowsCommandsLive,
     RunFlowsQueriesLive,
-  ).pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunLogsClientLive))),
+  ).pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunLogsClientLive, RunsUnitOfWorkLive))),
 };

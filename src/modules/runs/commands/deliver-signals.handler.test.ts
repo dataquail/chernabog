@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -94,12 +95,13 @@ describe("deliverSignalsHandler", () => {
       expect(engine.woken).toEqual(["d1"]);
       expect(engine.notes).toEqual(["a: signal: pushed"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(engine, {
           runs: [run("a")],
           waits: [wait("pushed", "d1"), wait("approved", "d2")],
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -120,7 +122,7 @@ describe("deliverSignalsHandler", () => {
         ),
       ).toEqual(["pushed:ci-1"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(racing, {
           runs: [run("a")],
           waits: [
@@ -129,7 +131,8 @@ describe("deliverSignalsHandler", () => {
             wait("pushed", "pushed:ci-1"),
           ],
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

@@ -14,7 +14,7 @@ import { EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.
 import {
   PersonaChoices,
   PersonaEntry,
-} from "../../domain/enrolled-repo/persona-choices.value-object.ts";
+} from "../../domain/enrolled-repo/persona-choices.aggregate.ts";
 
 export const EnrolledRepoEntry = Schema.Struct({
   // owner/name on GitHub: the key the entry's settings follow.

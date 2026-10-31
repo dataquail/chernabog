@@ -20,7 +20,6 @@ import {
   adoptRuns,
   buildPersonaContexts,
   defaultPersona,
-  describeElsewhere,
   EngineLive,
   type FlowHandle,
   flowHandle,
@@ -28,7 +27,7 @@ import {
   flowOrigins,
   openRepo,
   type RepoContext,
-  routeItems,
+  Routing,
   RunFlowsCommands,
   runLogFile,
   RunsQueries,
@@ -196,11 +195,11 @@ const resume = (
 // The first item this machine may start, past the work the flow left for others.
 const firstOf = (items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    const routed = routeItems(items);
+    const routed = Routing.split(items);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) {
       yield* Console.log(
-        `left for others: ${routed.elsewhere.map(describeElsewhere).join(", ")}; name one with --item to run it here`,
+        `left for others: ${routed.elsewhere.map(Routing.describeElsewhere).join(", ")}; name one with --item to run it here`,
       );
     }
 

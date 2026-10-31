@@ -32,6 +32,7 @@ import { RecipesQueries } from "../src/modules/recipes/recipes.query-handlers.ts
 import { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
+import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
 import { type Fake, flowTriggered, ISSUE, makeFake, settings } from "./sdk-fakes.ts";
@@ -70,7 +71,7 @@ const recipeText = (file: string) =>
 
 const recipes = (layer: Layer.Layer<Asker>) =>
   Layer.mergeAll(layer, RecipesModule.layer).pipe(
-    Layer.provideMerge(Layer.mergeAll(Exec.layer, HostEnvironment.layer)),
+    Layer.provideMerge(Layer.mergeAll(Exec.layer, HostEnvironment.layer, FileStoresUnitOfWork)),
   );
 
 // Copying the ones named, or, without names, the ones a person picks.

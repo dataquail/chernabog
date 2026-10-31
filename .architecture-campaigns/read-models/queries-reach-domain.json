@@ -1,0 +1,117 @@
+{
+  "version": 2,
+  "campaign": "read-models",
+  "objective": "queries-reach-domain",
+  "created": "2026-10-31T15:27:31.099Z",
+  "sectors": {
+    "src/modules/enrollment": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 8,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": [
+        "queries/find-checkout-root.query.ts",
+        "queries/list-enrolled-repos.handler.ts",
+        "queries/list-enrolled-repos.query.ts",
+        "queries/list-moved-repos.handler.ts",
+        "queries/list-paused-repos.handler.ts",
+        "queries/list-personas-in-use.handler.ts",
+        "queries/plan-enrollment.handler.ts",
+        "queries/plan-enrollment.query.ts"
+      ]
+    },
+    "src/modules/machine": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 5,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": [
+        "queries/check-service.handler.ts",
+        "queries/check-service.query.ts",
+        "queries/inspect-account-dir.handler.ts",
+        "queries/plan-setup.handler.ts",
+        "queries/read-machine-setup.handler.ts"
+      ]
+    },
+    "src/modules/recipes": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 4,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": [
+        "queries/diff-recipes.handler.ts",
+        "queries/diff-recipes.query.ts",
+        "queries/list-recipes.handler.ts",
+        "queries/list-recipes.query.ts"
+      ]
+    },
+    "src/modules/rehearsals": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 8,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": [
+        "queries/check-rehearsal.handler.ts",
+        "queries/check-rehearsal.query.ts",
+        "queries/choose-seeded-work.handler.ts",
+        "queries/choose-seeded-work.query.ts",
+        "queries/load-scenario.handler.ts",
+        "queries/load-scenario.query.ts",
+        "queries/plan-rehearsal.handler.ts",
+        "queries/plan-rehearsal.query.ts"
+      ]
+    },
+    "src/modules/runs": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 30,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": [
+        "queries/check-run-validity.handler.ts",
+        "queries/check-run-validity.query.ts",
+        "queries/find-active-run.handler.ts",
+        "queries/find-active-run.query.ts",
+        "queries/find-run.handler.ts",
+        "queries/find-run.query.ts",
+        "queries/list-active-runs.handler.ts",
+        "queries/list-active-runs.query.ts",
+        "queries/list-holds.handler.ts",
+        "queries/list-holds.query.ts",
+        "queries/list-recent-runs.handler.ts",
+        "queries/list-recent-runs.query.ts",
+        "queries/list-recent-skips.handler.ts",
+        "queries/list-recent-skips.query.ts",
+        "queries/list-run-markers.handler.ts",
+        "queries/list-run-markers.query.ts",
+        "queries/list-run-waits.handler.ts",
+        "queries/list-run-waits.query.ts",
+        "queries/list-unreleased-markers.handler.ts",
+        "queries/list-unreleased-markers.query.ts",
+        "queries/list-unsupported-runs.handler.ts",
+        "queries/list-unsupported-runs.query.ts",
+        "queries/poll-notifications.handler.ts",
+        "queries/poll-notifications.query.ts",
+        "queries/read-run-history.handler.ts",
+        "queries/read-run-history.query.ts",
+        "queries/read-run-log.handler.ts",
+        "queries/read-run-log.query.ts",
+        "queries/resolve-run-id.handler.ts",
+        "queries/resolve-run-id.query.ts"
+      ]
+    },
+    "src/modules/trust": {
+      "entered": "2026-10-31T15:27:31.099Z",
+      "initial": 0,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:27:31.099Z",
+      "holdouts": []
+    }
+  },
+  "concessions": []
+}

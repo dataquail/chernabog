@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -19,7 +20,7 @@ describe("addRecipePackageHandler", () => {
 
         const again = yield* addRecipePackageHandler({ root: "/repo", name: "@chernabog/recipes" });
         expect([again.change, again.version]).toEqual(["present", "0.2.0"]);
-      }).pipe(Effect.provide(fresh.layer)),
+      }).pipe(Effect.provide([fresh.layer, PassThroughUnitOfWork])),
   );
 
   const offline = recipeRepo({ ".chernabog/package.json": manifestWith({}) }, true);
@@ -31,7 +32,7 @@ describe("addRecipePackageHandler", () => {
       );
 
       expect(failed._tag).toBe("RecipePackageUnavailable");
-    }).pipe(Effect.provide(offline.layer)),
+    }).pipe(Effect.provide([offline.layer, PassThroughUnitOfWork])),
   );
 
   const newer = recipeRepo({
@@ -45,6 +46,6 @@ describe("addRecipePackageHandler", () => {
       );
 
       expect(failed.message).toBe("no version of @chernabog/recipes supports @chernabog/sdk 0.7.0");
-    }).pipe(Effect.provide(newer.layer)),
+    }).pipe(Effect.provide([newer.layer, PassThroughUnitOfWork])),
   );
 });

@@ -36,7 +36,7 @@ import { asSuffix, IMPLICIT, type Persona, samePersona } from "./kernel/persona.
 import { StandIns } from "./kernel/stand-in.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
-import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts";
+import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.aggregate.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/domain/enrolled-repo/team-flows.value-object.ts";
 import {
   type EnrolledRepoEntry,

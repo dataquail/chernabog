@@ -1,7 +1,9 @@
 // An event bus that keeps every event dispatched through it, for a handler
-// test to read back in the order they were dispatched.
+// test to read back in the order they were dispatched, with the unit of work
+// the handler dispatches in.
 
 import { EventBus, makeEventBus } from "@effect-server-utils/cqrs";
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -30,8 +32,13 @@ const Recording = Layer.effect(
   }),
 );
 
-// The bus, and what it has dispatched so far.
-export const RecordedEvents = Recording.pipe(
-  Layer.provideMerge(Layer.sync(DispatchedEvents, () => [])),
-  Layer.provide(makeEventBus()),
+// The bus, what it has dispatched so far, and the unit of work a command
+// declares: the library's own over a driver that opens nothing, which still
+// fails a dispatch outside one (EventDispatchedOutsideUnitOfWork).
+export const RecordedEvents = Layer.mergeAll(
+  Recording.pipe(
+    Layer.provideMerge(Layer.sync(DispatchedEvents, () => [])),
+    Layer.provide(makeEventBus()),
+  ),
+  PassThroughUnitOfWork,
 );

@@ -33,7 +33,7 @@ const engineInScratch = Layer.unwrap(
   ),
 );
 
-// Each module wires itself in its <module>.module.ts (ADR 9): the roots merge
+// Each module wires itself in its <module>.module.ts (ADR 12): the roots merge
 // the modules, and no module hands them a layer of loose adapters to order.
 describe("a module's wiring", () => {
   effect("each module assembles itself in its module.ts, with no layer.ts", () =>

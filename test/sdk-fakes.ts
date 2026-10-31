@@ -79,6 +79,7 @@ import {
   type ServicesFor,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { RuntimeLayer } from "../src/modules/runs/infrastructure/runtime/flow-runtime.ts";
+import { RunsUnitOfWorkLive } from "../src/modules/runs/runs.command-handlers.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
@@ -979,8 +980,8 @@ export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 export type EngineRun = RunView | ActiveRun;
 
 // The runs' stores and logs in a home's state.db, the bus their commands
-// dispatch on, and the engine journalling there: what a test that drives the
-// runs' handlers itself reads and writes.
+// dispatch on, the unit of work they declare, and the engine journalling
+// there: what a test that drives the runs' handlers itself reads and writes.
 export const StateAt = (home: string) =>
   Layer.mergeAll(
     RunsRepositoryLive,
@@ -991,6 +992,7 @@ export const StateAt = (home: string) =>
     HoldsRepositoryLive,
     RunLogsClientLive,
     makeEventBus(),
+    RunsUnitOfWorkLive,
   ).pipe(
     Layer.provideMerge(EngineAt(homePaths(home).state)),
     Layer.provideMerge(Home.at(home, home)),
