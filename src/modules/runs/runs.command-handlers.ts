@@ -32,6 +32,8 @@ import { PlanTickCommand } from "./commands/plan-tick.command.ts";
 import { planTickHandler } from "./commands/plan-tick.handler.ts";
 import { PollRunCommand } from "./commands/poll-run.command.ts";
 import { pollRunHandler } from "./commands/poll-run.handler.ts";
+import { PruneRunLogsCommand } from "./commands/prune-run-logs.command.ts";
+import { pruneRunLogsHandler } from "./commands/prune-run-logs.handler.ts";
 import { RecordSkipCommand } from "./commands/record-skip.command.ts";
 import { recordSkipHandler } from "./commands/record-skip.handler.ts";
 import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
@@ -65,6 +67,7 @@ export const runsCommandGroup = Command.group(
   HoldMarkerCommand,
   NameSubjectCommand,
   ParkRunCommand,
+  PruneRunLogsCommand,
   RecordSkipCommand,
   ReleaseRunWaitCommand,
   StartRunCommand,
@@ -79,6 +82,7 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   HoldMarkerCommand: (payload) => holdMarkerHandler(payload),
   NameSubjectCommand: (payload) => nameSubjectHandler(payload),
   ParkRunCommand: (payload) => parkRunHandler(payload),
+  PruneRunLogsCommand: () => pruneRunLogsHandler(),
   RecordSkipCommand: (payload) => recordSkipHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
@@ -88,7 +92,8 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
 // dispatches as a run takes its steps, parks on a signal, holds and forgets
 // its markers and names its subjects, and the daemon and `run` to adopt a
 // repo's runs from before its personas and to forget a wait its signal woke,
-// and the daemon to record why a tick started nothing.
+// and the daemon to record why a tick started nothing and to prune the run
+// logs past their retention, once a day.
 export class RunsCommands extends Context.Service<
   RunsCommands,
   Command.Dispatcher<typeof runsCommandGroup>

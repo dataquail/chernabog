@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import { BUNDLED_CORE_VERSION } from "../src/kernel/core-support.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
@@ -16,10 +17,11 @@ import { RunsQueries, RunsQueriesLive } from "../src/modules/runs/runs.query-han
 import { effect } from "./effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "./events.ts";
 
-// The runs' stores in state.db, and the bus their commands dispatch on, as the
-// engine provides them beneath RunsCommands and RunsQueries.
+// The runs' stores in state.db, their logs, and the bus their commands
+// dispatch on, as the engine provides them beneath RunsCommands and RunsQueries.
 const stores = Layer.mergeAll(
   RecordedEvents,
+  RunLogsClientFake({}),
   RunsRepositoryFake([]),
   RunMarkersRepositoryFake([]),
   RunStepsRepositoryFake([]),
