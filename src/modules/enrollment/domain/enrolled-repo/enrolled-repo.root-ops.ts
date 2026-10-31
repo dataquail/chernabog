@@ -29,7 +29,8 @@ import {
 import { EnrolledRepoRoot } from "./enrolled-repo.root.ts";
 import { type PersonaFlowSettings } from "./flow-settings.value-object.ts";
 import { type MachineOffer } from "./machine-offer.value-object.ts";
-import { type PersonaEntry } from "./persona-choices.value-object.ts";
+import { type PersonaEntry } from "./persona-choices.aggregate.ts";
+import { PersonaChoicesAggregateOps } from "./persona-choices.aggregate-ops.ts";
 import { FLOW_TURNED_OFF, type TeamFlows } from "./team-flows.value-object.ts";
 
 // The repo's short name: its own, else the name half of its slug.
@@ -205,47 +206,6 @@ const setFlowSchedule = (
     }),
   );
 
-const withoutAccount = ({ account: _account, ...rest }: PersonaEntry): PersonaEntry => rest;
-
-const withoutRoles = ({ roles: _roles, ...rest }: PersonaEntry): PersonaEntry => rest;
-
-// An emptied roles map goes with the last role.
-const withoutEmptyRoles = (choices: PersonaEntry) => {
-  if (
-    Option.fromUndefinedOr(choices.roles).pipe(
-      Option.exists((roles) => Object.keys(roles).length === 0),
-    )
-  ) {
-    return withoutRoles(choices);
-  }
-
-  return choices;
-};
-
-const withoutRole = (choices: PersonaEntry, role: string) => {
-  const { [role]: _role, ...roles } = choices.roles ?? {};
-
-  return withoutEmptyRoles({ ...choices, roles });
-};
-
-const pickAccount = (
-  choices: PersonaEntry,
-  role: Option.Option<string>,
-  account: Option.Option<string>,
-): PersonaEntry =>
-  Option.match(role, {
-    onNone: () =>
-      Option.match(account, {
-        onNone: () => withoutEmptyRoles(withoutAccount(choices)),
-        onSome: (chosen) => ({ ...choices, account: chosen }),
-      }),
-    onSome: (named) =>
-      Option.match(account, {
-        onNone: () => withoutRole(choices, named),
-        onSome: (chosen) => ({ ...choices, roles: { ...choices.roles, [named]: chosen } }),
-      }),
-  });
-
 // Picks the account a persona spends, or one of its roles does, or clears the
 // pick so the default applies again. It's kept on the persona's own entry when
 // it has one, else on the repo entry, which it runs from.
@@ -257,7 +217,11 @@ const setAccount = (
 ) => {
   const owner = Option.filter(persona, (login) => Record.has(repo.personas ?? {}, login));
 
-  return withChoicesAt(repo, owner, pickAccount(choicesAt(repo, owner), role, account));
+  return withChoicesAt(
+    repo,
+    owner,
+    PersonaChoicesAggregateOps.pickAccount(choicesAt(repo, owner), role, account),
+  );
 };
 
 // Whether a person naming a repo means this one: by its name, its slug or its

@@ -3,8 +3,8 @@
 // value objects its messages answer with. It declares nothing; anything not
 // re-exported here is private to the module.
 
+export { Routing } from "./domain/domain-services/routing.domain-service.ts";
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
-export { describeElsewhere, routeItems } from "./domain/routing/routing.value-object.ts";
 export { CancelledRun, CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
 export {
   PullRequestOpened,
@@ -13,9 +13,9 @@ export {
   RunNeedsAttention,
   RunStarted,
 } from "./domain/run/run.events.ts";
+export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
-export { RunHistory } from "./domain/run-step/run-history.value-object.ts";
 export {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,

@@ -3,7 +3,7 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunStepRoot } from "../../domain/run-step/run-step.root.ts";
+import { RunStepEntity } from "../../domain/run/run-step.entity.ts";
 import { type ColumnMap } from "./criteria-to-sql.ts";
 
 export const StepColumns = Schema.Struct({
@@ -12,8 +12,8 @@ export const StepColumns = Schema.Struct({
   entered_at: Schema.String,
 });
 
-export const toRoot = (row: typeof StepColumns.Type) =>
-  RunStepRoot.make({
+export const toEntity = (row: typeof StepColumns.Type) =>
+  RunStepEntity.make({
     runId: RunId.make(row.run_id),
     step: row.step,
     enteredAt: row.entered_at,

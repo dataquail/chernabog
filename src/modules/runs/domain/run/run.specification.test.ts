@@ -3,8 +3,9 @@ import * as Option from "effect/Option";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { Criteria, Spec } from "../../../../kernel/specification.ts";
-import { RunRoot, type RunStatus } from "./run.root.ts";
+import { RunRoot } from "./run.root.ts";
 import { RunSpecifications } from "./run.specification.ts";
+import { type RunStatus } from "./run-status.value-object.ts";
 
 const run = (id: string, repo: string, status: RunStatus) =>
   RunRoot.make({

@@ -48,17 +48,22 @@ import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
 import { startRunHandler } from "./commands/start-run.handler.ts";
 import { StateDbTransactionDriverLive } from "./infrastructure/repositories/state-db.transaction-driver-live.ts";
+import {
+  runEventSpanAttributes,
+  runFlowsCommandSpanAttributes,
+  runsCommandSpanAttributes,
+} from "./runs.event-span-attributes.ts";
 
 // Where the runs' commands say what happened to a run (RunStarted,
 // RunEnteredStep, RunNeedsAttention, RunFinished, PullRequestOpened), for the
 // dashboard's /events stream and the notifier to hear. One per process, beside
 // the state.db its commands write.
-export const RunEventsLive = makeEventBus();
+export const RunEventsLive = makeEventBus({ spanAttributes: runEventSpanAttributes });
 
 // The unit of work each of the runs' commands declares, over state.db: what a
 // command writes there commits together or not at all, and what it dispatches
 // on the bus is delivered once it has. Built beside the bus, and the runs'
-// dispatchers run their commands in it (docs/adr/0009-commands-declare-their-unit-of-work.md).
+// dispatchers run their commands in it (docs/adr/0010-commands-declare-their-unit-of-work.md).
 export const RunsUnitOfWorkLive = makeUnitOfWork().pipe(
   Layer.provide(StateDbTransactionDriverLive),
 );
@@ -107,7 +112,10 @@ export class RunsCommands extends Context.Service<
 export const RunsCommandsLive = Layer.effect(
   RunsCommands,
   Effect.flatMap(ownUnitOfWork, (own) =>
-    Command.dispatcher(runsCommandGroup, { middleware: [own] }),
+    Command.dispatcher(runsCommandGroup, {
+      middleware: [own],
+      spanAttributes: runsCommandSpanAttributes,
+    }),
   ),
 ).pipe(Layer.provideMerge(RunsCommandHandlersLive));
 
@@ -157,6 +165,9 @@ export class RunFlowsCommands extends Context.Service<
 export const RunFlowsCommandsLive = Layer.effect(
   RunFlowsCommands,
   Effect.flatMap(ownUnitOfWork, (own) =>
-    Command.dispatcher(runFlowsCommandGroup, { middleware: [own] }),
+    Command.dispatcher(runFlowsCommandGroup, {
+      middleware: [own],
+      spanAttributes: runFlowsCommandSpanAttributes,
+    }),
   ),
 ).pipe(Layer.provideMerge(RunFlowsCommandHandlersLive));

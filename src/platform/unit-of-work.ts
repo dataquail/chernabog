@@ -6,7 +6,7 @@
 // transaction across them to open. Their commands still declare
 // `withUnitOfWork`, over a driver that opens nothing, so every command has the
 // same boundary: what it dispatches is delivered once it has finished, and a
-// dispatch outside one is a defect (docs/adr/0009-commands-declare-their-unit-of-work.md).
+// dispatch outside one is a defect (docs/adr/0010-commands-declare-their-unit-of-work.md).
 
 import { type DeferralSink, type Middleware } from "@effect-server-utils/cqrs";
 import {

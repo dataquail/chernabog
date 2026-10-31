@@ -1,4 +1,4 @@
-# 9. Commands declare their unit of work
+# 10. Commands declare their unit of work
 
 Status: accepted, 2026-10-31. Issue #289. Supersedes decision 5 of
 [ADR 6](0006-use-cases-become-commands-and-queries.md).

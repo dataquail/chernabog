@@ -8,11 +8,11 @@ import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunStepEntity } from "../domain/run/run-step.entity.ts";
+import { RunStepSpecifications } from "../domain/run/run-step.specification.ts";
+import { RunStepsRepository } from "../domain/run/run-steps.repository.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
-import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
-import { RunStepSpecifications } from "../domain/run-step/run-step.specification.ts";
-import { RunStepsRepository } from "../domain/run-step/run-steps.repository.ts";
 import { type EnterStepPayload } from "./enter-step.command.ts";
 
 export const enterStepHandler = Effect.fn("enterStepHandler")(
@@ -33,7 +33,7 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(
       (entered) => entered.step === step,
     );
 
-    const entered = RunStepRoot.make({
+    const entered = RunStepEntity.make({
       runId,
       step,
       enteredAt: DateTime.formatIso(yield* DateTime.now),
