@@ -1,12 +1,15 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { BUNDLED_CORE_VERSION, providedRange } from "../../../kernel/core-support.value-object.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
-import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { listUnsupportedRunsHandler } from "./list-unsupported-runs.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -32,6 +35,17 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
 describe("listUnsupportedRunsHandler", () => {
   effect("lists the runs in flight under an SDK this binary doesn't run, naming both", () =>
     Effect.gen(function* () {
+      const repository = yield* RunsRepository;
+      yield* repository.save(run("old", { coreVersion: "0.5.2" }));
+      yield* repository.save(run("current"));
+      yield* repository.save(
+        run("ended", {
+          coreVersion: "0.5.2",
+          status: "done",
+          finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
+        }),
+      );
+
       const { runs } = yield* listUnsupportedRunsHandler();
 
       expect(runs.map((found) => [String(found.run.id), found.reason])).toEqual([
@@ -40,18 +54,6 @@ describe("listUnsupportedRunsHandler", () => {
           `it started under @chernabog/core 0.5.2, and this chernabog provides @chernabog/core ${providedRange}, so it wasn't resumed`,
         ],
       ]);
-    }).pipe(
-      Effect.provide(
-        RunsRepositoryFake([
-          run("old", { coreVersion: "0.5.2" }),
-          run("current"),
-          run("ended", {
-            coreVersion: "0.5.2",
-            status: "done",
-            finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
-          }),
-        ]),
-      ),
-    ),
+    }).pipe(Effect.provide(RunsRepositoryLive.pipe(Layer.provide(sqliteAfter(Effect.void))))),
   );
 });

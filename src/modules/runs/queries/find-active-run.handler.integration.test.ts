@@ -1,11 +1,14 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
-import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { findActiveRunHandler } from "./find-active-run.handler.ts";
 
 const run = (id: string, fields: Partial<RunRoot> = {}) =>
@@ -33,16 +36,16 @@ const wanted = { repo: "demo", persona: Option.some("bob"), flow: "review", item
 describe("findActiveRunHandler", () => {
   effect("finds the persona's run in flight for the item, and none for another persona", () =>
     Effect.gen(function* () {
+      const repository = yield* RunsRepository;
+      yield* repository.save(run("a", { status: "done", finishedAt: Option.some("x") }));
+      yield* repository.save(run("b"));
+
       const found = yield* findActiveRunHandler(wanted);
 
       expect(Option.map(found.run, (active) => String(active.id))).toEqual(Option.some("b"));
       expect(
         (yield* findActiveRunHandler({ ...wanted, persona: Option.some("alice") })).run,
       ).toEqual(Option.none());
-    }).pipe(
-      Effect.provide(
-        RunsRepositoryFake([run("a", { status: "done", finishedAt: Option.some("x") }), run("b")]),
-      ),
-    ),
+    }).pipe(Effect.provide(RunsRepositoryLive.pipe(Layer.provide(sqliteAfter(Effect.void))))),
   );
 });

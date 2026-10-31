@@ -235,6 +235,33 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
+  # A query handler's test runs its subject over real storage: a scratch home or
+  # checkout on the real filesystem, and a real SQLite state.db. Only the clients
+  # of third-party systems (GitHub, launchd, an agent CLI) keep their fakes.
+  query-integration-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A query's integration test names its module (its live repositories and clients among
+        them), the kernel, the home, the platform's exec and Bun's platform services (for git in a
+        scratch repo, as a client's live test runs it) and the shared test harness (test/*.ts) —
+        the scratch home and the SQLite state.db of test/sqlite.ts. It seeds through the live
+        repository or writes the file the live adapter would; only a third-party system's
+        client keeps its fake.
+      external: [effect, "@effect/platform-bun"]
+      allow:
+        - "@/kernel/**"
+        - "@/modules/{module}/**"
+        - "@/platform/home.ts"
+        - "@/platform/exec.ts"
+        - "test/*.ts"
+      deny:
+        - match: "@/modules/{module}/infrastructure/repositories/*.repository-fake.ts"
+          message: >-
+            A query's integration test reads real storage. Seed it through the live repository,
+            or write the file the live adapter would, never through a repository fake.
+
   # A repository adapter's test runs the live adapter over a scratch home.
   adapter-test-file:
     surface: [{ use: test-exports-nothing }]
@@ -772,10 +799,11 @@ tree:
               "*.query.ts": {}
               "*.handler.ts":
                 message: >-
-                  A query handler owes a sibling *.handler.test.ts, run over its ports' fakes.
-                requires: ["{base}.test.ts"]
+                  A query handler owes a sibling *.handler.integration.test.ts, run over real
+                  storage: a query reads what its repositories keep.
+                requires: ["{base}.integration.test.ts"]
                 surface: [{ use: one-handler-export }]
-              "*.test.ts": { use: module-test-file }
+              "*.integration.test.ts": { use: query-integration-test-file }
 
           "infrastructure/":
             message: >-
