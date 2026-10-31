@@ -7,9 +7,9 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import { describeStatus } from "../src/interface/cli/daemon/status.command.ts";
 import type { DaemonStatus } from "../src/interface/daemon/daemon.protocol.ts";
 import { initialModel, readUsage } from "../src/interface/tui/app.ts";
+import { describeStatus } from "../src/interface/tui/status.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
