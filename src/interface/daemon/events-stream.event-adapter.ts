@@ -91,6 +91,7 @@ export const openEventFeed = <E, R>(computeSnapshot: Effect.Effect<DaemonStatus,
 
     // What the bus said, numbered, for a client that joins a computation:
     // the last KEPT, and none from before the latest computation started.
+    // A client takes its slice as it joins, before awaiting its snapshot.
     let heard = 0;
     let kept: Array<{ readonly seq: number; readonly event: DaemonEvent }> = [];
     const checkpoints = new Map<number, Deferred.Deferred<number>>();
@@ -161,7 +162,17 @@ export const openEventFeed = <E, R>(computeSnapshot: Effect.Effect<DaemonStatus,
         };
 
         latest = Option.some(started);
-        yield* Effect.forkIn(Deferred.into(snapshot, started.result), scope);
+
+        // A computation that fails is shared no more, so a client that
+        // connects again starts a fresh one rather than getting its failure.
+        const forgetIfFailed = Effect.sync(() => {
+          latest = Option.filter(latest, (found) => found !== started);
+        });
+
+        yield* Effect.forkIn(
+          Deferred.into(snapshot.pipe(Effect.tapCause(() => forgetIfFailed)), started.result),
+          scope,
+        );
 
         return started;
       });
@@ -181,13 +192,16 @@ export const openEventFeed = <E, R>(computeSnapshot: Effect.Effect<DaemonStatus,
         const own = yield* bus.stream(daemonEventTags);
         const mark = yield* caughtUp;
         const shared = yield* computation(mark);
-        const status = yield* Deferred.await(shared.result);
 
+        // Taken now, while `kept` holds everything after the computation's
+        // start: once a newer computation starts, the recorder keeps only
+        // what came after it, and this one may still be running.
         const missed = kept
           .filter((entry) => entry.seq > shared.from && entry.seq <= mark)
           .map((entry) => entry.event);
 
         const sent = new Set(missed.map((event) => event.eventId));
+        const status = yield* Deferred.await(shared.result);
 
         return Stream.make(snapshotFrame(status)).pipe(
           Stream.concat(Stream.fromIterable(missed.map(eventFrame))),
