@@ -240,7 +240,7 @@ Before starting a run, the daemon checks the machine's limits (global concurrenc
 
 When its own binary changes, as `brew upgrade` changes it, the daemon drains: it starts no new runs, `status` and the live view say it's draining, and it restarts on the new binary once the runs executing now finish. Runs parked on a signal (a review that may take days) don't hold it up; the new binary decides whether each can resume.
 
-The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`.
+The daemon logs to `~/.config/chernabog/daemon.log`, and each run to `~/.config/chernabog/runs/<run>.log`. At its first write of each UTC day, the daemon moves the day before's log to `daemon.<YYYY-MM-DD>.log`, and deletes those older than 30 days. The service manager sends the daemon's own stdout and stderr, which hold little but a crash, to `daemon.out.log`, which is emptied past 10 MB. An upgrade rewrites a service unit an earlier chernabog installed to point there; systemd uses it from the daemon's next start, launchd from the next login or `chernabog stop` and `chernabog start`.
 
 ## Trust
 

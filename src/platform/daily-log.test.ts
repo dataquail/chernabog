@@ -68,8 +68,8 @@ describe("dailyLogWriting", () => {
         yield* fs.writeFileString(`${dir}/daemon.log`, "left\n");
         yield* fs.utimes(
           `${dir}/daemon.log`,
-          Date.parse("2026-10-29T12:00:00Z"),
-          Date.parse("2026-10-29T12:00:00Z"),
+          new Date("2026-10-29T12:00:00Z"),
+          new Date("2026-10-29T12:00:00Z"),
         );
         yield* at("2026-10-31T09:00:00Z");
         const { log } = yield* dailyLogWriting(`${dir}/daemon.log`);
