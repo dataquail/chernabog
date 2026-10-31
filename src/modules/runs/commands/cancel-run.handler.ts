@@ -14,8 +14,6 @@ import {
 } from "../domain/ports/clients/run-cleanup.client.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import {
   CancelledRun,
   CancelTarget,
@@ -25,14 +23,18 @@ import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/r
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { claimOf, itemTarget } from "../domain/run/work-item.value-object.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { type CancelRunPayload } from "./cancel-run.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
 // transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// waits on (docs/adr/0009-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -74,13 +76,13 @@ const namedAmongAll = (asked: string) =>
 const named = (target: CancelTarget) =>
   Effect.gen(function* () {
     const runs = yield* RunsRepository;
-    const running = yield* runs.findAll({ running: true });
+    const running = yield* runs.findMany(RunSpecifications.running);
 
     if (CancelTarget.guards.ByItem(target)) {
       return yield* Effect.fromResult(RunRootOps.inFlightFor(running, target));
     }
 
-    const exact = yield* runs.findOne(RunId.make(target.asked));
+    const exact = yield* runs.findOne(RunSpecifications.withId(RunId.make(target.asked)));
 
     if (Option.isSome(exact)) {
       return exact.value;
@@ -96,7 +98,7 @@ const named = (target: CancelTarget) =>
       onFailure: () => namedAmongAll(target.asked),
     });
 
-    return yield* Effect.flatMap(runs.findOne(id), (found) =>
+    return yield* Effect.flatMap(runs.findOne(RunSpecifications.withId(id)), (found) =>
       Effect.fromOption(found).pipe(Effect.mapError(() => new RunNotFound({ runId: id }))),
     );
   });
@@ -218,13 +220,13 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   // The run's ending and its waits go together; stopping its workflow and
   // cleaning up after it come once they have.
   const parked = yield* Effect.gen(function* () {
-    yield* runs.save(cancelled);
+    yield* runs.upsertOne(cancelled);
     yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(cancelled)));
 
-    const waiting = yield* waits.findAll(Option.some(found.id));
+    const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
 
     for (const wait of waiting) {
-      yield* waits.remove(wait);
+      yield* waits.deleteOne(wait);
     }
 
     return waiting;
@@ -264,7 +266,10 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
 
   // Worktrees another run in flight on the same issue or pull request may be
   // using stay, for the last run on it, or a person, to remove.
-  const sharing = RunRootOps.sharingTarget(yield* runs.findAll({ running: true }), cancelled);
+  const sharing = RunRootOps.sharingTarget(
+    yield* runs.findMany(RunSpecifications.running),
+    cancelled,
+  );
 
   for (const other of sharing) {
     leftForPerson.push(

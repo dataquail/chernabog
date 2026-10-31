@@ -7,7 +7,8 @@ import { effectAtHome } from "../../../../../test/effect-test.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { MachineAccount } from "../../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
-import { MachineSetupsRepository } from "../../domain/ports/repositories/machine-setups.repository.ts";
+import { MachineSetupSpecifications } from "../../domain/machine-setup/machine-setup.specification.ts";
+import { MachineSetupsRepository } from "../../domain/machine-setup/machine-setups.repository.ts";
 import { MachineSetupsRepositoryLive } from "./machine-setups.repository-live.ts";
 
 const opened = Effect.gen(function* () {
@@ -27,8 +28,10 @@ describe("MachineSetupsRepositoryLive", () => {
       Effect.gen(function* () {
         const { setups } = yield* opened;
 
-        expect(yield* setups.findOne).toEqual(
-          MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false }),
+        expect(yield* setups.findOne(MachineSetupSpecifications.thisMachine)).toEqual(
+          Option.some(
+            MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false }),
+          ),
         );
       }),
   );
@@ -51,11 +54,13 @@ describe("MachineSetupsRepositoryLive", () => {
         ].join("\n"),
       );
 
-      const before = yield* setups.findOne;
+      const before = Option.getOrThrow(
+        yield* setups.findOne(MachineSetupSpecifications.thisMachine),
+      );
 
       expect(before.accounts).toEqual([account("work", "claude", Option.none())]);
 
-      yield* setups.save(
+      yield* setups.upsertOne(
         MachineSetupRoot.make({
           ...before,
           personas: ["bob"],

@@ -7,9 +7,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { type Specification } from "../../../../kernel/specification.ts";
+import { HoldsRepository } from "../../domain/holds/holds.repository.ts";
 import { type HoldsRoot } from "../../domain/holds/holds.root.ts";
-import { HoldsRepository } from "../../domain/ports/repositories/holds.repository.ts";
-import { HoldColumns, toRoots } from "./hold.mapper.ts";
+import { criteriaToWhere } from "./criteria-to-sql.ts";
+import { HoldColumns, holdsColumns, toRoots } from "./hold.mapper.ts";
 
 export const HoldsRepositoryLive = Layer.effect(
   HoldsRepository,
@@ -26,13 +28,17 @@ export const HoldsRepositoryLive = Layer.effect(
     )`;
 
     // Queries this adapter wrote against its own table: a failure is a bug, not a condition.
-    const findAll = sql`SELECT * FROM om_holds ORDER BY repo, flow, persona, rowid`.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(HoldColumns))),
-      Effect.map(toRoots),
-      Effect.orDie,
-    );
+    const findMany = (spec: Specification<HoldsRoot>) =>
+      criteriaToWhere(sql, spec.criteria, holdsColumns).pipe(
+        Effect.flatMap(
+          (where) => sql`SELECT * FROM om_holds WHERE ${where} ORDER BY repo, flow, persona, rowid`,
+        ),
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(HoldColumns))),
+        Effect.map(toRoots),
+        Effect.orDie,
+      );
 
-    const save = (holds: HoldsRoot) =>
+    const upsertOne = (holds: HoldsRoot) =>
       Effect.gen(function* () {
         const persona = Option.getOrNull(holds.persona);
         yield* sql`DELETE FROM om_holds WHERE repo = ${holds.repo} AND flow = ${holds.flow} AND persona IS ${persona}`;
@@ -42,6 +48,6 @@ export const HoldsRepositoryLive = Layer.effect(
         }
       }).pipe(sql.withTransaction, Effect.asVoid, Effect.orDie);
 
-    return HoldsRepository.of({ findAll, save });
+    return HoldsRepository.of({ findMany, upsertOne });
   }).pipe(Effect.orDie),
 );

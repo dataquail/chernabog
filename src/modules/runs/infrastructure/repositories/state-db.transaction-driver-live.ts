@@ -5,7 +5,7 @@
 // transaction holds that permit until it ends: every other statement in the
 // process, the engine's journal included, waits for it. So a unit of work over
 // this driver holds only the runs' own reads and writes, never a call to
-// GitHub, git, a launcher or the engine (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// GitHub, git, a launcher or the engine (docs/adr/0009-commands-declare-their-unit-of-work.md).
 
 import { TransactionDriver, TransactionFailed } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";

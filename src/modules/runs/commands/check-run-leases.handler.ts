@@ -4,10 +4,13 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { Spec } from "../../../kernel/specification.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import {
   CLAIM_REF_MARKER,
   ClaimRefArgs,
@@ -19,7 +22,7 @@ import { type CheckRunLeasesPayload } from "./check-run-leases.command.ts";
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
 // transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// waits on (docs/adr/0009-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -36,7 +39,9 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
   const flows = yield* FlowsClient;
 
   const run = Option.filter(
-    yield* RunsRepository.use((runs) => runs.findOne(runId)).pipe(inUnitOfWork),
+    yield* RunsRepository.use((runs) => runs.findOne(RunSpecifications.withId(runId))).pipe(
+      inUnitOfWork,
+    ),
     RunRootOps.isRunning,
   );
 
@@ -49,7 +54,9 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
   const found = run.value;
 
   const held = yield* RunMarkersRepository.use((markers) =>
-    markers.findAll({ runId: Option.some(found.id), status: Option.some("held") }),
+    markers.findMany(
+      Spec.and(RunMarkerSpecifications.forRun(found.id), RunMarkerSpecifications.inStatus("held")),
+    ),
   ).pipe(inUnitOfWork);
 
   const items = held.flatMap((marker) =>

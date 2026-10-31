@@ -7,24 +7,26 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
+import { HoldsRepository } from "../domain/holds/holds.repository.ts";
 import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
-import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
 import { describeElsewhere, routeItems } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { describeWaiting, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { decideTick, freeSlots, TickPlan } from "../domain/schedule/tick.value-object.ts";
 import { SkipRoot } from "../domain/skip/skip.root.ts";
+import { SkipsRepository } from "../domain/skip/skips.repository.ts";
 import { type PlanTickPayload } from "./plan-tick.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
 // transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// waits on (docs/adr/0009-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -47,7 +49,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
 
   const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed">) =>
     Effect.gen(function* () {
-      yield* skips.save(
+      yield* skips.insertOne(
         SkipRoot.make({
           repo: flow.repo,
           persona: flow.persona,
@@ -128,9 +130,9 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
     at: DateTime.formatIso(yield* DateTime.now),
   });
 
-  yield* HoldsRepository.use((holds) => holds.save(holding)).pipe(inUnitOfWork);
+  yield* HoldsRepository.use((holds) => holds.upsertOne(holding)).pipe(inUnitOfWork);
 
-  const running = yield* (yield* RunsRepository).findAll({ running: true });
+  const running = yield* (yield* RunsRepository).findMany(RunSpecifications.running);
 
   // The items a run may start for: not only waking one, not held, and without its run already.
   const waiting = items.filter(
@@ -189,7 +191,9 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
 
   // A run parked on a signal doesn't count against the limits.
   const parked = new Set(
-    (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((wait) => wait.runId),
+    (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+      (wait) => wait.runId,
+    ),
   );
 
   const working = running.filter((run) => !parked.has(run.id));

@@ -1,10 +1,12 @@
 import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { FlowImportSpecifications } from "../domain/flow-import/flow-import.specification.ts";
+import { FlowImportsRepository } from "../domain/flow-import/flow-imports.repository.ts";
 import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client.ts";
 import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
-import { FlowImportsRepository } from "../domain/ports/repositories/flow-imports.repository.ts";
 import { FlowNotImported, RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { type CopiedRecord, withCopied } from "../domain/recipe/repo-manifest.value-object.ts";
@@ -18,11 +20,20 @@ export const ejectRecipeHandler = Effect.fn("ejectRecipeHandler")(
     const dir = yield* ChernabogDirClient;
     const packages = yield* RecipePackagesClient;
     const imports = yield* FlowImportsRepository;
-    const current = yield* imports.findAll(root);
 
-    const from = yield* Effect.fromOption(Option.fromUndefinedOr(current.get(flow))).pipe(
-      Effect.mapError(() => new FlowNotImported({ flow, imported: [...current.keys()] })),
+    const current = yield* imports
+      .findMany(FlowImportSpecifications.inCheckout(root))
+      .pipe(Effect.mapError((error) => new RecipeFilesFailed({ message: error.message })));
+
+    const flowImport = yield* Effect.fromOption(
+      Arr.findFirst(current, FlowImportSpecifications.forFlow(flow)),
+    ).pipe(
+      Effect.mapError(
+        () => new FlowNotImported({ flow, imported: current.map((each) => each.flow) }),
+      ),
     );
+
+    const { from } = flowImport;
 
     yield* packages.restore(root);
 
@@ -80,7 +91,9 @@ export const ejectRecipeHandler = Effect.fn("ejectRecipeHandler")(
 
     const manifest = Option.getOrElse(yield* dir.read(root, MANIFEST), () => "{}\n");
     yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(manifest, records)));
-    yield* imports.save(root, flow, Option.none());
+    yield* imports
+      .deleteOne(flowImport)
+      .pipe(Effect.mapError((error) => new RecipeFilesFailed({ message: error.message })));
 
     return RecipeEjected.make({ flow, recipe: ref, version: recipe.version, files });
   },

@@ -8,12 +8,13 @@ import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import {
   type FakeHoldings,
   fakeHoldings,
@@ -117,7 +118,9 @@ describe("cancelRunHandler", () => {
       expect(engine.interrupted).toEqual(["execution-a"]);
       expect(engine.notes).toEqual([`a: ${Option.getOrThrow(cancelled.run.summary)}`]);
       expect(
-        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.runId),
+        (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+          (left) => left.runId,
+        ),
       ).toEqual([RunId.make("other")]);
       // A pull request's run holds no claim.
       expect([holdings.cleaned, holdings.released]).toEqual([["a"], []]);
@@ -529,7 +532,7 @@ describe("cancelRunHandler", () => {
     Effect.gen(function* () {
       const live = yield* RunWaitsRepository;
 
-      return RunWaitsRepository.of({ ...live, remove: () => Effect.die("the disk filled up") });
+      return RunWaitsRepository.of({ ...live, deleteOne: () => Effect.die("the disk filled up") });
     }),
   ).pipe(Layer.provide(RunWaitsRepositoryLive));
 
@@ -549,8 +552,8 @@ describe("cancelRunHandler", () => {
 
   effect("a failure after the run is saved leaves state.db as it was", () =>
     Effect.gen(function* () {
-      yield* (yield* RunsRepository).save(run("a"));
-      yield* (yield* RunWaitsRepository).save(wait("a", "one"));
+      yield* (yield* RunsRepository).upsertOne(run("a"));
+      yield* (yield* RunWaitsRepository).upsertOne(wait("a", "one"));
 
       const ended = yield* cancelRunHandler({ target: byId("a"), ...asAlice }).pipe(
         Effect.as("cancelled"),
@@ -560,7 +563,9 @@ describe("cancelRunHandler", () => {
       expect(ended).toBe("died");
       expect(yield* statusOf("a")).toEqual(Option.some("running"));
       expect(
-        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.deferred),
+        (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+          (left) => left.deferred,
+        ),
       ).toEqual(["one"]);
       // Nothing was asked of the engine for a run that wasn't cancelled.
       expect(brokenDisk.interrupted).toEqual([]);

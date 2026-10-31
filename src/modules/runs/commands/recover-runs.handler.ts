@@ -6,17 +6,18 @@ import * as Option from "effect/Option";
 import type * as Result from "effect/Result";
 
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { type RunAlreadyFinished } from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RecoveredRuns, RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
 // transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// waits on (docs/adr/0009-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -31,7 +32,7 @@ export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
   const workflows = yield* WorkflowsClient;
   const events = yield* EventBus;
 
-  const interrupted = (yield* runs.findAll({ running: true })).flatMap((run) =>
+  const interrupted = (yield* runs.findMany(RunSpecifications.running)).flatMap((run) =>
     Option.toArray(RunRootOps.unexecuted(run)),
   );
 
@@ -41,7 +42,7 @@ export const recoverRunsHandler = Effect.fn("recoverRunsHandler")(function* () {
 
   // The ops can't fail here: every run recovered is still running.
   const saved = (change: Result.Result<RunRoot, RunAlreadyFinished>) =>
-    Effect.fromResult(change).pipe(Effect.orDie, Effect.tap(runs.save));
+    Effect.fromResult(change).pipe(Effect.orDie, Effect.tap(runs.upsertOne));
 
   for (const run of interrupted) {
     if (Option.isNone(run.item)) {

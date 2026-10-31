@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { FlowImportSpecifications } from "../domain/flow-import/flow-import.specification.ts";
+import { FlowImportsRepository } from "../domain/flow-import/flow-imports.repository.ts";
 import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client.ts";
 import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
-import { FlowImportsRepository } from "../domain/ports/repositories/flow-imports.repository.ts";
+import { RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import { type ListRecipesPayload, RecipeList } from "./list-recipes.query.ts";
 
@@ -43,7 +45,11 @@ export const listRecipesHandler = Effect.fn("listRecipesHandler")(function* (
   const copied = RecipeRootOps.copiedIn(installed, (file) => has.includes(file));
 
   const imported = new Set(
-    [...(yield* (yield* FlowImportsRepository).findAll(root)).values()].map(RecipeRootOps.fullRef),
+    (yield* (yield* FlowImportsRepository)
+      .findMany(FlowImportSpecifications.inCheckout(root))
+      .pipe(Effect.mapError((error) => new RecipeFilesFailed({ message: error.message })))).map(
+      (each) => RecipeRootOps.fullRef(each.from),
+    ),
   );
 
   return RecipeList.make({

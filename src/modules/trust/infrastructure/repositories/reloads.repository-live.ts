@@ -1,6 +1,7 @@
 // Reloads in reloaded.json under the chernabog home, which only the daemon
 // writes, just before it exits to restart.
 
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,11 +10,11 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
-import { type RepoSlug } from "../../../../kernel/repo-slug.id.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { ReloadsRepository } from "../../domain/ports/repositories/reloads.repository.ts";
 import { type ReloadRoot } from "../../domain/reload/reload.root.ts";
+import { ReloadsRepository } from "../../domain/reload/reloads.repository.ts";
 import { ReloadedFile, toRoot } from "./reload.mapper.ts";
 
 export const ReloadsRepositoryLive = Layer.effect(
@@ -37,14 +38,17 @@ export const ReloadsRepositoryLive = Layer.effect(
       return reloadsIn(Option.some(yield* fs.readFileString(file)));
     }).pipe(Effect.orElseSucceed(() => Record.empty<string, string>()));
 
-    const findOne = (repo: RepoSlug) =>
+    const findOne = (spec: Specification<ReloadRoot>) =>
       readAll.pipe(
         Effect.map((reloads) =>
-          Option.map(Record.get(reloads, repo), (tree) => toRoot(repo, tree)),
+          Arr.findFirst(
+            Object.entries(reloads).map(([slug, tree]) => toRoot(slug, tree)),
+            spec,
+          ),
         ),
       );
 
-    const save = (record: ReloadRoot) =>
+    const upsertOne = (record: ReloadRoot) =>
       Effect.gen(function* () {
         yield* fs.makeDirectory(home.root, { recursive: true });
         yield* updateFile(fs, file, "recording a restart", (text) =>
@@ -63,6 +67,6 @@ export const ReloadsRepositoryLive = Layer.effect(
         ),
       );
 
-    return ReloadsRepository.of({ findOne, save });
+    return ReloadsRepository.of({ findOne, upsertOne });
   }),
 );

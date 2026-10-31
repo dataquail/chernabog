@@ -33,6 +33,7 @@ import {
   type ReviewEvent,
   RunLog,
   Runs,
+  Settings,
   StepRunner,
   type SubmittedReview,
   triggerOf,
@@ -143,11 +144,15 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
   COMMENT: "COMMENTED",
 };
 
-// CI on the head (the checks GitHub reports, or read from a verdict), the
+// CI on the head (the checks GitHub reports, or read from a verdict), CI on
+// the base branch when a test sets it (otherwise it reads as the head's),
+// readings of the base's CI that come first, one per read, the
 // files the pull request changes, its mergeable_state on GitHub, whether
 // GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
+  baseCi: Option.Option<CiState>;
+  baseCiReads: Array<CiState>;
   checks: Option.Option<CiChecks>;
   files: Array<string>;
   state: string;
@@ -222,6 +227,8 @@ export const makeFake = (
 
   const merge: MergeFake = {
     ci: { state: "green" },
+    baseCi: Option.none(),
+    baseCiReads: [],
     checks: Option.none(),
     files: ["src/a.ts"],
     state: "clean",
@@ -682,7 +689,14 @@ export const makeFake = (
 
           return commitCi.get(sha) ?? { ...merge.ci, failedRuns: [] };
         }),
-      branchCiState: () => Effect.sync(() => ({ ...merge.ci, failedRuns: [] })),
+      branchCiState: () =>
+        Effect.sync(() => ({
+          ...Option.getOrElse(
+            Option.orElse(Option.fromUndefinedOr(merge.baseCiReads.shift()), () => merge.baseCi),
+            () => merge.ci,
+          ),
+          failedRuns: [],
+        })),
       ciFailureDetails: (run) =>
         Effect.sync(() => ({
           url: run.url,
@@ -1069,9 +1083,12 @@ export const triggered = <E, R>(
   trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>,
 ) => Effect.provide(trigger, fake.services);
 
-// What a flow's own trigger reports on the fake.
-export const flowTriggered = (fake: Fake, flow: Flow) =>
-  Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
+// What a flow's own trigger reports on the fake, with these settings.
+export const flowTriggered = (fake: Fake, flow: Flow, input: Settings.Input = {}) =>
+  Effect.provide(
+    triggerOf(flow),
+    Layer.mergeAll(fake.services, quietLog, Layer.succeed(Settings.FlowSettings, { input })),
+  );
 
 // The pull request stacked on `below`, the head of another pull request, as
 // a layer of an epic's stack is: open, or `state` as the layer below is now.

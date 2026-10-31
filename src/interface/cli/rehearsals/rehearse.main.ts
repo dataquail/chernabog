@@ -30,40 +30,36 @@ import * as Record from "effect/Record";
 import { asSuffix, type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import { type Ending } from "../../../kernel/scenario.value-object.ts";
-import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
-import { RehearsalsCommands } from "../../../modules/rehearsals/rehearsals.command-handlers.ts";
-import { RehearsalsQueries } from "../../../modules/rehearsals/rehearsals.query-handlers.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.platform.ts";
 import {
+  RehearsalsCommands,
+  RehearsalsQueries,
+} from "../../../modules/rehearsals/rehearsals.platform.ts";
+import {
+  buildPersonaContexts,
+  declaredLabels,
   describeElsewhere,
-  routeItems,
-} from "../../../modules/runs/domain/routing/routing.value-object.ts";
-import { type RunView } from "../../../modules/runs/domain/run/run-view.value-object.ts";
-import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
-import {
-  runAnswers,
-  runUnanswered,
-} from "../../../modules/runs/infrastructure/runtime/agents/answers.ts";
-import { REHEARSAL } from "../../../modules/runs/infrastructure/runtime/agents/rehearsal.ts";
-import {
   type FlowHandle,
   flowHandle,
   flowLayer,
-  runLogFile,
-} from "../../../modules/runs/infrastructure/runtime/engine.ts";
-import { declaredLabels, syncLabels } from "../../../modules/runs/infrastructure/runtime/labels.ts";
-import {
-  buildPersonaContexts,
   openRepo,
+  REHEARSAL,
   type RepoContext,
-  servicesFrom,
-  unreportedItem,
-} from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
-import {
+  routeItems,
+  runAnswers,
   RunFlowsCommands,
   RunFlowsCommandsLive,
-} from "../../../modules/runs/runs.command-handlers.ts";
-import { RuntimeLayer, StateAt } from "../../../modules/runs/runs.layer.ts";
-import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
+  runLogFile,
+  RunLogsQueries,
+  RuntimeLayer,
+  runUnanswered,
+  type RunView,
+  servicesFrom,
+  StateAt,
+  syncLabels,
+  unreportedItem,
+  withRepo,
+} from "../../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { execOk } from "../../../platform/exec.ts";
 import { packageOverride } from "../../../platform/flow-loader.ts";

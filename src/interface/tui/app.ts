@@ -31,15 +31,16 @@ import * as Schedule from "effect/Schedule";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
-import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-handlers.ts";
-import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
+import { EnrollmentCommands } from "../../modules/enrollment/enrollment.platform.ts";
+import { MachineQueries } from "../../modules/machine/machine.platform.ts";
 import {
+  attachCommand,
   type CancelledRun,
   CancelTarget,
-} from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
-import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
-import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
-import { RunLogsQueries } from "../../modules/runs/runs.query-handlers.ts";
+  readUsageLogLine,
+  RunLogsQueries,
+  runSessions,
+} from "../../modules/runs/runs.platform.ts";
 import { userName } from "../../platform/environment.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";

@@ -19,7 +19,7 @@ import {
   type AttachCommand,
   liveAttach,
   runSessions,
-} from "../../../modules/runs/infrastructure/runtime/agents.ts";
+} from "../../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "../../../repo-config.ts";

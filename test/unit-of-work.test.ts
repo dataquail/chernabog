@@ -1,4 +1,4 @@
-// Every command declares its unit of work (docs/adr/0007-commands-declare-their-unit-of-work.md):
+// Every command declares its unit of work (docs/adr/0009-commands-declare-their-unit-of-work.md):
 // what it writes commits together, and what it dispatches is delivered once it has.
 
 import { describe, expect } from "bun:test";

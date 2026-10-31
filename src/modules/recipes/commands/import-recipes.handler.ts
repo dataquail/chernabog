@@ -3,9 +3,11 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { FlowImportRoot } from "../domain/flow-import/flow-import.root.ts";
+import { FlowImportSpecifications } from "../domain/flow-import/flow-import.specification.ts";
+import { FlowImportsRepository } from "../domain/flow-import/flow-imports.repository.ts";
 import { ChernabogDirClient } from "../domain/ports/clients/chernabog-dir.client.ts";
 import { RecipePackagesClient } from "../domain/ports/clients/recipe-packages.client.ts";
-import { FlowImportsRepository } from "../domain/ports/repositories/flow-imports.repository.ts";
 import { RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 import { RecipeRootOps } from "../domain/recipe/recipe.root-ops.ts";
 import {
@@ -18,6 +20,10 @@ import { type ImportRecipesPayload, RecipesImported } from "./import-recipes.com
 type Imported = (typeof RecipesImported.Type.flows)[number];
 
 const MANIFEST = ".chernabog/package.json";
+
+// A checkout's config.yaml that couldn't be read or written.
+const filesFailed = (error: { readonly message: string }) =>
+  new RecipeFilesFailed({ message: error.message });
 
 const MODULE = /\.(?:ts|js|mts|mjs)$/;
 
@@ -35,8 +41,10 @@ export const importRecipesHandler = Effect.fn("importRecipesHandler")(
     );
 
     const current = new Map(
-      [...(yield* imports.findAll(root))].map(
-        ([flow, from]) => [flow, RecipeRootOps.fullRef(from)] as const,
+      (yield* imports
+        .findMany(FlowImportSpecifications.inCheckout(root))
+        .pipe(Effect.mapError(filesFailed))).map(
+        ({ flow, from }) => [flow, RecipeRootOps.fullRef(from)] as const,
       ),
     );
 
@@ -76,7 +84,9 @@ export const importRecipesHandler = Effect.fn("importRecipesHandler")(
         continue;
       }
 
-      yield* imports.save(root, recipe.name, Option.some(from));
+      yield* imports
+        .upsertOne(FlowImportRoot.make({ root, flow: recipe.name, from }))
+        .pipe(Effect.mapError(filesFailed));
       flows.push({ ...said, outcome: "imported", keptFor: Option.none() });
     }
 

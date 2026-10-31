@@ -58,7 +58,7 @@ export const RunEventsLive = makeEventBus();
 // The unit of work each of the runs' commands declares, over state.db: what a
 // command writes there commits together or not at all, and what it dispatches
 // on the bus is delivered once it has. Built beside the bus, and the runs'
-// dispatchers run their commands in it (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// dispatchers run their commands in it (docs/adr/0009-commands-declare-their-unit-of-work.md).
 export const RunsUnitOfWorkLive = makeUnitOfWork().pipe(
   Layer.provide(StateDbTransactionDriverLive),
 );

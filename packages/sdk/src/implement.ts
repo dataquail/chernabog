@@ -184,6 +184,15 @@ const whyWaiting = (issue: Issue, owned: ReadonlyMap<number, number>) =>
     return Option.some(`waits on ${open.map((blocker) => `#${blocker.number}`).join(", ")}`);
   });
 
+// The issues with the post-merge recipe's follow-ups first (Ci.isFollowUp),
+// each part in the order given: a follow-up fixes red CI on the base branch,
+// which other merges may be held for. Only the order changes; the flow's
+// and the machine's concurrency limits still decide how many start.
+export const followUpsFirst = (issues: ReadonlyArray<Issue>) => [
+  ...issues.filter((issue) => Ci.isFollowUp(issue.body)),
+  ...issues.filter((issue) => !Ci.isFollowUp(issue.body)),
+];
+
 // The issues, in the order given, as work items, queued by `label` when it's
 // not eligible's. One that waits is held, saying why, so `chernabog status`
 // shows it: "waits on #12, #13" for the open issues that block it, as the

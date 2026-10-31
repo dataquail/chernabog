@@ -5,7 +5,16 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { manifestOf, manifestWith, recipeRepo } from "../../../../test/recipe-repo.ts";
+import { FlowImportSpecifications } from "../domain/flow-import/flow-import.specification.ts";
+import { FlowImportsRepository } from "../domain/flow-import/flow-imports.repository.ts";
 import { importRecipesHandler } from "./import-recipes.handler.ts";
+
+// What the checkout imports, as `<root>/<flow>` and its from.
+const importedFlows = FlowImportsRepository.use((imports) =>
+  imports.findMany(FlowImportSpecifications.inCheckout("/repo")),
+).pipe(
+  Effect.map((found) => found.map((each) => [`${each.root}/${each.flow}`, each.from] as const)),
+);
 
 describe("importRecipesHandler", () => {
   const repo = recipeRepo(
@@ -35,7 +44,7 @@ describe("importRecipesHandler", () => {
           ["re-review", "kept", Option.some("@acme/recipes/deploy")],
           ["deploy", "imported", Option.none()],
         ]);
-        expect([...repo.imports]).toEqual([
+        expect(yield* importedFlows).toEqual([
           ["/repo/re-review", "@acme/recipes/deploy"],
           ["/repo/review", "@chernabog/recipes/review"],
           ["/repo/deploy", "@acme/recipes/deploy"],

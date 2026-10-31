@@ -5,9 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { ConfigTreeClient } from "../domain/ports/clients/config-tree.client.ts";
-import { TrustRecordsRepository } from "../domain/ports/repositories/trust-records.repository.ts";
 import { TrustEvents } from "../domain/trust-record/trust-record.events.ts";
 import { TrustRecordRootOps } from "../domain/trust-record/trust-record.root-ops.ts";
+import { TrustRecordSpecifications } from "../domain/trust-record/trust-record.specification.ts";
+import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";
 import { TrustOutcome, type TrustRepoPayload } from "./trust-repo.command.ts";
 
 export const trustRepoHandler = Effect.fn("trustRepoHandler")(
@@ -15,7 +16,7 @@ export const trustRepoHandler = Effect.fn("trustRepoHandler")(
     const records = yield* TrustRecordsRepository;
     const trees = yield* ConfigTreeClient;
     const tree = yield* trees.treeOf(cmd.path);
-    const record = yield* records.findOne(cmd.repo);
+    const record = yield* records.findOne(TrustRecordSpecifications.forRepo(cmd.repo));
     const previous = Option.map(record, (found) => found.tree);
 
     const approved = TrustRecordRootOps.approve(
@@ -36,7 +37,7 @@ export const trustRepoHandler = Effect.fn("trustRepoHandler")(
     }
 
     const changes = yield* trees.changesSince(cmd.path, previous, tree);
-    yield* records.save(approved.value);
+    yield* records.upsertOne(approved.value);
     yield* (yield* EventBus).dispatch([TrustEvents.trusted(approved.value, previous)]);
 
     return TrustOutcome.make({

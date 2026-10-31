@@ -7,8 +7,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
+import { Spec } from "../../../../kernel/specification.ts";
 import { RunRoot } from "../../domain/run/run.root.ts";
+import { RunSpecifications } from "../../domain/run/run.specification.ts";
+import { RunsRepository } from "../../domain/run/runs.repository.ts";
 import { RunsRepositoryLive } from "./runs.repository-live.ts";
 
 const runsAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClient>) =>
@@ -49,61 +51,77 @@ const finished = RunRoot.make({
 });
 
 describe("RunsRepositoryLive", () => {
-  effect("saves runs and reads them back by id, running, latest and repo", () =>
+  effect("upserts runs and reads back those a spec holds of, oldest first", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
-      yield* runs.save(second);
-      yield* runs.save(first);
-      yield* runs.save(RunRoot.make({ ...second, id: RunId.make("c"), repo: "other" }));
+      yield* runs.upsertOne(second);
+      yield* runs.upsertOne(first);
+      yield* runs.upsertOne(RunRoot.make({ ...second, id: RunId.make("c"), repo: "other" }));
 
-      expect(yield* runs.findOne(RunId.make("a"))).toEqual(Option.some(first));
-      expect(yield* runs.findOne(RunId.make("nope"))).toEqual(Option.none());
-      expect((yield* runs.findAll({ running: true })).map((found) => String(found.id))).toEqual([
-        "a",
-        "b",
-        "c",
-      ]);
-      expect((yield* runs.findAll({ latest: 2 })).map((found) => String(found.id))).toEqual([
-        "b",
-        "c",
-      ]);
-      expect((yield* runs.findAll({ repo: "demo" })).map((found) => String(found.id))).toEqual([
-        "a",
-        "b",
-      ]);
+      expect(yield* runs.findOne(RunSpecifications.withId(RunId.make("a")))).toEqual(
+        Option.some(first),
+      );
+      expect(yield* runs.findOne(RunSpecifications.withId(RunId.make("nope")))).toEqual(
+        Option.none(),
+      );
+      expect(
+        (yield* runs.findMany(RunSpecifications.running)).map((found) => String(found.id)),
+      ).toEqual(["a", "b", "c"]);
+      expect(
+        (yield* runs.findMany(RunSpecifications.all)).map((found) => String(found.id)),
+      ).toEqual(["a", "b", "c"]);
+      expect(
+        (yield* runs.findMany(Spec.isNull<RunRoot>("persona"))).map((found) => String(found.id)),
+      ).toEqual(["b", "c"]);
+      expect(
+        (yield* runs.findMany(
+          Spec.and(
+            RunSpecifications.forRepo("demo"),
+            Spec.not(RunSpecifications.withId(RunId.make("a"))),
+          ),
+        )).map((found) => String(found.id)),
+      ).toEqual(["b"]);
+      expect(
+        (yield* runs.findMany(RunSpecifications.forRepo("demo"))).map((found) => String(found.id)),
+      ).toEqual(["a", "b"]);
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
   effect("a run that ended isn't rewritten by a copy saved from before it ended", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
-      yield* runs.save(first);
-      yield* runs.save(finished);
-      yield* runs.save(RunRoot.make({ ...first, currentStep: Option.some("late") }));
+      yield* runs.upsertOne(first);
+      yield* runs.upsertOne(finished);
+      yield* runs.upsertOne(RunRoot.make({ ...first, currentStep: Option.some("late") }));
 
-      expect(yield* runs.findOne(first.id)).toEqual(Option.some(finished));
+      expect(yield* runs.findOne(RunSpecifications.withId(first.id))).toEqual(
+        Option.some(finished),
+      );
 
       // A copy of it as it ended still saves, as adopting it does.
       const adopted = RunRoot.make({ ...finished, persona: Option.some("alice") });
-      yield* runs.save(adopted);
-      expect(yield* runs.findOne(first.id)).toEqual(Option.some(adopted));
+      yield* runs.upsertOne(adopted);
+      expect(yield* runs.findOne(RunSpecifications.withId(first.id))).toEqual(Option.some(adopted));
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
   effect("keeps the subjects a run named, in order, and a stale copy drops none", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
-      yield* runs.save(first);
+      yield* runs.upsertOne(first);
       const named = RunRoot.make({ ...first, subjects: ["pr-124", "release-1.4", "pr-125"] });
-      yield* runs.save(named);
-      yield* runs.save(RunRoot.make({ ...first, currentStep: Option.some("stale") }));
+      yield* runs.upsertOne(named);
+      yield* runs.upsertOne(RunRoot.make({ ...first, currentStep: Option.some("stale") }));
 
-      expect(Option.map(yield* runs.findOne(first.id), (found) => found.subjects)).toEqual(
-        Option.some(["pr-124", "release-1.4", "pr-125"]),
-      );
-      expect((yield* runs.findAll({ running: true })).map((found) => found.subjects)).toEqual([
-        ["pr-124", "release-1.4", "pr-125"],
-      ]);
+      expect(
+        Option.map(
+          yield* runs.findOne(RunSpecifications.withId(first.id)),
+          (found) => found.subjects,
+        ),
+      ).toEqual(Option.some(["pr-124", "release-1.4", "pr-125"]));
+      expect(
+        (yield* runs.findMany(RunSpecifications.running)).map((found) => found.subjects),
+      ).toEqual([["pr-124", "release-1.4", "pr-125"]]);
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
@@ -112,7 +130,7 @@ describe("RunsRepositoryLive", () => {
       const runs = yield* RunsRepository;
 
       expect(
-        Option.map(yield* runs.findOne(RunId.make("old")), (found) => ({
+        Option.map(yield* runs.findOne(RunSpecifications.withId(RunId.make("old"))), (found) => ({
           persona: found.persona,
           item: found.item,
           subjects: found.subjects,
@@ -150,11 +168,17 @@ describe("RunsRepositoryLive", () => {
       const runs = yield* RunsRepository;
       const sql = yield* SqlClient.SqlClient;
 
-      expect(Option.map(yield* runs.findOne(RunId.make("old")), (found) => found.subjects)).toEqual(
-        Option.some(["pr-124"]),
-      );
       expect(
-        Option.map(yield* runs.findOne(RunId.make("none")), (found) => found.subjects),
+        Option.map(
+          yield* runs.findOne(RunSpecifications.withId(RunId.make("old"))),
+          (found) => found.subjects,
+        ),
+      ).toEqual(Option.some(["pr-124"]));
+      expect(
+        Option.map(
+          yield* runs.findOne(RunSpecifications.withId(RunId.make("none"))),
+          (found) => found.subjects,
+        ),
       ).toEqual(Option.some([]));
 
       const columns = yield* sql<{ name: string }>`SELECT name FROM pragma_table_info('om_runs')`;
@@ -180,7 +204,7 @@ describe("RunsRepositoryLive", () => {
         const runs = yield* RunsRepository;
 
         expect(
-          Option.map(yield* runs.findOne(RunId.make("old")), (found) => [
+          Option.map(yield* runs.findOne(RunSpecifications.withId(RunId.make("old"))), (found) => [
             found.coreVersion,
             found.configTree,
           ]),
@@ -191,8 +215,8 @@ describe("RunsRepositoryLive", () => {
           configTree: Option.some("abc123"),
         });
 
-        yield* runs.save(saved);
-        expect(yield* runs.findOne(saved.id)).toEqual(Option.some(saved));
+        yield* runs.upsertOne(saved);
+        expect(yield* runs.findOne(RunSpecifications.withId(saved.id))).toEqual(Option.some(saved));
       }).pipe(
         Effect.provide(
           runsAfter(

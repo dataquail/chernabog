@@ -2,16 +2,14 @@
 
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import {
-  type MarkerQuery,
-  RunMarkersRepository,
-} from "../../domain/ports/repositories/run-markers.repository.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { type RunMarkerRoot } from "../../domain/run-marker/run-marker.root.ts";
-import { MarkerColumns, toRoot, toRow } from "./run-marker.mapper.ts";
+import { RunMarkersRepository } from "../../domain/run-marker/run-markers.repository.ts";
+import { criteriaToWhere } from "./criteria-to-sql.ts";
+import { MarkerColumns, markerColumns, toRoot, toRow } from "./run-marker.mapper.ts";
 
 export const RunMarkersRepositoryLive = Layer.effect(
   RunMarkersRepository,
@@ -41,26 +39,16 @@ export const RunMarkersRepositoryLive = Layer.effect(
         Effect.orDie,
       );
 
-    const findAll = (query: MarkerQuery) => {
-      const conditions = [
-        ...Option.toArray(Option.map(query.runId, (runId) => sql`run_id = ${runId}`)),
-        ...Option.toArray(Option.map(query.status, (status) => sql`status = ${status}`)),
-      ];
-
-      const where = Option.match(
-        Option.liftPredicate(conditions, (all) => all.length > 0),
-        {
-          onNone: () => sql``,
-          onSome: (all) => sql`WHERE ${sql.and(all)}`,
-        },
+    const findMany = (spec: Specification<RunMarkerRoot>) =>
+      criteriaToWhere(sql, spec.criteria, markerColumns).pipe(
+        Effect.flatMap((where) =>
+          markers(
+            sql`SELECT run_id, name, args, keep_on, status, held_at, attempts, last_error, next_attempt_at, settled_at FROM om_markers WHERE ${where} ORDER BY seq`,
+          ),
+        ),
       );
 
-      return markers(
-        sql`SELECT run_id, name, args, keep_on, status, held_at, attempts, last_error, next_attempt_at, settled_at FROM om_markers ${where} ORDER BY seq`,
-      );
-    };
-
-    const save = (marker: RunMarkerRoot) => {
+    const upsertOne = (marker: RunMarkerRoot) => {
       const row = toRow(marker);
 
       return sql`INSERT INTO om_markers (run_id, name, args, keep_on, status, held_at, attempts, last_error, next_attempt_at, settled_at)
@@ -71,12 +59,12 @@ export const RunMarkersRepositoryLive = Layer.effect(
       );
     };
 
-    const remove = (marker: RunMarkerRoot) =>
+    const deleteOne = (marker: RunMarkerRoot) =>
       sql`DELETE FROM om_markers WHERE run_id = ${marker.runId} AND name = ${marker.name} AND args = ${toRow(marker).args}`.pipe(
         Effect.asVoid,
         Effect.orDie,
       );
 
-    return RunMarkersRepository.of({ findAll, save, remove });
+    return RunMarkersRepository.of({ findMany, upsertOne, deleteOne });
   }).pipe(Effect.orDie),
 );

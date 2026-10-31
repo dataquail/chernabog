@@ -2,8 +2,9 @@ import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { type SetPersonaFlowPayload } from "./set-persona-flow.command.ts";
 
 export const setPersonaFlowHandler = Effect.fn("setPersonaFlowHandler")(
@@ -11,10 +12,15 @@ export const setPersonaFlowHandler = Effect.fn("setPersonaFlowHandler")(
     const repository = yield* EnrolledReposRepository;
 
     const repo = yield* Effect.fromResult(
-      EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+      EnrolledRepoRootOps.named(
+        yield* repository.findMany(EnrolledRepoSpecifications.all),
+        cmd.name,
+      ),
     );
 
-    yield* repository.save(EnrolledRepoRootOps.setFlow(repo, cmd.persona, cmd.flow, cmd.enabled));
+    yield* repository.upsertOne(
+      EnrolledRepoRootOps.setFlow(repo, cmd.persona, cmd.flow, cmd.enabled),
+    );
 
     return EnrolledRepoSummary.make({
       name: EnrolledRepoRootOps.nameOf(repo),

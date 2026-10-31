@@ -5,12 +5,14 @@
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, MachineConfigFile, readYaml } from "../../../../repo-config.ts";
 import { type MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
-import { MachineSetupsRepository } from "../../domain/ports/repositories/machine-setups.repository.ts";
+import { MachineSetupsRepository } from "../../domain/machine-setup/machine-setups.repository.ts";
 import { applySetup, toRoot } from "./machine-setup.mapper.ts";
 
 const failed = (error: { readonly message: string }) =>
@@ -22,19 +24,20 @@ export const MachineSetupsRepositoryLive = Layer.effect(
     const services = yield* Effect.context<FileSystem.FileSystem | Home>();
     const file = homePaths((yield* Home).root).machineConfig;
 
-    const findOne = readYaml(MachineConfigFile, file).pipe(
-      Effect.map(toRoot),
-      Effect.mapError(failed),
-      Effect.provideContext(services),
-    );
+    const findOne = (spec: Specification<MachineSetupRoot>) =>
+      readYaml(MachineConfigFile, file).pipe(
+        Effect.map((config) => Option.filter(Option.some(toRoot(config)), spec)),
+        Effect.mapError(failed),
+        Effect.provideContext(services),
+      );
 
-    const save = (setup: MachineSetupRoot) =>
+    const upsertOne = (setup: MachineSetupRoot) =>
       editMachineConfig((document, current) =>
         Effect.sync(() => {
           applySetup(document, toRoot(current), setup);
         }),
       ).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
-    return MachineSetupsRepository.of({ findOne, save });
+    return MachineSetupsRepository.of({ findOne, upsertOne });
   }),
 );

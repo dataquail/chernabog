@@ -5,7 +5,7 @@ Status: accepted, 2026-10-29. Issue #228. Supersedes decision 1 of
 and the unit-of-work library on that ADR's list of what was left behind, and
 its settled question on folder names. Amends decision 1 of
 [ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md).
-Decision 5 is superseded by [ADR 7](0007-commands-declare-their-unit-of-work.md):
+Decision 5 is superseded by [ADR 9](0009-commands-declare-their-unit-of-work.md):
 every command declares its unit of work.
 
 ## Context

@@ -8,8 +8,9 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Checkout } from "../domain/enrolled-repo/checkout.value-object.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { TeamFlows } from "../domain/enrolled-repo/team-flows.value-object.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
@@ -33,7 +34,9 @@ const here = Checkout.make({
 const entry = (fields: Partial<ConstructorParameters<typeof EnrolledRepoRoot>[0]> = {}) =>
   EnrolledRepoRoot.make({ repo: demo, path: "/src/demo", defaults: {}, paused: false, ...fields });
 
-const stored = EnrolledReposRepository.use((repository) => repository.findAll);
+const stored = EnrolledReposRepository.use((repository) =>
+  repository.findMany(EnrolledRepoSpecifications.all),
+);
 
 const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArray<string> = []) =>
   Layer.mergeAll(

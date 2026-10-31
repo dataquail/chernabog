@@ -8,10 +8,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { type RunsQuery, RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { type RunRoot } from "../../domain/run/run.root.ts";
-import { RunColumns, toParameters, toRoot } from "./run.mapper.ts";
+import { RunsRepository } from "../../domain/run/runs.repository.ts";
+import { criteriaToWhere } from "./criteria-to-sql.ts";
+import { RunColumns, runColumns, toParameters, toRoot } from "./run.mapper.ts";
 
 const ColumnName = Schema.Struct({ name: Schema.String });
 
@@ -100,26 +101,23 @@ export const RunsRepositoryLive = Layer.effect(
         Effect.orDie,
       );
 
-    const findOne = (id: RunId) =>
-      runs(sql`${SELECTED} WHERE id = ${id}`).pipe(
+    // The runs a spec holds of, oldest first.
+    const findMany = (spec: Specification<RunRoot>) =>
+      criteriaToWhere(sql, spec.criteria, runColumns).pipe(
+        Effect.flatMap((where) => runs(sql`${SELECTED} WHERE ${where} ORDER BY started_at`)),
+      );
+
+    const findOne = (spec: Specification<RunRoot>) =>
+      criteriaToWhere(sql, spec.criteria, runColumns).pipe(
+        Effect.flatMap((where) =>
+          runs(sql`${SELECTED} WHERE ${where} ORDER BY started_at LIMIT 1`),
+        ),
         Effect.map((found) => Option.fromUndefinedOr(found[0])),
       );
 
-    const findAll = (query: RunsQuery) => {
-      if ("running" in query) {
-        return runs(sql`${SELECTED} WHERE status = 'running' ORDER BY started_at`);
-      }
-
-      if ("latest" in query) {
-        return runs(sql`${SELECTED} ORDER BY started_at DESC LIMIT ${query.latest}`);
-      }
-
-      return runs(sql`${SELECTED} WHERE repo = ${query.repo} ORDER BY started_at`);
-    };
-
     // A run that has ended is rewritten only by a save that carries the same
-    // ending, so a stale copy saved after it ended can't bring it back.
-    const save = (run: RunRoot) => {
+    // ending, so a stale copy upserted after it ended can't bring it back.
+    const upsertOne = (run: RunRoot) => {
       const [
         id,
         repo,
@@ -164,6 +162,6 @@ export const RunsRepositoryLive = Layer.effect(
       );
     };
 
-    return RunsRepository.of({ findOne, findAll, save });
+    return RunsRepository.of({ findOne, findMany, upsertOne });
   }).pipe(Effect.orDie),
 );

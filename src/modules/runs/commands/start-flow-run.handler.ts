@@ -8,18 +8,19 @@ import * as Result from "effect/Result";
 
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { WorkflowsClient } from "../domain/ports/clients/workflows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunView, StartedRun } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { mayStart } from "../domain/run/work-item.value-object.ts";
 import { type StartFlowRunPayload } from "./start-flow-run.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
 // What it asks of GitHub, git, a launcher or the engine stays outside it: a
 // transaction holds state.db's one connection, which the engine's journal
-// waits on (docs/adr/0007-commands-declare-their-unit-of-work.md).
+// waits on (docs/adr/0009-commands-declare-their-unit-of-work.md).
 const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     withUnitOfWork,
@@ -41,13 +42,13 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
   const runs = yield* RunsRepository;
   const workflows = yield* WorkflowsClient;
   const wanted = { repo: flow.repo, persona: flow.persona, flow: flow.flow, itemKey: item.key };
-  const running = yield* runs.findAll({ running: true });
+  const running = yield* runs.findMany(RunSpecifications.running);
 
   // The run already in flight, as it's stored now.
   const existing = (found: Option.Option<{ readonly id: RunId }>) =>
     Option.match(found, {
       onNone: () => Effect.succeed(Option.none<RunRoot>()),
-      onSome: (one) => runs.findOne(one.id),
+      onSome: (one) => runs.findOne(RunSpecifications.withId(one.id)),
     }).pipe(
       Effect.map((run) =>
         StartedRun.make({
@@ -82,7 +83,7 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
   // Recorded before its workflow executes, so a crash between leaves a run
   // RecoverRunsCommand executes.
   yield* Effect.gen(function* () {
-    yield* runs.save(started.success);
+    yield* runs.upsertOne(started.success);
     yield* (yield* EventBus).dispatch([RunEvents.started(started.success)]);
   }).pipe(inUnitOfWork);
 
@@ -93,7 +94,7 @@ export const startFlowRunHandler = Effect.fn("startFlowRunHandler")(function* ({
     RunRootOps.attachExecution(started.success, executionId),
   ).pipe(Effect.orDie);
 
-  yield* runs.save(attached).pipe(inUnitOfWork);
+  yield* runs.upsertOne(attached).pipe(inUnitOfWork);
 
   return StartedRun.make({ run: Option.some(RunView.make({ ...attached })), started: true });
 });

@@ -5,7 +5,8 @@ import * as Effect from "effect/Effect";
 
 import { EnrollmentEvents } from "../domain/enrolled-repo/enrolled-repo.events.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { type PauseRepoPayload, PauseState } from "./pause-repo.command.ts";
 
 export const pauseRepoHandler = Effect.fn("pauseRepoHandler")(
@@ -13,11 +14,14 @@ export const pauseRepoHandler = Effect.fn("pauseRepoHandler")(
     const repository = yield* EnrolledReposRepository;
 
     const repo = yield* Effect.fromResult(
-      EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+      EnrolledRepoRootOps.named(
+        yield* repository.findMany(EnrolledRepoSpecifications.all),
+        cmd.name,
+      ),
     );
 
     const paused = EnrolledRepoRootOps.pause(repo);
-    yield* repository.save(paused);
+    yield* repository.upsertOne(paused);
     yield* (yield* EventBus).dispatch(
       EnrollmentEvents.pausedOrResumed(repo, paused, DateTime.formatIso(yield* DateTime.now)),
     );

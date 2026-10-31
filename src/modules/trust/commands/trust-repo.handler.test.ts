@@ -6,9 +6,10 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
-import { TrustRecordsRepository } from "../domain/ports/repositories/trust-records.repository.ts";
 import { RepoTrusted } from "../domain/trust-record/trust-record.events.ts";
 import { TrustRecordRoot } from "../domain/trust-record/trust-record.root.ts";
+import { TrustRecordSpecifications } from "../domain/trust-record/trust-record.specification.ts";
+import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";
 import { ConfigTreeClientFake } from "../infrastructure/clients/config-tree.client-fake.ts";
 import { TrustRecordsRepositoryFake } from "../infrastructure/repositories/trust-records.repository-fake.ts";
 import { trustRepoHandler } from "./trust-repo.handler.ts";
@@ -38,7 +39,10 @@ describe("trustRepoHandler", () => {
         true,
       ]);
       expect(
-        Option.map(yield* (yield* TrustRecordsRepository).findOne(repo), (found) => found.tree),
+        Option.map(
+          yield* (yield* TrustRecordsRepository).findOne(TrustRecordSpecifications.forRepo(repo)),
+          (found) => found.tree,
+        ),
       ).toEqual(Option.some("aaaa"));
     }).pipe(Effect.provide(trusting("aaaa", []))),
   );
@@ -52,7 +56,10 @@ describe("trustRepoHandler", () => {
         Option.some("aaaa..bbbb"),
         true,
       ]);
-      const saved = yield* (yield* TrustRecordsRepository).findOne(repo);
+
+      const saved = yield* (yield* TrustRecordsRepository).findOne(
+        TrustRecordSpecifications.forRepo(repo),
+      );
 
       expect(Option.map(saved, (found) => found.tree)).toEqual(Option.some("bbbb"));
       expect(yield* DispatchedEvents).toEqual(
@@ -76,9 +83,9 @@ describe("trustRepoHandler", () => {
       const outcome = yield* trustRepoHandler(target);
 
       expect([outcome.changes, outcome.trusted]).toEqual([Option.none(), false]);
-      expect(yield* (yield* TrustRecordsRepository).findOne(repo)).toEqual(
-        Option.some(record("aaaa")),
-      );
+      expect(
+        yield* (yield* TrustRecordsRepository).findOne(TrustRecordSpecifications.forRepo(repo)),
+      ).toEqual(Option.some(record("aaaa")));
       expect(yield* DispatchedEvents).toEqual([]);
     }).pipe(Effect.provide(trusting("aaaa", [record("aaaa")]))),
   );
@@ -90,7 +97,9 @@ describe("trustRepoHandler", () => {
       expect(refused.message).toBe(
         "/src/elsewhere: no .chernabog/ on the default branch; run chernabog init and merge it first",
       );
-      expect(yield* (yield* TrustRecordsRepository).findOne(repo)).toEqual(Option.none());
+      expect(
+        yield* (yield* TrustRecordsRepository).findOne(TrustRecordSpecifications.forRepo(repo)),
+      ).toEqual(Option.none());
       expect(yield* DispatchedEvents).toEqual([]);
     }).pipe(Effect.provide(trusting("aaaa", []))),
   );

@@ -9,7 +9,7 @@ chernabog recipes add implement
 
 Bakes `.chernabog/flows/implement.ts` and its prompt, `.chernabog/prompts/implement.md`.
 
-**Picks up** the oldest open issue labelled `auto:eligible`, then the oldest labelled `auto:ship`, the [automated path](/chernabog/work/flows/#the-automated-path). With a [board](/chernabog/reference/configuration/#repo), only issues whose Status is `readyStatus`. The trigger is written out at the top of the file.
+**Picks up** the oldest open issue labelled `auto:eligible`, then the oldest labelled `auto:ship`, the [automated path](/chernabog/work/flows/#the-automated-path). A follow-up the [`post-merge`](/chernabog/recipes/post-merge/) recipe filed for red CI on the base comes first (`Implement.followUpsFirst`), since other merges may be [held](/chernabog/recipes/review/#holding-merges-on-a-red-base) for it; only the order changes, and the flow's and the machine's concurrency limits still decide how many start. With a [board](/chernabog/reference/configuration/#repo), only issues whose Status is `readyStatus`. The trigger is written out at the top of the file.
 
 **Ends with** a green pull request and a review requested of one reviewer from the [pool](/chernabog/work/flows/#the-reviewer-pool), or the issue handed to a person.
 

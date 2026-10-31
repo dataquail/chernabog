@@ -21,35 +21,44 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
-import { EnrollmentCommandsLive } from "../../modules/enrollment/enrollment.command-handlers.ts";
-import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
-import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
+import {
+  EnrollmentCommandsLive,
+  EnrollmentLayer,
+  EnrollmentQueriesLive,
+} from "../../modules/enrollment/enrollment.platform.ts";
 import {
   MachineCommands,
   MachineCommandsLive,
-} from "../../modules/machine/machine.command-handlers.ts";
-import { MachineLayer } from "../../modules/machine/machine.layer.ts";
-import { MachineQueriesLive } from "../../modules/machine/machine.query-handlers.ts";
-import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
-import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
-import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
-import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
-import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
+  MachineLayer,
+  MachineQueriesLive,
+} from "../../modules/machine/machine.platform.ts";
+import {
+  RecipesCommandsLive,
+  RecipesLayer,
+  RecipesQueriesLive,
+} from "../../modules/recipes/recipes.platform.ts";
+import {
+  RehearsalsCommandsLive,
+  RehearsalsQueriesLive,
+} from "../../modules/rehearsals/rehearsals.platform.ts";
 import {
   type ActiveRun,
+  attachCommand,
+  declaredLabels,
+  questionHook,
+  repoConfigDir,
+  runLaunch,
+  RunLogsLayer,
+  RunLogsQueries,
+  RunLogsQueriesLive,
+  runSessions,
+  runStepChild,
   type RunView,
-} from "../../modules/runs/domain/run/run-view.value-object.ts";
-import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
-import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
-import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
-import { declaredLabels, syncLabels } from "../../modules/runs/infrastructure/runtime/labels.ts";
-import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/shim.ts";
-import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
-import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
-import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
-import { RunLogsQueries, RunLogsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
-import { TrustCommandsLive } from "../../modules/trust/trust.command-handlers.ts";
-import { TrustQueriesLive } from "../../modules/trust/trust.query-handlers.ts";
+  StepServicesLive,
+  stopHook,
+  syncLabels,
+} from "../../modules/runs/runs.platform.ts";
+import { TrustCommandsLive, TrustQueriesLive } from "../../modules/trust/trust.platform.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";

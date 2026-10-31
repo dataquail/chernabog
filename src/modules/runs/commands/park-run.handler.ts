@@ -4,10 +4,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
 import { RunWait } from "../domain/run-wait/run-wait-view.value-object.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { type ParkRunPayload } from "./park-run.command.ts";
 
 export const parkRunHandler = Effect.fn("parkRunHandler")(
@@ -18,11 +19,11 @@ export const parkRunHandler = Effect.fn("parkRunHandler")(
 
     // A resumed run registers its wait again, and that wait's event went out
     // the first time.
-    const again = (yield* waits.findAll(Option.some(parking.runId))).some(
+    const again = (yield* waits.findMany(RunWaitSpecifications.forRun(parking.runId))).some(
       (parked) => parked.deferred === parking.deferred,
     );
 
-    yield* waits.save(wait);
+    yield* waits.upsertOne(wait);
 
     if (!again) {
       yield* (yield* EventBus).dispatch([
