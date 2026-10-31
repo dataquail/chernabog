@@ -626,7 +626,8 @@ export const holdWhileBaseRed = (pullRequest: number) =>
   });
 
 // For a trigger: the work items of runs holding a merge (holdWhileBaseRed)
-// whose base branch is no longer red, as BASE_GREEN signals to those runs.
+// whose base branch is no longer red, as BASE_GREEN signals to those runs,
+// one per work item, whichever run's marker is newest.
 // Only open pull requests on the automated path (ships) can be held, and a
 // run this machine knows has ended is left out. Never starts a run, and reads
 // nothing while the flow's settings don't hold merges.
@@ -646,8 +647,10 @@ export const baseTurnedGreen = Effect.gen(function* () {
 
     const bodies = (yield* github.trustedComments(pull.number)).map((found) => found.body);
 
-    for (const marker of Option.toArray(latestMarker(holdMarker.read, bodies))) {
-      if (!(yield* knownEnded(marker.runId))) {
+    // Every run that holds it, not only the newest: runs of other keys
+    // (review's and re-review's) may hold one pull request at once.
+    for (const marker of bodies.flatMap((body) => Option.toArray(holdMarker.read(body)))) {
+      if (!held.some((found) => found.key === marker.key) && !(yield* knownEnded(marker.runId))) {
         held.push({ pull, key: marker.key });
       }
     }

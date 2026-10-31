@@ -249,6 +249,29 @@ describe("holding a merge on a red base branch", () => {
       }),
   );
 
+  effect("wakes every run holding one pull request, once each, not only the newest", () =>
+    Effect.gen(function* () {
+      const fake = approved(GREEN);
+
+      // A re-review run holds, then a later round's run holds the same pull
+      // request; the first one's marker is no longer the newest.
+      for (const [runId, key] of [
+        ["run-2", `${KEY}-review-2`],
+        ["run-3", `${KEY}-review-3`],
+        ["run-2", `${KEY}-review-2`],
+      ]) {
+        fake.comment(
+          `Holding the merge. <!-- chernabog-merge-hold {"runId":"${runId}","key":"${key}"} -->`,
+        );
+      }
+
+      expect((yield* woken(fake)).map((work) => work.key)).toEqual([
+        `${KEY}-review-2`,
+        `${KEY}-review-3`,
+      ]);
+    }),
+  );
+
   effect("wakes nothing for a run this machine knows has ended, or with the setting off", () =>
     Effect.gen(function* () {
       const fake = approved(GREEN);
