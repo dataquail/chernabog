@@ -225,7 +225,8 @@ transitive reach), the coverage floors and the baseline.
   `ConfigTreeClient`. It is the CQRS worked example (ADR 6): adapters ask
   `TrustQueries` and `TrustCommands`. `TrustRepoCommand` is a security gate,
   so only the CLI dispatches it; never expose it to an agent-facing adapter
-  such as MCP. The daemon and `doctor` read trust through
+  such as MCP. It dispatches `RepoTrusted` (`trust-record.events.ts`) once
+  the record is saved. The daemon and `doctor` read trust through
   `FindTrustedTreeQuery`, `status` through `CheckTrustQuery`.
   `ReloadRoot` (`reloaded.json`, by slug, behind `ReloadsRepository`) is the
   tree each repo last restarted the daemon on: the daemon restarts on a
