@@ -102,7 +102,7 @@ Runs of an earlier version held an issue by its branch alone. While they may be 
 
 ## Markers
 
-A marker is something a run put on an item outside chernabog, with a named way to take it off. A run holds it, and the daemon releases it however the run ends: done, failed, needs-human, cancelled or superseded. A closure can't be journaled, so a release is defined by name at the top of the flow's module, with a schema for its arguments, and listed in the flow's `markers`:
+A marker is something a run put on an item outside chernabog, with a named way to take it off. A run holds it, and chernabog releases it as soon as the run ends, however it ends: done, failed, needs-human, cancelled or superseded. A release that fails is retried by the daemon, backing off between tries. A closure can't be journaled, so a release is defined by name at the top of the flow's module, with a schema for its arguments, and listed in the flow's `markers`:
 
 ```ts
 const inProgress = Markers.define(
