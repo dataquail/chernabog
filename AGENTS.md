@@ -189,10 +189,10 @@ transitive reach), the coverage floors and the baseline.
 
 - **The layout.** `src/modules/<module>/` holds `domain/<aggregate>/`
   (`x.root.ts`, a `Schema.Class`; `x.root-ops.ts`, pure functions returning
-  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`, and `.events.ts`, the
-  domain events its commands dispatch),
-  `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
-  values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
+  `Result`; `.id.ts`, `.errors.ts`, `.value-object.ts`, `.events.ts`, the
+  domain events its commands dispatch, `.specification.ts`, the predicates it
+  is read by, and `.repository.ts`, its repository port), `domain/ports/clients/`
+  (a port is a `Context.Service` and its shape, no values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
   `infrastructure/{repositories,clients}/`
@@ -213,9 +213,20 @@ transitive reach), the coverage floors and the baseline.
   result an adapter renders: a value object or event in the domain, which the
   adapters and the daemon's protocol name directly. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
-- **Obligations.** A `.root-ops.ts` and a `.handler.ts` each owe a sibling
-  `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
-  `-live.test.ts`. The lint names what is missing.
+- **Obligations.** A `.root-ops.ts`, a `.specification.ts` and a `.handler.ts`
+  each owe a sibling `.test.ts`; a repository or client port owes its
+  `-live.ts`, `-fake.ts` and `-live.test.ts`. The lint names what is missing.
+- **Repositories speak the persistence vocabulary** (ADR 7). A port declares
+  only `findOne`/`findMany`, each taking a `Specification` from the kernel
+  kit (`src/kernel/specification.ts`), and the writes
+  `insertOne`/`updateOne`/`deleteOne`/`upsertOne` and their `Many` forms. A
+  lookup or variant is a spec in the aggregate's `<aggregate>.specification.ts`
+  (`RunSpecifications.withId(id)`), composed at the call site with `Spec.and`,
+  `Spec.or` and `Spec.not`. The SQLite adapters compile it to a WHERE fragment
+  (`criteriaToWhere`, in the runs module's `infrastructure/repositories/`);
+  the file-backed ones and every fake filter with the spec itself. A store kept
+  where the aggregate says (a scenario at its path, a checkout's flow imports)
+  reads that place from the spec with `pinnedValue`.
 - **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
   an `EnrolledRepoRoot`: its machine-config entry (edited in place, comments
   kept, and written only when the entry changed) and whether it's paused
@@ -255,7 +266,7 @@ transitive reach), the coverage floors and the baseline.
   ones over state.db alone are `RunsQueries` and `RunsCommands`, and the ones
   over the flows a process loaded `RunFlowsQueries` and `RunFlowsCommands`,
   which the daemon, `run` and `rehearse` build over their runtime; a run's
-  `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
+  `RunView` is what crosses the socket. `RunsRepository.upsertOne` never rewrites a
   run that ended with another ending, so a stale copy can't revive it.
   `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
   The flow rules the daemon decides by are the runs module's domain too, as
