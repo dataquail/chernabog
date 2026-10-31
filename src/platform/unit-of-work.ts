@@ -50,11 +50,13 @@ export const FileStoresTransactionDriver = Layer.succeed(
   }),
 );
 
-// The unit of work, and the sink after-commit events wait on, for the modules
-// whose stores are files.
-export const FileStoresUnitOfWork = makeUnitOfWork().pipe(
-  Layer.provide(FileStoresTransactionDriver),
-);
+// The unit of work, and the sink after-commit events wait on, over a store's
+// transaction driver: what a module's wiring declares its commands run in.
+export const unitOfWorkOver = <E, R>(driver: Layer.Layer<TransactionDriver, E, R>) =>
+  makeUnitOfWork().pipe(Layer.provide(driver));
+
+// The unit of work for the modules whose stores are files.
+export const FileStoresUnitOfWork = unitOfWorkOver(FileStoresTransactionDriver);
 
 // A dispatcher's middleware that runs its module's commands in the unit of work
 // the dispatcher was built beside. A handler sees the dispatching fiber's

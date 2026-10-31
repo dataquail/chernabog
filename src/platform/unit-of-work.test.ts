@@ -1,4 +1,4 @@
-import { Command, Event, EventBus, makeEventBus } from "@effect-server-utils/cqrs";
+import { Command, Event, EventBus } from "@effect-server-utils/cqrs";
 import { TransactionDriver, UnitOfWork, withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import {
   PassThroughUnitOfWork,
@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { effect } from "../../test/effect-test.ts";
+import { TestEventBus } from "../../test/events.ts";
 import {
   FileStoresTransactionDriver,
   FileStoresUnitOfWork,
@@ -122,7 +123,7 @@ const reacting = Layer.effectDiscard(
   }),
 ).pipe(
   Layer.provideMerge(UnitOfWorkReactingAfterCommit),
-  Layer.provideMerge(Layer.mergeAll(makeEventBus(), RecordingTransactionDriver)),
+  Layer.provideMerge(Layer.mergeAll(TestEventBus, RecordingTransactionDriver)),
   Layer.provideMerge(Layer.sync(Reactions, () => [])),
 );
 

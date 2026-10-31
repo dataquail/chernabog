@@ -41,7 +41,6 @@ export {
   validityDue,
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
-export { type FlowRegistry } from "./infrastructure/clients/flows.client-live.ts";
 export { RunLog } from "./queries/read-run-log.query.ts";
 export { RunFlowsCommands, RunsCommands } from "./runs.command-handlers.ts";
 export { RunsModule } from "./runs.module.ts";
@@ -53,11 +52,12 @@ export {
 } from "./runs.query-handlers.ts";
 
 // The services the runs module leaves to each composition root that runs the
-// workflow engine: the engine and its SQL client over state.db, and the runtime
-// of the flows that root loaded. And what the runs' events say on their spans,
-// for the one bus each root builds and provides.
+// workflow engine: the engine and its SQL client over state.db, and the
+// registry of the flows that root loaded, which RunsModule.runtime runs. And
+// what the runs' events say on their spans, for the one bus the shared runtime
+// builds.
 export { EngineAt, EngineLive } from "./infrastructure/runtime/engine.ts";
-export { RuntimeLayer } from "./infrastructure/runtime/flow-runtime.ts";
+export { type FlowRegistry } from "./infrastructure/runtime/flow-registry.ts";
 export { runEventSpanAttributes } from "./runs.event-span-attributes.ts";
 
 // Interim: the runtime the roots still compose directly (the engine, launchers, run

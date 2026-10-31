@@ -50,7 +50,6 @@ import {
   RunFlowsCommands,
   runLogFile,
   RunLogsQueries,
-  RuntimeLayer,
   runUnanswered,
   type RunView,
   servicesFrom,
@@ -75,7 +74,7 @@ import {
   type PersonaRepo,
   repoNameOf,
 } from "../../repo-config.ts";
-import { applicationModules } from "../application-modules.ts";
+import { engineRuntime } from "../application-runtime.ts";
 import { fail } from "./cli.output.ts";
 import { repoFlag } from "./repo.arguments.ts";
 import { choosePersona, tailer } from "./run.main.ts";
@@ -453,21 +452,15 @@ const runRehearsal = (
 
     // The modules a process with an engine adds, and the flow it rehearses, over
     // the rehearsal's own runtime and an engine in the scratch's state.db.
-    const modules = applicationModules.engine;
-
     const engine = yield* Layer.build(
-      Layer.mergeAll(
-        modules,
-        flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provide(modules)),
-      ).pipe(
-        Layer.provide(
-          RuntimeLayer({
-            handles: [handle],
-            services: (_repo, one) => servicesFrom(contexts)(one),
-          }),
-        ),
-        Layer.provideMerge(EngineAt(`${scratch.root}/state.db`)),
-      ),
+      engineRuntime({
+        registry: {
+          handles: [handle],
+          services: (_repo, one) => servicesFrom(contexts)(one),
+        },
+        flows: [flowLayer(handle, servicesFrom(contexts))],
+        engine: EngineAt(`${scratch.root}/state.db`),
+      }),
     );
 
     const program = Effect.gen(function* () {

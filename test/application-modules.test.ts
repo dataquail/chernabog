@@ -7,12 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
-import {
-  EngineAt,
-  RunFlowsCommands,
-  RunsQueries,
-  RuntimeLayer,
-} from "../src/modules/runs/runs.platform.ts";
+import { EngineAt, RunFlowsCommands, RunsQueries } from "../src/modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 
@@ -24,7 +19,7 @@ const engineInScratch = Layer.unwrap(
   ).pipe(
     Effect.map((home) =>
       applicationModules.engine.pipe(
-        Layer.provide(RuntimeLayer({ handles: [], services: () => Option.none() })),
+        Layer.provide(applicationModules.runtime({ handles: [], services: () => Option.none() })),
         Layer.provide(makeEventBus()),
         Layer.provide(EngineAt(homePaths(home).state)),
         Layer.provide(Home.at(home, home)),

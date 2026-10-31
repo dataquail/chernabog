@@ -65,7 +65,6 @@ import {
   runLogWriting,
   RunsCommands,
   RunsQueries,
-  RuntimeLayer,
   RunValidity,
   type RunView,
   servicesFrom,
@@ -92,7 +91,7 @@ import {
   repoNameOf,
   scheduleFor,
 } from "../../repo-config.ts";
-import { applicationModules } from "../application-modules.ts";
+import { engineRuntime } from "../application-runtime.ts";
 import {
   CancelRequest,
   DaemonStatus,
@@ -529,13 +528,8 @@ export const runDaemon = Effect.gen(function* () {
   // The modules a process with an engine adds, and the flows loaded here, which
   // take their runs' steps through them, over the daemon's own runtime and the
   // engine in this machine's state.db.
-  const modules = applicationModules.engine;
-
   const engine = yield* Layer.build(
-    Layer.mergeAll(modules, ...flowLayers.map((flow) => flow.pipe(Layer.provide(modules)))).pipe(
-      Layer.provide(RuntimeLayer(registry)),
-      Layer.provideMerge(EngineLive),
-    ),
+    engineRuntime({ registry, flows: flowLayers, engine: EngineLive }),
   );
 
   return yield* Effect.provideContext(

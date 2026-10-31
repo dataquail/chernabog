@@ -9,13 +9,10 @@ import {
   isSetupError,
   Markers,
   Run,
-  Runs,
   Settings,
-  type SetupError,
   triggerOf,
   type TriggerServices,
 } from "@chernabog/core";
-import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -25,7 +22,6 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
-import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
@@ -38,28 +34,8 @@ import {
 } from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
-import { capturing, type FlowHandle, flowSettingsFor, surfaceSetup } from "../runtime/engine.ts";
-
-// Whether a run is still running, none for a run this machine doesn't know.
-// Runs a flow's trigger (or gate) with the repo's services, and Runs: what
-// this machine's runs say of a run, as `isRunning` reads it, for triggers that
-// leave alone a pull request a run owns. A setup error raised by a service the
-// flow asked for, such as ReviewerSeat, comes back as a failure.
-export const withRepoOver = <RR>(
-  isRunning: (runId: string) => Effect.Effect<Option.Option<boolean>, never, RR>,
-) => {
-  const capturingRuns = capturing(isRunning);
-
-  return <A, E, R>(context: Context.Context<R>, effect: Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      const isActive = yield* capturingRuns;
-
-      return yield* Effect.provideContext(
-        effect,
-        Context.add(context, Runs, Runs.of({ isActive })),
-      );
-    }).pipe(surfaceSetup);
-};
+import { type FlowHandle, flowSettingsFor } from "../runtime/engine.ts";
+import { type FlowRegistry, handleOf, withRepoOver } from "../runtime/flow-registry.ts";
 
 // The runs as the runtime reads them, from their store.
 const withRepo = withRepoOver((runId: string) =>
@@ -67,24 +43,6 @@ const withRepo = withRepoOver((runId: string) =>
     Effect.map(Option.map((run) => run.status === "running")),
   ),
 );
-
-// The flows a process loaded, and the services each persona's runs of them
-// use, which fail with the setup error that stops the persona acting: none
-// for a persona the repo no longer has.
-export type FlowRegistry = {
-  readonly handles: ReadonlyArray<FlowHandle>;
-  readonly services: (
-    repo: string,
-    persona: Persona,
-  ) => Option.Option<Effect.Effect<Context.Context<TriggerServices>, SetupError>>;
-};
-
-// The registry's handle for a flow, if it loaded it.
-export const handleOf = (handles: ReadonlyArray<FlowHandle>, flow: FlowRef) =>
-  Arr.findFirst(
-    handles,
-    (handle) => handle.repo.settings.name === flow.repo && handle.name === flow.flow,
-  );
 
 // A setup error says itself, fix included; anything else is the flow failing.
 const failed = <E>(error: E): FlowFailed | PersonaNotReady => {

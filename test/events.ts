@@ -8,6 +8,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+// A bare event bus, for a test outside test/ that builds its own runtime: only
+// the shared runtime and test/ may call a bus factory (ADR 15).
+export const TestEventBus = makeEventBus();
+
 export class DispatchedEvents extends Context.Service<
   DispatchedEvents,
   // Every domain event a module's commands dispatch carries its eventId.
