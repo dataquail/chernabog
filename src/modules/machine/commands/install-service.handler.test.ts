@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -11,6 +12,6 @@ describe("installServiceHandler", () => {
     Effect.gen(function* () {
       expect((yield* installServiceHandler()).path).toContain("chernabog.service");
       expect(yield* (yield* ServiceManagerClient).installed).toBe(true);
-    }).pipe(Effect.provide(ServiceManagerClientFake(false))),
+    }).pipe(Effect.provide([ServiceManagerClientFake(false), PassThroughUnitOfWork])),
   );
 });

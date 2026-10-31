@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -29,7 +30,7 @@ describe("gateFlowHandler", () => {
         ["gated", Option.some("pr-2"), "usage gate: over the ceiling"],
       ]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         Layer.mergeAll(
           SkipsRepositoryFake([]),
           FlowsClientFake({
@@ -37,7 +38,8 @@ describe("gateFlowHandler", () => {
             "demo/gated": { items: [], gate: "usage gate: over the ceiling" },
           }),
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

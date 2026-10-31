@@ -345,6 +345,18 @@ transitive reach), the coverage floors and the baseline.
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
+- **Every command declares its unit of work** (ADR 10): its handler pipes
+  `withUnitOfWork` at the end of its `Effect.fn`, and demotes
+  `PersistenceUnavailable` to a defect beside it. The runs' commands open a
+  `state.db` transaction (`RunsUnitOfWorkLive`, provided by `StateAt`);
+  the file stores' a scope that opens nothing (`FileStoresUnitOfWork`, in
+  `AppLive`), and each dispatcher pins its own (`ownUnitOfWork`). A
+  transaction holds `state.db`'s one connection, which the engine's journal
+  waits on: never call GitHub, git, a launcher or the engine inside one. A
+  command that calls out declares the boundary around its `state.db` reads
+  and writes only. Events are dispatched inside the unit of work; a
+  dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`
+  with `RecordedEvents` (`test/events.ts`).
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.

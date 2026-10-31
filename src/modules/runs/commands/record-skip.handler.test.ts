@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,6 +21,6 @@ describe("recordSkipHandler", () => {
 
       expect(recorded.at.length > 0).toBe(true);
       expect((yield* listRecentSkipsHandler({ latest: 5 })).skips).toEqual([recorded]);
-    }).pipe(Effect.provide(SkipsRepositoryFake([]))),
+    }).pipe(Effect.provide([SkipsRepositoryFake([]), PassThroughUnitOfWork])),
   );
 });

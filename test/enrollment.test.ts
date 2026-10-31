@@ -22,6 +22,7 @@ import { MachineQueriesLive } from "../src/modules/machine/machine.query-handler
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
 import { Home } from "../src/platform/home.ts";
+import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
@@ -148,7 +149,9 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
       Layer.mergeAll(
         layer,
         Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
+        Layer.fresh(EnrollmentCommandsLive).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
+        ),
         Layer.fresh(EnrollmentQueriesLive),
         Layer.fresh(MachineLayer),
         Layer.fresh(MachineQueriesLive),
@@ -162,10 +165,12 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
       Layer.mergeAll(
         layer,
         Layer.fresh(MachineLayer),
-        Layer.fresh(MachineCommandsLive),
+        Layer.fresh(MachineCommandsLive).pipe(Layer.provide(FileStoresUnitOfWork)),
         Layer.fresh(MachineQueriesLive),
         Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
+        Layer.fresh(EnrollmentCommandsLive).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
+        ),
         Layer.fresh(EnrollmentQueriesLive),
       ),
     ),

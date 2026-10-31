@@ -31,6 +31,7 @@ import {
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
+import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
 import { VERSION } from "../src/platform/version.ts";
 import {
   checkFlowSettings,
@@ -585,7 +586,7 @@ const scaffold = (repo: string) =>
         }
       }),
     ),
-    Effect.provide(Layer.mergeAll(ChernabogDirClientLive, BundleClientLive)),
+    Effect.provide(Layer.mergeAll(ChernabogDirClientLive, BundleClientLive, FileStoresUnitOfWork)),
   );
 
 describe("a flow's own settings", () => {
@@ -1019,7 +1020,7 @@ describe("GitHub personas", () => {
 // The enrollment commands' handlers over machine config as it's stored.
 const setFlow = (name: string, persona: Option.Option<string>, flow: string, enabled: boolean) =>
   setPersonaFlowHandler({ name, persona, flow, enabled }).pipe(
-    Effect.provide(EnrolledReposRepositoryLive),
+    Effect.provide(Layer.mergeAll(EnrolledReposRepositoryLive, FileStoresUnitOfWork)),
   );
 
 const setSchedule = (
@@ -1029,7 +1030,7 @@ const setSchedule = (
   schedule: Option.Option<string>,
 ) =>
   setFlowScheduleHandler({ name, persona, flow, schedule }).pipe(
-    Effect.provide(EnrolledReposRepositoryLive),
+    Effect.provide(Layer.mergeAll(EnrolledReposRepositoryLive, FileStoresUnitOfWork)),
   );
 
 const OFFERED = {
@@ -1048,7 +1049,7 @@ const setAccount = (
   account: Option.Option<string>,
 ) =>
   setPersonaAccountHandler({ name, persona, role, account, offered: OFFERED }).pipe(
-    Effect.provide(EnrolledReposRepositoryLive),
+    Effect.provide(Layer.mergeAll(EnrolledReposRepositoryLive, FileStoresUnitOfWork)),
   );
 
 describe("turning a flow on or off in machine config", () => {

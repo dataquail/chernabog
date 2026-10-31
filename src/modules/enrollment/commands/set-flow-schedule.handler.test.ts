@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -70,6 +71,11 @@ describe("setFlowScheduleHandler", () => {
       expect((yield* stored)[0].defaults.flows).toEqual({
         implement: { schedule: "*/20 * * * *" },
       });
-    }).pipe(Effect.provide(machineOf([entry({ defaults: { flows: { implement: {} } } })]))),
+    }).pipe(
+      Effect.provide([
+        machineOf([entry({ defaults: { flows: { implement: {} } } })]),
+        PassThroughUnitOfWork,
+      ]),
+    ),
   );
 });

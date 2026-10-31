@@ -309,8 +309,9 @@ defs:
       reset: true
       message: >-
         A handler test names its module, the kernel and the shared test harness
-        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
-      external: [effect]
+        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes, in the
+        unit-of-work library's pass-through unit of work.
+      external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
   # A mapper's test reads a stored row back as its aggregate, with no store.
@@ -364,6 +365,18 @@ defs:
         harness (test/*.ts) — the scratch home and fixtures.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
+
+  # state.db's transaction driver's test runs the unit-of-work library's unit
+  # of work over the driver, against a real SQLite database.
+  transaction-driver-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A transaction driver's test names its module, the shared test harness (test/*.ts) — a
+        scratch SQLite database — and the unit-of-work library it runs the driver under.
+      external: [effect, "@effect-server-utils/unit-of-work"]
+      allow: ["@/modules/{module}/**", "test/*.ts"]
 
   # A handler answers with its result; saying it, asking a person or ending
   # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
@@ -461,8 +474,9 @@ tree:
           message: >-
             A platform adapter wraps the machine. It names effect, node, the SDK (for its error
             descriptions and types), the kernel and its siblings, and chernabog's package.json for
-            its version; nothing of the modules, the interface or the legacy tier.
-          external: [effect]
+            its version; nothing of the modules, the interface or the legacy tier. The unit of
+            work the file stores' commands declare names the CQRS and unit-of-work libraries.
+          external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
           allow:
             - "node:**"
             - "~/core/src/**"
@@ -728,10 +742,11 @@ tree:
               reset: true
               message: >-
                 A module's handler map registers its messages' handlers on the bus with the live
-                adapters they need, from its layer. It names its own module, effect and the CQRS
-                library.
-              external: [effect, "@effect-server-utils/cqrs"]
-              allow: ["@/modules/{module}/**"]
+                adapters they need, from its layer, and pins its dispatcher to the unit of work it
+                is built beside. It names its own module, effect, the CQRS and unit-of-work
+                libraries, and the platform's unit of work.
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+              allow: ["@/modules/{module}/**", "@/platform/unit-of-work.ts"]
 
           # The span attribute extractors the module's dispatchers and event
           # bus are built with, keyed by message and event tag.
@@ -928,12 +943,12 @@ tree:
             imports:
               reset: true
               message: >-
-                A command names effect, the CQRS library, the kernel, its own
+                A command names effect, the CQRS and unit-of-work libraries, the kernel, its own
                 module's domain (aggregates and ports) and its sibling commands. Never a query
                 (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
                 interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
@@ -998,13 +1013,17 @@ tree:
                     machine config, JSON for runtime state. Until the machine
                     module owns machine config, a repository reads and edits it through the
                     legacy machinery in config.ts and repo-config.ts, and nothing else of the
-                    legacy tier.
-                  external: [yaml]
+                    legacy tier. state.db's transaction driver adapts the unit-of-work library's
+                    port to the SQL client the stores share.
+                  external: [yaml, "@effect-server-utils/unit-of-work"]
                   allow: ["@/platform/**", "@/repo-config.ts"]
                 children:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
+                  # The transaction a command's unit of work opens in the stores' database.
+                  "*.transaction-driver-live.ts": {}
+                  "*.transaction-driver-live.test.ts": { use: transaction-driver-test-file }
                   "*.repository-live.test.ts": { use: adapter-test-file }
                   "*.mapper.test.ts": { use: mapper-test-file }
                   # What a SQLite repository's reads compile their specification with.
@@ -1154,6 +1173,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - "@effect-server-utils/cqrs"
+        - "@effect-server-utils/unit-of-work"
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:

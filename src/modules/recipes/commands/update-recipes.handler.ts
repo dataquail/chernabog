@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
@@ -171,67 +172,70 @@ const updateFile = (
     }
   });
 
-export const updateRecipesHandler = Effect.fn("updateRecipesHandler")(function* (
-  cmd: UpdateRecipesPayload,
-) {
-  const { names, root, unrecorded } = cmd;
-  const dir = yield* ChernabogDirClient;
-  const packages = yield* RecipePackagesClient;
+export const updateRecipesHandler = Effect.fn("updateRecipesHandler")(
+  function* (cmd: UpdateRecipesPayload) {
+    const { names, root, unrecorded } = cmd;
+    const dir = yield* ChernabogDirClient;
+    const packages = yield* RecipePackagesClient;
 
-  yield* packages.restore(root);
+    yield* packages.restore(root);
 
-  const before = yield* readManifest(root);
+    const before = yield* readManifest(root);
 
-  const sdk = yield* Effect.fromOption(sdkVersionOf(before.manifest)).pipe(
-    Effect.mapError(
-      () =>
-        new RecipeFilesFailed({
-          message: `.chernabog/package.json doesn't pin ${SDK_PACKAGE}; run chernabog recipes upgrade`,
-        }),
-    ),
-  );
+    const sdk = yield* Effect.fromOption(sdkVersionOf(before.manifest)).pipe(
+      Effect.mapError(
+        () =>
+          new RecipeFilesFailed({
+            message: `.chernabog/package.json doesn't pin ${SDK_PACKAGE}; run chernabog recipes upgrade`,
+          }),
+      ),
+    );
 
-  const moves = yield* movePackages(root, before.manifest, sdk);
-  const installed = yield* packages.installed(root);
-  // bun rewrote package.json if it installed anything, so it's read again.
-  const { manifest, text } = yield* readManifest(root);
-  const records = copiedOf(manifest);
-  const flows = (yield* dir.list(root, ".chernabog/flows")).map((entry) => `flows/${entry}`);
+    const moves = yield* movePackages(root, before.manifest, sdk);
+    const installed = yield* packages.installed(root);
+    // bun rewrote package.json if it installed anything, so it's read again.
+    const { manifest, text } = yield* readManifest(root);
+    const records = copiedOf(manifest);
+    const flows = (yield* dir.list(root, ".chernabog/flows")).map((entry) => `flows/${entry}`);
 
-  const named = yield* Option.match(
-    Option.liftPredicate(names, (some) => some.length > 0),
-    {
-      onSome: (some) => Effect.asSome(Effect.fromResult(RecipeRootOps.allNamed(installed, some))),
-      onNone: () => Effect.succeed(Option.none<ReadonlyArray<RecipeRoot>>()),
-    },
-  );
+    const named = yield* Option.match(
+      Option.liftPredicate(names, (some) => some.length > 0),
+      {
+        onSome: (some) => Effect.asSome(Effect.fromResult(RecipeRootOps.allNamed(installed, some))),
+        onNone: () => Effect.succeed(Option.none<ReadonlyArray<RecipeRoot>>()),
+      },
+    );
 
-  const changes: Array<Change> = [];
-  const recorded: Record<string, Option.Option<CopiedRecord>> = {};
+    const changes: Array<Change> = [];
+    const recorded: Record<string, Option.Option<CopiedRecord>> = {};
 
-  // Only what the repo copied: a named recipe it hasn't is left for recipes add.
-  const copies = RecipeRootOps.copiesIn(
-    installed,
-    records,
-    (file) => flows.includes(file),
-    named,
-  ).filter((copy) => flows.includes(copy.recipe.flow) || Record.has(records, copy.file));
+    // Only what the repo copied: a named recipe it hasn't is left for recipes add.
+    const copies = RecipeRootOps.copiesIn(
+      installed,
+      records,
+      (file) => flows.includes(file),
+      named,
+    ).filter((copy) => flows.includes(copy.recipe.flow) || Record.has(records, copy.file));
 
-  for (const copy of copies) {
-    for (const updated of Option.toArray(
-      yield* updateFile(root, copy, Record.get(records, copy.file), unrecorded),
-    )) {
-      recorded[copy.file] = Option.some(updated.record);
+    for (const copy of copies) {
+      for (const updated of Option.toArray(
+        yield* updateFile(root, copy, Record.get(records, copy.file), unrecorded),
+      )) {
+        recorded[copy.file] = Option.some(updated.record);
 
-      for (const change of Option.toArray(updated.change)) {
-        changes.push(change);
+        for (const change of Option.toArray(updated.change)) {
+          changes.push(change);
+        }
       }
     }
-  }
 
-  if (!Record.isEmptyRecord(recorded)) {
-    yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(text, recorded)));
-  }
+    if (!Record.isEmptyRecord(recorded)) {
+      yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(text, recorded)));
+    }
 
-  return RecipesUpdated.make({ packages: moves, changes });
-});
+    return RecipesUpdated.make({ packages: moves, changes });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);
