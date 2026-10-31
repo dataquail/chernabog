@@ -242,7 +242,7 @@ describe("installing recipes", () => {
     Effect.gen(function* () {
       const found = yield* Effect.flip(bake(yield* checkout, "implement", "ship"));
       expect(found.message).toBe(
-        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, epic, human-initiated)",
+        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, epic, human-initiated, post-merge)",
       );
     }),
   );
@@ -292,6 +292,7 @@ describe("choosing recipes", () => {
           "plan",
           "epic",
           "human-initiated",
+          "post-merge",
         ]);
         expect(offered.some((choice) => choice.selected === true)).toBe(false);
         expect(offered[6]?.description).toContain(

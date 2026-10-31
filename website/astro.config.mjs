@@ -78,6 +78,7 @@ export default defineConfig({
             { slug: "recipes/plan" },
             { slug: "recipes/epic" },
             { slug: "recipes/human-initiated" },
+            { slug: "recipes/post-merge" },
             { slug: "recipes/packages" },
           ],
         },

@@ -76,6 +76,11 @@
         "description": "The hybrid path: chernabog start <issue> opens a session with a person, then opens the pull request and asks for a review",
         "flow": "flows/human-initiated.ts",
         "docs": "https://dataquail.github.io/chernabog/recipes/human-initiated/"
+      },
+      "post-merge": {
+        "description": "Watches CI on the merge commit of the persona's merged pull request, and files an auto:eligible follow-up issue when it goes red",
+        "flow": "flows/post-merge.ts",
+        "docs": "https://dataquail.github.io/chernabog/recipes/post-merge/"
       }
     }
   },
