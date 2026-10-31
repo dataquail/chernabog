@@ -6,7 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { MachineAccount } from "../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts";
-import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
+import { MachineSetupSpecifications } from "../domain/machine-setup/machine-setup.specification.ts";
+import { MachineSetupsRepository } from "../domain/machine-setup/machine-setups.repository.ts";
 import { AccountDirsClientFake } from "../infrastructure/clients/account-dirs.client-fake.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryFake } from "../infrastructure/repositories/machine-setups.repository-fake.ts";
@@ -33,7 +34,9 @@ const machine = (
     ),
   );
 
-const stored = MachineSetupsRepository.use((repository) => repository.findOne);
+const stored = MachineSetupsRepository.use((repository) =>
+  repository.findOne(MachineSetupSpecifications.thisMachine).pipe(Effect.map(Option.getOrThrow)),
+);
 
 const none = { personas: Option.none(), accounts: Option.none(), inUse: [] };
 

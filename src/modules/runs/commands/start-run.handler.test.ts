@@ -6,9 +6,10 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunStarted } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
 import { startRunHandler } from "./start-run.handler.ts";
 
@@ -54,7 +55,11 @@ describe("startRunHandler", () => {
         "running",
         Option.some("Fix it"),
       ]);
-      expect(Option.isSome(yield* (yield* RunsRepository).findOne(RunId.make("new")))).toBe(true);
+      expect(
+        Option.isSome(
+          yield* (yield* RunsRepository).findOne(RunSpecifications.withId(RunId.make("new"))),
+        ),
+      ).toBe(true);
       expect(yield* DispatchedEvents).toEqual([
         RunStarted.make({
           eventId: "new:started",
@@ -78,7 +83,9 @@ describe("startRunHandler", () => {
       const refused = yield* Effect.flip(startRunHandler(starting));
 
       expect([refused._tag, String(refused.runId)]).toEqual(["RunAlreadyActive", "a"]);
-      expect(yield* (yield* RunsRepository).findOne(RunId.make("new"))).toEqual(Option.none());
+      expect(
+        yield* (yield* RunsRepository).findOne(RunSpecifications.withId(RunId.make("new"))),
+      ).toEqual(Option.none());
       expect(yield* DispatchedEvents).toEqual([]);
     }).pipe(Effect.provide(Layer.mergeAll(RecordedEvents, RunsRepositoryFake([run("a")])))),
   );

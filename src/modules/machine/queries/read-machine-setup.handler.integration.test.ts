@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 
 import { effectAtHome } from "../../../../test/effect-test.ts";
 import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts";
-import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
+import { MachineSetupsRepository } from "../domain/machine-setup/machine-setups.repository.ts";
 import { MachineSetupsRepositoryLive } from "../infrastructure/repositories/machine-setups.repository-live.ts";
 import { readMachineSetupHandler } from "./read-machine-setup.handler.ts";
 
@@ -12,7 +12,7 @@ describe("readMachineSetupHandler", () => {
     "lists the personas and accounts, and the default work account when none are written",
     () =>
       Effect.gen(function* () {
-        yield* (yield* MachineSetupsRepository).save(
+        yield* (yield* MachineSetupsRepository).upsertOne(
           MachineSetupRoot.make({ personas: ["alice"], accounts: [], accountsWritten: false }),
         );
 

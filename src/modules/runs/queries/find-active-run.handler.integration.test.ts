@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { findActiveRunHandler } from "./find-active-run.handler.ts";
 
@@ -37,8 +37,8 @@ describe("findActiveRunHandler", () => {
   effect("finds the persona's run in flight for the item, and none for another persona", () =>
     Effect.gen(function* () {
       const repository = yield* RunsRepository;
-      yield* repository.save(run("a", { status: "done", finishedAt: Option.some("x") }));
-      yield* repository.save(run("b"));
+      yield* repository.upsertOne(run("a", { status: "done", finishedAt: Option.some("x") }));
+      yield* repository.upsertOne(run("b"));
 
       const found = yield* findActiveRunHandler(wanted);
 

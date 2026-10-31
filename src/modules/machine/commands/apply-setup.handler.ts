@@ -9,9 +9,10 @@ import {
   MachineSetupRootOps,
   type NewAccount,
 } from "../domain/machine-setup/machine-setup.root-ops.ts";
+import { MachineSetupSpecifications } from "../domain/machine-setup/machine-setup.specification.ts";
+import { MachineSetupsRepository } from "../domain/machine-setup/machine-setups.repository.ts";
 import { AccountDirsClient } from "../domain/ports/clients/account-dirs.client.ts";
 import { GitHubLoginsClient } from "../domain/ports/clients/github-logins.client.ts";
-import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
 import { AddedAccount, type ApplySetupPayload, SetupOutcome } from "./apply-setup.command.ts";
 
 const parseAccount = (spec: string, home: string) =>
@@ -40,7 +41,12 @@ export const applySetupHandler = Effect.fn("applySetupHandler")(function* (
   const repository = yield* MachineSetupsRepository;
   const dirs = yield* AccountDirsClient;
   const home = yield* dirs.home;
-  const before = yield* repository.findOne;
+
+  const before = Option.getOrElse(
+    yield* repository.findOne(MachineSetupSpecifications.thisMachine),
+    () => MachineSetupRootOps.unset,
+  );
+
   const loggedIn = yield* (yield* GitHubLoginsClient).logins;
 
   const personas = yield* Option.match(answers.personas, {
@@ -87,7 +93,7 @@ export const applySetupHandler = Effect.fn("applySetupHandler")(function* (
     home,
   );
 
-  yield* repository.save(setup);
+  yield* repository.upsertOne(setup);
 
   return SetupOutcome.make({
     personas: Option.map(personas, (chosen) => chosen.personas),

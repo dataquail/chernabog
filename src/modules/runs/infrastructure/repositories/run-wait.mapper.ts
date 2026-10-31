@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { RunWaitRoot } from "../../domain/run-wait/run-wait.root.ts";
+import { type ColumnMap } from "./criteria-to-sql.ts";
 
 export const WaitColumns = Schema.Struct({
   run_id: Schema.String,
@@ -21,3 +22,12 @@ export const toRoot = (row: typeof WaitColumns.Type) =>
     token: row.token,
     parkedAt: row.parked_at,
   });
+
+// Each field of a wait, as the om_waits column a spec's WHERE names.
+export const waitColumns: ColumnMap = {
+  runId: "run_id",
+  signal: "signal",
+  deferred: "deferred",
+  token: "token",
+  parkedAt: "parked_at",
+};

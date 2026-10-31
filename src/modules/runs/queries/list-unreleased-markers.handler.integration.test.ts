@@ -6,10 +6,10 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot, type RunStatus } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import { RunMarkersRepositoryLive } from "../infrastructure/repositories/run-markers.repository-live.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { listUnreleasedMarkersHandler } from "./list-unreleased-markers.handler.ts";
@@ -44,16 +44,16 @@ describe("listUnreleasedMarkersHandler", () => {
     () =>
       Effect.gen(function* () {
         const runs = yield* RunsRepository;
-        yield* runs.save(run("ended", "failed"));
-        yield* runs.save(run("going", "running"));
+        yield* runs.upsertOne(run("ended", "failed"));
+        yield* runs.upsertOne(run("going", "running"));
         const markers = yield* RunMarkersRepository;
-        yield* markers.save(marker("ended", "pending"));
-        yield* markers.save(RunMarkerRootOps.released(marker("ended", "released"), AT));
-        yield* markers.save(RunMarkerRootOps.kept(marker("ended", "kept"), AT));
-        yield* markers.save(
+        yield* markers.upsertOne(marker("ended", "pending"));
+        yield* markers.upsertOne(RunMarkerRootOps.released(marker("ended", "released"), AT));
+        yield* markers.upsertOne(RunMarkerRootOps.kept(marker("ended", "kept"), AT));
+        yield* markers.upsertOne(
           RunMarkerRootOps.unreleasable(marker("ended", "orphaned"), "no definition", AT),
         );
-        yield* markers.save(marker("going", "in-flight"));
+        yield* markers.upsertOne(marker("going", "in-flight"));
 
         expect(
           (yield* listUnreleasedMarkersHandler()).markers.map((found) => [found.runId, found.name]),

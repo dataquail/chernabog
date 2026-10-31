@@ -6,10 +6,10 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { RunWaitsRepositoryLive } from "../infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { listActiveRunsHandler } from "./list-active-runs.handler.ts";
@@ -45,13 +45,15 @@ const every: ListActiveRunsPayload = {
 const stores = Layer.effectDiscard(
   Effect.gen(function* () {
     const runs = yield* RunsRepository;
-    yield* runs.save(run("a"));
-    yield* runs.save(run("b", { persona: Option.none(), startedAt: "2026-10-21T00:00:00.000Z" }));
-    yield* runs.save(run("c", { flow: "implement", startedAt: "2026-10-22T00:00:00.000Z" }));
-    yield* runs.save(
+    yield* runs.upsertOne(run("a"));
+    yield* runs.upsertOne(
+      run("b", { persona: Option.none(), startedAt: "2026-10-21T00:00:00.000Z" }),
+    );
+    yield* runs.upsertOne(run("c", { flow: "implement", startedAt: "2026-10-22T00:00:00.000Z" }));
+    yield* runs.upsertOne(
       run("d", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00.000Z") }),
     );
-    yield* (yield* RunWaitsRepository).save(
+    yield* (yield* RunWaitsRepository).upsertOne(
       RunWaitRoot.make({
         runId: RunId.make("b"),
         signal: "pushed",

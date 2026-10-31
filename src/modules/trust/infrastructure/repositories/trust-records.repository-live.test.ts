@@ -6,8 +6,9 @@ import * as Option from "effect/Option";
 import { effectAtHome } from "../../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { TrustRecordsRepository } from "../../domain/ports/repositories/trust-records.repository.ts";
 import { TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
+import { TrustRecordSpecifications } from "../../domain/trust-record/trust-record.specification.ts";
+import { TrustRecordsRepository } from "../../domain/trust-record/trust-records.repository.ts";
 import { TrustRecordsRepositoryLive } from "./trust-records.repository-live.ts";
 
 const demo = RepoSlug.make("dataquail/demo");
@@ -24,21 +25,24 @@ describe("TrustRecordsRepositoryLive", () => {
   effectAtHome("saves a record by slug and reads it back, keeping the others", () =>
     Effect.gen(function* () {
       const { file, fs, records } = yield* opened;
-      yield* records.save(
+      yield* records.upsertOne(
         TrustRecordRoot.make({ repo: other, tree: "cccc", at: "2026-10-01T00:00:00.000Z" }),
       );
-      yield* records.save(
+      yield* records.upsertOne(
         TrustRecordRoot.make({ repo: demo, tree: "aaaa", at: "2026-10-22T00:00:00.000Z" }),
       );
 
-      expect(yield* records.findOne(demo)).toEqual(
+      expect(yield* records.findOne(TrustRecordSpecifications.forRepo(demo))).toEqual(
         Option.some(
           TrustRecordRoot.make({ repo: demo, tree: "aaaa", at: "2026-10-22T00:00:00.000Z" }),
         ),
       );
-      expect(Option.map(yield* records.findOne(other), (record) => record.tree)).toEqual(
-        Option.some("cccc"),
-      );
+      expect(
+        Option.map(
+          yield* records.findOne(TrustRecordSpecifications.forRepo(other)),
+          (record) => record.tree,
+        ),
+      ).toEqual(Option.some("cccc"));
       expect(yield* fs.readFileString(file)).toBe(
         '{\n  "dataquail/other": {\n    "tree": "cccc",\n    "at": "2026-10-01T00:00:00.000Z"\n  },\n  "dataquail/demo": {\n    "tree": "aaaa",\n    "at": "2026-10-22T00:00:00.000Z"\n  }\n}\n',
       );
@@ -49,10 +53,14 @@ describe("TrustRecordsRepositoryLive", () => {
     Effect.gen(function* () {
       const { file, fs, records } = yield* opened;
 
-      expect(yield* records.findOne(demo)).toEqual(Option.none());
+      expect(yield* records.findOne(TrustRecordSpecifications.forRepo(demo))).toEqual(
+        Option.none(),
+      );
 
       yield* fs.writeFileString(file, "{ not json");
-      expect(yield* records.findOne(demo)).toEqual(Option.none());
+      expect(yield* records.findOne(TrustRecordSpecifications.forRepo(demo))).toEqual(
+        Option.none(),
+      );
     }),
   );
 });

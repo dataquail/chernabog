@@ -8,8 +8,8 @@ import * as Option from "effect/Option";
 import { effectAtHomeWith } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Exec, execOk } from "../../../platform/exec.ts";
-import { TrustRecordsRepository } from "../domain/ports/repositories/trust-records.repository.ts";
 import { TrustRecordRoot } from "../domain/trust-record/trust-record.root.ts";
+import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";
 import { ConfigTreeClientLive } from "../infrastructure/clients/config-tree.client-live.ts";
 import { TrustRecordsRepositoryLive } from "../infrastructure/repositories/trust-records.repository-live.ts";
 import { checkTrustHandler } from "./check-trust.handler.ts";
@@ -45,7 +45,7 @@ const treeOf = (path: string) =>
 const trust = (path: string) =>
   Effect.gen(function* () {
     const tree = yield* treeOf(path);
-    yield* (yield* TrustRecordsRepository).save(
+    yield* (yield* TrustRecordsRepository).upsertOne(
       TrustRecordRoot.make({ repo, tree, at: "2026-10-01T00:00:00.000Z" }),
     );
 

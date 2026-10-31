@@ -1,5 +1,6 @@
 // The flows a checkout imports, in its .chernabog/config.yaml, edited in
-// place so the team's comments and other keys stay as they are.
+// place so the team's comments and other keys stay as they are. The file is
+// the checkout's, so a read finds it by the root its spec pins.
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,19 +9,21 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import YAML from "yaml";
 
+import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
+import { pinnedValue, type Specification } from "../../../../kernel/specification.ts";
 import { updateFile } from "../../../../platform/file-lock.ts";
-import { FlowImportsRepository } from "../../domain/ports/repositories/flow-imports.repository.ts";
-import { RecipeFilesFailed } from "../../domain/recipe/recipe.errors.ts";
+import { FlowImportRoot } from "../../domain/flow-import/flow-import.root.ts";
+import { FlowImportsRepository } from "../../domain/flow-import/flow-imports.repository.ts";
 
 const configOf = (root: string) => `${root}/.chernabog/config.yaml`;
 
 const failed = (error: { readonly message: string }) =>
-  new RecipeFilesFailed({ message: `.chernabog/config.yaml: ${error.message}` });
+  new PersistenceFailed({ message: `.chernabog/config.yaml: ${error.message}` });
 
-// Each flow's `from` in a config.yaml's text.
-const importsIn = (text: string) => {
+// Each flow's `from` in the config.yaml's text of the checkout at `root`.
+const importsIn = (root: string, text: string) => {
   const flows = YAML.parseDocument(text).get("flows");
-  const found = new Map<string, string>();
+  const found: Array<FlowImportRoot> = [];
 
   if (!YAML.isMap(flows)) {
     return found;
@@ -31,7 +34,7 @@ const importsIn = (text: string) => {
       const from: unknown = pair.value.get("from");
 
       if (Predicate.isString(from)) {
-        found.set(String(pair.key.value), from);
+        found.push(FlowImportRoot.make({ root, flow: String(pair.key.value), from }));
       }
     }
   }
@@ -44,19 +47,28 @@ export const FlowImportsRepositoryLive = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
-    const findAll = (root: string) =>
+    const readAll = (root: string) =>
       Effect.gen(function* () {
         if (!(yield* fs.exists(configOf(root)))) {
-          return new Map<string, string>();
+          return [];
         }
 
-        return importsIn(yield* fs.readFileString(configOf(root)));
+        return importsIn(root, yield* fs.readFileString(configOf(root)));
       }).pipe(Effect.mapError(failed));
 
-    const save = (root: string, flow: string, from: Option.Option<string>) =>
-      updateFile(fs, configOf(root), "importing a flow", (current) =>
+    // A spec that names no checkout is a bug in its caller: there is no
+    // listing of every checkout's imports.
+    const findMany = (spec: Specification<FlowImportRoot>) =>
+      Option.match(pinnedValue(spec.criteria, "root"), {
+        onNone: () => Effect.die(new Error("flow imports are read by their checkout's root")),
+        onSome: (root) => readAll(String(root)).pipe(Effect.map((imports) => imports.filter(spec))),
+      });
+
+    const edit = (flowImport: FlowImportRoot, from: Option.Option<string>) =>
+      updateFile(fs, configOf(flowImport.root), "importing a flow", (current) =>
         Effect.sync(() => {
           const document = YAML.parseDocument(Option.getOrElse(current, () => ""));
+          const { flow } = flowImport;
 
           Option.match(from, {
             onSome: (named) => {
@@ -77,6 +89,11 @@ export const FlowImportsRepositoryLive = Layer.effect(
         }),
       ).pipe(Effect.asVoid, Effect.mapError(failed));
 
-    return FlowImportsRepository.of({ findAll, save });
+    const upsertOne = (flowImport: FlowImportRoot) =>
+      edit(flowImport, Option.some(flowImport.from));
+
+    const deleteOne = (flowImport: FlowImportRoot) => edit(flowImport, Option.none());
+
+    return FlowImportsRepository.of({ findMany, upsertOne, deleteOne });
   }),
 );

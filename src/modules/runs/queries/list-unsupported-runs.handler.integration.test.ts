@@ -7,8 +7,8 @@ import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { BUNDLED_CORE_VERSION, providedRange } from "../../../kernel/core-support.value-object.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { listUnsupportedRunsHandler } from "./list-unsupported-runs.handler.ts";
 
@@ -36,9 +36,9 @@ describe("listUnsupportedRunsHandler", () => {
   effect("lists the runs in flight under an SDK this binary doesn't run, naming both", () =>
     Effect.gen(function* () {
       const repository = yield* RunsRepository;
-      yield* repository.save(run("old", { coreVersion: "0.5.2" }));
-      yield* repository.save(run("current"));
-      yield* repository.save(
+      yield* repository.upsertOne(run("old", { coreVersion: "0.5.2" }));
+      yield* repository.upsertOne(run("current"));
+      yield* repository.upsertOne(
         run("ended", {
           coreVersion: "0.5.2",
           status: "done",

@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { Spec } from "../../../kernel/specification.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { type ListMovedReposPayload, MovedRepo, MovedRepos } from "./list-moved-repos.query.ts";
 
 export const listMovedReposHandler = Effect.fn("listMovedReposHandler")(function* (
@@ -17,8 +19,11 @@ export const listMovedReposHandler = Effect.fn("listMovedReposHandler")(function
     return MovedRepos.make({ repos: [] });
   }
 
-  const repos = (yield* (yield* EnrolledReposRepository).findAll).filter(
-    (repo) => repo.repo === checkout.value.repo && repo.path !== root,
+  const repos = yield* (yield* EnrolledReposRepository).findMany(
+    Spec.and(
+      EnrolledRepoSpecifications.forRepo(checkout.value.repo),
+      Spec.not(EnrolledRepoSpecifications.atPath(root)),
+    ),
   );
 
   const gone: Array<string> = [];

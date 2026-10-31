@@ -28,8 +28,9 @@ import * as Result from "effect/Result";
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
-import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
+import { RunSpecifications } from "../../domain/run/run.specification.ts";
+import { RunsRepository } from "../../domain/run/runs.repository.ts";
 import {
   firstPullRequest,
   type FlowRef,
@@ -41,7 +42,7 @@ import { capturing, type FlowHandle, flowSettingsFor, surfaceSetup } from "../ru
 
 // Whether a run is still running, none for a run this machine doesn't know.
 const capturingRuns = capturing((runId: string) =>
-  RunsRepository.use((runs) => runs.findOne(RunId.make(runId))).pipe(
+  RunsRepository.use((runs) => runs.findOne(RunSpecifications.withId(RunId.make(runId)))).pipe(
     Effect.map(Option.map((run) => run.status === "running")),
   ),
 );

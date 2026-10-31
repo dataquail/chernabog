@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { MarkerStatus, RunMarkerRoot } from "../../domain/run-marker/run-marker.root.ts";
+import { type ColumnMap } from "./criteria-to-sql.ts";
 
 const JsonText = Schema.fromJsonString(Schema.Json);
 
@@ -47,3 +48,15 @@ export const toRow = (marker: RunMarkerRoot) =>
     next_attempt_at: marker.nextAttemptAt,
     settled_at: marker.settledAt,
   });
+
+// Each scalar field of a marker, as the om_markers column a spec's WHERE names.
+export const markerColumns: ColumnMap = {
+  runId: "run_id",
+  name: "name",
+  status: "status",
+  heldAt: "held_at",
+  attempts: "attempts",
+  lastError: "last_error",
+  nextAttemptAt: "next_attempt_at",
+  settledAt: "settled_at",
+};

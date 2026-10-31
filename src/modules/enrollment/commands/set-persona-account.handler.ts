@@ -1,9 +1,10 @@
 import * as Effect from "effect/Effect";
 
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { MachineOffer } from "../domain/enrolled-repo/machine-offer.value-object.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { type SetPersonaAccountPayload } from "./set-persona-account.command.ts";
 
 export const setPersonaAccountHandler = Effect.fn("setPersonaAccountHandler")(function* (
@@ -12,7 +13,7 @@ export const setPersonaAccountHandler = Effect.fn("setPersonaAccountHandler")(fu
   const repository = yield* EnrolledReposRepository;
 
   const repo = yield* Effect.fromResult(
-    EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+    EnrolledRepoRootOps.named(yield* repository.findMany(EnrolledRepoSpecifications.all), cmd.name),
   );
 
   const picked = yield* Effect.fromResult(
@@ -23,7 +24,7 @@ export const setPersonaAccountHandler = Effect.fn("setPersonaAccountHandler")(fu
     ),
   );
 
-  yield* repository.save(picked);
+  yield* repository.upsertOne(picked);
 
   return EnrolledRepoSummary.make({
     name: EnrolledRepoRootOps.nameOf(repo),

@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { RunWaitsRepositoryLive } from "../infrastructure/repositories/run-waits.repository-live.ts";
 import { listRunWaitsHandler } from "./list-run-waits.handler.ts";
 
@@ -24,9 +24,9 @@ describe("listRunWaitsHandler", () => {
   effect("lists the run's waits on the signal, not another signal's or run's", () =>
     Effect.gen(function* () {
       const repository = yield* RunWaitsRepository;
-      yield* repository.save(wait("a", "pushed", "d1"));
-      yield* repository.save(wait("a", "approved", "d2"));
-      yield* repository.save(wait("b", "pushed", "d3"));
+      yield* repository.upsertOne(wait("a", "pushed", "d1"));
+      yield* repository.upsertOne(wait("a", "approved", "d2"));
+      yield* repository.upsertOne(wait("b", "pushed", "d3"));
 
       const { waits } = yield* listRunWaitsHandler({ runId: RunId.make("a"), signal: "pushed" });
 

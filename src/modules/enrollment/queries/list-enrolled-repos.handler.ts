@@ -3,8 +3,9 @@ import * as Option from "effect/Option";
 
 import { type EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { EnrolledRepos, type ListEnrolledReposPayload } from "./list-enrolled-repos.query.ts";
 
 const summaryOf = (repo: EnrolledRepoRoot) =>
@@ -17,7 +18,7 @@ const summaryOf = (repo: EnrolledRepoRoot) =>
 export const listEnrolledReposHandler = Effect.fn("listEnrolledReposHandler")(function* (
   query: ListEnrolledReposPayload,
 ) {
-  const repos = yield* (yield* EnrolledReposRepository).findAll;
+  const repos = yield* (yield* EnrolledReposRepository).findMany(EnrolledRepoSpecifications.all);
 
   if (Option.isNone(query.name)) {
     return EnrolledRepos.make({ repos: repos.map(summaryOf) });

@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { findRunHandler } from "./find-run.handler.ts";
 
@@ -34,7 +34,7 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
 describe("findRunHandler", () => {
   effect("is the run with the id, and none for an id no run has", () =>
     Effect.gen(function* () {
-      yield* (yield* RunsRepository).save(run("a"));
+      yield* (yield* RunsRepository).upsertOne(run("a"));
 
       expect(
         Option.map((yield* findRunHandler({ runId: RunId.make("a") })).run, (found) =>

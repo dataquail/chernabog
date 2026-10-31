@@ -4,7 +4,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
-import { ScenariosRepository } from "../../domain/ports/repositories/scenarios.repository.ts";
+import { ScenarioSpecifications } from "../../domain/scenario/scenario.specification.ts";
+import { ScenariosRepository } from "../../domain/scenario/scenarios.repository.ts";
 import { ScenariosRepositoryLive } from "./scenarios.repository-live.ts";
 
 const SCENARIO = `repo: you/chernabog-rehearsal
@@ -31,7 +32,11 @@ describe("ScenariosRepositoryLive", () => {
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-scenario-" });
       yield* fs.writeFileString(`${dir}/implement.yaml`, SCENARIO);
 
-      const scenario = yield* (yield* ScenariosRepository).findOne(`${dir}/implement.yaml`);
+      const scenario = Option.getOrThrow(
+        yield* (yield* ScenariosRepository).findOne(
+          ScenarioSpecifications.atPath(`${dir}/implement.yaml`),
+        ),
+      );
 
       expect(scenario.dir).toBe(dir);
       expect(scenario.repo).toBe("you/chernabog-rehearsal");
@@ -44,17 +49,21 @@ describe("ScenariosRepositoryLive", () => {
     }).pipe(Effect.provide(ScenariosRepositoryLive)),
   );
 
-  effect("refuses a missing file, and a key the schema doesn't know", () =>
+  effect("has none for a missing file, and refuses a key the schema doesn't know", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-scenario-" });
       yield* fs.writeFileString(`${dir}/typo.yaml`, "repo: you/scratch\nexpects: { ends: done }\n");
       const repository = yield* ScenariosRepository;
 
-      const missing = yield* Effect.flip(repository.findOne(`${dir}/none.yaml`));
-      expect(missing.message).toContain("no such scenario file");
+      expect(yield* repository.findOne(ScenarioSpecifications.atPath(`${dir}/none.yaml`))).toEqual(
+        Option.none(),
+      );
 
-      const typo = yield* Effect.flip(repository.findOne(`${dir}/typo.yaml`));
+      const typo = yield* Effect.flip(
+        repository.findOne(ScenarioSpecifications.atPath(`${dir}/typo.yaml`)),
+      );
+
       expect(typo.message).toContain("expects");
     }).pipe(Effect.provide(ScenariosRepositoryLive)),
   );

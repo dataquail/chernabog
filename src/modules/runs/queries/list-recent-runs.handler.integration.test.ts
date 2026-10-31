@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { listRecentRunsHandler } from "./list-recent-runs.handler.ts";
 
@@ -35,9 +35,11 @@ describe("listRecentRunsHandler", () => {
   effect("lists the latest runs, newest first, finished or not", () =>
     Effect.gen(function* () {
       const repository = yield* RunsRepository;
-      yield* repository.save(run("a"));
-      yield* repository.save(run("b", { status: "done", startedAt: "2026-10-21T00:00:00.000Z" }));
-      yield* repository.save(run("c", { startedAt: "2026-10-22T00:00:00.000Z" }));
+      yield* repository.upsertOne(run("a"));
+      yield* repository.upsertOne(
+        run("b", { status: "done", startedAt: "2026-10-21T00:00:00.000Z" }),
+      );
+      yield* repository.upsertOne(run("c", { startedAt: "2026-10-22T00:00:00.000Z" }));
 
       const { runs } = yield* listRecentRunsHandler({ latest: 2 });
 

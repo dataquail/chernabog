@@ -3,8 +3,9 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type ItemValidity } from "../domain/run/work-item.value-object.ts";
 import { RunValidity } from "../domain/schedule/validity.value-object.ts";
 import { type CheckRunValidityPayload } from "./check-run-validity.query.ts";
@@ -24,7 +25,10 @@ export const checkRunValidityHandler = Effect.fn("checkRunValidityHandler")(func
 }: CheckRunValidityPayload) {
   const flows = yield* FlowsClient;
 
-  const run = Option.filter(yield* (yield* RunsRepository).findOne(runId), RunRootOps.isRunning);
+  const run = Option.filter(
+    yield* (yield* RunsRepository).findOne(RunSpecifications.withId(runId)),
+    RunRootOps.isRunning,
+  );
 
   const asking = Option.flatMap(run, (found) =>
     Option.map(Option.product(found.item, found.executionId), ([item, executionId]) => ({

@@ -8,7 +8,7 @@ import { effectAtHome } from "../../../../test/effect-test.ts";
 import { Home } from "../../../platform/home.ts";
 import { MachineAccount } from "../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../domain/machine-setup/machine-setup.root.ts";
-import { MachineSetupsRepository } from "../domain/ports/repositories/machine-setups.repository.ts";
+import { MachineSetupsRepository } from "../domain/machine-setup/machine-setups.repository.ts";
 import { AccountDirsClientLive } from "../infrastructure/clients/account-dirs.client-live.ts";
 import { GitHubLoginsClientFake } from "../infrastructure/clients/github-logins.client-fake.ts";
 import { MachineSetupsRepositoryLive } from "../infrastructure/repositories/machine-setups.repository-live.ts";
@@ -34,7 +34,7 @@ describe("planSetupHandler", () => {
         yield* fs.makeDirectory(`${home}/${dir}`, { recursive: true });
       }
 
-      yield* (yield* MachineSetupsRepository).save(
+      yield* (yield* MachineSetupsRepository).upsertOne(
         MachineSetupRoot.make({ personas: ["bob"], accounts: [work], accountsWritten: true }),
       );
 

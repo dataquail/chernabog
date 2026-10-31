@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { effectAtHome } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { EnrolledReposRepositoryLive } from "../infrastructure/repositories/enrolled-repos.repository-live.ts";
 import { listPausedReposHandler } from "./list-paused-repos.handler.ts";
 
@@ -15,7 +15,7 @@ const repo = (slug: string, paused: boolean) =>
 // Machine config in the scratch home, holding `entries`, as the live repository writes it.
 const enrol = (entries: ReadonlyArray<EnrolledRepoRoot>) =>
   EnrolledReposRepository.use((repository) =>
-    Effect.forEach(entries, (saved) => repository.save(saved), { discard: true }),
+    Effect.forEach(entries, (saved) => repository.upsertOne(saved), { discard: true }),
   );
 
 const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>) =>

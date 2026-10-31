@@ -6,8 +6,8 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import { RunMarkersRepositoryLive } from "../infrastructure/repositories/run-markers.repository-live.ts";
 import { listRunMarkersHandler } from "./list-run-markers.handler.ts";
 
@@ -27,7 +27,7 @@ describe("listRunMarkersHandler", () => {
         marker("a", "chernabog/assignment", 3),
         marker("b", "chernabog/label", 4),
       ]) {
-        yield* repository.save(held);
+        yield* repository.upsertOne(held);
       }
 
       const a = RunId.make("a");

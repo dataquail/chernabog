@@ -9,7 +9,7 @@ import { effectAtHomeWith } from "../../../../test/effect-test.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Exec, execOk } from "../../../platform/exec.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { CheckoutsClientLive } from "../infrastructure/clients/checkouts.client-live.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryLive } from "../infrastructure/repositories/enrolled-repos.repository-live.ts";
@@ -52,7 +52,7 @@ const elsewhere = FileSystem.FileSystem.use((fs) =>
 // Machine config in the scratch home, holding `entries`, as the live repository writes it.
 const enrol = (entries: ReadonlyArray<EnrolledRepoRoot>) =>
   EnrolledReposRepository.use((repository) =>
-    Effect.forEach(entries, (saved) => repository.save(saved), { discard: true }),
+    Effect.forEach(entries, (saved) => repository.upsertOne(saved), { discard: true }),
   );
 
 // Machine config through the live repository, checkouts through git; GitHub,

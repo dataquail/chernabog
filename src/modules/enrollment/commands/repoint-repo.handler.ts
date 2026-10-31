@@ -1,8 +1,9 @@
 import * as Effect from "effect/Effect";
 
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summary.value-object.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { type RepointRepoPayload } from "./repoint-repo.command.ts";
 
 export const repointRepoHandler = Effect.fn("repointRepoHandler")(function* (
@@ -11,11 +12,11 @@ export const repointRepoHandler = Effect.fn("repointRepoHandler")(function* (
   const repository = yield* EnrolledReposRepository;
 
   const repo = yield* Effect.fromResult(
-    EnrolledRepoRootOps.named(yield* repository.findAll, cmd.name),
+    EnrolledRepoRootOps.named(yield* repository.findMany(EnrolledRepoSpecifications.all), cmd.name),
   );
 
   const moved = EnrolledRepoRootOps.repoint(repo, cmd.root);
-  yield* repository.save(moved);
+  yield* repository.upsertOne(moved);
 
   return EnrolledRepoSummary.make({
     name: EnrolledRepoRootOps.nameOf(moved),

@@ -6,10 +6,10 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunStepsRepository } from "../domain/ports/repositories/run-steps.repository.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
+import { RunStepsRepository } from "../domain/run-step/run-steps.repository.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { RunStepsRepositoryLive } from "../infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "../infrastructure/repositories/run-waits.repository-live.ts";
 import { readRunHistoryHandler } from "./read-run-history.handler.ts";
@@ -23,10 +23,10 @@ describe("readRunHistoryHandler", () => {
   effect("reads a run's steps in order, and the signals it's parked on", () =>
     Effect.gen(function* () {
       const steps = yield* RunStepsRepository;
-      yield* steps.save(step(a, "claim", "2026-10-20T00:00:00.000Z"));
-      yield* steps.save(step(RunId.make("b"), "claim", "2026-10-20T00:00:30.000Z"));
-      yield* steps.save(step(a, "wait-for-push", "2026-10-20T00:01:00.000Z"));
-      yield* (yield* RunWaitsRepository).save(
+      yield* steps.insertOne(step(a, "claim", "2026-10-20T00:00:00.000Z"));
+      yield* steps.insertOne(step(RunId.make("b"), "claim", "2026-10-20T00:00:30.000Z"));
+      yield* steps.insertOne(step(a, "wait-for-push", "2026-10-20T00:01:00.000Z"));
+      yield* (yield* RunWaitsRepository).upsertOne(
         RunWaitRoot.make({
           runId: a,
           signal: "pushed",

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { RunRoot, RunStatus } from "../../domain/run/run.root.ts";
 import { WorkItem } from "../../domain/run/work-item.value-object.ts";
+import { type ColumnMap } from "./criteria-to-sql.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
@@ -80,3 +81,22 @@ export const toParameters = (run: RunRoot) =>
     run.startedAt,
     Option.getOrNull(run.finishedAt),
   ] as const;
+
+// Each scalar field of a run, as the om_runs column a spec's WHERE names.
+export const runColumns: ColumnMap = {
+  id: "om_runs.id",
+  repo: "om_runs.repo",
+  persona: "om_runs.persona",
+  flow: "om_runs.flow",
+  itemKey: "om_runs.item_key",
+  itemTitle: "om_runs.item_title",
+  itemUrl: "om_runs.item_url",
+  executionId: "om_runs.execution_id",
+  status: "om_runs.status",
+  currentStep: "om_runs.current_step",
+  summary: "om_runs.summary",
+  coreVersion: "om_runs.core_version",
+  configTree: "om_runs.config_tree",
+  startedAt: "om_runs.started_at",
+  finishedAt: "om_runs.finished_at",
+};

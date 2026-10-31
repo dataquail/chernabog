@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { SkipRoot } from "../../domain/skip/skip.root.ts";
+import { type ColumnMap } from "./criteria-to-sql.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
@@ -27,3 +28,13 @@ export const toRoot = (row: typeof SkipColumns.Type) =>
   });
 
 export const nullable = (value: Option.Option<string>) => Option.getOrNull(value);
+
+// Each field of a skip, as the om_skips column a spec's WHERE names.
+export const skipColumns: ColumnMap = {
+  repo: "repo",
+  persona: "persona",
+  flow: "flow",
+  itemKey: "item_key",
+  reason: "reason",
+  at: "at",
+};
