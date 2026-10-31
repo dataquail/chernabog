@@ -16,7 +16,8 @@ import { updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { type TrustRecordRoot } from "../../domain/trust-record/trust-record.root.ts";
 import { TrustRecordsRepository } from "../../domain/trust-record/trust-records.repository.ts";
-import { toEntry, toRoot, TrustFile } from "./trust-record.mapper.ts";
+import { TrustFile } from "../../storage/trust-file.schema.ts";
+import { toEntry, toRoot } from "./trust-record.mapper.ts";
 
 export const TrustRecordsRepositoryLive = Layer.effect(
   TrustRecordsRepository,

@@ -63,20 +63,24 @@ deny:
   - match: "**/node_modules/yaml/**"
     except:
       - "**/infrastructure/repositories/**"
+      - "@/modules/*/queries/**"
       - "@/*.ts"
       - "test/**"
     message: >-
       The yaml package is how machine config is stored, not what it means. Only a repository
-      adapter (infrastructure/repositories/) reads or writes a YAML document; the domain and the
-      use cases see aggregates, never a Document.
+      adapter (infrastructure/repositories/) writes a YAML document, and only it and a query,
+      which reads its storage directly (docs/adr/0011-queries-read-their-storage.md), read one;
+      the domain and the commands see aggregates, never a Document.
   - match: "**/node_modules/@effect/sql*/**"
     except:
       - "@/modules/runs/infrastructure/**"
+      - "@/modules/runs/queries/**"
       - "test/**"
     message: >-
       SQLite is where runs and the workflow journal are stored. Only the runs module's
-      infrastructure and the engine name the SQL client; everything else reads and writes runs
-      through the Run repository.
+      infrastructure and the engine name the SQL client, and the runs module's queries, which
+      read state.db directly (docs/adr/0011-queries-read-their-storage.md); everything else
+      writes runs through the Run repository and reads them through a runs query.
   - match: "**/node_modules/@opentui/**"
     except: ["@/interface/tui/**"]
     message: >-
@@ -147,6 +151,9 @@ graph:
         - "@/modules/*/infrastructure/**"
         - "@/interface/**"
         - "@/platform/**"
+      # Where chernabog keeps its files, which a query reads directly
+      # (docs/adr/0011-queries-read-their-storage.md). It names no adapter.
+      toNot: ["@/platform/home.ts"]
     - name: packages-reach-no-daemon
       message: >-
         @chernabog/core and @chernabog/sdk are published and run inside a person's flows. A route
@@ -971,14 +978,21 @@ tree:
             imports:
               reset: true
               message: >-
-                A query names effect, the CQRS library, the kernel, its own module's domain (to
-                read through its ports) and its sibling queries. Never a command,
-                never infrastructure, never interface/, never another module's internals.
+                A query reads its storage directly and answers with a read model it owns
+                (docs/adr/0011-queries-read-their-storage.md). It names effect (its FileSystem
+                among it), the CQRS library, the kernel, its sibling queries, its module's
+                storage/ (the file and row schemas it shares with the repositories), where
+                chernabog keeps its files (@/platform/home.ts), and its module's domain: its
+                branded ids and its client ports, and, until the `read-models` campaign is
+                done, the rest, which that campaign counts. Never a command, never
+                infrastructure, never interface/, never another module's internals.
               external: [effect, "@effect-server-utils/cqrs"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/queries/**"
+                - "@/modules/{module}/storage/**"
+                - "@/platform/home.ts"
             children:
               "*.query.ts": {}
               "*.handler.ts":
@@ -988,6 +1002,33 @@ tree:
                 requires: ["{base}.integration.test.ts"]
                 surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.integration.test.ts": { use: query-integration-test-file }
+
+          # How the module's stores keep things on disk, which its repositories
+          # write and its queries read directly: the hexagon's RowSchemas
+          # (docs/adr/0011-queries-read-their-storage.md). Only the format is
+          # shared; each side maps it to its own model.
+          "storage/":
+            message: >-
+              storage/ holds the module's storage formats, one <name>.schema.ts per file or table
+              its repositories write: the Schema of its rows or its document, and nothing else.
+              Turning one into an aggregate is the repository's mapper's job, and into a read
+              model the query's.
+            imports:
+              reset: true
+              message: >-
+                A storage format is a Schema over what's on disk: it names effect, never the
+                domain, whose meaning it doesn't carry.
+              external: [effect]
+              allow: []
+            importedBy:
+              message: >-
+                A storage format is shared by the module's repositories, which write it, and its
+                queries, which read it directly. Anything else reads the module through a query.
+              allow:
+                - "@/modules/*/infrastructure/repositories/**"
+                - "@/modules/*/queries/**"
+            children:
+              "*.schema.ts": {}
 
           "infrastructure/":
             message: >-
@@ -1016,7 +1057,7 @@ tree:
                     legacy tier. state.db's transaction driver adapts the unit-of-work library's
                     port to the SQL client the stores share.
                   external: [yaml, "@effect-server-utils/unit-of-work"]
-                  allow: ["@/platform/**", "@/repo-config.ts"]
+                  allow: ["@/platform/**", "@/repo-config.ts", "@/modules/{module}/storage/**"]
                 children:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
@@ -1211,3 +1252,90 @@ tree:
             The release PR check reads the PR's body with release-please's parser, and names
             effect beside it.
           external: [release-please]
+
+# The moves the policy above has not finished making, each counted and held:
+# a ledger under .architecture-campaigns/ lists what is left, and only shrinks.
+# `bun run architecture:clear` records a change's progress in it, in the same
+# commit; `check` fails until it has.
+campaigns:
+  read-models:
+    title: Queries read their storage directly and never reach the domain
+    why: >-
+      A query that reads through a repository and asks a root's ops is bound to the write model:
+      every change to an aggregate ripples into what the CLI, the TUI and the daemon show, and a
+      read can't be shaped for the one who asks without reshaping the aggregate. A query reads its
+      storage itself and answers with a read model it owns, as queries-isolation holds in
+      dataquail/functional-domain-driven-hexagon (docs/adr/0011-queries-read-their-storage.md).
+    how: >-
+      Have the handler read the file with effect's FileSystem (and yaml for machine config) or, in
+      runs, state.db with SQL, decoding it with the Schema in the module's storage/ that its
+      repository writes with. Move the view it answers with, and its read-side errors, into its
+      *.query.ts; express any rule it asked a root's ops over the read model, or reclassify it as
+      ADR 11 records. Keep its integration test unchanged, then run `bun run architecture:clear`.
+    owner: "@zacharyweidenbach"
+    scope: ["src/modules/**"]
+    perimeter: { glob: "src/modules/*/" }
+    onTouch: ratchet
+    staleAfter: 14d
+    phases:
+      - id: isolate
+        intent: >-
+          Each query stops naming its module's roots, ops, repositories, specifications, value
+          objects, errors and events. A module or a handful of queries per pull request; when the
+          ledger is empty, the queries' allowlist drops the domain but for ids and client ports,
+          and port-consumers and root-ops' importedBy drop queries/.
+        objectives: [queries-reach-domain]
+
+    objectives:
+      queries-reach-domain:
+        intent: >-
+          A query that names the write model reads through it, so the aggregate's shape is what
+          every reader sees.
+        holdout: file
+        match:
+          all:
+            - path: { file: "/queries/[^/]*\\.ts$" }
+            - not:
+                path: { file: "\\.test\\.ts$" }
+            - any:
+                - imports: { resolves: "@/modules/*/domain/*/*.root.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.root-ops.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.repository.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.specification.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.value-object.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.errors.ts" }
+                - imports: { resolves: "@/modules/*/domain/*/*.events.ts" }
+        probes:
+          fires:
+            - path: src/modules/trust/queries/find-trusted-tree.handler.ts
+              source: 'import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";'
+              edges:
+                "../domain/trust-record/trust-records.repository.ts": "src/modules/trust/domain/trust-record/trust-records.repository.ts"
+            - path: src/modules/runs/queries/list-recent-runs.query.ts
+              source: 'import { RunView } from "../domain/run/run-view.value-object.ts";'
+              edges:
+                "../domain/run/run-view.value-object.ts": "src/modules/runs/domain/run/run-view.value-object.ts"
+            - path: src/modules/runs/queries/resolve-run-id.handler.ts
+              source: 'import { RunRootOps } from "../domain/run/run.root-ops.ts";'
+              edges:
+                "../domain/run/run.root-ops.ts": "src/modules/runs/domain/run/run.root-ops.ts"
+          ignores:
+            - path: src/modules/trust/queries/check-trust.handler.ts
+              source: |-
+                import { ConfigTreeClient } from "../domain/ports/clients/config-tree.client.ts";
+                import { TrustFile } from "../storage/trust-file.schema.ts";
+              edges:
+                "../domain/ports/clients/config-tree.client.ts": "src/modules/trust/domain/ports/clients/config-tree.client.ts"
+                "../storage/trust-file.schema.ts": "src/modules/trust/storage/trust-file.schema.ts"
+            - path: src/modules/runs/queries/find-run.query.ts
+              source: 'import { RunId } from "../domain/run/run.id.ts";'
+              edges:
+                "../domain/run/run.id.ts": "src/modules/runs/domain/run/run.id.ts"
+            - path: src/modules/trust/queries/find-trusted-tree.handler.integration.test.ts
+              source: 'import { TrustRecordsRepository } from "../domain/trust-record/trust-records.repository.ts";'
+              edges:
+                "../domain/trust-record/trust-records.repository.ts": "src/modules/trust/domain/trust-record/trust-records.repository.ts"
+            - path: src/modules/runs/commands/finish-run.handler.ts
+              source: 'import { RunRootOps } from "../domain/run/run.root-ops.ts";'
+              edges:
+                "../domain/run/run.root-ops.ts": "src/modules/runs/domain/run/run.root-ops.ts"
