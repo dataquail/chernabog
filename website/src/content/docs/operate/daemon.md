@@ -61,5 +61,12 @@ The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a se
 | `~/.config/chernabog/daemon.<YYYY-MM-DD>.log` | the daemon, on an earlier day; deleted after 30 days |
 | `~/.config/chernabog/daemon.out.log` | what the service manager catches of the daemon's stdout and stderr, such as a crash; emptied past 10 MB |
 | `~/.config/chernabog/runs/<run>.log` | one run; `chernabog logs <run> -f` |
+| `~/.config/chernabog/telemetry/<day>/<process>-<pid>.jsonl` | the spans and logs of one process, the daemon's or a CLI command's, as JSON lines, in a folder for each UTC day |
 
-The daemon moves `daemon.log` to `daemon.<YYYY-MM-DD>.log` at its first write of each new UTC day, and a daily sweep deletes those older than 30 days. A service unit installed by a chernabog from before `daemon.out.log` sent the daemon's output to `daemon.log`; the daemon rewrites it when it starts on a newer chernabog. systemd uses the rewritten unit from the daemon's next start, and launchd from the next login, or after `chernabog stop` and `chernabog start`.
+The daemon keeps these to a retention policy, sweeping when it starts and every 24 hours:
+
+- **Telemetry:** a day folder goes once it's more than 30 days old, and then the oldest go while the rest hold more than 500 MB. Today's is never removed.
+- **Run logs:** a run's log goes 30 days after the run finished. A run still running, or parked waiting, keeps its log; a log with no run in `state.db` goes 30 days after it was last written.
+- **`daemon.log`:** the daemon moves it to `daemon.<YYYY-MM-DD>.log` at its first write of each new UTC day, and the sweep deletes those older than 30 days.
+
+A service unit installed by a chernabog from before `daemon.out.log` sent the daemon's output to `daemon.log`; the daemon rewrites it when it starts on a newer chernabog. systemd uses the rewritten unit from the daemon's next start, and launchd from the next login, or after `chernabog stop` and `chernabog start`.
