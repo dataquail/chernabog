@@ -38,14 +38,13 @@ import {
 import {
   buildPersonaContexts,
   declaredLabels,
-  describeElsewhere,
   type FlowHandle,
   flowHandle,
   flowLayer,
   openRepo,
   REHEARSAL,
   type RepoContext,
-  routeItems,
+  Routing,
   runAnswers,
   RunFlowsCommands,
   RunFlowsCommandsLive,
@@ -301,7 +300,7 @@ const pickItem = (
       } satisfies Picked;
     }
 
-    const routed = routeItems(ours);
+    const routed = Routing.split(ours);
 
     return Option.match(Arr.head(routed.elsewhere), {
       onNone: (): Picked => ({
@@ -315,7 +314,7 @@ const pickItem = (
       onSome: (): Picked => ({
         item: Arr.head(routed.mine),
         unseen: false,
-        why: `the flow leaves ${routed.elsewhere.map(describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
+        why: `the flow leaves ${routed.elsewhere.map(Routing.describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
       }),
     });
   });

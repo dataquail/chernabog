@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 
-import { RunHistory, RunStep } from "../domain/run-step/run-history.value-object.ts";
-import { RunStepSpecifications } from "../domain/run-step/run-step.specification.ts";
-import { RunStepsRepository } from "../domain/run-step/run-steps.repository.ts";
+import { RunHistory, RunStep } from "../domain/run/run-history.value-object.ts";
+import { RunStepSpecifications } from "../domain/run/run-step.specification.ts";
+import { RunStepsRepository } from "../domain/run/run-steps.repository.ts";
 import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
 import { RunWait } from "../domain/run-wait/run-wait-view.value-object.ts";
 import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";

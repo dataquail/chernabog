@@ -3,7 +3,7 @@ import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
 import { type RunId } from "../../../../../kernel/run-id.id.ts";
-import { type RunEnding } from "../../run/run.root.ts";
+import { type RunEnding } from "../../run/run-status.value-object.ts";
 import { type FlowRef, type WorkItem } from "../../run/work-item.value-object.ts";
 
 // How a workflow ended.

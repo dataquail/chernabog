@@ -1,7 +1,7 @@
 import { Query } from "@effect-server-utils/cqrs";
 
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunHistory } from "../domain/run-step/run-history.value-object.ts";
+import { RunHistory } from "../domain/run/run-history.value-object.ts";
 
 // The steps a run has entered and the signals it waits on, for a person
 // looking at where it has been.
