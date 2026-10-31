@@ -107,9 +107,9 @@ no longer read.
 
 `chernabog setup` (run by `install`) picks GitHub personas and AI accounts
 (the machine module: `PlanSetupQuery`, then `ApplySetupCommand`, with
-`src/interface/cli/machine/setup.command.ts` asking between them); `init` and
+`src/modules/machine/interface/cli/setup.endpoint.ts` asking between them); `init` and
 `enroll` run the enrollment wizard: `PlanEnrollmentQuery`, the questions in
-`src/interface/cli/enrollment/enroll.command.ts` (personas, then for each
+`src/modules/enrollment/interface/cli/enroll.endpoint.ts` (personas, then for each
 persona its flows and then its accounts), then `ApplyEnrollmentCommand`, which
 resolves what wasn't answered and writes the entry once. The machine's
 personas and accounts come in from the machine module's
@@ -202,7 +202,8 @@ transitive reach), the coverage floors and the baseline.
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`, its value
   exports camelCase),
-  `infrastructure/{repositories,clients}/`
+  `domain/ports/acl/` (what it asks another module),
+  `infrastructure/{repositories,clients,acl}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
   format of a file or table its repositories write and its queries read),
   `<module>.module.ts`,
@@ -260,7 +261,7 @@ transitive reach), the coverage floors and the baseline.
   an `EnrolledRepoRoot`: its machine-config entry (edited in place, comments
   kept, and written only when the entry changed) and whether it's paused
   (`paused.json`, by slug, so clones of one repo pause together). `pause` and
-  `resume` are use-cases the CLI (`src/interface/cli/enrollment/`), the TUI
+  `resume` are use-cases the CLI (`src/modules/enrollment/interface/cli/`), the TUI
   and the daemon's gate all go through. Enrolling, pausing, resuming and
   unenrolling a repo dispatch `RepoEnrolled`, `RepoPaused`, `RepoResumed` and
   `RepoUnenrolled` (`enrolled-repo.events.ts`) on the `EventBus` that
@@ -345,12 +346,14 @@ transitive reach), the coverage floors and the baseline.
   Run logs are behind `RunLogsClient`: `ResolveRunIdQuery` names a run by
   a prefix of its id, `ReadRunLogQuery` reads its log, and
   `FollowRunLogQuery` reads what it gained from an offset. Following a log is
-  the CLI's (`followLog` in `src/interface/cli/runs/run-log.output.ts`): a
+  the CLI's (`followLog` in `src/modules/runs/interface/cli/run-log.output.ts`): a
   `Stream` of those reads, ended by an effect it passes, since only the
   caller knows who to ask whether the run finished (the CLI asks the daemon).
 - **The daemon is an adapter too.** `src/interface/daemon/` holds its
   socket protocol (`daemon.protocol.ts`, made of the modules' results) and
-  the client the CLI and TUI ask it with (`daemon.client.ts`). The CLI's
+  the client the CLI and TUI ask it with (`daemon.client.ts`), beside its
+  server, which keeps the schedules and the socket and registers the routes a
+  module serves itself (`runsRoutes`). The CLI's
   `status`, `logs` and the rest print a use-case's result, and with `--json`
   print it through its schema instead (`printJson` in
   `src/interface/cli/cli.output.ts`).
@@ -358,9 +361,9 @@ transitive reach), the coverage floors and the baseline.
   (`github:` personas and `accounts:`, edited in place in machine config),
   gh's logins, the account directories in the home, and the daemon as a
   launchd or systemd service (`ServiceManagerClient`). `ApplySetupCommand`
-  refuses to drop a persona an enrolled repo runs as; the CLI passes
-  enrollment's `ListPersonasInUseQuery` in, since modules don't read each
-  other.
+  refuses to drop a persona an enrolled repo runs as; the `setup` endpoint
+  passes enrollment's `ListPersonasInUseQuery` in, through the grant
+  `machine.imports.ts` takes.
 - **Every command declares its unit of work** (ADR 10): its handler pipes
   `withUnitOfWork` at the end of its `Effect.fn`, and demotes
   `PersistenceUnavailable` to a defect beside it. The runs' commands open a
@@ -389,9 +392,35 @@ transitive reach), the coverage floors and the baseline.
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
-- **Modules don't reach into each other.** An adapter composes them: the
-  `trust` command lists its targets with enrollment's
-  `ListEnrolledReposQuery`, then trusts each.
+- **Modules ask each other only through ACL ports**
+  (`docs/adr/0013-modules-import-and-export.md`). An owner grants queries in
+  `<module>.exports.ts` (`recipesAccessQueries =
+Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
+  `<module>Access<Queries|Commands|DomainEvents|Errors>`, never a bare
+  re-export, and only with a consumer). The asker names that grant in its
+  `<module>.imports.ts`, declares a port in its own words in
+  `domain/ports/acl/<question>.acl.ts` (owing `-live.ts`, `-fake.ts` and
+  `-live.test.ts` in `infrastructure/acl/`), and its live adapter dispatches
+  the grant and translates the answer. Its handlers ask the port; they never
+  name the other module or its messages. The asker's `<module>.module.ts`
+  provides the owner's `<module>.module.ts` beneath its ACL adapter (ADR 12),
+  as `enrollment.module.ts` does with recipes. Owners: enrollment the enrolled repos and their
+  per-persona choices, machine the personas and accounts, recipes the team's
+  `.chernabog/config.yaml` (`ReadTeamConfigQuery`). An inbound adapter in
+  a module's `interface/` may also dispatch a grant its `<module>.imports.ts`
+  takes, to compose a peer's answer with its own module's
+  (`docs/adr/0014-inbound-adapters-live-in-their-module.md`): `trust` lists
+  its targets with enrollment's `ListEnrolledReposQuery`, then trusts each.
+  `Query.dispatcher` needs a scope, so such a dispatch is `Effect.scoped`.
+- **A module's inbound adapters live in the module**
+  (`docs/adr/0014-inbound-adapters-live-in-their-module.md`):
+  `src/modules/<module>/interface/cli/<command>.endpoint.ts` per CLI command
+  and `interface/daemon/<route>.endpoint.ts` per daemon route it alone serves,
+  each registered in a `<module>.endpoint-groups.ts` that `main.ts` (or the
+  daemon's server) names directly. `src/interface/cli/` keeps only the
+  composition roots (`main.ts`, and the `*.main.ts` that compose the engine,
+  the runs' runtime or several modules) and the shared arguments, output and
+  `asker.prompt.ts`; `status` is the TUI's twin, in `src/interface/tui/`.
 - **The platform** (`src/platform/`) holds the technical adapters everything
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
   `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the
@@ -412,9 +441,9 @@ transitive reach), the coverage floors and the baseline.
   past it, and only `src/interface/` names it. To use something new from a
   module, re-export it there. The runs module's runtime the roots still
   compose is published from `runs.platform.ts` for now, in a section marked
-  interim. A module names another only through its `*.platform.ts`,
-  `*.exports.ts` or `*.module.ts`: `*.exports.ts` arrives with its first
-  consumer, and a `*.module.ts` provides another module's `layer` with
+  interim. A module names another's vocabulary only through its
+  `*.exports.ts`, and only from its own `*.imports.ts`; its `*.module.ts`
+  provides another module's `layer` by that module's `*.module.ts`, with
   `Layer.provide` (never `provideMerge`, which re-exports it). A new module
   joins `src/interface/application-modules.ts` and is wired in every root.
 - **The runtime** a run's flow executes in is the runs module's
@@ -438,10 +467,13 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way. `read-models` (ADR 11, #283) counts the queries still reaching
-  their module's domain. `cqrs`, which moved every use-case to a command
-  or query and had the commands dispatch their domain events, is retired
-  (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
+  under way. `repo-config` counts the files under `src/` that still import
+  `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
+  (ADR 13), and the file is deleted when none is left. `read-models` (ADR 11,
+  #283) counts the queries still reaching their module's domain. `cqrs`, which
+  moved every use-case to a command or query and had the commands dispatch
+  their domain events, is retired (#273). A campaign's ledger in
+  `.architecture-campaigns/` lists what is
   left and may only shrink. A change that moves one runs
   `bun run architecture:clear` and commits the ledger with it;
   `bun run architecture:campaigns` shows what's left. Always clear through
@@ -787,7 +819,7 @@ Decisions that cut across them:
   repo writes its own `human-initiated` flow from them, as this repo's
   `.chernabog/flows/human-initiated.ts` does (`ownWork: true`, no gate). Its
   trigger finds nothing on a schedule; `chernabog start <issue>`
-  (`src/interface/cli/runs/start.main.ts`) asks the daemon to run on
+  (`src/interface/cli/start.main.ts`) asks the daemon to run on
   `issue-<n>` the flow that declares `defineFlow({ start: true })`, as its
   status reports it (`startFlowOf` in `src/kernel/manual-flow.value-object.ts`
   refuses a repo with none or several, naming them). The optional `Flow.item(key)` finds an item the
@@ -801,7 +833,7 @@ Decisions that cut across them:
 - `AgentRequest.withPerson`: only claude under an interactive launcher; the
   Stop hook gets `--person` and never blocks; the session stays open after
   answering; a session the person closes fails the call. The session's env
-  carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/interface/cli/runs/open-pr.main.ts`)
+  carries `CHERNABOG_SESSION`, which `chernabog open-pr` (`src/interface/cli/open-pr.main.ts`)
   uses to write the answer and `done` once the worktree is clean.
 - `Hybrid.handOff` posts a `SessionMarker` with `withPerson: true`, so
   `address-review` reopens the person's session (consider, address, local

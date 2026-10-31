@@ -11,6 +11,7 @@ import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts"
 import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { TeamFlows } from "../domain/enrolled-repo/team-flows.value-object.ts";
+import { TeamFlowsAclFake } from "../infrastructure/acl/team-flows.acl-fake.ts";
 import { CheckoutsClientFake } from "../infrastructure/clients/checkouts.client-fake.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
@@ -43,6 +44,7 @@ const machineOf = (repos: ReadonlyArray<EnrolledRepoRoot>, present: ReadonlyArra
     RecordedEvents,
     EnrolledReposRepositoryFake(repos),
     CheckoutsClientFake([here], present),
+    TeamFlowsAclFake({ [here.root]: team }),
     ViewerClientFake(Option.some("carol")),
   );
 

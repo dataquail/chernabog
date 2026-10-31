@@ -21,7 +21,14 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
+import { enrollmentEndpoints } from "../../modules/enrollment/interface/cli/enrollment.endpoint-groups.ts";
+import { machineEndpoints } from "../../modules/machine/interface/cli/machine.endpoint-groups.ts";
 import { MachineCommands } from "../../modules/machine/machine.platform.ts";
+import { recipesEndpoints } from "../../modules/recipes/interface/cli/recipes.endpoint-groups.ts";
+import {
+  followRunLog,
+  runsEndpoints,
+} from "../../modules/runs/interface/cli/runs.endpoint-groups.ts";
 import {
   type ActiveRun,
   attachCommand,
@@ -38,6 +45,7 @@ import {
   stopHook,
   syncLabels,
 } from "../../modules/runs/runs.platform.ts";
+import { trustEndpoints } from "../../modules/trust/interface/cli/trust.endpoint-groups.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -53,26 +61,16 @@ import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
 import { runTui } from "../tui/app.ts";
+import { showStatus, statusCommand } from "../tui/status.ts";
 import { Asker } from "./asker.prompt.ts";
-import { showStatus, statusCommand } from "./daemon/status.command.ts";
-import { enrollCommand } from "./enrollment/enroll.command.ts";
-import { pauseCommand } from "./enrollment/pause.command.ts";
-import { resumeCommand } from "./enrollment/resume.command.ts";
-import { unenrollCommand } from "./enrollment/unenroll.command.ts";
-import { doctorCommand } from "./machine/doctor.main.ts";
-import { installCommand, stopCommand, uninstallCommand } from "./machine/service.command.ts";
-import { setupCommand } from "./machine/setup.command.ts";
-import { initCommand } from "./recipes/init.command.ts";
-import { recipesCommand } from "./recipes/recipes.command.ts";
-import { rehearseCommand } from "./rehearsals/rehearse.main.ts";
+import { cancelRun } from "./cancel.main.ts";
+import { doctorCommand } from "./doctor.main.ts";
+import { initCommand } from "./init.main.ts";
+import { openPr } from "./open-pr.main.ts";
+import { rehearseCommand } from "./rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
-import { cancelRun } from "./runs/cancel.main.ts";
-import { logsCommand } from "./runs/logs.command.ts";
-import { openPr } from "./runs/open-pr.main.ts";
-import { runInForeground } from "./runs/run.main.ts";
-import { followRunLog } from "./runs/run-log.output.ts";
-import { openSession, startIssue } from "./runs/start.main.ts";
-import { trustCommand } from "./trust/trust.command.ts";
+import { runInForeground } from "./run.main.ts";
+import { openSession, startIssue } from "./start.main.ts";
 
 const printLines = (lines: Iterable<string>) =>
   Effect.forEach(lines, (line) => Console.log(line), { discard: true });
@@ -437,21 +435,21 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     cancel,
     trigger,
     openPrCommand,
-    logsCommand,
-    pauseCommand,
-    resumeCommand,
-    trustCommand,
+    runsEndpoints.logs,
+    enrollmentEndpoints.pause,
+    enrollmentEndpoints.resume,
+    trustEndpoints.trust,
     labels,
     doctorCommand,
-    setupCommand,
+    machineEndpoints.setup,
     initCommand,
-    recipesCommand,
-    enrollCommand,
-    unenrollCommand,
-    installCommand,
-    uninstallCommand,
+    recipesEndpoints.recipes,
+    enrollmentEndpoints.enroll,
+    enrollmentEndpoints.unenroll,
+    machineEndpoints.install,
+    machineEndpoints.uninstall,
     start,
-    stopCommand,
+    machineEndpoints.stop,
     daemon,
     Command.unlisted(stepChild),
     Command.unlisted(launchChild),

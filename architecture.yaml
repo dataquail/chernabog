@@ -136,6 +136,7 @@ graph:
       fromNot: "**/*.test.ts"
       to:
         - "@/modules/*/infrastructure/**"
+        - "@/modules/*/interface/**"
         - "@/interface/**"
         - "@/platform/**"
     - name: handlers-reach-no-adapter
@@ -150,6 +151,7 @@ graph:
       fromNot: "**/*.test.ts"
       to:
         - "@/modules/*/infrastructure/**"
+        - "@/modules/*/interface/**"
         - "@/interface/**"
         - "@/platform/**"
       # Where chernabog keeps its files, which a query reads directly
@@ -301,6 +303,33 @@ defs:
       - "@/modules/*/*.query-handlers.ts"
       - "**/*.test.ts"
 
+  # An ACL port is the question a module asks another, in its own words
+  # (docs/adr/0013-modules-import-and-export.md). Its handlers ask it, and its
+  # ACL adapter answers it; nothing outside the module may, since the answer
+  # is another module's and the platform asks that module itself.
+  acl-port-consumers:
+    message: >-
+      An ACL port (domain/ports/acl/) is consumed by its module's commands and queries and by
+      the ACL adapter that implements it (infrastructure/acl/), nothing else. An adapter in
+      interface/ wanting another module's answer dispatches that module's query itself.
+    allow:
+      - "@/modules/*/commands/**"
+      - "@/modules/*/queries/**"
+      - "@/modules/*/infrastructure/**"
+      - "**/*.test.ts"
+
+  # An ACL adapter's live test runs it over the module it asks, staged with
+  # its own handlers and storage by the shared harness.
+  acl-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        An ACL adapter's test names its module and the shared test harness (test/*.ts), which
+        stages the module the adapter asks with that module's own handlers over real storage.
+      external: [effect]
+      allow: ["@/modules/{module}/**", "test/*.ts"]
+
   # A domain test names its subject and the kernel.
   unit-test-file:
     surface: [{ use: test-exports-nothing }]
@@ -422,9 +451,10 @@ defs:
       message: >-
         A CLI composition root merges the modules through src/interface/application-modules.ts
         and names each module through its <module>.platform.ts (its buses and the value objects
-        and events those answer with, and the runtime the runs module still publishes), the
-        interface, the platform and the kernel, and the legacy files it still composes directly,
-        each named here until a module owns it.
+        and events those answer with, and the runtime the runs module still publishes) and its
+        CLI endpoints through interface/cli/<module>.endpoint-groups.ts, the interface, the
+        platform and the kernel, and the legacy files it still composes directly, each named here
+        until a module owns it.
       # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
       external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
       allow:
@@ -432,6 +462,7 @@ defs:
         - "@/platform/**"
         - "@/interface/**"
         - "@/modules/*/*.platform.ts"
+        - "@/modules/*/interface/cli/*.endpoint-groups.ts"
         - "~/core/src/**"
         - "@/migrate.ts"
         - "@/repo-config.ts"
@@ -508,8 +539,11 @@ tree:
 
       "interface/":
         message: >-
-          interface/ holds the inbound adapters, one folder per protocol: cli/ today, the daemon's
-          scheduler and socket and an MCP server later.
+          interface/ holds what no one module owns of the inbound side
+          (docs/adr/0014-inbound-adapters-live-in-their-module.md): the CLI's composition roots
+          and the framework its endpoints share (cli/), the daemon's protocol, client and server
+          (daemon/), and the TUI, a client of the modules (tui/). A module's own endpoints live
+          in the module, under interface/.
         name: kebab-case
         children:
           # The one list of modules (ADR 12), which every composition root merges
@@ -532,59 +566,43 @@ tree:
                 inbound adapter dispatches a module's commands and queries instead.
               allow:
                 - "@/interface/cli/main.ts"
-                - "@/interface/cli/*/*.main.ts"
+                - "@/interface/cli/*.main.ts"
                 - "@/interface/daemon/*.server.ts"
                 - "@/interface/daemon/*.event-adapter.test.ts"
                 - "test/**"
 
           "cli/":
             message: >-
-              cli/ holds the shared arguments (*.arguments.ts) and output (*.output.ts) and, per
-              module, one <command>.command.ts per CLI command: its flags, the command or query it
-              dispatches, and how its result reads, beside the output its commands share.
+              cli/ holds the CLI's composition roots and the framework every module's endpoints
+              share: the arguments (*.arguments.ts), the output (*.output.ts) and the prompts
+              (*.prompt.ts). A module's CLI commands are its own, in
+              src/modules/<module>/interface/cli/.
             imports:
               reset: true
               message: >-
-                A CLI command parses its arguments, dispatches a command or query and prints what
-                its result says. It names effect (its CLI and console), the kernel, each module's
-                <module>.platform.ts (its buses and the results, value objects and events they
-                answer with), the shared arguments and output, and the
-                daemon's client and protocol, to ask the daemon what it alone knows. Never a
-                repository, a domain op or an adapter: the composition root provides those.
+                The CLI's shared framework parses arguments, prints and asks a person: it names
+                effect, and nothing of the modules.
               external: [effect]
-              allow:
-                - "@/kernel/**"
-                - "@/modules/*/*.platform.ts"
-                - "@/interface/cli/**"
-                - "@/interface/daemon/*.client.ts"
-                - "@/interface/daemon/*.protocol.ts"
-                # Where chernabog keeps its files, and which chernabog this is,
-                # which a command may say.
-                - "@/platform/home.ts"
-                - "@/platform/version.ts"
+              allow: []
             children:
-              # The CLI process's composition root: its commands, the modules'
-              # layers, and the commands still written over the legacy tier,
-              # each legacy file named until it moves into a module.
-              # The CLI process's composition root: its commands, the modules'
+              # The CLI process's composition root: the modules' endpoints, their
               # layers, and the commands still written over the legacy tier.
               "main.ts": { use: cli-root }
+              # A command that is a composition root of its own: it composes the
+              # runtime the runs module still publishes or the engine over every
+              # module (run, start, cancel, open-pr, rehearse), several modules'
+              # answers (doctor), or several modules' endpoints (init).
+              "*.main.ts": { use: cli-root }
               "*.arguments.ts": {}
               "*.output.ts": {}
               # The questions the wizards ask between a plan and its apply.
               "*.prompt.ts": {}
-              "{module}/":
-                children:
-                  "*.command.ts": {}
-                  "*.output.ts": {}
-                  # A command that composes the runtime itself: the foreground
-                  # run, the hybrid path's start and open-pr, doctor.
-                  "*.main.ts": { use: cli-root }
 
           "tui/":
             message: >-
               tui/ is the live view chernabog opens in a terminal: the daemon's status, drawn
-              with @opentui, and the settings a person changes from it.
+              with @opentui, and the settings a person changes from it; and `status`, the same
+              status printed, through the CLI's shared output.
             imports:
               reset: true
               message: >-
@@ -598,6 +616,8 @@ tree:
                 - "@/kernel/**"
                 - "@/platform/**"
                 - "@/interface/tui/**"
+                - "@/interface/cli/*.arguments.ts"
+                - "@/interface/cli/*.output.ts"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
                 - "@/modules/*/*.platform.ts"
@@ -656,7 +676,8 @@ tree:
                   reset: true
                   message: >-
                     The daemon dispatches the modules' commands and queries on a schedule and over
-                    its socket. It names effect and Bun's HTTP server, the kernel, the platform,
+                    its socket, and registers the routes a module serves itself
+                    (interface/daemon/<module>.endpoint-groups.ts). It names effect and Bun's HTTP server, the kernel, the platform,
                     its own protocol, each module's <module>.platform.ts (its buses, layers and
                     value objects, and the runtime the runs module still publishes there), and
                     the legacy files it still reads, each named here until a module owns it.
@@ -667,6 +688,7 @@ tree:
                     - "@/interface/daemon/**"
                     - "@/interface/application-modules.ts"
                     - "@/modules/*/*.platform.ts"
+                    - "@/modules/*/interface/daemon/*.endpoint-groups.ts"
                     - "~/core/src/**"
                     - "@/repo-config.ts"
 
@@ -707,8 +729,10 @@ tree:
           adapters behind its ports), one <module>.module.ts that wires the module (ADR 12),
           <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
           <module>.event-span-attributes.ts, what its spans say about the messages and events
-          they carry, and <module>.platform.ts, the one surface it publishes to the composition
-          roots.
+          they carry, <module>.platform.ts, the one surface it publishes to the composition
+          roots, interface/ (its inbound adapters: the CLI's endpoints and the daemon's routes
+          that serve it alone), and, when another module asks it or it asks another, <module>.exports.ts and
+          <module>.imports.ts.
         name: kebab-case
         # A module is private except for what it publishes on purpose
         # (docs/adr/0007-module-gateways.md).
@@ -726,8 +750,12 @@ tree:
             # runtime still read, so it can't name their platform surfaces without a
             # cycle. It leaves when it moves into the enrollment module (ADR 2).
             - "@/repo-config.ts"
-          # The platform surface is itself public, so the restriction does not cover it.
-          matchNot: ["*.platform.ts"]
+          # The platform surface is itself public, so the restriction does not cover it; nor
+          # are a module's endpoint groups, which the roots register (their own importedBy
+          # says which). They are not on platform.ts: an endpoint asks the daemon over its
+          # client, whose protocol names the runs module's platform.ts, so publishing them
+          # there would close a cycle.
+          matchNot: ["*.platform.ts", "interface/*/*.endpoint-groups.ts"]
         imports:
           message: >-
             A module's platform surface re-exports its own module and nothing else; every other
@@ -739,15 +767,16 @@ tree:
             - match: "@/modules/*/**"
               matchNot:
                 - "@/modules/{module}/**"
-                - "@/modules/*/*.platform.ts"
                 - "@/modules/*/*.exports.ts"
                 - "@/modules/*/*.module.ts"
               message: >-
-                A module may only name another module through a file it publishes on purpose:
-                <module>.exports.ts for its peers, <module>.platform.ts for the platform,
-                <module>.module.ts for another module's wiring. Reaching anywhere else couples
-                you to a shape it is free to change. Modules don't read each other yet: the
-                adapter that dispatches to both composes them.
+                A module names another only through that module's <module>.exports.ts, the
+                grants it publishes to its peers, and only from its own <module>.imports.ts
+                (docs/adr/0013-modules-import-and-export.md), or, from its own <module>.module.ts,
+                that module's <module>.module.ts, to wire it (ADR 12). Reaching anywhere else
+                couples you to a shape the other module is free to change. Ask through a port of
+                your own in domain/ports/acl/, whose adapter dispatches the query the other module
+                grants.
         children:
           # The platform surface: what the composition roots and the inbound
           # adapters name to assemble and drive the module. It only re-exports.
@@ -795,6 +824,74 @@ tree:
                     composition root's job. Re-exporting anything else from infrastructure/ or
                     interface/ makes an adapter part of the module's public surface.
 
+          # The PEER surface: what another module may ask of this one, each grant
+          # a subset of its messages (docs/adr/0013-modules-import-and-export.md).
+          "*.exports.ts":
+            name: { like: "{module}" }
+            importedBy:
+              message: >-
+                <module>.exports.ts is the PEER surface: the messages another module is granted.
+                Only a peer's <module>.imports.ts names it, and the test harness that stages this
+                module for a peer's ACL adapter. Everywhere else in a consumer asks through a port
+                of its own in domain/ports/acl/, whose adapter is the one place this vocabulary
+                appears.
+              allow:
+                - "@/modules/*/*.imports.ts"
+                - "**/*.test.ts"
+                - "test/*.ts"
+            imports:
+              message: >-
+                <module>.exports.ts carves its grants from its own module's message groups with the
+                CQRS library's subsetOf, and names nothing else.
+              external: ["@effect-server-utils/cqrs"]
+            surface:
+              - message: >-
+                  What the peer surface declares is named
+                  `<module>Access<Queries|Commands|DomainEvents|Errors>`; `{name}` is not. One
+                  shape across every module, so a consumer's import line says which module it
+                  reaches and whether it is asking or telling.
+                kinds: [named]
+                reexport: false
+                convention:
+                  { regex: "^[a-z][a-zA-Z0-9]*Access(Queries|Commands|DomainEvents|Errors)$" }
+                probe:
+                  source: "export const zzPeerQueries = 1;"
+              - message: >-
+                  <module>.exports.ts declares its grants; `{name}` is a bare re-export, which
+                  publishes whatever the origin file exports, under whatever name it uses, and
+                  slips past the naming rule above. Carve it into the <module>Access<...> grant
+                  with Query.subsetOf or Command.subsetOf, so a peer's dispatcher demands only
+                  those tags.
+                kinds: [named]
+                reexport: true
+                probe:
+                  source: 'export { ZzThing } from "./zz.ts";'
+
+          # The inbound gateway, mirroring the peer surface: what this module
+          # takes from others, and the one file here that names another module.
+          "*.imports.ts":
+            name: { like: "{module}" }
+            imports:
+              reset: true
+              message: >-
+                <module>.imports.ts names other modules' <module>.exports.ts and nothing else: it
+                is this module's inventory of what it takes from them, and the one file here
+                allowed to name them.
+              allow: ["@/modules/*/*.exports.ts"]
+            importedBy:
+              message: >-
+                <module>.imports.ts is read by this module's adapters: its ACL adapters
+                (infrastructure/acl/), which translate another module's answer for a handler, and
+                its inbound adapters (interface/), which compose a peer's answer with their own
+                module's as ADR 3 lets an adapter
+                (docs/adr/0014-inbound-adapters-live-in-their-module.md). A handler asks the ACL
+                port instead; another module reaching for this file would depend on a third module
+                through this one.
+              allow:
+                - "@/modules/*/infrastructure/acl/*.acl-live.ts"
+                - "@/modules/*/interface/**"
+                - "**/*.test.ts"
+
           # The module's slice of each bus: its messages grouped, each mapped to
           # its handler, and the dispatcher service the adapters ask, as the
           # hexagon's <module>.command-handlers.ts does. What the handlers need is
@@ -827,23 +924,20 @@ tree:
 
           # The wiring plane (ADR 12): the module assembled, as a record of Layers.
           # It provides the modules it needs with Layer.provide, which keeps
-          # them a private import; Layer.provideMerge would re-export them. No
-          # module needs another yet, so "@/modules/*/*.module.ts" joins its
-          # allowlist with the first that does (the module-wide prohibition
-          # above already admits it): an allowance nothing imports through is
-          # slack, which the conformance ceiling refuses.
+          # them a private import; Layer.provideMerge would re-export them.
+          # Enrollment's provides recipes', beneath the ACL adapter that asks it.
           "*.module.ts":
             name: { like: "{module}" }
             imports:
               reset: true
               message: >-
                 <module>.module.ts wires the module: it provides its handler maps with the live
-                adapters they need, and will provide each module it needs by that module's
+                adapters they need, and provides each module it needs by that module's
                 <module>.module.ts, the wiring plane talking to the wiring plane. It names its
                 own module, effect to merge them, and the platform. A peer's vocabulary is not
                 wiring, and does not belong here.
               external: [effect]
-              allow: ["@/modules/{module}/**", "@/platform/**"]
+              allow: ["@/modules/{module}/**", "@/modules/*/*.module.ts", "@/platform/**"]
             importedBy:
               message: >-
                 <module>.module.ts is the WIRING plane: it holds the module's Layers, and only
@@ -856,6 +950,83 @@ tree:
                 - "@/modules/*/*.module.ts"
                 - "@/modules/*/*.platform.ts"
                 - "**/*.test.ts"
+
+          # The module's inbound adapters (the hexagon's ADR-0013;
+          # docs/adr/0014-inbound-adapters-live-in-their-module.md).
+          "interface/":
+            message: >-
+              interface/ is a container: one folder per inbound protocol, cli/ (the module's CLI
+              commands), daemon/ (the routes it serves on the daemon's socket) and events/ (what
+              it does on another module's events). No files live directly in interface/. cli/ and
+              daemon/ hold one *.endpoint.ts per endpoint, a <module>.endpoint-groups.ts that
+              registers them, the output its endpoints share (*.output.ts), and pure leaf helpers
+              (*.util.ts).
+            children:
+              "cli/ | daemon/ | events/":
+                imports:
+                  reset: true
+                  message: >-
+                    An inbound adapter translates the wire into its module's commands and queries:
+                    it names its own module's commands, queries, dispatchers, domain and
+                    interface/, the peer grants its <module>.imports.ts takes, the kernel, the
+                    CLI's shared framework (arguments, output, prompts), the daemon's client and
+                    protocol, and where chernabog keeps its files and which chernabog this is.
+                    Never its repositories or other adapters, nor another module's internals.
+                  external: [effect, "@effect-server-utils/cqrs"]
+                  allow:
+                    - "@/kernel/**"
+                    - "@/modules/{module}/commands/**"
+                    - "@/modules/{module}/queries/**"
+                    - "@/modules/{module}/domain/**"
+                    - "@/modules/{module}/interface/**"
+                    - "@/modules/{module}/*.command-handlers.ts"
+                    - "@/modules/{module}/*.query-handlers.ts"
+                    - "@/modules/{module}/*.imports.ts"
+                    - "@/interface/cli/*.arguments.ts"
+                    - "@/interface/cli/*.output.ts"
+                    - "@/interface/cli/*.prompt.ts"
+                    - "@/interface/daemon/*.client.ts"
+                    - "@/interface/daemon/*.protocol.ts"
+                    - "@/platform/home.ts"
+                    - "@/platform/version.ts"
+                children:
+                  "*.endpoint-groups.ts":
+                    name: { like: "{module}" }
+                    importedBy:
+                      message: >-
+                        <module>.endpoint-groups.ts registers the module's endpoints with a
+                        composition root: the CLI's main.ts and its *.main.ts roots, or the
+                        daemon's server. Nothing else drives them.
+                      allow:
+                        - "@/interface/cli/main.ts"
+                        - "@/interface/cli/*.main.ts"
+                        - "@/interface/daemon/*.server.ts"
+                        - "**/*.test.ts"
+                        - "test/**"
+                  "*.endpoint.ts": {}
+                  # How the module's results read, shared by its endpoints.
+                  "*.output.ts": {}
+                  "*.util.ts":
+                    message: >-
+                      An interface *.util.ts is a pure leaf helper (the hexagon's ADR-0023); its
+                      sibling *.util.test.ts is the anti-drift guard: the extraction must be
+                      justified by a unit test.
+                    requires: ["{base}.test.ts"]
+                    imports:
+                      reset: true
+                      message: >-
+                        An interface *.util.ts is a leaf: pure protocol or wire plumbing. No
+                        ports, no commands or queries, no adapters, no buses: if it needs any of
+                        those it is the endpoint's own work. Effect is all it gets.
+                      external: [effect]
+                      allow: []
+                  "*.util.test.ts":
+                    surface: [{ use: test-exports-nothing }]
+                    imports:
+                      reset: true
+                      message: >-
+                        A util's test names its util.
+                      allow: ["@/modules/{module}/interface/**"]
 
           "domain/":
             message: >-
@@ -876,8 +1047,24 @@ tree:
               "ports/":
                 message: >-
                   domain/ports/ is a container: clients/ (third-party systems such as gh, git or
-                  launchd). A repository port lives beside its aggregate, in domain/<aggregate>/.
+                  launchd) and acl/ (another module this one asks). A repository port lives
+                  beside its aggregate, in domain/<aggregate>/.
                 children:
+                  "acl/":
+                    message: >-
+                      domain/ports/acl/ holds one *.acl.ts per question this module asks another,
+                      in this module's own words (docs/adr/0013-modules-import-and-export.md).
+                    children:
+                      "*.acl.ts":
+                        message: >-
+                          An ACL port needs its live adapter, its fake and the live adapter's
+                          test in ../../../infrastructure/acl/.
+                        surface: [{ use: port-declares-no-value }]
+                        requires:
+                          - "../../../infrastructure/acl/{base}-live.ts"
+                          - "../../../infrastructure/acl/{base}-fake.ts"
+                          - "../../../infrastructure/acl/{base}-live.test.ts"
+                        importedBy: { use: acl-port-consumers }
                   "clients/":
                     children:
                       "*.client.ts":
@@ -1114,9 +1301,10 @@ tree:
                 storage/ (the file and row schemas it shares with the repositories), where
                 chernabog keeps its files (@/platform/home.ts), and its module's domain: its
                 branded ids and its client ports, and, until the `read-models` campaign is
-                done, the rest, which that campaign counts. Never a command, never
-                infrastructure, never interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+                done, the rest, which that campaign counts. It names yaml to read a YAML file
+                it reads directly. Never a command, never infrastructure, never interface/,
+                never another module's internals.
+              external: [effect, "@effect-server-utils/cqrs", yaml]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
@@ -1163,8 +1351,8 @@ tree:
           "infrastructure/":
             message: >-
               infrastructure/ is a container: repositories/ (behind the aggregates' repository
-              ports) and clients/ (behind domain/ports/clients/). No files live directly in
-              infrastructure/.
+              ports), clients/ (behind domain/ports/clients/) and acl/ (behind
+              domain/ports/acl/). No files live directly in infrastructure/.
             imports:
               reset: true
               message: >-
@@ -1177,6 +1365,27 @@ tree:
                 - "@/modules/{module}/domain/**"
                 - "@/modules/{module}/infrastructure/**"
             children:
+              # The anti-corruption seam: the one place another module's
+              # vocabulary appears (docs/adr/0013-modules-import-and-export.md).
+              "acl/":
+                imports:
+                  reset: true
+                  message: >-
+                    An ACL adapter answers its module's ACL port by dispatching the query another
+                    module grants, taken from this module's own <module>.imports.ts, and
+                    translates the answer into the port's types: this module's value objects and
+                    errors. It names nothing else: no repository, no client, no handler, and no
+                    other module directly.
+                  external: [effect, "@effect-server-utils/cqrs"]
+                  allow:
+                    - "@/modules/{module}/*.imports.ts"
+                    - "@/modules/{module}/domain/ports/acl/**"
+                    - "@/modules/{module}/domain/*/*.value-object.ts"
+                    - "@/modules/{module}/domain/*/*.errors.ts"
+                children:
+                  "*.acl-live.ts": {}
+                  "*.acl-fake.ts": {}
+                  "*.test.ts": { use: acl-test-file }
               "repositories/":
                 imports:
                   message: >-
@@ -1388,6 +1597,54 @@ tree:
 # `bun run architecture:clear` records a change's progress in it, in the same
 # commit; `check` fails until it has.
 campaigns:
+  repo-config:
+    title: Modules stop sharing repo-config.ts
+    why: >-
+      The legacy src/repo-config.ts reads and edits machine config and a repo's team config for
+      whoever asks, so the modules couple through it as through a shared database no one owns.
+      Each part has an owner (docs/adr/0013-modules-import-and-export.md): enrolled repos and
+      their per-persona choices are enrollment's, the machine's personas and accounts are
+      machine's, and the team's .chernabog/config.yaml is recipes'. Another module asks an owner
+      only through an ACL port of its own.
+    how: >-
+      Give the file's need an owner. A module's own config moves into its own repository. What
+      it reads of another module's becomes a port in its domain/ports/acl/, whose live adapter in
+      infrastructure/acl/ dispatches the query the owner grants in its <module>.exports.ts (taken
+      through the consumer's <module>.imports.ts) and translates the answer into the consumer's
+      types. A composition root dispatches the owner's queries itself. Then drop the import and
+      run `bun run architecture:clear`; when none is left, delete src/repo-config.ts, its
+      baseline entry and every allowance naming it.
+    owner: "@zacharyweidenbach"
+    scope: ["src/**"]
+    onTouch: ratchet
+    staleAfter: 14d
+    phases:
+      - id: owners
+        intent: >-
+          Each file that imports src/repo-config.ts stops: its module's own config moves into its
+          repository, another module's comes through an ACL port, and a root asks the owner's
+          queries. A consumer or two per pull request.
+        objectives: [repo-config-imports]
+
+    objectives:
+      repo-config-imports:
+        intent: A file that imports repo-config.ts couples to every module's config through it.
+        holdout: file
+        match:
+          imports:
+            resolves: "@/repo-config.ts"
+        probes:
+          fires:
+            - path: src/modules/runs/infrastructure/runtime/labels.ts
+              source: 'import { flowSettingsInput } from "../../../../repo-config.ts";'
+              edges:
+                "../../../../repo-config.ts": src/repo-config.ts
+          ignores:
+            - path: src/modules/enrollment/infrastructure/acl/team-flows.acl-live.ts
+              source: 'import { recipesAccessQueries } from "../../enrollment.imports.ts";'
+              edges:
+                "../../enrollment.imports.ts": src/modules/enrollment/enrollment.imports.ts
+
   read-models:
     title: Queries read their storage directly and never reach the domain
     why: >-

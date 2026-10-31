@@ -6,9 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { followLog } from "../src/interface/cli/runs/run-log.output.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
+import { followLog } from "../src/modules/runs/interface/cli/run-log.output.ts";
 import { RunLogsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effectOnTestClock } from "./effect-test.ts";
 

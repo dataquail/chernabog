@@ -14,7 +14,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { it } from "effect-bun-test";
 
-import { openPr } from "../src/interface/cli/runs/open-pr.main.ts";
+import { openPr } from "../src/interface/cli/open-pr.main.ts";
 import {
   Draft,
   OPEN_PR_HEADER,
