@@ -26,7 +26,7 @@ import * as Schema from "effect/Schema";
 import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
-import { runLabel } from "../../kernel/run-id.id.ts";
+import { runLabel, shortRunId } from "../../kernel/run-id.id.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
 import {
@@ -77,7 +77,7 @@ import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
-import { keepDayFolders, TELEMETRY_RETENTION } from "../../platform/retention.ts";
+import { daily, reported, sweepDayFolders, TELEMETRY_RETENTION } from "../../platform/retention.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
   checkFlowSettings,
@@ -460,19 +460,6 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
   }
 
-  // Keeps <home>/telemetry to its retention, now and once a day, on a fiber
-  // of its own. A failed sweep is logged, and the next day's tries again.
-  yield* Effect.forkScoped(
-    keepDayFolders(paths.telemetry, TELEMETRY_RETENTION, {
-      swept: (removed) =>
-        Effect.when(
-          log(`telemetry: removed ${removed.join(", ")}, past retention`),
-          Effect.succeed(removed.length > 0),
-        ).pipe(Effect.asVoid),
-      failed: (cause) => log(`telemetry: the retention sweep failed: ${String(cause)}`),
-    }),
-  );
-
   const busy = yield* Ref.make(0);
 
   // Wakes the scheduling loop early, when an event makes a tick due.
@@ -574,6 +561,34 @@ export const runDaemon = Effect.gen(function* () {
     Effect.gen(function* () {
       // What each run's ending released, logged as the sweep's is.
       yield* subscribeMarkerReleases(logReleases);
+
+      // Keeps <home>/telemetry and the run logs to their retention, now and
+      // once a day, on a fiber of its own; the logs through the engine's
+      // commands, which read state.db. A failed sweep is logged, and the next
+      // day's tries again; one failing never keeps the other from its turn.
+      yield* Effect.forkScoped(
+        daily<FileSystem.FileSystem | RunsCommands>([
+          reported(sweepDayFolders(paths.telemetry, TELEMETRY_RETENTION), {
+            swept: (removed) =>
+              Effect.when(
+                log(`telemetry: removed ${removed.join(", ")}, past retention`),
+                Effect.succeed(removed.length > 0),
+              ).pipe(Effect.asVoid),
+            failed: (cause) => log(`telemetry: the retention sweep failed: ${String(cause)}`),
+          }),
+          reported(
+            RunsCommands.use((runs) => runs.PruneRunLogsCommand()),
+            {
+              swept: ({ removed }) =>
+                Effect.when(
+                  log(`run logs: removed ${removed.map(shortRunId).join(", ")}, past retention`),
+                  Effect.succeed(removed.length > 0),
+                ).pipe(Effect.asVoid),
+              failed: (cause) => log(`run logs: the retention sweep failed: ${String(cause)}`),
+            },
+          ),
+        ]),
+      );
 
       // Every run that ends, however it ended, is logged, and one that didn't
       // finish its work leaves its own flow to cron, so a trigger whose item
