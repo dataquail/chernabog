@@ -31,7 +31,9 @@ export const daemonEnrollmentCommands = Command.subsetOf(
 export const daemonTrustCommands = Command.subsetOf(trustCommandGroup, "TrustRepoCommand");
 
 // Where the route listens: the local socket only, which only this machine's
-// user can reach. Which of these a TCP listener may dispatch is #330's.
+// user can reach. Nothing reads this yet, because the daemon has no other
+// listener: a TCP listener (#330) must check it, with an allowlist of its own,
+// before it serves /commands/:tag, or every command here goes out over TCP.
 export const DAEMON_COMMAND_LISTENERS = ["socket"] as const;
 
 const allowed: ReadonlyArray<Command.Any> = [
