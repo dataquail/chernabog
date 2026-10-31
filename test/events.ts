@@ -12,6 +12,11 @@ import * as Layer from "effect/Layer";
 // the shared runtime and test/ may call a bus factory (ADR 15).
 export const TestEventBus = makeEventBus();
 
+// Dispatches events on the bus in context, for a test outside test/ that
+// subscribes an adapter and has no command to dispatch them.
+export const dispatchEvents = (events: ReadonlyArray<{ readonly _tag: string }>) =>
+  EventBus.use((bus) => bus.dispatch(events));
+
 export class DispatchedEvents extends Context.Service<
   DispatchedEvents,
   // Every domain event a module's commands dispatch carries its eventId.
@@ -36,13 +41,13 @@ const Recording = Layer.effect(
   }),
 );
 
-// The bus, what it has dispatched so far, and the unit of work a command
+// The bus and what it has dispatched so far (RecordedBus), and with them
+// (RecordedEvents) the unit of work a command
 // declares: the library's own over a driver that opens nothing, which still
 // fails a dispatch outside one (EventDispatchedOutsideUnitOfWork).
-export const RecordedEvents = Layer.mergeAll(
-  Recording.pipe(
-    Layer.provideMerge(Layer.sync(DispatchedEvents, () => [])),
-    Layer.provide(makeEventBus()),
-  ),
-  PassThroughUnitOfWork,
+export const RecordedBus = Recording.pipe(
+  Layer.provideMerge(Layer.sync(DispatchedEvents, () => [])),
+  Layer.provide(makeEventBus()),
 );
+
+export const RecordedEvents = Layer.mergeAll(RecordedBus, PassThroughUnitOfWork);

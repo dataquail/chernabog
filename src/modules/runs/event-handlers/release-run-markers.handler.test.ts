@@ -4,13 +4,16 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import type * as Schema from "effect/Schema";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedBus } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type RunStatus } from "../domain/run/run-status.value-object.ts";
+import { type RunMarkersReleased } from "../domain/run-marker/run-marker.events.ts";
 import { type RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
@@ -55,8 +58,26 @@ const runtime = (
     RunsRepositoryFake(runs),
     RunMarkersRepositoryFake(markers),
     FlowsClientFake({ "demo/implement": flow }),
+    RecordedBus,
     PassThroughUnitOfWork,
   );
+
+// What the release said it did, by marker name, from each event it dispatched.
+const told = DispatchedEvents.use((dispatched) =>
+  Effect.succeed(
+    dispatched
+      .filter((event): event is RunMarkersReleased =>
+        Predicate.isTagged(event, "RunMarkersReleased"),
+      )
+      .map((event) => ({
+        eventId: event.eventId,
+        released: event.releases.released.map((view) => view.name),
+        kept: event.releases.kept.map((view) => view.name),
+        failed: event.releases.failed.map((view) => [view.name, view.attempts]),
+        unreleasable: event.releases.unreleasable.map((view) => view.name),
+      })),
+  ),
+);
 
 const released = (releases: ReadonlyArray<{ runId: string; name: string }>) =>
   releases.map((release) => [release.runId, release.name]);
@@ -174,6 +195,54 @@ describe("releaseRunMarkersHandler", () => {
           ],
           { items: [], markers: ["tried", "fresh"], releases },
         ),
+      ),
+    );
+  });
+
+  effect("tells what it did, once, for the daemon to log", () => {
+    const releases: Array<{ runId: string; name: string; args: Schema.Json }> = [];
+    const ended = run("a", "done");
+
+    return Effect.gen(function* () {
+      yield* releaseRunMarkersHandler(finished(ended));
+      // A repeat finds nothing left to do, and says nothing.
+      yield* releaseRunMarkersHandler(finished(ended));
+
+      expect(yield* told).toEqual([
+        {
+          eventId: "a:markers",
+          released: ["first"],
+          kept: [],
+          failed: [],
+          unreleasable: ["gone"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        runtime([ended], [marker("a", "gone"), marker("a", "first")], {
+          items: [],
+          markers: ["first"],
+          releases,
+        }),
+      ),
+    );
+  });
+
+  effect("tells of a release that failed, on its first attempt", () => {
+    const ended = run("a", "done");
+
+    return Effect.gen(function* () {
+      yield* releaseRunMarkersHandler(finished(ended));
+
+      expect((yield* told).map((said) => said.failed)).toEqual([[["first", 1]]]);
+    }).pipe(
+      Effect.provide(
+        runtime([ended], [marker("a", "first")], {
+          items: [],
+          markers: ["first"],
+          releases: [],
+          releaseFails: ["GitHub is down"],
+        }),
       ),
     );
   });
