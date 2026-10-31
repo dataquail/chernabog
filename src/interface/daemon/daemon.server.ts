@@ -29,6 +29,15 @@ import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import {
+  CancelledRun,
+  CancelTarget,
+} from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
+import {
+  type ActiveRun,
+  type RunView,
+} from "../../modules/runs/domain/run/run-view.value-object.ts";
+import { RunHistory } from "../../modules/runs/domain/run-step/run-history.value-object.ts";
+import {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,
   eventTickAt,
@@ -42,6 +51,7 @@ import {
   renewalDue,
   RunLeases,
 } from "../../modules/runs/domain/schedule/lease.value-object.ts";
+import { type NotificationNews } from "../../modules/runs/domain/schedule/notifications.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
   type CheckFailures,
@@ -85,10 +95,6 @@ import {
   RunsQueries,
   RunsQueriesLive,
 } from "../../modules/runs/runs.query-handlers.ts";
-import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
-import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
-import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
 import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
 import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";

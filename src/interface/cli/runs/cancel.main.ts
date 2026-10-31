@@ -12,6 +12,10 @@ import * as Result from "effect/Result";
 
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import {
+  type CancelledRun,
+  CancelTarget,
+} from "../../../modules/runs/domain/run/cancelled-run.value-object.ts";
+import {
   buildPersonaContexts,
   openRepo,
   type PersonaContext,
@@ -22,10 +26,6 @@ import {
   RunFlowsCommandsLive,
 } from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
-import {
-  type CancelledRun,
-  CancelTarget,
-} from "../../../modules/runs/use-cases/cancel-run.result.ts";
 import { userName } from "../../../platform/environment.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";

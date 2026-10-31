@@ -24,6 +24,10 @@ import * as Schedule from "effect/Schedule";
 import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
+import {
+  type CancelledRun,
+  CancelTarget,
+} from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
 import { RunValidity } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import {
   type FlowHandle,
@@ -34,10 +38,6 @@ import {
 import { checkRunValidityHandler } from "../src/modules/runs/queries/check-run-validity.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import {
-  type CancelledRun,
-  CancelTarget,
-} from "../src/modules/runs/use-cases/cancel-run.result.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {

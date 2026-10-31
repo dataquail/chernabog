@@ -37,12 +37,12 @@ import { StandIns } from "./kernel/stand-in.value-object.ts";
 import { EnrolledRepoRootOps } from "./modules/enrollment/domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { FlowSettings } from "./modules/enrollment/domain/enrolled-repo/flow-settings.value-object.ts";
 import { type PersonaEntry } from "./modules/enrollment/domain/enrolled-repo/persona-choices.value-object.ts";
+import { FLOW_TURNED_OFF } from "./modules/enrollment/domain/enrolled-repo/team-flows.value-object.ts";
 import {
   type EnrolledRepoEntry,
   EnrolledRepoEntry as EnrolledRepoSchema,
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
-import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   DEFAULT_LEASE_LIMITS,

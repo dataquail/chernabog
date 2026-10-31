@@ -19,6 +19,10 @@ import {
   describeElsewhere,
   routeItems,
 } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import {
+  type ActiveRun,
+  type RunView,
+} from "../../../modules/runs/domain/run/run-view.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   defaultPersona,
@@ -43,7 +47,6 @@ import {
 } from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
-import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";

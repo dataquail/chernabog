@@ -35,6 +35,10 @@ import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
 import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
 import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
 import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
+import {
+  type ActiveRun,
+  type RunView,
+} from "../../modules/runs/domain/run/run-view.value-object.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
@@ -44,7 +48,6 @@ import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-ru
 import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
 import { RunLogsQueries, RunLogsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
-import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { TrustCommandsLive } from "../../modules/trust/trust.command-handlers.ts";
 import { TrustQueriesLive } from "../../modules/trust/trust.query-handlers.ts";
 import { HostEnvironment } from "../../platform/environment.ts";

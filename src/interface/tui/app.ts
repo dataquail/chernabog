@@ -33,10 +33,13 @@ import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { EnrollmentCommands } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { MachineQueries } from "../../modules/machine/machine.query-handlers.ts";
+import {
+  type CancelledRun,
+  CancelTarget,
+} from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { readUsageLogLine } from "../../modules/runs/infrastructure/runtime/usage-gate.ts";
 import { RunLogsQueries } from "../../modules/runs/runs.query-handlers.ts";
-import { type CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { userName } from "../../platform/environment.ts";
 import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";

@@ -3,18 +3,18 @@
 
 import * as Schema from "effect/Schema";
 
-import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { HoldView } from "../../modules/runs/use-cases/hold.result.ts";
-import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
+import { HoldView } from "../../modules/runs/domain/holds/hold-view.value-object.ts";
+import { CancelTarget } from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
 import {
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
   RunNeedsAttention,
   RunStarted,
-} from "../../modules/runs/use-cases/run-event.result.ts";
-import { RunMarkerView } from "../../modules/runs/use-cases/run-marker.result.ts";
-import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
+} from "../../modules/runs/domain/run/run.events.ts";
+import { ActiveRun, RunView } from "../../modules/runs/domain/run/run-view.value-object.ts";
+import { RunMarkerView } from "../../modules/runs/domain/run-marker/run-marker-view.value-object.ts";
+import { SkipView } from "../../modules/runs/domain/skip/skip-view.value-object.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
