@@ -1,6 +1,9 @@
-import { Command } from "@effect-server-utils/cqrs";
-import { TransactionDriver, UnitOfWork } from "@effect-server-utils/unit-of-work";
-import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
+import { Command, Event, EventBus } from "@effect-server-utils/cqrs";
+import { TransactionDriver, UnitOfWork, withUnitOfWork } from "@effect-server-utils/unit-of-work";
+import {
+  PassThroughUnitOfWork,
+  RecordingTransactionDriver,
+} from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -8,10 +11,12 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { effect } from "../../test/effect-test.ts";
+import { TestEventBus } from "../../test/events.ts";
 import {
   FileStoresTransactionDriver,
   FileStoresUnitOfWork,
   ownUnitOfWork,
+  UnitOfWorkReactingAfterCommit,
 } from "./unit-of-work.ts";
 
 const active = TransactionDriver.use((driver) => driver.isActive);
@@ -88,5 +93,72 @@ describe("ownUnitOfWork", () => {
         ),
       ),
     ),
+  );
+});
+
+// An event a reaction answers, and what each delivery of it saw.
+const Happened = Event.make("Happened", { eventId: Schema.String });
+
+class Reactions extends Context.Service<
+  Reactions,
+  Array<{ readonly eventId: string; readonly inTransaction: boolean }>
+>()("test/Reactions") {}
+
+// A unit of work that reacts outside its transactions, over a driver that
+// records whether a scope is open, and a reaction that notes what it saw.
+const reacting = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const bus = yield* EventBus;
+    const reactions = yield* Reactions;
+    const driver = yield* TransactionDriver;
+
+    yield* bus.subscribeAfterCommit(
+      Happened,
+      (event) =>
+        Effect.map(driver.isActive, (inTransaction) => {
+          reactions.push({ eventId: event.eventId, inTransaction });
+        }),
+      { name: "test/notes-it" },
+    );
+  }),
+).pipe(
+  Layer.provideMerge(UnitOfWorkReactingAfterCommit),
+  Layer.provideMerge(Layer.mergeAll(TestEventBus, RecordingTransactionDriver)),
+  Layer.provideMerge(Layer.sync(Reactions, () => [])),
+);
+
+const happen = (eventId: string) =>
+  EventBus.use((bus) => bus.dispatch([Happened.make({ eventId })])).pipe(withUnitOfWork);
+
+describe("UnitOfWorkReactingAfterCommit", () => {
+  effect("runs a reaction once the transaction has committed, in none of its own", () =>
+    Effect.gen(function* () {
+      yield* happen("run-1:finished");
+
+      expect(yield* Reactions).toEqual([{ eventId: "run-1:finished", inTransaction: false }]);
+    }).pipe(Effect.provide(reacting)),
+  );
+
+  effect("runs nothing for work that was rolled back", () =>
+    Effect.gen(function* () {
+      yield* EventBus.use((bus) =>
+        bus.dispatch([Happened.make({ eventId: "run-1:finished" })]),
+      ).pipe(Effect.andThen(Effect.fail("rolled back")), withUnitOfWork, Effect.ignore);
+
+      expect(yield* Reactions).toEqual([]);
+    }).pipe(Effect.provide(reacting)),
+  );
+
+  effect("reacts to a repeated event, by its eventId, only once", () =>
+    Effect.gen(function* () {
+      yield* happen("run-1:finished");
+      yield* happen("run-1:finished");
+      yield* happen("run-2:finished");
+
+      expect((yield* Reactions).map((reaction) => reaction.eventId)).toEqual([
+        "run-1:finished",
+        "run-2:finished",
+      ]);
+    }).pipe(Effect.provide(reacting)),
   );
 });

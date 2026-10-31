@@ -1,8 +1,9 @@
-// Markers through the real engine and the daemon's release: a flow that puts
-// something on its own system and holds a marker for it sees it taken off
-// however the run ends; one held to stay for a person stays; a release that
-// fails is retried and shown until it succeeds; and an implement run that
-// fails partway leaves no auto:in-progress and no assignment.
+// Markers through the real engine and the release on RunFinished: a flow that
+// puts something on its own system and holds a marker for it sees it taken off
+// the moment the run ends, however it ends, and the daemon's sweep finds
+// nothing left to do; one held to stay for a person stays; a release that
+// fails is shown and left for the sweep to retry until it succeeds; and an
+// implement run that fails partway leaves no auto:in-progress and no assignment.
 
 import {
   activity,
@@ -176,14 +177,16 @@ const asRun = <A, E>(
 const ended = (run: EngineRun) =>
   pollRun(run).pipe(Effect.repeat({ ...POLLS, until: (polled) => polled.status !== "running" }));
 
-// Runs the flow to its end, and releases what it held, as the daemon does.
+// Runs the flow to its end, which releases what it held, then what ended runs
+// left held, and what the daemon's sweep then does.
 const runAndRelease = (handle: FlowHandle) =>
   Effect.gen(function* () {
     const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, item("T-1"))).run);
     const finished = yield* ended(started);
-    const releases = yield* releaseMarkersHandler();
+    const left = yield* listUnreleasedMarkersHandler();
+    const swept = yield* releaseMarkersHandler();
 
-    return { finished, releases };
+    return { finished, left, swept };
   });
 
 describe("a flow's own marker", () => {
@@ -199,11 +202,11 @@ describe("a flow's own marker", () => {
         const value = yield* withEngine(handle, makeFake("approve"), runAndRelease(handle));
 
         expect(value.finished.status).toBe(status);
-        expect(value.releases.released.map((marker) => marker.name)).toEqual([
-          "tracker-in-progress",
-        ]);
         expect([...tracker.inProgress]).toEqual([]);
         expect(tracker.releases).toBe(1);
+        // Released as it ended: nothing is left for the sweep.
+        expect(value.left.markers).toEqual([]);
+        expect(value.swept.released).toEqual([]);
       }),
     );
   }
@@ -236,9 +239,11 @@ describe("a flow's own marker", () => {
             endAs: Option.none(),
           });
 
-          const releases = yield* releaseMarkersHandler();
+          // Taken off as the cancel ended it, before any sweep.
+          const inProgress = [...tracker.inProgress];
+          const swept = yield* releaseMarkersHandler();
 
-          return { whileRunning, held, releases, polled: yield* pollRun(started) };
+          return { whileRunning, held, inProgress, swept, polled: yield* pollRun(started) };
         }),
       );
 
@@ -247,8 +252,9 @@ describe("a flow's own marker", () => {
         ["tracker-in-progress", { key: "T-1" }],
       ]);
       expect(value.polled.status).toBe("cancelled");
-      expect(value.releases.released.map((marker) => marker.name)).toEqual(["tracker-in-progress"]);
-      expect([...tracker.inProgress]).toEqual([]);
+      expect(value.inProgress).toEqual([]);
+      expect(tracker.releases).toBe(1);
+      expect(value.swept.released).toEqual([]);
     }),
   );
 
@@ -265,8 +271,11 @@ describe("a flow's own marker", () => {
       const value = yield* withEngine(handle, makeFake("approve"), runAndRelease(handle));
 
       expect(value.finished.status).toBe("needs-human");
-      expect(value.releases.kept.map((marker) => marker.name)).toEqual(["tracker-in-progress"]);
       expect([...tracker.inProgress]).toEqual(["T-1"]);
+      expect(tracker.releases).toBe(0);
+      // Kept, not held: nothing is left for the sweep or a person.
+      expect(value.left.markers).toEqual([]);
+      expect(value.swept.kept).toEqual([]);
     }),
   );
 
@@ -276,24 +285,16 @@ describe("a flow's own marker", () => {
       tracker.down = true;
       const handle = flowHandle(repo, "tracked", trackerFlow(tracker, "done"));
 
-      const value = yield* withEngine(
-        handle,
-        makeFake("approve"),
-        Effect.gen(function* () {
-          const first = yield* runAndRelease(handle);
-          const shown = yield* listUnreleasedMarkersHandler();
+      const value = yield* withEngine(handle, makeFake("approve"), runAndRelease(handle));
 
-          return { first, shown };
-        }),
-      );
-
-      expect(value.first.releases.failed.map((marker) => [marker.name, marker.attempts])).toEqual([
+      // The release on its ending failed once, and backs off: the sweep
+      // doesn't try it again before it is due.
+      expect(value.left.markers.map((marker) => [marker.name, marker.attempts])).toEqual([
         ["tracker-in-progress", 1],
       ]);
-      expect(Option.getOrThrow(value.first.releases.failed[0].lastError)).toContain(
-        "the tracker is down",
-      );
-      expect(value.shown.markers.map((marker) => marker.status)).toEqual(["held"]);
+      expect(Option.getOrThrow(value.left.markers[0].lastError)).toContain("the tracker is down");
+      expect(value.left.markers.map((marker) => marker.status)).toEqual(["held"]);
+      expect(value.swept.failed).toEqual([]);
       expect([...tracker.inProgress]).toEqual(["T-1"]);
     }),
   );

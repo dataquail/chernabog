@@ -120,7 +120,33 @@ const failed = (marker: RunMarkerRoot, reason: string, now: DateTime.Utc) => {
 // A run's markers newest first, the order they're released in, from the order they were held.
 const releaseOrder = (markers: ReadonlyArray<RunMarkerRoot>) => markers.toReversed();
 
+// How long after a run ends the sweep leaves its untried markers to the
+// release its ending set off: longer than that reaction takes, a minute at
+// most per marker, so the two never release one marker at once.
+const SWEEP_GRACE = Duration.minutes(15);
+
+// Whether nothing has tried to release the marker yet: what a run's ending
+// releases. A release tried before is the sweep's to try again.
+const untried = (marker: RunMarkerRoot) => marker.attempts === 0;
+
+// Whether the sweep may take a held marker of a run that ended at `endedAt`: a
+// release tried and failed before, or an untried one whose run ended longer
+// than the grace ago, which a crash must have kept its ending from releasing.
+const leftToSweep = (marker: RunMarkerRoot, endedAt: Option.Option<string>, now: DateTime.Utc) =>
+  !untried(marker) ||
+  Option.match(
+    Option.flatMap(endedAt, (at) => DateTime.make(at)),
+    {
+      onNone: () => true,
+      onSome: (ended) =>
+        DateTime.isLessThanOrEqualTo(DateTime.addDuration(ended, SWEEP_GRACE), now),
+    },
+  );
+
 export const RunMarkerRootOps = {
+  SWEEP_GRACE,
+  leftToSweep,
+  untried,
   argsText,
   same,
   hold,

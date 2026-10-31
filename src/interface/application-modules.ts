@@ -20,7 +20,9 @@ import { TrustModule } from "../modules/trust/trust.platform.ts";
 // process that runs the workflow engine adds, inside that engine: it needs the
 // engine over state.db and the runtime of the flows the process loaded
 // (`runtime`, over the root's registry), which differ between roots, so each
-// root passes them to the shared runtime (application-runtime.ts).
+// root passes them to the shared runtime (application-runtime.ts). The modules'
+// event subscriptions (`events`) react to what the engine's commands dispatch,
+// so they join it there, on the bus the root provides.
 export const applicationModules = {
   layer: Layer.mergeAll(
     EnrollmentModule.layer,
@@ -30,7 +32,7 @@ export const applicationModules = {
     RunsModule.layer,
     TrustModule.layer,
   ),
-  engine: RunsModule.engine,
+  engine: Layer.mergeAll(RunsModule.engine, RunsModule.events),
   runtime: RunsModule.runtime,
 
   // Each module's slice of the application's buses, which the shared runtime

@@ -147,6 +147,7 @@ graph:
       from:
         - "@/modules/*/commands/**"
         - "@/modules/*/queries/**"
+        - "@/modules/*/event-handlers/**"
       fromNot: "**/*.test.ts"
       to:
         - "@/modules/*/infrastructure/**"
@@ -287,14 +288,15 @@ defs:
   # by the adapter that implements it and by the module and maps that wire them.
   port-consumers:
     message: >-
-      A port is consumed by its module's commands and queries, the infrastructure adapter that
-      implements it, and the module's wiring and handler maps. An adapter in interface/ or another
+      A port is consumed by its module's commands, queries and event handlers, the infrastructure
+      adapter that implements it, and the module's wiring and handler maps. An adapter in interface/ or another
       module reaching for one is bypassing the module's boundary: dispatch a command or query
       instead.
     allow:
       - "@/modules/*/domain/**"
       - "@/modules/*/commands/**"
       - "@/modules/*/queries/**"
+      - "@/modules/*/event-handlers/**"
       - "@/modules/*/infrastructure/**"
       - "@/modules/*/*.module.ts"
       - "@/modules/*/*.command-handlers.ts"
@@ -614,10 +616,12 @@ tree:
             importedBy:
               message: >-
                 The list of modules is for the shared runtime (application-runtime.ts), which
-                assembles every root's, and the tests. A root assembles its runtime through that
-                slice; an inbound adapter dispatches a module's commands and queries instead.
+                assembles every root's, and the tests, an event adapter's among them. A root
+                assembles its runtime through that slice; an inbound adapter dispatches a
+                module's commands and queries instead.
               allow:
                 - "@/interface/application-runtime.ts"
+                - "@/interface/daemon/*.event-adapter.test.ts"
                 - "test/**"
 
           # The shared runtime slice (ADR 15, the reference hexagon's
@@ -724,6 +728,30 @@ tree:
             children:
               "*.protocol.ts": {}
               "*.client.ts": {}
+              # What the daemon does when one of the modules' events happens: an
+              # inbound adapter over the bus (docs/adr/0013-event-handlers.md).
+              "*.event-adapter.ts":
+                message: >-
+                  An event adapter owes a sibling *.event-adapter.test.ts, which dispatches the
+                  event through the modules and sees the daemon told.
+                requires: ["{base}.test.ts"]
+                imports:
+                  message: >-
+                    An event adapter subscribes the daemon to a module's events on the bus and
+                    asks the module's queries what it needs: it names the CQRS library's bus
+                    beside what the daemon's protocol may.
+                  external: ["@effect-server-utils/cqrs"]
+              "*.event-adapter.test.ts":
+                surface: [{ use: test-exports-nothing }]
+                imports:
+                  message: >-
+                    An event adapter's test drives the modules a daemon adds, from the one list of
+                    modules, over a scratch home and the shared test harness.
+                  allow:
+                    - "@/kernel/**"
+                    - "@/platform/home.ts"
+                    - "@/interface/application-modules.ts"
+                    - "test/*.ts"
               # The daemon process: its schedules, its socket and the engine it
               # drives, still over the legacy runtime, each file named here.
               "*.server.ts":
@@ -779,7 +807,8 @@ tree:
       "modules/{module}/":
         message: >-
           A module admits domain/ (its aggregates, their ops and errors, its domain services and
-          its ports), commands/ and queries/ (what the adapters dispatch), infrastructure/ (the
+          its ports), commands/ and queries/ (what the adapters dispatch), event-handlers/ (what
+          reacts to its events, and the triggers that subscribe it), infrastructure/ (the
           adapters behind its ports), one <module>.module.ts that wires the module (ADR 12),
           <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
           <module>.event-span-attributes.ts, what its spans say about the messages and events
@@ -1193,13 +1222,14 @@ tree:
                     importedBy:
                       message: >-
                         *.root-ops.ts is the aggregate's mutation surface. Only its module's
-                        domain, its commands and queries (which ask its predicates),
+                        domain, its commands, event handlers and queries (which ask its predicates),
                         its repository fakes and tests may call it; an adapter reaching for an op
                         is bypassing the command that should own the change.
                       allow:
                         - "@/modules/*/domain/**"
                         - "@/modules/*/commands/**"
                         - "@/modules/*/queries/**"
+                        - "@/modules/*/event-handlers/**"
                         - "**/*.repository-fake.ts"
                         - "**/*.test.ts"
                   "*.entity.ts":
@@ -1212,7 +1242,14 @@ tree:
                     surface: [{ use: id-exports }]
                   "*.value-object.ts": {}
                   "*.errors.ts": {}
-                  "*.events.ts": {}
+                  # Declared for the bus with the CQRS library's Event.make, whose
+                  # subscriptions route on the tag and seal the payload by its schema.
+                  "*.events.ts":
+                    imports:
+                      message: >-
+                        An aggregate's events are declared for the bus with Event.make, so they
+                        name the CQRS library beside effect.
+                      external: ["@effect-server-utils/cqrs"]
                   "*.specification.ts": { use: specification }
                   "*.repository.ts":
                     message: >-
@@ -1297,6 +1334,49 @@ tree:
                 requires: ["{base}.test.ts"]
                 surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.test.ts": { use: module-test-file }
+
+          # Side effects outside the boundary of the command that caused them
+          # (docs/adr/0013-event-handlers.md): a handler per reaction, with a
+          # command's dependency shape, and the triggers that subscribe each to
+          # the events of one publisher.
+          "event-handlers/":
+            message: >-
+              event-handlers/ holds, per reaction to one of the module's events, a
+              <verb-noun>.handler.ts carrying it out and its test, and triggers/, one
+              <publisher>.triggers.ts per aggregate whose events it subscribes them to. A reaction
+              that must roll its publisher back is the rare one; the rest are after commit.
+            members: [{ use: no-talking }]
+            imports:
+              reset: true
+              message: >-
+                An event handler has a command's shape: it names effect, the CQRS and unit-of-work
+                libraries, the kernel and its own module's domain (aggregates, events and ports).
+                Never a command or query (a reaction is its own use case), never infrastructure,
+                never interface/, never another module's internals.
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+              allow:
+                - "@/kernel/**"
+                - "@/modules/{module}/domain/**"
+            children:
+              "*.handler.ts":
+                message: >-
+                  An event handler owes a sibling *.handler.test.ts, which hands it the event,
+                  run over its ports' fakes, and shows a repeat of the event does nothing twice.
+                requires: ["{base}.test.ts"]
+                surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
+              "*.test.ts": { use: module-test-file }
+              "triggers/":
+                message: >-
+                  triggers/ holds one <publisher>.triggers.ts per aggregate whose events the
+                  module's handlers react to: the subscriptions, each after commit under a stable
+                  name unless it must roll its publisher back.
+                children:
+                  "*.triggers.ts":
+                    imports:
+                      message: >-
+                        A triggers file subscribes its module's event handlers to its publisher's
+                        events on the bus, so it names them beside what a handler may.
+                      allow: ["@/modules/{module}/event-handlers/*.handler.ts"]
 
           "queries/":
             message: >-

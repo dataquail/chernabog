@@ -82,7 +82,11 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
     const flow = { repo: run.repo, flow: run.flow, persona: run.persona };
 
     for (const marker of RunMarkerRootOps.releaseOrder(ownMarkers)) {
-      if (!RunMarkerRootOps.isDue(marker, now)) {
+      // A marker its run's ending is still releasing is left to it.
+      if (
+        !RunMarkerRootOps.isDue(marker, now) ||
+        !RunMarkerRootOps.leftToSweep(marker, run.finishedAt, now)
+      ) {
         continue;
       }
 

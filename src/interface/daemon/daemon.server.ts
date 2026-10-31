@@ -50,6 +50,7 @@ import {
   type FlowRegistry,
   leaseTtlFor,
   localCause,
+  type MarkerReleases,
   nextTick,
   noteCheckFailure,
   noteEvent,
@@ -102,6 +103,8 @@ import {
   RunRequest,
   TickResult,
 } from "./daemon.protocol.ts";
+import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
+import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
 
 // Exits with this when the config changed, so launchd or systemd starts it again on the new config.
 export const RELOAD_EXIT_CODE = 75;
@@ -531,8 +534,54 @@ export const runDaemon = Effect.gen(function* () {
     engineRuntime({ registry, flows: flowLayers, engine: EngineLive }),
   );
 
+  // What releasing markers did, as the daemon logs it, whoever released them: a
+  // run's ending (release-run-markers) or the sweep. A failure is logged the
+  // first time it fails; status shows it until it succeeds.
+  const logReleases = (releases: MarkerReleases) =>
+    Effect.gen(function* () {
+      for (const marker of releases.released) {
+        yield* log(`released ${marker.name} for ${marker.runId}`);
+      }
+
+      for (const marker of releases.failed.filter((failed) => failed.attempts === 1)) {
+        yield* log(
+          `releasing ${marker.name} for ${marker.runId} failed: ${Option.getOrElse(marker.lastError, () => "")}; trying again`,
+        );
+      }
+
+      for (const marker of releases.unreleasable) {
+        yield* log(
+          `can't release ${marker.name} for ${marker.runId}, a person must take it off: ${Option.getOrElse(marker.lastError, () => "")}`,
+        );
+      }
+    });
+
   return yield* Effect.provideContext(
     Effect.gen(function* () {
+      // What each run's ending released, logged as the sweep's is.
+      yield* subscribeMarkerReleases(logReleases);
+
+      // Every run that ends, however it ended, is logged, and one that didn't
+      // finish its work leaves its own flow to cron, so a trigger whose item
+      // fails fast retries no faster. Subscribed before anything here can end
+      // a run, so the endings below are told too.
+      yield* subscribeRunEndings((finished) =>
+        log(
+          `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
+        ).pipe(
+          Effect.andThen(
+            noteLocal(
+              finished.repo,
+              localCause(`${finished.flow} run ended`, Option.none()),
+              (schedule) =>
+                finished.status !== "done" &&
+                schedule.handle.name === finished.flow &&
+                samePersona(schedule.persona, finished.persona),
+            ),
+          ),
+        ),
+      );
+
       // Runs in flight that started under an SDK this binary doesn't run go
       // to a person, released as a cancel releases them, rather than resume.
       for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
@@ -928,29 +977,13 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // Polls running workflows and records the ones that finished.
+      // Polls running workflows and records the ones that finished. What the
+      // daemon does when one has is subscribeRunEndings', above.
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
             for (const running of yield* active) {
-              const polled = yield* (yield* RunFlowsCommands).PollRunCommand({ runId: running.id });
-              const ended = Option.filter(polled.run, (run) => run.status !== "running");
-
-              for (const finished of Option.toArray(ended)) {
-                yield* log(
-                  `finished ${finished.id} (${runLabel(finished)}): ${finished.status}: ${Option.getOrElse(finished.summary, () => "")}`,
-                );
-                // A run that didn't finish its work leaves its own flow to
-                // cron, so a trigger whose item fails fast retries no faster.
-                yield* noteLocal(
-                  finished.repo,
-                  localCause(`${finished.flow} run ended`, Option.none()),
-                  (schedule) =>
-                    finished.status !== "done" &&
-                    schedule.handle.name === finished.flow &&
-                    samePersona(schedule.persona, finished.persona),
-                );
-              }
+              yield* (yield* RunFlowsCommands).PollRunCommand({ runId: running.id });
             }
 
             yield* Effect.sleep("3 seconds");
@@ -958,29 +991,16 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
 
-      // Releases the markers ended runs hold, however they ended, and tries
-      // releases that failed again once their backoff is up. A failure is
-      // logged the first time; status shows it until it succeeds.
+      // The sweep behind the markers' release on RunFinished
+      // (release-run-markers), logged as that is: tries releases that failed
+      // again once their backoff is up, and releases what an ending left
+      // untried once the grace after it ended is up, as when a crash came
+      // between its commit and its reaction. It leaves an untried marker to
+      // its run's ending until then, so the two never release one at once.
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
-
-            for (const marker of releases.released) {
-              yield* log(`released ${marker.name} for ${marker.runId}`);
-            }
-
-            for (const marker of releases.failed.filter((failed) => failed.attempts === 1)) {
-              yield* log(
-                `releasing ${marker.name} for ${marker.runId} failed: ${Option.getOrElse(marker.lastError, () => "")}; trying again`,
-              );
-            }
-
-            for (const marker of releases.unreleasable) {
-              yield* log(
-                `can't release ${marker.name} for ${marker.runId}, a person must take it off: ${Option.getOrElse(marker.lastError, () => "")}`,
-              );
-            }
+            yield* logReleases(yield* (yield* RunFlowsCommands).ReleaseMarkersCommand());
 
             yield* Effect.sleep("5 seconds");
           }).pipe(

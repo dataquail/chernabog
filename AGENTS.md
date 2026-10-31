@@ -207,6 +207,9 @@ transitive reach), the coverage floors and the baseline.
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
   format of a file or table its repositories write and its queries read),
   `<module>.module.ts`,
+  `event-handlers/` (per reaction to an event, a `<verb-noun>.handler.ts`
+  exporting one `<verbNoun>Handler`, and `triggers/<publisher>.triggers.ts`
+  subscribing them, ADR 13),
   `<module>.platform.ts` (what it publishes to the adapters),
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which bind
   the handlers to their messages and declare the module's dispatchers
@@ -377,6 +380,19 @@ transitive reach), the coverage floors and the baseline.
   and writes only. Events are dispatched inside the unit of work; a
   dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`
   with `RecordedEvents` (`test/events.ts`).
+- **Side effects outside a command's boundary are event handlers** (ADR 13).
+  A module's `event-handlers/<verb-noun>.handler.ts` reacts to one event,
+  with a command's dependency shape and a required test that hands it the
+  event and shows a repeat does nothing twice; `event-handlers/triggers/<publisher>.triggers.ts`
+  subscribes them, joining `<Module>Module.events`. Subscribe after commit
+  with a stable `{ name }`; `subscribe` is only for a reaction that must roll
+  its publisher back. The runs' reactions run after commit outside any
+  transaction (`UnitOfWorkReactingAfterCommit`), in memory, so a crash
+  loses them: keep a sweep for what one leaves undone, as
+  `ReleaseMarkersCommand` is behind `release-run-markers` on `RunFinished`.
+  The daemon's reactions are inbound event adapters
+  (`src/interface/daemon/*.event-adapter.ts`), such as the run endings it
+  logs.
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.

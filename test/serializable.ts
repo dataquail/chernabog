@@ -13,8 +13,9 @@ import type * as Schema from "effect/Schema";
 
 type Group = Parameters<typeof checkSerializable>[0];
 
-// A module's events are tagged structs, keyed here by their tag.
-type Events = Readonly<Record<string, { readonly fields: Schema.Struct.Fields }>>;
+// A module's events, keyed here by their tag: tagged structs, or events already
+// declared for the bus (Event.make), as the runs' are.
+type Events = Readonly<Record<string, { readonly fields: Schema.Struct.Fields } | Event.Any>>;
 
 export const unserializable = (
   groups: ReadonlyArray<Group>,
@@ -24,7 +25,13 @@ export const unserializable = (
     const ofGroups = yield* Effect.forEach(groups, checkSerializable);
 
     const ofEvents = yield* checkEventsSerializable(
-      Object.entries(events).map(([tag, schema]) => Event.make(tag, schema.fields)),
+      Object.entries(events).map(([tag, schema]) => {
+        if (Event.is(schema)) {
+          return schema;
+        }
+
+        return Event.make(tag, schema.fields);
+      }),
     );
 
     return [...ofGroups.flat(), ...ofEvents];

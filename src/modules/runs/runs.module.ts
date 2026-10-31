@@ -3,7 +3,8 @@ import * as Layer from "effect/Layer";
 
 import { Exec } from "../../platform/exec.ts";
 import { GitHubApi } from "../../platform/github-api.ts";
-import { unitOfWorkOver } from "../../platform/unit-of-work.ts";
+import { UnitOfWorkReactingAfterCommit } from "../../platform/unit-of-work.ts";
+import { RunTriggersLive } from "./event-handlers/triggers/run.triggers.ts";
 import { FlowsClientLive } from "./infrastructure/clients/flows.client-live.ts";
 import { NotificationsClientLive } from "./infrastructure/clients/notifications.client-live.ts";
 import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.client-live.ts";
@@ -53,8 +54,13 @@ const RunsStoresLive = Layer.mergeAll(
 // The unit of work each of the runs' commands declares, over state.db: what a
 // command writes there commits together or not at all, and what it dispatches
 // on the bus is delivered once it has
-// (docs/adr/0010-commands-declare-their-unit-of-work.md).
-const RunsUnitOfWorkLive = unitOfWorkOver(StateDbTransactionDriverLive);
+// (docs/adr/0010-commands-declare-their-unit-of-work.md). Its after-commit
+// reactions run outside any transaction, since a transaction holds state.db's
+// one connection and a reaction reaches GitHub, git or the engine
+// (docs/adr/0013-event-handlers.md).
+const RunsUnitOfWorkLive = UnitOfWorkReactingAfterCommit.pipe(
+  Layer.provide(StateDbTransactionDriverLive),
+);
 
 // The runs module, wired.
 export const RunsModule = {
@@ -77,6 +83,12 @@ export const RunsModule = {
     RunFlowsCommandsLive,
     RunFlowsQueriesLive,
   ).pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunLogsClientLive, RunsUnitOfWorkLive))),
+
+  // What reacts to the runs' events, subscribed on the bus the root provides:
+  // an ended run's markers released at once. It reacts to what the engine's
+  // commands dispatch, over the same stores and the flows the process loaded,
+  // so it is provided at the engine's depth.
+  events: RunTriggersLive.pipe(Layer.provide(Layer.mergeAll(RunsStoresLive, RunsUnitOfWorkLive))),
 
   // The runtime a tick and a run drive: the flows a process loaded, with each
   // persona's services, their workflows in the engine it runs, and cleaning up
