@@ -4,10 +4,10 @@ import * as Ref from "effect/Ref";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
 import { RunStepsRepository } from "../../domain/ports/repositories/run-steps.repository.ts";
-import { type RunStepRoot } from "../../domain/run-step/run-step.root.ts";
+import { type RunStepEntity } from "../../domain/run/run-step.entity.ts";
 
 // Steps in memory, starting from `steps`.
-export const RunStepsRepositoryFake = (steps: ReadonlyArray<RunStepRoot>) =>
+export const RunStepsRepositoryFake = (steps: ReadonlyArray<RunStepEntity>) =>
   Layer.effect(
     RunStepsRepository,
     Effect.gen(function* () {
@@ -18,7 +18,7 @@ export const RunStepsRepositoryFake = (steps: ReadonlyArray<RunStepRoot>) =>
           Ref.get(store).pipe(
             Effect.map((stored) => stored.filter((step) => step.runId === runId)),
           ),
-        save: (step: RunStepRoot) => Ref.update(store, (stored) => [...stored, step]),
+        save: (step: RunStepEntity) => Ref.update(store, (stored) => [...stored, step]),
       });
     }),
   );

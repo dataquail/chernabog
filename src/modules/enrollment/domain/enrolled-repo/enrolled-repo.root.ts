@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
-import { PersonaEntry } from "./persona-choices.value-object.ts";
+import { PersonaEntry } from "./persona-choices.aggregate.ts";
 
 // A repo enrolled on this machine: its entry in machine config. A dumb value;
 // its operations, and the rules they keep, are EnrolledRepoRootOps.

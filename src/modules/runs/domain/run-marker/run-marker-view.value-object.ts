@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { MarkerStatus } from "./run-marker.root.ts";
+import { MarkerStatus } from "./marker-status.value-object.ts";
 
 // A marker a run holds or held: its name and arguments, where its release
 // is, and, while a release keeps failing, how often, why last, and when it's

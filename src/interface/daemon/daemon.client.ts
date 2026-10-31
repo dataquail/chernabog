@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { CancelledRun } from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
-import { RunHistory } from "../../modules/runs/domain/run-step/run-history.value-object.ts";
+import { RunHistory } from "../../modules/runs/domain/run/run-history.value-object.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,

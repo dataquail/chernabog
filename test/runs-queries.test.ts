@@ -7,8 +7,8 @@ import { BUNDLED_CORE_VERSION } from "../src/kernel/core-support.value-object.ts
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { HoldsRoot } from "../src/modules/runs/domain/holds/holds.root.ts";
 import { RunRoot } from "../src/modules/runs/domain/run/run.root.ts";
+import { RunStepEntity } from "../src/modules/runs/domain/run/run-step.entity.ts";
 import { RunMarkerRootOps } from "../src/modules/runs/domain/run-marker/run-marker.root-ops.ts";
-import { RunStepRoot } from "../src/modules/runs/domain/run-step/run-step.root.ts";
 import { RunWaitRoot } from "../src/modules/runs/domain/run-wait/run-wait.root.ts";
 import { SkipRoot } from "../src/modules/runs/domain/skip/skip.root.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
@@ -52,7 +52,7 @@ const stores = Layer.mergeAll(
     RunMarkerRootOps.hold({ runId: ended.id, name: "label", args: 2, keepOn: [] }, AT),
   ]),
   RunStepsRepositoryFake([
-    RunStepRoot.make({ runId: RunId.make("a"), step: "claim", enteredAt: AT }),
+    RunStepEntity.make({ runId: RunId.make("a"), step: "claim", enteredAt: AT }),
   ]),
   RunWaitsRepositoryFake([
     RunWaitRoot.make({

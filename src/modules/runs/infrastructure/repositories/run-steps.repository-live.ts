@@ -8,8 +8,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
 import { RunStepsRepository } from "../../domain/ports/repositories/run-steps.repository.ts";
-import { type RunStepRoot } from "../../domain/run-step/run-step.root.ts";
-import { StepColumns, toRoot } from "./run-step.mapper.ts";
+import { type RunStepEntity } from "../../domain/run/run-step.entity.ts";
+import { StepColumns, toEntity } from "./run-step.mapper.ts";
 
 export const RunStepsRepositoryLive = Layer.effect(
   RunStepsRepository,
@@ -28,11 +28,11 @@ export const RunStepsRepositoryLive = Layer.effect(
     const findAll = (runId: RunId) =>
       sql`SELECT * FROM om_steps WHERE run_id = ${runId} ORDER BY entered_at, rowid`.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StepColumns))),
-        Effect.map((rows) => rows.map(toRoot)),
+        Effect.map((rows) => rows.map(toEntity)),
         Effect.orDie,
       );
 
-    const save = (step: RunStepRoot) =>
+    const save = (step: RunStepEntity) =>
       sql`INSERT INTO om_steps (run_id, step, entered_at) VALUES (${step.runId}, ${step.step}, ${step.enteredAt})`.pipe(
         Effect.asVoid,
         Effect.orDie,

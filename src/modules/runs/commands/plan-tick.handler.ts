@@ -6,13 +6,13 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
+import { Routing } from "../domain/domain-services/routing.domain-service.ts";
 import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
 import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
-import { describeElsewhere, routeItems } from "../domain/routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { describeWaiting, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
@@ -135,9 +135,9 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
   );
 
   // Work the flow left for others is theirs, unless a person names the item.
-  const routed = routeItems(waiting);
+  const routed = Routing.split(waiting);
 
-  const elsewhere = routed.elsewhere.map(describeElsewhere);
+  const elsewhere = routed.elsewhere.map(Routing.describeElsewhere);
 
   const so = {
     signalled: items,

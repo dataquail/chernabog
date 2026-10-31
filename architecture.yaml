@@ -188,6 +188,78 @@ defs:
     match: "*Handler"
     count: { min: 1, max: 1 }
 
+  # A handler's other value exports are named as it is (ADR-0024 in the
+  # hexagon; docs/adr/0007-the-hexagons-remaining-stereotypes.md).
+  camel-case-value-exports:
+    message: >-
+      A handler's value exports are camelCase: `{name}` is not. The handler is `<verbNoun>Handler`,
+      and a helper it publishes is named the same way.
+    declares: [function, variable]
+    convention: camelCase
+    probe:
+      source: "export const ZzHandler = () => 1;"
+
+  # The identifier carries its file's stereotype, so a call site says what it
+  # names: XRoot, XRootOps, XEntity, XId
+  # (docs/adr/0007-the-hexagons-remaining-stereotypes.md).
+  root-exports:
+    message: >-
+      An aggregate root file exports its root, named `<Aggregate>Root`: `{name}` is not. A status
+      or other value the root carries is a value object in its own *.value-object.ts.
+    declares: [function, class, variable, enum]
+    allow: ["*Root"]
+    probe:
+      source: "export const ZzStatus = 1;"
+
+  root-ops-exports:
+    message: >-
+      An aggregate's operations file exports one bag, `<Aggregate>RootOps`: `{name}` is not. An op
+      is a member of the bag, so a call site reads `XRootOps.op(…)`.
+    declares: [function, class, variable, enum]
+    allow: ["*RootOps"]
+    probe:
+      source: "export const zzOp = () => 1;"
+
+  aggregate-ops-exports:
+    message: >-
+      A constituent aggregate's operations file exports one bag, `<Name>AggregateOps`: `{name}` is
+      not.
+    declares: [function, class, variable, enum]
+    allow: ["*AggregateOps"]
+    probe:
+      source: "export const zzOp = () => 1;"
+
+  entity-exports:
+    message: >-
+      An entity file exports its entity, named `<Name>Entity`: `{name}` is not.
+    declares: [function, class, variable, enum]
+    allow: ["*Entity"]
+    probe:
+      source: "export class ZzStep {}"
+
+  id-exports:
+    message: >-
+      An id file's value exports are ids, named `<Name>Id`: `{name}` is not.
+    declares: [function, class, variable, enum]
+    allow: ["*Id"]
+    probe:
+      source: "export const ZzSlug = 1;"
+
+  # The constituent operations bags: invariant logic on an aggregate's
+  # internals, which only the domain composes, each owing a sibling test.
+  constituent-ops:
+    message: >-
+      A constituent operations bag (*.aggregate-ops.ts) is domain-private invariant logic; add the
+      sibling *.aggregate-ops.test.ts.
+    requires: ["{base}.test.ts"]
+    importedBy:
+      message: >-
+        A constituent operations bag encodes invariants on an aggregate's internals. It is
+        domain-private: only its module's own domain/ composes it, and nothing outside domain/
+        touches it. Change the aggregate through its root's ops: a command, query or adapter
+        reaching for a constituent op is bypassing the root.
+      allow: ["@/modules/*/domain/**", "**/*.test.ts"]
+
   # A port is a declaration: the service's shape and the Context.Service class
   # that names it. A value beside them is an implementation.
   port-declares-no-value:
@@ -234,6 +306,20 @@ defs:
         (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
+
+  # A mapper's test reads a stored row back as its aggregate, with no store.
+  mapper-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A mapper's test names its mapper, its module's domain, the kernel and effect. It runs no
+        store: a row is a value.
+      external: [effect]
+      allow:
+        - "@/kernel/**"
+        - "@/modules/{module}/domain/**"
+        - "@/modules/{module}/infrastructure/repositories/*.mapper.ts"
 
   # A repository adapter's test runs the live adapter over a scratch home.
   adapter-test-file:
@@ -293,7 +379,7 @@ defs:
         - "@/modules/*/*.query-handlers.ts"
         - "@/modules/runs/infrastructure/runtime/**"
         - "@/modules/runs/infrastructure/clients/flows.client-live.ts"
-        - "@/modules/runs/domain/routing/routing.value-object.ts"
+        - "@/modules/runs/domain/domain-services/routing.domain-service.ts"
         - "~/core/src/**"
         - "@/migrate.ts"
         - "@/repo-config.ts"
@@ -522,11 +608,10 @@ tree:
 
       "modules/{module}/":
         message: >-
-          A module admits domain/ (its aggregates, their ops and errors, and its ports),
-          commands/ and queries/ (what the adapters dispatch), infrastructure/ (the adapters
-          behind its ports), one
-          <module>.layer.ts that builds the module's live Layer, and <module>.command-handlers.ts
-          and <module>.query-handlers.ts, its slice of the buses.
+          A module admits domain/ (its aggregates, their ops and errors, its domain services and
+          its ports), commands/ and queries/ (what the adapters dispatch), infrastructure/ (the
+          adapters behind its ports), one <module>.layer.ts that builds the module's live Layer,
+          and <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses.
         name: kebab-case
         children:
           # The module's slice of each bus: its messages grouped, each mapped to
@@ -555,9 +640,9 @@ tree:
 
           "domain/":
             message: >-
-              domain/ is a container: one folder per aggregate (named for it), and ports/ for the
-              repositories and clients the handlers depend on. No files live directly in
-              domain/.
+              domain/ is a container: one folder per aggregate (named for it), domain-services/
+              for domain logic no single aggregate owns, and ports/ for the repositories and
+              clients the handlers depend on. No files live directly in domain/.
             members: [{ use: no-talking }]
             imports:
               reset: true
@@ -614,15 +699,36 @@ tree:
                           - "../../../infrastructure/clients/{base}-live.test.ts"
                         importedBy: { use: port-consumers }
 
-              # One folder per aggregate. ports/ above is matched first, so this
-              # catch-all is only ever an aggregate.
+              # Pure free-function bags for domain logic no single aggregate owns
+              # (the hexagon's ADR-0023): the one domain folder meant to compose
+              # several aggregates. Logic an aggregate owns stays on its ops.
+              "domain-services/":
+                message: >-
+                  domain/domain-services/ holds *.domain-service.ts files and their tests:
+                  stateless domain logic that no single aggregate owns, such as routing a
+                  trigger's items before any run exists. It is a pure free-function bag (like
+                  XRootOps, no Context.Service). Logic that reads or changes one aggregate
+                  belongs on that aggregate's *.root-ops.ts.
+                children:
+                  "*.domain-service.ts":
+                    message: >-
+                      A domain service is real domain logic, so it needs a sibling
+                      *.domain-service.test.ts.
+                    requires: ["{base}.test.ts"]
+                  "*.test.ts": { use: unit-test-file }
+
+              # One folder per aggregate. ports/ and domain-services/ above are
+              # matched first, so this catch-all is only ever an aggregate.
               "{aggregate}/":
                 message: >-
                   An aggregate's folder admits its root (*.root.ts, a Schema.Class value), its
-                  operations (*.root-ops.ts, pure functions returning Result), its id
-                  (*.id.ts), its value objects (*.value-object.ts), its errors (*.errors.ts) and
-                  its domain events (*.events.ts, the Schemas its commands dispatch). A
-                  free-standing helper is an op that hasn't found its root.
+                  operations (*.root-ops.ts, pure functions returning Result), its entities
+                  (*.entity.ts, parts with an identity of their own), its constituent aggregates
+                  (*.aggregate.ts, parts that gather value objects but are not a consistency
+                  boundary) and their operations (*.aggregate-ops.ts), its id (*.id.ts), its value
+                  objects (*.value-object.ts), its errors (*.errors.ts) and its domain events
+                  (*.events.ts, the Schemas its commands dispatch). A free-standing helper is an op
+                  that hasn't found its root, or a domain service.
                 imports:
                   message: >-
                     An aggregate sees itself, the kernel and effect. It does not reach another
@@ -632,8 +738,10 @@ tree:
                   # The folder is the aggregate, so its root carries the folder's name.
                   "*.root.ts":
                     name: { like: "{aggregate}" }
+                    surface: [{ use: root-exports }]
                   "*.root-ops.ts":
                     name: { like: "{aggregate}" }
+                    surface: [{ use: root-ops-exports }]
                     message: >-
                       An aggregate's operations own its invariants, so they carry the test
                       obligation: add the sibling *.root-ops.test.ts.
@@ -650,7 +758,14 @@ tree:
                         - "@/modules/*/queries/**"
                         - "**/*.repository-fake.ts"
                         - "**/*.test.ts"
-                  "*.id.ts": {}
+                  "*.entity.ts":
+                    surface: [{ use: entity-exports }]
+                  "*.aggregate.ts": {}
+                  "*.aggregate-ops.ts":
+                    use: constituent-ops
+                    surface: [{ use: aggregate-ops-exports }]
+                  "*.id.ts":
+                    surface: [{ use: id-exports }]
                   "*.value-object.ts": {}
                   "*.errors.ts": {}
                   "*.events.ts": {}
@@ -682,7 +797,7 @@ tree:
                 message: >-
                   A command handler owes a sibling *.handler.test.ts, run over its ports' fakes.
                 requires: ["{base}.test.ts"]
-                surface: [{ use: one-handler-export }]
+                surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.test.ts": { use: module-test-file }
 
           "queries/":
@@ -708,7 +823,7 @@ tree:
                 message: >-
                   A query handler owes a sibling *.handler.test.ts, run over its ports' fakes.
                 requires: ["{base}.test.ts"]
-                surface: [{ use: one-handler-export }]
+                surface: [{ use: one-handler-export }, { use: camel-case-value-exports }]
               "*.test.ts": { use: module-test-file }
 
           "infrastructure/":
@@ -741,7 +856,8 @@ tree:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
-                  "*.test.ts": { use: adapter-test-file }
+                  "*.repository-live.test.ts": { use: adapter-test-file }
+                  "*.mapper.test.ts": { use: mapper-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and
               # usage, and the agents and launchers sessions run in. Adapters

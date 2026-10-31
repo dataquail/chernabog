@@ -22,7 +22,8 @@ import {
   RunNotNamed,
   SeveralRunsInFlight,
 } from "./run.errors.ts";
-import { type RunEnding, RunRoot } from "./run.root.ts";
+import { RunRoot } from "./run.root.ts";
+import { type RunEnding } from "./run-status.value-object.ts";
 import { itemTarget, type WorkItem } from "./work-item.value-object.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";

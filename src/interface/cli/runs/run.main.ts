@@ -15,10 +15,7 @@ import * as Option from "effect/Option";
 import { nothingNamed } from "../../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
-import {
-  describeElsewhere,
-  routeItems,
-} from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import { Routing } from "../../../modules/runs/domain/domain-services/routing.domain-service.ts";
 import {
   type ActiveRun,
   type RunView,
@@ -204,11 +201,11 @@ const resume = (
 // The first item this machine may start, past the work the flow left for others.
 const firstOf = (items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    const routed = routeItems(items);
+    const routed = Routing.split(items);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) {
       yield* Console.log(
-        `left for others: ${routed.elsewhere.map(describeElsewhere).join(", ")}; name one with --item to run it here`,
+        `left for others: ${routed.elsewhere.map(Routing.describeElsewhere).join(", ")}; name one with --item to run it here`,
       );
     }
 

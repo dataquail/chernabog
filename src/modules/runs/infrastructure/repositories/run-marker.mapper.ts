@@ -3,7 +3,8 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { MarkerStatus, RunMarkerRoot } from "../../domain/run-marker/run-marker.root.ts";
+import { MarkerStatus } from "../../domain/run-marker/marker-status.value-object.ts";
+import { RunMarkerRoot } from "../../domain/run-marker/run-marker.root.ts";
 
 const JsonText = Schema.fromJsonString(Schema.Json);
 

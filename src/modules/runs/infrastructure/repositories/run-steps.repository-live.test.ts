@@ -6,11 +6,11 @@ import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { RunStepsRepository } from "../../domain/ports/repositories/run-steps.repository.ts";
-import { RunStepRoot } from "../../domain/run-step/run-step.root.ts";
+import { RunStepEntity } from "../../domain/run/run-step.entity.ts";
 import { RunStepsRepositoryLive } from "./run-steps.repository-live.ts";
 
 const step = (runId: string, name: string, enteredAt: string) =>
-  RunStepRoot.make({ runId: RunId.make(runId), step: name, enteredAt });
+  RunStepEntity.make({ runId: RunId.make(runId), step: name, enteredAt });
 
 describe("RunStepsRepositoryLive", () => {
   effect("keeps each step a run enters, in the order it entered them, repeats included", () =>

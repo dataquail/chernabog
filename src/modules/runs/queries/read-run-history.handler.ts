@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 
 import { RunStepsRepository } from "../domain/ports/repositories/run-steps.repository.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunHistory, RunStep } from "../domain/run-step/run-history.value-object.ts";
+import { RunHistory, RunStep } from "../domain/run/run-history.value-object.ts";
 import { RunWait } from "../domain/run-wait/run-wait-view.value-object.ts";
 import { type ReadRunHistoryPayload } from "./read-run-history.query.ts";
 

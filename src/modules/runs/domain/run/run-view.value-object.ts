@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunStatus } from "./run.root.ts";
+import { RunStatus } from "./run-status.value-object.ts";
 
 // Absent values cross the daemon's socket as null.
 const Maybe = Schema.OptionFromNullOr(Schema.String);

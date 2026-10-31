@@ -4,7 +4,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { RunRoot, RunStatus } from "../../domain/run/run.root.ts";
+import { RunRoot } from "../../domain/run/run.root.ts";
+import { RunStatus } from "../../domain/run/run-status.value-object.ts";
 import { WorkItem } from "../../domain/run/work-item.value-object.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);

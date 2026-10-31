@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
+import { RunStepEntity } from "../domain/run/run-step.entity.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
@@ -14,7 +14,7 @@ import { readRunHistoryHandler } from "./read-run-history.handler.ts";
 const a = RunId.make("a");
 
 const step = (runId: RunId, name: string, enteredAt: string) =>
-  RunStepRoot.make({ runId, step: name, enteredAt });
+  RunStepEntity.make({ runId, step: name, enteredAt });
 
 describe("readRunHistoryHandler", () => {
   effect("reads a run's steps in order, and the signals it's parked on", () =>

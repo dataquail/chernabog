@@ -32,11 +32,11 @@ import {
   CancelledRun,
   CancelTarget,
 } from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
+import { RunHistory } from "../../modules/runs/domain/run/run-history.value-object.ts";
 import {
   type ActiveRun,
   type RunView,
 } from "../../modules/runs/domain/run/run-view.value-object.ts";
-import { RunHistory } from "../../modules/runs/domain/run-step/run-history.value-object.ts";
 import {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,

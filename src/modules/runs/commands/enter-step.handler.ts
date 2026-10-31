@@ -8,8 +8,8 @@ import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts"
 import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunStepEntity } from "../domain/run/run-step.entity.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
-import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
 import { type EnterStepPayload } from "./enter-step.command.ts";
 
 export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
@@ -29,7 +29,7 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
   // step's event went out the first time.
   const again = (yield* steps.findAll(runId)).some((entered) => entered.step === step);
 
-  const entered = RunStepRoot.make({
+  const entered = RunStepEntity.make({
     runId,
     step,
     enteredAt: DateTime.formatIso(yield* DateTime.now),

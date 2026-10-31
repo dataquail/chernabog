@@ -7,7 +7,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
-import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
+import { RunStepEntity } from "../domain/run/run-step.entity.ts";
 import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
@@ -41,7 +41,7 @@ const ended = run("ended", {
   finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
 });
 
-const steps = (runs: ReadonlyArray<RunRoot>, recorded: ReadonlyArray<RunStepRoot> = []) =>
+const steps = (runs: ReadonlyArray<RunRoot>, recorded: ReadonlyArray<RunStepEntity> = []) =>
   Layer.mergeAll(
     RecordedEvents,
     RunsRepositoryFake(runs),
@@ -100,7 +100,7 @@ describe("enterStepHandler", () => {
         steps(
           [run("a", { currentStep: Option.some("claim") })],
           [
-            RunStepRoot.make({
+            RunStepEntity.make({
               runId: RunId.make("a"),
               step: "claim",
               enteredAt: "2026-10-20T00:00:01.000Z",

@@ -33,10 +33,7 @@ import { type Ending } from "../../../kernel/scenario.value-object.ts";
 import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
 import { RehearsalsCommands } from "../../../modules/rehearsals/rehearsals.command-handlers.ts";
 import { RehearsalsQueries } from "../../../modules/rehearsals/rehearsals.query-handlers.ts";
-import {
-  describeElsewhere,
-  routeItems,
-} from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import { Routing } from "../../../modules/runs/domain/domain-services/routing.domain-service.ts";
 import { type RunView } from "../../../modules/runs/domain/run/run-view.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
@@ -305,7 +302,7 @@ const pickItem = (
       } satisfies Picked;
     }
 
-    const routed = routeItems(ours);
+    const routed = Routing.split(ours);
 
     return Option.match(Arr.head(routed.elsewhere), {
       onNone: (): Picked => ({
@@ -319,7 +316,7 @@ const pickItem = (
       onSome: (): Picked => ({
         item: Arr.head(routed.mine),
         unseen: false,
-        why: `the flow leaves ${routed.elsewhere.map(describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
+        why: `the flow leaves ${routed.elsewhere.map(Routing.describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
       }),
     });
   });

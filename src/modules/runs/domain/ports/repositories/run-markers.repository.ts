@@ -3,7 +3,8 @@ import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
 import { type RunId } from "../../../../../kernel/run-id.id.ts";
-import { type MarkerStatus, type RunMarkerRoot } from "../../run-marker/run-marker.root.ts";
+import { type MarkerStatus } from "../../run-marker/marker-status.value-object.ts";
+import { type RunMarkerRoot } from "../../run-marker/run-marker.root.ts";
 
 // Which markers to read: one run's, or every run's, and only those in one status.
 export type MarkerQuery = {

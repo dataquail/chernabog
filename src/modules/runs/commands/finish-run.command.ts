@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
-import { RunEnding } from "../domain/run/run.root.ts";
+import { RunEnding } from "../domain/run/run-status.value-object.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 
 // Records a run as ended, once its workflow completes, with how it ended. A

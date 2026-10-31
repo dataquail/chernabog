@@ -5,7 +5,8 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunRoot, type RunStatus } from "../domain/run/run.root.ts";
+import { RunRoot } from "../domain/run/run.root.ts";
+import { type RunStatus } from "../domain/run/run-status.value-object.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
