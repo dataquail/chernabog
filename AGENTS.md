@@ -768,6 +768,13 @@ Decisions that cut across them:
   (`tools/oxlint/local/`, scoped to `src/` in `.oxlintrc.json`) refuses a
   string that is a recipe's name and a regex over the SDK's vocabulary;
   learn what a flow does from what it declares through core instead.
+- **A span attribute is an ID or a name.** Spans are written to disk and kept
+  for 30 days, so `local/no-secret-span-attributes` refuses a secret-named key
+  (`token`, `auth`, `session` but for `session.id`, …), a value read from
+  something named like a secret, and a whole prompt, body or environment, in
+  `spanAttributes` maps (and consts named `*SpanAttributes`),
+  `Effect.annotateCurrentSpan`, `Effect.annotateLogs` and the `attributes` of
+  `Effect.withSpan` and `Effect.fn`. Record an ID, a name or a length instead.
 - Gone: the `ship` composite flow, `Review.labelVerdict`/`reviewRound`,
   review's wait-for-push loop, and the `fix` flow (`Review.fixTrigger`,
   `fixWorkflow`, `FixItem`, the `fix` prompt), and the whole workflows and
