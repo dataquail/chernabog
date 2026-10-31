@@ -231,8 +231,9 @@ defs:
       reset: true
       message: >-
         A handler test names its module, the kernel and the shared test harness
-        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
-      external: [effect]
+        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes, in the
+        unit-of-work library's pass-through unit of work.
+      external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
   # A repository adapter's test runs the live adapter over a scratch home.
@@ -242,8 +243,9 @@ defs:
       reset: true
       message: >-
         A repository adapter's test names its module, the kernel, the home and the shared test
-        harness (test/*.ts) — the scratch home and fixtures.
-      external: [effect]
+        harness (test/*.ts) — the scratch home and fixtures, and the unit-of-work library a
+        transaction driver's test runs it under.
+      external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
 
   # A handler answers with its result; saying it, asking a person or ending
@@ -346,8 +348,9 @@ tree:
           message: >-
             A platform adapter wraps the machine. It names effect, node, the SDK (for its error
             descriptions and types), the kernel and its siblings, and chernabog's package.json for
-            its version; nothing of the modules, the interface or the legacy tier.
-          external: [effect]
+            its version; nothing of the modules, the interface or the legacy tier. The unit of
+            work the file stores' commands declare names the CQRS and unit-of-work libraries.
+          external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
           allow:
             - "node:**"
             - "~/core/src/**"
@@ -538,8 +541,9 @@ tree:
               reset: true
               message: >-
                 A module's handler map registers its messages' handlers on the bus with the live
-                adapters they need, from its layer. It names its own module, effect and the CQRS
-                library.
+                adapters they need, from its layer, and pins its dispatcher to the unit of work it
+                is built beside. It names its own module, effect, the CQRS and unit-of-work
+                libraries, and the platform's unit of work.
               external: [effect, "@effect-server-utils/cqrs"]
               allow: ["@/modules/{module}/**"]
 
@@ -666,7 +670,7 @@ tree:
             imports:
               reset: true
               message: >-
-                A command names effect, the CQRS library, the kernel, its own
+                A command names effect, the CQRS and unit-of-work libraries, the kernel, its own
                 module's domain (aggregates and ports) and its sibling commands. Never a query
                 (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
@@ -734,13 +738,16 @@ tree:
                     machine config, JSON for runtime state. Until the machine
                     module owns machine config, a repository reads and edits it through the
                     legacy machinery in config.ts and repo-config.ts, and nothing else of the
-                    legacy tier.
-                  external: [yaml]
+                    legacy tier. state.db's transaction driver adapts the unit-of-work library's
+                    port to the SQL client the stores share.
+                  external: [yaml, "@effect-server-utils/unit-of-work"]
                   allow: ["@/platform/**", "@/repo-config.ts"]
                 children:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
+                  # The transaction a command's unit of work opens in the stores' database.
+                  "*.transaction-driver-live.ts": {}
                   "*.test.ts": { use: adapter-test-file }
               # The runtime a run's flow executes in: the workflow engine and the
               # step runner, the SDK's services over GitHub, git, worktrees and

@@ -1,3 +1,4 @@
+import { makeUnitOfWork } from "@effect-server-utils/unit-of-work";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -5,8 +6,10 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
+import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
+import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
@@ -23,7 +26,10 @@ import {
   WorkflowsClientFake,
 } from "../infrastructure/clients/workflows.client-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
+import { RunWaitsRepositoryLive } from "../infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
+import { StateDbTransactionDriverLive } from "../infrastructure/repositories/state-db.transaction-driver-live.ts";
 import { findRunHandler } from "../queries/find-run.handler.ts";
 import { cancelRunHandler } from "./cancel-run.handler.ts";
 
@@ -515,5 +521,48 @@ describe("cancelRunHandler", () => {
         }),
       ),
     ),
+  );
+
+  // The stores in state.db, whose waits fail to go once the run is saved.
+  const failingWaits = Layer.effect(
+    RunWaitsRepository,
+    Effect.gen(function* () {
+      const live = yield* RunWaitsRepository;
+
+      return RunWaitsRepository.of({ ...live, remove: () => Effect.die("the disk filled up") });
+    }),
+  ).pipe(Layer.provide(RunWaitsRepositoryLive));
+
+  const stateDb = (stopping: FakeEngine) =>
+    Layer.mergeAll(
+      RecordedEvents,
+      RunsRepositoryLive,
+      failingWaits,
+      makeUnitOfWork().pipe(Layer.provide(StateDbTransactionDriverLive)),
+      RunLogsClientFake({ a: "" }),
+      WorkflowsClientFake(stopping),
+      RunCleanupClientFake(fakeHoldings()),
+    ).pipe(Layer.provideMerge(sqliteAfter(Effect.void)));
+
+  const brokenDisk = stoppingEngine("a");
+
+  effect("a failure after the run is saved leaves state.db as it was", () =>
+    Effect.gen(function* () {
+      yield* (yield* RunsRepository).save(run("a"));
+      yield* (yield* RunWaitsRepository).save(wait("a", "one"));
+
+      const ended = yield* cancelRunHandler({ target: byId("a"), ...asAlice }).pipe(
+        Effect.as("cancelled"),
+        Effect.catchDefect(() => Effect.succeed("died")),
+      );
+
+      expect(ended).toBe("died");
+      expect(yield* statusOf("a")).toEqual(Option.some("running"));
+      expect(
+        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.deferred),
+      ).toEqual(["one"]);
+      // Nothing was asked of the engine for a run that wasn't cancelled.
+      expect(brokenDisk.interrupted).toEqual([]);
+    }).pipe(Effect.provide(stateDb(brokenDisk))),
   );
 });
