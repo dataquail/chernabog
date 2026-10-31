@@ -1,9 +1,9 @@
-# 13. A module's inbound adapters live in the module
+# 14. A module's inbound adapters live in the module
 
 Status: accepted, 2026-10-31. Issue #288. Brings over the reference
 hexagon's `modules/<m>/interface/{http,cli,events}/`
 (`dataquail/functional-domain-driven-hexagon`, its ADR-0013 and ADR-0023).
-Amends ADR 9.
+Amends ADR 13.
 
 ## Context
 
@@ -33,7 +33,7 @@ module's `/runs/:id` routes beside its own scheduling.
    together, and the ACL route a handler would take doesn't fit here:
    `enroll` needs the machine's setup and `setup` needs enrollment's personas
    in use, so ACL ports on both sides would have each `module.ts` provide the
-   other, a cycle. This amends ADR 9, which let only an ACL adapter dispatch a
+   other, a cycle. This amends ADR 13, which let only an ACL adapter dispatch a
    grant. The grants: machine's `ReadMachineSetupQuery` (to enrollment), and
    enrollment's `FindCheckoutRootQuery` (to recipes), `ListEnrolledReposQuery`
    (to trust) and `ListPersonasInUseQuery` (to machine). The hexagon's event

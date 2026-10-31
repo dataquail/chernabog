@@ -45,9 +45,7 @@
         "queries/diff-recipes.handler.ts",
         "queries/diff-recipes.query.ts",
         "queries/list-recipes.handler.ts",
-        "queries/list-recipes.query.ts",
-        "queries/read-team-config.handler.ts",
-        "queries/read-team-config.query.ts"
+        "queries/list-recipes.query.ts"
       ]
     },
     "src/modules/rehearsals": {
@@ -115,17 +113,5 @@
       "holdouts": []
     }
   },
-  "concessions": [
-    {
-      "sector": "src/modules/recipes",
-      "at": "2026-10-31T16:33:32.938Z",
-      "by": "zweidenbach@gmail.com",
-      "delta": 2,
-      "reason": "read-team-config (#300, ADR 9) is the new query enrollment asks recipes through an ACL port; it reads through TeamConfigsRepository because neither queries nor storage/ may import yaml yet to read .chernabog/config.yaml directly",
-      "holdouts": [
-        "queries/read-team-config.handler.ts",
-        "queries/read-team-config.query.ts"
-      ]
-    }
-  ]
+  "concessions": []
 }

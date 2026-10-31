@@ -377,7 +377,7 @@ transitive reach), the coverage floors and the baseline.
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
 - **Modules ask each other only through ACL ports**
-  (`docs/adr/0009-modules-import-and-export.md`). An owner grants queries in
+  (`docs/adr/0013-modules-import-and-export.md`). An owner grants queries in
   `<module>.exports.ts` (`recipesAccessQueries =
 Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   `<module>Access<Queries|Commands|DomainEvents|Errors>`, never a bare
@@ -386,17 +386,18 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   `domain/ports/acl/<question>.acl.ts` (owing `-live.ts`, `-fake.ts` and
   `-live.test.ts` in `infrastructure/acl/`), and its live adapter dispatches
   the grant and translates the answer. Its handlers ask the port; they never
-  name the other module or its messages. `main.ts`'s `AppLive` provides an
-  owner beneath its askers. Owners: enrollment the enrolled repos and their
+  name the other module or its messages. The asker's `<module>.module.ts`
+  provides the owner's `<module>.module.ts` beneath its ACL adapter (ADR 12),
+  as `enrollment.module.ts` does with recipes. Owners: enrollment the enrolled repos and their
   per-persona choices, machine the personas and accounts, recipes the team's
   `.chernabog/config.yaml` (`ReadTeamConfigQuery`). An inbound adapter in
   a module's `interface/` may also dispatch a grant its `<module>.imports.ts`
   takes, to compose a peer's answer with its own module's
-  (`docs/adr/0013-inbound-adapters-live-in-their-module.md`): `trust` lists
+  (`docs/adr/0014-inbound-adapters-live-in-their-module.md`): `trust` lists
   its targets with enrollment's `ListEnrolledReposQuery`, then trusts each.
   `Query.dispatcher` needs a scope, so such a dispatch is `Effect.scoped`.
 - **A module's inbound adapters live in the module**
-  (`docs/adr/0013-inbound-adapters-live-in-their-module.md`):
+  (`docs/adr/0014-inbound-adapters-live-in-their-module.md`):
   `src/modules/<module>/interface/cli/<command>.endpoint.ts` per CLI command
   and `interface/daemon/<route>.endpoint.ts` per daemon route it alone serves,
   each registered in a `<module>.endpoint-groups.ts` that `main.ts` (or the
@@ -452,7 +453,7 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
   under way. `repo-config` counts the files under `src/` that still import
   `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
-  (ADR 9), and the file is deleted when none is left. `read-models` (ADR 11,
+  (ADR 13), and the file is deleted when none is left. `read-models` (ADR 11,
   #283) counts the queries still reaching their module's domain. `cqrs`, which
   moved every use-case to a command or query and had the commands dispatch
   their domain events, is retired (#273). A campaign's ledger in

@@ -2,7 +2,7 @@ import { Query } from "@effect-server-utils/cqrs";
 import * as Schema from "effect/Schema";
 
 import { PersistenceFailed } from "../../../kernel/persistence.errors.ts";
-import { TeamFlowConfig } from "../domain/team-config/team-flow-config.value-object.ts";
+import { TeamFlowConfig } from "../storage/team-config.schema.ts";
 
 // What the team's .chernabog/config.yaml says about who runs its flows and
 // with which agents: the repo's agent, runners and reviewers, and each flow's.

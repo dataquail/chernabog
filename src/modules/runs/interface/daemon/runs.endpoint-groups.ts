@@ -1,5 +1,5 @@
 // The runs module's routes on the daemon's socket, which the daemon's server
-// registers beside its own (docs/adr/0013-inbound-adapters-live-in-their-module.md).
+// registers beside its own (docs/adr/0014-inbound-adapters-live-in-their-module.md).
 // How a failure answers is the server's, so it hands its `answer` in.
 
 import type * as Effect from "effect/Effect";
