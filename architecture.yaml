@@ -29,6 +29,11 @@ baseline: .architecture-baseline.json
 
 resolve:
   scopes:
+    # The dashboard resolves through its own tsconfig: the DOM, JSX for React,
+    # and `#daemon/protocol`. The catch-all must come last.
+    - files: "^packages/dashboard/"
+      language: typescript
+      options: { tsconfig: packages/dashboard/tsconfig.json }
     - files: ""
       language: typescript
       options: { tsconfig: tsconfig.json }
@@ -115,6 +120,9 @@ graph:
         - "~/sdk/src/index.ts"
         # What a compiled binary resolves the SDK to: its root index (packages/sdk/index.ts).
         - "~/sdk/index.ts"
+        # The dashboard's entry, which its index.html loads, and the daemon
+        # serves (docs/adr/0016-the-browser-tier.md).
+        - "~/dashboard/src/main.tsx"
         # Run with `bun scripts/<name>.ts`.
         - "scripts/gen-*.ts"
         - "scripts/homebrew-formula.ts"
@@ -164,6 +172,20 @@ graph:
         they are installed.
       from: "~/{core,sdk}/**"
       to: "@/**"
+    - name: dashboard-reaches-no-server
+      message: >-
+        The dashboard transitively reaches the daemon's own code. It runs in a browser, which Bun
+        bundles it for: a route from it to an adapter, the platform, a module's platform surface
+        or the legacy tier pulls Bun's runtime and the engine into the page, or fails the bundle.
+        It names the daemon's protocol, which names the modules' <module>.contracts.ts, and they
+        their domain (docs/adr/0016-the-browser-tier.md).
+      from: "~/dashboard/**"
+      to: "@/**"
+      toNot:
+        - "@/interface/daemon/*.protocol.ts"
+        - "@/modules/*/*.contracts.ts"
+        - "@/modules/*/domain/**"
+        - "@/kernel/**"
     - name: daemon-reaches-no-sdk
       message: >-
         The binary provides @chernabog/core and nothing else of the flows' packages: each repo
@@ -726,7 +748,18 @@ tree:
                 - "@/interface/daemon/**"
                 - "@/platform/home.ts"
             children:
-              "*.protocol.ts": {}
+              # The dashboard bundles the protocol for a browser
+              # (docs/adr/0016-the-browser-tier.md).
+              "*.protocol.ts":
+                imports:
+                  reset: true
+                  message: >-
+                    The daemon's protocol is what the CLI, the TUI and the dashboard decode, and
+                    the dashboard decodes it in a browser. It names effect and the value objects
+                    and events the modules publish on their <module>.contracts.ts, which reach no
+                    adapter; never a <module>.platform.ts, which publishes the engine.
+                  external: [effect]
+                  allow: ["@/modules/*/*.contracts.ts"]
               "*.client.ts": {}
               # What the daemon does when one of the modules' events happens: an
               # inbound adapter over the bus (docs/adr/0013-event-handlers.md).
@@ -774,6 +807,9 @@ tree:
                     - "@/modules/*/interface/daemon/*.endpoint-groups.ts"
                     - "~/core/src/**"
                     - "@/repo-config.ts"
+                    # The dashboard's page, which the daemon serves at / and
+                    # `bun build --compile` embeds.
+                    - "~/dashboard/index.html"
 
       "kernel/":
         message: >-
@@ -813,7 +849,8 @@ tree:
           <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
           <module>.event-span-attributes.ts, what its spans say about the messages and events
           they carry, <module>.platform.ts, the one surface it publishes to the composition
-          roots, interface/ (its inbound adapters: the CLI's endpoints and the daemon's routes
+          roots, <module>.contracts.ts, the value objects and events the daemon's protocol
+          carries, interface/ (its inbound adapters: the CLI's endpoints and the daemon's routes
           that serve it alone), and, when another module asks it or it asks another, <module>.exports.ts and
           <module>.imports.ts.
         name: kebab-case
@@ -841,7 +878,7 @@ tree:
           # says which). They are not on platform.ts: an endpoint asks the daemon over its
           # client, whose protocol names the runs module's platform.ts, so publishing them
           # there would close a cycle.
-          matchNot: ["*.platform.ts", "interface/*/*.endpoint-groups.ts"]
+          matchNot: ["*.platform.ts", "*.contracts.ts", "interface/*/*.endpoint-groups.ts"]
         imports:
           message: >-
             A module's platform surface re-exports its own module and nothing else; every other
@@ -909,6 +946,33 @@ tree:
                     third-party client's live/fake pair, because choosing between those is a
                     composition root's job. Re-exporting anything else from infrastructure/ or
                     interface/ makes an adapter part of the module's public surface.
+
+          # The CONTRACTS surface: the value objects and events the daemon's
+          # protocol carries, which the dashboard decodes in a browser
+          # (docs/adr/0016-the-browser-tier.md). It only re-exports, from the
+          # domain alone.
+          "*.contracts.ts":
+            name: { like: "{module}" }
+            importedBy:
+              message: >-
+                <module>.contracts.ts is what the daemon's protocol carries: only
+                src/interface/daemon/*.protocol.ts names it, and tests. The rest of the inbound
+                side names the module's <module>.platform.ts.
+              allow:
+                - "@/interface/daemon/*.protocol.ts"
+                - "**/*.test.ts"
+                - "test/**"
+            surface:
+              - message: >-
+                  <module>.contracts.ts re-exports; `{name}` is declared here. Declare it in the
+                  domain and re-export it from there.
+                reexport: false
+            imports:
+              reset: true
+              message: >-
+                <module>.contracts.ts re-exports the value objects and events of its own module's
+                domain, and nothing else: the dashboard bundles what it reaches for a browser.
+              allow: ["@/modules/{module}/domain/**"]
 
           # The PEER surface: what another module may ask of this one, each grant
           # a subset of its messages (docs/adr/0013-modules-import-and-export.md).
@@ -1630,6 +1694,37 @@ tree:
       "prompts/":
         children:
           "*.md": {}
+
+  "~/dashboard/":
+    message: >-
+      The browser tier: the dashboard the daemon serves, a React page Bun bundles from its
+      index.html and `bun build --compile` embeds in the binary (docs/adr/0016-the-browser-tier.md).
+      src/ holds its components (*.tsx), what they ask the daemon (*.ts), and their tests.
+    imports:
+      reset: true
+      message: >-
+        The dashboard runs in a browser and knows the daemon only by what its socket says. It names
+        effect, React, its own files and the daemon's protocol, which it decodes every answer
+        with; nothing else under src/, whose adapters a browser can't run.
+      external: [effect, react, react-dom]
+      allow: ["~/dashboard/**", "@/interface/daemon/daemon.protocol.ts"]
+    surface:
+      - use: no-default-exports
+      - use: no-star-exports
+    children:
+      "src/":
+        name: kebab-case
+        children:
+          "main.tsx": {}
+          "*.tsx": {}
+          "*.ts": {}
+          "*.test.tsx":
+            surface: [{ use: test-exports-nothing }]
+            imports:
+              message: >-
+                A dashboard test renders a component, or asks a fake daemon, with effect's test
+                runner for Bun.
+              external: [effect-bun-test]
 
   "test/":
     message: >-

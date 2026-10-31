@@ -220,6 +220,22 @@ describe("the daemon", () => {
     ]);
   }, 30_000);
 
+  test("serves the dashboard at /, the page and the bundle it loads, from what it was built with", async () => {
+    const page = await fetch("http://daemon/", { unix: socket() });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain('<div id="root">');
+
+    // The page's script is the bundle of packages/dashboard/src/main.tsx,
+    // which a compiled binary carries inside it.
+    const script = html.match(/<script[^>]* src="([^"]+)"/)?.[1];
+    expect(script).toBeDefined();
+    const bundle = await fetch(new URL(script ?? "", "http://daemon/"), { unix: socket() });
+    expect(bundle.status).toBe(200);
+    expect(await bundle.text()).toContain("StatusUnavailable");
+  }, 30_000);
+
   test("picks up a repo enrolled while it runs, untrusted until trust, without a manual restart", async () => {
     // A second repo whose origin path reads as github.com/dataquail/other, so enroll takes it for a GitHub repo.
     const origin = join(sandbox.root, "github.com", "dataquail", "other.git");
