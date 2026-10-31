@@ -26,8 +26,9 @@ import * as Schema from "effect/Schema";
 import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
-import { RunId, runLabel } from "../../kernel/run-id.id.ts";
+import { runLabel } from "../../kernel/run-id.id.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
+import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
 import {
   type ActiveRun,
   adoptRuns,
@@ -59,7 +60,6 @@ import {
   renewalDue,
   RunFlowsCommands,
   RunFlowsQueries,
-  RunHistory,
   runIsAbout,
   RunLeases,
   runLogWriting,
@@ -100,7 +100,6 @@ import {
   Refusal,
   Reloaded,
   type RepoStatus,
-  RunReply,
   RunRequest,
   TickResult,
 } from "./daemon.protocol.ts";
@@ -425,8 +424,6 @@ const LATEST_MS = 15_000;
 
 // The finished runs status reports, newest first.
 const RECENT_RUNS = 100;
-
-const PathParams = Schema.Struct({ id: RunId });
 
 // Every run in flight, whatever its repo, persona or flow.
 const everyRun = { repo: Option.none(), persona: Option.none(), flow: Option.none() };
@@ -1798,32 +1795,7 @@ export const runDaemon = Effect.gen(function* () {
           "/status",
           answer(status.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DaemonStatus)))),
         ),
-        HttpRouter.add(
-          "GET",
-          "/runs/:id",
-          answer(
-            Effect.gen(function* () {
-              const { id } = yield* HttpRouter.schemaPathParams(PathParams);
-
-              return yield* HttpServerResponse.schemaJson(RunReply)(
-                (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId: id }))).run,
-              );
-            }),
-          ),
-        ),
-        HttpRouter.add(
-          "GET",
-          "/runs/:id/history",
-          answer(
-            Effect.gen(function* () {
-              const { id } = yield* HttpRouter.schemaPathParams(PathParams);
-
-              return yield* HttpServerResponse.schemaJson(RunHistory)(
-                yield* RunsQueries.use((runs) => runs.ReadRunHistoryQuery({ runId: id })),
-              );
-            }),
-          ),
-        ),
+        runsRoutes(answer),
         HttpRouter.add(
           "POST",
           "/reload",
