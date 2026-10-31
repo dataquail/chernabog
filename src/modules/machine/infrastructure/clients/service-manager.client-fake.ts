@@ -18,6 +18,7 @@ export const ServiceManagerClientFake = (registered: boolean) =>
         install: Ref.set(state, { registered: true, running: true }).pipe(Effect.as(UNIT)),
         uninstall: Ref.set(state, { registered: false, running: false }).pipe(Effect.as(UNIT)),
         installed: Ref.get(state).pipe(Effect.map((now) => now.registered)),
+        refresh: Effect.succeedNone,
         start: Effect.gen(function* () {
           if (!(yield* Ref.get(state)).registered) {
             return yield* new ServiceFailed({

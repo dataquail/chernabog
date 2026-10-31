@@ -113,6 +113,23 @@ export const sweepDayFolders = (
     return removed;
   });
 
+// What the daemon keeps of its own logs: rotations of daemon.log for 30 days,
+// and daemon.out.log, the service manager's, up to 10 MB.
+export const DAEMON_LOG_RETENTION = {
+  maxAgeDays: 30,
+  outLogMaxBytes: 10 * 1024 * 1024,
+};
+
+export const sweepRotatedLogs = (
+  _log: string,
+  _maxAgeDays: number,
+): Effect.Effect<ReadonlyArray<string>, PlatformError, FileSystem.FileSystem> => Effect.succeed([]);
+
+export const capLog = (
+  _path: string,
+  _maxBytes: number,
+): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> => Effect.succeed(false);
+
 // Where a keeper says what each sweep did.
 export type SweepReports = {
   readonly swept: (removed: ReadonlyArray<string>) => Effect.Effect<void>;

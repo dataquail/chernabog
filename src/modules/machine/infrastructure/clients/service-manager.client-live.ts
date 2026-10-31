@@ -227,6 +227,7 @@ export const ServiceManagerClientLive = Layer.effect(
       install: managed(install),
       uninstall: managed(uninstall),
       installed: installed.pipe(Effect.provideContext(services)),
+      refresh: Effect.succeedNone,
       start: managed(start),
       stop: managed(stop),
     });
