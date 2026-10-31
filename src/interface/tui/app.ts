@@ -147,6 +147,7 @@ const readDetail = (runId: string) =>
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
   status: Option.none(),
   error: Option.none(),
+  reconnecting: false,
   usage: [],
   thresholds: {
     fiveHourCeiling: DEFAULT_GATE.fiveHourCeiling,

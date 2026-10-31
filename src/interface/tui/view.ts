@@ -67,6 +67,8 @@ export type Settings = {
 export type Model = {
   readonly status: Option.Option<DaemonStatus>;
   readonly error: Option.Option<string>;
+  // The /events stream dropped; the view shows what it last knew until it is back.
+  readonly reconnecting: boolean;
   readonly usage: ReadonlyArray<UsageRow>;
   readonly thresholds: { readonly fiveHourCeiling: number; readonly targetEndUsage: number };
   // The project tab (a repo's name; none for All) and the persona filter
