@@ -4,8 +4,7 @@ import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
-import { RunLog } from "../../../modules/runs/queries/read-run-log.query.ts";
-import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
+import { RunLog, RunLogsQueries } from "../../../modules/runs/runs.platform.ts";
 import { fail, printJson } from "../cli.output.ts";
 import { jsonFlag } from "../output.arguments.ts";
 import { followRunLog } from "./run-log.output.ts";

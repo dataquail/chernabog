@@ -2,8 +2,10 @@ import * as Command from "effect/cli/Command";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
-import { type PauseState } from "../../../modules/enrollment/commands/pause-repo.command.ts";
-import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
+import {
+  EnrollmentCommands,
+  type PauseState,
+} from "../../../modules/enrollment/enrollment.platform.ts";
 import { repoArgument } from "../repo.arguments.ts";
 
 const describePaused = (state: PauseState) =>

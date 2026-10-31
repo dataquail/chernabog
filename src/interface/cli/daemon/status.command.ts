@@ -10,11 +10,12 @@ import * as Schema from "effect/Schema";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
-import { FLOW_TURNED_OFF } from "../../../modules/enrollment/domain/enrolled-repo/team-flows.value-object.ts";
-import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { type RunMarkerView } from "../../../modules/runs/domain/run-marker/run-marker-view.value-object.ts";
-import { type TrustCheck } from "../../../modules/trust/queries/check-trust.query.ts";
-import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
+import {
+  EnrollmentQueries,
+  FLOW_TURNED_OFF,
+} from "../../../modules/enrollment/enrollment.platform.ts";
+import { type RunMarkerView } from "../../../modules/runs/runs.platform.ts";
+import { type TrustCheck, TrustQueries } from "../../../modules/trust/trust.platform.ts";
 import { daemonStatus } from "../../daemon/daemon.client.ts";
 import { DaemonStatus } from "../../daemon/daemon.protocol.ts";
 import { printJson, printLines } from "../cli.output.ts";

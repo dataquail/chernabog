@@ -2,7 +2,7 @@ import * as Command from "effect/cli/Command";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
-import { MachineCommands } from "../../../modules/machine/machine.command-handlers.ts";
+import { MachineCommands } from "../../../modules/machine/machine.platform.ts";
 import { printLines } from "../cli.output.ts";
 import { setupFlags, setUpMachine } from "./setup.command.ts";
 

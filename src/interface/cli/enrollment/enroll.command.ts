@@ -7,14 +7,14 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type Persona } from "../../../kernel/persona.value-object.ts";
-import { type Enrolled } from "../../../modules/enrollment/commands/apply-enrollment.command.ts";
-import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
-import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import {
+  type Enrolled,
+  EnrollmentCommands,
   type EnrollmentPlan,
+  EnrollmentQueries,
   type PersonaPlan,
-} from "../../../modules/enrollment/queries/plan-enrollment.query.ts";
-import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
+} from "../../../modules/enrollment/enrollment.platform.ts";
+import { MachineQueries } from "../../../modules/machine/machine.platform.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";

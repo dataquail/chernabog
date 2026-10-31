@@ -2,11 +2,13 @@ import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { type SetupOutcome } from "../../../modules/machine/commands/apply-setup.command.ts";
-import { MachineCommands } from "../../../modules/machine/machine.command-handlers.ts";
-import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
-import { type SetupPlan } from "../../../modules/machine/queries/plan-setup.query.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.platform.ts";
+import {
+  MachineCommands,
+  MachineQueries,
+  type SetupOutcome,
+  type SetupPlan,
+} from "../../../modules/machine/machine.platform.ts";
 import { Asker } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { listed, listFlag } from "../list.arguments.ts";
