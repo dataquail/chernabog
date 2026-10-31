@@ -5,20 +5,17 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { listMovedReposUseCase } from "../../../modules/enrollment/use-cases/list-moved-repos.use-case.ts";
-import { repointRepoUseCase } from "../../../modules/enrollment/use-cases/repoint-repo.use-case.ts";
-import { addRecipePackageUseCase } from "../../../modules/recipes/use-cases/add-recipe-package.use-case.ts";
-import {
-  OFFICIAL_PACKAGE,
-  type RecipePackageAdded,
-  type Scaffolded,
-} from "../../../modules/recipes/use-cases/recipe.result.ts";
-import { scaffoldRepoUseCase } from "../../../modules/recipes/use-cases/scaffold-repo.use-case.ts";
+import { OFFICIAL_PACKAGE } from "../../../kernel/recipe-package.value-object.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
+import { type RecipePackageAdded } from "../../../modules/recipes/commands/add-recipe-package.command.ts";
+import { type Scaffolded } from "../../../modules/recipes/commands/scaffold-repo.command.ts";
+import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { confirm } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { enrollFlags, enrollHere, rootOf } from "../enrollment/enroll.command.ts";
-import { bakeRecipes, recipesFlag } from "./recipes.command.ts";
+import { bakeRecipes, recipesFlag, refreshSchemas } from "./recipes.command.ts";
 
 const describeScaffold = (scaffolded: Scaffolded) =>
   Option.match(Option.liftPredicate(scaffolded.changes, Arr.isReadonlyArrayNonEmpty), {
@@ -57,9 +54,10 @@ const suffix = (value: Option.Option<string>, prefix: string) =>
 // such entry was left where it was.
 const offerRepoint = (root: string) =>
   Effect.gen(function* () {
+    const { repos } = yield* (yield* EnrollmentQueries).ListMovedReposQuery({ root });
     let declined = false;
 
-    for (const entry of (yield* listMovedReposUseCase(root)).repos) {
+    for (const entry of repos) {
       if (
         !(yield* confirm(
           `${entry.name} (${entry.repo}) is enrolled at ${entry.path}, which is gone. Point it here, keeping its settings?`,
@@ -72,7 +70,7 @@ const offerRepoint = (root: string) =>
         continue;
       }
 
-      yield* repointRepoUseCase(entry.path, root);
+      yield* (yield* EnrollmentCommands).RepointRepoCommand({ name: entry.path, root });
       yield* Console.log(`pointed ${entry.name} at ${root}`);
       yield* daemonReload.pipe(Effect.ignore);
     }
@@ -87,10 +85,18 @@ export const initCommand = Command.make(
     Effect.gen(function* () {
       const root = yield* rootOf(path);
 
-      yield* printLines(describeScaffold(yield* scaffoldRepoUseCase(root)));
+      yield* printLines(
+        describeScaffold(yield* (yield* RecipesCommands).ScaffoldRepoCommand({ root })),
+      );
       // The recipes init offers.
-      yield* printLines(describePackage(yield* addRecipePackageUseCase(root, OFFICIAL_PACKAGE)));
+      yield* printLines(
+        describePackage(
+          yield* (yield* RecipesCommands).AddRecipePackageCommand({ root, name: OFFICIAL_PACKAGE }),
+        ),
+      );
       yield* printLines(yield* bakeRecipes(root, recipes));
+      // config.schema.json again, describing the settings of the recipes it added.
+      yield* printLines(yield* refreshSchemas(root));
 
       // Enrolling would point a moved entry here after all, so a checkout that
       // isn't the moved one enrolls only under a name of its own.

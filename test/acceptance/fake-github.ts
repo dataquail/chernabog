@@ -42,6 +42,8 @@ export type FakePull = {
   author: string;
   // The commit a merge made on the base, for a test that merged it in git itself.
   mergeCommit?: string;
+  // The head it merged at, which GitHub keeps once the branch is deleted.
+  mergedHead?: string;
 };
 
 const ReviewComment = Schema.Struct({
@@ -197,7 +199,11 @@ const NewIssueBody = Schema.Struct({
   assignees: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
-const StateBody = Schema.Struct({ state: Schema.optionalKey(Schema.Literals(["open", "closed"])) });
+const StateBody = Schema.Struct({
+  state: Schema.optionalKey(Schema.Literals(["open", "closed"])),
+  base: Schema.optionalKey(Schema.String),
+});
+
 const LabelBody = Schema.Struct({ name: Schema.String });
 
 const CreateRefBody = Schema.Struct({ ref: Schema.String, sha: Schema.String });
@@ -330,6 +336,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const statuses = new Map<string, Array<FakeStatus>>();
   // The message of the 403 the branch-rules endpoint answers with, if it refuses.
   let branchRulesRefusal = Option.none<string>();
+  // The checks the base branch's rules require, by context.
+  let requiredContexts: ReadonlyArray<string> = [];
   const inAWhile = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
 
   const usageOf = (fiveHour: number, sevenDay: number) => ({
@@ -396,7 +404,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     state: pull.state,
     merged_at: Option.liftPredicate(now(), () => pull.merged),
     merge_commit_sha: Option.fromUndefinedOr(pull.mergeCommit),
-    head: { ref: pull.head, sha: Option.getOrElse(refSha(pull.head), () => "") },
+    head: {
+      ref: pull.head,
+      sha: pull.mergedHead ?? Option.getOrElse(refSha(pull.head), () => ""),
+    },
     base: { ref: pull.base },
     labels: pull.labels.map((name) => ({ name })),
     user: { login: pull.author },
@@ -513,6 +524,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       onNone: notFound,
       onSome: (pull) => {
         pull.state = body.state ?? pull.state;
+        pull.base = body.base ?? pull.base;
 
         return encoded(PullJson, pullJson(pull));
       },
@@ -633,6 +645,22 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json(comment, 201);
   });
 
+  // Edits a comment by its id, on whichever issue or pull request it is.
+  const editComment = withBody(CommentBody, (body, args) => {
+    const id = numberParam(args);
+
+    const found = Arr.findFirst([...comments.values()].flat(), (comment) => comment.id === id);
+
+    return Option.match(found, {
+      onNone: notFound,
+      onSome: (comment) => {
+        comment.body = body.body;
+
+        return json(comment);
+      },
+    });
+  });
+
   const linkedJson = (links: Map<number, Array<number>>, args: Args) =>
     json(
       (links.get(numberParam(args)) ?? []).flatMap((number) =>
@@ -735,16 +763,21 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   });
 
   // How far one branch is ahead of another, as git counts it in the bare repo.
+  // A branch git can't find (deleted meanwhile, say) is GitHub's 404.
   const compare = (args: Args) => {
     const [base = "", head = ""] = (args.params[0] ?? "").split("...").map(decodeURIComponent);
 
-    const ahead = Number(
-      execFileSync("git", ["--git-dir", options.bare, "rev-list", "--count", `${base}..${head}`], {
-        encoding: "utf8",
-      }).trim(),
+    const counted = spawnSync(
+      "git",
+      ["--git-dir", options.bare, "rev-list", "--count", `${base}..${head}`],
+      { encoding: "utf8" },
     );
 
-    return json({ ahead_by: ahead, behind_by: 0 });
+    if (counted.status !== 0) {
+      return json({ message: "Not Found" }, 404);
+    }
+
+    return json({ ahead_by: Number(counted.stdout.trim()), behind_by: 0 });
   };
 
   const createPull = withBody(NewPullBody, (body, args) => {
@@ -840,7 +873,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     }),
   );
 
-  // Merges exactly the head asked for, as a squash onto the base.
+  // Merges exactly the head asked for, onto the base, by moving the base to it.
+  // As on GitHub, a merge into the default branch closes the issues the pull
+  // request's body closes.
   const mergePull = withBody(MergeBody, (body, args) =>
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
@@ -852,6 +887,19 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         git("update-ref", `refs/heads/${pull.base}`, body.sha);
         pull.state = "closed";
         pull.merged = true;
+        pull.mergeCommit = pull.mergeCommit ?? body.sha;
+        pull.mergedHead = body.sha;
+
+        if (pull.base === "main") {
+          for (const closed of pull.body.matchAll(/Closes #(\d+)/g)) {
+            for (const issue of Option.toArray(
+              Option.fromUndefinedOr(issues.get(Number(closed[1]))),
+            )) {
+              issue.closed = true;
+            }
+          }
+        }
+
         merges.push({ number: pull.number, method: body.merge_method, by: args.login });
 
         return json({ sha: body.sha, merged: true });
@@ -1041,9 +1089,25 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     });
   };
 
+  // The base branch's rules: a required-checks rule, when it requires any.
+  const rules = () => {
+    if (requiredContexts.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        type: "required_status_checks",
+        parameters: {
+          required_status_checks: requiredContexts.map((context) => ({ context })),
+        },
+      },
+    ];
+  };
+
   const branchRules = () =>
     Option.match(branchRulesRefusal, {
-      onNone: () => json([]),
+      onNone: () => json(rules()),
       onSome: (message) => json({ message, status: "403" }, 403),
     });
 
@@ -1158,6 +1222,11 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
+    {
+      method: "PATCH",
+      pattern: new RegExp(`^${repo}/issues/comments/(\\d+)$`),
+      handle: editComment,
+    },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`),
@@ -1331,6 +1400,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
       pull.state = "closed";
       pull.merged = merged;
+
+      if (merged) {
+        pull.mergedHead = Option.getOrUndefined(refSha(pull.head));
+      }
     },
     requests,
     requestsBy,
@@ -1370,6 +1443,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         status,
         ...(statuses.get(sha) ?? []).filter((set) => set.context !== status.context),
       ]);
+    },
+    // Makes the base branch's rules require these checks, by context.
+    requireChecks: (contexts: ReadonlyArray<string>) => {
+      requiredContexts = contexts;
     },
     // Refuses the branch-rules endpoint with a 403. By default it's GitHub's
     // answer on a private repo in a free-plan org.

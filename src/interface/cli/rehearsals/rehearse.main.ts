@@ -9,6 +9,7 @@ import {
   HEADLESS,
   isManual,
   type RepoSettings,
+  type Settings,
   triggerOf,
   type WorkItem,
 } from "@chernabog/core";
@@ -24,21 +25,18 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
+import * as Record from "effect/Record";
 
 import { asSuffix, type Persona } from "../../../kernel/persona.value-object.ts";
-import { sameLogin } from "../../../kernel/reviewer-pool.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import { type Ending } from "../../../kernel/scenario.value-object.ts";
-import { pauseRepoUseCase } from "../../../modules/enrollment/use-cases/pause-repo.use-case.ts";
-import { resumeRepoUseCase } from "../../../modules/enrollment/use-cases/resume-repo.use-case.ts";
-import { checkRehearsalUseCase } from "../../../modules/rehearsals/use-cases/check-rehearsal.use-case.ts";
-import { chooseSeededWorkUseCase } from "../../../modules/rehearsals/use-cases/choose-seeded-work.use-case.ts";
-import { cleanUpScenarioUseCase } from "../../../modules/rehearsals/use-cases/clean-up-scenario.use-case.ts";
-import { loadScenarioUseCase } from "../../../modules/rehearsals/use-cases/load-scenario.use-case.ts";
-import { planRehearsalUseCase } from "../../../modules/rehearsals/use-cases/plan-rehearsal.use-case.ts";
-import { type LoadedScenario } from "../../../modules/rehearsals/use-cases/scenario.result.ts";
-import { seedScenarioUseCase } from "../../../modules/rehearsals/use-cases/seed-scenario.use-case.ts";
-import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
+import { RehearsalsCommands } from "../../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueries } from "../../../modules/rehearsals/rehearsals.query-handlers.ts";
+import {
+  describeElsewhere,
+  routeItems,
+} from "../../../modules/runs/domain/routing/routing.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   runAnswers,
@@ -51,28 +49,24 @@ import {
   flowLayer,
   runLogFile,
 } from "../../../modules/runs/infrastructure/runtime/engine.ts";
-import {
-  desiredLabels,
-  syncLabels,
-  withFlowLabels,
-} from "../../../modules/runs/infrastructure/runtime/labels.ts";
+import { declaredLabels, syncLabels } from "../../../modules/runs/infrastructure/runtime/labels.ts";
 import {
   buildPersonaContexts,
-  loginOf,
   openRepo,
   type RepoContext,
   servicesFrom,
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+} from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateAt } from "../../../modules/runs/runs.layer.ts";
-import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
-import { resolveRunIdUseCase } from "../../../modules/runs/use-cases/resolve-run-id.use-case.ts";
+import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
 import { type RunView } from "../../../modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { execOk } from "../../../platform/exec.ts";
-import { packageOverride, reviewingFlows } from "../../../platform/flow-loader.ts";
+import { packageOverride } from "../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../platform/github-api.ts";
 import { execOptionsFor } from "../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
@@ -86,17 +80,21 @@ import {
   personaOf,
   type PersonaRepo,
   repoNameOf,
-  routingOf,
 } from "../../../repo-config.ts";
 import { fail } from "../cli.output.ts";
 import { repoFlag } from "../repo.arguments.ts";
 import { choosePersona, tailer } from "../runs/run.main.ts";
 
-// What seeding made, as its use-case answers.
-type Seeded = Effect.Success<ReturnType<typeof seedScenarioUseCase>>;
+// A scenario ready to rehearse, as loading answers it.
+type LoadedScenario = Effect.Success<ReturnType<RehearsalsQueries["Service"]["LoadScenarioQuery"]>>;
+
+// What seeding made, as its command answers.
+type Seeded = Effect.Success<ReturnType<RehearsalsCommands["Service"]["SeedScenarioCommand"]>>;
 
 // The stand-ins a rehearsal runs with, as planning answers them.
-type StandIns = Effect.Success<ReturnType<typeof planRehearsalUseCase>>["standIns"];
+type StandIns = Effect.Success<
+  ReturnType<RehearsalsQueries["Service"]["PlanRehearsalQuery"]>
+>["standIns"];
 
 // A list for a sentence, or `none` when it's empty.
 const listed = (items: ReadonlyArray<string>, none: string) =>
@@ -156,14 +154,36 @@ const rehearsing = (
   launcher: HEADLESS,
 });
 
+// The scenario's install and local gate over every flow's settings too, for
+// the SDK's blocks that read them there (Settings), the clone's branch as
+// every flow's base, and the board none of them gives, so the rehearsal's none stands.
+const rehearsalSettings = (scratch: Scratch, loaded: LoadedScenario): Settings.Input => ({
+  base: scratch.base,
+  ...Option.match(Option.fromUndefinedOr(loaded.scenario.install), {
+    onNone: () => ({}),
+    onSome: (install) => ({ install: Option.getOrNull(install) }),
+  }),
+  ...Option.match(Option.fromUndefinedOr(loaded.scenario.localGate), {
+    onNone: () => ({}),
+    onSome: (localGate) => ({ localGate }),
+  }),
+});
+
 const rehearsalRepo = (
   repo: EffectiveRepo,
   scratch: Scratch,
   loaded: LoadedScenario,
 ): EffectiveRepo => {
+  const over = rehearsalSettings(scratch, loaded);
+
   const [first, ...rest] = repo.personas.map((own): PersonaRepo => ({
     ...own,
     settings: rehearsing(own.settings, scratch, loaded),
+    shared: Record.remove({ ...own.shared, ...over }, "board"),
+    flows: Record.map(own.flows, (flow) => ({
+      ...flow,
+      settings: Record.remove({ ...flow.settings, ...over }, "board"),
+    })),
   }));
 
   return {
@@ -270,10 +290,10 @@ const pickItem = (
 
     const usable = found.filter((candidate) => candidate.wakeOnly !== true);
 
-    const seededKeys = yield* chooseSeededWorkUseCase(
+    const { keys: seededKeys } = yield* (yield* RehearsalsQueries).ChooseSeededWorkQuery({
       seeded,
-      usable.map((item) => item.key),
-    );
+      keys: usable.map((item) => item.key),
+    });
 
     const ours = usable.filter((item) => seededKeys.includes(item.key));
 
@@ -285,9 +305,7 @@ const pickItem = (
       } satisfies Picked;
     }
 
-    const login = yield* loginOf(handle.repo, persona);
-    const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
-    const routed = routeItems(ours, routingOf(own, handle.name), login);
+    const routed = routeItems(ours);
 
     return Option.match(Arr.head(routed.elsewhere), {
       onNone: (): Picked => ({
@@ -301,7 +319,7 @@ const pickItem = (
       onSome: (): Picked => ({
         item: Arr.head(routed.mine),
         unseen: false,
-        why: `routing leaves ${routed.elsewhere.map((item) => item.key).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
+        why: `the flow leaves ${routed.elsewhere.map(describeElsewhere).join(", ")} to other personas or machines, not${asSuffix(persona)} here`,
       }),
     });
   });
@@ -362,7 +380,10 @@ const follow = (
     while (current.status === "running" && (yield* Clock.currentTimeMillis) < deadline) {
       yield* tail;
       yield* Effect.sleep("1 second");
-      current = Option.getOrElse((yield* pollRunUseCase(current.id)).run, () => current);
+      current = Option.getOrElse(
+        (yield* (yield* RunFlowsCommands).PollRunCommand({ runId: current.id })).run,
+        () => current,
+      );
       const now = yield* Clock.currentTimeMillis;
 
       if (now - lastSignals > SIGNAL_EVERY_MS) {
@@ -372,7 +393,7 @@ const follow = (
           Effect.orElseSucceed(() => []),
         );
 
-        yield* deliverSignalsUseCase(ref, items);
+        yield* (yield* RunFlowsCommands).DeliverSignalsCommand({ flow: ref, items });
       }
     }
 
@@ -381,13 +402,9 @@ const follow = (
     return current;
   });
 
-// Who reviews as each login here: a persona of the repo that runs a flow that reviews.
-const reviewsHere = (repo: EffectiveRepo, reviewing: ReadonlyArray<string>, login: string) =>
-  repo.personas.some(
-    (own) =>
-      Option.exists(own.persona, (mine) => sameLogin(mine, login)) &&
-      reviewing.some((flow) => Option.isNone(flowOff(own, flow))),
-  );
+// Whether this machine acts as the login: one of its personas, as GitHub compares logins.
+const actsHere = (personas: ReadonlyArray<string>, login: string) =>
+  personas.some((own) => own.toLowerCase() === login.toLowerCase());
 
 const describeSeeded = (seeded: Seeded) =>
   listed(
@@ -406,7 +423,7 @@ const replayedAnswers = (replay: Option.Option<string>) =>
     onNone: () => Effect.succeed([]),
     onSome: (asked) =>
       Effect.gen(function* () {
-        const { runId } = yield* resolveRunIdUseCase(asked);
+        const { runId } = yield* (yield* RunLogsQueries).ResolveRunIdQuery({ asked });
         const answers = yield* runAnswers(runId);
 
         if (Option.isNone(answers)) {
@@ -440,13 +457,17 @@ const runRehearsal = (
     );
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: (_repo, one) => servicesFrom(contexts)(one),
-      }).pipe(
+      RunFlowsCommandsLive.pipe(
         Layer.provideMerge(
-          flowLayer(handle, servicesFrom(contexts)).pipe(
-            Layer.provideMerge(StateAt(`${scratch.root}/state.db`)),
+          RuntimeLayer({
+            handles: [handle],
+            services: (_repo, one) => servicesFrom(contexts)(one),
+          }).pipe(
+            Layer.provideMerge(
+              flowLayer(handle, servicesFrom(contexts)).pipe(
+                Layer.provideMerge(StateAt(`${scratch.root}/state.db`)),
+              ),
+            ),
           ),
         ),
       ),
@@ -459,10 +480,10 @@ const runRehearsal = (
         return Option.none<RunView>();
       }
 
-      const { run } = yield* startFlowRunUseCase(
-        { repo: handle.repo.settings.name, flow: handle.name, persona },
-        item.value,
-      );
+      const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+        flow: { repo: handle.repo.settings.name, flow: handle.name, persona },
+        item: item.value,
+      });
 
       if (Option.isNone(run)) {
         return Option.none<RunView>();
@@ -481,11 +502,11 @@ const runRehearsal = (
 // What a rehearsal found, as lines, and whether it went as the scenario said.
 const report = (
   loaded: LoadedScenario,
-  repo: EffectiveRepo,
   seeded: Seeded,
   ended: RunView,
   standIns: StandIns,
   seedAs: Persona,
+  personas: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
     const ending: Ending = ended.status;
@@ -503,7 +524,7 @@ const report = (
       (answer) => answer.step,
     );
 
-    const check = yield* checkRehearsalUseCase({
+    const check = yield* (yield* RehearsalsQueries).CheckRehearsalQuery({
       scenario: loaded.scenario,
       seeded,
       item: ended.itemKey,
@@ -515,17 +536,15 @@ const report = (
       as: seedAs,
     });
 
-    const reviewing = yield* reviewingFlows(repo.settings.configDir);
-
     for (const asking of check.reviewRequests) {
       for (const login of asking.logins) {
-        if (reviewsHere(repo, reviewing, login)) {
+        if (actsHere(personas, login)) {
           yield* Console.log(
-            `#${asking.pullRequest} asks ${login} to review it; ${login} reviews here`,
+            `#${asking.pullRequest} asks ${login} to review it; ${login} is a persona here`,
           );
         } else {
           yield* Console.log(
-            `! #${asking.pullRequest} asks ${login} to review it, and no persona here reviews as ${login}: a real run would wait for another machine to review it`,
+            `! #${asking.pullRequest} asks ${login} to review it, and this machine doesn't act as ${login}: a real run would wait for another machine to review it`,
           );
         }
       }
@@ -573,7 +592,7 @@ const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
-    const cleaned = yield* cleanUpScenarioUseCase({
+    const cleaned = yield* (yield* RehearsalsCommands).CleanUpScenarioCommand({
       repo: slug,
       seeded,
       branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
@@ -606,7 +625,7 @@ const pausedMeanwhile = <A, E, R>(
 
       return Effect.acquireUseRelease(
         Effect.gen(function* () {
-          const paused = yield* pauseRepoUseCase(name);
+          const paused = yield* (yield* EnrollmentCommands).PauseRepoCommand({ name });
           yield* Console.log(
             `${entry.repo} is enrolled here as ${name}: paused it on this machine for the rehearsal; another machine's daemon may still pick up what is seeded`,
           );
@@ -614,7 +633,13 @@ const pausedMeanwhile = <A, E, R>(
           return paused.changed;
         }),
         () => effect,
-        (changed) => Effect.ignore(Effect.when(resumeRepoUseCase(name), Effect.succeed(changed))),
+        (changed) =>
+          Effect.ignore(
+            Effect.when(
+              EnrollmentCommands.use((enrollment) => enrollment.ResumeRepoCommand({ name })),
+              Effect.succeed(changed),
+            ),
+          ),
       );
     },
   });
@@ -624,7 +649,7 @@ export const rehearse = (options: RehearseOptions) =>
     const machine = yield* loadMachineConfig;
     const enrolled = yield* findEnrolled(machine, options.repo);
 
-    const loaded = yield* loadScenarioUseCase({
+    const loaded = yield* (yield* RehearsalsQueries).LoadScenarioQuery({
       path: options.scenario,
       flow: options.flow,
       enrolled: machine.repos.map((entry) => entry.repo),
@@ -663,10 +688,10 @@ export const rehearse = (options: RehearseOptions) =>
       );
     }
 
-    const plan = yield* planRehearsalUseCase(
-      loaded.scenario,
-      yield* replayedAnswers(options.replay),
-    );
+    const plan = yield* (yield* RehearsalsQueries).PlanRehearsalQuery({
+      scenario: loaded.scenario,
+      replayed: yield* replayedAnswers(options.replay),
+    });
 
     const seedAs = Option.orElse(Option.fromUndefinedOr(loaded.scenario.given?.as), () => persona);
 
@@ -691,12 +716,17 @@ export const rehearse = (options: RehearseOptions) =>
 
         const labels = yield* syncLabels(
           loaded.scenario.repo,
-          withFlowLabels(desiredLabels(repo.settings.labels), flows.values()),
+          yield* declaredLabels(repo, flows),
         ).pipe(Effect.provideContext(yield* Layer.build(GitHubApi.layerFor(seedAs))));
 
         yield* Console.log(labels);
 
-        const seeding = yield* Effect.result(seedScenarioUseCase(loaded.scenario, seedAs));
+        const seeding = yield* Effect.result(
+          (yield* RehearsalsCommands).SeedScenarioCommand({
+            scenario: loaded.scenario,
+            as: seedAs,
+          }),
+        );
 
         // A seeding that fails partway still cleans up what it made.
         const seeded = yield* Effect.catchTag(
@@ -727,7 +757,7 @@ export const rehearse = (options: RehearseOptions) =>
 
           return yield* Option.match(ended, {
             onNone: () => Effect.succeed(false),
-            onSome: (run) => report(loaded, repo, seeded, run, plan.standIns, seedAs),
+            onSome: (run) => report(loaded, seeded, run, plan.standIns, seedAs, machine.github),
           });
         });
 

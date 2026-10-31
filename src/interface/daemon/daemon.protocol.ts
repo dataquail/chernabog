@@ -6,6 +6,13 @@ import * as Schema from "effect/Schema";
 import { CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
 import { HoldView } from "../../modules/runs/use-cases/hold.result.ts";
 import { ActiveRun, RunView } from "../../modules/runs/use-cases/run.result.ts";
+import {
+  PullRequestOpened,
+  RunEnteredStep,
+  RunFinished,
+  RunNeedsAttention,
+  RunStarted,
+} from "../../modules/runs/use-cases/run-event.result.ts";
 import { RunMarkerView } from "../../modules/runs/use-cases/run-marker.result.ts";
 import { SkipView } from "../../modules/runs/use-cases/skip.result.ts";
 
@@ -34,8 +41,13 @@ export const FlowStatus = Schema.Struct({
   offReason: Schema.optionalKey(Schema.String),
   // What the last tick found waiting for a run.
   queued: Schema.Array(Schema.String),
-  // What it left for other machines, by flows.<flow>.assignee and reviewRequested.
+  // What its trigger left for other personas or machines, each with why.
   assignedElsewhere: Schema.optionalKey(Schema.Array(Schema.String)),
+  // What its trigger says waits on someone, each with who and why, such as
+  // "pr-73 waits on bob (not on this machine)".
+  waiting: Schema.optionalKey(Schema.Array(Schema.String)),
+  // Whether it is the flow `chernabog start <issue>` runs, as it declares.
+  start: Schema.optionalKey(Schema.Boolean),
   // For a flow imported from a recipe package, the package and its version,
   // as `@acme/recipes@2.1.0`; absent for a flow in the repo.
   source: Schema.optionalKey(Schema.String),
@@ -152,3 +164,16 @@ export const CancelRequest = Schema.Struct({
 });
 
 export type CancelRequest = typeof CancelRequest.Type;
+
+// What the dashboard's /events stream sends: what happened to a run, as the
+// runs' commands dispatch it. A resumed run can say one again, under the same
+// eventId, for a client to drop.
+export const DaemonEvent = Schema.Union([
+  RunStarted,
+  RunEnteredStep,
+  RunNeedsAttention,
+  RunFinished,
+  PullRequestOpened,
+]);
+
+export type DaemonEvent = typeof DaemonEvent.Type;

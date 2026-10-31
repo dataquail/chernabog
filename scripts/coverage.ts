@@ -19,7 +19,9 @@ export type Threshold = { readonly lines: number; readonly functions: number };
 // Coverage when the floor was set, rounded down: it stops regressions, it is not
 // a target. Raise it when coverage rises. It is here, not bunfig.toml's
 // coverageThreshold, because Bun holds every file to that, not the total.
-export const floor: Threshold = { lines: 0.91, functions: 0.67 };
+// Functions was 0.67 while it counted modules that only declare; without them
+// main measured 86.7% (2026-10-30), held to 0.85 so the CQRS move has room.
+export const floor: Threshold = { lines: 0.91, functions: 0.85 };
 
 const field = (record: ReadonlyArray<string>, key: string) =>
   Option.map(
@@ -51,17 +53,22 @@ export const declaresOnly = (file: FileCoverage) =>
 // Nothing to cover is fully covered, as Bun counts it.
 const fraction = ({ found, hit }: Counts) => hit / Math.max(found, 1) + Number(found === 0);
 
-// What bun test gates on: the mean of each file's fraction, as its "All files" row.
+// The mean of each file's fraction, as bun test's "All files" row, except that
+// functions leaves out the modules that only declare: each counted 0%, so every
+// command and query message the CQRS move added lowered it.
 export const totals = (files: ReadonlyArray<FileCoverage>): Threshold => {
-  const mean = (measure: (file: FileCoverage) => number) =>
-    Arr.match(files, {
+  const mean = (among: ReadonlyArray<FileCoverage>, measure: (file: FileCoverage) => number) =>
+    Arr.match(among, {
       onEmpty: () => 1,
       onNonEmpty: (all) => all.reduce((sum, file) => sum + measure(file), 0) / all.length,
     });
 
   return {
-    lines: mean((file) => fraction(file.lines)),
-    functions: mean((file) => fraction(file.functions)),
+    lines: mean(files, (file) => fraction(file.lines)),
+    functions: mean(
+      files.filter((file) => !declaresOnly(file)),
+      (file) => fraction(file.functions),
+    ),
   };
 };
 
@@ -112,7 +119,7 @@ export const renderSummary = (files: ReadonlyArray<FileCoverage>, threshold: Thr
     "| --- | ---: | ---: |",
     ...Arr.sort(files, byPath).map(fileRow),
     "",
-    "Functions is n/a for a module that only declares: Bun counts it one function that never ran, though every line did.",
+    "Functions is n/a for a module that only declares, and the total leaves it out: Bun counts it one function that never ran, though every line did.",
     "",
     "</details>",
     "",

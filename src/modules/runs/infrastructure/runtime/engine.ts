@@ -7,11 +7,12 @@
 import {
   Agent,
   AgentError,
+  CAPABILITIES,
+  Capabilities,
   Claims,
   describeError,
   type Flow,
   FlowPackage,
-  Git,
   GitHub,
   isSetupError,
   Markers,
@@ -19,9 +20,11 @@ import {
   type RepoSettings,
   Run,
   RunLog,
+  Settings,
   type SetupError,
   Signals,
   Skip,
+  Subjects,
   WorkItem,
 } from "@chernabog/core";
 import { SqliteClient } from "@effect/sql-sqlite-bun";
@@ -52,16 +55,11 @@ import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
-import type { EffectiveRepo } from "../../../../repo-config.ts";
+import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
+import { type WorkflowOutcome } from "../../domain/ports/clients/workflows.client.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
-import { enterStepUseCase } from "../../use-cases/enter-step.use-case.ts";
-import { findRunUseCase } from "../../use-cases/find-run.use-case.ts";
-import { type RunOutcome } from "../../use-cases/finish-run.use-case.ts";
-import { forgetMarkerUseCase } from "../../use-cases/forget-marker.use-case.ts";
-import { holdMarkerUseCase } from "../../use-cases/hold-marker.use-case.ts";
-import { linkPullRequestUseCase } from "../../use-cases/link-pull-request.use-case.ts";
-import { listRunMarkersUseCase } from "../../use-cases/list-run-markers.use-case.ts";
-import { parkRunUseCase } from "../../use-cases/park-run.use-case.ts";
+import { RunsCommands, RunsCommandsLive } from "../../runs.command-handlers.ts";
+import { RunsQueries, RunsQueriesLive } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
@@ -285,39 +283,6 @@ export const capturing = <Args extends ReadonlyArray<unknown>, A, E, R>(
         Effect.provideContext(use(...args), context),
   );
 
-// The run's GitHub, which links the run to a pull request it opens, or to an
-// open one it finds for its branch and adopts: the only ways a flow takes a
-// pull request on for its work. Services without GitHub stay as they are.
-export const linkingPullRequests = <R>(
-  context: Context.Context<R>,
-  link: (pullRequest: number) => Effect.Effect<void>,
-): Context.Context<R> =>
-  Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(Effect.tap((opened) => link(opened.number))),
-          pullRequestForBranch: (branch) =>
-            github
-              .pullRequestForBranch(branch)
-              .pipe(
-                Effect.tap((found) =>
-                  Effect.forEach(
-                    Option.toArray(Option.filter(found, (pull) => pull.state === "open")),
-                    (pull) => link(pull.number),
-                    { discard: true },
-                  ),
-                ),
-              ),
-        }),
-      ),
-  });
-
 // The executions told to stop, by id. The engine's interrupt lands only
 // between activities, and an activity in progress, such as an agent step an
 // hour long, checks nothing. So a run told to stop ends its workflow at once,
@@ -411,145 +376,34 @@ export const stoppingWith = <R>(
       ),
   });
 
-// The run's GitHub and Git, which report the changes other flows act on: pull
-// requests, pushes, reviews, merges, labels, statuses, comments and other API
-// writes, so no flow declares them. Branches made or deleted, Git.run, a
-// .chernabog/stages/ step's own process and the agent's own gh or git aren't
-// seen here; the run's end, or cron, catches those. A change is reported once
-// made; a failed one changed nothing to tick for.
+// The run's capabilities, which report the changes other flows act on: every
+// write a capability declares (pull requests, pushes, reviews, labels,
+// comments, other API writes…), so no flow declares them. What a port doesn't
+// declare a write (a claim, Git.run), a .chernabog/stages/ step's own process
+// and the agent's own gh or git aren't seen here; the run's end, or cron,
+// catches those. A change is reported once made; a failed one changed nothing
+// to tick for.
 export const reportingChanges = <R>(
   context: Context.Context<R>,
   changed: (what: string, item: Option.Option<number>) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const on =
-    (what: string, item: Option.Option<number> = Option.none()) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.tap(effect, () => changed(what, item));
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.tap(call, (result) => changed(write.done, write.item(result))),
+  );
 
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) =>
-            github.comment(number, body).pipe(on("commented", Option.some(number))),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(on(`labelled ${label}`, Option.some(number))),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(on(`unlabelled ${label}`, Option.some(number))),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(on(`moved to ${status}`, Option.some(number))),
-          assignSelf: (number) =>
-            github.assignSelf(number).pipe(on("assigned", Option.some(number))),
-          openPullRequest: (pullRequest) =>
-            github
-              .openPullRequest(pullRequest)
-              .pipe(
-                Effect.tap((opened) => changed("pull request opened", Option.some(opened.number))),
-              ),
-          requestReviewers: (pullRequest, logins) =>
-            github
-              .requestReviewers(pullRequest, logins)
-              .pipe(on("review requested", Option.some(pullRequest))),
-          review: (pullRequest, review) =>
-            github
-              .review(pullRequest, review)
-              .pipe(on("review submitted", Option.some(pullRequest))),
-          merge: (pullRequest, merge) =>
-            github.merge(pullRequest, merge).pipe(on("merged", Option.some(pullRequest))),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(on(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(on(`pushed ${branch}`)),
-        }),
-      ),
-  });
-};
-
-// The run's GitHub and Git, which check before each write another person or
-// run sees (comments, labels, assignments, statuses, pull requests, reviews,
-// merges, other API writes and pushes) that `fence` lets it through: that
-// every claim the run holds still names it. A run that lost one never gets
-// past the check. A small window between the check and the write remains.
+// The run's capabilities, which check before each write they declare, each
+// one another person or run sees, that `fence` lets it through: that every
+// claim the run holds still names it. A run that lost one never gets past
+// the check. A small window between the check and the write remains.
 export const fencing = <R>(
   context: Context.Context<R>,
   fence: (what: string) => Effect.Effect<void>,
-): Context.Context<R> => {
-  const first =
-    (what: string) =>
-    <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.andThen(fence(what), effect);
-
-  const withGitHub = Option.match(Context.getOption(context, GitHub), {
-    onNone: () => context,
-    onSome: (github) =>
-      Context.add(
-        context,
-        GitHub,
-        GitHub.of({
-          ...github,
-          comment: (number, body) => github.comment(number, body).pipe(first("commenting")),
-          addLabel: (number, label) =>
-            github.addLabel(number, label).pipe(first(`labelling ${label}`)),
-          removeLabel: (number, label) =>
-            github.removeLabel(number, label).pipe(first(`unlabelling ${label}`)),
-          moveToStatus: (number, status) =>
-            github.moveToStatus(number, status).pipe(first(`moving to ${status}`)),
-          assignSelf: (number) => github.assignSelf(number).pipe(first("assigning")),
-          openPullRequest: (pullRequest) =>
-            github.openPullRequest(pullRequest).pipe(first("opening a pull request")),
-          requestReviewers: (pullRequest, logins) =>
-            github.requestReviewers(pullRequest, logins).pipe(first("requesting review")),
-          review: (pullRequest, review) =>
-            github.review(pullRequest, review).pipe(first("reviewing")),
-          merge: (pullRequest, merge) => github.merge(pullRequest, merge).pipe(first("merging")),
-          request: (method, path, body) =>
-            Option.match(
-              Option.liftPredicate(method, (named) => named !== "GET"),
-              {
-                onNone: () => github.request(method, path, body),
-                onSome: (writing) =>
-                  github.request(method, path, body).pipe(first(`${writing} ${path}`)),
-              },
-            ),
-        }),
-      ),
-  });
-
-  return Option.match(Context.getOption(withGitHub, Git), {
-    onNone: () => withGitHub,
-    onSome: (git) =>
-      Context.add(
-        withGitHub,
-        Git,
-        Git.of({
-          ...git,
-          push: (cwd, branch) => git.push(cwd, branch).pipe(first(`pushing ${branch}`)),
-        }),
-      ),
-  });
-};
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) =>
+    Effect.andThen(fence(write.doing), call),
+  );
 
 // The fence a run's writes pass (fencing): every claim it holds, as its
 // claim-ref markers say, still names it. One that doesn't completes `lost`
@@ -616,6 +470,15 @@ const provideFlowPackage =
         }),
     });
 
+// The flow's settings as `persona` runs it; none for a persona the repo no longer has.
+export const flowSettingsFor = (handle: FlowHandle, persona: Persona) =>
+  Settings.FlowSettings.of({
+    input: Option.match(personaOf(handle.repo, persona), {
+      onNone: () => ({}),
+      onSome: (own) => flowSettingsInput(own, handle.name),
+    }),
+  });
+
 // The markers a run holds, recorded against it for their release when it
 // ends. A marker neither the SDK nor the flow defines couldn't be released,
 // so holding one fails.
@@ -627,15 +490,15 @@ const markerHolds = (runId: RunId, flow: Flow) =>
 
     const hold = yield* capturing(
       (name: string, args: Schema.Json, keepOn: ReadonlyArray<string>) =>
-        holdMarkerUseCase({ runId, name, args, keepOn }),
+        RunsCommands.use((runs) => runs.HoldMarkerCommand({ runId, name, args, keepOn })),
     );
 
     const forget = yield* capturing((name: string, args: Schema.Json) =>
-      forgetMarkerUseCase({ runId, name, args }),
+      RunsCommands.use((runs) => runs.ForgetMarkerCommand({ runId, name, args })),
     );
 
     const held = yield* capturing((name: string) =>
-      listRunMarkersUseCase(runId, Option.some(name)).pipe(
+      RunsQueries.use((runs) => runs.ListRunMarkersQuery({ runId, name: Option.some(name) })).pipe(
         Effect.map((found) => found.markers.map((marker) => marker.args)),
       ),
     );
@@ -658,144 +521,155 @@ export const flowLayer = <R>(
   servicesFor: ServicesFor<R>,
   hooks: StepHooks = noHooks,
 ) =>
-  handle.workflow.toLayer((payload, executionId) =>
-    Effect.gen(function* () {
-      const runId = RunId.make(payload.runId);
-      const row = (yield* findRunUseCase(runId)).run;
+  handle.workflow
+    .toLayer((payload, executionId) =>
+      Effect.gen(function* () {
+        const runId = RunId.make(payload.runId);
+        const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
 
-      // A run started under a core this binary doesn't provide is never
-      // replayed under this one: it goes to a person before any of its flow runs.
-      const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.coreVersion));
+        // A run started under a core this binary doesn't provide is never
+        // replayed under this one: it goes to a person before any of its flow runs.
+        const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.coreVersion));
 
-      for (const version of Option.toArray(
-        Option.filter(started, (sdk) => !resumesRunsFrom(sdk)),
-      )) {
-        return {
-          status: "needs-human",
-          summary: unsupportedRunSummary(version),
-        } satisfies RunResult;
-      }
+        for (const version of Option.toArray(
+          Option.filter(started, (sdk) => !resumesRunsFrom(sdk)),
+        )) {
+          return {
+            status: "needs-human",
+            summary: unsupportedRunSummary(version),
+          } satisfies RunResult;
+        }
 
-      const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
-        Option.flatMap(row, (found) => found.persona),
-      );
+        const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
+          Option.flatMap(row, (found) => found.persona),
+        );
 
-      // A run from before personas acts as the implicit persona while the repo
-      // still has one, else as its first persona. Its row may not say so yet:
-      // the engine can resume it before the daemon adopts it.
-      const persona = Option.match(named, {
-        onSome: (login): Persona => Option.some(login),
-        onNone: () => {
-          if (Option.isSome(servicesFor(IMPLICIT))) {
-            return IMPLICIT;
-          }
+        // A run from before personas acts as the implicit persona while the repo
+        // still has one, else as its first persona. Its row may not say so yet:
+        // the engine can resume it before the daemon adopts it.
+        const persona = Option.match(named, {
+          onSome: (login): Persona => Option.some(login),
+          onNone: () => {
+            if (Option.isSome(servicesFor(IMPLICIT))) {
+              return IMPLICIT;
+            }
 
-          return defaultPersona(handle.repo);
-        },
-      });
-
-      const services = servicesFor(persona);
-
-      if (Option.isNone(services)) {
-        const who = Option.getOrElse(persona, () => "the implicit persona");
-
-        return yield* new RunFailed({
-          message: `${who} no longer runs ${handle.repo.settings.name}; add it back to the repo's personas to finish this run`,
+            return defaultPersona(handle.repo);
+          },
         });
-      }
 
-      const context = yield* services.value.pipe(
-        Effect.mapError((error) => new RunFailed({ message: error.message })),
-      );
+        const services = servicesFor(persona);
 
-      // A step reported after its run ended changes nothing.
-      const enterStep = yield* capturing((step: string) =>
-        enterStepUseCase(runId, step).pipe(
-          Effect.catchTags({
-            RunAlreadyFinished: () => Effect.void,
-            RunNotFound: () => Effect.void,
-          }),
-        ),
-      );
+        if (Option.isNone(services)) {
+          const who = Option.getOrElse(persona, () => "the implicit persona");
 
-      const park = yield* capturing(parkRunUseCase);
+          return yield* new RunFailed({
+            message: `${who} no longer runs ${handle.repo.settings.name}; add it back to the repo's personas to finish this run`,
+          });
+        }
 
-      const link = yield* capturing((pullRequest: number) =>
-        linkPullRequestUseCase(runId, pullRequest).pipe(
-          Effect.catchTags({
-            RunAlreadyFinished: () => Effect.void,
-            RunNotFound: () => Effect.void,
-          }),
-          Effect.asVoid,
-        ),
-      );
+        const context = yield* services.value.pipe(
+          Effect.mapError((error) => new RunFailed({ message: error.message })),
+        );
 
-      const runLog = yield* runLogFor(payload.runId, {
-        onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
-        onStepDone: hooks.onStepDone,
-        onChange: hooks.onChange,
-      });
+        // A step reported after its run ended changes nothing.
+        const enterStep = yield* capturing((step: string) =>
+          RunsCommands.use((runs) => runs.EnterStepCommand({ runId, step })).pipe(
+            Effect.catchTags({
+              RunAlreadyFinished: () => Effect.void,
+              RunNotFound: () => Effect.void,
+            }),
+          ),
+        );
 
-      const signals = Signals.of({
-        register: (signal, deferred, token) =>
-          park({ runId, signal, deferred, token }).pipe(Effect.asVoid),
-      });
+        const park = yield* capturing(
+          (parking: { signal: string; deferred: string; token: string }) =>
+            RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
+        );
 
-      const flow = yield* flowOfRun(
-        handle,
-        Option.flatMap(row, (found) => found.configTree),
-      );
+        // A subject named after its run ended changes nothing.
+        const nameSubject = yield* capturing((subject: string) =>
+          RunsCommands.use((runs) => runs.NameSubjectCommand({ runId, subject })).pipe(
+            Effect.catchTags({
+              RunAlreadyFinished: () => Effect.void,
+              RunNotFound: () => Effect.void,
+            }),
+            Effect.asVoid,
+          ),
+        );
 
-      const holds = yield* markerHolds(runId, flow);
-      const lost = yield* Deferred.make<string>();
-      const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
+        const runLog = yield* runLogFor(payload.runId, {
+          onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
+          onStepDone: hooks.onStepDone,
+          onChange: hooks.onChange,
+        });
 
-      const outcome = yield* flow.workflow(payload.item).pipe(
-        Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
-        surfaceSetup,
-        Effect.catch(outcomeOf),
-        Effect.provideService(Run, {
-          flow: handle.name,
-          runId: payload.runId,
-          executionId,
-          item: payload.item,
-          leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
-        }),
-        // An imported flow's prompts and steps are looked up in its package after the repo.
-        provideFlowPackage(flow),
-        Effect.provideService(RunLog, runLog),
-        Effect.provideService(Signals, signals),
-        Effect.provideService(Markers.MarkerHolds, holds),
-        Effect.provideContext(
-          stoppingWith(
-            fencing(
-              reportingChanges(linkingPullRequests(context, link), (what, item) =>
-                hooks.onChange(handle.repo.settings.name, localCause(what, item)),
-              ),
-              fence,
-            ),
+        const signals = Signals.of({
+          register: (signal, deferred, token) =>
+            park({ signal, deferred, token }).pipe(Effect.asVoid),
+        });
+
+        const flow = yield* flowOfRun(
+          handle,
+          Option.flatMap(row, (found) => found.configTree),
+        );
+
+        const holds = yield* markerHolds(runId, flow);
+        const lost = yield* Deferred.make<string>();
+        const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
+
+        const outcome = yield* flow.workflow(payload.item).pipe(
+          Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
+          surfaceSetup,
+          Effect.catch(outcomeOf),
+          Effect.provideService(Run, {
+            flow: handle.name,
+            runId: payload.runId,
             executionId,
+            item: payload.item,
+            leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
+          }),
+          // An imported flow's prompts and steps are looked up in its package after the repo.
+          provideFlowPackage(flow),
+          Effect.provideService(RunLog, runLog),
+          Effect.provideService(Signals, signals),
+          Effect.provideService(Markers.MarkerHolds, holds),
+          Effect.provideService(
+            Subjects.RunSubjects,
+            Subjects.RunSubjects.of({ name: nameSubject }),
           ),
-        ),
-        // A run that lost its item ends as lost, before any flow sees why.
-        (workflow) =>
-          Effect.raceFirst(
-            workflow,
-            Deferred.await(lost).pipe(
-              Effect.map((reason): RunResult => ({ status: "lost", summary: reason })),
+          Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
+          Effect.provideContext(
+            stoppingWith(
+              fencing(
+                reportingChanges(context, (what, item) =>
+                  hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+                ),
+                fence,
+              ),
+              executionId,
             ),
           ),
-        // Told to stop, it ends as an interrupt, before any flow sees why.
-        untilStopped(executionId),
-      );
+          // A run that lost its item ends as lost, before any flow sees why.
+          (workflow) =>
+            Effect.raceFirst(
+              workflow,
+              Deferred.await(lost).pipe(
+                Effect.map((reason): RunResult => ({ status: "lost", summary: reason })),
+              ),
+            ),
+          // Told to stop, it ends as an interrupt, before any flow sees why.
+          untilStopped(executionId),
+        );
 
-      yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
+        yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
 
-      return outcome;
-    }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
-  );
+        return outcome;
+      }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
+    )
+    .pipe(Layer.provide(Layer.mergeAll(RunsQueriesLive, RunsCommandsLive)));
 
-export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): RunOutcome => {
+export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): WorkflowOutcome => {
   if (Exit.isSuccess(exit)) {
     return exit.value;
   }

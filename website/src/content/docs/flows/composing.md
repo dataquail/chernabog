@@ -11,23 +11,29 @@ This is the `implement` recipe, as `chernabog recipes add implement` bakes it, w
 
 ```ts
 // .chernabog/flows/implement.ts
-import { Claims, defineFlow, GitHub, Implement, Repo, reportAs, Skip } from '@chernabog/sdk';
+import { Claims, defineFlow, GitHub, Implement, reportAs, Settings, Skip } from '@chernabog/sdk';
 import * as Effect from 'effect/Effect';
 import * as Option from 'effect/Option';
+import * as Schema from 'effect/Schema';
 
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
-  const repo = yield* Repo;
-  const eligible = yield* github.queuedIssuesLabelled(repo.labels.eligible);
-  const shipping = (yield* github.queuedIssuesLabelled(repo.labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
+  const labels = yield* Settings.labels;
+  const eligible = yield* github.queuedIssuesLabelled(labels.eligible);
+  const shipping = (yield* github.queuedIssuesLabelled(labels.ship)).filter((issue) => !eligible.some((queued) => queued.number === issue.number));
 
-  return [...eligible.map((issue) => Implement.issueItem(issue)), ...shipping.map((issue) => Implement.issueItem(issue, Option.some(repo.labels.ship)))];
+  return [...eligible.map((issue) => Implement.issueItem(issue)), ...shipping.map((issue) => Implement.issueItem(issue, Option.some(labels.ship)))];
 }).pipe(reportAs('trigger'));
+
+// What config.yaml may set for this flow: the SDK's settings its blocks read.
+const settings = Schema.Struct({ ...Settings.Labels.fields, ...Settings.Board.fields, ...Settings.LocalGate.fields, ...Settings.Rules.fields, ...Settings.Ci.fields, ...Settings.Reviewers.fields });
 
 export default defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
+  labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...Implement.adoptionLabels]),
+  settings,
   workflow: (item) =>
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
@@ -92,7 +98,7 @@ return yield* PullRequest.handToPerson(pullRequest, 'review 1 requested changes'
 
 The ending is the flow's choice. Each of these leaves the labels the way [the label contract](/chernabog/flows/sdk/#the-label-contract) asks:
 
-- **Merge on the automated path.** `PullRequest.mergeOrLeave(pr)` merges an `auto:ship` pull request with `PullRequest.merge(pr, { method: "squash" })`, and leaves any other one for a person to merge. `merge` merges only when the required checks are green, the latest review approved that very head (or one the head has only cleanly merged its base into since), no `humanOnlyPaths` are touched, and GitHub allows it; otherwise it fails with `MergeRefused`, and `mergeOrLeave` labels the pull request `auto:needs-human` with the reason. A recipe's own `mergeIfShipping` does the same with `Effect.catchTag('MergeRefused', …)`. See [Merging](/chernabog/flows/flows/#merging).
+- **Merge on the automated path.** `PullRequest.mergeOrLeave(pr)` merges an `auto:ship` pull request with `PullRequest.merge(pr, { method: "squash" })`, and leaves any other one for a person to merge. `merge` merges only when the required checks are green, the latest review approved that very head (or one the head has only cleanly merged its base into since), no `humanOnlyPaths` are touched, and GitHub allows it; otherwise it fails with `MergeRefused`, and `mergeOrLeave` labels the pull request `auto:needs-human` with the reason. A layer of a stack waits for the layer below instead: `PullRequest.waitingOnLayer(pr)` says why, and `mergeOrLeave` leaves it approved, for the epic run to merge once it is on the base. A recipe's own `mergeIfShipping` does the same, with `waitingOnLayer` and `Effect.catchTag('MergeRefused', …)`. See [Merging](/chernabog/flows/flows/#merging).
 - **Hand to a person.** `PullRequest.handToPerson(pr, reason)` labels the pull request `auto:needs-human` and says why; `Implement.handToHuman` does the same for the issue and its pull request.
 - **Ask for a review.** `PullRequest.requestReview(pr)` asks one reviewer from the pool, as `handOff` does.
 - **Comment and stop.** `PullRequest.comment(pr, …)` posts and does nothing else.

@@ -4,12 +4,22 @@
 
 import { fileURLToPath } from "node:url";
 
-import { Claims, DEFAULT_LABELS, Plan, printJson } from "@chernabog/sdk";
+import {
+  Claims,
+  DEFAULT_LABELS,
+  type Flow,
+  labelsOf,
+  Plan,
+  printJson,
+  Repo,
+  Settings,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import implement from "../packages/recipes/flows/implement.ts";
@@ -17,14 +27,18 @@ import RecipesPackage from "../packages/recipes/package.json" with { type: "json
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
 import { RecipePackageManifest } from "../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
+import { RecipesCommandsLive } from "../src/modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
-import { listRecipesUseCase } from "../src/modules/recipes/use-cases/list-recipes.use-case.ts";
+import {
+  RecipesQueries,
+  RecipesQueriesLive,
+} from "../src/modules/recipes/recipes.query-handlers.ts";
 import { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { scripted } from "./asker.ts";
 import { effect } from "./effect-test.ts";
-import { type Fake, flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, ISSUE, makeFake, settings } from "./sdk-fakes.ts";
 
 const PACKAGE = fileURLToPath(new URL("../packages/recipes", import.meta.url));
 
@@ -59,7 +73,7 @@ const recipeText = (file: string) =>
   FileSystem.FileSystem.use((fs) => fs.readFileString(`${PACKAGE}/${file}`));
 
 const recipes = (layer: Layer.Layer<Asker>) =>
-  Layer.mergeAll(layer, RecipesLayer).pipe(
+  Layer.mergeAll(layer, RecipesLayer, RecipesQueriesLive, RecipesCommandsLive).pipe(
     Layer.provideMerge(Layer.mergeAll(Exec.layer, HostEnvironment.layer)),
   );
 
@@ -74,7 +88,7 @@ const bake = (repo: string, ...names: ReadonlyArray<string>) =>
   baking(Asker.none, repo, Option.some(names));
 
 const installed = (repo: string) =>
-  listRecipesUseCase(repo).pipe(
+  RecipesQueries.use((queries) => queries.ListRecipesQuery({ root: repo })).pipe(
     Effect.map(({ recipes: listed }) =>
       listed.filter((recipe) => recipe.state === "copied").map((recipe) => recipe.ref),
     ),
@@ -124,6 +138,43 @@ describe("the recipes", () => {
         expect(yield* recipeText(recipe.flow)).not.toMatch(
           /\b(Implement|Review)\.(workflow|reReviewWorkflow|addressWorkflow)\b/,
         );
+      }
+    }),
+  );
+
+  // Each recipe's flow, as its package exports it.
+  const flowOf = (recipe: (typeof RECIPES)[number]) =>
+    Effect.promise(
+      (): Promise<{ readonly default: Flow }> => import(`${PACKAGE}/${recipe.flow}`),
+    ).pipe(Effect.map((module) => module.default));
+
+  effect("each declares the SDK's settings it reads, and refuses a bad one when it loads", () =>
+    Effect.gen(function* () {
+      for (const recipe of RECIPES) {
+        const flow = yield* flowOf(recipe);
+        const declared = Option.getOrThrow(Option.fromUndefinedOr(flow.settings));
+
+        expect(Schema.decodeResult(declared)({}).pipe(Result.isSuccess)).toBe(true);
+        expect(
+          Schema.decodeResult(declared)({ labels: { needsHuman: 3 } }).pipe(Result.isFailure),
+        ).toBe(true);
+      }
+    }),
+  );
+
+  effect("each declares the labels it uses, under the names its settings give them", () =>
+    Effect.gen(function* () {
+      for (const recipe of RECIPES) {
+        const labels = yield* labelsOf(yield* flowOf(recipe)).pipe(
+          Effect.provideService(Repo, settings),
+          Effect.provideService(Settings.FlowSettings, {
+            input: { labels: { needsHuman: "team:needs-person" } },
+          }),
+        );
+
+        const names = labels.map((label) => label.name);
+        expect(names).toContain("team:needs-person");
+        expect(names).not.toContain(DEFAULT_LABELS.needsHuman);
       }
     }),
   );
@@ -191,7 +242,7 @@ describe("installing recipes", () => {
     Effect.gen(function* () {
       const found = yield* Effect.flip(bake(yield* checkout, "implement", "ship"));
       expect(found.message).toBe(
-        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, human-initiated, post-merge)",
+        "no recipe named ship (there are: implement, review, re-review, address-review, resolve-conflicts, plan, epic, human-initiated, post-merge)",
       );
     }),
   );
@@ -239,11 +290,12 @@ describe("choosing recipes", () => {
           "address-review",
           "resolve-conflicts",
           "plan",
+          "epic",
           "human-initiated",
           "post-merge",
         ]);
         expect(offered.some((choice) => choice.selected === true)).toBe(false);
-        expect(offered[5]?.description).toContain(
+        expect(offered[6]?.description).toContain(
           "https://dataquail.github.io/chernabog/recipes/human-initiated/",
         );
       }),

@@ -12,10 +12,12 @@ import {
   DEFAULT_LABELS,
   type Flow,
   isManual,
+  type Json,
   type LauncherCommands,
   type Limits,
   type RepoSettings,
   type ResolvedLauncher,
+  type Settings,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
@@ -23,7 +25,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
@@ -39,7 +43,6 @@ import {
   toRoot as entryToRoot,
 } from "./modules/enrollment/infrastructure/repositories/enrolled-repo.mapper.ts";
 import { FLOW_TURNED_OFF } from "./modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { namesMe, type Routing } from "./modules/runs/domain/routing/routing.value-object.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "./modules/runs/domain/schedule/event-tick.value-object.ts";
 import {
   DEFAULT_LEASE_LIMITS,
@@ -55,14 +58,13 @@ import {
 import type { GateConfig } from "./modules/runs/infrastructure/runtime/usage-gate.ts";
 import { describeNewerStamp, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
+import { knownDefaultBranch } from "./platform/config-snapshot.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { FileBusy, updateFile } from "./platform/file-lock.ts";
 import { checkRunnable } from "./platform/flow-deps.ts";
 import { type PackageOverrides } from "./platform/flow-loader.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
-
-export type { Routing };
 
 export { FLOW_TURNED_OFF };
 
@@ -120,12 +122,20 @@ const RepoFlowSettings = Schema.Struct({
   from: Schema.optionalKey(FlowFrom),
 });
 
+// A key a flow's settings hold now, kept until core's next major (ADR 0005).
+const deprecated = (key: string) =>
+  `Deprecated: set ${key} under settings: (every flow) or flows.<name>.settings, where the flows that use it read it. A flow's settings win over this.`;
+
+// A recipe's limit, kept here until core's next major (ADR 0005).
+const recipeLimit = <S extends Schema.Top>(key: string, schema: S) =>
+  Schema.optionalKey(schema.annotate({ description: deprecated(key) }));
+
 const LimitsFile = Schema.Struct({
-  localGateRounds: Schema.optionalKey(Schema.Int),
-  ciRounds: Schema.optionalKey(Schema.Int),
-  reviewRounds: Schema.optionalKey(Schema.Int),
-  staleAfter: Schema.optionalKey(DurationText),
-  ciTimeout: Schema.optionalKey(DurationText),
+  localGateRounds: recipeLimit("localGateRounds", Schema.Int),
+  ciRounds: recipeLimit("ciRounds", Schema.Int),
+  reviewRounds: recipeLimit("reviewRounds", Schema.Int),
+  staleAfter: recipeLimit("staleAfter", DurationText),
+  ciTimeout: recipeLimit("ciTimeout", DurationText),
   // The least time between two ticks of a persona's flow that events ask for (#138).
   eventTickMin: Schema.optionalKey(DurationText),
   // How often the daemon asks whether each run's work item is still valid (#142).
@@ -135,10 +145,9 @@ const LimitsFile = Schema.Struct({
   leaseTtl: Schema.optionalKey(DurationText),
   parkedLeaseTtl: Schema.optionalKey(DurationText),
   leaseRenewEvery: Schema.optionalKey(DurationText),
-  planNodes: Schema.optionalKey(Schema.Int),
-  planRounds: Schema.optionalKey(Schema.Int),
-  stackDepth: Schema.optionalKey(Schema.Int),
-  postMergeNoCiGrace: Schema.optionalKey(DurationText),
+  planNodes: recipeLimit("planNodes", Schema.Int),
+  planRounds: recipeLimit("planRounds", Schema.Int),
+  stackDepth: recipeLimit("stackDepth", Schema.Int),
 });
 
 const Board = Schema.Struct({
@@ -169,17 +178,34 @@ const MachineOnly = Schema.optionalKey(
   Schema.Never.annotate({ description: MACHINE_ONLY, message: MACHINE_ONLY }),
 );
 
+// What every flow's settings start from, before flows.<name>.settings.
+const SharedSettings = Schema.Record(Schema.String, Schema.Json).annotate({
+  description:
+    "Settings every flow shares, such as the reviewer pool (reviewers), the CI limits (ciRounds, ciTimeout) and the local gate (localGate, install), read by the flows whose settings declare them. flows.<name>.settings overrides them key by key.",
+});
+
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
-  baseBranch: Schema.optionalKey(Schema.String),
-  install: Nullable(Schema.String),
-  localGate: Schema.optionalKey(Strings),
-  humanOnly: Schema.optionalKey(Strings),
-  humanOnlyPaths: Schema.optionalKey(Strings),
-  notes: Schema.optionalKey(Strings),
-  board: Nullable(Board),
-  reviewTrigger: Nullable(Schema.String),
-  labels: Schema.optionalKey(LabelsFile),
+  baseBranch: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        "Deprecated: set base under settings: (every flow) or flows.<name>.settings, the branch a flow's work starts from and targets. It never chose the branch .chernabog/ is read from, which is GitHub's default. A flow's base wins over this.",
+    }),
+  ),
+  settings: Schema.optionalKey(SharedSettings),
+  install: Nullable(Schema.String.annotate({ description: deprecated("install") })),
+  localGate: Schema.optionalKey(Strings.annotate({ description: deprecated("localGate") })),
+  humanOnly: Schema.optionalKey(Strings.annotate({ description: deprecated("humanOnly") })),
+  humanOnlyPaths: Schema.optionalKey(
+    Strings.annotate({ description: deprecated("humanOnlyPaths") }),
+  ),
+  notes: Schema.optionalKey(Strings.annotate({ description: deprecated("notes") })),
+  board: Nullable(Board.annotate({ description: deprecated("board") })),
+  // Read by nothing; accepted, so a config that sets it still loads, until core's next major.
+  reviewTrigger: Nullable(
+    Schema.String.annotate({ description: "Deprecated, and has no effect." }),
+  ),
+  labels: Schema.optionalKey(LabelsFile.annotate({ description: deprecated("labels") })),
   schedule: Schema.optionalKey(Schema.String),
   agent: Schema.optionalKey(Schema.String),
   // The team's default launcher, and the launchers a person may choose; any, when left out.
@@ -190,8 +216,7 @@ export const RepoConfigFile = Schema.Struct({
   runners: Schema.optionalKey(Runners),
   reviewers: Schema.optionalKey(
     Strings.annotate({
-      description:
-        "The reviewer pool, by GitHub login: a pull request with green CI asks one of them at random to review it, never its author. Each needs write access, since the reviewer merges on the automated path (auto:ship).",
+      description: `The reviewer pool, by GitHub login. ${deprecated("reviewers")}`,
     }),
   ),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
@@ -302,7 +327,6 @@ export const DEFAULT_LIMITS: Limits = {
   planNodes: 12,
   planRounds: 2,
   stackDepth: 4,
-  postMergeNoCiGrace: Duration.minutes(10),
 };
 
 // A change a run here makes ticks the repo's flows; notifications wait until
@@ -350,6 +374,8 @@ export type PersonaRepo = {
   readonly schedule: { readonly own: Option.Option<string>; readonly repo: Option.Option<string> };
   readonly activeHours: Option.Option<string>;
   readonly flows: Readonly<Record<string, FlowSettings>>;
+  // The team's settings: for every flow, before each one's flows.<name>.settings.
+  readonly shared: Settings.Input;
   // The flows this persona runs: the ones machine config lists for it.
   readonly chosen: ReadonlyArray<string>;
   // What the persona chose in machine config, its own keys over the repo
@@ -413,37 +439,6 @@ export const namesRunners = (repo: RepoConfigFile, flows: ReadonlyArray<string>)
   Option.isSome(Option.fromUndefinedOr(repo.runners)) ||
   flows.some((flow) => Option.isSome(Option.fromUndefinedOr(repo.flows?.[flow]?.runners)));
 
-const listOf = (who: Option.Option<string | ReadonlyArray<string>>) =>
-  Option.map(who, (found): ReadonlyArray<string> => Arr.ensure(found));
-
-// Whose work items a flow starts as this persona; anyone's without a filter.
-export const routingOf = (repo: PersonaRepo, flow: string): Routing => {
-  const settings = Record.get(repo.flows, flow);
-
-  return {
-    assignee: Option.flatMap(settings, (found) =>
-      listOf(Option.flatten(Option.fromUndefinedOr(found.assignee))),
-    ),
-    reviewRequested: Option.flatMap(settings, (found) =>
-      listOf(Option.flatten(Option.fromUndefinedOr(found.reviewRequested))),
-    ),
-  };
-};
-
-// Whether the daemon must know this machine's GitHub login for the repo: for
-// a flow the implicit persona runs that starts only work for @me. A named
-// persona's login is its own.
-export const needsLogin = (repo: EffectiveRepo) =>
-  repo.personas.some(
-    (own) =>
-      Option.isNone(own.persona) &&
-      own.chosen.some((flow) => {
-        const routing = routingOf(own, flow);
-
-        return namesMe(routing.assignee) || namesMe(routing.reviewRequested);
-      }),
-  );
-
 // When a persona's flow ticks: the flow's own setting for the persona in
 // machine config, then the persona's default, then the team's: the flow's
 // setting in config.yaml, the flow module's, the repo's. `index` of `count`
@@ -499,13 +494,13 @@ const manualSchedules = (repo: EffectiveRepo, flowName: string) =>
 export const checkManualSchedules = (repo: EffectiveRepo, flows: ReadonlyMap<string, Flow>) =>
   Effect.forEach(
     [...flows].filter(([, flow]) => isManual(flow)),
-    ([flowName]) =>
+    ([flowName, flow]) =>
       Option.match(Arr.head(Arr.dedupe(manualSchedules(repo, flowName))), {
         onNone: () => Effect.void,
         onSome: (where) =>
           Effect.fail(
             new ConfigError({
-              message: `${repo.settings.name}: ${where} gives flows.${flowName} a schedule, but ${flowName} is a manual flow, started only with ${howToStart(flowName)}; remove the schedule`,
+              message: `${repo.settings.name}: ${where} gives flows.${flowName} a schedule, but ${flowName} is a manual flow, started only with ${howToStart(flowName, flow.start === true)}; remove the schedule`,
             }),
           ),
       }),
@@ -656,6 +651,79 @@ export const findEnrolled = (machine: MachineConfig, name: string) =>
     }),
   );
 
+const isPlainObject = (value: Json): value is Settings.Input =>
+  Predicate.isObject(value) && !Array.isArray(value);
+
+// One setting over another: two objects merge one level down.
+const overSetting = (earlier: Option.Option<Json>, value: Json): Json => {
+  const objects = Option.filter(earlier, isPlainObject);
+
+  if (Option.isSome(objects) && isPlainObject(value)) {
+    return { ...objects.value, ...value };
+  }
+
+  return value;
+};
+
+// Settings over others, key by key; a key both give as an object merges one
+// level down, so a layer can rename one label and keep the rest.
+export const mergeSettings = (under: Settings.Input, over: Settings.Input): Settings.Input => ({
+  ...under,
+  ...Record.map(over, (value, key) => overSetting(Record.get(under, key), value)),
+});
+
+// The old flows.<name>.assignee and reviewRequested, as the settings the
+// SDK's Routing reads, until core's next major (ADR 0005). null clears the
+// team's filter, as it did.
+const oldRouting = (settings: FlowSettings): Settings.Input =>
+  Record.getSomes({
+    assignee: Option.map(Option.fromUndefinedOr(settings.assignee), (who) =>
+      Option.getOrNull(Option.map(who, (found): Json => [found].flat())),
+    ),
+    reviewRequested: Option.map(Option.fromUndefinedOr(settings.reviewRequested), (who) =>
+      Option.getOrNull(Option.map(who, (found): Json => [found].flat())),
+    ),
+  });
+
+// What a persona's flow decodes its settings from: the team's shared
+// settings, then the flow's in config.yaml, then the persona's in machine
+// config, with the old routing keys under the flow's own.
+export const flowSettingsInput = (repo: PersonaRepo, flow: string) =>
+  Option.match(Record.get(repo.flows, flow), {
+    onNone: () => repo.shared,
+    onSome: (found) =>
+      mergeSettings(
+        mergeSettings(repo.shared, oldRouting(found)),
+        Option.getOrElse(Option.fromUndefinedOr(found.settings), () => ({})),
+      ),
+  });
+
+// Decodes each flow's settings with the schema it declares, as each persona
+// runs it: a setting the schema refuses fails the repo when it loads.
+export const checkFlowSettings = (repo: EffectiveRepo, flows: ReadonlyMap<string, Flow>) =>
+  Effect.forEach(
+    [...flows].flatMap(([flowName, flow]) =>
+      Option.toArray(
+        Option.map(Option.fromUndefinedOr(flow.settings), (schema) => ({ flowName, schema })),
+      ),
+    ),
+    ({ flowName, schema }) =>
+      Effect.forEach(
+        repo.personas,
+        (own) =>
+          Schema.decodeEffect(schema)(flowSettingsInput(own, flowName)).pipe(
+            Effect.mapError(
+              (issue) =>
+                new ConfigError({
+                  message: `${repo.settings.name}${asSuffix(own.persona)}: flows.${flowName}.settings: ${issue.message}`,
+                }),
+            ),
+          ),
+        { discard: true },
+      ),
+    { discard: true },
+  );
+
 const mergeFlows = (
   layers: ReadonlyArray<Readonly<Record<string, FlowSettings>>>,
   machineConcurrency: number,
@@ -667,10 +735,17 @@ const mergeFlows = (
     for (const [name, settings] of Object.entries(layer)) {
       const earlier = Option.fromUndefinedOr(merged[name]?.agents);
       const later = Option.fromUndefinedOr(settings.agents);
+      const before = Option.fromUndefinedOr(merged[name]?.settings);
+      const over = Option.fromUndefinedOr(settings.settings);
       merged[name] = { ...merged[name], ...settings };
 
       if (Option.isSome(earlier) && Option.isSome(later)) {
         merged[name] = { ...merged[name], agents: { ...earlier.value, ...later.value } };
+      }
+
+      // So are a flow's own settings, so a person can change one and keep the team's others.
+      if (Option.isSome(before) && Option.isSome(over)) {
+        merged[name] = { ...merged[name], settings: mergeSettings(before.value, over.value) };
       }
     }
   }
@@ -725,10 +800,6 @@ const limitsFrom = (file: RepoConfigFile["limits"]): Limits => ({
   planNodes: file?.planNodes ?? DEFAULT_LIMITS.planNodes,
   planRounds: file?.planRounds ?? DEFAULT_LIMITS.planRounds,
   stackDepth: file?.stackDepth ?? DEFAULT_LIMITS.stackDepth,
-  postMergeNoCiGrace: Option.getOrElse(
-    Option.flatMap(Option.fromUndefinedOr(file?.postMergeNoCiGrace), parseDuration),
-    () => DEFAULT_LIMITS.postMergeNoCiGrace,
-  ),
 });
 
 // Unlike the agent, the launcher describes the person's own machine, so their
@@ -893,8 +964,21 @@ const otherAccounts = (
     return { accounts, agents };
   });
 
+// The engine still reads the reviewer pool (for a persona's reviewer seat),
+// the board (for queued issues) and the label names (to release a cancelled
+// run's claim) from Repo, until core's next major (ADR 0005): so a repo that
+// moved them to its shared settings gives them there, over the old keys'
+// labels, and the engine and the SDK's blocks agree on them. One the
+// schema doesn't fit is the flows' to refuse, when they decode their settings.
+const sharedSetting = <A, I>(repo: RepoConfigFile, key: string, schema: Schema.Codec<A, I>) =>
+  Option.flatMap(Option.fromUndefinedOr(repo.settings?.[key]), (value) =>
+    Result.getSuccess(Schema.decodeUnknownResult(schema)(value)),
+  );
+
 // Merges the layers for one persona of a repo. `configDir` is where its
-// .chernabog/ was read from; `env` is the extra environment its commands run with.
+// .chernabog/ was read from; `env` is the extra environment its commands run
+// with; `defaultBranch` is the repo's default branch, the integration base
+// when config.yaml's deprecated baseBranch doesn't name one.
 const mergePersona = (
   machine: MachineConfig,
   enrolled: EnrolledRepo,
@@ -902,6 +986,7 @@ const mergePersona = (
   persona: Persona,
   configDir: string,
   env: Environment,
+  defaultBranch: string,
 ) =>
   Effect.gen(function* () {
     const failed = (message: string) =>
@@ -945,7 +1030,7 @@ const mergePersona = (
       name: repoNameOf(enrolled),
       slug: enrolled.repo,
       path: enrolled.path,
-      baseBranch: repo.baseBranch ?? enrolled.baseBranch ?? "main",
+      baseBranch: repo.baseBranch ?? defaultBranch,
       account: agentAccounts[agent] ?? ownAccount(account),
       agent,
       agentAccounts,
@@ -965,18 +1050,29 @@ const mergePersona = (
         ),
       ),
       roleAgents: roles.agents,
-      labels: { ...DEFAULT_LABELS, ...repo.labels },
+      labels: {
+        ...DEFAULT_LABELS,
+        ...repo.labels,
+        ...Option.getOrElse(sharedSetting(repo, "labels", LabelsFile), () => ({})),
+      },
       install: Option.flatten(Option.fromUndefinedOr(repo.install)),
       localGate: repo.localGate ?? [],
       humanOnly: [...machine.humanOnly, ...(repo.humanOnly ?? [])],
       humanOnlyPaths: repo.humanOnlyPaths ?? [".github/**"],
       notes: repo.notes ?? [],
-      board: Option.flatten(Option.fromUndefinedOr(repo.board)),
-      reviewTrigger: Option.flatten(Option.fromUndefinedOr(repo.reviewTrigger)),
-      ...Option.match(Option.fromUndefinedOr(repo.reviewers), {
-        onNone: () => ({}),
-        onSome: (reviewers) => ({ reviewers }),
-      }),
+      board: Option.orElse(Option.flatten(Option.fromUndefinedOr(repo.board)), () =>
+        Option.flatten(sharedSetting(repo, "board", Schema.OptionFromNullOr(Board))),
+      ),
+      reviewTrigger: Option.none(),
+      ...Option.match(
+        Option.orElse(Option.fromUndefinedOr(repo.reviewers), () =>
+          sharedSetting(repo, "reviewers", Strings),
+        ),
+        {
+          onNone: () => ({}),
+          onSome: (reviewers) => ({ reviewers }),
+        },
+      ),
       limits: limitsFrom(repo.limits),
       env,
       configDir,
@@ -992,6 +1088,7 @@ const mergePersona = (
       },
       activeHours: Option.fromUndefinedOr(own.activeHours),
       flows,
+      shared: repo.settings ?? {},
       chosen: Object.entries(ownFlows).flatMap(([flow, chosen]) =>
         Option.toArray(Option.liftPredicate(flow, () => chosen.enabled !== false)),
       ),
@@ -1007,12 +1104,13 @@ export const mergeRepoConfig = (
   repo: RepoConfigFile,
   configDir: string,
   env: Environment,
+  defaultBranch = "main",
 ) =>
   Effect.gen(function* () {
     const [first, ...rest] = yield* personasOf(machine, enrolled);
 
     const merge = (persona: Persona) =>
-      mergePersona(machine, enrolled, repo, persona, configDir, env);
+      mergePersona(machine, enrolled, repo, persona, configDir, env, defaultBranch);
 
     const head = yield* merge(first);
     const tail = yield* Effect.forEach(rest, merge);
@@ -1088,6 +1186,7 @@ export const loadRepo = (
       repo,
       configDir,
       yield* repoEnvironment(enrolled.path),
+      yield* knownDefaultBranch(enrolled.path),
     );
   });
 

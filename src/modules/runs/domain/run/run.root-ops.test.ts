@@ -97,17 +97,21 @@ describe("RunRootOps lifecycle", () => {
     ]);
   });
 
-  test("a running run links the pull request it opened", () => {
-    expect(Result.getOrThrow(RunRootOps.linkPullRequest(running, 124)).pullRequest).toEqual(
-      Option.some(124),
-    );
-    expect(running.pullRequest).toEqual(Option.none());
+  test("a running run names its subjects in order, each once", () => {
+    const named = Result.getOrThrow(RunRootOps.nameSubject(running, "pr-124"));
+    const twice = Result.getOrThrow(RunRootOps.nameSubject(named, "release-1.4"));
+    expect(twice.subjects).toEqual(["pr-124", "release-1.4"]);
+    expect(Result.getOrThrow(RunRootOps.nameSubject(twice, "pr-124")).subjects).toEqual([
+      "pr-124",
+      "release-1.4",
+    ]);
+    expect(running.subjects).toEqual([]);
   });
 
-  test("a run that ended takes no step, no execution, no pull request and no second ending", () => {
+  test("a run that ended takes no step, no execution, no subject and no second ending", () => {
     for (const refused of [
       RunRootOps.enterStep(finished, "late"),
-      RunRootOps.linkPullRequest(finished, 9),
+      RunRootOps.nameSubject(finished, "pr-9"),
       RunRootOps.attachExecution(finished, "y"),
       RunRootOps.finish(finished, "failed", "again", later),
     ]) {

@@ -20,6 +20,7 @@ import {
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -27,7 +28,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type EngineRun,
@@ -42,6 +43,7 @@ import {
   type RunsServices,
   runToEnd as runFlowToEnd,
   runUntil as runFlowUntil,
+  stackOn,
   summaryOf,
   triggered,
 } from "./sdk-fakes.ts";
@@ -207,6 +209,19 @@ const runUntil = (
 
 const runToEnd = (fake: Fake, key: string) => runFlowToEnd(handle, fake, item(key));
 
+// The flow in a repo whose settings let a failing optional check through.
+const ignoringOptional = flowHandle(
+  {
+    ...repo,
+    personas: Arr.map(repo.personas, (persona) => ({
+      ...persona,
+      shared: { ciOptionalFailures: "ignore" },
+    })),
+  },
+  "demo",
+  flow,
+);
+
 describe("the review steps", () => {
   effect(
     "Review.round posts a real review and its marker, naming the reviewer and its session, and leaves the labels alone",
@@ -323,9 +338,34 @@ describe("a base branch per item", () => {
           createdFrom: ["base1234"],
           targets: ["main"],
           checkedAgainst: ["main", "main"],
+          compared: [],
         });
         expect(fake.requests[0]?.prompt).toContain("cut from `main`");
         expect(claimedOn(fake)).toEqual(["main"]);
+      }),
+  );
+
+  effect(
+    "the flow's base setting, such as develop in git flow, is what they build on and target",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.remote.heads.set("develop", "develop1234");
+
+        const onDevelop = flowHandle(
+          { ...repo, personas: [{ ...repo.personas[0], shared: { base: "develop" } }] },
+          "demo",
+          flow,
+        );
+
+        expect((yield* runFlowToEnd(onDevelop, fake, item("on-repo-base"))).status).toBe("done");
+        expect(fake.based).toEqual({
+          createdFrom: ["develop1234"],
+          targets: ["develop"],
+          checkedAgainst: ["develop", "develop"],
+          compared: [],
+        });
+        expect(claimedOn(fake)).toEqual(["develop"]);
       }),
   );
 
@@ -341,6 +381,7 @@ describe("a base branch per item", () => {
           targets: [STACKED],
           // The no-commits check and the humanOnlyPaths check: the task's own diff, not the task below's.
           checkedAgainst: [STACKED, STACKED],
+          compared: [],
         });
         expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
         expect(claimedOn(fake)).toEqual([STACKED]);
@@ -357,6 +398,7 @@ describe("a base branch per item", () => {
         targets: [STACKED],
         // With a person in the session, only the no-commits check runs.
         checkedAgainst: [STACKED],
+        compared: [],
       });
       expect(fake.requests[0]?.prompt).toContain(`cut from \`${STACKED}\``);
       expect(claimedOn(fake)).toEqual([STACKED]);
@@ -420,7 +462,9 @@ describe("owning a pull request", () => {
     Effect.gen(function* () {
       const fake = makeFake("approve");
       yield* runUntil(fake, "owning-waits", (run) =>
-        listRunWaitsUseCase(run.id, "pushed").pipe(Effect.map(({ waits }) => waits.length > 0)),
+        listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+          Effect.map(({ waits }) => waits.length > 0),
+        ),
       );
       expect(ownership(fake)).toEqual([false]);
     }),
@@ -545,6 +589,41 @@ describe("PullRequest.merge", () => {
     }),
   );
 
+  // A required check passing and an optional one failing on the head.
+  const optionalFailing = (fake: Fake) => {
+    approved(fake);
+    fake.merge.checks = Option.some({
+      headSha: HEAD,
+      checks: [
+        { name: "test", kind: "check-run", state: "passed", required: true, url: "" },
+        { name: "ci/docs", kind: "status", state: "failed", required: false, url: "" },
+      ],
+      required: ["test"],
+      caveat: Option.none(),
+    });
+  };
+
+  effect("merges on its required checks while an optional one fails, when the flow says so", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      optionalFailing(fake);
+      const finished = yield* runFlowToEnd(ignoringOptional, fake, item("merge"));
+      expect(finished.status).toBe("done");
+      expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  effect("holds the merge for a failing optional check by default", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      optionalFailing(fake);
+      const finished = yield* runToEnd(fake, "merge");
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain("checks failed: ci/docs");
+      expect(fake.merge.requests).toEqual([]);
+    }),
+  );
+
   // Each case sets up one reason to refuse, and the run hands the pull request to a person without merging.
   const refusals: ReadonlyArray<readonly [string, (fake: Fake) => void, string]> = [
     [
@@ -590,9 +669,9 @@ describe("PullRequest.merge", () => {
       "a layer of a stack",
       (fake) => {
         approved(fake);
-        fake.stack.base = "auto/issue-2";
+        stackOn(fake, "auto/issue-2");
       },
-      "stacked on auto/issue-2; it merges after the layer below",
+      "stacked on auto/issue-2 (#2); it merges after the layer below",
     ],
     [
       "GitHub refuses",

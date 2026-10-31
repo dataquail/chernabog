@@ -7,21 +7,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { type Persona } from "../../../kernel/persona.value-object.ts";
-import { applyEnrollmentUseCase } from "../../../modules/enrollment/use-cases/apply-enrollment.use-case.ts";
+import { type Enrolled } from "../../../modules/enrollment/commands/apply-enrollment.command.ts";
+import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import {
-  type Enrolled,
   type EnrollmentPlan,
   type PersonaPlan,
-} from "../../../modules/enrollment/use-cases/enrollment.result.ts";
-import { findCheckoutRootUseCase } from "../../../modules/enrollment/use-cases/find-checkout-root.use-case.ts";
-import { planEnrollmentUseCase } from "../../../modules/enrollment/use-cases/plan-enrollment.use-case.ts";
-import { readMachineSetupUseCase } from "../../../modules/machine/use-cases/read-machine-setup.use-case.ts";
+} from "../../../modules/enrollment/queries/plan-enrollment.query.ts";
+import { MachineQueries } from "../../../modules/machine/machine.query-handlers.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";
 import { listed, listFlag } from "../list.arguments.ts";
-import { describeUnserved } from "../reviewer-pool.output.ts";
 
 export const enrollFlags = {
   account: listFlag(
@@ -229,28 +227,28 @@ const askedAbout = (plan: EnrollmentPlan, personas: Option.Option<ReadonlyArray<
       ),
   });
 
-const describeEnrolled = (enrolled: Enrolled) => [
-  ...enrolled.chosen.map(({ account, accounts, flows, persona }) => {
+const describeEnrolled = (enrolled: Enrolled) =>
+  enrolled.chosen.map(({ account, accounts, flows, persona }) => {
     const spends = Option.match(account, {
       onNone: () => "",
       onSome: (name) => `; account ${[name, ...accounts].join(", ")}`,
     });
 
     return `${enrolled.name} as ${who(persona)}: flows ${listed(flows)}${spends}`;
-  }),
-  ...enrolled.unserved.map(
-    ({ persona, reviewers }) =>
-      `note: ${enrolled.name} as ${who(persona)}: ${describeUnserved(persona, reviewers)}`,
-  ),
-];
+  });
 
 // Enrolls the checkout at `root`, asking in a terminal what the flags don't
 // say, and returns what it chose and the lines that say so.
 export const enrollCheckout = (root: string, flags: EnrollFlags) =>
   Effect.gen(function* () {
     const asker = yield* Asker;
-    const machine = yield* readMachineSetupUseCase();
-    const plan = yield* planEnrollmentUseCase(root, flags.name, machine);
+    const machine = yield* (yield* MachineQueries).ReadMachineSetupQuery();
+
+    const plan = yield* (yield* EnrollmentQueries).PlanEnrollmentQuery({
+      path: root,
+      name: flags.name,
+      offered: machine,
+    });
 
     const personas = yield* Option.match(flags.persona, {
       onSome: (named) => Effect.succeedSome(named),
@@ -292,14 +290,19 @@ export const enrollCheckout = (root: string, flags: EnrollFlags) =>
       }
     }
 
-    const enrolled = yield* applyEnrollmentUseCase(root, flags.name, machine, {
-      personas,
-      flows: Option.orElse(
-        Option.map(flags.flows, (flows) => ({ flows })),
-        () => Option.liftPredicate({ defaults: true } as const, () => flags.defaults),
-      ),
-      accounts: named,
-      asked,
+    const enrolled = yield* (yield* EnrollmentCommands).ApplyEnrollmentCommand({
+      path: root,
+      name: flags.name,
+      offered: machine,
+      answers: {
+        personas,
+        flows: Option.orElse(
+          Option.map(flags.flows, (flows) => ({ flows })),
+          () => Option.liftPredicate({ defaults: true } as const, () => flags.defaults),
+        ),
+        accounts: named,
+        asked,
+      },
     });
 
     return { enrolled, lines: describeEnrolled(enrolled) };
@@ -320,9 +323,7 @@ export const enrollHere = (root: string, flags: EnrollFlags) =>
       },
     );
 
-    yield* Console.log(
-      `${action} ${enrolled.repo} (${enrolled.path}, base ${enrolled.baseBranch}) in ${file}`,
-    );
+    yield* Console.log(`${action} ${enrolled.repo} (${enrolled.path}) in ${file}`);
     yield* printLines(lines);
     yield* daemonReload.pipe(Effect.ignore);
 
@@ -331,9 +332,13 @@ export const enrollHere = (root: string, flags: EnrollFlags) =>
 
 // The repo a path is in; the working directory's when none is given.
 export const rootOf = (path: Option.Option<string>) =>
-  findCheckoutRootUseCase(Option.getOrElse(path, () => ".")).pipe(
-    Effect.map((found) => found.root),
-  );
+  Effect.gen(function* () {
+    const found = yield* (yield* EnrollmentQueries).FindCheckoutRootQuery({
+      path: Option.getOrElse(path, () => "."),
+    });
+
+    return found.root;
+  });
 
 export const enrollCommand = Command.make(
   "enroll",

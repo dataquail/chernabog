@@ -19,6 +19,8 @@ import {
   Repo,
   reportAs,
   Review,
+  Routing,
+  Settings,
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -27,15 +29,20 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona for a review, which it hasn't reviewed
-// yet. Reading review requests needs the persona's seat in the reviewer pool,
-// which chernabog checks before the flow runs.
-const trigger = Effect.map(Review.reviewRequests, (found) =>
-  found.flatMap(({ pull, reviewed }) =>
-    Option.toArray(
-      Option.liftPredicate(Review.reviewItem(pull, `pr-${pull.number}`), () => reviewed === 0),
-    ),
-  ),
-).pipe(reportAs("trigger"));
+// yet, routed by their assignees and reviewers, and those waiting on a
+// reviewer no persona on this machine acts as, which status lists. Reading
+// review requests needs the persona's seat in the reviewer pool, which
+// chernabog checks before the flow runs.
+const trigger = Effect.gen(function* () {
+  const found = yield* Review.reviewRequests;
+
+  const mine = yield* Effect.forEach(
+    found.filter(({ reviewed }) => reviewed === 0),
+    ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
+  );
+
+  return [...mine, ...(yield* Review.waitingElsewhere)];
+}).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
 
@@ -61,13 +68,20 @@ const conflicts = (pullRequest: number) =>
   );
 
 // Chernabog merges only pull requests on the automated path (auto:ship), and
-// only when that's safe; a person merges any other. One refused because it
-// conflicts with its base is left to resolve-conflicts, which merges the base
-// in and asks for this review again.
+// only when that's safe; a person merges any other. A layer of a stack waits,
+// approved, for the layer below: the epic run merges it once it is on the
+// base. One refused because it conflicts with its base is left to
+// resolve-conflicts, which merges the base in and asks for this review again.
 const mergeIfShipping = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* PullRequest.shipping(pullRequest))) {
       return `#${pullRequest} approved; a person merges`;
+    }
+
+    const waiting = yield* PullRequest.waitingOnLayer(pullRequest);
+
+    if (Option.isSome(waiting)) {
+      return `#${pullRequest} approved; ${waiting.value}`;
     }
 
     return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
@@ -103,11 +117,24 @@ const workflow = (item: WorkItem) =>
     }),
   );
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Routing.Settings.fields,
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.Rules.fields,
+  ...Settings.Reviewers.fields,
+});
+
 export default defineFlow({
+  labels: Settings.declaredLabels,
+  settings,
   trigger,
   concurrency: 1,
   // Its trigger finds only pull requests that ask this persona for a review.
   ownWork: true,
+  // Doctor warns when a reviewer this machine acts as doesn't run it.
+  doctor: [Review.reviewerCheck],
   // A pull request closed or merged ends the run as superseded.
   stillValid: Review.stillValid,
   workflow,

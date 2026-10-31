@@ -22,7 +22,6 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { parseRecipeRef, RecipePackageManifest } from "../kernel/recipe-package.value-object.ts";
-import { authorsPullRequests, reviewsPullRequests } from "../kernel/reviewer-pool.value-object.ts";
 import { effectModules, effectRoot } from "./effect-modules.ts";
 
 export class LoadError extends Schema.TaggedError<LoadError, { readonly brand: "LoadError" }>()(
@@ -356,42 +355,6 @@ export const flowNames = (configDir: string) =>
 
     return Arr.sort(Arr.dedupe([...local, ...imported]), Order.String);
   });
-
-// The flows, in <configDir>/flows/ or imported, whose name and code `test`
-// picks. Their code is read, not imported, so it runs nothing; none when the
-// folder can't be read.
-const flowsWhere = (configDir: string, test: (name: string, source: string) => boolean) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const picked: Array<string> = [];
-
-    const files: Array<readonly [string, string]> = [...(yield* localFlowFiles(configDir))];
-
-    // An imported flow whose package isn't installed is left out, not the rest.
-    for (const [name, from] of yield* flowImports(configDir)) {
-      for (const resolved of Option.toArray(
-        yield* Effect.option(resolveImport(configDir, name, from, NO_OVERRIDES)),
-      )) {
-        files.push([name, resolved.path]);
-      }
-    }
-
-    for (const [name, path] of files) {
-      const source = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
-
-      if (test(name, source)) {
-        picked.push(name);
-      }
-    }
-
-    return Arr.sort(picked, Order.String);
-  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-
-// The flows that open pull requests asking the pool for a review.
-export const authoringFlows = (configDir: string) => flowsWhere(configDir, authorsPullRequests);
-
-// The flows that review the pull requests asked of their persona.
-export const reviewingFlows = (configDir: string) => flowsWhere(configDir, reviewsPullRequests);
 
 // Every flow, by name: those in <configDir>/flows/, by file name, and those
 // imported from recipe packages, by the name config.yaml gives them. An

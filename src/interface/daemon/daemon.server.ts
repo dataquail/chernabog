@@ -27,7 +27,7 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
-import { listPausedReposUseCase } from "../../modules/enrollment/use-cases/list-paused-repos.use-case.ts";
+import { EnrollmentQueries } from "../../modules/enrollment/enrollment.query-handlers.ts";
 import {
   causeOf,
   DEFAULT_EVENT_TICK_MIN,
@@ -40,6 +40,7 @@ import {
   DEFAULT_LEASE_LIMITS,
   leaseTtlFor,
   renewalDue,
+  RunLeases,
 } from "../../modules/runs/domain/schedule/lease.value-object.ts";
 import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
 import {
@@ -47,6 +48,7 @@ import {
   DEFAULT_VALIDITY_EVERY,
   noteCheckFailure,
   runIsAbout,
+  RunValidity,
   validityDue,
 } from "../../modules/runs/domain/schedule/validity.value-object.ts";
 import {
@@ -64,47 +66,39 @@ import {
 } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
 import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+  RunsCommands,
+  RunsCommandsLive,
+} from "../../modules/runs/runs.command-handlers.ts";
+import {
   type FlowRegistry,
   NotificationsLayer,
   RuntimeLayer,
   StateLive,
 } from "../../modules/runs/runs.layer.ts";
+import {
+  NotificationsQueries,
+  NotificationsQueriesOver,
+  RunFlowsQueries,
+  RunFlowsQueriesLive,
+  RunsQueries,
+  RunsQueriesLive,
+} from "../../modules/runs/runs.query-handlers.ts";
 import { CancelledRun, CancelTarget } from "../../modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../../modules/runs/use-cases/cancel-run.use-case.ts";
-import { RunLeases } from "../../modules/runs/use-cases/check-run-leases.result.ts";
-import { checkRunLeasesUseCase } from "../../modules/runs/use-cases/check-run-leases.use-case.ts";
-import { RunValidity } from "../../modules/runs/use-cases/check-run-validity.result.ts";
-import { checkRunValidityUseCase } from "../../modules/runs/use-cases/check-run-validity.use-case.ts";
-import { deliverSignalsUseCase } from "../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { findRunUseCase } from "../../modules/runs/use-cases/find-run.use-case.ts";
-import { gateFlowUseCase } from "../../modules/runs/use-cases/gate-flow.use-case.ts";
-import { listActiveRunsUseCase } from "../../modules/runs/use-cases/list-active-runs.use-case.ts";
-import { listHoldsUseCase } from "../../modules/runs/use-cases/list-holds.use-case.ts";
-import { listRecentRunsUseCase } from "../../modules/runs/use-cases/list-recent-runs.use-case.ts";
-import { listRecentSkipsUseCase } from "../../modules/runs/use-cases/list-recent-skips.use-case.ts";
-import { listUnreleasedMarkersUseCase } from "../../modules/runs/use-cases/list-unreleased-markers.use-case.ts";
-import { listUnsupportedRunsUseCase } from "../../modules/runs/use-cases/list-unsupported-runs.use-case.ts";
 import { type NotificationNews } from "../../modules/runs/use-cases/notifications.result.ts";
-import { planTickUseCase } from "../../modules/runs/use-cases/plan-tick.use-case.ts";
-import { pollNotificationsUseCase } from "../../modules/runs/use-cases/poll-notifications.use-case.ts";
-import { pollRunUseCase } from "../../modules/runs/use-cases/poll-run.use-case.ts";
-import { readRunHistoryUseCase } from "../../modules/runs/use-cases/read-run-history.use-case.ts";
-import { recordSkipUseCase } from "../../modules/runs/use-cases/record-skip.use-case.ts";
-import { recoverRunsUseCase } from "../../modules/runs/use-cases/recover-runs.use-case.ts";
-import { releaseMarkersUseCase } from "../../modules/runs/use-cases/release-markers.use-case.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
 import { RunHistory } from "../../modules/runs/use-cases/run-history.result.ts";
-import { startFlowRunUseCase } from "../../modules/runs/use-cases/start-flow-run.use-case.ts";
-import { claimReloadUseCase } from "../../modules/trust/use-cases/claim-reload.use-case.ts";
-import { findTrustedTreeUseCase } from "../../modules/trust/use-cases/find-trusted-tree.use-case.ts";
+import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
+import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
-import { viewerLogin } from "../../platform/github-api.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
+  checkFlowSettings,
   checkManualSchedules,
   type EffectiveRepo,
   EnrolledRepo,
@@ -113,10 +107,8 @@ import {
   loadMachineConfig,
   loadRepo,
   type MachineConfig,
-  needsLogin,
   type PersonaRepo,
   repoNameOf,
-  routingOf,
   scheduleFor,
 } from "../../repo-config.ts";
 import {
@@ -152,9 +144,10 @@ type FlowSchedule = {
   pending: Option.Option<PendingTick>;
   lastEventTick: Option.Option<DateTime.Utc>;
   queued: ReadonlyArray<string>;
-  // What the last tick left for other machines, by flows.<flow>.assignee and
-  // reviewRequested, and for the review flow, review requests no persona here serves.
+  // What the last tick's trigger left for others, with why, and said waits
+  // on someone, with who and why.
   elsewhere: ReadonlyArray<string>;
+  waiting: ReadonlyArray<string>;
 };
 
 export type RepoState = {
@@ -168,14 +161,12 @@ export type RepoState = {
   latestTree: Option.Option<string>;
 };
 
-const baseBranchOf = (enrolled: EnrolledRepo) => enrolled.baseBranch ?? "main";
-
 const checkoutExists = (enrolled: EnrolledRepo) =>
   FileSystem.FileSystem.use((fs) => fs.exists(enrolled.path)).pipe(
     Effect.orElseSucceed(() => false),
   );
 
-// Snapshots a repo's .chernabog/ from its base branch and loads its flows,
+// Snapshots a repo's .chernabog/ from its default branch and loads its flows,
 // unless the snapshot is not the tree that was trusted. A repo whose checkout
 // is gone is paused, its settings kept, until the checkout is back or
 // chernabog init points it at the checkout's new place.
@@ -214,20 +205,23 @@ export const loadRepoState = (
       } satisfies RepoState;
     }
 
-    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path, baseBranchOf(enrolled)));
+    const snapshot = yield* Effect.result(snapshotConfig(enrolled.path));
 
     if (Result.isFailure(snapshot)) {
       return failed(snapshot.failure, Option.none());
     }
 
     const { configDir, tree } = snapshot.success;
-    const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(enrolled.repo))).tree;
+
+    const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+      repo: RepoSlug.make(enrolled.repo),
+    })).tree;
 
     if (!Option.contains(trusted, tree)) {
       const message = Option.match(trusted, {
         onNone: () => `not trusted yet; run chernabog trust ${name}`,
         onSome: () =>
-          `.chernabog/ changed on the base branch; review it with chernabog trust ${name}`,
+          `.chernabog/ changed on the default branch; review it with chernabog trust ${name}`,
       });
 
       return {
@@ -243,7 +237,10 @@ export const loadRepoState = (
       Effect.all({
         repo: loadRepo(machine, enrolled, configDir),
         flows: loadFlows(configDir),
-      }).pipe(Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows))),
+      }).pipe(
+        Effect.tap(({ flows, repo }) => checkManualSchedules(repo, flows)),
+        Effect.tap(({ flows, repo }) => checkFlowSettings(repo, flows)),
+      ),
     );
 
     if (Result.isFailure(loaded)) {
@@ -291,6 +288,7 @@ export const loadRepoState = (
             lastEventTick: Option.none(),
             queued: [],
             elsewhere: [],
+            waiting: [],
           };
         });
       }),
@@ -386,7 +384,7 @@ const formatOption = (at: Option.Option<DateTime.Utc>) => Option.map(at, DateTim
 
 const sameTree = Option.makeEquivalence(Equivalence.String);
 
-// Running on an older tree than its base branch's, which isn't trusted yet.
+// Running on an older tree than its default branch's, which isn't trusted yet.
 const stale = (repo: RepoState) => repo.status === "ready" && !sameTree(repo.latestTree, repo.tree);
 
 // Waiting on trust: never loaded for it, or running on a tree since replaced.
@@ -476,49 +474,8 @@ export const runDaemon = Effect.gen(function* () {
     yield* log(`${repo.name}: ${repo.status}${message}${flows}`);
   }
 
-  // Who the implicit persona is on GitHub, for repos that name their flows'
-  // runners or start only work assigned to it. A persona's login is its own.
-  let login = Option.none<string>();
-
-  if (repos.some((repo) => Option.exists(repo.repo, needsLogin))) {
-    const found = yield* Effect.result(viewerLogin);
-    login = Result.getSuccess(found);
-    yield* log(
-      Result.match(found, {
-        onSuccess: (self) => `this machine is ${self} on GitHub`,
-        onFailure: (error) => `could not tell who this machine is on GitHub: ${error.message}`,
-      }),
-    );
-  }
-
   if (machine.github.length > 0) {
     yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
-  }
-
-  const loginFor = (persona: Persona) => Option.orElse(persona, () => login);
-
-  // Several personas on one flow each see all its work unless @me tells them apart.
-  for (const repo of repos) {
-    for (const flow of Arr.dedupe(repo.flows.map((schedule) => schedule.handle.name))) {
-      const running = repo.flows.filter(
-        (schedule) =>
-          schedule.handle.name === flow &&
-          schedule.handle.flow.ownWork !== true &&
-          Option.isNone(flowOff(schedule.own, flow)),
-      );
-
-      const unrouted = running.some(
-        (schedule) =>
-          Option.isNone(routingOf(schedule.own, flow).assignee) &&
-          Option.isNone(routingOf(schedule.own, flow).reviewRequested),
-      );
-
-      if (running.length > 1 && unrouted) {
-        yield* log(
-          `${repo.name}/${flow}: runs as ${running.flatMap((schedule) => Option.toArray(schedule.persona)).join(", ")} with no assignee or reviewRequested, so each takes any of its work`,
-        );
-      }
-    }
   }
 
   const busy = yield* Ref.make(0);
@@ -590,9 +547,15 @@ export const runDaemon = Effect.gen(function* () {
   };
 
   const engine = yield* Layer.build(
-    RuntimeLayer(registry).pipe(
+    Layer.mergeAll(RunFlowsCommandsLive, RunFlowsQueriesLive).pipe(
       Layer.provideMerge(
-        Layer.mergeAll(Layer.empty, ...flowLayers).pipe(Layer.provideMerge(StateLive)),
+        RuntimeLayer(registry).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(RunsQueriesLive, RunsCommandsLive, ...flowLayers).pipe(
+              Layer.provideMerge(StateLive),
+            ),
+          ),
+        ),
       ),
     ),
   );
@@ -601,12 +564,15 @@ export const runDaemon = Effect.gen(function* () {
     Effect.gen(function* () {
       // Runs in flight that started under an SDK this binary doesn't run go
       // to a person, released as a cancel releases them, rather than resume.
-      for (const { reason, run } of (yield* listUnsupportedRunsUseCase()).runs) {
-        const ended = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "needs-human", reason }),
-        }).pipe(Effect.result);
+      for (const { reason, run } of (yield* (yield* RunsQueries).ListUnsupportedRunsQuery()).runs) {
+        const ended = yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "needs-human", reason }),
+          }),
+        ).pipe(Effect.result);
 
         yield* log(
           Result.match(ended, {
@@ -628,7 +594,7 @@ export const runDaemon = Effect.gen(function* () {
       }
 
       // Starts that a crash interrupted, finished before anything ticks.
-      const recovered = yield* recoverRunsUseCase();
+      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
 
       for (const run of recovered.executed) {
         yield* log(`started ${run.id} (${runLabel(run)}), which a crash interrupted`);
@@ -657,7 +623,9 @@ export const runDaemon = Effect.gen(function* () {
 
       const reloaded = yield* Deferred.make<true>();
 
-      const active = listActiveRunsUseCase(everyRun).pipe(Effect.map((found) => found.runs));
+      const active = RunsQueries.use((runs) => runs.ListActiveRunsQuery(everyRun)).pipe(
+        Effect.map((found) => found.runs),
+      );
 
       // Each run in flight whose stillValid keeps failing: how often in a
       // row, and why. Status shows them; the runs carry on.
@@ -666,11 +634,14 @@ export const runDaemon = Effect.gen(function* () {
       // Ends a run whose work item went as superseded, released as a cancel
       // releases it; its agent sessions stay open.
       const supersede = (run: ActiveRun, reason: string) =>
-        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "superseded", reason }),
-        }).pipe(
+        RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "superseded", reason }),
+          }),
+        ).pipe(
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -709,11 +680,14 @@ export const runDaemon = Effect.gen(function* () {
       // Ends a run whose claim another run took over as lost. What it left on
       // the item, worktree included, stays for the run that took it over.
       const loseRun = (run: ActiveRun, reason: string) =>
-        cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
-          by: "chernabog",
-          closeSessions: false,
-          endAs: Option.some({ ending: "lost", reason }),
-        }).pipe(
+        RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target: CancelTarget.cases.ById.make({ asked: run.id }),
+            by: "chernabog",
+            closeSessions: false,
+            endAs: Option.some({ ending: "lost", reason }),
+          }),
+        ).pipe(
           Effect.result,
           Effect.flatMap((ended) =>
             log(
@@ -738,7 +712,11 @@ export const runDaemon = Effect.gen(function* () {
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
-          const found = yield* checkRunLeasesUseCase(run.id, renew);
+          const found = yield* (yield* RunFlowsCommands).CheckRunLeasesCommand({
+            runId: run.id,
+            renew,
+          });
+
           const known = leaseNotes.get(run.id) ?? [];
 
           yield* RunLeases.match(found, {
@@ -795,7 +773,7 @@ export const runDaemon = Effect.gen(function* () {
             return false;
           }
 
-          const found = yield* checkRunValidityUseCase(run.id);
+          const found = yield* (yield* RunFlowsQueries).CheckRunValidityQuery({ runId: run.id });
 
           if (!Predicate.isTagged(found, "CheckFailed")) {
             checkFailures.delete(run.id);
@@ -870,7 +848,7 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => Effect.succeed(Result.succeed(false)),
               onSome: () =>
                 Effect.result(
-                  listPausedReposUseCase().pipe(
+                  EnrollmentQueries.use((enrollment) => enrollment.ListPausedReposQuery()).pipe(
                     Effect.map((found) => found.repos.includes(RepoSlug.make(repo.enrolled.repo))),
                   ),
                 ),
@@ -879,12 +857,15 @@ export const runDaemon = Effect.gen(function* () {
 
           if (Result.isFailure(paused)) {
             const reason = `could not tell whether it is paused: ${paused.failure.message}`;
-            yield* recordSkipUseCase({ ...ref, itemKey: Option.none(), reason });
+            yield* RunsCommands.use((runs) =>
+              runs.RecordSkipCommand({ ...ref, itemKey: Option.none(), reason }),
+            );
 
             return { started: [], skipped: Option.some(reason) } satisfies TickResult;
           }
 
-          const plan = yield* planTickUseCase(ref, {
+          const plan = yield* (yield* RunFlowsCommands).PlanTickCommand({
+            flow: ref,
             gates: options.gates,
             item: options.item,
             conditions: {
@@ -894,9 +875,6 @@ export const runDaemon = Effect.gen(function* () {
               quietHours: machine.quietHours,
               activeHours: settings.activeHours,
             },
-            routing: routingOf(settings, handle.name),
-            login: loginFor(persona),
-            here: machine.github,
             concurrency: {
               flow: Option.getOrElse(
                 Option.flatMap(Record.get(settings.flows, handle.name), (found) =>
@@ -908,20 +886,18 @@ export const runDaemon = Effect.gen(function* () {
             },
           });
 
-          const unserved = Option.getOrElse(plan.unserved, (): ReadonlyArray<string> => []);
-
-          if (Option.isSome(plan.unserved)) {
-            schedule.elsewhere = unserved;
-          }
-
           for (const routed of Option.toArray(plan.routed)) {
             schedule.lastTick = Option.some(yield* DateTime.now);
             schedule.lastCause = Option.some(options.cause);
             schedule.queued = routed.queued;
-            schedule.elsewhere = [...routed.elsewhere, ...unserved];
+            schedule.elsewhere = routed.elsewhere;
+            schedule.waiting = routed.waiting;
           }
 
-          yield* deliverSignalsUseCase(ref, yield* stillWaking(ref, plan.signalled));
+          yield* (yield* RunFlowsCommands).DeliverSignalsCommand({
+            flow: ref,
+            items: yield* stillWaking(ref, plan.signalled),
+          });
 
           const started: Array<RunView> = [];
           let skipped = plan.skipped;
@@ -933,7 +909,9 @@ export const runDaemon = Effect.gen(function* () {
               {
                 onNone: () => Effect.succeedNone,
                 onSome: () =>
-                  gateFlowUseCase(ref, item.key).pipe(Effect.map((found) => found.held)),
+                  RunFlowsCommands.use((runs) =>
+                    runs.GateFlowCommand({ flow: ref, itemKey: item.key }),
+                  ).pipe(Effect.map((found) => found.held)),
               },
             );
 
@@ -942,7 +920,10 @@ export const runDaemon = Effect.gen(function* () {
               break;
             }
 
-            const outcome = yield* startFlowRunUseCase(ref, item);
+            const outcome = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+              flow: ref,
+              item,
+            });
 
             for (const run of Option.toArray(Option.filter(outcome.run, () => outcome.started))) {
               yield* log(`started ${run.id} (${runLabel(run)})`);
@@ -962,7 +943,7 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // A repo whose flows may run: loaded, and its base branch still on the
+      // A repo whose flows may run: loaded, and its default branch still on the
       // trusted tree. Its services, as each persona.
       const runnable = (repo: RepoState) =>
         Option.filter(
@@ -981,7 +962,7 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             for (const running of yield* active) {
-              const polled = yield* pollRunUseCase(running.id);
+              const polled = yield* (yield* RunFlowsCommands).PollRunCommand({ runId: running.id });
               const ended = Option.filter(polled.run, (run) => run.status !== "running");
 
               for (const finished of Option.toArray(ended)) {
@@ -1012,7 +993,7 @@ export const runDaemon = Effect.gen(function* () {
       yield* Effect.forkScoped(
         Effect.forever(
           Effect.gen(function* () {
-            const releases = yield* releaseMarkersUseCase();
+            const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
 
             for (const marker of releases.released) {
               yield* log(`released ${marker.name} for ${marker.runId}`);
@@ -1254,12 +1235,12 @@ export const runDaemon = Effect.gen(function* () {
       );
 
       // Until the next notified item's check is due, or VALIDITY_POLL (or a
-      // repo's limits.leaseRenewEvery, if sooner) at the latest.
+      // repo's limits.validityEvery or leaseRenewEvery, if sooner) at the latest.
       const untilNextCheck = Effect.map(DateTime.now, (now) =>
         Arr.reduce(
           [...notifiedItems.values()],
           Arr.reduce(repos, VALIDITY_POLL, (soonest, repo) =>
-            Duration.min(soonest, leasesOf(repo).renewEvery),
+            Duration.min(soonest, Duration.min(validityEveryOf(repo), leasesOf(repo).renewEvery)),
           ),
           (soonest, item) =>
             Option.match(notifiedDueAt(item), {
@@ -1326,7 +1307,11 @@ export const runDaemon = Effect.gen(function* () {
               .map((repo) => repo.enrolled.repo);
 
             const polled = yield* Effect.result(
-              pollNotificationsUseCase(persona, yield* Ref.get(cursor), slugs),
+              (yield* NotificationsQueries).PollNotificationsQuery({
+                persona,
+                cursor: yield* Ref.get(cursor),
+                repos: slugs,
+              }),
             );
 
             if (Result.isFailure(polled)) {
@@ -1364,7 +1349,7 @@ export const runDaemon = Effect.gen(function* () {
           });
 
           return yield* Effect.forever(pollOnce.pipe(Effect.flatMap(Effect.sleep)));
-        }).pipe(Effect.provide(NotificationsLayer));
+        }).pipe(Effect.provide(NotificationsQueriesOver.pipe(Layer.provide(NotificationsLayer))));
 
       for (const persona of notifiedPersonas(machine)) {
         yield* Effect.forkScoped(pollNotifications(persona));
@@ -1373,20 +1358,21 @@ export const runDaemon = Effect.gen(function* () {
       // Restarts the daemon on a repo's trusted tree, only the first time it does.
       const reloadOn = (repo: RepoState, tree: string) =>
         Effect.gen(function* () {
-          const claim = yield* claimReloadUseCase(RepoSlug.make(repo.enrolled.repo), tree);
+          const claim = yield* (yield* TrustCommands).ClaimReloadCommand({
+            repo: RepoSlug.make(repo.enrolled.repo),
+            tree,
+          });
 
           if (claim.first) {
             yield* Ref.set(reloadPending, true);
           }
         });
 
-      // Notices a new .chernabog/ on a base branch: trusted, it restarts the
+      // Notices a new .chernabog/ on a config branch, GitHub's default: trusted, it restarts the
       // daemon on it once nothing is executing; untrusted, the repo starts no new runs.
       const checkConfig = Effect.gen(function* () {
         for (const repo of repos) {
-          const tree = yield* Effect.result(
-            configTree(repo.enrolled.path, baseBranchOf(repo.enrolled)),
-          );
+          const tree = yield* Effect.result(configTree(repo.enrolled.path));
 
           if (Result.isFailure(tree) || Option.contains(repo.latestTree, tree.success)) {
             continue;
@@ -1395,7 +1381,9 @@ export const runDaemon = Effect.gen(function* () {
           repo.latestTree = Option.some(tree.success);
 
           const trusted = Option.contains(
-            (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree,
+            (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+              repo: RepoSlug.make(repo.enrolled.repo),
+            })).tree,
             tree.success,
           );
 
@@ -1415,7 +1403,9 @@ export const runDaemon = Effect.gen(function* () {
             continue;
           }
 
-          const trusted = (yield* findTrustedTreeUseCase(RepoSlug.make(repo.enrolled.repo))).tree;
+          const trusted = (yield* (yield* TrustQueries).FindTrustedTreeQuery({
+            repo: RepoSlug.make(repo.enrolled.repo),
+          })).tree;
 
           if (sameTree(trusted, repo.latestTree)) {
             yield* reloadOn(repo, repo.latestTree.value);
@@ -1543,7 +1533,9 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => ({}),
               onSome: (persona) => ({ persona }),
             }),
-            schedule: Option.getOrElse(flow.expression, () => manualSchedule(flow.handle.name)),
+            schedule: Option.getOrElse(flow.expression, () =>
+              manualSchedule(flow.handle.name, flow.handle.flow.start === true),
+            ),
             // A manual flow has no schedule, the team's or anyone's.
             ...Option.match(flow.teamExpression, {
               onNone: () => ({ manual: true }),
@@ -1577,6 +1569,14 @@ export const runDaemon = Effect.gen(function* () {
             }),
             queued: flow.queued,
             assignedElsewhere: flow.elsewhere,
+            ...Option.match(Option.liftPredicate(flow.waiting, Arr.isReadonlyArrayNonEmpty), {
+              onNone: () => ({}),
+              onSome: (waiting) => ({ waiting }),
+            }),
+            ...Option.match(Option.fromUndefinedOr(flow.handle.flow.start), {
+              onNone: () => ({}),
+              onSome: (start) => ({ start }),
+            }),
             ...Option.match(flowSourceOf(flow.handle.flow), {
               onNone: () => ({}),
               onSome: (source) => ({ source: describeSource(source) }),
@@ -1601,12 +1601,14 @@ export const runDaemon = Effect.gen(function* () {
           ...status,
           status: "untrusted",
           message: Option.some(
-            `.chernabog/ changed on the base branch; review it with chernabog trust ${repo.name}`,
+            `.chernabog/ changed on the default branch; review it with chernabog trust ${repo.name}`,
           ),
         } satisfies RepoStatus;
       };
 
       const status = Effect.gen(function* () {
+        const runsQueries = yield* RunsQueries;
+
         return {
           pid: process.pid,
           startedAt: DateTime.formatIso(startedAt),
@@ -1615,7 +1617,7 @@ export const runDaemon = Effect.gen(function* () {
           draining: yield* Ref.get(draining),
           repos: repos.map(
             repoStatus(
-              yield* listPausedReposUseCase().pipe(
+              yield* EnrollmentQueries.use((enrollment) => enrollment.ListPausedReposQuery()).pipe(
                 Effect.map((found) => found.repos),
                 Effect.orElseSucceed((): ReadonlyArray<RepoSlug> => []),
               ),
@@ -1628,11 +1630,11 @@ export const runDaemon = Effect.gen(function* () {
           active: yield* active,
           // Enough for the live view's project tabs and persona filter to
           // still have runs to show.
-          recent: (yield* listRecentRunsUseCase(RECENT_RUNS)).runs,
-          skips: (yield* listRecentSkipsUseCase(20)).skips,
+          recent: (yield* runsQueries.ListRecentRunsQuery({ latest: RECENT_RUNS })).runs,
+          skips: (yield* runsQueries.ListRecentSkipsQuery({ latest: 20 })).skips,
           // Only a flow the daemon still schedules, and has on, holds anything:
           // an unenrolled repo's or a turned-off flow's last holds aren't current.
-          holds: (yield* listHoldsUseCase()).holds.filter((hold) =>
+          holds: (yield* runsQueries.ListHoldsQuery()).holds.filter((hold) =>
             repos.some(
               (repo) =>
                 repo.name === hold.repo &&
@@ -1663,7 +1665,7 @@ export const runDaemon = Effect.gen(function* () {
           leases: [...leaseNotes].flatMap(([runId, leases]) =>
             leases.map((lease) => ({ runId, ...lease })),
           ),
-          markers: (yield* listUnreleasedMarkersUseCase()).markers,
+          markers: (yield* runsQueries.ListUnreleasedMarkersQuery()).markers,
         } satisfies DaemonStatus;
       });
 
@@ -1751,7 +1753,10 @@ export const runDaemon = Effect.gen(function* () {
 
           // Nothing finds a manual flow's work, so a person must name it.
           if (Option.isNone(schedule.expression) && Option.isNone(body.item)) {
-            return yield* refuse(400, nothingNamed(schedule.handle.name));
+            return yield* refuse(
+              400,
+              nothingNamed(schedule.handle.name, schedule.handle.flow.start === true),
+            );
           }
 
           return yield* HttpServerResponse.schemaJson(TickResult)(
@@ -1781,11 +1786,14 @@ export const runDaemon = Effect.gen(function* () {
           }),
         });
 
-        const cancelled = yield* cancelRunUseCase(target, {
-          by: body.by,
-          closeSessions: body.closeSessions,
-          endAs: Option.none(),
-        }).pipe(Effect.result);
+        const cancelled = yield* RunFlowsCommands.use((runs) =>
+          runs.CancelRunCommand({
+            target,
+            by: body.by,
+            closeSessions: body.closeSessions,
+            endAs: Option.none(),
+          }),
+        ).pipe(Effect.result);
 
         if (Result.isFailure(cancelled)) {
           return yield* refuse(409, cancelled.failure.message);
@@ -1818,7 +1826,7 @@ export const runDaemon = Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
 
               return yield* HttpServerResponse.schemaJson(RunReply)(
-                (yield* findRunUseCase(id)).run,
+                (yield* RunsQueries.use((runs) => runs.FindRunQuery({ runId: id }))).run,
               );
             }),
           ),
@@ -1831,7 +1839,7 @@ export const runDaemon = Effect.gen(function* () {
               const { id } = yield* HttpRouter.schemaPathParams(PathParams);
 
               return yield* HttpServerResponse.schemaJson(RunHistory)(
-                yield* readRunHistoryUseCase(id),
+                yield* RunsQueries.use((runs) => runs.ReadRunHistoryQuery({ runId: id })),
               );
             }),
           ),

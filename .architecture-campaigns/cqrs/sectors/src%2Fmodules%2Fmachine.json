@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "campaign": "cqrs",
+  "sector": "src/modules/machine",
+  "reached": "events",
+  "since": "2026-10-30T18:11:49.942Z",
+  "attested": [],
+  "notes": []
+}

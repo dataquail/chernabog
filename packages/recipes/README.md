@@ -2,6 +2,8 @@
 
 Chernabog's recipes: complete flows, written from [`@chernabog/sdk`](https://www.npmjs.com/package/@chernabog/sdk)'s blocks, that a repo copies into its `.chernabog/` or imports from this package. Each recipe is documented at <https://dataquail.github.io/chernabog/recipes/>.
 
+Its recipes are `implement`, `review`, `re-review`, `address-review` and `resolve-conflicts`, the review loop; `plan`, which splits a spec into an epic of sub-issues; `epic`, which works through an epic's tasks as pull requests, each based on the branch of the task it builds on; and `human-initiated`, the hybrid path.
+
 `chernabog init` adds this package to a repo's `.chernabog/package.json`. You don't need to install it by hand.
 
 ## The recipe package format

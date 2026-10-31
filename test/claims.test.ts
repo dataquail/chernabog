@@ -9,6 +9,7 @@ import {
   Claims,
   DEFAULT_LABELS,
   defineFlow,
+  Implement,
   PullRequest,
   Review,
   StepFailed,
@@ -21,7 +22,7 @@ import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type Fake,
@@ -100,6 +101,34 @@ describe("a claim commit", () => {
 });
 
 describe("claiming an issue", () => {
+  effect(
+    "claimed again by the same run for a later attempt, takes the base it is given now and takes the queue label off again",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve", POOL);
+        fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+
+        // The first attempt is stacked on another task's branch; by the
+        // second, that branch has merged, and the task's base is main.
+        const twice = defineFlow({
+          trigger: Effect.succeed([]),
+          workflow: () =>
+            Effect.gen(function* () {
+              const first = yield* Implement.claim(ISSUE, { base: "auto/issue-9", id: "task-1" });
+              fake.existing.branch = true;
+              fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+              const second = yield* Implement.claim(ISSUE, { base: "main", id: "task-1-2" });
+
+              return `${first.base ?? ""} then ${second.base ?? ""}`;
+            }),
+        });
+
+        const finished = yield* runToEnd(flowHandle(repo, "twice", twice), fake, work);
+        expect(summaryOf(finished)).toBe("auto/issue-9 then main");
+        expect(fake.labelsOf(ISSUE)).not.toContain(DEFAULT_LABELS.eligible);
+      }),
+  );
+
   effect("takes the claim ref, and lets it go when the run ends, keeping the pull request", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve", POOL);
@@ -112,6 +141,8 @@ describe("claiming an issue", () => {
       ]);
       expect(fake.refs.has(ISSUE_REF)).toBe(false);
       expect(fake.git.opened).toBe(true);
+      // The pull request it opened is the run's subject.
+      expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
       // The comment a person reads says the claim is a ref.
       expect(
@@ -231,7 +262,9 @@ describe("owning a pull request", () => {
       const waiting = makeFake("approve");
 
       const parked = yield* runUntil(owning, waiting, item("owning-waits"), (run) =>
-        listRunWaitsUseCase(run.id, "pushed").pipe(Effect.map(({ waits }) => waits.length > 0)),
+        listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
+          Effect.map(({ waits }) => waits.length > 0),
+        ),
       );
 
       expect(Option.map(holderOf(waiting, PULL_REF), (holder) => holder.runId)).toEqual(

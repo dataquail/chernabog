@@ -1,0 +1,21 @@
+import { Query } from "@effect-server-utils/cqrs";
+import * as Schema from "effect/Schema";
+
+import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunLogMissing } from "../domain/run/run.errors.ts";
+
+// A run's log as it is now, and where it's kept.
+export class RunLog extends Schema.Class<RunLog, { readonly brand: "RunLog" }>("RunLog")({
+  runId: RunId,
+  path: Schema.String,
+  text: Schema.String,
+}) {}
+
+// A run's log as it is now. Fails when the run has written none.
+export const ReadRunLogQuery = Query.make("ReadRunLogQuery", {
+  payload: { runId: RunId },
+  success: RunLog,
+  failure: RunLogMissing,
+});
+
+export type ReadRunLogPayload = Query.Payload<typeof ReadRunLogQuery>;

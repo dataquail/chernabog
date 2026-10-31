@@ -116,13 +116,13 @@ describe("EnrolledRepoRootOps.reenroll", () => {
 
     const again = EnrolledRepoRootOps.reenroll(
       existing,
-      enrolled({ path: "/new", baseBranch: "trunk" }),
+      enrolled({ path: "/new", name: "widgets-2" }),
     );
 
     expect(again).toEqual(
       enrolled({
         path: "/new",
-        baseBranch: "trunk",
+        name: "widgets-2",
         defaults: { account: "work", flows: { implement: {} } },
         personas: { alice: { flows: { review: {} } } },
       }),
@@ -323,7 +323,7 @@ const machine = (
   });
 
 const checkout = (flows: ReadonlyArray<string>, teamFlows = team()) =>
-  Checkout.make({ root: "/src/widgets", repo: slug, baseBranch: "main", flows, team: teamFlows });
+  Checkout.make({ root: "/src/widgets", repo: slug, flows, team: teamFlows });
 
 describe("EnrolledRepoRootOps flow offers", () => {
   test("the team's defaults are its flows that aren't off and that this machine can run", () => {
@@ -501,11 +501,7 @@ describe("EnrolledRepoRootOps enrolling", () => {
       EnrolledRepoRootOps.enroll([], checkout(["implement"]), Option.none()),
     );
 
-    expect([fresh.added, fresh.repo.path, fresh.repo.baseBranch]).toEqual([
-      true,
-      "/src/widgets",
-      "main",
-    ]);
+    expect([fresh.added, fresh.repo.path]).toEqual([true, "/src/widgets"]);
 
     const before = enrolled({ path: "/old", defaults: { flows: { review: {} } }, paused: true });
 

@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "campaign": "cqrs",
+  "objective": "write-use-cases",
+  "created": "2026-10-30T05:15:22.531Z",
+  "sectors": {
+    "src/modules/trust": {
+      "entered": "2026-10-30T05:41:27.470Z",
+      "initial": 0,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T05:41:27.470Z",
+      "holdouts": []
+    },
+    "src/modules/enrollment": {
+      "entered": "2026-10-30T06:14:45.008Z",
+      "initial": 8,
+      "cleared": 8,
+      "closed": 0,
+      "lastCleared": "2026-10-30T14:12:37.810Z",
+      "holdouts": []
+    },
+    "src/modules/rehearsals": {
+      "entered": "2026-10-30T14:27:56.088Z",
+      "initial": 0,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-30T14:27:56.088Z",
+      "holdouts": []
+    },
+    "src/modules/recipes": {
+      "entered": "2026-10-30T14:29:25.654Z",
+      "initial": 4,
+      "cleared": 4,
+      "closed": 0,
+      "lastCleared": "2026-10-30T15:20:31.135Z",
+      "holdouts": []
+    },
+    "src/modules/runs": {
+      "entered": "2026-10-30T16:22:31.073Z",
+      "initial": 20,
+      "cleared": 20,
+      "closed": 0,
+      "lastCleared": "2026-10-30T22:26:02.086Z",
+      "holdouts": []
+    },
+    "src/modules/machine": {
+      "entered": "2026-10-30T14:26:03.533Z",
+      "initial": 5,
+      "cleared": 5,
+      "closed": 0,
+      "lastCleared": "2026-10-30T18:11:49.942Z",
+      "holdouts": []
+    }
+  },
+  "concessions": []
+}

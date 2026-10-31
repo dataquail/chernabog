@@ -1,4 +1,4 @@
-import { DEFAULT_LABELS, defineFlow } from "@chernabog/core";
+import { defineFlow, Settings } from "@chernabog/core";
 import { expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -7,9 +7,14 @@ import * as Schema from "effect/Schema";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { fixture } from "../../../../../test/fixtures.ts";
-import { desiredLabels, Label, planLabelSync, withFlowLabels } from "./labels.ts";
+import { asPersona, repoAs, settings } from "../../../../../test/sdk-fakes.ts";
+import { declaredLabels, desiredLabels, Label, planLabelSync } from "./labels.ts";
 
-const DESIRED = desiredLabels(DEFAULT_LABELS);
+const DESIRED = desiredLabels([
+  { name: "auto:eligible", color: "0e8a16", description: "Queued for an unattended run" },
+  { name: "auto:in-progress", color: "fbca04", description: "An unattended run owns this issue" },
+  { name: "auto:needs-human", color: "b60205", description: "A person takes over" },
+]);
 
 // The first desired label exists as it should; the second exists with the wrong color.
 const asWanted = DESIRED.slice(0, 1).map((label) => ({
@@ -52,25 +57,65 @@ effect("a repo with none of them yet gets all of them", () =>
   }),
 );
 
-test("a repo's own label names are the ones synced", () => {
-  expect(desiredLabels({ ...DEFAULT_LABELS, eligible: "agent:queued" })[0]?.name).toBe(
-    "agent:queued",
-  );
-});
-
-test("labels a flow declares are synced too, after the repo's own", () => {
-  const ship = defineFlow({
-    trigger: Effect.succeed([]),
-    workflow: () => Effect.void,
-    labels: [
-      { name: "auto:deploy", description: "Deploy once merged" },
-      { name: "auto:approved", color: "000000" },
-    ],
-  });
-
-  const all = withFlowLabels(DESIRED, [ship]);
-  expect(all.slice(DESIRED.length)).toEqual([
-    { name: "auto:deploy", color: "c5def5", description: "Deploy once merged" },
+test("a label two flows declare is synced once, with the first one's look", () => {
+  const all = desiredLabels([
+    { name: "auto:deploy", description: "Deploy once merged" },
+    { name: "auto:approved", color: "0e8a16", description: "Approved" },
+    { name: "AUTO:APPROVED", color: "000000" },
   ]);
-  expect(all.find((label) => label.name === "auto:approved")?.color).toBe("0e8a16");
+
+  expect(all).toEqual([
+    { name: "auto:deploy", color: "c5def5", description: "Deploy once merged" },
+    { name: "auto:approved", color: "0e8a16", description: "Approved" },
+  ]);
 });
+
+const noop = { trigger: Effect.succeed([]), workflow: () => Effect.void };
+
+effect("only the labels the loaded flows declare are synced, none of core's own", () =>
+  Effect.gen(function* () {
+    const ship = defineFlow({ ...noop, labels: [{ name: "auto:deploy" }] });
+    const quiet = defineFlow(noop);
+
+    const labels = yield* declaredLabels(
+      repoAs(settings),
+      new Map([
+        ["ship", ship],
+        ["quiet", quiet],
+      ]),
+    );
+
+    expect(labels.map((label) => label.name)).toEqual(["auto:deploy"]);
+  }),
+);
+
+effect("a flow works its labels out from its settings, as each persona runs it", () =>
+  Effect.gen(function* () {
+    const Own = Schema.Struct({ queue: Schema.optionalKey(Schema.String) });
+
+    const queue = defineFlow({
+      ...noop,
+      settings: Own,
+      labels: Effect.map(Settings.read(Own), (own) => [{ name: own.queue ?? "queued" }]),
+    });
+
+    const repo = {
+      ...repoAs(settings),
+      personas: [
+        {
+          ...asPersona(settings, Option.some("alice")),
+          shared: { queue: "team:queued" },
+        },
+        {
+          ...asPersona(settings, Option.some("bob")),
+          shared: { queue: "team:queued" },
+          flows: { queue: { settings: { queue: "bob:queued" } } },
+        },
+      ],
+    } as const;
+
+    const labels = yield* declaredLabels(repo, new Map([["queue", queue]]));
+
+    expect(labels.map((label) => label.name)).toEqual(["team:queued", "bob:queued"]);
+  }),
+);

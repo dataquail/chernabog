@@ -2,6 +2,34 @@
 
 What `@chernabog/core` declares, module by module, as `tsc` emits it. `bun run gen:core-api` writes this file, and a test fails when it is out of date. Within a major, change it only by adding to it: see [ADR 0004](../../docs/adr/0004-core-abi.md).
 
+## capabilities.ts
+
+```ts
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+export type Write<A> = {
+    readonly doing: string;
+    readonly done: string;
+    readonly item: (result: A) => Option.Option<number>;
+};
+export declare const write: <A>(doing: string, done: string, item?: Option.Option<number>) => Option.Option<Write<A>>;
+export type Other = "read" | "local" | "claim" | "delegated";
+export type Guard = <Args extends ReadonlyArray<unknown>, A, E, R>(method: (...args: Args) => Effect.Effect<A, E, R>, describe: (...args: Args) => Option.Option<Write<A>>) => (...args: Args) => Effect.Effect<A, E, R>;
+export type Around = <A, E, R>(described: Write<A>, call: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+export type Guarded = {
+    readonly guarding: <R>(context: Context.Context<R>, around: Around) => Context.Context<R>;
+};
+export type Capability<S, W extends Partial<S>> = Guarded & {
+    readonly writes: (service: S, guard: Guard) => W;
+    readonly others: {
+        readonly [K in Exclude<keyof S, keyof W>]: Other;
+    };
+};
+export declare const declare: <I, S, W extends Partial<S>>(port: Context.Key<I, S>, writes: (service: S, guard: Guard) => W, others: { readonly [K in Exclude<keyof S, keyof W>]: Other; }) => Capability<S, W>;
+export declare const guardingAll: <R>(context: Context.Context<R>, capabilities: ReadonlyArray<Guarded>, around: Around) => Context.Context<R>;
+```
+
 ## claims.ts
 
 ```ts
@@ -228,6 +256,27 @@ export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticat
 export {};
 ```
 
+## flow-settings.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import type { Json } from "./json.ts";
+export type SettingsSchema = Schema.Codec<unknown, unknown>;
+export type Input = {
+    readonly [key: string]: Json;
+};
+declare const FlowSettings_base: Context.ServiceClass<FlowSettings, "@chernabog/sdk/FlowSettings", {
+    readonly input: Input;
+}>;
+export declare class FlowSettings extends FlowSettings_base {
+}
+export declare const input: Effect.Effect<Input, never, never>;
+export declare const read: <S extends SettingsSchema>(schema: S) => Effect.Effect<S["Type"]>;
+export {};
+```
+
 ## flow.ts
 
 ```ts
@@ -242,6 +291,7 @@ import type * as Scope from "effect/Scope";
 import * as DurableDeferred from "effect/workflow/DurableDeferred";
 import type * as WorkflowEngine from "effect/workflow/WorkflowEngine";
 import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
+import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
 import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
@@ -276,13 +326,33 @@ export declare const valid: Valid;
 export declare const gone: (reason: string) => Gone;
 export declare const isGone: (validity: Validity) => validity is Gone;
 export type StillValid = (item: WorkItem) => Effect.Effect<Validity, FlowError, TriggerServices | Run>;
+export type Warning = {
+    readonly warning: string;
+    readonly fix: string;
+};
+export type DoctorFlow = {
+    readonly name: string;
+    readonly runners: ReadonlyArray<string>;
+    readonly doctor: ReadonlyArray<DoctorCheck>;
+};
+export type DoctorContext = {
+    readonly flow: string;
+    readonly personas: ReadonlyArray<string>;
+    readonly login: Option.Option<string>;
+    readonly runs: boolean;
+    readonly flows: ReadonlyArray<DoctorFlow>;
+};
+export type DoctorCheck = (context: DoctorContext) => Effect.Effect<ReadonlyArray<Warning>, never, FlowSettings | Repo>;
 type FlowCommon = {
     readonly gate?: Effect.Effect<void, FlowError, TriggerServices>;
     readonly concurrency?: number;
-    readonly labels?: ReadonlyArray<FlowLabel>;
+    readonly settings?: SettingsSchema;
+    readonly labels?: ReadonlyArray<FlowLabel> | Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
     readonly ownWork?: boolean;
     readonly stillValid?: StillValid;
     readonly markers?: ReadonlyArray<Marker>;
+    readonly doctor?: ReadonlyArray<DoctorCheck>;
+    readonly start?: boolean;
     readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 };
 export type TriggeredFlow = FlowCommon & {
@@ -297,6 +367,7 @@ export type ManualFlow = FlowCommon & {
 };
 export type Flow = TriggeredFlow | ManualFlow;
 export declare const defineFlow: (flow: Flow) => Flow;
+export declare const labelsOf: (flow: Flow) => Effect.Effect<ReadonlyArray<FlowLabel>, never, FlowSettings | Repo>;
 export declare const isManual: (flow: Flow) => flow is ManualFlow;
 export declare const triggerOf: (flow: Flow) => TriggeredFlow["trigger"];
 export declare const describeError: <E>(error: E) => string;
@@ -332,6 +403,7 @@ export declare const boardStatus: import("./run-markers.ts").Definition<{
 }>;
 export declare const claimBranch: import("./run-markers.ts").Definition<{
     readonly branch: string;
+    readonly base?: string | undefined;
 }>;
 export declare const builtIn: ReadonlyArray<Marker>;
 ```
@@ -339,9 +411,11 @@ export declare const builtIn: ReadonlyArray<Marker>;
 ## index.ts
 
 ```ts
+export * as Capabilities from "./capabilities.ts";
 export * as Claims from "./claims.ts";
 export * from "./errors.ts";
 export * from "./flow.ts";
+export * as Settings from "./flow-settings.ts";
 export * from "./json.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";
@@ -349,6 +423,7 @@ export * from "./paths.ts";
 export * from "./roles.ts";
 export * from "./services.ts";
 export * from "./stage.ts";
+export * as Subjects from "./subjects.ts";
 ```
 
 ## json.ts
@@ -594,6 +669,7 @@ import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Capabilities from "./capabilities.ts";
 import type { AgentError, GitError, GitHubError, MergeRefused, NotFound, PullRequestClosed, PushRejected, UsageError } from "./errors.ts";
 import type { Json } from "./json.ts";
 export declare const Labels: Schema.Struct<{
@@ -635,7 +711,6 @@ export declare const Limits: Schema.Struct<{
     readonly planNodes: Schema.Finite;
     readonly planRounds: Schema.Finite;
     readonly stackDepth: Schema.Finite;
-    readonly postMergeNoCiGrace: Schema.Duration;
 }>;
 export type Limits = typeof Limits.Type;
 export declare const LauncherCommands: Schema.Struct<{
@@ -724,7 +799,6 @@ export declare const RepoSettings: Schema.Struct<{
         readonly planNodes: Schema.Finite;
         readonly planRounds: Schema.Finite;
         readonly stackDepth: Schema.Finite;
-        readonly postMergeNoCiGrace: Schema.Duration;
     }>;
     readonly env: Schema.$Record<Schema.String, Schema.String>;
     readonly configDir: Schema.String;
@@ -807,7 +881,6 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
         readonly planNodes: number;
         readonly planRounds: number;
         readonly stackDepth: number;
-        readonly postMergeNoCiGrace: import("effect/Duration").Duration;
     };
     readonly env: {
         readonly [x: string]: string;
@@ -824,6 +897,11 @@ export declare const WorkItem: Schema.Struct<{
     readonly signals: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
     readonly held: Schema.optionalKey<Schema.String>;
+    readonly elsewhere: Schema.optionalKey<Schema.String>;
+    readonly waitsOn: Schema.optionalKey<Schema.Struct<{
+        readonly who: Schema.String;
+        readonly why: Schema.String;
+    }>>;
     readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
 }>;
@@ -840,9 +918,15 @@ export declare const RunInfo: Schema.Struct<{
         readonly signals: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly wakeOnly: Schema.optionalKey<Schema.Boolean>;
         readonly held: Schema.optionalKey<Schema.String>;
+        readonly elsewhere: Schema.optionalKey<Schema.String>;
+        readonly waitsOn: Schema.optionalKey<Schema.Struct<{
+            readonly who: Schema.String;
+            readonly why: Schema.String;
+        }>>;
         readonly assignees: Schema.optionalKey<Schema.$Array<Schema.String>>;
         readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
     }>;
+    readonly subjects: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly pullRequest: Schema.optionalKey<Schema.Finite>;
     readonly leaseTtl: Schema.optionalKey<Schema.Finite>;
 }>;
@@ -859,9 +943,15 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
         readonly signals?: readonly string[] | undefined;
         readonly wakeOnly?: boolean | undefined;
         readonly held?: string | undefined;
+        readonly elsewhere?: string | undefined;
+        readonly waitsOn?: {
+            readonly who: string;
+            readonly why: string;
+        } | undefined;
         readonly assignees?: readonly string[] | undefined;
         readonly reviewers?: readonly string[] | undefined;
     };
+    readonly subjects?: readonly string[] | undefined;
     readonly pullRequest?: number | undefined;
     readonly leaseTtl?: number | undefined;
 }>;
@@ -971,6 +1061,19 @@ export type CiState = ({
 }) & {
     readonly caveat?: string;
 };
+export type CiCheck = {
+    readonly name: string;
+    readonly kind: "check-run" | "status";
+    readonly state: "pending" | "passed" | "failed";
+    readonly required: boolean;
+    readonly url: string;
+};
+export type CiChecks = {
+    readonly headSha: string;
+    readonly checks: ReadonlyArray<CiCheck>;
+    readonly required: ReadonlyArray<string>;
+    readonly caveat: Option.Option<string>;
+};
 export type CiFailedRun = {
     readonly name: string;
     readonly url: string;
@@ -1022,6 +1125,7 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
     openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
     ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
     commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
@@ -1035,6 +1139,69 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
 }>;
 export declare class GitHub extends GitHub_base {
 }
+export declare const GitHubCapability: Capabilities.Capability<{
+    readonly queuedIssues: Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    queuedIssuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    readonly oldestQueued: Effect.Effect<Option.Option<number>, GitHubError>;
+    issuesLabelled(label: string): Effect.Effect<ReadonlyArray<Issue>, GitHubError>;
+    issue(number: number): Effect.Effect<Issue, NotFound | GitHubError>;
+    createIssue(issue: NewIssue): Effect.Effect<Issue, GitHubError>;
+    subIssues(parent: number): Effect.Effect<ReadonlyArray<LinkedIssue>, GitHubError>;
+    addSubIssue(parent: number, child: number): Effect.Effect<void, GitHubError>;
+    blockedBy(issue: number): Effect.Effect<ReadonlyArray<LinkedIssue>, GitHubError>;
+    addBlockedBy(issue: number, blocker: number): Effect.Effect<void, GitHubError>;
+    removeBlockedBy(issue: number, blocker: number): Effect.Effect<void, GitHubError>;
+    trustedComments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;
+    comments(number: number): Effect.Effect<ReadonlyArray<Comment>, GitHubError>;
+    comment(number: number, body: string): Effect.Effect<void, GitHubError>;
+    addLabel(number: number, label: string): Effect.Effect<void, GitHubError>;
+    removeLabel(number: number, label: string): Effect.Effect<void, GitHubError>;
+    moveToStatus(number: number, status: string): Effect.Effect<void, GitHubError>;
+    assignSelf(number: number): Effect.Effect<void, GitHubError>;
+    readonly login: Effect.Effect<string, GitHubError>;
+    branchSha(branch: string): Effect.Effect<Option.Option<string>, GitHubError>;
+    createBranch(branch: string, sha: string): Effect.Effect<"created" | "already-exists", GitHubError>;
+    deleteBranch(branch: string): Effect.Effect<void, GitHubError>;
+    createCommit(commit: NewCommit): Effect.Effect<string, GitHubError>;
+    createRef(ref: string, sha: string): Effect.Effect<"created" | "already-exists", GitHubError>;
+    ref(ref: string): Effect.Effect<Option.Option<RefCommit>, GitHubError>;
+    deleteRef(ref: string): Effect.Effect<void, GitHubError>;
+    updateRef(ref: string, sha: string): Effect.Effect<void, GitHubError>;
+    pullRequest(number: number): Effect.Effect<PullRequest, NotFound | GitHubError>;
+    pullRequestForBranch(branch: string): Effect.Effect<Option.Option<PullRequest>, GitHubError>;
+    pullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    readonly openPullRequests: Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    requestReviewers(pullRequest: number, logins: ReadonlyArray<string>): Effect.Effect<void, PullRequestClosed | GitHubError>;
+    reviews(pullRequest: number): Effect.Effect<ReadonlyArray<SubmittedReview>, GitHubError>;
+    openPullRequest(pullRequest: NewPullRequest): Effect.Effect<PullRequest, GitHubError>;
+    ciChecks(pullRequest: number): Effect.Effect<CiChecks, GitHubError>;
+    ciState(pullRequest: number): Effect.Effect<CiState, GitHubError>;
+    commitCiState(sha: string, options?: CommitCiOptions): Effect.Effect<CiReport, GitHubError>;
+    branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
+    ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
+    pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
+    closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
+    review(pullRequest: number, review: NewReview): Effect.Effect<void, PullRequestClosed | GitHubError>;
+    reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;
+    merge(pullRequest: number, merge: MergeRequest): Effect.Effect<Merged, MergeRefused | PullRequestClosed | GitHubError>;
+    request(method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE", path: string, body: Option.Option<Json>): Effect.Effect<Json, GitHubError>;
+}, {
+    createIssue: (issue: NewIssue) => Effect.Effect<Issue, GitHubError, never>;
+    addSubIssue: (parent: number, child: number) => Effect.Effect<void, GitHubError, never>;
+    addBlockedBy: (issue: number, blocker: number) => Effect.Effect<void, GitHubError, never>;
+    removeBlockedBy: (issue: number, blocker: number) => Effect.Effect<void, GitHubError, never>;
+    comment: (number: number, body: string) => Effect.Effect<void, GitHubError, never>;
+    addLabel: (number: number, label: string) => Effect.Effect<void, GitHubError, never>;
+    removeLabel: (number: number, label: string) => Effect.Effect<void, GitHubError, never>;
+    moveToStatus: (number: number, status: string) => Effect.Effect<void, GitHubError, never>;
+    assignSelf: (number: number) => Effect.Effect<void, GitHubError, never>;
+    deleteBranch: (branch: string) => Effect.Effect<void, GitHubError, never>;
+    requestReviewers: (pullRequest: number, logins: readonly string[]) => Effect.Effect<void, GitHubError | PullRequestClosed, never>;
+    openPullRequest: (pullRequest: NewPullRequest) => Effect.Effect<PullRequest, GitHubError, never>;
+    review: (pullRequest: number, review: NewReview) => Effect.Effect<void, GitHubError | PullRequestClosed, never>;
+    merge: (pullRequest: number, merge: MergeRequest) => Effect.Effect<Merged, GitHubError | MergeRefused | PullRequestClosed, never>;
+    request: (method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT", path: string, body: Option.Option<Schema.Json>) => Effect.Effect<Schema.Json, GitHubError, never>;
+}>;
 declare const Git_base: Context.ServiceClass<Git, "@chernabog/sdk/Git", {
     run(args: ReadonlyArray<string>, cwd: string): Effect.Effect<string, GitError>;
     headSha(cwd: string): Effect.Effect<string, GitError>;
@@ -1045,14 +1212,34 @@ declare const Git_base: Context.ServiceClass<Git, "@chernabog/sdk/Git", {
 }>;
 export declare class Git extends Git_base {
 }
+export declare const GitCapability: Capabilities.Capability<{
+    run(args: ReadonlyArray<string>, cwd: string): Effect.Effect<string, GitError>;
+    headSha(cwd: string): Effect.Effect<string, GitError>;
+    commitsAhead(cwd: string, base: string): Effect.Effect<number, GitError>;
+    changedFiles(cwd: string, base: string): Effect.Effect<ReadonlyArray<string>, GitError>;
+    push(cwd: string, branch: string): Effect.Effect<void, PushRejected | GitError>;
+    pull(cwd: string, branch: string): Effect.Effect<void, GitError>;
+}, {
+    push: (_cwd: string, branch: string) => Effect.Effect<void, GitError | PushRejected, never>;
+}>;
+export type EnsureOptions = {
+    readonly from?: string;
+    readonly runId?: string;
+};
 declare const Worktree_base: Context.ServiceClass<Worktree, "@chernabog/sdk/Worktree", {
-    ensure(branch: string, runId?: string): Effect.Effect<string, GitError>;
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
     pathFor(branch: string): string;
     remove(branch: string): Effect.Effect<void, GitError>;
     checkout(name: string, ref: string): Effect.Effect<string, GitError>;
 }>;
 export declare class Worktree extends Worktree_base {
 }
+export declare const WorktreeCapability: Capabilities.Capability<{
+    ensure(branch: string, options?: EnsureOptions | string): Effect.Effect<string, GitError>;
+    pathFor(branch: string): string;
+    remove(branch: string): Effect.Effect<void, GitError>;
+    checkout(name: string, ref: string): Effect.Effect<string, GitError>;
+}, {}>;
 export type LaunchDecision = {
     readonly launch: boolean;
     readonly reason: string;
@@ -1063,6 +1250,10 @@ declare const Usage_base: Context.ServiceClass<Usage, "@chernabog/sdk/Usage", {
 }>;
 export declare class Usage extends Usage_base {
 }
+export declare const UsageCapability: Capabilities.Capability<{
+    readonly gate: Effect.Effect<LaunchDecision, UsageError>;
+    readonly checkAccount: Effect.Effect<string, UsageError>;
+}, {}>;
 export type AgentResult = {
     readonly sessionId: string;
     readonly output: Json;
@@ -1084,15 +1275,28 @@ declare const Agent_base: Context.ServiceClass<Agent, "@chernabog/sdk/Agent", {
 }>;
 export declare class Agent extends Agent_base {
 }
+export declare const AgentCapability: Capabilities.Capability<{
+    run(request: AgentRequest): Effect.Effect<AgentResult, AgentError>;
+    readonly adapters: ReadonlyArray<string>;
+}, {}>;
 declare const ReviewerSeat_base: Context.ServiceClass<ReviewerSeat, "@chernabog/sdk/ReviewerSeat", {
     readonly login: Effect.Effect<string>;
 }>;
 export declare class ReviewerSeat extends ReviewerSeat_base {
 }
+export declare const ReviewerSeatCapability: Capabilities.Capability<{
+    readonly login: Effect.Effect<string>;
+}, {}>;
+export declare const CAPABILITIES: ReadonlyArray<Capabilities.Guarded>;
 declare const Runs_base: Context.ServiceClass<Runs, "@chernabog/sdk/Runs", {
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
 }>;
 export declare class Runs extends Runs_base {
+}
+declare const Machine_base: Context.ServiceClass<Machine, "@chernabog/sdk/Machine", {
+    readonly personas: ReadonlyArray<string>;
+}>;
+export declare class Machine extends Machine_base {
 }
 declare const RunLog_base: Context.ServiceClass<RunLog, "@chernabog/sdk/RunLog", {
     log(line: string): Effect.Effect<void>;
@@ -1123,4 +1327,18 @@ export declare const STEP_EXIT: {
     readonly ok: 0;
     readonly skip: 78;
 };
+```
+
+## subjects.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+declare const RunSubjects_base: Context.ServiceClass<RunSubjects, "@chernabog/sdk/RunSubjects", {
+    name(subject: string): Effect.Effect<void>;
+}>;
+export declare class RunSubjects extends RunSubjects_base {
+}
+export declare const name: (subject: string) => Effect.Effect<void, never, never>;
+export {};
 ```

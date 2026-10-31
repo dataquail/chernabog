@@ -81,6 +81,7 @@ describe("human-initiated", () => {
         expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.ship);
         expect(fake.labelsOf(ISSUE)).toEqual([]);
         expect(fake.people.requested).toHaveLength(1);
+        expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
         const marker = Option.firstSomeOf(
           fake.comments.map((comment) => sessionMarker.read(comment.body)),

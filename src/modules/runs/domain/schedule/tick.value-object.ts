@@ -3,7 +3,9 @@
 
 import type * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import { WorkItem } from "../run/work-item.value-object.ts";
 import { withinHours } from "./schedule.value-object.ts";
 
 export type Capacity = {
@@ -67,3 +69,21 @@ export const freeSlots = (capacity: Capacity) =>
       capacity.machineConcurrency - capacity.activeOnMachine,
     ),
   );
+
+// What a tick of a persona's flow would do: the work whose signals go to the
+// runs in flight (none when its trigger didn't run), the work it may start
+// runs for, in order, why it would start nothing when it wouldn't, and, once
+// its trigger ran, what it queued for this machine, left for others, and
+// says waits on someone, with who and why.
+export class TickPlan extends Schema.Class<TickPlan, { readonly brand: "TickPlan" }>("TickPlan")({
+  signalled: Schema.Array(WorkItem),
+  start: Schema.Array(WorkItem),
+  skipped: Schema.Option(Schema.String),
+  routed: Schema.Option(
+    Schema.Struct({
+      queued: Schema.Array(Schema.String),
+      elsewhere: Schema.Array(Schema.String),
+      waiting: Schema.Array(Schema.String),
+    }),
+  ),
+}) {}

@@ -15,7 +15,7 @@
 //
 // This file is chernabog's post-merge recipe, and this repo's to change:
 // `chernabog recipes diff` shows how it differs from the recipe's current
-// version. The names of its steps ("ci-<n>", "ci-before-merge",
+// version. The names of its steps ("watch-limits", "ci-<n>", "ci-before-merge",
 // "closes-follow-up", "failure-details", "file-follow-up") are the keys a
 // run in flight resumes by, so renaming one restarts that step.
 
@@ -29,6 +29,7 @@ import {
   PullRequest,
   Repo,
   reportAs,
+  Settings,
   sleep,
   StepFailed,
   type WorkItem,
@@ -43,6 +44,33 @@ import * as Schema from "effect/Schema";
 // Only merges this recent are watched, so enrolling a repo doesn't watch its history.
 const WATCH_WITHIN = Duration.days(1);
 const CI_POLL = Duration.minutes(1);
+
+// How long a merge commit may go with no CI run before the repo is taken to
+// run none for it, unless the flow's noCiGrace setting says otherwise.
+const NO_CI_GRACE = Duration.minutes(10);
+
+// "10 minutes": a duration as config may write one.
+const isDurationText = (text: string): text is `${number} ${Duration.Unit}` =>
+  /^\d+(?:\.\d+)? (?:nano|micro|milli|second|minute|hour|day|week)s?$/.test(text);
+
+const durationOf = (text: string) =>
+  Option.flatMap(Option.liftPredicate(text, isDurationText), Duration.fromInput);
+
+// What config.yaml may set for this flow alone, under flows.<name>.settings.
+const Own = Schema.Struct({
+  noCiGrace: Schema.optionalKey(
+    Schema.String.pipe(
+      Schema.check(
+        Schema.makeFilter(
+          (text: string) =>
+            Option.isSome(durationOf(text)) || `"${text}" is not a duration, such as "10 minutes"`,
+        ),
+      ),
+    ).annotate({
+      description: `How long a merge commit may go with no CI run before the run takes the repo to run none for it, such as "10 minutes". Default: ${Duration.format(NO_CI_GRACE)}.`,
+    }),
+  ),
+});
 
 // A hidden marker in a comment or an issue body, as chernabog's own are written.
 const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
@@ -126,6 +154,7 @@ const isRecent = (mergedAt: string, now: DateTime.Utc) =>
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
+  const base = yield* Settings.base;
   const me = yield* github.login;
   const now = yield* DateTime.now;
   const items: Array<WorkItem> = [];
@@ -141,7 +170,7 @@ const trigger = Effect.gen(function* () {
   for (const pull of closed) {
     if (
       !sameLogin(pull.user.login, me) ||
-      pull.base.ref !== repo.baseBranch ||
+      pull.base.ref !== base ||
       Option.isNone(pull.merge_commit_sha) ||
       !Option.exists(pull.merged_at, (at) => isRecent(at, now))
     ) {
@@ -222,14 +251,35 @@ const readMergeCi = (sha: string, poll: number) =>
     MergeCi,
   );
 
-// Polls the merge commit's push CI durably until it stops pending. No run
-// within limits.postMergeNoCiGrace is no CI for this push; still pending
-// after limits.ciTimeout is a person's to look at.
-const awaitMergeCi = (merged: MergedItem) =>
+const WatchLimits = Schema.Struct({ grace: Schema.Duration, timeout: Schema.Duration });
+
+type WatchLimits = typeof WatchLimits.Type;
+
+// The no-CI grace and the CI timeout, read once, so a replay decides the same.
+const watchLimits = activity(
+  "watch-limits",
   Effect.gen(function* () {
-    const repo = yield* Repo;
-    const grace = Duration.toMillis(repo.limits.postMergeNoCiGrace);
-    const timeout = Duration.toMillis(repo.limits.ciTimeout);
+    const own = yield* Settings.read(Own);
+    const ci = yield* Settings.ci;
+
+    return {
+      grace: Option.getOrElse(
+        Option.flatMap(Option.fromUndefinedOr(own.noCiGrace), durationOf),
+        () => NO_CI_GRACE,
+      ),
+      timeout: ci.timeout,
+    };
+  }),
+  WatchLimits,
+);
+
+// Polls the merge commit's push CI durably until it stops pending. No run
+// within the noCiGrace setting is no CI for this push; still pending after
+// the ciTimeout setting is a person's to look at.
+const awaitMergeCi = (merged: MergedItem, limits: WatchLimits) =>
+  Effect.gen(function* () {
+    const grace = Duration.toMillis(limits.grace);
+    const timeout = Duration.toMillis(limits.timeout);
     const every = Duration.toMillis(CI_POLL);
 
     for (let poll = 1; ; poll++) {
@@ -251,7 +301,7 @@ const awaitMergeCi = (merged: MergedItem) =>
 
       if (waited >= timeout) {
         return yield* new NeedsHuman({
-          reason: `CI on ${merged.baseRef} at ${merged.mergeSha} stayed pending for ${Duration.format(repo.limits.ciTimeout)} after #${merged.pullRequest} merged`,
+          reason: `CI on ${merged.baseRef} at ${merged.mergeSha} stayed pending for ${Duration.format(limits.timeout)} after #${merged.pullRequest} merged`,
         });
       }
     }
@@ -427,15 +477,15 @@ const fileFollowUp = (merged: MergedItem, body: string, fixed: Option.Option<num
         return existing.value;
       }
 
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
 
       const issue = yield* (yield* GitHub).createIssue({
         title: `CI is red on ${merged.baseRef} after #${merged.pullRequest} merged`,
         body,
         labels: [
           Option.match(fixed, {
-            onNone: () => repo.labels.eligible,
-            onSome: () => repo.labels.needsHuman,
+            onNone: () => labelNames.eligible,
+            onSome: () => labelNames.needsHuman,
           }),
         ],
       });
@@ -456,10 +506,11 @@ const watch = (merged: MergedItem) =>
       `Watching CI on \`${merged.baseRef}\` at ${merged.mergeSha}, this pull request's merge commit. ${watchedMarker.write({ sha: merged.mergeSha })}`,
     );
 
-    const ci = yield* awaitMergeCi(merged);
+    const limits = yield* watchLimits;
+    const ci = yield* awaitMergeCi(merged, limits);
 
     if (ci.state === "none") {
-      return `${pr}: no CI ran on ${short} within ${Duration.format(repo.limits.postMergeNoCiGrace)}; taken as none for this push`;
+      return `${pr}: no CI ran on ${short} within ${Duration.format(limits.grace)}; taken as none for this push`;
     }
 
     if (ci.state === "green") {
@@ -501,11 +552,21 @@ const workflow = (item: WorkItem) =>
     return yield* watch(merged);
   });
 
+// What config.yaml may set for this flow, under settings: or flows.<name>.settings.
+const settings = Schema.Struct({
+  ...Settings.Labels.fields,
+  ...Settings.Base.fields,
+  ...Settings.Ci.fields,
+  ...Own.fields,
+});
+
 export default defineFlow({
   trigger,
   // No agent runs, so no usage gate. Watching is only polling, so several merges are watched at once.
   concurrency: 4,
   // Its trigger finds only pull requests this persona wrote.
   ownWork: true,
+  labels: Settings.declaredLabels,
+  settings,
   workflow,
 });

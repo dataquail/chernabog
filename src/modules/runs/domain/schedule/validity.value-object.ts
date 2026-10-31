@@ -5,6 +5,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { itemTarget } from "../run/work-item.value-object.ts";
 
@@ -36,10 +37,23 @@ export const noteCheckFailure = (
 });
 
 // Whether a run in flight is about the issue or pull request a notification
-// names: its item is that one, or it opened or adopted it as its pull request.
+// names: its item is that one, or it named that one as a subject.
 export const runIsAbout = (
-  run: { readonly itemKey: string; readonly pullRequest: Option.Option<number> },
+  run: { readonly itemKey: string; readonly subjects: ReadonlyArray<string> },
   number: number,
 ) =>
-  Option.exists(itemTarget(run.itemKey), (target) => target.number === number) ||
-  Option.contains(run.pullRequest, number);
+  [run.itemKey, ...run.subjects].some((key) =>
+    Option.exists(itemTarget(key), (target) => target.number === number),
+  );
+
+// What checking a run's work item found: still valid; gone, and why; not
+// checked, because the run has ended, has no item or execution to ask about,
+// or its flow has no stillValid; or the check failed, which is not Gone.
+export const RunValidity = Schema.TaggedUnion({
+  Valid: {},
+  Gone: { reason: Schema.String },
+  Unchecked: {},
+  CheckFailed: { message: Schema.String },
+});
+
+export type RunValidity = typeof RunValidity.Type;

@@ -17,12 +17,15 @@ import {
   type PersonaContext,
   servicesFrom,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+} from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
 import {
   type CancelledRun,
   CancelTarget,
 } from "../../../modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../../../modules/runs/use-cases/cancel-run.use-case.ts";
 import { userName } from "../../../platform/environment.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
@@ -87,14 +90,16 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
     });
 
     const runtime = yield* Layer.build(
-      RuntimeLayer({
-        handles: [],
-        services: (repoName, persona) =>
-          Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
-            servicesFrom(personas)(persona),
-          ),
-      }).pipe(
-        Layer.provideMerge(StateLive),
+      RunFlowsCommandsLive.pipe(
+        Layer.provideMerge(
+          RuntimeLayer({
+            handles: [],
+            services: (repoName, persona) =>
+              Option.flatMap(Option.fromUndefinedOr(contexts.get(repoName)), (personas) =>
+                servicesFrom(personas)(persona),
+              ),
+          }).pipe(Layer.provideMerge(StateLive)),
+        ),
         // The engine's storage loop warns, on every pass, of the messages it
         // keeps for workflows this process doesn't load, such as other runs'
         // and the interrupt just stored; the daemon delivers them.
@@ -102,9 +107,9 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
       ),
     );
 
-    return yield* cancelRunUseCase(named, { by, closeSessions, endAs: Option.none() }).pipe(
-      Effect.provideContext(runtime),
-    );
+    return yield* RunFlowsCommands.use((runs) =>
+      runs.CancelRunCommand({ target: named, by, closeSessions, endAs: Option.none() }),
+    ).pipe(Effect.provideContext(runtime));
   }).pipe(Effect.scoped);
 
 const deletedRefs = (cancelled: CancelledRun) =>

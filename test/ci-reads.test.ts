@@ -1,7 +1,7 @@
 // The GitHub service's CI reads behind the fake GitHub: a pull request's, a
 // commit's and a branch's, and what a failed run's log says.
 
-import { GitHub, type RepoSettings } from "@chernabog/sdk";
+import { Ci, GitHub, type RepoSettings } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -285,6 +285,116 @@ describe("ciFailureDetails", () => {
 
       const details = yield* service.ciFailureDetails(failed);
       expect(details).toEqual({ url: "https://ci.example.com/9", logTail: Option.none() });
+    }),
+  );
+});
+
+describe("ciChecks", () => {
+  atHome("reports a required commit status, which goes green once it passes", () =>
+    Effect.gen(function* () {
+      const { featureSha, github, service } = yield* ciRepo;
+      github.requireChecks(["ci/outside"]);
+      expect(github.addPull("A change", "feature", "alice", [])).toBe(1);
+
+      github.setStatus(featureSha, {
+        id: 7,
+        context: "ci/outside",
+        state: "pending",
+        targetUrl: "https://ci.example.com/7",
+      });
+
+      const pending = yield* service.ciChecks(1);
+      expect(pending.headSha).toBe(featureSha);
+      expect(pending.required).toEqual(["ci/outside"]);
+      expect(pending.caveat).toEqual(Option.none());
+      expect(pending.checks).toEqual([
+        {
+          name: "ci/outside",
+          kind: "status",
+          state: "pending",
+          required: true,
+          url: "https://ci.example.com/7",
+        },
+        {
+          name: "test",
+          kind: "check-run",
+          state: "passed",
+          required: false,
+          url: `https://github.com/${SLUG}/runs/1`,
+        },
+      ]);
+      expect(Ci.verdict(pending, Ci.DEFAULT_POLICY)).toEqual({
+        state: "pending",
+        waitingOn: ["ci/outside"],
+      });
+
+      github.setStatus(featureSha, {
+        id: 8,
+        context: "ci/outside",
+        state: "success",
+        targetUrl: "https://ci.example.com/8",
+      });
+
+      const passed = yield* service.ciChecks(1);
+      expect(passed.checks.map((check) => [check.name, check.state])).toEqual([
+        ["ci/outside", "passed"],
+        ["test", "passed"],
+      ]);
+      expect(Ci.verdict(passed, Ci.DEFAULT_POLICY)).toEqual({ state: "green" });
+      // The deprecated verdict counts commit statuses too.
+      expect(yield* service.ciState(1)).toEqual({ state: "green" });
+    }),
+  );
+
+  atHome("reports a failing optional check as failed and not required, without a verdict", () =>
+    Effect.gen(function* () {
+      const { featureSha, github, service } = yield* ciRepo;
+      github.requireChecks(["ci/outside"]);
+      github.addPull("A change", "feature", "alice", []);
+      github.setChecks("red");
+
+      github.setStatus(featureSha, {
+        id: 9,
+        context: "ci/outside",
+        state: "success",
+        targetUrl: "https://ci.example.com/9",
+      });
+
+      const facts = yield* service.ciChecks(1);
+      expect(facts.checks.map((check) => [check.name, check.state, check.required])).toEqual([
+        ["ci/outside", "passed", true],
+        ["test", "failed", false],
+      ]);
+      expect(Ci.verdict(facts, Ci.DEFAULT_POLICY)).toEqual({
+        state: "red",
+        failedChecks: ["test"],
+      });
+      expect(Ci.verdict(facts, { gates: "required", optionalFailures: "ignore" })).toEqual({
+        state: "green",
+      });
+    }),
+  );
+
+  atHome("names a required check that hasn't reported, and says when GitHub won't say", () =>
+    Effect.gen(function* () {
+      const { github, service } = yield* ciRepo;
+      github.requireChecks(["ci/outside"]);
+      github.addPull("A change", "feature", "alice", []);
+
+      const facts = yield* service.ciChecks(1);
+      expect(facts.required).toEqual(["ci/outside"]);
+      expect(facts.checks.map((check) => check.name)).toEqual(["test"]);
+      expect(Ci.verdict(facts, Ci.DEFAULT_POLICY)).toEqual({
+        state: "pending",
+        waitingOn: ["ci/outside"],
+      });
+
+      github.refuseBranchRules();
+
+      const unsaid = yield* service.ciChecks(1);
+      expect(unsaid.required).toEqual([]);
+      expect(Option.getOrElse(unsaid.caveat, () => "")).toContain("every check counts");
+      expect(Ci.verdict(unsaid, Ci.DEFAULT_POLICY)).toMatchObject({ state: "green" });
     }),
   );
 });

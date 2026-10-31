@@ -3,6 +3,7 @@
 import {
   type Board,
   type Comment,
+  type EnsureOptions,
   Git,
   GitError,
   GitHub,
@@ -35,7 +36,10 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
 import type { HostEnvironment } from "../../../../platform/environment.ts";
@@ -55,7 +59,13 @@ import {
   type GitHubTokens,
 } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
-import { readBranchCiState, readCiFailureDetails, readCiState, readCommitCiState } from "./ci.ts";
+import {
+  readBranchCiState,
+  readCiChecks,
+  readCiFailureDetails,
+  readCiState,
+  readCommitCiState,
+} from "./ci.ts";
 import { checkCodexAccount, codexUsageGate } from "./codex-usage.ts";
 import {
   eligibleIssuesFrom,
@@ -776,6 +786,7 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
               }),
             ).pipe(Effect.map(toPullRequest)),
           ),
+        ciChecks: (pullRequest) => provide(readCiChecks(repo, pullRequest)),
         ciState: (pullRequest) => provide(readCiState(repo, pullRequest)),
         commitCiState: (sha, options = {}) =>
           provide(readCommitCiState(repo, sha, Option.fromUndefinedOr(options.event))),
@@ -870,6 +881,22 @@ export const pushRejection = (branch: string, said: string) => {
   );
 };
 
+// What git says when GitHub failed the push rather than refused it: a 5xx,
+// with or without a [remote rejected] line, or the connection dropping. The
+// push is worth trying again (#254).
+const SERVER_FAILURE =
+  /\((?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)\)|returned error: 5\d\d|remote end hung up unexpectedly/;
+
+export const isServerFailure = (said: string) => SERVER_FAILURE.test(said);
+
+// A lease keeps a push from overwriting anyone's, so trying it again is safe:
+// about 30 seconds of tries.
+const SERVER_FAILURE_RETRIES = {
+  while: (error: GitError) => isServerFailure(error.message),
+  schedule: Schedule.exponential("2 seconds"),
+  times: 4,
+};
+
 // Git as one persona: a push authenticates with its token.
 export const GitLive = (
   persona: Persona,
@@ -905,6 +932,7 @@ export const GitLive = (
         // Only ever the run's own branch, so a lease is enough to never overwrite someone's push.
         push: (cwd, branch) =>
           run(["push", "--force-with-lease", "origin", `HEAD:refs/heads/${branch}`], cwd).pipe(
+            Effect.retry(SERVER_FAILURE_RETRIES),
             Effect.asVoid,
             Effect.catchTag("GitError", (error): Effect.Effect<never, GitError | PushRejected> =>
               Effect.fail(
@@ -920,6 +948,34 @@ export const GitLive = (
       });
     }),
   );
+
+// What git says when another git holds the repository's config, a ref or the
+// index: the work wasn't done, and is done once the lock is released.
+const LOCK_CONTENTION =
+  /could not lock config file|cannot lock ref|Unable to create '[^']+\.lock': File exists/;
+
+const isLockContention = (error: { readonly message: string }) =>
+  LOCK_CONTENTION.test(error.message);
+
+// Every worktree of a repository shares its checkout's .git (config, refs,
+// the worktree list), so its runs prepare worktrees one at a time (#212),
+// whichever persona's Worktree they go through.
+const repositoryLocks = new Map<string, Semaphore.Semaphore>();
+
+const repositoryLock = (path: string) => {
+  const held = repositoryLocks.get(path) ?? Semaphore.makeUnsafe(1);
+  repositoryLocks.set(path, held);
+
+  return Semaphore.withPermit(held);
+};
+
+// Another process's git, such as `chernabog run`'s, can still hold a lock
+// for a moment: the whole preparation runs again once it's released.
+const CONTENTION_RETRIES = {
+  while: isLockContention,
+  schedule: Schedule.exponential("100 millis"),
+  times: 6,
+};
 
 // Worktrees, fetched as `persona`. A branch has one worktree whoever works on
 // it, since git allows a branch only one, and a resumed agent session finds
@@ -969,8 +1025,9 @@ export const WorktreeLive = (
       const exists = (path: string) => fs.exists(path).pipe(Effect.mapError(gitError));
       const makeRoot = fs.makeDirectory(root, { recursive: true }).pipe(Effect.mapError(gitError));
 
-      // The branch's remote-tracking ref, fetched over whatever an earlier run left there.
-      const fetchBranch = (branch: string) =>
+      // The branch's remote-tracking ref, fetched over whatever an earlier run
+      // left there; for a branch origin lacks, `from`'s, and with no `from`, an error.
+      const fetchBranch = (branch: string, from: Option.Option<string>) =>
         Effect.gen(function* () {
           const remote = yield* exec
             .run(
@@ -984,9 +1041,20 @@ export const WorktreeLive = (
             return `origin/${branch}`;
           }
 
-          yield* git(["fetch", "--quiet", "origin", settings.baseBranch]);
+          // A branch held up by a lock isn't a branch origin lacks.
+          if (isLockContention({ message: remote.stderr })) {
+            return yield* new GitError({ message: remote.stderr.trim() });
+          }
 
-          return `origin/${settings.baseBranch}`;
+          if (Option.isNone(from)) {
+            return yield* new GitError({
+              message: `origin has no branch ${branch}, and no base was given to start it from`,
+            });
+          }
+
+          yield* git(["fetch", "--quiet", "origin", from.value]);
+
+          return `origin/${from.value}`;
         });
 
       // Which run last prepared a worktree, kept in its git directory.
@@ -1011,10 +1079,23 @@ export const WorktreeLive = (
             ),
         });
 
-      const ensure = (branch: string, runId?: string) =>
+      // A run id alone is how an SDK from before `from` calls ensure: its new
+      // branches start from the repo's baseBranch, as they did then.
+      const ensureOptions = (given: EnsureOptions | string): EnsureOptions => {
+        if (Predicate.isString(given)) {
+          return { runId: given, from: settings.baseBranch };
+        }
+
+        return given;
+      };
+
+      const ensure = (branch: string, given: EnsureOptions | string = {}) =>
         Effect.gen(function* () {
           const path = pathFor(branch);
+          const { from, runId } = ensureOptions(given);
+
           const run = Option.fromUndefinedOr(runId);
+          const base = Option.fromUndefinedOr(from);
 
           if (yield* exists(`${path}/.git`)) {
             // Reused as is without a run, or by the run that prepared it, whose
@@ -1027,7 +1108,7 @@ export const WorktreeLive = (
               return path;
             }
 
-            const start = yield* fetchBranch(branch);
+            const start = yield* fetchBranch(branch, base);
             yield* git(["checkout", "--quiet", "--force", "-B", branch, start], path);
             yield* git(["clean", "-fdq"], path);
 
@@ -1042,7 +1123,7 @@ export const WorktreeLive = (
 
           yield* makeRoot;
           yield* git(["worktree", "prune"]);
-          const start = yield* fetchBranch(branch);
+          const start = yield* fetchBranch(branch, base);
           yield* git(["worktree", "add", "--force", "-B", branch, path, start]);
 
           if (start === `origin/${branch}`) {
@@ -1092,7 +1173,16 @@ export const WorktreeLive = (
             .pipe(Effect.ignore);
         });
 
-      return Worktree.of({ pathFor, ensure, checkout, remove });
+      // One preparation of this repository's worktrees at a time, again while git reports a lock held.
+      const guarded = <A>(effect: Effect.Effect<A, GitError>) =>
+        effect.pipe(Effect.retry(CONTENTION_RETRIES), repositoryLock(settings.path));
+
+      return Worktree.of({
+        pathFor,
+        ensure: (branch, given) => guarded(ensure(branch, given)),
+        checkout: (name, ref) => guarded(checkout(name, ref)),
+        remove: (branch) => guarded(remove(branch)),
+      });
     }),
   );
 

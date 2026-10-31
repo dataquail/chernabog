@@ -18,10 +18,12 @@ import {
   ReviewerSeat,
   Run,
   RunLog,
+  Settings,
   type SetupError,
   Skip,
   StepFailed,
   StepRunner,
+  Subjects,
   Usage,
   type WorkItem,
   Worktree,
@@ -38,20 +40,19 @@ import * as Schema from "effect/Schema";
 
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
+import { attachExecutionHandler } from "../src/modules/runs/commands/attach-execution.handler.ts";
+import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
+import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
+import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
 import {
   flowHandle,
   flowLayer,
   forEveryPersona,
-  linkingPullRequests,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { attachExecutionUseCase } from "../src/modules/runs/use-cases/attach-execution.use-case.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { findRunUseCase } from "../src/modules/runs/use-cases/find-run.use-case.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
-import { recoverRunsUseCase } from "../src/modules/runs/use-cases/recover-runs.use-case.ts";
-import { startRunUseCase } from "../src/modules/runs/use-cases/start-run.use-case.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -59,9 +60,7 @@ import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
   type EngineRun,
-  makeFake,
   pollRun,
-  PULL,
   repoAs,
   runtimeFor,
   startRun,
@@ -152,6 +151,13 @@ const flow = defineFlow({
 
       if (key === "wait") {
         return `woke by ${yield* awaitSignal(["pushed"], { id: "round-1", timeout: "1 hour" })}`;
+      }
+
+      if (key === "subjects") {
+        yield* Subjects.name("pr-40");
+        yield* activity("release", Subjects.name("release-1.4"));
+        yield* Subjects.name("pr-40");
+        yield* activity("second-pull", Subjects.name("pr-41"));
       }
 
       if (key === "seat") {
@@ -331,7 +337,7 @@ describe("the engine", () => {
         const run = yield* started(item("wait"));
 
         // Before the run registers its wait, there is nothing to deliver.
-        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
+        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,
@@ -353,7 +359,7 @@ describe("the engine", () => {
       const cancels = Effect.gen(function* () {
         const run = yield* started(item("wait"));
 
-        yield* listRunWaitsUseCase(run.id, "pushed").pipe(
+        yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" }).pipe(
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: ({ waits }) => waits.length > 0,
@@ -361,7 +367,8 @@ describe("the engine", () => {
           }),
         );
 
-        const cancelled = yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: run.id }), {
+        const cancelled = yield* cancelRunHandler({
+          target: CancelTarget.cases.ById.make({ asked: run.id }),
           by: "alice",
           closeSessions: false,
           endAs: Option.none(),
@@ -387,7 +394,7 @@ describe("the engine", () => {
     () =>
       Effect.gen(function* () {
         const recorded = (key: string) =>
-          startRunUseCase({
+          startRunHandler({
             id: RunId.make(key),
             coreVersion: BUNDLED_CORE,
             repo: "demo",
@@ -411,7 +418,7 @@ describe("the engine", () => {
             { discard: true },
           );
 
-          const recovered = yield* recoverRunsUseCase();
+          const recovered = yield* recoverRunsHandler();
           const ended = yield* Effect.forEach(recovered.executed, toEnd);
 
           return { execution, recovered, ended };
@@ -455,7 +462,7 @@ describe("a run and the .chernabog/ tree it started from", () => {
     () =>
       Effect.gen(function* () {
         const recorded = (key: string, configTree: Option.Option<string>) =>
-          startRunUseCase({
+          startRunHandler({
             id: RunId.make(key),
             coreVersion: BUNDLED_CORE,
             configTree,
@@ -473,7 +480,7 @@ describe("a run and the .chernabog/ tree it started from", () => {
           yield* recorded("current-tree", Option.some("current"));
           yield* recorded("no-tree", Option.none());
 
-          const recovered = yield* recoverRunsUseCase();
+          const recovered = yield* recoverRunsHandler();
 
           return yield* Effect.forEach(recovered.executed, toEnd);
         });
@@ -510,25 +517,70 @@ describe("a run and the .chernabog/ tree it started from", () => {
   );
 });
 
-describe("linking a run to its pull request", () => {
-  effect("links the pull request a run opens, or the open one it finds for its branch", () =>
+describe("a run's subjects", () => {
+  effect("records each subject a run names, once, in order", () =>
     Effect.gen(function* () {
-      const linked: Array<number> = [];
+      const { value } = yield* withEngine(runToEnd(item("subjects")));
+      expect(value.status).toBe("done");
+      expect(value.subjects).toEqual(["pr-40", "release-1.4", "pr-41"]);
+    }),
+  );
 
-      const context = linkingPullRequests(
-        yield* Layer.build(makeFake("approve").services),
-        (pullRequest) => Effect.sync(() => linked.push(pullRequest)),
+  effect("a run that names none has none, and Subjects.name outside a run does nothing", () =>
+    Effect.gen(function* () {
+      const { value } = yield* withEngine(runToEnd(item("one")));
+      expect(value.subjects).toEqual([]);
+      yield* Subjects.name("pr-1");
+    }),
+  );
+});
+
+describe("a flow's own settings", () => {
+  // A setting no other flow and nothing in core knows: which branch a release promotes from.
+  const Promote = Schema.Struct({ promoteFrom: Schema.String, dryRun: Schema.Boolean });
+
+  const promoting = defineFlow({
+    trigger: Effect.succeed([]),
+    settings: Promote,
+    workflow: () =>
+      Effect.map(
+        Settings.read(Promote),
+        (own) => `promote from ${own.promoteFrom}, dry run: ${String(own.dryRun)}`,
+      ),
+  });
+
+  // The team shares dryRun under settings:, and sets promoteFrom for promote alone.
+  const [own] = repo.personas;
+
+  const promoteHandle = flowHandle(
+    {
+      ...repo,
+      personas: [
+        {
+          ...own,
+          shared: { dryRun: true, promoteFrom: "main" },
+          flows: { promote: { settings: { promoteFrom: "develop" } } },
+        },
+      ],
+    },
+    "promote",
+    promoting,
+  );
+
+  effect("a run reads them typed, the flow's own over the shared ones", () =>
+    Effect.gen(function* () {
+      const { value: finished } = yield* withEngine(
+        startRun(promoteHandle, IMPLICIT, item("release")).pipe(
+          Effect.flatMap((outcome) => Effect.fromOption(outcome.run)),
+          Effect.orDie,
+          Effect.flatMap(toEnd),
+        ),
+        Effect.map(Layer.build(repoServices), forEveryPersona),
+        promoteHandle,
       );
 
-      const github = Context.get(context, GitHub);
-      // Nothing open for the branch yet: nothing to adopt.
-      yield* github.pullRequestForBranch("auto/issue-3");
-      expect(linked).toEqual([]);
-
-      yield* github.openPullRequest({ head: "auto/issue-3", base: "main", title: "t", body: "b" });
-      yield* github.pullRequestForBranch("auto/issue-3");
-      expect(linked).toEqual([PULL, PULL]);
-    }).pipe(Effect.scoped),
+      expect(summaryOf(finished)).toBe("promote from develop, dry run: true");
+    }),
   );
 });
 
@@ -574,7 +626,7 @@ describe("personas", () => {
     () =>
       Effect.gen(function* () {
         const adopted = Effect.gen(function* () {
-          yield* startRunUseCase({
+          yield* startRunHandler({
             id: OLD,
             coreVersion: BUNDLED_CORE,
             repo: "demo",
@@ -585,15 +637,15 @@ describe("personas", () => {
             itemUrl: Option.none(),
             item: Option.none(),
           });
-          yield* attachExecutionUseCase(
-            OLD,
-            yield* handle.workflow.execute(
+          yield* attachExecutionHandler({
+            runId: OLD,
+            executionId: yield* handle.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
-          );
+          });
 
-          return yield* toEnd(Option.getOrThrow((yield* findRunUseCase(OLD)).run));
+          return yield* toEnd(Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run));
         });
 
         const { value: finished } = yield* withEngine(adopted, asAliceOrBob);
@@ -608,7 +660,7 @@ describe("personas", () => {
         const asPersonas = flowHandle(repoAs(settings, [alice, bob]), "demo", flow);
 
         const unadopted = Effect.gen(function* () {
-          yield* startRunUseCase({
+          yield* startRunHandler({
             id: OLD,
             coreVersion: BUNDLED_CORE,
             repo: "demo",
@@ -619,15 +671,17 @@ describe("personas", () => {
             itemUrl: Option.none(),
             item: Option.none(),
           });
-          yield* attachExecutionUseCase(
-            OLD,
-            yield* asPersonas.workflow.execute(
+          yield* attachExecutionHandler({
+            runId: OLD,
+            executionId: yield* asPersonas.workflow.execute(
               { runId: "old", item: item("whoami") },
               { discard: true },
             ),
-          );
+          });
 
-          return yield* pollRun(Option.getOrThrow((yield* findRunUseCase(OLD)).run)).pipe(
+          return yield* pollRun(
+            Option.getOrThrow((yield* findRunHandler({ runId: OLD })).run),
+          ).pipe(
             Effect.repeat({
               schedule: Schedule.spaced("25 millis"),
               while: isRunning,

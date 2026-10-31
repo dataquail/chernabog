@@ -4,13 +4,13 @@
 
 import { type CiReport, DEFAULT_LABELS } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import postMerge from "../packages/recipes/flows/post-merge.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { DEFAULT_LIMITS } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
 import {
   flowTriggered,
@@ -62,11 +62,29 @@ describe("post-merge's flow", () => {
     Effect.sync(() => {
       expect(Object.keys(postMerge).toSorted()).toEqual([
         "concurrency",
+        "labels",
         "ownWork",
+        "settings",
         "trigger",
         "workflow",
       ]);
       expect(postMerge.ownWork).toBe(true);
+    }),
+  );
+
+  effect("declares noCiGrace among its settings, and refuses one that isn't a duration", () =>
+    Effect.gen(function* () {
+      const schema = Option.fromUndefinedOr(postMerge.settings);
+      expect(Option.isSome(schema)).toBe(true);
+
+      for (const found of Option.toArray(schema)) {
+        expect(yield* Schema.decodeEffect(found)({ noCiGrace: "3 minutes" })).toEqual(
+          expect.objectContaining({ noCiGrace: "3 minutes" }),
+        );
+        expect(
+          Exit.isFailure(yield* Effect.exit(Schema.decodeEffect(found)({ noCiGrace: "soon" }))),
+        ).toBe(true);
+      }
     }),
   );
 });
@@ -130,9 +148,21 @@ describe("post-merge", () => {
 
   effect("ends done when no CI starts on the merge commit within the grace period", () =>
     Effect.gen(function* () {
-      const fake = mergedPull({ limits: { ...DEFAULT_LIMITS, postMergeNoCiGrace: Duration.zero } });
+      // The repo gives no CI no time to start.
+      const [own] = repo.personas;
+
+      const impatient = flowHandle(
+        {
+          ...repo,
+          personas: [{ ...own, flows: { "post-merge": { settings: { noCiGrace: "0 millis" } } } }],
+        },
+        "post-merge",
+        postMerge,
+      );
+
+      const fake = mergedPull();
       fake.commitCi.set(MERGE, { state: "pending", waitingOn: [], failedRuns: [] });
-      const finished = yield* runToEnd(watching, fake, work);
+      const finished = yield* runToEnd(impatient, fake, work);
       expect(finished.status).toBe("done");
       expect(summaryOf(finished)).toBe(
         `#${PULL}: no CI ran on merge56 within 0; taken as none for this push`,

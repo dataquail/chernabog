@@ -1,5 +1,6 @@
 // `chernabog start <issue>`: the hybrid path. The daemon runs the repo's
-// `human-initiated` flow on the issue, whatever its trigger reports, and its session
+// entry flow, the one that declares defineFlow({ start: true }), on the
+// issue, whatever its trigger reports, and its session
 // opens under the launcher; this brings it up in front of the person who
 // asked: the Orca terminal, or `tmux attach`.
 
@@ -12,7 +13,7 @@ import * as Predicate from "effect/Predicate";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { START_FLOW } from "../../../kernel/manual-flow.value-object.ts";
+import { startFlowOf } from "../../../kernel/manual-flow.value-object.ts";
 import { shortRunId } from "../../../kernel/run-id.id.ts";
 import {
   type AttachCommand,
@@ -23,9 +24,6 @@ import { ConfigError } from "../../../platform/config-error.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 import { findEnrolled, loadMachineConfig, repoNameOf } from "../../../repo-config.ts";
 import { daemonRun, daemonRunRow, daemonStatus } from "../../daemon/daemon.client.ts";
-
-// Where each recipe is documented, by name.
-const RECIPES_DOCS = "https://dataquail.github.io/chernabog/recipes/";
 
 // How long the session has to open before the command leaves it to `chernabog attach`.
 const OPENING_POLLS = 120;
@@ -89,8 +87,35 @@ const repoFor = (named: Option.Option<string>) =>
     );
   });
 
+// What to do when the daemon isn't running, which the hybrid path needs.
+const daemonDown = (unavailable: { readonly message: string }) =>
+  Effect.fail(
+    new ConfigError({ message: `${unavailable.message}; the hybrid path runs through it` }),
+  );
+
+// The flow start runs in the repo, as the daemon loaded its flows: the one
+// that declares itself start's entry point.
+const startFlowFor = (repo: string) =>
+  Effect.gen(function* () {
+    const status = yield* daemonStatus.pipe(
+      Effect.catchIf(Predicate.isTagged("DaemonUnavailable"), daemonDown),
+    );
+
+    const flows = Option.getOrElse(
+      Option.map(
+        Arr.findFirst(status.repos, (found) => found.name === repo),
+        (found) => found.flows.map((flow) => ({ name: flow.name, start: flow.start === true })),
+      ),
+      () => [],
+    );
+
+    return yield* Effect.fromResult(startFlowOf(repo, flows)).pipe(
+      Effect.mapError((message) => new ConfigError({ message })),
+    );
+  });
+
 // The run that has the issue: the one just started, or the one already in flight.
-const runFor = (repo: string, key: string, started: ReadonlyArray<string>) =>
+const runFor = (repo: string, flow: string, key: string, started: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     if (Arr.isReadonlyArrayNonEmpty(started)) {
       return Option.some(started[0]);
@@ -99,10 +124,7 @@ const runFor = (repo: string, key: string, started: ReadonlyArray<string>) =>
     const active = (yield* daemonStatus).active;
 
     return Option.map(
-      Arr.findFirst(
-        active,
-        (run) => run.repo === repo && run.flow === START_FLOW && run.itemKey === key,
-      ),
+      Arr.findFirst(active, (run) => run.repo === repo && run.flow === flow && run.itemKey === key),
       (run) => run.id,
     );
   });
@@ -144,32 +166,16 @@ export const startIssue = (
   Effect.gen(function* () {
     const repo = yield* repoFor(named);
     const key = `issue-${issue}`;
+    const flow = yield* startFlowFor(repo);
 
     const result = yield* daemonRun({
       repo,
-      flow: START_FLOW,
+      flow,
       item: Option.some(key),
       ...Option.match(persona, { onNone: () => ({}), onSome: (login) => ({ persona: login }) }),
-    }).pipe(
-      Effect.catchIf(Predicate.isTagged("DaemonUnavailable"), (unavailable) =>
-        Effect.fail(
-          new ConfigError({ message: `${unavailable.message}; the hybrid path runs through it` }),
-        ),
-      ),
-      Effect.catchIf(
-        (error) =>
-          Predicate.isTagged(error, "DaemonRefused") &&
-          error.message.includes(`no flow named ${START_FLOW}`),
-        () =>
-          Effect.fail(
-            new ConfigError({
-              message: `${repo} has no ${START_FLOW} flow in .chernabog/flows/; the hybrid path needs one. chernabog recipes add ${START_FLOW} bakes it: ${RECIPES_DOCS}${START_FLOW}/`,
-            }),
-          ),
-      ),
-    );
+    }).pipe(Effect.catchIf(Predicate.isTagged("DaemonUnavailable"), daemonDown));
 
-    const runId = yield* runFor(repo, key, result.started);
+    const runId = yield* runFor(repo, flow, key, result.started);
 
     if (Option.isNone(runId)) {
       return yield* new ConfigError({

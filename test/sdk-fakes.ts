@@ -8,6 +8,8 @@ import {
   Agent,
   AgentError,
   type AgentRequest,
+  type CiCheck,
+  type CiChecks,
   type CiReport,
   type CiState,
   type Comment,
@@ -50,6 +52,10 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
+import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
+import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
+import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
+import { startFlowRunHandler } from "../src/modules/runs/commands/start-flow-run.handler.ts";
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
@@ -59,11 +65,7 @@ import {
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { deliverSignalsUseCase } from "../src/modules/runs/use-cases/deliver-signals.use-case.ts";
-import { pollRunUseCase } from "../src/modules/runs/use-cases/poll-run.use-case.ts";
-import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import type { ActiveRun, RunView } from "../src/modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../src/modules/runs/use-cases/start-flow-run.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
@@ -111,6 +113,7 @@ export const asPersona = (repoSettings: RepoSettings, persona: Persona): Persona
   schedule: { own: Option.none(), repo: Option.none() },
   activeHours: Option.none(),
   flows: {},
+  shared: {},
   chosen: [],
   own: {},
   teamFlows: {},
@@ -139,14 +142,40 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
   COMMENT: "COMMENTED",
 };
 
-// CI on the head, the files the pull request changes, its mergeable_state on
-// GitHub, whether GitHub refuses the merge, and the merges asked for.
+// CI on the head (the checks GitHub reports, or read from a verdict), the
+// files the pull request changes, its mergeable_state on GitHub, whether
+// GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
+  checks: Option.Option<CiChecks>;
   files: Array<string>;
   state: string;
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
+};
+
+// The checks a verdict stands for, every one required: green is one passing
+// check, red its failed checks, pending the checks it waits on.
+const checksOf = (ci: CiState, headSha: string): CiChecks => {
+  const required = (name: string, state: CiCheck["state"]): CiCheck => ({
+    name,
+    kind: "check-run",
+    state,
+    required: true,
+    url: `https://github.com/dataquail/demo/runs/${name}`,
+  });
+
+  let checks = [required("test", "passed")];
+
+  if (ci.state === "red") {
+    checks = ci.failedChecks.map((name) => required(name, "failed"));
+  }
+
+  if (ci.state === "pending") {
+    checks = ci.waitingOn.map((name) => required(name, "pending"));
+  }
+
+  return { headSha, checks, required: checks.map((check) => check.name), caveat: Option.none() };
 };
 
 // Whether a person closed the fake's issue, and closed or merged its pull request.
@@ -154,6 +183,9 @@ export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] 
 
 // The body of a request that unassigns people from an issue.
 const Unassigning = Schema.Struct({ assignees: Schema.Array(Schema.String) });
+
+// The body of a request that edits a comment.
+const Editing = Schema.Struct({ body: Schema.String });
 
 // One issue and its pull request, and what the steps did to them. Reviews
 // answer `verdicts` in turn, the last one repeating.
@@ -189,6 +221,7 @@ export const makeFake = (
 
   const merge: MergeFake = {
     ci: { state: "green" },
+    checks: Option.none(),
     files: ["src/a.ts"],
     state: "clean",
     refusal: Option.none(),
@@ -196,13 +229,15 @@ export const makeFake = (
   };
 
   // The pushed head, pushes so far, whether the pull request is open, the
-  // commits the agent made since the last push, and what the remote says to a push.
+  // commits the agent made since the last push, what the remote says to a push,
+  // and the changes the agent left in the worktree, as `git status --porcelain` lists them.
   const git = {
     head: HEAD,
     pushes: 0,
     opened: false,
     commits: 0,
     rejects: Option.none<PushRejected>(),
+    uncommitted: new Array<string>(),
   };
 
   // The worktree's head: the pushed one, or a commit of the agent's on top.
@@ -216,7 +251,14 @@ export const makeFake = (
 
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
-  const author = { consider: "address", resolve: "resolved", closes: false };
+  // `asks` are worktrees whose next implement session answers with questions.
+  const author = {
+    consider: "address",
+    resolve: "resolved",
+    closes: false,
+    asks: new Array<string>(),
+  };
+
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
   const agent = { hangs: false };
   // The issue's Status on the repo's board, once a step moved it.
@@ -234,11 +276,13 @@ export const makeFake = (
   const stack = { base: "main", below: new Array<string>() };
 
   // What the steps based their work on: the sha each branch was created from,
-  // the base each pull request targets, and the base each push was checked against.
+  // the base each pull request targets, the base each push was checked
+  // against, and the base each claim branch was compared with.
   const based = {
     createdFrom: new Array<string>(),
     targets: new Array<string>(),
     checkedAgainst: new Array<string>(),
+    compared: new Array<string>(),
   };
 
   // Whether a person closed the issue or closed (or merged) the pull request.
@@ -352,6 +396,14 @@ export const makeFake = (
     }
 
     if (schema.includes("needs-clarification")) {
+      const asking = author.asks.indexOf(request.cwd);
+
+      if (asking >= 0) {
+        author.asks.splice(asking, 1);
+
+        return { status: "needs-clarification", summary: "Which way?", title: "", body: "" };
+      }
+
       git.commits += 1;
 
       return {
@@ -557,10 +609,35 @@ export const makeFake = (
             Option.filter(Option.some(pull()), () => git.opened),
           ),
         ),
+      // The queued issue's pull request, or one of its own for another
+      // issue's branch, such as an epic's task.
       openPullRequest: (request) =>
         Effect.sync(() => {
-          git.opened = true;
           based.targets.push(request.base);
+
+          if (request.head !== `auto/issue-${ISSUE}`) {
+            const number = 200 + branchPulls.size;
+
+            const opened: PullRequest = {
+              ...pull(),
+              number,
+              title: request.title,
+              body: request.body,
+              url: `https://github.com/dataquail/demo/pull/${number}`,
+              state: "open",
+              headRef: request.head,
+              headSha: `head${number}`,
+              baseRef: request.base,
+              labels: [],
+              requestedReviewers: [],
+            };
+
+            branchPulls.set(request.head, opened);
+
+            return opened;
+          }
+
+          git.opened = true;
 
           return pull();
         }),
@@ -577,8 +654,18 @@ export const makeFake = (
           ];
         }),
       closedPullRequestsLabelled: () => Effect.succeed([]),
-      pullRequest: () => Effect.sync(pull),
+      pullRequest: (number) =>
+        Effect.sync(() =>
+          Option.getOrElse(
+            Option.fromUndefinedOr(
+              [...branchPulls.values()].find((found) => found.number === number),
+            ),
+            pull,
+          ),
+        ),
       ciState: () => Effect.sync(() => merge.ci),
+      ciChecks: () =>
+        Effect.sync(() => Option.getOrElse(merge.checks, () => checksOf(merge.ci, git.head))),
       // A commit's CI is its own when a test sets it; otherwise it and a
       // branch's read as the pull request's, with no links to failed runs.
       commitCiState: (sha) =>
@@ -621,8 +708,30 @@ export const makeFake = (
             return {};
           }
 
+          // An edit of a comment, by its id.
+          const edited = Option.fromNullishOr(
+            path.match(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/(\d+)$/),
+          );
+
+          if (method === "PATCH" && Option.isSome(edited)) {
+            const index = comments.findIndex((found) => found.id === Number(edited.value[1]));
+            const edit = Option.flatMap(body, Schema.decodeUnknownOption(Editing));
+
+            if (index >= 0 && Option.isSome(edit)) {
+              comments[index] = { ...comments[index], body: edit.value.body };
+            }
+
+            return {};
+          }
+
           // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
           if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+            const [compared = ""] = path
+              .slice(`/repos/${settings.slug}/compare/`.length)
+              .split("...");
+
+            based.compared.push(decodeURIComponent(compared));
+
             return { ahead_by: git.pushes + git.commits };
           }
 
@@ -702,8 +811,15 @@ export const makeFake = (
         }),
     }),
     Layer.mock(Git)({
-      // Any other git command, such as cleaning up's: it has nothing to say.
-      run: () => Effect.succeed(""),
+      // `git status`, and any other git command, such as cleaning up's: it has nothing else to say.
+      run: (args) =>
+        Effect.sync(() => {
+          if (args[0] === "status") {
+            return git.uncommitted.join("\n");
+          }
+
+          return "";
+        }),
       commitsAhead: (_, base) =>
         Effect.sync(() => {
           based.checkedAgainst.push(base);
@@ -845,10 +961,10 @@ export const runtimeFor = (handle: FlowHandle) =>
 
 // Starting, polling and waking runs as the daemon does, through the runs module.
 export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
-  startFlowRunUseCase(refOf(handle, persona), work);
+  startFlowRunHandler({ flow: refOf(handle, persona), item: work });
 
 export const pollRun = (run: EngineRun) =>
-  pollRunUseCase(run.id).pipe(
+  pollRunHandler({ runId: run.id }).pipe(
     Effect.map((found): EngineRun => Option.getOrElse(found.run, () => run)),
   );
 
@@ -856,7 +972,10 @@ export const deliverSignals = (
   handle: FlowHandle,
   persona: Persona,
   items: ReadonlyArray<WorkItem>,
-) => deliverSignalsUseCase(refOf(handle, persona), items).pipe(Effect.map(({ count }) => count));
+) =>
+  deliverSignalsHandler({ flow: refOf(handle, persona), items }).pipe(
+    Effect.map(({ count }) => count),
+  );
 
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(
@@ -864,12 +983,14 @@ const quietLog = Layer.succeed(
   RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
 );
 
-// Starts a run of the flow on the fake, and polls until `until` says it has got far enough.
+// Starts a run of the flow on the fake, and polls until `until` says it has got far enough,
+// at most `polls` times, 25ms apart: about five seconds, unless a slower case asks for more.
 export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
   work: WorkItem,
   until: (run: EngineRun) => Effect.Effect<boolean, never, RuntimeServices>,
+  polls = 200,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -902,7 +1023,7 @@ export const runUntil = (
           Effect.repeat({
             schedule: Schedule.spaced("25 millis"),
             until: (step) => step.done,
-            times: 200,
+            times: polls,
           }),
         ),
       ),
@@ -910,7 +1031,7 @@ export const runUntil = (
       // A run that ended has its markers released, as the daemon releases them.
       Effect.tap((polled) =>
         Effect.when(
-          releaseMarkersUseCase(),
+          releaseMarkersHandler(),
           Effect.sync(() => !isRunning(polled)),
         ),
       ),
@@ -936,5 +1057,25 @@ export const triggered = <E, R>(
 // What a flow's own trigger reports on the fake.
 export const flowTriggered = (fake: Fake, flow: Flow) =>
   Effect.provide(triggerOf(flow), Layer.mergeAll(fake.services, quietLog));
+
+// The pull request stacked on `below`, the head of another pull request, as
+// a layer of an epic's stack is: open, or `state` as the layer below is now.
+export const stackOn = (fake: Fake, below: string, state: PullRequest["state"] = "open") => {
+  fake.stack.base = below;
+  fake.branchPulls.set(below, {
+    number: 2,
+    title: "feat: the layer below",
+    body: "",
+    url: "https://github.com/dataquail/demo/pull/2",
+    state,
+    headRef: below,
+    headSha: "below0000000",
+    baseRef: "main",
+    labels: [],
+    author: "chernabog-bot",
+    assignees: [],
+    requestedReviewers: [],
+  });
+};
 
 export const summaryOf = (run: EngineRun) => Option.getOrElse(run.summary, () => "");

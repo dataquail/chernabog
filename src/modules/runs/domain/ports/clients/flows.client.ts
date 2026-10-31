@@ -4,7 +4,6 @@ import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
-import { type ReviewRequest } from "../../routing/routing.value-object.ts";
 import { type FlowFailed, type PersonaNotReady } from "../../run/run.errors.ts";
 import {
   type FlowRef,
@@ -58,10 +57,6 @@ export type FlowsClientService = {
   ) => Effect.Effect<LeaseState, FlowFailed | PersonaNotReady>;
   // Why the flow's gate holds its runs back, if it does.
   readonly gate: (flow: FlowRef) => Effect.Effect<Option.Option<string>>;
-  // The repo's open pull requests and whom each asks to review, as the
-  // flow's persona reads them; none when they can't be read, since they're
-  // only a note.
-  readonly reviewRequests: (flow: FlowRef) => Effect.Effect<ReadonlyArray<ReviewRequest>>;
 };
 
 export class FlowsClient extends Context.Service<FlowsClient, FlowsClientService>()(

@@ -4,9 +4,8 @@ import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
-import { readRunLogUseCase } from "../../../modules/runs/use-cases/read-run-log.use-case.ts";
-import { resolveRunIdUseCase } from "../../../modules/runs/use-cases/resolve-run-id.use-case.ts";
-import { RunLog } from "../../../modules/runs/use-cases/run-log.result.ts";
+import { RunLog } from "../../../modules/runs/queries/read-run-log.query.ts";
+import { RunLogsQueries } from "../../../modules/runs/runs.query-handlers.ts";
 import { fail, printJson } from "../cli.output.ts";
 import { jsonFlag } from "../output.arguments.ts";
 import { followRunLog } from "./run-log.output.ts";
@@ -20,8 +19,9 @@ export const logsCommand = Command.make(
   },
   ({ follow, json, run }) =>
     Effect.gen(function* () {
-      const { runId } = yield* resolveRunIdUseCase(run);
-      const log = yield* readRunLogUseCase(runId);
+      const logs = yield* RunLogsQueries;
+      const { runId } = yield* logs.ResolveRunIdQuery({ asked: run });
+      const log = yield* logs.ReadRunLogQuery({ runId });
 
       if (follow) {
         return yield* followRunLog(runId).pipe(Effect.asVoid);

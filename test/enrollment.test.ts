@@ -12,8 +12,12 @@ import {
   type EnrollFlags,
 } from "../src/interface/cli/enrollment/enroll.command.ts";
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
+import { EnrollmentCommandsLive } from "../src/modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
+import { EnrollmentQueriesLive } from "../src/modules/enrollment/enrollment.query-handlers.ts";
+import { MachineCommandsLive } from "../src/modules/machine/machine.command-handlers.ts";
 import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
+import { MachineQueriesLive } from "../src/modules/machine/machine.query-handlers.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
 import { Home } from "../src/platform/home.ts";
@@ -139,12 +143,31 @@ const checkout = (teamConfig: string) =>
 // Enrolling, or setting up, with these answers: a script of them, or no one to ask.
 const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollFlags) =>
   enrollCheckout(root, given).pipe(
-    Effect.provide(Layer.mergeAll(layer, Layer.fresh(EnrollmentLayer), Layer.fresh(MachineLayer))),
+    Effect.provide(
+      Layer.mergeAll(
+        layer,
+        Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentCommandsLive),
+        Layer.fresh(EnrollmentQueriesLive),
+        Layer.fresh(MachineLayer),
+        Layer.fresh(MachineQueriesLive),
+      ),
+    ),
   );
 
 const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
   setUpMachine(given).pipe(
-    Effect.provide(Layer.mergeAll(layer, Layer.fresh(MachineLayer), Layer.fresh(EnrollmentLayer))),
+    Effect.provide(
+      Layer.mergeAll(
+        layer,
+        Layer.fresh(MachineLayer),
+        Layer.fresh(MachineCommandsLive),
+        Layer.fresh(MachineQueriesLive),
+        Layer.fresh(EnrollmentLayer),
+        Layer.fresh(EnrollmentCommandsLive),
+        Layer.fresh(EnrollmentQueriesLive),
+      ),
+    ),
   );
 
 const TEAM = "flows:\n  fix:\n    enabled: false\n";
@@ -165,7 +188,7 @@ describe("enrolling a repo", () => {
   );
 
   effectWithLogins(
-    "notes when a persona's pull requests can only go to reviewers this machine doesn't act as",
+    "says nothing of the reviewer pool, whatever the flows are named: doctor asks the repo's flows",
     () =>
       Effect.gen(function* () {
         yield* writeMachine({ github: { alice: {} } });
@@ -177,24 +200,7 @@ describe("enrolling a repo", () => {
           options({ flows: Option.some(["implement"]) }),
         );
 
-        expect(lines).toEqual([
-          "demo as alice: flows implement",
-          "note: demo as alice: pull requests authored as alice go to bob, which this machine doesn't act as; they wait until another machine reviews them",
-        ]);
-
-        // A persona that opens no pull requests gets no note, nor one whose reviewer is here.
-        expect(
-          (yield* enrollAnswering(Asker.none, root, options({ flows: Option.some(["fix"]) })))
-            .lines,
-        ).toEqual(["demo as alice: flows fix"]);
-        yield* writeMachine({ github: { alice: {}, bob: {} } });
-        expect(
-          (yield* enrollAnswering(
-            Asker.none,
-            root,
-            options({ personas: Option.some(["alice"]), flows: Option.some(["implement"]) }),
-          )).lines,
-        ).toEqual(["demo as alice: flows implement"]);
+        expect(lines).toEqual(["demo as alice: flows implement"]);
       }),
   );
 

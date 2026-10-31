@@ -16,6 +16,8 @@ A flow is a TypeScript module in `.chernabog/flows/` whose default export is `de
 | `stillValid`  | optional; `(item) => Effect<Valid \| Gone>`: whether a run's work item is still there to work on. The daemon ends a run whose item is `Gone` as `superseded`; see [Work that goes away](#work-that-goes-away) |
 | `markers`     | optional; the [markers](/chernabog/flows/sdk/#markers) its runs hold, each from `Markers.define`, so the daemon can release them by name however a run ends. The SDK's own need no listing |
 | `item`        | `(key) => Effect<Option<WorkItem>>`: the work item for a key a person names that the trigger doesn't report, as `Hybrid.itemFor` finds the issue `chernabog start` names. `run --item <key>` and the daemon use it. Optional, except on a manual flow |
+| `doctor`      | optional; checks `chernabog doctor` runs for the flow, each `(context) => Effect<ReadonlyArray<Warning>>`, given the machine's personas, the persona it runs as and the repo's flows, with that persona's settings. Each warning is `{ warning, fix }`; see [What doctor learns from flows](#what-doctor-learns-from-flows) |
+| `start`       | optional; `true` makes it the flow `chernabog start <issue>` runs. One per repo |
 | `workflow`    | `(item) => Effect`: the durable work for one item                      |
 
 `trigger`, `gate`, `item` and `workflow` may fail only with the flow's own outcomes, `Skip`, `NeedsHuman` and `StepFailed`. Any other error has to be handled before the flow compiles: see [Errors](#errors).
@@ -75,7 +77,7 @@ A run whose item is `Gone` ends as **`superseded`**, with the reason as its summ
 
 Before `stillValid`, the daemon checks the run's [lease](/chernabog/operate/daemon/#leases): a run whose claim another run took over, after its lease expired, ends as **`lost`** instead, leaving what it put on the item to that run.
 
-A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `pullRequest`, the one it opened.
+A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `subjects`, the work items it [named](/chernabog/flows/sdk/#subjects).
 
 The SDK's checks, which the recipes use:
 
@@ -87,9 +89,25 @@ The SDK's checks, which the recipes use:
 
 Without `stillValid`, a run carries on until its workflow ends it, as before.
 
+## What doctor learns from flows
+
+`chernabog doctor` knows no flow. What it checks of a repo's flows beyond loading them, it learns from each flow's `doctor` checks, run once for each of the repo's personas on the machine with that persona's settings. A check gets the flow's name, the GitHub logins the machine acts as, the persona's login (none for the implicit account when gh can't say) and whether it runs the flow, and every flow of the repo with the logins that run it and the checks it contributes. Its warnings print as `!` lines with their fix, each once, and never fail doctor. A flow that contributes no checks gets no warnings.
+
+The SDK's reviewer-pool checks are `Review.poolCheck`, for a flow that asks the pool for reviews (`implement`, `human-initiated`, `epic`), and `Review.reviewerCheck`, for one that reviews (`review`, `re-review`). `poolCheck` counts a flow that includes `reviewerCheck` as one that reviews, so a repo that renames `review`, or writes its own, keeps the warnings.
+
+```ts
+import { defineFlow, Review } from "@chernabog/sdk";
+
+export default defineFlow({
+  trigger,
+  doctor: [Review.reviewerCheck],
+  workflow,
+});
+```
+
 ## Manual flows
 
-A flow with `item` and no `trigger` is manual: nothing finds its work, and it runs only when a person names an item, with `chernabog start <issue>` for [`human-initiated`](/chernabog/recipes/human-initiated/), or `chernabog run <flow> --item <key>` for any other. The daemon never ticks it on a schedule, and `status` shows it as `manual` in place of a schedule and its next tick.
+A flow with `item` and no `trigger` is manual: nothing finds its work, and it runs only when a person names an item, with `chernabog start <issue>` for the flow that declares itself start's entry point (`start: true`, as [`human-initiated`](/chernabog/recipes/human-initiated/) does; one per repo), or `chernabog run <flow> --item <key>` for any other. The daemon never ticks it on a schedule, and `status` shows it as `manual` in place of a schedule and its next tick.
 
 ```ts
 import { defineFlow, Hybrid } from "@chernabog/sdk";
@@ -99,6 +117,8 @@ export default defineFlow({
   workflow: (item) => /* … */,
 });
 ```
+
+`chernabog start` refuses a repo where no flow, or several, declare `start: true`, and names them.
 
 A manual flow must have `item`, since nothing else could start it, and can't have `schedule`. A `schedule` for it under `flows.<flow>`, in `config.yaml` or machine config, fails the repo's config with the flow's name; the repo's and the persona's default `schedule` don't apply to it. `run` and `trigger` without `--item` fail and say how to start it.
 
@@ -120,6 +140,8 @@ Activity names are unique within a run, so one in a loop carries its round: `fix
 
 **Signals.** A trigger reports signals in `WorkItem.signals`; a waiting run's `awaitSignal` wakes on them. Report an item with `wakeOnly` to wake a waiting run without starting a new one.
 
+**Work that waits on someone.** Report an item with `waitsOn: { who: "bob", why: "not on this machine" }` when it waits on a person or a login, such as a review request no persona here serves. Like held work, it starts no run and its signals still wake a waiting run; `chernabog status` lists it as `waiting: pr-73 waits on bob (not on this machine)`. A trigger knows the logins this machine acts as from the `Machine` service (`Effect.serviceOption(Machine)`, since an older binary provides none), as `Review.waitingElsewhere` reads them.
+
 **Held work.** Report an item with `held: "waits on #12, #13"` when the trigger won't start it yet. It starts no run, even with `wakeOnly` unset, its signals still wake a waiting run, and `chernabog status` and the live view list it with the reason, so an idle queue and a queue of blocked work look different.
 
 ## Errors
@@ -137,7 +159,7 @@ Errors are split by who has to act on them.
 | `MergeRefused`      | `GitHub.merge`, `PullRequest.merge`                              | the reason |
 | `PushRejected`      | `Git.push`, `Implement.push`, `waitForCi`                        | the reason, and `missingScope` when the token lacks one, such as `workflow` for a change to `.github/workflows/`; its message says how to fix the token |
 | `NothingCommitted`  | `Implement.push`                                                 | the branch |
-| `CiTimedOut`        | `Implement.waitForCi`, when CI stays pending past `limits.ciTimeout` | the pull request, and how long |
+| `CiTimedOut`        | `Implement.waitForCi`, when CI stays pending past `ciTimeout` | the pull request, and how long |
 
 Handle them with `Effect.catchTag` or `Effect.catchTags`, usually by handing the work to a person:
 
@@ -153,7 +175,7 @@ yield* Implement.push("push", worktree, branch).pipe(
 **Errors a flow can only report**, such as `GitHubError`, `GitError`, `AgentError` and `UsageError`, carry a message and nothing to decide on. An activity turns any of them into `StepFailed`, named for the activity. Outside an activity, as in a trigger, pipe the effect through `reportAs(step)` to do the same:
 
 ```ts
-const trigger = GitHub.use((github) => github.queuedIssues).pipe(
+const trigger = GitHub.use((github) => github.queuedIssuesLabelled("auto:eligible")).pipe(
   Effect.map((issues) => issues.map((issue) => Implement.issueItem(issue))),
   reportAs("trigger"),
 );
@@ -182,9 +204,10 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `Review.reviewRequests` lists the open pull requests that ask this persona for a review, each with how many reviews it has posted; `Review.reviewItem(pull, key)` makes one a work item. `Review.latestOwnReview(pr)` finds this persona's latest review to resume with `Review.recheck`.
 - `Review.authoredByMe`, `Review.decisiveReviews(pr)` and `Review.addressItem` find the reviews that ask for changes on this persona's pull requests; `Review.changesAsked`, `authorSession`, `prepareAuthorWorktree`, `checkChanged` and `askAgain` are `address-review`'s steps around `Implement.considerFindings` and `addressFindings`. `Review.ownedByARun(pull)` says whether another flow's run owns a pull request.
 - The SDK has no whole workflows and no triggers of the review loop: those are written out in each recipe, where a repo can read and change them.
-- `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
+- `PullRequest.shipping(pr)` says, once per run, whether chernabog may merge the pull request: whether it carries `auto:ship` (`PullRequest.ships`). The recipes merge only then, with `PullRequest.merge`, and leave any other for a person; `PullRequest.mergeOrLeave(pr)` does the same in one block. A layer of a stack waits, approved, for the one below (`PullRequest.waitingOnLayer`), rather than going to a person. `PullRequest.handToPerson(pr, reason)` labels it `auto:needs-human` and ends the run.
 - `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's, and hold it as a marker, so it goes however the run ends; `releasing` lets it go sooner.
 - `Markers` defines, holds and drops [markers](/chernabog/flows/sdk/#markers): what a run put on an item, which the daemon releases however the run ends.
+- `Subjects.name(key)` names a [subject](/chernabog/flows/sdk/#subjects): a work item the run touched besides its own, such as a pull request it opened.
 - `PullRequest.owning(pr)(effect)` holds the pull request's claim while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone. A pull request another run owns is skipped.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.
@@ -222,7 +245,8 @@ Each of these has its own prompt, `recheck`, `consider` and `address`, and `Hybr
 - its required checks are green on the current head;
 - the latest review approved that very head, or the head has only merged the base in since (`PullRequest.onlyMergedBase`: every commit on its first parents back to the reviewed one is a two-parent merge of a commit on the base branch, with exactly the tree a clean automatic merge gives, so a merge where someone resolved a conflict or added edits still needs a review);
 - it touches no `humanOnlyPaths`;
-- GitHub's rules for the repo allow it. The merge is of exactly the head it checked, so GitHub refuses it if the head moves in between.
+- GitHub's rules for the repo allow it. The merge is of exactly the head it checked, so GitHub refuses it if the head moves in between;
+- it isn't a layer of a stack: its base isn't the head branch of another pull request that is open, or that merged while its branch stayed (the layer then waits to be retargeted onto the base below, which GitHub does only when that branch is deleted), unless that base is the flow's `base` setting. A pull request into any other branch, such as `develop` in git flow, merges.
 
 Otherwise it fails with `MergeRefused`, giving the reason, or `PullRequestClosed` when the pull request was closed without merging, and merges nothing. A pull request merged already, as by a rerun, counts as merged. Nothing merges unless a flow calls it. The recipes call it only when `PullRequest.shipping` says the pull request is labelled `auto:ship`.
 

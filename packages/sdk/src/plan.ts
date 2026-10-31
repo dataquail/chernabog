@@ -15,7 +15,6 @@ import {
   hasMarker,
   type Issue,
   type Json,
-  type Labels,
   NeedsHuman,
   planMarker,
   planNodeMarker,
@@ -39,6 +38,7 @@ import {
 } from "./implement.ts";
 import { LABELS } from "./plan-labels.ts";
 import { renderPrompt } from "./prompt.ts";
+import * as Settings from "./settings.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // Whether the spec is still this run's to plan, for a flow's stillValid: it
@@ -401,6 +401,8 @@ const specPrompt = (spec: number) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const repo = yield* Repo;
+    const planLimits = yield* Settings.plans;
+    const rules = yield* Settings.rules;
     const details = yield* github.issue(spec);
     const comments = yield* github.trustedComments(spec);
 
@@ -412,10 +414,10 @@ const specPrompt = (spec: number) =>
       comments: comments
         .filter((comment) => !hasMarker(comment.body))
         .map((comment) => `${comment.author}: ${comment.body}`),
-      base: repo.baseBranch,
-      planNodes: repo.limits.planNodes,
-      humanOnly: repo.humanOnly,
-      notes: repo.notes,
+      base: yield* Settings.base,
+      planNodes: planLimits.nodes,
+      humanOnly: rules.humanOnly,
+      notes: rules.notes,
     });
   });
 
@@ -439,13 +441,12 @@ const askForPlan = <E, R>(name: string, spec: number, asking: Effect.Effect<Aski
   activity(
     name,
     Effect.gen(function* () {
-      const repo = yield* Repo;
       const run = yield* Run;
       const { prompt, resume } = yield* asking;
 
       const worktree = yield* (yield* Worktree).checkout(
         planCheckout(spec),
-        `origin/${repo.baseBranch}`,
+        `origin/${yield* Settings.base}`,
       );
 
       const result = yield* (yield* Agent).run({
@@ -498,19 +499,19 @@ const fix = (spec: number, round: number, attempt: number, problems: ReadonlyArr
 // to limits.planRounds times. A plan that still fails needs a person.
 export const checkedDraft = (spec: number, round: number, changes: Option.Option<string>) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const planLimits = yield* Settings.plans;
     let answer = yield* draft(spec, round, changes);
 
     for (let attempt = 1; answer.status === "plan"; attempt++) {
-      const problems = checkPlan(answer.nodes, repo.limits.planNodes);
+      const problems = checkPlan(answer.nodes, planLimits.nodes);
 
       if (problems.length === 0) {
         return answer;
       }
 
-      if (attempt > repo.limits.planRounds) {
+      if (attempt > planLimits.rounds) {
         return yield* new NeedsHuman({
-          reason: `the plan still fails its checks after ${repo.limits.planRounds} attempts to fix it:\n\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
+          reason: `the plan still fails its checks after ${planLimits.rounds} attempts to fix it:\n\n${problems.map((problem) => `- ${problem}`).join("\n")}`,
         });
       }
 
@@ -572,7 +573,7 @@ export const changesAsked = (spec: number, round: number) =>
     Schema.String,
   );
 
-const labelsFor = (kind: string, labels: Labels): ReadonlyArray<string> => {
+const labelsFor = (kind: string, labels: Settings.LabelNames): ReadonlyArray<string> => {
   if (kind === "auto") {
     return [labels.eligible];
   }
@@ -659,7 +660,7 @@ export const create = (spec: number, plan: Plan) =>
     "create-issues",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
       const made = yield* madeFor(spec);
 
       for (const node of plan) {
@@ -695,7 +696,7 @@ export const create = (spec: number, plan: Plan) =>
       }
 
       for (const node of plan) {
-        for (const label of labelsFor(node.kind, repo.labels)) {
+        for (const label of labelsFor(node.kind, labelNames)) {
           yield* github.addLabel(yield* numberOf(node.key), label);
         }
       }
@@ -712,10 +713,10 @@ export const becomeEpic = (spec: number, plan: Plan, created: Created) =>
     "epic",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labelNames = yield* Settings.labels;
       yield* github.addLabel(spec, LABELS.epic);
 
-      for (const label of [LABELS.approved, LABELS.proposed, repo.labels.inProgress]) {
+      for (const label of [LABELS.approved, LABELS.proposed, labelNames.inProgress]) {
         yield* github.removeLabel(spec, label);
       }
 
@@ -751,10 +752,10 @@ export const handToHuman = (spec: number, reason: string) =>
     "needs-human",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(spec, repo.labels.needsHuman);
+      const labelNames = yield* Settings.labels;
+      yield* github.addLabel(spec, labelNames.needsHuman);
 
-      for (const label of [LABELS.proposed, repo.labels.inProgress]) {
+      for (const label of [LABELS.proposed, labelNames.inProgress]) {
         yield* github.removeLabel(spec, label);
       }
 

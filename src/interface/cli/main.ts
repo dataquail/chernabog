@@ -20,26 +20,32 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
+import { EnrollmentCommandsLive } from "../../modules/enrollment/enrollment.command-handlers.ts";
 import { EnrollmentLayer } from "../../modules/enrollment/enrollment.layer.ts";
+import { EnrollmentQueriesLive } from "../../modules/enrollment/enrollment.query-handlers.ts";
+import {
+  MachineCommands,
+  MachineCommandsLive,
+} from "../../modules/machine/machine.command-handlers.ts";
 import { MachineLayer } from "../../modules/machine/machine.layer.ts";
-import { startServiceUseCase } from "../../modules/machine/use-cases/start-service.use-case.ts";
+import { MachineQueriesLive } from "../../modules/machine/machine.query-handlers.ts";
+import { RecipesCommandsLive } from "../../modules/recipes/recipes.command-handlers.ts";
 import { RecipesLayer } from "../../modules/recipes/recipes.layer.ts";
-import { RehearsalsLayer } from "../../modules/rehearsals/rehearsals.layer.ts";
+import { RecipesQueriesLive } from "../../modules/recipes/recipes.query-handlers.ts";
+import { RehearsalsCommandsLive } from "../../modules/rehearsals/rehearsals.command-handlers.ts";
+import { RehearsalsQueriesLive } from "../../modules/rehearsals/rehearsals.query-handlers.ts";
 import { attachCommand, runSessions } from "../../modules/runs/infrastructure/runtime/agents.ts";
 import { questionHook } from "../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
 import { stopHook } from "../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
-import {
-  desiredLabels,
-  syncLabels,
-  withFlowLabels,
-} from "../../modules/runs/infrastructure/runtime/labels.ts";
+import { declaredLabels, syncLabels } from "../../modules/runs/infrastructure/runtime/labels.ts";
 import { runLaunch } from "../../modules/runs/infrastructure/runtime/launchers/shim.ts";
 import { repoConfigDir } from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
 import { runStepChild, StepServicesLive } from "../../modules/runs/infrastructure/runtime/steps.ts";
 import { RunLogsLayer } from "../../modules/runs/runs.layer.ts";
-import { resolveRunIdUseCase } from "../../modules/runs/use-cases/resolve-run-id.use-case.ts";
+import { RunLogsQueries, RunLogsQueriesLive } from "../../modules/runs/runs.query-handlers.ts";
 import { type ActiveRun, type RunView } from "../../modules/runs/use-cases/run.result.ts";
-import { TrustLayer } from "../../modules/trust/trust.layer.ts";
+import { TrustCommandsLive } from "../../modules/trust/trust.command-handlers.ts";
+import { TrustQueriesLive } from "../../modules/trust/trust.query-handlers.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -48,7 +54,7 @@ import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
 import { VERSION } from "../../platform/version.ts";
-import { findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
+import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
@@ -111,7 +117,7 @@ const start = Command.make(
         return yield* startIssue(issue.value, repo, as);
       }
 
-      yield* startServiceUseCase();
+      yield* (yield* MachineCommands).StartServiceCommand();
       yield* Console.log("started");
     }),
 ).pipe(
@@ -353,23 +359,19 @@ const labels = Command.make(
 
       for (const enrolled of targets) {
         const { configDir } = yield* repoConfigDir(enrolled, fromCheckout);
-        const { settings } = yield* loadRepo(machine, enrolled, configDir);
+        const effective = yield* loadRepo(machine, enrolled, configDir);
         const flows = yield* loadFlows(configDir);
+        yield* checkFlowSettings(effective, flows);
         yield* Console.log(
-          yield* syncLabels(
-            enrolled.repo,
-            withFlowLabels(desiredLabels(settings.labels), flows.values()),
-          ),
+          yield* syncLabels(enrolled.repo, yield* declaredLabels(effective, flows)),
         );
       }
     }),
-).pipe(
-  Command.withDescription("Create or correct each repo's labels, and those its flows declare"),
-);
+).pipe(Command.withDescription("Create or correct the labels each repo's flows declare"));
 
 const attach = Command.make("attach", { run: Argument.String("run") }, ({ run: named }) =>
   Effect.gen(function* () {
-    const { runId } = yield* resolveRunIdUseCase(named);
+    const { runId } = yield* (yield* RunLogsQueries).ResolveRunIdQuery({ asked: named });
     const session = Arr.last(yield* runSessions(runId));
 
     if (Option.isNone(session)) {
@@ -469,11 +471,20 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 // One GitHubTokens for the process, so each persona's token is looked up once.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
-  TrustLayer,
+  EnrollmentCommandsLive,
+  EnrollmentQueriesLive,
+  TrustCommandsLive,
+  TrustQueriesLive,
   RunLogsLayer,
+  RunLogsQueriesLive,
   MachineLayer,
+  MachineCommandsLive,
+  MachineQueriesLive,
   RecipesLayer,
-  RehearsalsLayer,
+  RecipesCommandsLive,
+  RecipesQueriesLive,
+  RehearsalsCommandsLive,
+  RehearsalsQueriesLive,
 ).pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
   Layer.provideMerge(GitHubTokens.layer),

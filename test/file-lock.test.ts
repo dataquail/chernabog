@@ -10,7 +10,9 @@ import { effect } from "./effect-test.ts";
 const COUNT = 60;
 
 // A process adding COUNT lines tagged `tag` to the file, one update each,
-// pausing inside each so that two such processes overlap.
+// pausing inside each so that two such processes overlap, and between them as
+// any caller does, so a process waiting its turn (polling every 20 millis) gets
+// one rather than losing every race to a holder that takes the lock straight back.
 const writerSource = (file: string, tag: string) => `
 import { BunServices } from "@effect/platform-bun";
 import * as Effect from "effect/Effect";
@@ -31,6 +33,7 @@ await Effect.runPromise(
           Effect.as([index, Option.some(Option.getOrElse(text, () => "") + "${tag}-" + index + "\\n")] as const),
         ),
       );
+      yield* Effect.sleep("25 millis");
     }
   }).pipe(Effect.provide(BunServices.layer)),
 );

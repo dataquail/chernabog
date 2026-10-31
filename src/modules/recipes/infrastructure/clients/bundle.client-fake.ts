@@ -15,6 +15,11 @@ export const BundleClientFake = (scaffold: Scaffold) =>
     BundleClient.of({
       sdkVersion: "0.6.0",
       scaffold: Effect.succeed(scaffold),
+      // The scaffold's schema, naming the repo's flows, if it has any.
+      configSchema: (root) =>
+        Effect.succeed(
+          (scaffold.files["config.schema.json"] ?? "").replace("{flows}", `{flows of ${root}}`),
+        ),
       refuseNewer: (manifest) =>
         Effect.fromOption(
           Option.liftPredicate(manifest, (text) => !text.includes('"too new"')),

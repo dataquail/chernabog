@@ -21,7 +21,7 @@ import implement from "../packages/recipes/flows/implement.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { listRunWaitsUseCase } from "../src/modules/runs/use-cases/list-run-waits.use-case.ts";
+import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -116,6 +116,7 @@ describe("an issue an open pull request already closes", () => {
         // The claim marker records the adoption, and the issue says which pull request.
         expect(adoptions(fake)).toEqual([{ number: PULL, url: PULL_URL, draft: false }]);
         expect(saying(fake, `Adopted #${PULL}`)).toHaveLength(1);
+        expect(finished.subjects).toEqual([`pr-${PULL}`]);
 
         // Marked as this persona's to answer reviews on, and sent for review by someone other than its author.
         expect(fake.labelsOf(PULL)).toContain(Implement.ADOPTED_LABEL);
@@ -145,6 +146,8 @@ describe("an issue an open pull request already closes", () => {
         expect(fake.requests[0]?.cwd).toBe(`/tmp/demo-worktrees/${BRANCH}`);
         expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
         expect(fake.requests[0]?.prompt).toContain(`--branch ${BRANCH}`);
+        // A failing title check is fixed on the pull request: an answer's title isn't applied again.
+        expect(fake.requests[0]?.prompt).toContain(`gh pr edit ${PULL} --title`);
         expect(fake.git.pushes).toBeGreaterThan(0);
       }),
   );
@@ -174,7 +177,7 @@ describe("an issue an open pull request already closes", () => {
               return true;
             }
 
-            const { waits } = yield* listRunWaitsUseCase(run.id, "ready");
+            const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "ready" });
 
             if (!waits.some((wait) => wait.deferred === `ready:draft-${PULL}`)) {
               return false;

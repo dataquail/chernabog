@@ -10,11 +10,11 @@ import * as Schema from "effect/Schema";
 import { asSuffix } from "../../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
 import { FLOW_TURNED_OFF } from "../../../modules/enrollment/use-cases/enrolled-repos.result.ts";
-import { listEnrolledReposUseCase } from "../../../modules/enrollment/use-cases/list-enrolled-repos.use-case.ts";
 import { type RunMarkerView } from "../../../modules/runs/use-cases/run-marker.result.ts";
-import { checkTrustUseCase } from "../../../modules/trust/use-cases/check-trust.use-case.ts";
-import { type TrustCheck } from "../../../modules/trust/use-cases/trust-check.result.ts";
+import { type TrustCheck } from "../../../modules/trust/queries/check-trust.query.ts";
+import { TrustQueries } from "../../../modules/trust/trust.query-handlers.ts";
 import { daemonStatus } from "../../daemon/daemon.client.ts";
 import { DaemonStatus } from "../../daemon/daemon.protocol.ts";
 import { printJson, printLines } from "../cli.output.ts";
@@ -135,6 +135,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
     }
 
     const elsewhere = flow.assignedElsewhere ?? [];
+    const waiting = flow.waiting ?? [];
 
     // An event tick waiting to run is due now, whenever the rate cap lets it go.
     const next = Option.match(Option.fromUndefinedOr(flow.pending), {
@@ -147,7 +148,7 @@ export const describeStatus = (status: DaemonStatus, now: DateTime.Utc) => {
       onSome: (cause) => `, last ${relative(flow.lastTick, now)} (${cause})`,
     });
 
-    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; assigned elsewhere: ${elsewhere.join(", ")}`)}`;
+    return `  ${name}: ${flow.schedule}, next ${next}${last}${when(elsewhere.length > 0, `; left for others: ${elsewhere.join(", ")}`)}${when(waiting.length > 0, `; waiting: ${waiting.join(", ")}`)}`;
   };
 
   return [
@@ -252,10 +253,14 @@ const offline = (unavailable: string, json: boolean) =>
       yield* Console.log(unavailable);
     }
 
-    const { repos } = yield* listEnrolledReposUseCase(Option.none());
+    const enrollment = yield* EnrollmentQueries;
+    const trust = yield* TrustQueries;
+    const { repos } = yield* enrollment.ListEnrolledReposQuery({ name: Option.none() });
 
     const checked = yield* Effect.forEach(repos, (repo) =>
-      checkTrustUseCase(repo).pipe(Effect.map((check) => ({ name: repo.name, check }))),
+      trust
+        .CheckTrustQuery({ repo: repo.repo, path: repo.path })
+        .pipe(Effect.map((check) => ({ name: repo.name, check }))),
     );
 
     if (json) {

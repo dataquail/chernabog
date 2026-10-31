@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "campaign": "cqrs",
+  "sector": "src/modules/recipes",
+  "reached": "events",
+  "since": "2026-10-30T15:20:31.135Z",
+  "attested": [],
+  "notes": []
+}

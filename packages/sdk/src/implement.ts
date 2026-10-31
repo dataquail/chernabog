@@ -34,6 +34,7 @@ import {
   Skip,
   sleep,
   StepFailed,
+  Subjects,
   Usage,
   type WorkItem,
   Worktree,
@@ -48,11 +49,14 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as Ci from "./ci.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
 import type { ReviewResult } from "./review.ts";
+import * as Routing from "./routing.ts";
+import * as Settings from "./settings.ts";
 import { issueValidity } from "./still-valid.ts";
 
 // The work branch of an issue, as core's claims name it.
@@ -75,8 +79,12 @@ export const issueItem = (
     issue: issue.number,
     ...Option.match(label, { onNone: () => ({}), onSome: (queued) => ({ label: queued }) }),
   },
-  assignees: issue.assignees,
 });
+
+// The issue's work item, left for others when the flow's routing (Routing's
+// settings) says it isn't this persona's, by the issue's assignees.
+export const routed = (issue: Issue, item: WorkItem) =>
+  Routing.route(item, { assignees: issue.assignees });
 
 // The issue number a work item from `trigger` carries.
 export const issueOf = (item: WorkItem) =>
@@ -106,11 +114,13 @@ export const sessionIdFor = (runId: string, purpose: string) => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
 
-// Issues with a queue label, oldest first, each with its assignees. A flow
+// Issues with a queue label, oldest first, routed by their assignees. A flow
 // keyed by its own label pairs it with `claim(issue, queuedBy(item))`.
 export const triggerFor = (label: string) =>
   GitHub.use((github) => github.queuedIssuesLabelled(label)).pipe(
-    Effect.map((issues) => issues.map((issue) => issueItem(issue, Option.some(label)))),
+    Effect.flatMap((issues) =>
+      Effect.forEach(issues, (issue) => routed(issue, issueItem(issue, Option.some(label)))),
+    ),
     reportAs("trigger"),
   );
 
@@ -178,7 +188,8 @@ const whyWaiting = (issue: Issue, owned: ReadonlyMap<number, number>) =>
 // not eligible's. One that waits is held, saying why, so `chernabog status`
 // shows it: "waits on #12, #13" for the open issues that block it, as the
 // tasks of an epic start in the order its plan gave, or "belongs to the epic
-// run on #136" for a task of an epic an epic run holds.
+// run on #136" for a task of an epic an epic run holds. Each is routed by its
+// assignees.
 export const queued = (
   issues: ReadonlyArray<Issue>,
   label: Option.Option<string> = Option.none(),
@@ -192,7 +203,7 @@ export const queued = (
     const items: Array<WorkItem> = [];
 
     for (const issue of issues) {
-      const item = issueItem(issue, label);
+      const item = yield* routed(issue, issueItem(issue, label));
       items.push(
         Option.match(yield* whyWaiting(issue, owned), {
           onNone: () => item,
@@ -227,15 +238,42 @@ export const queuedBy = (item: WorkItem) =>
   );
 
 const queueLabel = (options: QueueOptions) =>
-  Repo.use((repo) => Effect.succeed(options.label ?? repo.labels.eligible));
+  Effect.map(Settings.labels, (labels) => options.label ?? labels.eligible);
 
 // The branch an item's work builds on, and its pull request targets: the
-// repo's base branch unless given, such as another task's branch for a task
-// stacked on it. A flow passes claim's `base` on to the later blocks.
+// flow's integration base (Settings.base) unless given, such as another
+// task's branch for a task stacked on it. A flow passes claim's `base` on to
+// the later blocks.
 export type BaseOptions = { readonly base?: string };
 
 export const baseOf = (options: BaseOptions) =>
-  Repo.use((repo) => Effect.succeed(options.base ?? repo.baseBranch));
+  Option.match(Option.fromUndefinedOr(options.base), {
+    onNone: () => Settings.base,
+    onSome: Effect.succeed,
+  });
+
+// Tells apart two calls of a looping step in one run, such as the local gate
+// before the pull request opens and again after a review's fix: their
+// activities are named like `local-gate-1#fix-1`, as `step` does with its id.
+// A run that works on several issues, as an epic run does on its tasks, gives
+// each issue's blocks its own id (`claim#task-12`), and each its own session.
+export type RepeatOptions = { readonly id?: string };
+
+const named = (options: RepeatOptions, name: string) =>
+  Option.match(Option.fromUndefinedOr(options.id), {
+    onNone: () => name,
+    onSome: (id) => `${name}#${id}`,
+  });
+
+// The agent session that implements an issue: this run's, or with an id, the
+// issue's own within the run, which implementWithAgent and handOff name too.
+export const sessionFor = (options: RepeatOptions) =>
+  Run.use((run) =>
+    Effect.succeed<AuthorSession>({
+      sessionId: Option.some(sessionIdFor(run.runId, named(options, "implement"))),
+      adapter: Option.none(),
+    }),
+  );
 
 // An open pull request a run took on for its issue, as claim adopted it.
 export const Adopted = Schema.Struct({
@@ -274,9 +312,8 @@ export const baseHead = (base: string) =>
   });
 
 // The base a run that already holds the claim recorded, which it keeps
-// whatever it is given now; the repo's base branch for a marker without one.
-export const claimedBase = (marker: ClaimMarker) =>
-  Repo.use((repo) => Effect.succeed(marker.base ?? repo.baseBranch));
+// whatever it is given now; the flow's integration base for a marker without one.
+export const claimedBase = (marker: ClaimMarker) => baseOf({ base: marker.base });
 
 // The account is the one machine config expects, and it has room for a task.
 export const gate = Effect.gen(function* () {
@@ -417,20 +454,21 @@ export const legacyClaim = (latest: Option.Option<ClaimMarker>, runId: string) =
 export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labels = yield* Settings.labels;
+    const board = yield* Settings.board;
     const also = options.keepOn ?? [];
-    const inProgress = { number: issue, label: repo.labels.inProgress };
+    const inProgress = { number: issue, label: labels.inProgress };
 
     yield* Markers.hold(Markers.label, inProgress, { keepOn: also });
-    yield* github.addLabel(issue, repo.labels.inProgress);
+    yield* github.addLabel(issue, labels.inProgress);
 
-    if (Option.isSome(repo.board)) {
+    if (Option.isSome(board)) {
       yield* Markers.hold(
         Markers.boardStatus,
-        { number: issue, status: repo.board.value.readyStatus },
+        { number: issue, status: board.value.readyStatus },
         { keepOn: ["done", ...also] },
       );
-      yield* github.moveToStatus(issue, repo.board.value.inProgressStatus);
+      yield* github.moveToStatus(issue, board.value.inProgressStatus);
     }
 
     yield* Markers.hold(
@@ -443,7 +481,9 @@ export const markClaimed = (issue: number, options: Markers.HoldOptions = {}) =>
 
 // Takes the in-progress label off now, rather than when the run ends.
 export const dropInProgress = (issue: number) =>
-  Repo.use((repo) => Markers.drop(Markers.label, { number: issue, label: repo.labels.inProgress }));
+  Effect.flatMap(Settings.labels, (labels) =>
+    Markers.drop(Markers.label, { number: issue, label: labels.inProgress }),
+  );
 
 const describePull = (pull: { readonly number: number; readonly url: string }) =>
   `#${pull.number} (${pull.url})`;
@@ -470,9 +510,9 @@ export const adoptionComment = (claim: ClaimMarker, adopted: Adopted) =>
 const referToPerson = (issue: number, label: string, reason: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const repo = yield* Repo;
+    const labels = yield* Settings.labels;
     yield* github.removeLabel(issue, label);
-    yield* github.addLabel(issue, repo.labels.needsHuman);
+    yield* github.addLabel(issue, labels.needsHuman);
     yield* github.comment(issue, `Chernabog didn't take this issue on: ${reason}`);
 
     return yield* new NeedsHuman({ reason });
@@ -482,8 +522,8 @@ const referToPerson = (issue: number, label: string, reason: string) =>
 // own, that already closes the issue: marks the issue claimed, labels it
 // awaiting-ready when the pull request is a draft, and records the adoption
 // in the claim marker. It leaves the pull request alone: hand-off makes it
-// the persona's (ADOPTED_LABEL). Finding the pull request by its branch links the run to
-// it, as one the run opened would be. None closing it is none to adopt;
+// the persona's (ADOPTED_LABEL). The run names it as a subject, as it would
+// one it opened. None closing it is none to adopt;
 // several, or one on a fork, go to a person (NeedsHuman), named. A run that
 // resumes inside claim keeps what its marker records.
 const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =>
@@ -532,7 +572,7 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
     }
 
     const adopted = { number: only.number, url: only.url, draft: only.isDraft };
-    yield* github.pullRequestForBranch(only.headRefName);
+    yield* Subjects.name(Claims.pullRequest(only.number));
     yield* markClaimed(issue);
     yield* github.removeLabel(issue, label);
 
@@ -567,9 +607,12 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
 // the claim marker records the base, which a run that resumes keeps. With
 // `adopt`, an open pull request that already closes the issue is adopted
 // instead (see adopt): no branch is made, and `adopted` names it.
-export const claim = (issue: number, options: QueueOptions & BaseOptions & AdoptOptions = {}) =>
+export const claim = (
+  issue: number,
+  options: QueueOptions & BaseOptions & AdoptOptions & RepeatOptions = {},
+) =>
   activity(
-    "claim",
+    named(options, "claim"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const run = yield* Run;
@@ -598,7 +641,16 @@ export const claim = (issue: number, options: QueueOptions & BaseOptions & Adopt
       if ((yield* github.createBranch(branch, baseSha)) === "already-exists") {
         const latest = yield* latestClaim(issue);
 
+        // This run claimed it before, for an earlier attempt: the queue label
+        // comes off again, and a base the caller gives is the task's now,
+        // which may have moved since that claim (#249).
         if (Option.isSome(latest) && latest.value.runId === run.runId) {
+          yield* github.removeLabel(issue, label);
+
+          if (Option.isSome(Option.fromUndefinedOr(options.base))) {
+            return { branch, base };
+          }
+
           return { branch, base: yield* claimedBase(latest.value) };
         }
 
@@ -608,7 +660,7 @@ export const claim = (issue: number, options: QueueOptions & BaseOptions & Adopt
           return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
       } else {
-        yield* Markers.hold(Markers.claimBranch, { branch }, { keepOn: ["needs-human"] });
+        yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
       }
 
       yield* markClaimed(issue);
@@ -656,17 +708,20 @@ export const shell = (command: string, cwd: string, env: Readonly<Record<string,
 const tail = (text: string, lines = 80) => text.trimEnd().split("\n").slice(-lines).join("\n");
 
 // The worktree for the claim branch, with dependencies installed. One an
-// earlier run left is brought to the claim first, so its work stays out of this run.
-export const prepareWorktree = (branch: string) =>
+// earlier run left is brought to the claim first, so its work stays out of
+// this run. A branch origin lacks starts from `base` (see baseOf).
+export const prepareWorktree = (branch: string, options: RepeatOptions & BaseOptions = {}) =>
   activity(
-    "prepare-worktree",
+    named(options, "prepare-worktree"),
     Effect.gen(function* () {
       const repo = yield* Repo;
+      const { install } = yield* Settings.localGate;
       const run = yield* Run;
-      const path = yield* (yield* Worktree).ensure(branch, run.runId);
+      const from = yield* baseOf(options);
+      const path = yield* (yield* Worktree).ensure(branch, { runId: run.runId, from });
 
-      if (Option.isSome(repo.install)) {
-        const installed = yield* shell(repo.install.value, path, repo.env);
+      if (Option.isSome(install)) {
+        const installed = yield* shell(install.value, path, repo.env);
 
         if (installed.exitCode !== 0) {
           return yield* new StepFailed({ step: "install", message: tail(installed.output, 30) });
@@ -727,12 +782,18 @@ const decodeOutcome = (result: AgentResult) =>
 // .chernabog/prompts/implement.md. It answers done, with the pull request's
 // title and body, or needs-clarification, with its questions. The prompt's
 // `base` is the given one, the repo's base branch unless given.
-export const implementWithAgent = (issue: number, worktree: string, options: BaseOptions = {}) =>
+export const implementWithAgent = (
+  issue: number,
+  worktree: string,
+  options: BaseOptions & RepeatOptions = {},
+) =>
   activity(
-    "implement",
+    named(options, "implement"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
+      const localGate = yield* Settings.localGate;
+      const rules = yield* Settings.rules;
       const run = yield* Run;
       const details = yield* github.issue(issue);
       const comments = yield* github.trustedComments(issue);
@@ -745,15 +806,15 @@ export const implementWithAgent = (issue: number, worktree: string, options: Bas
         comments: comments.map((comment) => `${comment.author}: ${comment.body}`),
         branch: branchFor(issue),
         base: yield* baseOf(options),
-        localGate: repo.localGate.map((command) => `\`${command}\``),
-        humanOnly: repo.humanOnly,
-        notes: repo.notes,
+        localGate: localGate.commands.map((command) => `\`${command}\``),
+        humanOnly: rules.humanOnly,
+        notes: rules.notes,
       });
 
       const result = yield* (yield* Agent).run({
         cwd: worktree,
         prompt,
-        sessionId: sessionIdFor(run.runId, "implement"),
+        sessionId: sessionIdFor(run.runId, named(options, "implement")),
         resumePrompt: Option.some(RESUME_PROMPT),
         outputSchema: Option.some(implementOutcomeJsonSchema),
         adapter: Option.none(),
@@ -945,13 +1006,14 @@ const requeueHint = (board: Option.Option<{ readonly readyStatus: string }>) =>
 export const askForClarification = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions = {},
+  options: QueueOptions & RepeatOptions = {},
 ) =>
   activity(
-    "needs-clarification",
+    named(options, "needs-clarification"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labels = yield* Settings.labels;
+      const board = yield* Settings.board;
       const label = yield* queueLabel(options);
       const questions = outcome.questions ?? outcome.summary;
       yield* github.comment(
@@ -959,10 +1021,10 @@ export const askForClarification = (
         [
           questions,
           "",
-          `To requeue: answer the questions above, then ${requeueHint(repo.board)} \`${label}\` again.`,
+          `To requeue: answer the questions above, then ${requeueHint(board)} \`${label}\` again.`,
         ].join("\n"),
       );
-      yield* github.addLabel(issue, repo.labels.needsClarification);
+      yield* github.addLabel(issue, labels.needsClarification);
       yield* dropInProgress(issue);
       yield* github.deleteBranch(branchFor(issue));
       yield* (yield* Worktree).remove(branchFor(issue));
@@ -974,28 +1036,18 @@ export const askForClarification = (
 
 const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.String });
 
-// Tells apart two calls of a looping step in one run, such as the local gate
-// before the pull request opens and again after a review's fix: their
-// activities are named like `local-gate-1#fix-1`, as `step` does with its id.
-export type RepeatOptions = { readonly id?: string };
-
 // The session the local gate sends the agent back to: this run's implement session unless given.
 export type LocalGateOptions = RepeatOptions & { readonly session?: AuthorSession };
-
-const named = (options: RepeatOptions, name: string) =>
-  Option.match(Option.fromUndefinedOr(options.id), {
-    onNone: () => name,
-    onSome: (id) => `${name}#${id}`,
-  });
 
 const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =>
   activity(
     named(options, `local-gate-${round}`),
     Effect.gen(function* () {
       const repo = yield* Repo;
+      const localGate = yield* Settings.localGate;
       const log = yield* RunLog;
 
-      for (const command of repo.localGate) {
+      for (const command of localGate.commands) {
         yield* log.log(`local gate: ${command}`);
         const result = yield* shell(command, worktree, repo.env);
 
@@ -1013,10 +1065,10 @@ const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =
   );
 
 // Runs the repo's local gate, and sends the agent back to fix what fails, up to
-// limits.localGateRounds times.
+// localGateRounds times.
 export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.localGate;
 
     for (let round = 1; ; round++) {
       const result = yield* runLocalGate(worktree, round, options);
@@ -1025,9 +1077,9 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
         return;
       }
 
-      if (round > repo.limits.localGateRounds) {
+      if (round > rounds) {
         return yield* new NeedsHuman({
-          reason: `the local gate still fails after ${repo.limits.localGateRounds} fix attempts:\n\n${result.failure}`,
+          reason: `the local gate still fails after ${rounds} fix attempts:\n\n${result.failure}`,
         });
       }
 
@@ -1054,7 +1106,7 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
     name,
     Effect.gen(function* () {
       const git = yield* Git;
-      const repo = yield* Repo;
+      const rules = yield* Settings.rules;
       const base = yield* baseOf(options);
 
       if ((yield* git.commitsAhead(worktree, base)) === 0) {
@@ -1062,7 +1114,10 @@ export const push = (name: string, worktree: string, branch: string, options: Pu
       }
 
       if (options.withPerson !== true) {
-        const touched = pathsMatching(yield* git.changedFiles(worktree, base), repo.humanOnlyPaths);
+        const touched = pathsMatching(
+          yield* git.changedFiles(worktree, base),
+          rules.humanOnlyPaths,
+        );
 
         if (touched.length > 0) {
           return yield* new NeedsHuman({
@@ -1087,23 +1142,33 @@ const footer = (shipping: boolean) => {
   return "Opened by Chernabog for an unattended run. A person merges.";
 };
 
+// The epic an issue is a task of, which its pull request names.
+export type PartOfOptions = { readonly partOf?: number };
+
+const closes = (issue: number, options: PartOfOptions) =>
+  Option.match(Option.fromUndefinedOr(options.partOf), {
+    onNone: () => `Closes #${issue}`,
+    onSome: (epic) => `Closes #${issue}\nPart of #${epic}`,
+  });
+
 // Opens the pull request for the branch, or finds the one already open. An
 // issue queued by ship (auto:ship) gives its pull request the label too, the
 // automated path, which merges once approved. It targets `base`, the repo's
-// base branch unless given.
+// base branch unless given. A task of an epic says so under its Closes line.
+// The run names the pull request as a subject.
 export const openPullRequest = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions & BaseOptions = {},
+  options: QueueOptions & BaseOptions & RepeatOptions & PartOfOptions = {},
 ) =>
   activity(
-    "open-pull-request",
+    named(options, "open-pull-request"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
+      const labels = yield* Settings.labels;
       const branch = branchFor(issue);
       const base = yield* baseOf(options);
-      const shipping = options.label === repo.labels.ship;
+      const shipping = options.label === labels.ship;
 
       const existing = Option.filter(
         yield* github.pullRequestForBranch(branch),
@@ -1117,12 +1182,14 @@ export const openPullRequest = (
             head: branch,
             base,
             title: outcome.title,
-            body: `Closes #${issue}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
+            body: `${closes(issue, options)}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
           }),
       });
 
+      yield* Subjects.name(Claims.pullRequest(opened.number));
+
       if (shipping) {
-        yield* github.addLabel(opened.number, repo.labels.ship);
+        yield* github.addLabel(opened.number, labels.ship);
       }
 
       return { number: opened.number, url: opened.url };
@@ -1140,14 +1207,14 @@ const CiReading = Schema.Union([
 
 type CiReading = typeof CiReading.Type;
 
-// Polls the pull request's checks durably until they stop pending, or limits.ciTimeout passes.
+// Polls the pull request's checks durably until they stop pending, or ciTimeout passes.
 const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { timeout } = yield* Settings.ci;
 
     const maxPolls = Math.max(
       1,
-      Math.ceil(Duration.toMillis(repo.limits.ciTimeout) / Duration.toMillis(CI_POLL)),
+      Math.ceil(Duration.toMillis(timeout) / Duration.toMillis(CI_POLL)),
     );
 
     let reading: CiReading = { state: "pending", waitingOn: [] };
@@ -1156,7 +1223,7 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
       if (poll > maxPolls) {
         return yield* new CiTimedOut({
           pullRequest,
-          after: Duration.format(Duration.fromInputUnsafe(repo.limits.ciTimeout)),
+          after: Duration.format(timeout),
         });
       }
 
@@ -1166,7 +1233,7 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
 
       reading = yield* activity(
         named(options, `ci-${round}-${poll}`),
-        GitHub.use((github) => github.ciState(pullRequest)),
+        Ci.pullRequestState(pullRequest),
         CiReading,
       );
     }
@@ -1183,7 +1250,7 @@ const waitForCiIn = <E, R>(
   options: RepeatOptions,
 ) =>
   Effect.gen(function* () {
-    const repo = yield* Repo;
+    const { rounds } = yield* Settings.ci;
 
     for (let round = 1; ; round++) {
       const reading = yield* awaitChecks(pullRequest, round, options);
@@ -1194,9 +1261,9 @@ const waitForCiIn = <E, R>(
 
       const failed = reading.failedChecks.join(", ");
 
-      if (round > repo.limits.ciRounds) {
+      if (round > rounds) {
         return yield* new NeedsHuman({
-          reason: `CI is still red after ${repo.limits.ciRounds} fix attempts: ${failed}`,
+          reason: `CI is still red after ${rounds} fix attempts: ${failed}`,
         });
       }
 
@@ -1209,6 +1276,7 @@ const waitForCiIn = <E, R>(
           `CI failed on pull request #${pullRequest}: ${failed}.`,
           `Read why with \`gh run list --branch ${target.branch} --limit 5\` and \`gh run view <run id> --log-failed\`.`,
           "Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again.",
+          `A check on the pull request's title or body is fixed on the pull request, not in a commit: \`gh pr edit ${pullRequest} --title "<title>"\` (or \`--body-file\`). Your answer's title is not applied again.`,
         ].join("\n"),
         target,
       );
@@ -1266,11 +1334,14 @@ const askForReview = (pullRequest: number, options: HandOffOptions) => {
 // Whether hand-off asks the team's reviewer pool for a review. A flow that
 // reviews the pull request itself says false. adoptedBranch: the pull request
 // is one claim adopted, on this branch, which no session of this run wrote.
-export type HandOffOptions = { readonly needsReview: boolean; readonly adoptedBranch?: string };
+// `id` as RepeatOptions.
+export type HandOffOptions = {
+  readonly needsReview: boolean;
+  readonly adoptedBranch?: string;
+} & RepeatOptions;
 
-// Hands the green pull request to review: the review trigger if the repo has
-// one, a review requested of one reviewer from the pool (needs-review for a
-// person without one) unless the options leave it off, and a closing comment
+// Hands the green pull request to review: a review requested of one reviewer
+// from the pool (needs-review for a person without one) unless the options leave it off, and a closing comment
 // on the issue.
 export const handOff = (
   issue: number,
@@ -1279,21 +1350,17 @@ export const handOff = (
   options: HandOffOptions = { needsReview: true },
 ) =>
   activity(
-    "hand-off",
+    named(options, "hand-off"),
     Effect.gen(function* () {
       const github = yield* GitHub;
       const repo = yield* Repo;
       const run = yield* Run;
 
-      if (Option.isSome(repo.reviewTrigger)) {
-        yield* github.comment(pullRequest.number, repo.reviewTrigger.value);
-      }
-
       // The fix flow resumes this session to answer a review. For an adopted
       // pull request it is one a CI fix started, or none yet.
       const session = {
         adapter: repo.agent,
-        sessionId: sessionIdFor(run.runId, "implement"),
+        sessionId: sessionIdFor(run.runId, named(options, "implement")),
         issue,
         branch: options.adoptedBranch ?? branchFor(issue),
       };
@@ -1378,17 +1445,22 @@ export const readied = Effect.gen(function* () {
 });
 
 // Labels the work item for a person and says why. No flow picks it up again.
-export const handToHuman = (issue: number, reason: string, pullRequest: Option.Option<number>) =>
+export const handToHuman = (
+  issue: number,
+  reason: string,
+  pullRequest: Option.Option<number>,
+  options: RepeatOptions = {},
+) =>
   activity(
-    "needs-human",
+    named(options, "needs-human"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const repo = yield* Repo;
-      yield* github.addLabel(issue, repo.labels.needsHuman);
+      const labels = yield* Settings.labels;
+      yield* github.addLabel(issue, labels.needsHuman);
       yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
-        yield* github.addLabel(pullRequest.value, repo.labels.needsHuman);
+        yield* github.addLabel(pullRequest.value, labels.needsHuman);
       }
 
       yield* github.comment(

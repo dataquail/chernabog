@@ -76,7 +76,7 @@ describe("the pre-commit hook", () => {
         "bun run check",
         "bun run lint",
         "bun run lint:architecture",
-        "bun test",
+        "bun run test",
       ]);
     }),
   );

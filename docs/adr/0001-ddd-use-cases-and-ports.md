@@ -1,6 +1,9 @@
 # 1. Use-cases over a domain, behind ports
 
-Status: accepted, 2026-10-22.
+Status: accepted, 2026-10-22. Decision 1, the CQRS bus, its message
+definitions and the unit-of-work library among what was left behind, and the
+settled question on folder names are superseded by
+[ADR 6](0006-use-cases-become-commands-and-queries.md).
 
 ## Context
 

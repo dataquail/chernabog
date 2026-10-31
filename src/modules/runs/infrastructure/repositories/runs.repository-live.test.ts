@@ -12,7 +12,7 @@ import { RunRoot } from "../../domain/run/run.root.ts";
 import { RunsRepositoryLive } from "./runs.repository-live.ts";
 
 const runsAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClient>) =>
-  RunsRepositoryLive.pipe(Layer.provide(sqliteAfter(before)));
+  RunsRepositoryLive.pipe(Layer.provideMerge(sqliteAfter(before)));
 
 const run = (id: string, startedAt: string, persona: Option.Option<string>) =>
   RunRoot.make({
@@ -90,14 +90,20 @@ describe("RunsRepositoryLive", () => {
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
-  effect("keeps the pull request a run opened", () =>
+  effect("keeps the subjects a run named, in order, and a stale copy drops none", () =>
     Effect.gen(function* () {
       const runs = yield* RunsRepository;
       yield* runs.save(first);
-      const linked = RunRoot.make({ ...first, pullRequest: Option.some(124) });
-      yield* runs.save(linked);
+      const named = RunRoot.make({ ...first, subjects: ["pr-124", "release-1.4", "pr-125"] });
+      yield* runs.save(named);
+      yield* runs.save(RunRoot.make({ ...first, currentStep: Option.some("stale") }));
 
-      expect(yield* runs.findOne(first.id)).toEqual(Option.some(linked));
+      expect(Option.map(yield* runs.findOne(first.id), (found) => found.subjects)).toEqual(
+        Option.some(["pr-124", "release-1.4", "pr-125"]),
+      );
+      expect((yield* runs.findAll({ running: true })).map((found) => found.subjects)).toEqual([
+        ["pr-124", "release-1.4", "pr-125"],
+      ]);
     }).pipe(Effect.provide(runsAfter(Effect.void))),
   );
 
@@ -109,7 +115,7 @@ describe("RunsRepositoryLive", () => {
         Option.map(yield* runs.findOne(RunId.make("old")), (found) => ({
           persona: found.persona,
           item: found.item,
-          pullRequest: found.pullRequest,
+          subjects: found.subjects,
           status: found.status,
           coreVersion: found.coreVersion,
           configTree: found.configTree,
@@ -118,7 +124,7 @@ describe("RunsRepositoryLive", () => {
         Option.some({
           persona: Option.none(),
           item: Option.none(),
-          pullRequest: Option.none(),
+          subjects: [],
           status: "running",
           // No core-providing binary resumes it.
           coreVersion: "0.0.0",
@@ -133,6 +139,34 @@ describe("RunsRepositoryLive", () => {
             yield* sql`CREATE TABLE om_runs (id TEXT PRIMARY KEY, repo TEXT NOT NULL, flow TEXT NOT NULL, item_key TEXT NOT NULL, item_title TEXT, item_url TEXT, execution_id TEXT, status TEXT NOT NULL, current_step TEXT, summary TEXT, started_at TEXT NOT NULL, finished_at TEXT)`;
             yield* sql`CREATE INDEX om_runs_active ON om_runs (status, repo, flow, item_key)`;
             yield* sql`INSERT INTO om_runs (id, repo, flow, item_key, status, started_at) VALUES ('old', 'demo', 'review', 'pr-1', 'running', '2026-10-20T00:00:00Z')`;
+          }),
+        ),
+      ),
+    ),
+  );
+
+  effect("a database whose runs kept a pull request names it as each one's subject", () =>
+    Effect.gen(function* () {
+      const runs = yield* RunsRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      expect(Option.map(yield* runs.findOne(RunId.make("old")), (found) => found.subjects)).toEqual(
+        Option.some(["pr-124"]),
+      );
+      expect(
+        Option.map(yield* runs.findOne(RunId.make("none")), (found) => found.subjects),
+      ).toEqual(Option.some([]));
+
+      const columns = yield* sql<{ name: string }>`SELECT name FROM pragma_table_info('om_runs')`;
+      expect(columns.map((column) => column.name)).not.toContain("pull_request");
+    }).pipe(
+      Effect.provide(
+        runsAfter(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`CREATE TABLE om_runs (id TEXT PRIMARY KEY, repo TEXT NOT NULL, flow TEXT NOT NULL, item_key TEXT NOT NULL, item_title TEXT, item_url TEXT, execution_id TEXT, status TEXT NOT NULL, current_step TEXT, summary TEXT, started_at TEXT NOT NULL, finished_at TEXT, persona TEXT, item TEXT, core_version TEXT, config_tree TEXT, pull_request INTEGER)`;
+            yield* sql`INSERT INTO om_runs (id, repo, flow, item_key, status, core_version, started_at, pull_request) VALUES ('old', 'demo', 'implement', 'issue-1', 'done', '1.0.0', '2026-10-20T00:00:00Z', 124)`;
+            yield* sql`INSERT INTO om_runs (id, repo, flow, item_key, status, core_version, started_at) VALUES ('none', 'demo', 'implement', 'issue-2', 'done', '1.0.0', '2026-10-20T00:00:00Z')`;
           }),
         ),
       ),

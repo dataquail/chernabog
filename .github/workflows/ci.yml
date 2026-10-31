@@ -3,8 +3,45 @@ on:
   pull_request:
   push:
     branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
-  check:
+  # Which of the jobs below a pull request needs, from the files it changes. A
+  # push to main, or a change to the toolchain or this workflow, runs them all.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      static: ${{ steps.filter.outputs.static }}
+      unit: ${{ steps.filter.outputs.unit }}
+      acceptance: ${{ steps.filter.outputs.acceptance }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          everything() {
+            echo "static=true" >> "$GITHUB_OUTPUT"
+            echo "unit=true" >> "$GITHUB_OUTPUT"
+            echo "acceptance=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [ -z "$BASE_SHA" ] && everything
+          git fetch -q --depth=1 origin "$BASE_SHA"
+          changed=$(git diff --name-only "$BASE_SHA" HEAD)
+          printf '%s\n' "$changed"
+          grep -qE '^(package\.json|bun\.lock|bunfig\.toml|tsconfig\.json|\.github/workflows/ci\.yml)$' <<<"$changed" && everything
+          has() { grep -qE "$1" <<<"$changed" && echo true || echo false; }
+          # Prettier reads every file outside website/, which has its own toolchain.
+          echo "static=$(grep -qvE '^website/' <<<"$changed" && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "unit=$(has '^(src|packages|test|scripts|tools|fixtures|templates)/')" >> "$GITHUB_OUTPUT"
+          echo "acceptance=$(has '^(src|packages|templates|test/acceptance|test/fakebin)/')" >> "$GITHUB_OUTPUT"
+
+  static:
+    needs: changes
+    if: needs.changes.outputs.static == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -20,13 +57,56 @@ jobs:
       - run: bun run format:check
       - run: bun run lint
       - run: bun run lint:architecture
+
+  # Every test but the acceptance tests, which measure no coverage: they run
+  # the CLI in processes of its own.
+  unit:
+    needs: changes
+    if: needs.changes.outputs.unit == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
       # Measures coverage too (bunfig.toml).
-      - run: bun test
+      - run: bun run test:unit
       # The coverage table in the job summary, even when the tests failed; fails below the floor.
       - if: always()
         run: bun scripts/coverage-summary.ts
+
+  # The acceptance tests from source, split across runners by how long each
+  # file takes (test/acceptance/timings.json).
+  acceptance:
+    needs: changes
+    if: needs.changes.outputs.acceptance == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun run test:acceptance --shard=${{ matrix.shard }}/4
+
+  # The end-to-end tests again, on the binary a release ships.
+  binary:
+    needs: changes
+    if: needs.changes.outputs.acceptance == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
       - run: bun run build
-      - run: CHERNABOG_BIN=$PWD/dist/chernabog bun test test/acceptance/e2e.test.ts test/acceptance/daemon.test.ts
+      - run: CHERNABOG_BIN=$PWD/dist/chernabog bun test --parallel test/acceptance/e2e.test.ts test/acceptance/daemon.test.ts
 
   # Old blocks on this binary: the oldest and newest @chernabog/sdk on npm that
   # need a core this branch provides, with their recipes, loaded under this
@@ -56,3 +136,25 @@ jobs:
         working-directory: website
       - run: bun run build
         working-directory: website
+
+  # The one check branch protection requires, named `check` as the ruleset
+  # names it: it fails when any job above failed or was cancelled, and passes
+  # over the ones the changes skipped.
+  pr_gate:
+    name: check
+    if: always()
+    needs: [changes, static, unit, acceptance, binary, published, docs]
+    runs-on: ubuntu-latest
+    # Reads only the jobs' results, never the repo.
+    permissions: {}
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "::error::a required job ended as $result"; exit 1 ;;
+            esac
+          done

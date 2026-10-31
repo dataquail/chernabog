@@ -13,6 +13,7 @@ A recipe is a complete flow: its trigger, its steps in order and its endings, wr
 | [`address-review`](/chernabog/recipes/address-review/) | Answers a review that requests changes on the persona's own pull request, in the session that wrote it |
 | [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) | Merges the base into the persona's own pull request when it conflicts, resolves the conflicts, and asks an approving reviewer to look again |
 | [`plan`](/chernabog/recipes/plan/) | Turns an `auto:plan` spec issue into an epic of sub-issues, linked by what blocks what, once a person approves the agent's plan |
+| [`epic`](/chernabog/recipes/epic/) | Works through an `auto:epic` issue's tasks as pull requests, each stacked on the branch of the task it builds on, and parks between changes to its layers |
 | [`human-initiated`](/chernabog/recipes/human-initiated/) | The hybrid path: `chernabog start <issue>` opens a session with a person, then opens the pull request and asks for a review |
 | [`post-merge`](/chernabog/recipes/post-merge/) | Watches CI on the merge commit of the persona's merged pull request, and files an `auto:eligible` follow-up issue when it goes red |
 

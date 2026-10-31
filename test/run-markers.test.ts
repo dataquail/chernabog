@@ -27,18 +27,18 @@ import * as Schema from "effect/Schema";
 
 import implement from "../packages/recipes/flows/implement.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
+import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handler.ts";
+import { releaseMarkersHandler } from "../src/modules/runs/commands/release-markers.handler.ts";
 import {
   type FlowHandle,
   flowHandle,
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { listRunMarkersHandler } from "../src/modules/runs/queries/list-run-markers.handler.ts";
+import { listUnreleasedMarkersHandler } from "../src/modules/runs/queries/list-unreleased-markers.handler.ts";
 import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { CancelTarget } from "../src/modules/runs/use-cases/cancel-run.result.ts";
-import { cancelRunUseCase } from "../src/modules/runs/use-cases/cancel-run.use-case.ts";
-import { listRunMarkersUseCase } from "../src/modules/runs/use-cases/list-run-markers.use-case.ts";
-import { listUnreleasedMarkersUseCase } from "../src/modules/runs/use-cases/list-unreleased-markers.use-case.ts";
-import { releaseMarkersUseCase } from "../src/modules/runs/use-cases/release-markers.use-case.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
@@ -186,7 +186,7 @@ const runAndRelease = (handle: FlowHandle) =>
   Effect.gen(function* () {
     const started = Option.getOrThrow((yield* startRun(handle, IMPLICIT, item("T-1"))).run);
     const finished = yield* ended(started);
-    const releases = yield* releaseMarkersUseCase();
+    const releases = yield* releaseMarkersHandler();
 
     return { finished, releases };
   });
@@ -229,16 +229,19 @@ describe("a flow's own marker", () => {
           );
 
           // In flight, it keeps what it holds.
-          const whileRunning = yield* releaseMarkersUseCase();
-          const held = (yield* listRunMarkersUseCase(started.id, Option.none())).markers;
+          const whileRunning = yield* releaseMarkersHandler();
 
-          yield* cancelRunUseCase(CancelTarget.cases.ById.make({ asked: started.id }), {
+          const held = (yield* listRunMarkersHandler({ runId: started.id, name: Option.none() }))
+            .markers;
+
+          yield* cancelRunHandler({
+            target: CancelTarget.cases.ById.make({ asked: started.id }),
             by: "alice",
             closeSessions: false,
             endAs: Option.none(),
           });
 
-          const releases = yield* releaseMarkersUseCase();
+          const releases = yield* releaseMarkersHandler();
 
           return { whileRunning, held, releases, polled: yield* pollRun(started) };
         }),
@@ -283,7 +286,7 @@ describe("a flow's own marker", () => {
         makeFake("approve"),
         Effect.gen(function* () {
           const first = yield* runAndRelease(handle);
-          const shown = yield* listUnreleasedMarkersUseCase();
+          const shown = yield* listUnreleasedMarkersHandler();
 
           return { first, shown };
         }),
@@ -346,6 +349,19 @@ describe("the SDK's markers", () => {
       }
 
       expect(fake.labelsOf(ISSUE)).toEqual([DEFAULT_LABELS.needsHuman]);
+    }),
+  );
+
+  effect("a claim branch is compared with the base it was cut from, such as develop", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      const branch = `auto/issue-${ISSUE}`;
+
+      yield* asRun(fake, "run-1", Markers.claimBranch.releaseJson({ branch, base: "develop" }));
+      // One held before the claim recorded its base compares with the repo's.
+      yield* asRun(fake, "run-1", Markers.claimBranch.releaseJson({ branch }));
+
+      expect(fake.based.compared).toEqual(["develop", "main"]);
     }),
   );
 

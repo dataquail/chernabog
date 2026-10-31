@@ -15,7 +15,10 @@ import * as Option from "effect/Option";
 import { nothingNamed } from "../../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
-import { routeItems } from "../../../modules/runs/domain/routing/routing.value-object.ts";
+import {
+  describeElsewhere,
+  routeItems,
+} from "../../../modules/runs/domain/routing/routing.value-object.ts";
 import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
 import {
   defaultPersona,
@@ -28,31 +31,23 @@ import {
   adoptRuns,
   buildPersonaContexts,
   flowOrigins,
-  loginOf,
   openRepo,
   type RepoContext,
   servicesFrom,
   unreportedItem,
 } from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
+import {
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
+  RunsCommandsLive,
+} from "../../../modules/runs/runs.command-handlers.ts";
 import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
-import { deliverSignalsUseCase } from "../../../modules/runs/use-cases/deliver-signals.use-case.ts";
-import { listActiveRunsUseCase } from "../../../modules/runs/use-cases/list-active-runs.use-case.ts";
-import { pollRunUseCase } from "../../../modules/runs/use-cases/poll-run.use-case.ts";
-import { recoverRunsUseCase } from "../../../modules/runs/use-cases/recover-runs.use-case.ts";
-import { releaseMarkersUseCase } from "../../../modules/runs/use-cases/release-markers.use-case.ts";
-import { resumeRunUseCase } from "../../../modules/runs/use-cases/resume-run.use-case.ts";
+import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
 import { type ActiveRun, type RunView } from "../../../modules/runs/use-cases/run.result.ts";
-import { startFlowRunUseCase } from "../../../modules/runs/use-cases/start-flow-run.use-case.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
-import {
-  type EffectiveRepo,
-  findEnrolled,
-  loadMachineConfig,
-  personaOf,
-  routingOf,
-} from "../../../repo-config.ts";
+import { type EffectiveRepo, findEnrolled, loadMachineConfig } from "../../../repo-config.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -100,7 +95,10 @@ const followRun = (
     while (current.status === "running") {
       yield* tail;
       yield* Effect.sleep("1 second");
-      current = Option.getOrElse((yield* pollRunUseCase(current.id)).run, () => current);
+      current = Option.getOrElse(
+        (yield* (yield* RunFlowsCommands).PollRunCommand({ runId: current.id })).run,
+        () => current,
+      );
       const now = yield* Clock.currentTimeMillis;
 
       if (now - lastSignalCheck > SIGNAL_EVERY_MS) {
@@ -110,7 +108,10 @@ const followRun = (
           Effect.orElseSucceed(() => []),
         );
 
-        yield* deliverSignalsUseCase(refOf(handle, persona), items);
+        yield* (yield* RunFlowsCommands).DeliverSignalsCommand({
+          flow: refOf(handle, persona),
+          items,
+        });
       }
     }
 
@@ -118,7 +119,7 @@ const followRun = (
 
     // What the run held is released here, as the daemon would; a release
     // that fails is left to the daemon, or the next run, to try again.
-    const releases = yield* releaseMarkersUseCase();
+    const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
 
     for (const marker of [...releases.failed, ...releases.unreleasable]) {
       yield* Console.log(
@@ -191,22 +192,20 @@ const resume = (
     );
 
     if (!recovered) {
-      yield* resumeRunUseCase(unfinished.id);
+      yield* (yield* RunFlowsCommands).ResumeRunCommand({ runId: unfinished.id });
     }
 
     return Option.some(yield* followRun(handle, persona, unfinished, context));
   });
 
-// The first item this machine may start, unless the flow leaves work for others to them.
-const firstOf = (handle: FlowHandle, persona: Persona, items: ReadonlyArray<WorkItem>) =>
+// The first item this machine may start, past the work the flow left for others.
+const firstOf = (items: ReadonlyArray<WorkItem>) =>
   Effect.gen(function* () {
-    const login = yield* loginOf(handle.repo, persona);
-    const own = yield* Effect.fromOption(personaOf(handle.repo, persona)).pipe(Effect.orDie);
-    const routed = routeItems(items, routingOf(own, handle.name), login);
+    const routed = routeItems(items);
 
     if (routed.elsewhere.length > 0 && routed.mine.length === 0) {
       yield* Console.log(
-        `left for other machines: ${routed.elsewhere.map((item) => item.key).join(", ")}; name one with --item to run it here`,
+        `left for others: ${routed.elsewhere.map(describeElsewhere).join(", ")}; name one with --item to run it here`,
       );
     }
 
@@ -222,7 +221,9 @@ const startFirst = (
   Effect.gen(function* () {
     // Nothing finds a manual flow's work, so a person must name it.
     if (isManual(handle.flow) && Option.isNone(options.item)) {
-      return yield* new ConfigError({ message: nothingNamed(handle.name) });
+      return yield* new ConfigError({
+        message: nothingNamed(handle.name, handle.flow.start === true),
+      });
     }
 
     const reported = yield* withRepo(context, triggerOf(handle.flow));
@@ -233,7 +234,7 @@ const startFirst = (
     ].filter((candidate) => candidate.wakeOnly !== true);
 
     const found = yield* Option.match(options.item, {
-      onNone: () => firstOf(handle, persona, items),
+      onNone: () => firstOf(items),
       onSome: (key) =>
         Effect.succeed(Option.fromUndefinedOr(items.find((candidate) => candidate.key === key))),
     });
@@ -249,7 +250,10 @@ const startFirst = (
       return Option.none<RunView>();
     }
 
-    const { run } = yield* startFlowRunUseCase(refOf(handle, persona), found.value);
+    const { run } = yield* (yield* RunFlowsCommands).StartFlowRunCommand({
+      flow: refOf(handle, persona),
+      item: found.value,
+    });
 
     if (Option.isNone(run)) {
       return Option.none<RunView>();
@@ -308,7 +312,7 @@ export const runInForeground = (options: RunOptions) =>
     const program = Effect.gen(function* () {
       yield* adoptRuns(repo);
 
-      const recovered = yield* recoverRunsUseCase();
+      const recovered = yield* (yield* RunFlowsCommands).RecoverRunsCommand();
 
       for (const run of recovered.abandoned) {
         yield* Console.log(
@@ -317,7 +321,7 @@ export const runInForeground = (options: RunOptions) =>
       }
 
       const unfinished = Arr.head(
-        (yield* listActiveRunsUseCase({
+        (yield* (yield* RunsQueries).ListActiveRunsQuery({
           repo: Option.some(repo.settings.name),
           persona: Option.some(persona),
           flow: Option.some(options.flow),
@@ -338,12 +342,20 @@ export const runInForeground = (options: RunOptions) =>
     });
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: (_repo, one) => servicesFrom(contexts)(one),
-      }).pipe(
+      RunFlowsCommandsLive.pipe(
         Layer.provideMerge(
-          flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provideMerge(StateLive)),
+          RuntimeLayer({
+            handles: [handle],
+            services: (_repo, one) => servicesFrom(contexts)(one),
+          }).pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(
+                flowLayer(handle, servicesFrom(contexts)),
+                RunsQueriesLive,
+                RunsCommandsLive,
+              ).pipe(Layer.provideMerge(StateLive)),
+            ),
+          ),
         ),
       ),
     );

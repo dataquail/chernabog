@@ -1,8 +1,12 @@
-// CI's reading of a pull request, a commit or a branch: red as soon as any
-// check fails, green once every check that gates it has passed, pending
-// otherwise. And what a failed run's log says.
+// CI on a pull request as facts: each check run and commit status on its
+// head, and whether its base requires it. The deprecated readings of a pull
+// request, a commit or a branch: red as soon as any check fails, green once
+// every check that gates it has passed, pending otherwise. And what a failed
+// run's log says.
 
 import {
+  type CiCheck,
+  type CiChecks,
   type CiFailedRun,
   type CiFailureDetails,
   type CiReport,
@@ -123,8 +127,6 @@ const PullRequestRefs = Schema.Struct({
   head: Schema.Struct({ sha: Schema.String }),
 });
 
-const CheckRunsPage = Schema.Struct({ check_runs: Schema.Array(CheckRun) });
-
 const Rules = Schema.Array(BranchRule);
 
 const ErrorMessage = Schema.Struct({ message: Schema.String });
@@ -174,30 +176,6 @@ const requiredChecksOf = (repo: string, branch: string) =>
     const rules = [...firstPage, ...rest];
 
     return { required: requiredChecksFrom(rules), caveat: Option.none<string>() };
-  });
-
-export const readCiState = (repo: string, pullRequestNumber: number) =>
-  Effect.gen(function* () {
-    const pullRequest = yield* githubJson(
-      "GET",
-      `/repos/${repo}/pulls/${pullRequestNumber}`,
-      PullRequestRefs,
-    );
-
-    const { caveat, required } = yield* requiredChecksOf(repo, pullRequest.base.ref);
-
-    const checkRuns = yield* githubGetAllPages(
-      `/repos/${repo}/commits/${pullRequest.head.sha}/check-runs?per_page=100`,
-      CheckRunsPage,
-      (page) => page.check_runs,
-    );
-
-    const reading: CiState = classifyChecks(checkRuns, required);
-
-    return Option.match(caveat, {
-      onNone: () => reading,
-      onSome: (said): CiState => ({ ...reading, caveat: said }),
-    });
   });
 
 // A check with where to read why it failed.
@@ -396,6 +374,111 @@ export const readCommitCiState = (repo: string, sha: string, event: Option.Optio
       ...statuses.map(statusCheck),
     ]);
   });
+
+// A check on a pull request's head, with what kind of check it is.
+type HeadCheck = LinkedCheck & { readonly kind: CiCheck["kind"] };
+
+// A pull request's head, the checks its base branch requires (or why every
+// check counts), and every check run and commit status on its head.
+const readHead = (repo: string, pullRequestNumber: number) =>
+  Effect.gen(function* () {
+    const pullRequest = yield* githubJson(
+      "GET",
+      `/repos/${repo}/pulls/${pullRequestNumber}`,
+      PullRequestRefs,
+    );
+
+    const { caveat, required } = yield* requiredChecksOf(repo, pullRequest.base.ref);
+
+    const checkRuns = yield* githubGetAllPages(
+      `/repos/${repo}/commits/${pullRequest.head.sha}/check-runs?per_page=100`,
+      LinkedCheckRunsPage,
+      (page) => page.check_runs,
+    );
+
+    const statuses = yield* githubGetAllPages(
+      `/repos/${repo}/commits/${pullRequest.head.sha}/status?per_page=100`,
+      CombinedStatus,
+      (page) => page.statuses,
+    );
+
+    const checks: ReadonlyArray<HeadCheck> = [
+      ...checkRuns.map((run) => ({
+        kind: "check-run" as const,
+        check: { id: run.id, name: run.name, status: run.status, conclusion: run.conclusion },
+        link: checkRunLink(run),
+      })),
+      ...statuses.map((status) => ({ kind: "status" as const, ...statusCheck(status) })),
+    ];
+
+    return { headSha: pullRequest.head.sha, required, caveat, checks };
+  });
+
+const stateOf = (check: CheckRun): CiCheck["state"] => {
+  if (check.status !== "completed") {
+    return "pending";
+  }
+
+  if (isFailed(check)) {
+    return "failed";
+  }
+
+  return "passed";
+};
+
+// The newest check of each kind and name, by name.
+const newestChecks = (checks: ReadonlyArray<HeadCheck>, required: ReadonlyArray<string>) =>
+  Arr.sort(
+    (["check-run", "status"] as const).flatMap((kind) => {
+      const ofKind = checks.filter((linked) => linked.kind === kind);
+      const newest = new Set(latestRunPerCheck(ofKind.map((linked) => linked.check)).values());
+
+      return ofKind.flatMap((linked): ReadonlyArray<CiCheck> => {
+        if (!newest.has(linked.check)) {
+          return [];
+        }
+
+        return [
+          {
+            name: linked.check.name,
+            kind,
+            state: stateOf(linked.check),
+            required: required.includes(linked.check.name),
+            url: linked.link.url,
+          },
+        ];
+      });
+    }),
+    Order.mapInput(Order.String, (check: CiCheck) => check.name),
+  );
+
+// A pull request's CI as GitHub reports it, with no verdict.
+export const readCiChecks = (repo: string, pullRequestNumber: number) =>
+  readHead(repo, pullRequestNumber).pipe(
+    Effect.map((head): CiChecks => ({
+      headSha: head.headSha,
+      checks: newestChecks(head.checks, head.required),
+      required: head.required,
+      caveat: head.caveat,
+    })),
+  );
+
+// The deprecated verdict on a pull request, over its check runs and commit
+// statuses alike.
+export const readCiState = (repo: string, pullRequestNumber: number) =>
+  readHead(repo, pullRequestNumber).pipe(
+    Effect.map((head) => {
+      const reading: CiState = classifyChecks(
+        head.checks.map((linked) => linked.check),
+        head.required,
+      );
+
+      return Option.match(head.caveat, {
+        onNone: () => reading,
+        onSome: (said): CiState => ({ ...reading, caveat: said }),
+      });
+    }),
+  );
 
 // The newest 100 push runs on the branch: enough for each workflow's newest
 // completed one, short of a branch where one workflow ran a hundred times since.

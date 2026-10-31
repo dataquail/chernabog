@@ -37,17 +37,18 @@ describe("noteCheckFailure", () => {
 });
 
 describe("runIsAbout", () => {
-  test("a run is about the issue or pull request its item names, or the pull request it opened", () => {
-    const run = (itemKey: string, pullRequest = Option.none<number>()) => ({
+  test("a run is about the issue or pull request its item or one of its subjects names", () => {
+    const run = (itemKey: string, subjects: ReadonlyArray<string> = []) => ({
       itemKey,
-      pullRequest,
+      subjects,
     });
 
     expect(runIsAbout(run("issue-12"), 12)).toBe(true);
     expect(runIsAbout(run("pr-73"), 73)).toBe(true);
     expect(runIsAbout(run("pr-73-changes-2"), 73)).toBe(true);
-    expect(runIsAbout(run("issue-12", Option.some(40)), 40)).toBe(true);
-    expect(runIsAbout(run("issue-12", Option.some(40)), 41)).toBe(false);
+    expect(runIsAbout(run("issue-12", ["pr-40"]), 40)).toBe(true);
+    expect(runIsAbout(run("issue-12", ["pr-40", "pr-41"]), 41)).toBe(true);
+    expect(runIsAbout(run("issue-12", ["release-1.4"]), 41)).toBe(false);
     expect(runIsAbout(run("pr-73"), 7)).toBe(false);
     expect(runIsAbout(run("nightly-12"), 12)).toBe(false);
   });

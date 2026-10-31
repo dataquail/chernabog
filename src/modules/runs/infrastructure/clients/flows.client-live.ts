@@ -6,11 +6,11 @@
 import {
   Claims,
   describeError,
-  GitHub,
   isSetupError,
   Markers,
   Run,
   Runs,
+  Settings,
   type SetupError,
   triggerOf,
   type TriggerServices,
@@ -29,12 +29,15 @@ import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
 import { RunsRepository } from "../../domain/ports/repositories/runs.repository.ts";
-import { type ReviewRequest } from "../../domain/routing/routing.value-object.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
-import { type FlowRef, type ValidityQuestion } from "../../domain/run/work-item.value-object.ts";
+import {
+  firstPullRequest,
+  type FlowRef,
+  type ValidityQuestion,
+} from "../../domain/run/work-item.value-object.ts";
 import { MarkerUnreleasable } from "../../domain/run-marker/run-marker.errors.ts";
 import { type LeaseState } from "../../domain/schedule/lease.value-object.ts";
-import { capturing, type FlowHandle, surfaceSetup } from "../runtime/engine.ts";
+import { capturing, type FlowHandle, flowSettingsFor, surfaceSetup } from "../runtime/engine.ts";
 
 // Whether a run is still running, none for a run this machine doesn't know.
 const capturingRuns = capturing((runId: string) =>
@@ -217,7 +220,8 @@ const runInfo = (flow: FlowRef, question: ValidityQuestion) =>
     runId: question.runId,
     executionId: question.executionId,
     item: question.item,
-    ...Option.match(question.pullRequest, {
+    subjects: question.subjects,
+    ...Option.match(firstPullRequest(question.subjects), {
       onNone: () => ({}),
       onSome: (pullRequest) => ({ pullRequest }),
     }),
@@ -249,10 +253,16 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                   message: `${flow.repo} has no services for ${flow.flow} as ${Option.getOrElse(flow.persona, () => "the implicit persona")}`,
                 }),
               ),
+            // The flow's settings, as the persona runs it, beside the persona's services.
             onSome: ([handle, build]) =>
-              Effect.map(build, (services) => ({ handle, services })).pipe(
-                Effect.mapError((error) => new PersonaNotReady({ message: error.message })),
-              ),
+              Effect.map(build, (services) => ({
+                handle,
+                services: Context.add(
+                  services,
+                  Settings.FlowSettings,
+                  flowSettingsFor(handle, flow.persona),
+                ),
+              })).pipe(Effect.mapError((error) => new PersonaNotReady({ message: error.message }))),
           },
         );
 
@@ -370,23 +380,6 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
                 ),
             });
           }).pipe(Effect.provideContext(runs)),
-        reviewRequests: (flow) =>
-          Effect.gen(function* () {
-            const { services } = yield* loaded(flow);
-
-            const pulls = yield* withRepo(
-              services,
-              GitHub.use((github) => github.openPullRequests),
-            );
-
-            return pulls.map((pull): ReviewRequest => ({
-              number: pull.number,
-              requestedReviewers: pull.requestedReviewers,
-            }));
-          }).pipe(
-            Effect.orElseSucceed((): ReadonlyArray<ReviewRequest> => []),
-            Effect.provideContext(runs),
-          ),
       });
     }),
   );

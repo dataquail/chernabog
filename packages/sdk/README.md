@@ -60,9 +60,9 @@ export default defineStage({
   output: Schema.Struct({ issue: Schema.Number }),
   run: () =>
     Effect.gen(function* () {
-      const issue = yield* (yield* GitHub).oldestQueued;
+      const [issue] = yield* (yield* GitHub).queuedIssuesLabelled("auto:eligible");
       if (issue === undefined) return yield* new Skip({ reason: "nothing queued" });
-      return { issue };
+      return { issue: issue.number };
     }),
 });
 ```

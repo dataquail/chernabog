@@ -1,0 +1,113 @@
+import { describe, expect } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import { effect } from "../../../../test/effect-test.ts";
+import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
+import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunRoot } from "../domain/run/run.root.ts";
+import { RunStepRoot } from "../domain/run-step/run-step.root.ts";
+import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
+import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
+import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { findRunHandler } from "../queries/find-run.handler.ts";
+import { readRunHistoryHandler } from "../queries/read-run-history.handler.ts";
+import { enterStepHandler } from "./enter-step.handler.ts";
+
+const run = (id: string, fields: Partial<RunRoot> = {}) =>
+  RunRoot.make({
+    id: RunId.make(id),
+    coreVersion: "0.6.0",
+    repo: "demo",
+    persona: Option.some("bob"),
+    flow: "review",
+    itemKey: "pr-1",
+    itemTitle: Option.none(),
+    itemUrl: Option.none(),
+    item: Option.none(),
+    executionId: Option.none(),
+    status: "running",
+    currentStep: Option.none(),
+    summary: Option.none(),
+    startedAt: "2026-10-20T00:00:00.000Z",
+    finishedAt: Option.none(),
+    ...fields,
+  });
+
+const ended = run("ended", {
+  status: "done",
+  summary: Option.some("merged"),
+  finishedAt: Option.some("2026-10-21T00:00:00.000Z"),
+});
+
+const steps = (runs: ReadonlyArray<RunRoot>, recorded: ReadonlyArray<RunStepRoot> = []) =>
+  Layer.mergeAll(
+    RecordedEvents,
+    RunsRepositoryFake(runs),
+    RunStepsRepositoryFake(recorded),
+    RunWaitsRepositoryFake([]),
+  );
+
+const eventsOf = (events: ReadonlyArray<{ readonly _tag: string; readonly eventId?: unknown }>) =>
+  events.map((event) => [event._tag, event.eventId]);
+
+describe("enterStepHandler", () => {
+  effect("records the step a running run is in, and each step it has entered", () =>
+    Effect.gen(function* () {
+      const a = RunId.make("a");
+      yield* enterStepHandler({ runId: a, step: "claim" });
+      yield* enterStepHandler({ runId: a, step: "ci" });
+
+      expect((yield* enterStepHandler({ runId: a, step: "ci" })).currentStep).toEqual(
+        Option.some("ci"),
+      );
+      expect((yield* readRunHistoryHandler({ runId: a })).steps.map((found) => found.step)).toEqual(
+        ["claim", "ci", "ci"],
+      );
+      expect(eventsOf(yield* DispatchedEvents)).toEqual([
+        ["RunEnteredStep", "a:step:claim"],
+        ["RunEnteredStep", "a:step:ci"],
+      ]);
+    }).pipe(Effect.provide(steps([run("a")]))),
+  );
+
+  effect("a run that ended takes no step, and stays as it ended", () =>
+    Effect.gen(function* () {
+      const refused = yield* Effect.flip(enterStepHandler({ runId: ended.id, step: "late" }));
+
+      expect(refused._tag).toBe("RunAlreadyFinished");
+      expect(
+        Option.map((yield* findRunHandler({ runId: ended.id })).run, (found) => found.currentStep),
+      ).toEqual(Option.some(Option.none()));
+      expect((yield* readRunHistoryHandler({ runId: ended.id })).steps).toEqual([]);
+      expect(yield* DispatchedEvents).toEqual([]);
+    }).pipe(Effect.provide(steps([ended]))),
+  );
+
+  effect("a run resumed from a step it recorded tells no one it entered that step again", () =>
+    Effect.gen(function* () {
+      const a = RunId.make("a");
+      yield* enterStepHandler({ runId: a, step: "claim" });
+      yield* enterStepHandler({ runId: a, step: "ci" });
+
+      const [entered] = yield* DispatchedEvents;
+
+      expect(eventsOf(yield* DispatchedEvents)).toEqual([["RunEnteredStep", "a:step:ci"]]);
+      expect(entered).toMatchObject({ runId: a, step: "ci" });
+    }).pipe(
+      Effect.provide(
+        steps(
+          [run("a", { currentStep: Option.some("claim") })],
+          [
+            RunStepRoot.make({
+              runId: RunId.make("a"),
+              step: "claim",
+              enteredAt: "2026-10-20T00:00:01.000Z",
+            }),
+          ],
+        ),
+      ),
+    ),
+  );
+});

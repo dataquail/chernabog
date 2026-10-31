@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.8.1](https://github.com/dataquail/chernabog/compare/sdk-v0.8.0...sdk-v0.8.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **recipes:** a repo that checks its titles gets conventional commits, and CI fixes edit a failing title ([#247](https://github.com/dataquail/chernabog/issues/247)) ([6e7c51a](https://github.com/dataquail/chernabog/commit/6e7c51a9daf3aad93ea7dc3a66c8ddcf868ed7de))
+* **recipes:** an epic task whose layer below merges mid-task opens on the branch that layer merged into ([#265](https://github.com/dataquail/chernabog/issues/265)) ([114033d](https://github.com/dataquail/chernabog/commit/114033db536953a9c8a399bc13e0ef31c2aa684b))
+
+## [0.8.0](https://github.com/dataquail/chernabog/compare/sdk-v0.7.0...sdk-v0.8.0) (2026-10-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* @chernabog/core is the binary's contract with every repo's flows, and each repo runs the @chernabog/sdk it pins ([#167](https://github.com/dataquail/chernabog/issues/167))
+
+### Features
+
+* @chernabog/core is the binary's contract with every repo's flows, and each repo runs the @chernabog/sdk it pins ([#167](https://github.com/dataquail/chernabog/issues/167)) ([4c9db37](https://github.com/dataquail/chernabog/commit/4c9db376061ce357cd9ceddfd367aa94210bfa07))
+* a run names the subjects it touched, instead of the engine recording its pull request ([#210](https://github.com/dataquail/chernabog/issues/210)) ([799e427](https://github.com/dataquail/chernabog/commit/799e427c7aac4edec0e6b833b1ebdbc30bad232a))
+* a trigger can report an item as held, with a reason, and status shows it ([#183](https://github.com/dataquail/chernabog/issues/183)) ([ac588bf](https://github.com/dataquail/chernabog/commit/ac588bf6790ce91e96f937249ca207b8c1dfd5b8))
+* CI is read as checks and statuses, the SDK decides the verdict, and cancel leaves labels to markers ([#217](https://github.com/dataquail/chernabog/issues/217)) ([caf8574](https://github.com/dataquail/chernabog/commit/caf85743f1fac8432f205baddfb26fe308a7e02c))
+* claims are leases: the daemon renews its runs' claims, an expired one can be taken over, and a run that lost its claim ends as lost ([#169](https://github.com/dataquail/chernabog/issues/169)) ([7d90433](https://github.com/dataquail/chernabog/commit/7d90433ba3db386135d7dbdefcb299ad030fa2bc))
+* Epic.tasks works out which of an epic's tasks are ready, the base each stacks on, and why the rest wait ([#187](https://github.com/dataquail/chernabog/issues/187)) ([36ff85f](https://github.com/dataquail/chernabog/commit/36ff85f187b1f566c534c8009808d4dc2a53a864))
+* flows declare their own settings, and core's settings are only the engine's ([#214](https://github.com/dataquail/chernabog/issues/214)) ([0037fdd](https://github.com/dataquail/chernabog/commit/0037fddf168d4144a716e301979637d13b1537e7))
+* implement adopts an open pull request that already closes its issue, instead of implementing it again ([#191](https://github.com/dataquail/chernabog/issues/191)) ([425803c](https://github.com/dataquail/chernabog/commit/425803c5d190cef04eddc0bba7f5df8af680846a))
+* Implement and Hybrid blocks take a base branch per item, not only repo.baseBranch ([#168](https://github.com/dataquail/chernabog/issues/168)) ([1f716ea](https://github.com/dataquail/chernabog/commit/1f716eabe15863f27173ca083a54fed355080c1e))
+* markers: a run registers what it put on an item, and the daemon takes it off however the run ends ([#164](https://github.com/dataquail/chernabog/issues/164)) ([fdca485](https://github.com/dataquail/chernabog/commit/fdca4854162d396cec044d9589fc6352c0207600))
+* **recipes:** an epic recipe that implements an epic's tasks as stacked pull requests ([#193](https://github.com/dataquail/chernabog/issues/193)) ([0fe6ebd](https://github.com/dataquail/chernabog/commit/0fe6ebd023a2ef5e0fa87b9a4209222ece449ca7))
+* **recipes:** an epic with ship set lands its layers, bottom to top, once each is approved ([#220](https://github.com/dataquail/chernabog/issues/220)) ([e614164](https://github.com/dataquail/chernabog/commit/e614164a5bbbac95175d439e97dabdb0f1b93a9e))
+* **recipes:** the epic run carries a lower layer's change up its stack ([#197](https://github.com/dataquail/chernabog/issues/197)) ([d528b27](https://github.com/dataquail/chernabog/commit/d528b278b6bcc026851cf18f9eb9fd7a95590e8d))
+* routing is the flow's decision, not the engine's ([#215](https://github.com/dataquail/chernabog/issues/215)) ([805af1a](https://github.com/dataquail/chernabog/commit/805af1afb5cccbd2aacfad998771aa3d032bf7cc)), closes [#204](https://github.com/dataquail/chernabog/issues/204)
+* runs whose issue or pull request goes away end as superseded (flows' stillValid, checked by the daemon) ([#160](https://github.com/dataquail/chernabog/issues/160)) ([c0bbcfb](https://github.com/dataquail/chernabog/commit/c0bbcfbcd76c5f7c1a85c15bc95b0a8e755fd858))
+* **sdk:** an approval survives a head that only merged in its base ([#184](https://github.com/dataquail/chernabog/issues/184)) ([8a6c44f](https://github.com/dataquail/chernabog/commit/8a6c44f66cb9c082499c5325396117004fe3721e))
+* **sdk:** implement holds a blocked issue, and leaves an epic run's tasks to it ([#188](https://github.com/dataquail/chernabog/issues/188)) ([4f66c12](https://github.com/dataquail/chernabog/commit/4f66c121764859caa0b31a893f09d05bdd0379b2)), closes [#177](https://github.com/dataquail/chernabog/issues/177)
+* **sdk:** Stack.refreshLayer brings a layer whose base moved up to date and adjusts it, outside the review rounds ([#189](https://github.com/dataquail/chernabog/issues/189)) ([205ab4c](https://github.com/dataquail/chernabog/commit/205ab4c2f4314585baf3ae81e751385b3e400d2f))
+* **sdk:** Stack.syncBase merges a layer's moved base in, including a squash-merged layer below ([#186](https://github.com/dataquail/chernabog/issues/186)) ([1487c3f](https://github.com/dataquail/chernabog/commit/1487c3f69a5fae456f84f1bd5f0b72df2ab3d5bb))
+* the config branch is GitHub's default, and a flow's work targets its own base ([#216](https://github.com/dataquail/chernabog/issues/216)) ([4a4ffd5](https://github.com/dataquail/chernabog/commit/4a4ffd5c0bb81aa58c232c339f07827d006258be))
+
+
+### Bug Fixes
+
+* a worktree left by an earlier run is reset to the claimed branch, so implement's push no longer fails with stale info ([#159](https://github.com/dataquail/chernabog/issues/159)) ([9552a27](https://github.com/dataquail/chernabog/commit/9552a27ae3562b6f82f56adc447e8b8e6279f24a))
+* **recipes:** an approved layer of a stack waits for the layer below, rather than going to a person ([#219](https://github.com/dataquail/chernabog/issues/219)) ([4f450ab](https://github.com/dataquail/chernabog/commit/4f450ab73f79751a630e7c30ecd0594c0726519b))
+* review, address-review and merge treat a pull request stacked on another branch as a layer ([#185](https://github.com/dataquail/chernabog/issues/185)) ([9b834b8](https://github.com/dataquail/chernabog/commit/9b834b8e06b5c52a76de925183a106fbea643c82))
+* **sdk:** addressing a review stops for a person when the author leaves edits uncommitted ([#194](https://github.com/dataquail/chernabog/issues/194)) ([657528d](https://github.com/dataquail/chernabog/commit/657528dfc6288a348a27585cab9f11f964e6d2a6)), closes [#192](https://github.com/dataquail/chernabog/issues/192)
+
 ## [0.7.0](https://github.com/dataquail/chernabog/compare/sdk-v0.6.0...sdk-v0.7.0) (2026-10-28)
 
 
