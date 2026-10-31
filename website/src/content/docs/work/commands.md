@@ -67,5 +67,6 @@ description: Every chernabog command and flag.
 | -------------------------------------- | -------------------------------------------------- |
 | `~/.config/chernabog/config.yaml`      | [Machine config](/chernabog/reference/configuration/#machine) |
 | `~/.config/chernabog/state.db`         | The workflow engine's journal                      |
-| `~/.config/chernabog/daemon.log`       | The daemon's log                                   |
+| `~/.config/chernabog/daemon.log`       | The daemon's log, today's (UTC); earlier days' are `daemon.<YYYY-MM-DD>.log`, kept 30 days |
+| `~/.config/chernabog/daemon.out.log`   | The daemon's stdout and stderr, as the service manager catches them |
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log                                     |

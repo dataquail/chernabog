@@ -29,6 +29,19 @@ const effect = effectAtHomeWith(
   "linux",
 );
 
+// launchctl answers too; on macOS.
+const onMac = effectAtHomeWith(
+  execTestLayer((command, args) => {
+    ran.push([command, ...args].join(" "));
+
+    return Option.liftPredicate(
+      { exitCode: 0, stdout: "", stderr: "" },
+      () => command === "launchctl",
+    );
+  }),
+  "darwin",
+);
+
 describe("ServiceManagerClientLive", () => {
   test("launchd runs the daemon with the installer PATH and restarts it", () => {
     const plist = launchAgentPlist(
@@ -88,6 +101,108 @@ describe("ServiceManagerClientLive", () => {
 
       expect(yield* manager.uninstall).toBe(unit);
       expect(yield* manager.installed).toBe(false);
+    }).pipe(Effect.provide(ServiceManagerClientLive)),
+  );
+
+  effect("the systemd unit sends the daemon's stdout and stderr to daemon.out.log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root } = yield* Home;
+      const unit = yield* (yield* ServiceManagerClient).install;
+      const written = yield* fs.readFileString(unit);
+
+      expect(written).toContain(`StandardOutput=append:${root}/daemon.out.log`);
+      expect(written).toContain(`StandardError=append:${root}/daemon.out.log`);
+      expect(written).not.toContain("daemon.log");
+    }).pipe(Effect.provide(ServiceManagerClientLive)),
+  );
+
+  onMac("the launchd plist sends the daemon's stdout and stderr to daemon.out.log", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { root } = yield* Home;
+      const plist = yield* (yield* ServiceManagerClient).install;
+      const written = yield* fs.readFileString(plist);
+
+      expect(plist).toEndWith("/Library/LaunchAgents/com.dataquail.chernabog.plist");
+      expect(written).toContain(
+        `<key>StandardOutPath</key>\n  <string>${root}/daemon.out.log</string>`,
+      );
+      expect(written).toContain(
+        `<key>StandardErrorPath</key>\n  <string>${root}/daemon.out.log</string>`,
+      );
+      expect(written).not.toContain("daemon.log");
+    }).pipe(Effect.provide(ServiceManagerClientLive)),
+  );
+
+  // What a former chernabog installed, from this same program and home: what
+  // this one installs, with the daemon's stdout and stderr in daemon.log.
+  const installFormer = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const unit = yield* (yield* ServiceManagerClient).install;
+    const former = (yield* fs.readFileString(unit)).replaceAll("daemon.out.log", "daemon.log");
+    yield* fs.writeFileString(unit, former);
+    ran.length = 0;
+
+    return unit;
+  });
+
+  effect("an upgrade rewrites the unit a former chernabog installed, and reloads systemd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* Home;
+      const manager = yield* ServiceManagerClient;
+      const unit = yield* installFormer;
+
+      expect(yield* manager.refresh).toEqual(Option.some(unit));
+      expect(yield* fs.readFileString(unit)).toContain(
+        `StandardOutput=append:${home.root}/daemon.out.log`,
+      );
+      expect(ran).toEqual(["systemctl --user daemon-reload"]);
+
+      // Current now: nothing more to do.
+      expect(yield* manager.refresh).toEqual(Option.none());
+    }).pipe(Effect.provide(ServiceManagerClientLive)),
+  );
+
+  onMac("an upgrade rewrites the plist a former chernabog installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* Home;
+      const manager = yield* ServiceManagerClient;
+      const plist = yield* installFormer;
+
+      expect(yield* manager.refresh).toEqual(Option.some(plist));
+
+      const written = yield* fs.readFileString(plist);
+
+      expect(written).toContain(`<string>${home.root}/daemon.out.log</string>`);
+      expect(written).not.toContain("daemon.log");
+    }).pipe(Effect.provide(ServiceManagerClientLive)),
+  );
+
+  effect("leaves alone a unit it didn't write, and does nothing with none installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* Home;
+      const manager = yield* ServiceManagerClient;
+
+      expect(yield* manager.refresh).toEqual(Option.none());
+
+      // Another program's: a checkout's daemon must not take over the person's service.
+      const unit = yield* installFormer;
+
+      const theirs = systemdUnit(
+        ["/opt/homebrew/opt/chernabog/bin/chernabog"],
+        serviceEnv({ PATH: "/usr/bin" }, home.user),
+        `${home.root}/daemon.log`,
+      );
+
+      yield* fs.writeFileString(unit, theirs);
+
+      expect(yield* manager.refresh).toEqual(Option.none());
+      expect(yield* fs.readFileString(unit)).toBe(theirs);
+      expect(ran).toEqual([]);
     }).pipe(Effect.provide(ServiceManagerClientLive)),
   );
 });

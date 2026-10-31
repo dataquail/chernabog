@@ -28,6 +28,7 @@ import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
+import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
 import {
   type ActiveRun,
@@ -63,7 +64,6 @@ import {
   RunFlowsQueries,
   runIsAbout,
   RunLeases,
-  runLogWriting,
   RunsCommands,
   RunsQueries,
   RunValidity,
@@ -74,10 +74,18 @@ import {
 import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
+import { dailyLogWriting } from "../../platform/daily-log.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
-import { keepDayFolders, TELEMETRY_RETENTION } from "../../platform/retention.ts";
+import {
+  capLog,
+  DAEMON_LOG_RETENTION,
+  keepDayFolders,
+  keepSweeping,
+  sweepRotatedLogs,
+  TELEMETRY_RETENTION,
+} from "../../platform/retention.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
   checkFlowSettings,
@@ -435,8 +443,8 @@ export const runDaemon = Effect.gen(function* () {
   const paths = homePaths((yield* Home).root);
   const fs = yield* FileSystem.FileSystem;
   yield* acquireLock(paths.engineLock, "daemon");
-  const daemonLog = yield* runLogWriting(paths.daemonLog);
-  const log = daemonLog.log;
+  // daemon.log, which turns over at the first write of each UTC day.
+  const { log } = yield* dailyLogWriting(paths.daemonLog);
   const machine = yield* loadMachineConfig;
   const startedAt = yield* DateTime.now;
 
@@ -471,6 +479,46 @@ export const runDaemon = Effect.gen(function* () {
         ).pipe(Effect.asVoid),
       failed: (cause) => log(`telemetry: the retention sweep failed: ${String(cause)}`),
     }),
+  );
+
+  // Keeps daemon.log's rotations to 30 days, and daemon.out.log, the service
+  // manager's, under its cap, the same way.
+  yield* Effect.forkScoped(
+    keepSweeping(
+      Effect.all({
+        emptied: capLog(paths.daemonOutLog, DAEMON_LOG_RETENTION.outLogMaxBytes),
+        removed: sweepRotatedLogs(paths.daemonLog, DAEMON_LOG_RETENTION.maxAgeDays),
+      }),
+      {
+        swept: ({ emptied, removed }) =>
+          Effect.all([
+            Effect.when(
+              log(`logs: removed ${removed.join(", ")}, past retention`),
+              Effect.succeed(removed.length > 0),
+            ),
+            Effect.when(
+              log(`logs: emptied ${paths.daemonOutLog}, past its cap`),
+              Effect.succeed(emptied),
+            ),
+          ]).pipe(Effect.asVoid),
+        failed: (cause) => log(`logs: the retention sweep failed: ${String(cause)}`),
+      },
+    ),
+  );
+
+  // An upgrade rolls changes to the service unit out to an install from
+  // before them, such as sending its output to daemon.out.log. Not being able
+  // to is said, not fatal.
+  yield* (yield* MachineCommands).RefreshServiceCommand().pipe(
+    Effect.flatMap((refreshed) =>
+      Effect.forEach(
+        Option.toArray(refreshed.rewrote),
+        (path) =>
+          log(`service: rewrote ${path} for this chernabog; it applies from its next start`),
+        { discard: true },
+      ),
+    ),
+    Effect.catch((error) => log(`service: could not rewrite the unit: ${error.message}`)),
   );
 
   const busy = yield* Ref.make(0);

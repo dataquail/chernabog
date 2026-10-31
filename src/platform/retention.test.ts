@@ -6,7 +6,14 @@ import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
 import { effect } from "../../test/effect-test.ts";
-import { keepDayFolders, type RetentionPolicy, sweepDayFolders } from "./retention.ts";
+import {
+  capLog,
+  DAEMON_LOG_RETENTION,
+  keepDayFolders,
+  type RetentionPolicy,
+  sweepDayFolders,
+  sweepRotatedLogs,
+} from "./retention.ts";
 
 const TODAY = "2026-10-31";
 
@@ -190,5 +197,65 @@ describe("keepDayFolders", () => {
         yield* keeper.stop;
       }),
     ),
+  );
+});
+
+describe("sweepRotatedLogs", () => {
+  effect("removes a log's rotations older than 30 days, by name, and keeps the rest", () =>
+    atToday(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* scratch;
+        yield* setToday;
+
+        for (const name of [
+          "daemon.log",
+          "daemon.out.log",
+          "daemon.2026-09-01.log",
+          "daemon.2026-09-30.log",
+          "daemon.2026-10-01.log",
+          "daemon.2026-10-30.log",
+          "daemon.2020-13-45.log",
+          "other.2020-01-01.log",
+        ]) {
+          yield* fs.writeFileString(`${dir}/${name}`, "x");
+        }
+
+        const removed = yield* sweepRotatedLogs(
+          `${dir}/daemon.log`,
+          DAEMON_LOG_RETENTION.maxAgeDays,
+        );
+
+        expect(removed).toEqual(["daemon.2026-09-01.log", "daemon.2026-09-30.log"]);
+        expect(yield* entries(dir)).toEqual([
+          "daemon.2020-13-45.log",
+          "daemon.2026-10-01.log",
+          "daemon.2026-10-30.log",
+          "daemon.log",
+          "daemon.out.log",
+          "other.2020-01-01.log",
+        ]);
+      }),
+    ),
+  );
+});
+
+describe("capLog", () => {
+  effect("empties a log past its cap, and leaves one under it alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* scratch;
+      yield* fs.writeFileString(`${dir}/big.log`, "x".repeat(200));
+      yield* fs.writeFileString(`${dir}/small.log`, "x".repeat(50));
+
+      expect(yield* capLog(`${dir}/big.log`, 100)).toBe(true);
+      expect(yield* capLog(`${dir}/small.log`, 100)).toBe(false);
+      expect(yield* capLog(`${dir}/missing.log`, 100)).toBe(false);
+
+      expect(yield* fs.readFileString(`${dir}/big.log`)).toBe("");
+      expect(yield* fs.readFileString(`${dir}/small.log`)).toBe("x".repeat(50));
+      // daemon.out.log's cap.
+      expect(DAEMON_LOG_RETENTION.outLogMaxBytes).toBe(10 * 1024 * 1024);
+    }),
   );
 });

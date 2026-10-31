@@ -1,6 +1,8 @@
 // The daemon as a launchd agent on macOS, or a systemd user service on Linux,
 // that restarts on exit, running this same program's `daemon` command with
-// the installer's PATH.
+// the installer's PATH. The service manager sends the daemon's stdout and
+// stderr to daemon.out.log; the daemon writes its own daemon.log, which it
+// turns over each day, and which the service manager mustn't hold open.
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -119,6 +121,25 @@ const unitPath = Effect.gen(function* () {
   return systemdUnitPath(user);
 });
 
+// The unit this program installs on `platform`, its output going to `logPath`.
+const unitFor = (platform: string, logPath: string) =>
+  Effect.gen(function* () {
+    const host = yield* HostEnvironment;
+    const home = yield* Home;
+    const env = serviceEnv(host.variables, home.user);
+
+    if (platform === "darwin") {
+      return launchAgentPlist(selfCommand(), env, logPath);
+    }
+
+    return systemdUnit(selfCommand(), env, logPath);
+  });
+
+// Where units a former chernabog installed sent the daemon's output: before
+// daemon.out.log, the daemon.log it now turns over itself (#307). A unit
+// changing again adds what it was here, for refresh to roll the change out.
+const formerLogPaths = (root: string) => [homePaths(root).daemonLog];
+
 const writeUnit = (path: string, contents: string) =>
   FileSystem.FileSystem.use((fs) =>
     fs
@@ -132,14 +153,12 @@ const install = Effect.gen(function* () {
   const paths = homePaths(home.root);
   const fs = yield* FileSystem.FileSystem;
   yield* fs.makeDirectory(home.root, { recursive: true });
-  const command = selfCommand();
-  const env = serviceEnv(host.variables, home.user);
 
   if (host.platform === "darwin") {
     const path = launchAgentPath(home.user);
     const gui = yield* domain;
     yield* (yield* Exec).run("launchctl", ["bootout", `${gui}/${LABEL}`]);
-    yield* writeUnit(path, launchAgentPlist(command, env, paths.daemonLog));
+    yield* writeUnit(path, yield* unitFor(host.platform, paths.daemonOutLog));
     yield* execOk("launchctl", ["bootstrap", gui, path]);
 
     return path;
@@ -147,7 +166,7 @@ const install = Effect.gen(function* () {
 
   if (host.platform === "linux") {
     const path = systemdUnitPath(home.user);
-    yield* writeUnit(path, systemdUnit(command, env, paths.daemonLog));
+    yield* writeUnit(path, yield* unitFor(host.platform, paths.daemonOutLog));
     yield* execOk("systemctl", ["--user", "daemon-reload"]);
     yield* execOk("systemctl", ["--user", "enable", "--now", "chernabog.service"]);
 
@@ -180,6 +199,46 @@ const installed = Effect.gen(function* () {
 
   return yield* fs.exists(yield* unitPath);
 }).pipe(Effect.orElseSucceed(() => false));
+
+// Rolls a change to the unit out to an install from before it: rewrites the
+// unit a former chernabog wrote from this same program and home, as this one
+// would write it. A unit it didn't write as one of its own former units, such
+// as a checkout's daemon finding the person's installed service, is left
+// alone. systemd reloads it, for the daemon's next start; launchd reads the
+// plist when it next loads it, at login or after `chernabog stop` and start.
+const refresh = Effect.gen(function* () {
+  const { platform } = yield* HostEnvironment;
+  const { root } = yield* Home;
+  const fs = yield* FileSystem.FileSystem;
+
+  if (platform !== "darwin" && platform !== "linux") {
+    return Option.none<string>();
+  }
+
+  const path = yield* unitPath;
+
+  if (!(yield* fs.exists(path))) {
+    return Option.none<string>();
+  }
+
+  const existing = yield* fs.readFileString(path);
+
+  const formers = yield* Effect.forEach(formerLogPaths(root), (logPath) =>
+    unitFor(platform, logPath),
+  );
+
+  if (!formers.includes(existing)) {
+    return Option.none<string>();
+  }
+
+  yield* writeUnit(path, yield* unitFor(platform, homePaths(root).daemonOutLog));
+
+  if (platform === "linux") {
+    yield* execOk("systemctl", ["--user", "daemon-reload"]);
+  }
+
+  return Option.some(path);
+});
 
 const start = Effect.gen(function* () {
   if (!(yield* installed)) {
@@ -227,6 +286,7 @@ export const ServiceManagerClientLive = Layer.effect(
       install: managed(install),
       uninstall: managed(uninstall),
       installed: installed.pipe(Effect.provideContext(services)),
+      refresh: managed(refresh),
       start: managed(start),
       stop: managed(stop),
     });
