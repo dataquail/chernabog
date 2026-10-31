@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
 import { RunId } from "../../kernel/run-id.id.ts";
-import { MarkerReleases } from "./domain/run-marker/run-marker-view.value-object.ts";
-import { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 import { RunEvents } from "./domain/run/run.events.ts";
+import { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
+import { MarkerReleases } from "./domain/run-marker/run-marker-view.value-object.ts";
 import { runFlowsCommandGroup, runsCommandGroup } from "./runs.command-handlers.ts";
 import {
   runEventSpanAttributes,

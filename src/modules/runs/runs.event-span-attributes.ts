@@ -8,7 +8,6 @@
 import { Event } from "@effect-server-utils/cqrs";
 
 import { type RunId } from "../../kernel/run-id.id.ts";
-import { type RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 import {
   type PullRequestOpened,
   type RunEnteredStep,
@@ -16,6 +15,7 @@ import {
   type RunNeedsAttention,
   type RunStarted,
 } from "./domain/run/run.events.ts";
+import { type RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 
 // A message or event about one run.
 const ofRun = (message: { readonly runId: RunId }) => ({ "run.id": message.runId });
