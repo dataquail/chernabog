@@ -4,7 +4,7 @@ Status: accepted, 2026-10-31. Issue #284. Supersedes the
 `*.platform.ts`, `*.exports.ts` and `*.imports.ts` module gateways on
 [ADR 1](0001-ddd-use-cases-and-ports.md)'s list of what was left behind.
 Decision 6 is superseded, and decision 4 narrowed, by
-[ADR 9](0009-modules-import-and-export.md): a module names another only
+[ADR 13](0013-modules-import-and-export.md): a module names another only
 through its `*.exports.ts`.
 
 ## Context

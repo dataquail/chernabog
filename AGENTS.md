@@ -375,7 +375,7 @@ transitive reach), the coverage floors and the baseline.
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
 - **Modules ask each other only through ACL ports**
-  (`docs/adr/0009-modules-import-and-export.md`). An owner grants queries in
+  (`docs/adr/0013-modules-import-and-export.md`). An owner grants queries in
   `<module>.exports.ts` (`recipesAccessQueries =
 Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   `<module>Access<Queries|Commands|DomainEvents|Errors>`, never a bare
@@ -438,7 +438,7 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
   under way. `repo-config` counts the files under `src/` that still import
   `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
-  (ADR 9), and the file is deleted when none is left. `read-models` (ADR 11,
+  (ADR 13), and the file is deleted when none is left. `read-models` (ADR 11,
   #283) counts the queries still reaching their module's domain. `cqrs`, which
   moved every use-case to a command or query and had the commands dispatch
   their domain events, is retired (#273). A campaign's ledger in

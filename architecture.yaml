@@ -300,7 +300,7 @@ defs:
       - "**/*.test.ts"
 
   # An ACL port is the question a module asks another, in its own words
-  # (docs/adr/0009-modules-import-and-export.md). Its handlers ask it, and its
+  # (docs/adr/0013-modules-import-and-export.md). Its handlers ask it, and its
   # ACL adapter answers it; nothing outside the module may, since the answer
   # is another module's and the platform asks that module itself.
   acl-port-consumers:
@@ -742,7 +742,7 @@ tree:
               message: >-
                 A module names another only through that module's <module>.exports.ts, the
                 grants it publishes to its peers, and only from its own <module>.imports.ts
-                (docs/adr/0009-modules-import-and-export.md), or, from its own <module>.module.ts,
+                (docs/adr/0013-modules-import-and-export.md), or, from its own <module>.module.ts,
                 that module's <module>.module.ts, to wire it (ADR 12). Reaching anywhere else
                 couples you to a shape the other module is free to change. Ask through a port of
                 your own in domain/ports/acl/, whose adapter dispatches the query the other module
@@ -795,7 +795,7 @@ tree:
                     interface/ makes an adapter part of the module's public surface.
 
           # The PEER surface: what another module may ask of this one, each grant
-          # a subset of its messages (docs/adr/0009-modules-import-and-export.md).
+          # a subset of its messages (docs/adr/0013-modules-import-and-export.md).
           "*.exports.ts":
             name: { like: "{module}" }
             importedBy:
@@ -942,7 +942,7 @@ tree:
                   "acl/":
                     message: >-
                       domain/ports/acl/ holds one *.acl.ts per question this module asks another,
-                      in this module's own words (docs/adr/0009-modules-import-and-export.md).
+                      in this module's own words (docs/adr/0013-modules-import-and-export.md).
                     children:
                       "*.acl.ts":
                         message: >-
@@ -1204,7 +1204,7 @@ tree:
                 - "@/modules/{module}/infrastructure/**"
             children:
               # The anti-corruption seam: the one place another module's
-              # vocabulary appears (docs/adr/0009-modules-import-and-export.md).
+              # vocabulary appears (docs/adr/0013-modules-import-and-export.md).
               "acl/":
                 imports:
                   reset: true
@@ -1440,7 +1440,7 @@ campaigns:
     why: >-
       The legacy src/repo-config.ts reads and edits machine config and a repo's team config for
       whoever asks, so the modules couple through it as through a shared database no one owns.
-      Each part has an owner (docs/adr/0009-modules-import-and-export.md): enrolled repos and
+      Each part has an owner (docs/adr/0013-modules-import-and-export.md): enrolled repos and
       their per-persona choices are enrollment's, the machine's personas and accounts are
       machine's, and the team's .chernabog/config.yaml is recipes'. Another module asks an owner
       only through an ACL port of its own.

@@ -1,4 +1,4 @@
-# 9. Modules import and export, and ask each other through ACL ports
+# 13. Modules import and export, and ask each other through ACL ports
 
 Status: accepted, 2026-10-31. Issue #285. Supersedes the `*.exports.ts` and
 `*.imports.ts` module gateways on [ADR 1](0001-ddd-use-cases-and-ports.md)'s
