@@ -57,5 +57,9 @@ The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a se
 
 | File                                 | Holds            |
 | ------------------------------------ | ---------------- |
-| `~/.config/chernabog/daemon.log`     | the daemon       |
+| `~/.config/chernabog/daemon.log`     | the daemon, today (UTC) |
+| `~/.config/chernabog/daemon.<YYYY-MM-DD>.log` | the daemon, on an earlier day; deleted after 30 days |
+| `~/.config/chernabog/daemon.out.log` | what the service manager catches of the daemon's stdout and stderr, such as a crash; emptied past 10 MB |
 | `~/.config/chernabog/runs/<run>.log` | one run; `chernabog logs <run> -f` |
+
+The daemon moves `daemon.log` to `daemon.<YYYY-MM-DD>.log` at its first write of each new UTC day, and a daily sweep deletes those older than 30 days. A service unit installed by a chernabog from before `daemon.out.log` sent the daemon's output to `daemon.log`; the daemon rewrites it when it starts on a newer chernabog. systemd uses the rewritten unit from the daemon's next start, and launchd from the next login, or after `chernabog stop` and `chernabog start`.

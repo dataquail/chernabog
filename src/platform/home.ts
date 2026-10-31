@@ -43,7 +43,11 @@ export const homePaths = (root: string) => ({
   state: `${root}/state.db`,
   engineLock: `${root}/state.db.lock`,
   socket: `${root}/daemon.sock`,
+  // The daemon's own log, which it turns over each UTC day (daily-log.ts).
   daemonLog: `${root}/daemon.log`,
+  // What the service manager catches of the daemon's stdout and stderr:
+  // crashes, and anything said before its own log starts.
+  daemonOutLog: `${root}/daemon.out.log`,
   paused: `${root}/paused.json`,
   reloaded: `${root}/reloaded.json`,
   trust: `${root}/trust.json`,

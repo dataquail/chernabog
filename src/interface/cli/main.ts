@@ -160,7 +160,7 @@ const daemon = Command.make("daemon", {}, () =>
   }),
 ).pipe(
   Command.withDescription(
-    "Run the daemon in the foreground (the service runs this; it logs to daemon.log in the chernabog home)",
+    "Run the daemon in the foreground (the service runs this; it logs to daemon.log in the chernabog home, a file a day)",
   ),
 );
 

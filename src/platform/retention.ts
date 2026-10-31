@@ -1,7 +1,8 @@
 // Retention for a folder of day folders, <dir>/<YYYY-MM-DD>/…, such as the
 // telemetry FileTelemetry writes: a sweep that removes the day folders a
 // policy no longer keeps, and a keeper that sweeps once a day, beside any
-// other sweep of the day, such as the daemon's of run logs.
+// other sweep of the day, such as the daemon's of run logs. And for the
+// daemon's logs: daemon.log's daily rotations by age, daemon.out.log by size.
 //
 // A day is judged by the folder's name, a UTC day as FileTelemetry names
 // them, never by its mtime, which an append to a late file or a copy moves.
@@ -11,8 +12,11 @@ import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import type { PlatformError } from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
+
+import { rotatedLogPath } from "./daily-log.ts";
 
 export type RetentionPolicy = {
   // A day folder older than this many days, by its name, is removed.
@@ -114,6 +118,70 @@ export const sweepDayFolders = (
     return removed;
   });
 
+// What the daemon keeps of its own logs: rotations of daemon.log for 30 days,
+// and daemon.out.log, the service manager's, up to 10 MB.
+export const DAEMON_LOG_RETENTION = {
+  maxAgeDays: 30,
+  outLogMaxBytes: 10 * 1024 * 1024,
+};
+
+// The day in a rotated log's name, daemon.<day>.log, if it has one.
+const ROTATED_DAY = /\.(\d{4}-\d{2}-\d{2})(\.[^.]*)?$/;
+
+// Removes the rotations of the log at `log` (daily-log.ts names daemon.log's
+// daemon.<YYYY-MM-DD>.log) older than `maxAgeDays`, judged by name, never the
+// log itself. Answers with the file names removed, oldest first.
+export const sweepRotatedLogs = (
+  log: string,
+  maxAgeDays: number,
+): Effect.Effect<ReadonlyArray<string>, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = log.slice(0, log.lastIndexOf("/"));
+    const name = log.slice(log.lastIndexOf("/") + 1);
+
+    if (!(yield* fs.exists(dir))) {
+      return [];
+    }
+
+    const oldestKept = dayOf((yield* Clock.currentTimeMillis) - maxAgeDays * MILLIS_PER_DAY);
+
+    const expired = (yield* fs.readDirectory(dir))
+      .filter((entry) =>
+        Option.exists(
+          Option.fromNullishOr(ROTATED_DAY.exec(entry)),
+          ([, day = ""]) => isDay(day) && day < oldestKept && rotatedLogPath(name, day) === entry,
+        ),
+      )
+      .toSorted();
+
+    yield* Effect.forEach(expired, (entry) => fs.remove(`${dir}/${entry}`), { discard: true });
+
+    return expired;
+  });
+
+// Empties the file at `path` once it holds more than `maxBytes`, in place, so
+// a service manager appending to it keeps doing so. Answers whether it did.
+export const capLog = (
+  path: string,
+  maxBytes: number,
+): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+
+    if (!(yield* fs.exists(path))) {
+      return false;
+    }
+
+    if (Number((yield* fs.stat(path)).size) <= maxBytes) {
+      return false;
+    }
+
+    yield* fs.truncate(path, 0);
+
+    return true;
+  });
+
 // Where a keeper says what each sweep did: what it removed, or why it failed.
 export type SweepReports<A = ReadonlyArray<string>, E = PlatformError> = {
   readonly swept: (removed: A) => Effect.Effect<void>;
@@ -139,12 +207,18 @@ export const daily = <R>(
     Effect.asVoid,
   );
 
-// Sweeps `dir` now and then once a day, for as long as it runs. A failed
+// Runs `sweep` now and then once a day, for as long as it runs. A failed
 // sweep goes to `reports.failed`, and the next day's sweep tries again: it
 // never fails or stops the keeper.
+export const keepSweeping = <A, R>(
+  sweep: Effect.Effect<A, PlatformError, R>,
+  reports: SweepReports<A>,
+): Effect.Effect<void, never, R> => daily([reported(sweep, reports)]);
+
+// Sweeps `dir`'s day folders now and then once a day, as keepSweeping does.
 export const keepDayFolders = (
   dir: string,
   policy: RetentionPolicy,
   reports: SweepReports,
 ): Effect.Effect<void, never, FileSystem.FileSystem> =>
-  daily([reported(sweepDayFolders(dir, policy), reports)]);
+  keepSweeping(sweepDayFolders(dir, policy), reports);
