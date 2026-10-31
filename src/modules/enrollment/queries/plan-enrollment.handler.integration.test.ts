@@ -6,10 +6,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effectAtHomeWith } from "../../../../test/effect-test.ts";
+import { RecipesPeerLive } from "../../../../test/recipe-repo.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { Exec, execOk } from "../../../platform/exec.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
+import { TeamFlowsAclLive } from "../infrastructure/acl/team-flows.acl-live.ts";
 import { CheckoutsClientLive } from "../infrastructure/clients/checkouts.client-live.ts";
 import { ViewerClientFake } from "../infrastructure/clients/viewer.client-fake.ts";
 import { EnrolledReposRepositoryLive } from "../infrastructure/repositories/enrolled-repos.repository-live.ts";
@@ -63,11 +65,13 @@ const enrol = (entries: ReadonlyArray<EnrolledRepoRoot>) =>
     Effect.forEach(entries, (saved) => repository.upsertOne(saved), { discard: true }),
   );
 
-// Machine config through the live repository, checkouts through git; GitHub,
+// Machine config through the live repository, checkouts through git, and the
+// team's config asked of the recipes module over its own storage; GitHub,
 // which the viewer asks, keeps its fake.
 const machine = Layer.mergeAll(
   EnrolledReposRepositoryLive,
   CheckoutsClientLive,
+  TeamFlowsAclLive.pipe(Layer.provide(RecipesPeerLive)),
   ViewerClientFake(Option.some("carol")),
 );
 

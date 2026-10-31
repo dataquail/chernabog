@@ -202,7 +202,8 @@ transitive reach), the coverage floors and the baseline.
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`, its value
   exports camelCase),
-  `infrastructure/{repositories,clients}/`
+  `domain/ports/acl/` (what it asks another module),
+  `infrastructure/{repositories,clients,acl}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
   format of a file or table its repositories write and its queries read),
   `<module>.module.ts`,
@@ -377,9 +378,23 @@ transitive reach), the coverage floors and the baseline.
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
-- **Modules don't reach into each other.** An adapter composes them: the
-  `trust` command lists its targets with enrollment's
-  `ListEnrolledReposQuery`, then trusts each.
+- **Modules ask each other only through ACL ports**
+  (`docs/adr/0013-modules-import-and-export.md`). An owner grants queries in
+  `<module>.exports.ts` (`recipesAccessQueries =
+Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
+  `<module>Access<Queries|Commands|DomainEvents|Errors>`, never a bare
+  re-export, and only with a consumer). The asker names that grant in its
+  `<module>.imports.ts`, declares a port in its own words in
+  `domain/ports/acl/<question>.acl.ts` (owing `-live.ts`, `-fake.ts` and
+  `-live.test.ts` in `infrastructure/acl/`), and its live adapter dispatches
+  the grant and translates the answer. Its handlers ask the port; they never
+  name the other module or its messages. The asker's `<module>.module.ts`
+  provides the owner's `<module>.module.ts` beneath its ACL adapter (ADR 12),
+  as `enrollment.module.ts` does with recipes. Owners: enrollment the enrolled repos and their
+  per-persona choices, machine the personas and accounts, recipes the team's
+  `.chernabog/config.yaml` (`ReadTeamConfigQuery`). An adapter may still
+  compose modules itself: the `trust` command lists its targets with
+  enrollment's `ListEnrolledReposQuery`, then trusts each.
 - **The platform** (`src/platform/`) holds the technical adapters everything
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
   `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the
@@ -408,9 +423,9 @@ transitive reach), the coverage floors and the baseline.
   past it, and only `src/interface/` names it. To use something new from a
   module, re-export it there. The runs module's runtime the roots still
   compose is published from `runs.platform.ts` for now, in a section marked
-  interim. A module names another only through its `*.platform.ts`,
-  `*.exports.ts` or `*.module.ts`: `*.exports.ts` arrives with its first
-  consumer, and a `*.module.ts` provides another module's `layer` with
+  interim. A module names another's vocabulary only through its
+  `*.exports.ts`, and only from its own `*.imports.ts`; its `*.module.ts`
+  provides another module's `layer` by that module's `*.module.ts`, with
   `Layer.provide` (never `provideMerge`, which re-exports it). A new module
   joins `src/interface/application-modules.ts` and is wired in every root.
 - **The runtime** a run's flow executes in is the runs module's
@@ -434,10 +449,13 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way. `read-models` (ADR 11, #283) counts the queries still reaching
-  their module's domain. `cqrs`, which moved every use-case to a command
-  or query and had the commands dispatch their domain events, is retired
-  (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
+  under way. `repo-config` counts the files under `src/` that still import
+  `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
+  (ADR 13), and the file is deleted when none is left. `read-models` (ADR 11,
+  #283) counts the queries still reaching their module's domain. `cqrs`, which
+  moved every use-case to a command or query and had the commands dispatch
+  their domain events, is retired (#273). A campaign's ledger in
+  `.architecture-campaigns/` lists what is
   left and may only shrink. A change that moves one runs
   `bun run architecture:clear` and commits the ledger with it;
   `bun run architecture:campaigns` shows what's left. Always clear through
