@@ -791,6 +791,7 @@ const settings = Schema.Struct({
   ...Settings.Ci.fields,
   ...Settings.Reviewers.fields,
   ...Settings.Stacks.fields,
+  ...Settings.MergeHold.fields,
   ...Own.fields,
 });
 

@@ -19,17 +19,24 @@ import {
   PullRequestClosed,
   reviewMarker,
   Run,
+  RunLog,
   Runs,
+  signalDeferred,
+  Signals,
   Skip,
+  sleep,
+  type WorkItem,
   Worktree,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
+import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
 import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
@@ -185,6 +192,10 @@ export const owner = (pullRequest: number) =>
 // run's rounds do (`merge-pr-12#land-3`); a refused try is saved like any step.
 export type MergeOptions = { readonly method: MergeMethod; readonly id?: string };
 
+// How merge's refusal for a red base begins (baseRed), which mergeHolding
+// tells from its other refusals.
+const HOLDING = "holding merge:";
+
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
 const short = (sha: string) => sha.slice(0, 7);
@@ -316,12 +327,59 @@ const waitsOn = (pull: PullRequest, below: PullRequest) => {
   return `stacked on ${pull.baseRef} (#${below.number}); it merges after the layer below`;
 };
 
+// The issue a pull request closes: the one its body names, or its claim branch's.
+const closedIssue = (pull: PullRequest) =>
+  Option.map(
+    Option.fromNullishOr(
+      pull.body.match(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #(\d+)/i) ??
+        pull.headRef.match(/^auto\/issue-(\d+)$/),
+    ),
+    (match) => Number(match[1]),
+  );
+
+// Whether the pull request is the fix for a follow-up issue the post-merge
+// recipe filed (Ci.isFollowUp): the fix every held merge is waiting on.
+export const fixesFollowUp = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    const closes = closedIssue(pull);
+
+    if (Option.isNone(closes)) {
+      return false;
+    }
+
+    return yield* (yield* GitHub).issue(closes.value).pipe(
+      Effect.map((issue) => Ci.isFollowUp(issue.body)),
+      Effect.catchTag("NotFound", () => Effect.succeed(false)),
+    );
+  });
+
+// Why the pull request waits for its base branch's CI, such as "CI failing on
+// main": only when the flow's settings hold merges on a broken base
+// (Settings.MergeHold), the newest completed push run of a workflow on the
+// base failed (GitHub.branchCiState), and the pull request isn't a follow-up's
+// fix. A run still in progress changes nothing, and a base with no CI is never red.
+export const baseRed = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    if (!(yield* Settings.mergeHold).enabled) {
+      return Option.none<string>();
+    }
+
+    const ci = yield* (yield* GitHub).branchCiState(pull.baseRef);
+
+    if (ci.state !== "red" || (yield* fixesFollowUp(pull))) {
+      return Option.none<string>();
+    }
+
+    return Option.some(`CI failing on ${pull.baseRef}`);
+  });
+
 // Merges the pull request, only when that is safe: it is open and not a
 // layer of a stack, its checks are green on the current head by the flow's
 // CI policy (Ci.verdict: by default, its required checks passed and no check
 // failed), the latest review approved that very head or one the head has only merged
-// its base into since (onlyMergedBase), it touches no humanOnlyPaths, and
-// GitHub's rules for the repo allow it. A pull request into any branch may
+// its base into since (onlyMergedBase), it touches no humanOnlyPaths, its
+// base branch's CI isn't red when the flow holds merges for that (baseRed),
+// and GitHub's rules for the repo allow it. A pull request into any branch may
 // merge, such as develop in git flow. One whose base is the head branch of
 // another pull request is a layer stacked on it (layerBelow): it waits while
 // the layer below is open, and after it merges, until it is retargeted onto
@@ -353,6 +411,12 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
 
       if (Option.isSome(below)) {
         return yield* refuse(pullRequest, waitsOn(pull, below.value));
+      }
+
+      const red = yield* baseRed(pull);
+
+      if (Option.isSome(red)) {
+        return yield* refuse(pullRequest, `${HOLDING} ${red.value}`);
       }
 
       const ci = yield* Ci.pullRequestState(pullRequest);
@@ -411,6 +475,268 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
     Schema.String,
   );
 
+// Whether chernabog may merge the pull request: only on the automated path,
+// one labelled ship (auto:ship). Anything else, a missing or misspelt label
+// included, is left for a person to merge. The one place that decides it.
+export const ships = (pull: PullRequest, labels: Settings.LabelNames) =>
+  pull.labels.includes(labels.ship);
+
+// The signal a run holding a merge parks on: its trigger reports it once CI
+// on the pull request's base branch is no longer red (baseTurnedGreen).
+export const BASE_GREEN = "base-green";
+
+// On a pull request whose merge a run holds: which run, and the work item it
+// runs for, so the trigger can wake it.
+const HoldMarker = Schema.fromJsonString(
+  Schema.Struct({ runId: Schema.String, key: Schema.String }),
+);
+
+const HOLD_MARKER = /<!-- chernabog-merge-hold (\{.*?\}) -->/;
+
+const holdMarker = {
+  write: (value: typeof HoldMarker.Type) =>
+    `<!-- chernabog-merge-hold ${Schema.encodeSync(HoldMarker)(value)} -->`,
+  read: (body: string) =>
+    Option.fromNullishOr(body.match(HOLD_MARKER)).pipe(
+      Option.flatMap((match) => Schema.decodeOption(HoldMarker)(match[1])),
+    ),
+};
+
+// One look at the base branch's CI before a merge: the base, while it holds
+// the merge, and when it looked, so a replay decides the same.
+const BaseCheck = Schema.Struct({ held: Schema.Option(Schema.String), at: Schema.Finite });
+
+const checkBase = (pullRequest: number, round: string) =>
+  activity(
+    `base-ci-pr-${pullRequest}-${round}`,
+    Effect.gen(function* () {
+      const pull = yield* (yield* GitHub).pullRequest(pullRequest);
+      const at = DateTime.toEpochMillis(yield* DateTime.now);
+
+      // One merged or closed meanwhile is merge's to report.
+      if (pull.state !== "open") {
+        return { held: Option.none<string>(), at };
+      }
+
+      return {
+        held: Option.map(yield* baseRed(pull), () => pull.baseRef),
+        at,
+      };
+    }),
+    BaseCheck,
+  );
+
+const holdLimit = (pullRequest: number) =>
+  activity(
+    `merge-hold-limit-pr-${pullRequest}`,
+    Effect.map(Settings.mergeHold, (hold) => hold.timeout),
+    Schema.Option(Schema.Duration),
+  );
+
+// Parks the run on BASE_GREEN, its step showing why it holds the merge, until
+// the trigger reports the signal or the time left runs out.
+const parkOnBase = (
+  pullRequest: number,
+  round: string,
+  base: string,
+  left: Option.Option<Duration.Duration>,
+) =>
+  Effect.gen(function* () {
+    const id = `merge-pr-${pullRequest}-${round}`;
+    const deferred = signalDeferred(`${BASE_GREEN}:${id}`);
+    const token = yield* DurableDeferred.token(deferred);
+    const step = `holding merge: CI failing on ${base}`;
+
+    yield* activity(
+      `hold-${id}`,
+      Effect.gen(function* () {
+        // The step a parked run shows, as a person reads it, entered before
+        // it parks, so a run seen waiting already shows why.
+        yield* Effect.serviceOption(RunLog).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (log) => log.step(step).pipe(Effect.andThen(log.stepDone(step))),
+            }),
+          ),
+        );
+
+        yield* Signals.use((registry) => registry.register(BASE_GREEN, deferred.name, token));
+      }),
+    );
+
+    const green = DurableDeferred.await(deferred).pipe(Effect.as(BASE_GREEN));
+
+    return yield* Option.match(left, {
+      onNone: () => green,
+      onSome: (duration) =>
+        DurableDeferred.raceAll({
+          name: `race:${id}`,
+          success: Schema.String,
+          error: Schema.Never,
+          effects: [green, sleep(`timeout:${id}`, duration).pipe(Effect.as("timeout"))],
+        }),
+    });
+  });
+
+// Before a merge: while CI on the pull request's base branch is red (baseRed),
+// holds the merge rather than refusing it. The run says so on the pull
+// request, with a marker naming the run, and parks on BASE_GREEN, which the
+// flow's trigger reports with baseTurnedGreen; woken, it looks again, and
+// returns once the base is no longer red, for merge's usual checks. The hold
+// lasts as long as the base stays red, unless the mergeHoldTimeout setting
+// caps it: then it fails with MergeRefused, for a person. With the flow's
+// settings not holding merges, or for a follow-up's fix, it returns at once.
+export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
+  Effect.gen(function* () {
+    let since = Option.none<number>();
+
+    for (let round = 1; ; round++) {
+      // A later attempt (mergeHolding's) names its steps apart from the first's.
+      const named = Option.match(
+        Option.liftPredicate(attempt, (count) => count > 1),
+        {
+          onNone: () => `${round}`,
+          onSome: (count) => `${count}.${round}`,
+        },
+      );
+
+      const check = yield* checkBase(pullRequest, named);
+
+      if (Option.isNone(check.held)) {
+        return;
+      }
+
+      const base = check.held.value;
+      const first = Option.getOrElse(since, () => check.at);
+      since = Option.some(first);
+      const limit = yield* holdLimit(pullRequest);
+
+      const left = Option.map(limit, (duration) =>
+        Duration.millis(Duration.toMillis(duration) - (check.at - first)),
+      );
+
+      const stayedRed = new MergeRefused({
+        pullRequest,
+        reason: `CI on ${base} stayed red for ${Option.match(limit, { onNone: () => "too long", onSome: Duration.format })}`,
+      });
+
+      if (Option.exists(left, (duration) => Duration.toMillis(duration) <= 0)) {
+        return yield* stayedRed;
+      }
+
+      const run = yield* Run;
+
+      yield* comment(
+        pullRequest,
+        `Holding the merge: CI is failing on \`${base}\`. It merges once CI there is green again. ${holdMarker.write({ runId: run.runId, key: run.item.key })}`,
+      );
+
+      if ((yield* parkOnBase(pullRequest, named, base, left)) !== BASE_GREEN) {
+        return yield* stayedRed;
+      }
+    }
+  });
+
+// Holds while the pull request's base branch is red (holdWhileBaseRed), then
+// merges it with merge's usual checks. A merge refused because the base
+// turned red after the hold last looked holds again, rather than failing:
+// only merge's other refusals, and a hold past mergeHoldTimeout, fail with
+// MergeRefused. The first try keeps merge's own step name (`merge-pr-7`, or
+// with `id`), and each later one adds `hold-<n>`.
+export const mergeHolding = (pullRequest: number, options: MergeOptions) =>
+  Effect.gen(function* () {
+    for (let attempt = 1; ; attempt++) {
+      yield* holdWhileBaseRed(pullRequest, attempt);
+
+      const id = Option.match(
+        Option.liftPredicate(attempt, (count) => count > 1),
+        {
+          onNone: () => Option.fromUndefinedOr(options.id),
+          onSome: (count) =>
+            Option.some(
+              Option.match(Option.fromUndefinedOr(options.id), {
+                onNone: () => `hold-${count}`,
+                onSome: (given) => `${given}-hold-${count}`,
+              }),
+            ),
+        },
+      );
+
+      const merged = yield* merge(pullRequest, {
+        method: options.method,
+        ...Option.match(id, { onNone: () => ({}), onSome: (named) => ({ id: named }) }),
+      }).pipe(
+        Effect.asSome,
+        Effect.catchTag("MergeRefused", (refused) => {
+          if (refused.reason.startsWith(HOLDING)) {
+            return Effect.succeedNone;
+          }
+
+          return Effect.fail(refused);
+        }),
+      );
+
+      if (Option.isSome(merged)) {
+        return merged.value;
+      }
+    }
+  });
+
+// For a trigger: the work items of runs holding a merge (holdWhileBaseRed)
+// whose base branch is no longer red, as BASE_GREEN signals to those runs,
+// one per work item, whichever run's marker is newest.
+// Only open pull requests on the automated path (ships) can be held, and a
+// run this machine knows has ended is left out. Never starts a run, and reads
+// nothing while the flow's settings don't hold merges.
+export const baseTurnedGreen = Effect.gen(function* () {
+  if (!(yield* Settings.mergeHold).enabled) {
+    return [];
+  }
+
+  const github = yield* GitHub;
+  const labelNames = yield* Settings.labels;
+  const held: Array<{ readonly pull: PullRequest; readonly key: string }> = [];
+
+  for (const pull of yield* github.openPullRequests) {
+    if (!ships(pull, labelNames)) {
+      continue;
+    }
+
+    const bodies = (yield* github.trustedComments(pull.number)).map((found) => found.body);
+
+    // Every run that holds it, not only the newest: runs of other keys
+    // (review's and re-review's) may hold one pull request at once.
+    for (const marker of bodies.flatMap((body) => Option.toArray(holdMarker.read(body)))) {
+      if (!held.some((found) => found.key === marker.key) && !(yield* knownEnded(marker.runId))) {
+        held.push({ pull, key: marker.key });
+      }
+    }
+  }
+
+  const red = new Map<string, boolean>();
+  const items: Array<WorkItem> = [];
+
+  for (const { key, pull } of held) {
+    if (!red.has(pull.baseRef)) {
+      red.set(pull.baseRef, (yield* github.branchCiState(pull.baseRef)).state === "red");
+    }
+
+    if (red.get(pull.baseRef) !== true) {
+      items.push({
+        key,
+        title: pull.title,
+        url: pull.url,
+        data: { pullRequest: pull.number },
+        signals: [BASE_GREEN],
+        wakeOnly: true,
+      });
+    }
+  }
+
+  return items;
+});
+
 const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 
 // Asks one reviewer from the team's pool (reviewers: in config) to review the
@@ -440,12 +766,6 @@ export const requestReview = (pullRequest: number) =>
     }),
     Schema.String,
   );
-
-// Whether chernabog may merge the pull request: only on the automated path,
-// one labelled ship (auto:ship). Anything else, a missing or misspelt label
-// included, is left for a person to merge. The one place that decides it.
-export const ships = (pull: PullRequest, labels: Settings.LabelNames) =>
-  pull.labels.includes(labels.ship);
 
 // Labels the pull request needs-human and says why; no flow picks it up again
 // until a person removes the label.
@@ -492,7 +812,9 @@ export const waitingOnLayer = (pullRequest: number) =>
 // After an approval: on the automated path, merges the pull request when that
 // is safe, and otherwise hands it to a person; a layer waiting for the one
 // below is left approved, any other pull request is left for a person to
-// merge, and one closed meanwhile is left alone.
+// merge, and one closed meanwhile is left alone. While its base branch is red
+// it holds the merge (mergeHolding), so the flow's trigger should include
+// baseTurnedGreen.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
     if (!(yield* shipping(pullRequest))) {
@@ -505,7 +827,7 @@ export const mergeOrLeave = (pullRequest: number) =>
       return `#${pullRequest} approved; ${waiting.value}`;
     }
 
-    return yield* merge(pullRequest, { method: "squash" }).pipe(
+    return yield* mergeHolding(pullRequest, { method: "squash" }).pipe(
       Effect.catchTags({
         MergeRefused: (refused) => handToPerson(pullRequest, refused.message),
         PullRequestClosed: (closed) => Effect.succeed(`${closed.message}; nothing to merge`),

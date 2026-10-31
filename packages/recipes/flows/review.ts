@@ -29,8 +29,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 // Pull requests that ask this persona for a review, which it hasn't reviewed
-// yet, routed by their assignees and reviewers, and those waiting on a
-// reviewer no persona on this machine acts as, which status lists. Reading
+// yet, routed by their assignees and reviewers, those waiting on a reviewer
+// no persona on this machine acts as, which status lists, and the runs
+// holding a merge whose base branch is green again, to wake them. Reading
 // review requests needs the persona's seat in the reviewer pool, which
 // chernabog checks before the flow runs.
 const trigger = Effect.gen(function* () {
@@ -41,7 +42,7 @@ const trigger = Effect.gen(function* () {
     ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
   );
 
-  return [...mine, ...(yield* Review.waitingElsewhere)];
+  return [...mine, ...(yield* Review.waitingElsewhere), ...(yield* PullRequest.baseTurnedGreen)];
 }).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
@@ -84,7 +85,8 @@ const mergeIfShipping = (pullRequest: number) =>
       return `#${pullRequest} approved; ${waiting.value}`;
     }
 
-    return yield* PullRequest.merge(pullRequest, { method: "squash" }).pipe(
+    // While CI on the base branch is red, the merge holds rather than going to a person.
+    return yield* PullRequest.mergeHolding(pullRequest, { method: "squash" }).pipe(
       Effect.catchTag("MergeRefused", (refused) =>
         Effect.gen(function* () {
           if (yield* conflicts(pullRequest)) {
@@ -124,6 +126,7 @@ const settings = Schema.Struct({
   ...Settings.Base.fields,
   ...Settings.Rules.fields,
   ...Settings.Reviewers.fields,
+  ...Settings.MergeHold.fields,
 });
 
 export default defineFlow({

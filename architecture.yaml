@@ -241,6 +241,33 @@ defs:
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
+  # A query handler's test runs its subject over real storage: a scratch home or
+  # checkout on the real filesystem, and a real SQLite state.db. Only the clients
+  # of third-party systems (GitHub, launchd, an agent CLI) keep their fakes.
+  query-integration-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A query's integration test names its module (its live repositories and clients among
+        them), the kernel, the home, the platform's exec and Bun's platform services (for git in a
+        scratch repo, as a client's live test runs it) and the shared test harness (test/*.ts) —
+        the scratch home and the SQLite state.db of test/sqlite.ts. It seeds through the live
+        repository or writes the file the live adapter would; only a third-party system's
+        client keeps its fake.
+      external: [effect, "@effect/platform-bun"]
+      allow:
+        - "@/kernel/**"
+        - "@/modules/{module}/**"
+        - "@/platform/home.ts"
+        - "@/platform/exec.ts"
+        - "test/*.ts"
+      deny:
+        - match: "@/modules/{module}/infrastructure/repositories/*.repository-fake.ts"
+          message: >-
+            A query's integration test reads real storage. Seed it through the live repository,
+            or write the file the live adapter would, never through a repository fake.
+
   # A repository adapter's test runs the live adapter over a scratch home.
   adapter-test-file:
     surface: [{ use: test-exports-nothing }]
@@ -277,29 +304,25 @@ defs:
       source: 'export const zz = (fs: Fs) => fs.writeFileString("state.json", "{}");'
       name: writeFileString
 
-  # What a composition root of the CLI may name: the modules' layers, buses and
-  # value objects, the interface, the platform and the kernel, and, file by
-  # file, the runtime and legacy it still composes directly.
+  # What a composition root of the CLI may name: each module's platform surface
+  # (its layers, buses and value objects, and for runs the runtime it still
+  # publishes), the interface, the platform and the kernel, and, file by file,
+  # the legacy it still composes directly.
   cli-root:
     imports:
       reset: true
       message: >-
-        A CLI composition root names the modules' layers, their buses and the value objects and
-        events those answer with, the interface, the platform and the kernel, and the runtime
-        and legacy files it still composes directly, each named here until a module owns it.
+        A CLI composition root names each module through its <module>.platform.ts (its layers,
+        its buses and the value objects and events those answer with, and the runtime the runs
+        module still publishes), the interface, the platform and the kernel, and the legacy
+        files it still composes directly, each named here until a module owns it.
       # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
       external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
       allow:
         - "@/kernel/**"
         - "@/platform/**"
         - "@/interface/**"
-        - "@/modules/*/*.layer.ts"
-        - "@/modules/*/domain/*/*.value-object.ts"
-        - "@/modules/*/*.command-handlers.ts"
-        - "@/modules/*/*.query-handlers.ts"
-        - "@/modules/runs/infrastructure/runtime/**"
-        - "@/modules/runs/infrastructure/clients/flows.client-live.ts"
-        - "@/modules/runs/domain/routing/routing.value-object.ts"
+        - "@/modules/*/*.platform.ts"
         - "~/core/src/**"
         - "@/migrate.ts"
         - "@/repo-config.ts"
@@ -388,19 +411,15 @@ tree:
               reset: true
               message: >-
                 A CLI command parses its arguments, dispatches a command or query and prints what
-                its result says. It names effect (its CLI and console), the kernel, the modules'
-                messages and buses, the value objects and events they answer with, the shared
-                arguments and output, and the
+                its result says. It names effect (its CLI and console), the kernel, each module's
+                <module>.platform.ts (its buses and the results, value objects and events they
+                answer with), the shared arguments and output, and the
                 daemon's client and protocol, to ask the daemon what it alone knows. Never a
                 repository, a domain op or an adapter: the composition root provides those.
               external: [effect]
               allow:
                 - "@/kernel/**"
-                - "@/modules/*/domain/*/*.value-object.ts"
-                - "@/modules/*/commands/*.command.ts"
-                - "@/modules/*/queries/*.query.ts"
-                - "@/modules/*/*.command-handlers.ts"
-                - "@/modules/*/*.query-handlers.ts"
+                - "@/modules/*/*.platform.ts"
                 - "@/interface/cli/**"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
@@ -435,9 +454,10 @@ tree:
               reset: true
               message: >-
                 The TUI asks the daemon over its client, dispatches the modules' queries and
-                commands, and draws with @opentui. It names the kernel, the platform, the value
-                objects and events the modules answer with, and the legacy files it still reads,
-                each named here until a module owns it.
+                commands, and draws with @opentui. It names the kernel, the platform, each
+                module's <module>.platform.ts (its buses and the value objects and events they
+                answer with), and the legacy files it still reads, each named here until a module
+                owns it.
               external: [effect, "@opentui/core"]
               allow:
                 - "@/kernel/**"
@@ -445,11 +465,7 @@ tree:
                 - "@/interface/tui/**"
                 - "@/interface/daemon/*.client.ts"
                 - "@/interface/daemon/*.protocol.ts"
-                - "@/modules/*/domain/*/*.value-object.ts"
-                - "@/modules/*/*.query-handlers.ts"
-                - "@/modules/*/*.command-handlers.ts"
-                - "@/modules/runs/infrastructure/runtime/agents.ts"
-                - "@/modules/runs/infrastructure/runtime/usage-gate.ts"
+                - "@/modules/*/*.platform.ts"
                 - "@/repo-config.ts"
             children:
               "*.ts": {}
@@ -463,11 +479,11 @@ tree:
               message: >-
                 The daemon's protocol is made of the modules' results, and its client reaches the
                 socket in the chernabog home. They name effect, the value objects and events the
-                modules answer with, and home.ts for the home's paths.
+                modules answer with, through each module's <module>.platform.ts, and home.ts for
+                the home's paths.
               external: [effect]
               allow:
-                - "@/modules/*/domain/*/*.value-object.ts"
-                - "@/modules/*/domain/*/*.events.ts"
+                - "@/modules/*/*.platform.ts"
                 - "@/interface/daemon/**"
                 - "@/platform/home.ts"
             children:
@@ -481,23 +497,16 @@ tree:
                   message: >-
                     The daemon dispatches the modules' commands and queries on a schedule and over
                     its socket. It names effect and Bun's HTTP server, the kernel, the platform,
-                    its own protocol, the modules' buses, layers and value objects, and the legacy
-                    runtime it still
-                    drives, each named here until it moves into the runs module.
+                    its own protocol, each module's <module>.platform.ts (its buses, layers and
+                    value objects, and the runtime the runs module still publishes there), and
+                    the legacy files it still reads, each named here until a module owns it.
                   external: [effect, "@effect/platform-bun"]
                   allow:
                     - "@/kernel/**"
                     - "@/platform/**"
                     - "@/interface/daemon/**"
-                    - "@/modules/*/domain/*/*.value-object.ts"
-                    - "@/modules/*/*.command-handlers.ts"
-                    - "@/modules/*/*.query-handlers.ts"
-                    - "@/modules/*/*.layer.ts"
+                    - "@/modules/*/*.platform.ts"
                     - "~/core/src/**"
-                    - "@/modules/runs/infrastructure/runtime/engine.ts"
-                    - "@/modules/runs/infrastructure/runtime/launchers.ts"
-                    - "@/modules/runs/infrastructure/runtime/runlog.ts"
-                    - "@/modules/runs/infrastructure/runtime/repo-runtime.ts"
                     - "@/repo-config.ts"
 
       "kernel/":
@@ -533,11 +542,95 @@ tree:
         message: >-
           A module admits domain/ (its aggregates, their ops and errors, and its ports),
           commands/ and queries/ (what the adapters dispatch), infrastructure/ (the adapters
-          behind its ports), one
-          <module>.layer.ts that builds the module's live Layer, and <module>.command-handlers.ts
-          and <module>.query-handlers.ts, its slice of the buses.
+          behind its ports), one <module>.layer.ts that builds the module's live Layer,
+          <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
+          and <module>.platform.ts, the one surface it publishes to the composition roots.
         name: kebab-case
+        # A module is private except for what it publishes on purpose
+        # (docs/adr/0007-module-gateways.md).
+        importedBy:
+          message: >-
+            Code outside src/modules/ names a module only through its <module>.platform.ts. A
+            module is private except for what it publishes on purpose: reaching past that file
+            couples you to a shape the module is free to change. Re-export what you need from
+            the platform surface instead.
+          allow:
+            - "@/modules/**"
+            - "**/*.test.ts"
+            - "test/**"
+            # The legacy tier's repo settings, which the modules' repositories and
+            # runtime still read, so it can't name their platform surfaces without a
+            # cycle. It leaves when it moves into the enrollment module (ADR 2).
+            - "@/repo-config.ts"
+          # The platform surface is itself public, so the restriction does not cover it.
+          matchNot: ["*.platform.ts"]
+        imports:
+          message: >-
+            A module's platform surface re-exports its own module and nothing else; every other
+            file in it states its own allowlist below. The prohibition here holds for all of
+            them.
+          allow: ["@/modules/{module}/**"]
+          deny:
+            # Module-wide, so it holds for every tier below, whatever its allowlist.
+            - match: "@/modules/*/**"
+              matchNot:
+                - "@/modules/{module}/**"
+                - "@/modules/*/*.platform.ts"
+                - "@/modules/*/*.exports.ts"
+                - "@/modules/*/*.module.ts"
+              message: >-
+                A module may only name another module through a file it publishes on purpose:
+                <module>.exports.ts for its peers, <module>.platform.ts for the platform,
+                <module>.module.ts for another module's wiring. Reaching anywhere else couples
+                you to a shape it is free to change. Modules don't read each other yet: the
+                adapter that dispatches to both composes them.
         children:
+          # The platform surface: what the composition roots and the inbound
+          # adapters name to assemble and drive the module. It only re-exports.
+          "*.platform.ts":
+            name: { like: "{module}" }
+            importedBy:
+              message: >-
+                <module>.platform.ts is the PLATFORM surface: what the composition roots and the
+                inbound adapters they run (src/interface/) name to assemble and drive this
+                module. Another module never names it; a peer's vocabulary comes through
+                <module>.exports.ts when the first one needs it.
+              allow:
+                - "@/interface/**"
+                - "**/*.test.ts"
+                - "test/**"
+            surface:
+              - message: >-
+                  <module>.platform.ts re-exports; `{name}` is declared here. It is the surface
+                  the module publishes to the platform, not a home for code: move the
+                  declaration into the stereotype folder that owns it and re-export it from
+                  there.
+                reexport: false
+            # Inherits the module's own allowlist: its own module and nothing else.
+            imports:
+              message: >-
+                <module>.platform.ts re-exports from its own module and nowhere else: its
+                dispatchers, message results, domain value objects and events, and its Layers.
+                Anything it names becomes public.
+              allow: []
+              deny:
+                - match: ["@/modules/*/infrastructure/**", "@/modules/*/interface/**"]
+                  # The one publishable adapter: a third-party client's live/fake
+                  # pair, which a composition root picks between. And, for now,
+                  # the runs module's runtime, which the roots still compose
+                  # directly until it finishes moving behind the module's
+                  # commands, queries and Layers.
+                  matchNot:
+                    - "@/modules/*/infrastructure/clients/*.client-live.ts"
+                    - "@/modules/*/infrastructure/clients/*.client-fake.ts"
+                    - "@/modules/runs/infrastructure/runtime/**"
+                  message: >-
+                    <module>.platform.ts publishes the module's dispatchers, results, value
+                    objects, events and Layers, never its adapters, with one exception: a
+                    third-party client's live/fake pair, because choosing between those is a
+                    composition root's job. Re-exporting anything else from infrastructure/ or
+                    interface/ makes an adapter part of the module's public surface.
+
           # The module's slice of each bus: its messages grouped, each mapped to
           # its handler with the adapters it needs, and the dispatcher service
           # the adapters ask, as the hexagon's <module>.command-handlers.ts does.
@@ -649,14 +742,14 @@ tree:
                       - "../../infrastructure/repositories/{base}-live.test.ts"
                     importedBy: { use: port-consumers }
                     # A repository stores aggregates and reads them back; what they mean is
-                    # the domain's (docs/adr/0007-repository-vocabulary-and-specifications.md).
+                    # the domain's (docs/adr/0008-repository-vocabulary-and-specifications.md).
                     # Both halves of the persistence vocabulary, each with the advice that
                     # fits its half. The probes are written as an intersection, whose own
                     # members the rule must still read under the alias's name.
                     members:
                       - message: >-
                           Repository port method "{name}" is not in the persistence vocabulary
-                          (ADR 7). A read is only findOne/findMany taking a Specification: turn
+                          (ADR 8). A read is only findOne/findMany taking a Specification: turn
                           this lookup or variant into a Specification the caller composes (e.g.
                           repo.findOne(RunSpecifications.withId(id))), so the rule lives in one
                           place and the fake filters with the same object the live adapter
@@ -671,7 +764,7 @@ tree:
                           name: findOneByRepo
                       - message: >-
                           Repository port method "{name}" is not in the persistence vocabulary
-                          (ADR 7). It reads like a domain verb: put that behaviour on the
+                          (ADR 8). It reads like a domain verb: put that behaviour on the
                           aggregate's ops and have the handler store the result. A port declares
                           only insertOne/insertMany, updateOne/updateMany, deleteOne/deleteMany,
                           upsertOne/upsertMany, and findOne/findMany.
@@ -743,10 +836,11 @@ tree:
               "*.query.ts": {}
               "*.handler.ts":
                 message: >-
-                  A query handler owes a sibling *.handler.test.ts, run over its ports' fakes.
-                requires: ["{base}.test.ts"]
+                  A query handler owes a sibling *.handler.integration.test.ts, run over real
+                  storage: a query reads what its repositories keep.
+                requires: ["{base}.integration.test.ts"]
                 surface: [{ use: one-handler-export }]
-              "*.test.ts": { use: module-test-file }
+              "*.integration.test.ts": { use: query-integration-test-file }
 
           "infrastructure/":
             message: >-

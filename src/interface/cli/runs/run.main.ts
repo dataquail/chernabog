@@ -16,37 +16,31 @@ import { nothingNamed } from "../../../kernel/manual-flow.value-object.ts";
 import { type Persona } from "../../../kernel/persona.value-object.ts";
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import {
-  describeElsewhere,
-  routeItems,
-} from "../../../modules/runs/domain/routing/routing.value-object.ts";
-import {
   type ActiveRun,
-  type RunView,
-} from "../../../modules/runs/domain/run/run-view.value-object.ts";
-import { withRepo } from "../../../modules/runs/infrastructure/clients/flows.client-live.ts";
-import {
+  adoptRuns,
+  buildPersonaContexts,
   defaultPersona,
+  describeElsewhere,
   type FlowHandle,
   flowHandle,
   flowLayer,
-  runLogFile,
-} from "../../../modules/runs/infrastructure/runtime/engine.ts";
-import {
-  adoptRuns,
-  buildPersonaContexts,
   flowOrigins,
   openRepo,
   type RepoContext,
-  servicesFrom,
-  unreportedItem,
-} from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
-import {
+  routeItems,
   RunFlowsCommands,
   RunFlowsCommandsLive,
+  runLogFile,
   RunsCommandsLive,
-} from "../../../modules/runs/runs.command-handlers.ts";
-import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
-import { RunsQueries, RunsQueriesLive } from "../../../modules/runs/runs.query-handlers.ts";
+  RunsQueries,
+  RunsQueriesLive,
+  RuntimeLayer,
+  type RunView,
+  servicesFrom,
+  StateLive,
+  unreportedItem,
+  withRepo,
+} from "../../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";

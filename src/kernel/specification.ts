@@ -9,7 +9,7 @@ import * as P from "effect/Predicate";
 // and makes a join-shaped filter unconstructable: a predicate that reaches
 // into a child collection can only be a plain `Predicate`, never a
 // `Specification`, so it can never be handed to a repository.
-// (docs/adr/0007-repository-vocabulary-and-specifications.md)
+// (docs/adr/0008-repository-vocabulary-and-specifications.md)
 export type Criteria = Data.TaggedEnum<{
   And: { readonly nodes: ReadonlyArray<Criteria> };
   Or: { readonly nodes: ReadonlyArray<Criteria> };

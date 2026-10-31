@@ -1,7 +1,7 @@
 // Compiles a specification's Criteria into a WHERE fragment for one of this
 // module's SQLite tables. The repository owns everything else of the query:
 //   SELECT <projection> FROM <table> WHERE ${where} ORDER BY …
-// (docs/adr/0007-repository-vocabulary-and-specifications.md)
+// (docs/adr/0008-repository-vocabulary-and-specifications.md)
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

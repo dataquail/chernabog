@@ -12,20 +12,17 @@ import * as Result from "effect/Result";
 
 import { runLabel } from "../../../kernel/run-id.id.ts";
 import {
+  buildPersonaContexts,
   type CancelledRun,
   CancelTarget,
-} from "../../../modules/runs/domain/run/cancelled-run.value-object.ts";
-import {
-  buildPersonaContexts,
   openRepo,
   type PersonaContext,
-  servicesFrom,
-} from "../../../modules/runs/infrastructure/runtime/repo-runtime.ts";
-import {
   RunFlowsCommands,
   RunFlowsCommandsLive,
-} from "../../../modules/runs/runs.command-handlers.ts";
-import { RuntimeLayer, StateLive } from "../../../modules/runs/runs.layer.ts";
+  RuntimeLayer,
+  servicesFrom,
+  StateLive,
+} from "../../../modules/runs/runs.platform.ts";
 import { userName } from "../../../platform/environment.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
