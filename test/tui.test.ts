@@ -1,14 +1,27 @@
 import { HEADLESS, printJson } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
-import type { DaemonStatus } from "../src/interface/daemon/daemon.protocol.ts";
+import {
+  type DaemonEvent,
+  type DaemonStatus,
+  StatusChanged,
+} from "../src/interface/daemon/daemon.protocol.ts";
 import { initialModel, readUsage } from "../src/interface/tui/app.ts";
+import {
+  type Feed,
+  feed,
+  quiet,
+  reconnectDelay,
+  REFETCH_AT_MOST_EVERY,
+  refetched,
+} from "../src/interface/tui/live.ts";
 import { describeStatus } from "../src/interface/tui/status.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
@@ -1117,5 +1130,88 @@ describe("the settings view", () => {
       enabled: false,
     });
     expect(press(opened(), { name: "escape" }).model.view).toBe("main");
+  });
+});
+
+describe("the live view's updates from /events", () => {
+  const changed = (eventId: string): DaemonEvent =>
+    StatusChanged.make({ eventId, files: ["config.yaml"], at: minutes(0) });
+
+  // How many refetches a run of feed messages asks for.
+  const refetchesFor = (messages: ReadonlyArray<Feed>) =>
+    messages.reduce(
+      (fed, message) => {
+        const next = feed(fed.model, fed.live, message);
+
+        return { ...next, asked: fed.asked + Number(Option.isSome(next.refetchIn)) };
+      },
+      { model: model(), live: quiet, asked: 0 },
+    ).asked;
+
+  test("a snapshot replaces the model's status, and says it is connected again", () => {
+    const dropped = feed(
+      model({ status: Option.none(), error: Option.some("the daemon is not answering") }),
+      quiet,
+      { kind: "dropped", reason: "the daemon is not answering" },
+    );
+
+    expect(dropped.model.reconnecting).toBe(true);
+
+    const fed = feed(dropped.model, dropped.live, { kind: "snapshot", status });
+
+    expect(fed.model.status).toEqual(Option.some(status));
+    expect(fed.model.error).toEqual(Option.none());
+    expect(fed.model.reconnecting).toBe(false);
+    expect(fed.refetchIn).toEqual(Option.none());
+  });
+
+  test("a snapshot from a restarted daemon forgets the flows turned on or off here", () => {
+    const pending = model({ pendingFlows: { "goodbones/implement": false } });
+
+    const same = feed(pending, quiet, { kind: "snapshot", status });
+
+    expect(same.model.pendingFlows).toEqual({ "goodbones/implement": false });
+
+    const restarted = feed(pending, quiet, {
+      kind: "snapshot",
+      status: { ...status, pid: status.pid + 1 },
+    });
+
+    expect(restarted.model.pendingFlows).toEqual({});
+  });
+
+  test("an event asks for /status once, within 250 ms", () => {
+    const fed = feed(model(), quiet, { kind: "event", event: changed("a") });
+
+    expect(fed.refetchIn).toEqual(Option.some(REFETCH_AT_MOST_EVERY));
+    expect(Duration.toMillis(REFETCH_AT_MOST_EVERY)).toBe(250);
+    expect(refetchesFor([{ kind: "event", event: changed("a") }])).toBe(1);
+  });
+
+  test("a burst of events asks for /status once", () => {
+    expect(
+      refetchesFor(["a", "b", "c", "d", "e"].map((id) => ({ kind: "event", event: changed(id) }))),
+    ).toBe(1);
+  });
+
+  test("an event after the refetch ran asks again", () => {
+    const first = feed(model(), quiet, { kind: "event", event: changed("a") });
+    const again = feed(first.model, refetched(first.live), { kind: "event", event: changed("b") });
+
+    expect(Option.isSome(again.refetchIn)).toBe(true);
+  });
+
+  test("a dropped stream says reconnecting in the header and keeps what it last knew", () => {
+    const fed = feed(model(), quiet, { kind: "dropped", reason: "the daemon is not answering" });
+
+    expect(fed.model.status).toEqual(Option.some(status));
+    expect(plain(view(fed.model)).split("\n")[0]).toContain("reconnecting");
+    expect(plain(view(model())).split("\n")[0]).not.toContain("reconnecting");
+  });
+
+  test("reconnects after 1, 2 and 4 seconds, then every 5", () => {
+    expect(
+      [0, 1, 2, 3, 4, 10].map((attempt) => Duration.toSeconds(reconnectDelay(attempt))),
+    ).toEqual([1, 2, 4, 5, 5, 5]);
   });
 });

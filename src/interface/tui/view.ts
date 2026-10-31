@@ -67,6 +67,8 @@ export type Settings = {
 export type Model = {
   readonly status: Option.Option<DaemonStatus>;
   readonly error: Option.Option<string>;
+  // The /events stream dropped; the view shows what it last knew until it is back.
+  readonly reconnecting: boolean;
   readonly usage: ReadonlyArray<UsageRow>;
   readonly thresholds: { readonly fiveHourCeiling: number; readonly targetEndUsage: number };
   // The project tab (a repo's name; none for All) and the persona filter
@@ -741,6 +743,7 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
       `  daemon ${status.pid}, up ${ago(Option.some(status.startedAt), now).replace(" ago", "")}`,
       "dim",
     ),
+    ...onlyIf(model.reconnecting, [segment("  reconnecting to the daemon…", "yellow")]),
     ...onlyIf(status.busy > 0, [
       segment(`  ${status.busy} step${plural(status.busy)} executing`, "cyan"),
     ]),
