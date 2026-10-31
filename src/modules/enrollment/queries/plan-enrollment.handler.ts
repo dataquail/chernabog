@@ -2,10 +2,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { IMPLICIT, type Persona } from "../../../kernel/persona.value-object.ts";
+import { Checkout } from "../domain/enrolled-repo/checkout.value-object.ts";
 import { EnrolledRepoRootOps } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
 import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
 import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { MachineOffer } from "../domain/enrolled-repo/machine-offer.value-object.ts";
+import { TeamFlowsAcl } from "../domain/ports/acl/team-flows.acl.ts";
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
 import { ViewerClient } from "../domain/ports/clients/viewer.client.ts";
 import { EnrollmentPlan, type PlanEnrollmentPayload } from "./plan-enrollment.query.ts";
@@ -16,7 +18,9 @@ export const planEnrollmentHandler = Effect.fn("planEnrollmentHandler")(function
   const { name, path } = query;
   const machine = MachineOffer.make(query.offered);
   const checkouts = yield* CheckoutsClient;
-  const checkout = yield* checkouts.inspect(yield* checkouts.rootOf(path));
+  const tree = yield* checkouts.inspect(yield* checkouts.rootOf(path));
+  const team = yield* (yield* TeamFlowsAcl).of(tree.root);
+  const checkout = Checkout.make({ root: tree.root, repo: tree.repo, flows: tree.flows, team });
   const repos = yield* (yield* EnrolledReposRepository).findMany(EnrolledRepoSpecifications.all);
   const existing = yield* Effect.fromResult(EnrolledRepoRootOps.entryOf(repos, checkout, name));
   const viewer = yield* ViewerClient;

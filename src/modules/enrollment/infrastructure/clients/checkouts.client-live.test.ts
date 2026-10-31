@@ -55,10 +55,6 @@ describe("CheckoutsClientLive", () => {
         "dataquail/demo",
         ["implement", "review"],
       ]);
-      expect([read.team.agent, read.team.flows]).toEqual([
-        Option.some("claude"),
-        { review: { agent: "codex", runners: ["bob"] } },
-      ]);
       expect(yield* checkouts.exists(root)).toBe(true);
       expect(yield* checkouts.exists(`${root}/gone`)).toBe(false);
     }),

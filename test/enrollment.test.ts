@@ -25,6 +25,7 @@ import { Home } from "../src/platform/home.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
+import { RecipesPeerLive } from "./recipe-repo.ts";
 
 // git answers for a checkout of dataquail/demo wherever it is, and gh is logged in to `logins`.
 const fakes = (logins: ReadonlyArray<string>) =>
@@ -147,9 +148,11 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
     Effect.provide(
       Layer.mergeAll(
         layer,
-        Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
-        Layer.fresh(EnrollmentQueriesLive),
+        Layer.fresh(EnrollmentLayer).pipe(Layer.provide(RecipesPeerLive)),
+        Layer.fresh(EnrollmentCommandsLive).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), RecipesPeerLive)),
+        ),
+        Layer.fresh(EnrollmentQueriesLive).pipe(Layer.provide(RecipesPeerLive)),
         Layer.fresh(MachineLayer),
         Layer.fresh(MachineQueriesLive),
       ),
@@ -164,9 +167,11 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
         Layer.fresh(MachineLayer),
         Layer.fresh(MachineCommandsLive),
         Layer.fresh(MachineQueriesLive),
-        Layer.fresh(EnrollmentLayer),
-        Layer.fresh(EnrollmentCommandsLive).pipe(Layer.provide(makeEventBus())),
-        Layer.fresh(EnrollmentQueriesLive),
+        Layer.fresh(EnrollmentLayer).pipe(Layer.provide(RecipesPeerLive)),
+        Layer.fresh(EnrollmentCommandsLive).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), RecipesPeerLive)),
+        ),
+        Layer.fresh(EnrollmentQueriesLive).pipe(Layer.provide(RecipesPeerLive)),
       ),
     ),
   );

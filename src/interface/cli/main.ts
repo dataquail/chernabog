@@ -483,6 +483,8 @@ const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Ho
 
 // One GitHubTokens for the process, so each persona's token is looked up once,
 // and one bus that enrollment's and trust's commands dispatch their events on.
+// A module whose ACL adapters ask another's published queries sits above it:
+// enrollment asks recipes the team's config (enrollment.imports.ts).
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
   EnrollmentCommandsLive,
@@ -494,12 +496,10 @@ const AppLive = Layer.mergeAll(
   MachineLayer,
   MachineCommandsLive,
   MachineQueriesLive,
-  RecipesLayer,
-  RecipesCommandsLive,
-  RecipesQueriesLive,
   RehearsalsCommandsLive,
   RehearsalsQueriesLive,
 ).pipe(
+  Layer.provideMerge(Layer.mergeAll(RecipesLayer, RecipesCommandsLive, RecipesQueriesLive)),
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus())),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "campaign": "repo-config",
+  "phases": [
+    {
+      "id": "owners",
+      "hash": "040ff79b",
+      "defined": true,
+      "concessions": 0
+    }
+  ]
+}
