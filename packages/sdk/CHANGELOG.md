@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/dataquail/chernabog/compare/sdk-v0.8.1...sdk-v0.9.0) (2026-10-31)
+
+
+### Features
+
+* hold an approved merge while CI on the base branch is red, rather than handing the pull request to a person ([#292](https://github.com/dataquail/chernabog/issues/292)) ([0ec429b](https://github.com/dataquail/chernabog/commit/0ec429b4ababedae53b6ee0ba4a0546a0e0cfe8a))
+
+
+### Bug Fixes
+
+* the pre-commit hook runs the fast checks, not the tests, so an agent's commit lands before it answers ([#199](https://github.com/dataquail/chernabog/issues/199)) ([e4b56a8](https://github.com/dataquail/chernabog/commit/e4b56a89d13f29e4e9765a632a4ecd52979c8d3f)), closes [#198](https://github.com/dataquail/chernabog/issues/198)
+
 ## [0.8.1](https://github.com/dataquail/chernabog/compare/sdk-v0.8.0...sdk-v0.8.1) (2026-10-30)
 
 
