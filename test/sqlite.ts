@@ -11,3 +11,7 @@ export const sqliteAfter = <E>(before: Effect.Effect<void, E, SqlClient.SqlClien
     Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
     Layer.orDie,
   );
+
+// A SQLite database in a file, which several connections can open at once, as
+// the daemon's and a foreground run's do.
+export const sqliteAt = (filename: string) => SqliteClient.layer({ filename }).pipe(Layer.orDie);
