@@ -3,6 +3,7 @@
 // a newer SDK, and @acme/recipes, a company's own package.
 
 import { type Json, printJson } from "@chernabog/core";
+import { Query } from "@effect-server-utils/cqrs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,8 @@ import {
 import { TextDiffClientFake } from "../src/modules/recipes/infrastructure/clients/text-diff.client-fake.ts";
 import { FlowImportsRepositoryFake } from "../src/modules/recipes/infrastructure/repositories/flow-imports.repository-fake.ts";
 import { FlowImportsRepositoryLive } from "../src/modules/recipes/infrastructure/repositories/flow-imports.repository-live.ts";
+import { readTeamConfigHandler } from "../src/modules/recipes/queries/read-team-config.handler.ts";
+import { recipesAccessQueries } from "../src/modules/recipes/recipes.exports.ts";
 
 export const SCAFFOLD = {
   files: { "config.yaml": "flows: {}\n", "config.schema.json": "{ schema }\n" },
@@ -153,3 +156,10 @@ export const scratchRecipeRepos = () => {
     ),
   };
 };
+
+// The recipes module as a peer asks it: the queries it grants (recipes.exports.ts)
+// registered with their live handlers, which read the checkout's files for
+// real. A module's ACL adapter dispatches over it.
+export const RecipesPeerLive = Query.handlersOf(recipesAccessQueries, {
+  ReadTeamConfigQuery: (payload) => readTeamConfigHandler(payload),
+});

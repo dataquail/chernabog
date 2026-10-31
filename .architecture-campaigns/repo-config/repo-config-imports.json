@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "campaign": "repo-config",
+  "objective": "repo-config-imports",
+  "created": "2026-10-31T15:35:59.144Z",
+  "sectors": {
+    "scope": {
+      "entered": "2026-10-31T15:35:59.144Z",
+      "initial": 22,
+      "cleared": 0,
+      "closed": 0,
+      "lastCleared": "2026-10-31T15:35:59.144Z",
+      "holdouts": [
+        "src/interface/cli/machine/doctor.main.ts",
+        "src/interface/cli/main.ts",
+        "src/interface/cli/rehearsals/rehearse.main.ts",
+        "src/interface/cli/runs/cancel.main.ts",
+        "src/interface/cli/runs/run.main.ts",
+        "src/interface/cli/runs/start.main.ts",
+        "src/interface/daemon/daemon.server.ts",
+        "src/interface/tui/app.ts",
+        "src/migrate.ts",
+        "src/modules/enrollment/infrastructure/repositories/enrolled-repos.repository-live.ts",
+        "src/modules/machine/infrastructure/repositories/machine-setup.mapper.ts",
+        "src/modules/machine/infrastructure/repositories/machine-setups.repository-live.ts",
+        "src/modules/recipes/infrastructure/clients/bundle.client-live.ts",
+        "src/modules/rehearsals/infrastructure/repositories/scenarios.repository-live.ts",
+        "src/modules/runs/infrastructure/runtime/diagnostics.ts",
+        "src/modules/runs/infrastructure/runtime/engine.ts",
+        "src/modules/runs/infrastructure/runtime/labels.ts",
+        "src/modules/runs/infrastructure/runtime/repo-runtime.ts",
+        "src/modules/runs/infrastructure/runtime/sdk-live.test.ts",
+        "src/modules/runs/infrastructure/runtime/steps.ts",
+        "src/modules/runs/infrastructure/runtime/usage-gate.test.ts",
+        "src/repo-config.test.ts"
+      ]
+    }
+  },
+  "concessions": []
+}
