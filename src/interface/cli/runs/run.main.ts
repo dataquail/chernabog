@@ -111,11 +111,11 @@ const followRun = (
 
     yield* tail;
 
-    // What the run held is released here, as the daemon would; a release
-    // that fails is left to the daemon, or the next run, to try again.
-    const releases = yield* (yield* RunFlowsCommands).ReleaseMarkersCommand();
+    // What the run held was released as it ended (on RunFinished); a release
+    // that failed is left to the daemon's sweep, or the next run, to try again.
+    const unreleased = yield* (yield* RunsQueries).ListUnreleasedMarkersQuery();
 
-    for (const marker of [...releases.failed, ...releases.unreleasable]) {
+    for (const marker of unreleased.markers.filter((left) => left.runId === current.id)) {
       yield* Console.log(
         `not released: ${marker.name}: ${Option.getOrElse(marker.lastError, () => "")}`,
       );

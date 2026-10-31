@@ -18,7 +18,8 @@ import {
 // before its workflow could record anything else; forgets its waits;
 // interrupts its workflow, which the engine keeps across a restart; and then
 // cleans up what it held: its worktrees, its claim ref, its claim on its
-// issue, and, if asked, its agent sessions. What cleaning up can't do is left
+// issue, and, if asked, its agent sessions; and only then says it ended
+// (RunFinished), for its markers' release. What cleaning up can't do is left
 // for a person, and said; it never undoes the cancel. Pull requests are never
 // touched. A run that has already ended only lets go of its claim ref.
 export const CancelRunCommand = Command.make("CancelRunCommand", {

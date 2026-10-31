@@ -106,6 +106,16 @@ const named = (target: CancelTarget) =>
 const describeFailure = (what: string) => (failure: CleanupFailed) =>
   Effect.succeed(`${what}: ${failure.message}`);
 
+// Says the run ended, once cancel has stopped its workflow and cleaned up
+// after it, so what reacts to the ending (its markers' release, the daemon)
+// comes after the workflow stopped and after the claims cancel reports: a
+// marker released while the workflow still ran could let another run take its
+// item. A crash before it leaves the markers to the release sweep.
+const tellEnded = (cancelled: RunRoot) =>
+  EventBus.use((bus) => bus.dispatch(Option.toArray(RunEvents.finished(cancelled)))).pipe(
+    inUnitOfWork,
+  );
+
 // Waits, a while, for an interrupted workflow to stop; whether it has.
 const stopping = (run: RunRoot, executionId: string) =>
   WorkflowsClient.use((workflows) =>
@@ -218,10 +228,9 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   );
 
   // The run's ending and its waits go together; stopping its workflow and
-  // cleaning up after it come once they have.
+  // cleaning up after it come once they have, and saying it ended last.
   const parked = yield* Effect.gen(function* () {
     yield* runs.upsertOne(cancelled);
-    yield* (yield* EventBus).dispatch(Option.toArray(RunEvents.finished(cancelled)));
 
     const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
 
@@ -250,6 +259,8 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   // A run that lost its item leaves everything on it, worktree included, to
   // the run that took it over, and for a person to look at.
   if (cancelled.status === "lost") {
+    yield* tellEnded(cancelled);
+
     return CancelledRun.make({
       run: RunView.make({ ...cancelled }),
       alreadyEnded: false,
@@ -324,6 +335,8 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       );
     }
   }
+
+  yield* tellEnded(cancelled);
 
   return CancelledRun.make({
     run: RunView.make({ ...cancelled }),
