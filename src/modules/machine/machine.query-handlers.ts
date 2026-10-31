@@ -2,7 +2,6 @@ import { Query } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
-import { MachineLayer } from "./machine.layer.ts";
 import { checkServiceHandler } from "./queries/check-service.handler.ts";
 import { CheckServiceQuery } from "./queries/check-service.query.ts";
 import { inspectAccountDirHandler } from "./queries/inspect-account-dir.handler.ts";
@@ -24,7 +23,7 @@ const MachineQueryHandlersLive = Query.handlersOf(machineQueryGroup, {
   InspectAccountDirQuery: (payload) => inspectAccountDirHandler(payload),
   PlanSetupQuery: () => planSetupHandler(),
   ReadMachineSetupQuery: () => readMachineSetupHandler(),
-}).pipe(Layer.provide(MachineLayer));
+});
 
 // The machine module's slice of the read side, which setup, enroll, doctor
 // and the TUI ask.

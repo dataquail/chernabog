@@ -2,7 +2,6 @@ import { Query } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
-import { EnrollmentLayer } from "./enrollment.layer.ts";
 import { findCheckoutRootHandler } from "./queries/find-checkout-root.handler.ts";
 import { FindCheckoutRootQuery } from "./queries/find-checkout-root.query.ts";
 import { listEnrolledReposHandler } from "./queries/list-enrolled-repos.handler.ts";
@@ -32,7 +31,7 @@ const EnrollmentQueryHandlersLive = Query.handlersOf(enrollmentQueryGroup, {
   ListPausedReposQuery: () => listPausedReposHandler(),
   ListPersonasInUseQuery: () => listPersonasInUseHandler(),
   PlanEnrollmentQuery: (payload) => planEnrollmentHandler(payload),
-}).pipe(Layer.provide(EnrollmentLayer));
+});
 
 // The enrollment module's slice of the read side, which enroll, init, setup,
 // status, trust and the daemon ask.

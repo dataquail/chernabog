@@ -12,6 +12,6 @@ export { type RecipesUpdated, type Unrecorded } from "./commands/update-recipes.
 export { type RepoUpgraded } from "./commands/upgrade-repo.command.ts";
 export { type RecipesDiff } from "./queries/diff-recipes.query.ts";
 export { type RecipeList } from "./queries/list-recipes.query.ts";
-export { RecipesCommands, RecipesCommandsLive } from "./recipes.command-handlers.ts";
-export { RecipesLayer } from "./recipes.layer.ts";
-export { RecipesQueries, RecipesQueriesLive } from "./recipes.query-handlers.ts";
+export { RecipesCommands } from "./recipes.command-handlers.ts";
+export { RecipesModule } from "./recipes.module.ts";
+export { RecipesQueries } from "./recipes.query-handlers.ts";

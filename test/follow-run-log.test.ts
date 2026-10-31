@@ -9,13 +9,13 @@ import * as TestClock from "effect/testing/TestClock";
 import { followLog } from "../src/interface/cli/runs/run-log.output.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
-import { RunLogsQueriesOver } from "../src/modules/runs/runs.query-handlers.ts";
+import { RunLogsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effectOnTestClock } from "./effect-test.ts";
 
 const logs = { a: "started\n" };
 
 // RunLogsQueries as the CLI dispatches it, over logs in memory.
-const queries = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientFake(logs)));
+const queries = RunLogsQueriesLive.pipe(Layer.provide(RunLogsClientFake(logs)));
 
 describe("followLog", () => {
   effectOnTestClock(

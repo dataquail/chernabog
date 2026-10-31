@@ -58,8 +58,8 @@ import { VERSION } from "../../../../platform/version.ts";
 import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
 import { type WorkflowOutcome } from "../../domain/ports/clients/workflows.client.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
-import { RunsCommands, RunsCommandsLive } from "../../runs.command-handlers.ts";
-import { RunsQueries, RunsQueriesLive } from "../../runs.query-handlers.ts";
+import { RunsCommands } from "../../runs.command-handlers.ts";
+import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
@@ -108,6 +108,11 @@ export const EngineAt = (database: string) =>
       );
     }).pipe(Effect.catchTag("PlatformError", Effect.die)),
   );
+
+// The engine in this machine's state.db.
+export const EngineLive = Layer.unwrap(
+  Home.use((home) => Effect.succeed(EngineAt(homePaths(home.root).state))),
+);
 
 // The repo's settings as a persona sees them: Repo.persona names it.
 export const personaSettings = (settings: RepoSettings, persona: Persona): RepoSettings =>
@@ -516,158 +521,156 @@ const markerHolds = (runId: RunId, flow: Flow) =>
     });
   });
 
+// A flow's workflow, registered in the engine. Its runs take their steps,
+// markers and subjects through the runs' dispatchers, which the composition
+// root provides from the runs module.
 export const flowLayer = <R>(
   handle: FlowHandle,
   servicesFor: ServicesFor<R>,
   hooks: StepHooks = noHooks,
 ) =>
-  handle.workflow
-    .toLayer((payload, executionId) =>
-      Effect.gen(function* () {
-        const runId = RunId.make(payload.runId);
-        const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
+  handle.workflow.toLayer((payload, executionId) =>
+    Effect.gen(function* () {
+      const runId = RunId.make(payload.runId);
+      const row = (yield* (yield* RunsQueries).FindRunQuery({ runId })).run;
 
-        // A run started under a core this binary doesn't provide is never
-        // replayed under this one: it goes to a person before any of its flow runs.
-        const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.coreVersion));
+      // A run started under a core this binary doesn't provide is never
+      // replayed under this one: it goes to a person before any of its flow runs.
+      const started = Option.flatMap(row, (found) => Option.fromUndefinedOr(found.coreVersion));
 
-        for (const version of Option.toArray(
-          Option.filter(started, (sdk) => !resumesRunsFrom(sdk)),
-        )) {
-          return {
-            status: "needs-human",
-            summary: unsupportedRunSummary(version),
-          } satisfies RunResult;
-        }
+      for (const version of Option.toArray(
+        Option.filter(started, (sdk) => !resumesRunsFrom(sdk)),
+      )) {
+        return {
+          status: "needs-human",
+          summary: unsupportedRunSummary(version),
+        } satisfies RunResult;
+      }
 
-        const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
-          Option.flatMap(row, (found) => found.persona),
-        );
+      const named = Option.orElse(Option.fromUndefinedOr(payload.persona), () =>
+        Option.flatMap(row, (found) => found.persona),
+      );
 
-        // A run from before personas acts as the implicit persona while the repo
-        // still has one, else as its first persona. Its row may not say so yet:
-        // the engine can resume it before the daemon adopts it.
-        const persona = Option.match(named, {
-          onSome: (login): Persona => Option.some(login),
-          onNone: () => {
-            if (Option.isSome(servicesFor(IMPLICIT))) {
-              return IMPLICIT;
-            }
+      // A run from before personas acts as the implicit persona while the repo
+      // still has one, else as its first persona. Its row may not say so yet:
+      // the engine can resume it before the daemon adopts it.
+      const persona = Option.match(named, {
+        onSome: (login): Persona => Option.some(login),
+        onNone: () => {
+          if (Option.isSome(servicesFor(IMPLICIT))) {
+            return IMPLICIT;
+          }
 
-            return defaultPersona(handle.repo);
-          },
+          return defaultPersona(handle.repo);
+        },
+      });
+
+      const services = servicesFor(persona);
+
+      if (Option.isNone(services)) {
+        const who = Option.getOrElse(persona, () => "the implicit persona");
+
+        return yield* new RunFailed({
+          message: `${who} no longer runs ${handle.repo.settings.name}; add it back to the repo's personas to finish this run`,
         });
+      }
 
-        const services = servicesFor(persona);
+      const context = yield* services.value.pipe(
+        Effect.mapError((error) => new RunFailed({ message: error.message })),
+      );
 
-        if (Option.isNone(services)) {
-          const who = Option.getOrElse(persona, () => "the implicit persona");
-
-          return yield* new RunFailed({
-            message: `${who} no longer runs ${handle.repo.settings.name}; add it back to the repo's personas to finish this run`,
-          });
-        }
-
-        const context = yield* services.value.pipe(
-          Effect.mapError((error) => new RunFailed({ message: error.message })),
-        );
-
-        // A step reported after its run ended changes nothing.
-        const enterStep = yield* capturing((step: string) =>
-          RunsCommands.use((runs) => runs.EnterStepCommand({ runId, step })).pipe(
-            Effect.catchTags({
-              RunAlreadyFinished: () => Effect.void,
-              RunNotFound: () => Effect.void,
-            }),
-          ),
-        );
-
-        const park = yield* capturing(
-          (parking: { signal: string; deferred: string; token: string }) =>
-            RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
-        );
-
-        // A subject named after its run ended changes nothing.
-        const nameSubject = yield* capturing((subject: string) =>
-          RunsCommands.use((runs) => runs.NameSubjectCommand({ runId, subject })).pipe(
-            Effect.catchTags({
-              RunAlreadyFinished: () => Effect.void,
-              RunNotFound: () => Effect.void,
-            }),
-            Effect.asVoid,
-          ),
-        );
-
-        const runLog = yield* runLogFor(payload.runId, {
-          onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
-          onStepDone: hooks.onStepDone,
-          onChange: hooks.onChange,
-        });
-
-        const signals = Signals.of({
-          register: (signal, deferred, token) =>
-            park({ signal, deferred, token }).pipe(Effect.asVoid),
-        });
-
-        const flow = yield* flowOfRun(
-          handle,
-          Option.flatMap(row, (found) => found.configTree),
-        );
-
-        const holds = yield* markerHolds(runId, flow);
-        const lost = yield* Deferred.make<string>();
-        const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
-
-        const outcome = yield* flow.workflow(payload.item).pipe(
-          Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
-          surfaceSetup,
-          Effect.catch(outcomeOf),
-          Effect.provideService(Run, {
-            flow: handle.name,
-            runId: payload.runId,
-            executionId,
-            item: payload.item,
-            leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
+      // A step reported after its run ended changes nothing.
+      const enterStep = yield* capturing((step: string) =>
+        RunsCommands.use((runs) => runs.EnterStepCommand({ runId, step })).pipe(
+          Effect.catchTags({
+            RunAlreadyFinished: () => Effect.void,
+            RunNotFound: () => Effect.void,
           }),
-          // An imported flow's prompts and steps are looked up in its package after the repo.
-          provideFlowPackage(flow),
-          Effect.provideService(RunLog, runLog),
-          Effect.provideService(Signals, signals),
-          Effect.provideService(Markers.MarkerHolds, holds),
-          Effect.provideService(
-            Subjects.RunSubjects,
-            Subjects.RunSubjects.of({ name: nameSubject }),
-          ),
-          Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
-          Effect.provideContext(
-            stoppingWith(
-              fencing(
-                reportingChanges(context, (what, item) =>
-                  hooks.onChange(handle.repo.settings.name, localCause(what, item)),
-                ),
-                fence,
+        ),
+      );
+
+      const park = yield* capturing(
+        (parking: { signal: string; deferred: string; token: string }) =>
+          RunsCommands.use((runs) => runs.ParkRunCommand({ runId, ...parking })),
+      );
+
+      // A subject named after its run ended changes nothing.
+      const nameSubject = yield* capturing((subject: string) =>
+        RunsCommands.use((runs) => runs.NameSubjectCommand({ runId, subject })).pipe(
+          Effect.catchTags({
+            RunAlreadyFinished: () => Effect.void,
+            RunNotFound: () => Effect.void,
+          }),
+          Effect.asVoid,
+        ),
+      );
+
+      const runLog = yield* runLogFor(payload.runId, {
+        onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
+        onStepDone: hooks.onStepDone,
+        onChange: hooks.onChange,
+      });
+
+      const signals = Signals.of({
+        register: (signal, deferred, token) =>
+          park({ signal, deferred, token }).pipe(Effect.asVoid),
+      });
+
+      const flow = yield* flowOfRun(
+        handle,
+        Option.flatMap(row, (found) => found.configTree),
+      );
+
+      const holds = yield* markerHolds(runId, flow);
+      const lost = yield* Deferred.make<string>();
+      const fence = leaseFence(payload.runId, Context.getOption(context, GitHub), holds, lost);
+
+      const outcome = yield* flow.workflow(payload.item).pipe(
+        Effect.map((summary): RunResult => ({ status: "done", summary: summaryOf(summary) })),
+        surfaceSetup,
+        Effect.catch(outcomeOf),
+        Effect.provideService(Run, {
+          flow: handle.name,
+          runId: payload.runId,
+          executionId,
+          item: payload.item,
+          leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
+        }),
+        // An imported flow's prompts and steps are looked up in its package after the repo.
+        provideFlowPackage(flow),
+        Effect.provideService(RunLog, runLog),
+        Effect.provideService(Signals, signals),
+        Effect.provideService(Markers.MarkerHolds, holds),
+        Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
+        Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
+        Effect.provideContext(
+          stoppingWith(
+            fencing(
+              reportingChanges(context, (what, item) =>
+                hooks.onChange(handle.repo.settings.name, localCause(what, item)),
               ),
-              executionId,
+              fence,
+            ),
+            executionId,
+          ),
+        ),
+        // A run that lost its item ends as lost, before any flow sees why.
+        (workflow) =>
+          Effect.raceFirst(
+            workflow,
+            Deferred.await(lost).pipe(
+              Effect.map((reason): RunResult => ({ status: "lost", summary: reason })),
             ),
           ),
-          // A run that lost its item ends as lost, before any flow sees why.
-          (workflow) =>
-            Effect.raceFirst(
-              workflow,
-              Deferred.await(lost).pipe(
-                Effect.map((reason): RunResult => ({ status: "lost", summary: reason })),
-              ),
-            ),
-          // Told to stop, it ends as an interrupt, before any flow sees why.
-          untilStopped(executionId),
-        );
+        // Told to stop, it ends as an interrupt, before any flow sees why.
+        untilStopped(executionId),
+      );
 
-        yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
+      yield* runLog.log(`finished: ${outcome.status}: ${outcome.summary}`);
 
-        return outcome;
-      }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
-    )
-    .pipe(Layer.provide(Layer.mergeAll(RunsQueriesLive, RunsCommandsLive)));
+      return outcome;
+    }).pipe(Effect.catchTag("RunFailed", Effect.fail), Effect.orDie),
+  );
 
 export const statusOfExit = (exit: Exit.Exit<RunResult, RunFailed>): WorkflowOutcome => {
   if (Exit.isSuccess(exit)) {

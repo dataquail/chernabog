@@ -21,36 +21,16 @@ import * as Stream from "effect/Stream";
 import { IMPLICIT } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
 import { migrateMachineConfig } from "../../migrate.ts";
-import {
-  EnrollmentCommandsLive,
-  EnrollmentLayer,
-  EnrollmentQueriesLive,
-} from "../../modules/enrollment/enrollment.platform.ts";
-import {
-  MachineCommands,
-  MachineCommandsLive,
-  MachineLayer,
-  MachineQueriesLive,
-} from "../../modules/machine/machine.platform.ts";
-import {
-  RecipesCommandsLive,
-  RecipesLayer,
-  RecipesQueriesLive,
-} from "../../modules/recipes/recipes.platform.ts";
-import {
-  RehearsalsCommandsLive,
-  RehearsalsQueriesLive,
-} from "../../modules/rehearsals/rehearsals.platform.ts";
+import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import {
   type ActiveRun,
   attachCommand,
   declaredLabels,
   questionHook,
   repoConfigDir,
+  runEventSpanAttributes,
   runLaunch,
-  RunLogsLayer,
   RunLogsQueries,
-  RunLogsQueriesLive,
   runSessions,
   runStepChild,
   type RunView,
@@ -58,7 +38,6 @@ import {
   stopHook,
   syncLabels,
 } from "../../modules/runs/runs.platform.ts";
-import { TrustCommandsLive, TrustQueriesLive } from "../../modules/trust/trust.platform.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Exec } from "../../platform/exec.ts";
 import { loadFlows } from "../../platform/flow-loader.ts";
@@ -69,6 +48,7 @@ import { withShutdownDeadline } from "../../platform/shutdown.ts";
 import { FileStoresUnitOfWork } from "../../platform/unit-of-work.ts";
 import { VERSION } from "../../platform/version.ts";
 import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
+import { applicationModules } from "../application-modules.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
 import { RELOAD_EXIT_CODE, runDaemon } from "../daemon/daemon.server.ts";
@@ -482,28 +462,18 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
-// One GitHubTokens for the process, so each persona's token is looked up once,
-// one bus that enrollment's and trust's commands dispatch their events on, and
-// the unit of work the commands over files declare.
-const AppLive = Layer.mergeAll(
-  EnrollmentLayer,
-  EnrollmentCommandsLive,
-  EnrollmentQueriesLive,
-  TrustCommandsLive,
-  TrustQueriesLive,
-  RunLogsLayer,
-  RunLogsQueriesLive,
-  MachineLayer,
-  MachineCommandsLive,
-  MachineQueriesLive,
-  RecipesLayer,
-  RecipesCommandsLive,
-  RecipesQueriesLive,
-  RehearsalsCommandsLive,
-  RehearsalsQueriesLive,
-).pipe(
+// Every module, over the CLI's own services: one GitHubTokens for the process,
+// so each persona's token is looked up once, one bus that the modules'
+// commands dispatch their events on, with what the runs' events say on their
+// spans, and the unit of work the commands over files declare.
+const AppLive = applicationModules.layer.pipe(
   Layer.provideMerge(
-    Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus(), FileStoresUnitOfWork),
+    Layer.mergeAll(
+      GitHubApi.layerFor(IMPLICIT),
+      Asker.layer,
+      makeEventBus({ spanAttributes: runEventSpanAttributes }),
+      FileStoresUnitOfWork,
+    ),
   ),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
