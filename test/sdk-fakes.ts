@@ -144,12 +144,14 @@ const STATE_OF: Readonly<Record<ReviewEvent, string>> = {
 };
 
 // CI on the head (the checks GitHub reports, or read from a verdict), CI on
-// the base branch when a test sets it (otherwise it reads as the head's), the
+// the base branch when a test sets it (otherwise it reads as the head's),
+// readings of the base's CI that come first, one per read, the
 // files the pull request changes, its mergeable_state on GitHub, whether
 // GitHub refuses the merge, and the merges asked for.
 export type MergeFake = {
   ci: CiState;
   baseCi: Option.Option<CiState>;
+  baseCiReads: Array<CiState>;
   checks: Option.Option<CiChecks>;
   files: Array<string>;
   state: string;
@@ -225,6 +227,7 @@ export const makeFake = (
   const merge: MergeFake = {
     ci: { state: "green" },
     baseCi: Option.none(),
+    baseCiReads: [],
     checks: Option.none(),
     files: ["src/a.ts"],
     state: "clean",
@@ -687,7 +690,10 @@ export const makeFake = (
         }),
       branchCiState: () =>
         Effect.sync(() => ({
-          ...Option.getOrElse(merge.baseCi, () => merge.ci),
+          ...Option.getOrElse(
+            Option.orElse(Option.fromUndefinedOr(merge.baseCiReads.shift()), () => merge.baseCi),
+            () => merge.ci,
+          ),
           failedRuns: [],
         })),
       ciFailureDetails: (run) =>

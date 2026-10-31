@@ -192,6 +192,10 @@ export const owner = (pullRequest: number) =>
 // run's rounds do (`merge-pr-12#land-3`); a refused try is saved like any step.
 export type MergeOptions = { readonly method: MergeMethod; readonly id?: string };
 
+// How merge's refusal for a red base begins (baseRed), which mergeHolding
+// tells from its other refusals.
+const HOLDING = "holding merge:";
+
 const refuse = (pullRequest: number, reason: string) => new MergeRefused({ pullRequest, reason });
 
 const short = (sha: string) => sha.slice(0, 7);
@@ -412,7 +416,7 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
       const red = yield* baseRed(pull);
 
       if (Option.isSome(red)) {
-        return yield* refuse(pullRequest, `holding merge: ${red.value}`);
+        return yield* refuse(pullRequest, `${HOLDING} ${red.value}`);
       }
 
       const ci = yield* Ci.pullRequestState(pullRequest);
@@ -502,7 +506,7 @@ const holdMarker = {
 // the merge, and when it looked, so a replay decides the same.
 const BaseCheck = Schema.Struct({ held: Schema.Option(Schema.String), at: Schema.Finite });
 
-const checkBase = (pullRequest: number, round: number) =>
+const checkBase = (pullRequest: number, round: string) =>
   activity(
     `base-ci-pr-${pullRequest}-${round}`,
     Effect.gen(function* () {
@@ -533,7 +537,7 @@ const holdLimit = (pullRequest: number) =>
 // the trigger reports the signal or the time left runs out.
 const parkOnBase = (
   pullRequest: number,
-  round: number,
+  round: string,
   base: string,
   left: Option.Option<Duration.Duration>,
 ) =>
@@ -583,12 +587,21 @@ const parkOnBase = (
 // lasts as long as the base stays red, unless the mergeHoldTimeout setting
 // caps it: then it fails with MergeRefused, for a person. With the flow's
 // settings not holding merges, or for a follow-up's fix, it returns at once.
-export const holdWhileBaseRed = (pullRequest: number) =>
+export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
   Effect.gen(function* () {
     let since = Option.none<number>();
 
     for (let round = 1; ; round++) {
-      const check = yield* checkBase(pullRequest, round);
+      // A later attempt (mergeHolding's) names its steps apart from the first's.
+      const named = Option.match(
+        Option.liftPredicate(attempt, (count) => count > 1),
+        {
+          onNone: () => `${round}`,
+          onSome: (count) => `${count}.${round}`,
+        },
+      );
+
+      const check = yield* checkBase(pullRequest, named);
 
       if (Option.isNone(check.held)) {
         return;
@@ -619,8 +632,53 @@ export const holdWhileBaseRed = (pullRequest: number) =>
         `Holding the merge: CI is failing on \`${base}\`. It merges once CI there is green again. ${holdMarker.write({ runId: run.runId, key: run.item.key })}`,
       );
 
-      if ((yield* parkOnBase(pullRequest, round, base, left)) !== BASE_GREEN) {
+      if ((yield* parkOnBase(pullRequest, named, base, left)) !== BASE_GREEN) {
         return yield* stayedRed;
+      }
+    }
+  });
+
+// Holds while the pull request's base branch is red (holdWhileBaseRed), then
+// merges it with merge's usual checks. A merge refused because the base
+// turned red after the hold last looked holds again, rather than failing:
+// only merge's other refusals, and a hold past mergeHoldTimeout, fail with
+// MergeRefused. The first try keeps merge's own step name (`merge-pr-7`, or
+// with `id`), and each later one adds `hold-<n>`.
+export const mergeHolding = (pullRequest: number, options: MergeOptions) =>
+  Effect.gen(function* () {
+    for (let attempt = 1; ; attempt++) {
+      yield* holdWhileBaseRed(pullRequest, attempt);
+
+      const id = Option.match(
+        Option.liftPredicate(attempt, (count) => count > 1),
+        {
+          onNone: () => Option.fromUndefinedOr(options.id),
+          onSome: (count) =>
+            Option.some(
+              Option.match(Option.fromUndefinedOr(options.id), {
+                onNone: () => `hold-${count}`,
+                onSome: (given) => `${given}-hold-${count}`,
+              }),
+            ),
+        },
+      );
+
+      const merged = yield* merge(pullRequest, {
+        method: options.method,
+        ...Option.match(id, { onNone: () => ({}), onSome: (named) => ({ id: named }) }),
+      }).pipe(
+        Effect.asSome,
+        Effect.catchTag("MergeRefused", (refused) => {
+          if (refused.reason.startsWith(HOLDING)) {
+            return Effect.succeedNone;
+          }
+
+          return Effect.fail(refused);
+        }),
+      );
+
+      if (Option.isSome(merged)) {
+        return merged.value;
       }
     }
   });
@@ -755,7 +813,7 @@ export const waitingOnLayer = (pullRequest: number) =>
 // is safe, and otherwise hands it to a person; a layer waiting for the one
 // below is left approved, any other pull request is left for a person to
 // merge, and one closed meanwhile is left alone. While its base branch is red
-// it holds the merge (holdWhileBaseRed), so the flow's trigger should include
+// it holds the merge (mergeHolding), so the flow's trigger should include
 // baseTurnedGreen.
 export const mergeOrLeave = (pullRequest: number) =>
   Effect.gen(function* () {
@@ -769,8 +827,7 @@ export const mergeOrLeave = (pullRequest: number) =>
       return `#${pullRequest} approved; ${waiting.value}`;
     }
 
-    return yield* holdWhileBaseRed(pullRequest).pipe(
-      Effect.andThen(merge(pullRequest, { method: "squash" })),
+    return yield* mergeHolding(pullRequest, { method: "squash" }).pipe(
       Effect.catchTags({
         MergeRefused: (refused) => handToPerson(pullRequest, refused.message),
         PullRequestClosed: (closed) => Effect.succeed(`${closed.message}; nothing to merge`),

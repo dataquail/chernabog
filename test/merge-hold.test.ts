@@ -57,6 +57,10 @@ const flow = defineFlow({
   trigger: Effect.succeed([]),
   workflow: (work) =>
     Effect.gen(function* () {
+      if (work.key === "merge-holding") {
+        return yield* PullRequest.mergeHolding(PULL, { method: "squash" });
+      }
+
       if (work.key !== "merge-only") {
         yield* PullRequest.holdWhileBaseRed(PULL);
       }
@@ -246,6 +250,39 @@ describe("holding a merge on a red base branch", () => {
         expect(finished.status).toBe("needs-human");
         expect(summaryOf(finished)).toContain("holding merge: CI failing on main");
         expect(fake.merge.requests).toEqual([]);
+      }),
+  );
+
+  effect(
+    "mergeHolding holds again, rather than handing over, when the base turns red between the hold's look and the merge's",
+    () =>
+      Effect.gen(function* () {
+        const fake = approved(GREEN);
+        // The hold sees it green, merge sees it red, and the next hold red again.
+        fake.merge.baseCiReads.push(GREEN, RED, RED);
+        const work = item("merge-holding");
+        let held = false;
+
+        const finished = yield* runUntil(holding, fake, work, (run) =>
+          Effect.gen(function* () {
+            if (run.status !== "running") {
+              return true;
+            }
+
+            if (yield* parkedOnBase(run)) {
+              held = true;
+              expect(fake.merge.requests).toEqual([]);
+              yield* deliverSignals(holding, IMPLICIT, yield* woken(fake));
+            }
+
+            return false;
+          }),
+        );
+
+        expect(held).toBe(true);
+        expect(finished.status).toBe("done");
+        expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
+        expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
       }),
   );
 

@@ -86,8 +86,7 @@ const mergeIfShipping = (pullRequest: number) =>
     }
 
     // While CI on the base branch is red, the merge holds rather than going to a person.
-    return yield* PullRequest.holdWhileBaseRed(pullRequest).pipe(
-      Effect.andThen(PullRequest.merge(pullRequest, { method: "squash" })),
+    return yield* PullRequest.mergeHolding(pullRequest, { method: "squash" }).pipe(
       Effect.catchTag("MergeRefused", (refused) =>
         Effect.gen(function* () {
           if (yield* conflicts(pullRequest)) {
