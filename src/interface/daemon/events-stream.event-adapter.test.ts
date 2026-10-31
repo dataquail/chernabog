@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { effect } from "../../../test/effect-test.ts";
 import { CountedStreamsBus, OpenStreams } from "../../../test/events.ts";
@@ -23,6 +25,7 @@ import {
   broadcastDaemonEvents,
   eventsRoute,
   openEventFeed,
+  SNAPSHOT_SHARED_FOR,
 } from "./events-stream.event-adapter.ts";
 
 // The modules a daemon adds, over a runtime with no flows and a state.db in a
@@ -87,17 +90,15 @@ const field = (lines: ReadonlyArray<string>, name: string) =>
     () => "",
   );
 
-// A client of /events, reading its events (pings left out) into a queue
-// until it drops, which ends the request.
-const connect = (handler: (request: Request) => Promise<Response>) =>
+// Reads an event stream's bytes, its events (pings left out) into a queue,
+// until the reader is interrupted, as a client dropping.
+const reader = <E>(bytes: Stream.Stream<Uint8Array, E>) =>
   Effect.gen(function* () {
-    const response = yield* Effect.promise(() => handler(new Request("http://daemon/events")));
-    const body = yield* Effect.fromOption(Option.fromNullOr(response.body)).pipe(Effect.orDie);
     const frames = yield* Queue.unbounded<Frame>();
     let lines: Array<string> = [];
 
     const reading = yield* Effect.forkScoped(
-      Stream.fromReadableStream({ evaluate: () => body, onError: (error) => error }).pipe(
+      bytes.pipe(
         Stream.decodeText,
         Stream.splitLines,
         Stream.runForEach((line) => {
@@ -133,8 +134,25 @@ const connect = (handler: (request: Request) => Promise<Response>) =>
         ),
       );
 
-    return { response, frames, next, drop: Fiber.interrupt(reading) };
+    return { frames, next, drop: Fiber.interrupt(reading) };
   });
+
+// A client of /events over HTTP.
+const connect = (handler: (request: Request) => Promise<Response>) =>
+  Effect.gen(function* () {
+    const response = yield* Effect.promise(() => handler(new Request("http://daemon/events")));
+    const body = yield* Effect.fromOption(Option.fromNullOr(response.body)).pipe(Effect.orDie);
+
+    const client = yield* reader(
+      Stream.fromReadableStream({ evaluate: () => body, onError: (error) => error }),
+    );
+
+    return { response, ...client };
+  });
+
+// Lets the fibers a client started run until they wait on something: its
+// subscription, its checkpoint and its choice of computation take no time.
+const settle = Effect.yieldNow.pipe(Effect.repeat({ times: 100 }));
 
 // The /events route over a feed of `snapshot`, as a web handler.
 const serving = (snapshot: Effect.Effect<DaemonStatus>) =>
@@ -246,6 +264,77 @@ describe("the /events stream", () => {
 
       yield* late.drop;
       yield* early.drop;
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+
+  effect("tells a client sharing a snapshot that outlives the sharing window what it missed", () =>
+    Effect.gen(function* () {
+      const computed = yield* Ref.make(0);
+      const begun = yield* Deferred.make<boolean>();
+      const gate = yield* Deferred.make<boolean>();
+
+      const feed = yield* openEventFeed(
+        Ref.update(computed, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(begun, true)),
+          Effect.andThen(Deferred.await(gate)),
+          Effect.as(status),
+        ),
+      );
+
+      // A starts the first computation, which a slow status keeps open.
+      const first = yield* reader(feed.connect);
+      yield* Deferred.await(begun);
+
+      // B joins it after a run started, which its snapshot may not show.
+      yield* start("a");
+      const joining = yield* reader(feed.connect);
+      yield* settle;
+
+      // Past the sharing window, C starts a second computation, and the bus
+      // says something more meanwhile.
+      yield* TestClock.adjust(Duration.sum(SNAPSHOT_SHARED_FOR, Duration.millis(200)));
+      const latest = yield* reader(feed.connect);
+
+      yield* Effect.yieldNow.pipe(
+        Effect.andThen(Ref.get(computed)),
+        Effect.repeat({ until: (count) => count >= 2, times: 1000 }),
+      );
+      yield* start("b");
+      yield* Deferred.succeed(gate, true);
+
+      expect((yield* Queue.take(joining.frames)).event).toBe("snapshot");
+      expect((yield* Queue.take(joining.frames)).id).toBe("a:started");
+      expect((yield* joining.next("RunStarted")).id).toBe("b:started");
+      expect(yield* Ref.get(computed)).toBe(2);
+
+      yield* Effect.forEach([first, joining, latest], (client) => client.drop);
+      // The test's clock is virtual; the engine, built beside it, keeps the real one.
+    }).pipe(Effect.provide(Layer.mergeAll(daemonInScratch, TestClock.layer()))),
+  );
+
+  effect("starts a fresh snapshot for a client that connects after one failed", () =>
+    Effect.gen(function* () {
+      const computed = yield* Ref.make(0);
+
+      const feed = yield* openEventFeed(
+        Ref.updateAndGet(computed, (count) => count + 1).pipe(
+          Effect.filterOrFail(
+            (count) => count > 1,
+            () => "status failed",
+          ),
+          Effect.as(status),
+        ),
+      );
+
+      // The first client's stream ends with nothing, its snapshot failed.
+      const failed = yield* Stream.runCollect(feed.connect.pipe(Stream.take(1)));
+      expect(failed).toEqual([]);
+
+      const again = yield* reader(feed.connect);
+      expect((yield* Queue.take(again.frames)).event).toBe("snapshot");
+      expect(yield* Ref.get(computed)).toBe(2);
+
+      yield* again.drop;
     }).pipe(Effect.provide(daemonInScratch)),
   );
 
