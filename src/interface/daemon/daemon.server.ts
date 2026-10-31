@@ -22,6 +22,7 @@ import * as Record from "effect/Record";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 // The dashboard's page: Bun bundles it and what it loads, and `bun build
 // --compile` embeds the bundle in the binary.
@@ -92,6 +93,7 @@ import {
   TELEMETRY_RETENTION,
 } from "../../platform/retention.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
+import { watchStateChanges } from "../../platform/state-changes.ts";
 import {
   checkFlowSettings,
   checkManualSchedules,
@@ -109,15 +111,23 @@ import {
 import { engineRuntime } from "../application-runtime.ts";
 import {
   CancelRequest,
+  DaemonReloading,
   DaemonStatus,
   type PersonaStatus,
   Refusal,
   Reloaded,
   type RepoStatus,
   RunRequest,
+  StatusChanged,
+  TickRan,
   TickResult,
 } from "./daemon.protocol.ts";
 import { commandsRoute } from "./daemon-commands.server.ts";
+import {
+  broadcastDaemonEvents,
+  eventsRoute,
+  openEventFeed,
+} from "./events-stream.event-adapter.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
 
@@ -717,6 +727,22 @@ export const runDaemon = Effect.gen(function* () {
       // Set once chernabog's binary changes under the daemon: it starts no new
       // runs, and restarts on the new binary once none is executing.
       const draining = yield* Ref.make(false);
+
+      // Sets a reload pending or the daemon draining, and tells the /events
+      // stream's clients the first time.
+      const reloading = (flag: Ref.Ref<boolean>, reason: DaemonReloading["reason"]) =>
+        Effect.gen(function* () {
+          if (yield* Ref.getAndSet(flag, true)) {
+            return;
+          }
+
+          const at = DateTime.formatIso(yield* DateTime.now);
+
+          yield* broadcastDaemonEvents([
+            DaemonReloading.make({ eventId: `daemon:${reason}:${at}`, reason, at }),
+          ]);
+        });
+
       const executable = yield* watchedExecutable;
 
       const startedAs = yield* Option.match(executable, {
@@ -1043,6 +1069,26 @@ export const runDaemon = Effect.gen(function* () {
             log(`${scheduleName(repo.name, schedule)}: tick failed: ${String(cause)}`).pipe(
               Effect.as({ started: [], skipped: Option.some("tick failed") } satisfies TickResult),
             ),
+          ),
+          // Told to the /events stream's clients, whatever it did.
+          Effect.tap((result) =>
+            Effect.gen(function* () {
+              const at = DateTime.formatIso(yield* DateTime.now);
+
+              yield* broadcastDaemonEvents([
+                TickRan.make({
+                  eventId: `${scheduleName(repo.name, schedule)}:ticked:${at}`,
+                  repo: repo.name,
+                  flow: schedule.handle.name,
+                  persona: schedule.persona,
+                  cause: options.cause,
+                  started: result.started,
+                  skipped: result.skipped,
+                  queued: schedule.queued,
+                  at,
+                }),
+              ]);
+            }),
           ),
         );
 
@@ -1438,7 +1484,7 @@ export const runDaemon = Effect.gen(function* () {
           });
 
           if (claim.first) {
-            yield* Ref.set(reloadPending, true);
+            yield* reloading(reloadPending, "reload-pending");
           }
         });
 
@@ -1503,7 +1549,7 @@ export const runDaemon = Effect.gen(function* () {
           yield* log(
             `${repo.name}: checkout ${checkoutChange(missing)} at ${repo.enrolled.path}; restarting on it when idle`,
           );
-          yield* Ref.set(reloadPending, true);
+          yield* reloading(reloadPending, "reload-pending");
         }
       });
 
@@ -1525,7 +1571,7 @@ export const runDaemon = Effect.gen(function* () {
 
         enrolledChanged = true;
         yield* log("enrolled repos changed; restarting on them when idle");
-        yield* Ref.set(reloadPending, true);
+        yield* reloading(reloadPending, "reload-pending");
       });
 
       // Notices chernabog's binary changing under the daemon, as a Homebrew
@@ -1542,7 +1588,7 @@ export const runDaemon = Effect.gen(function* () {
             continue;
           }
 
-          yield* Ref.set(draining, true);
+          yield* reloading(draining, "draining");
           yield* log(
             `chernabog changed at ${path}; draining: starting no new runs, and restarting on it once the runs executing now finish (runs parked on a signal resume after)`,
           );
@@ -1743,6 +1789,43 @@ export const runDaemon = Effect.gen(function* () {
         } satisfies DaemonStatus;
       });
 
+      // GET /events: the status, then what happens, to the dashboard and the TUI.
+      const feed = yield* openEventFeed(status);
+
+      // What the bus can't hear: machine config, paused.json or trust.json
+      // edited by a person or another process, and state.db written by
+      // another process's engine (a foreground run, a rehearsal). Told to
+      // the /events stream's clients, once a second at most, to ask /status
+      // again. A change the daemon made itself is told on the bus already.
+      const inHome = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+      yield* Effect.forkScoped(
+        Stream.runForEach(
+          watchStateChanges({
+            dir: paths.state.slice(0, paths.state.lastIndexOf("/")),
+            files: [paths.machineConfig, paths.paused, paths.trust].map(inHome),
+            database: {
+              name: inHome(paths.state),
+              version: RunsQueries.use((runs) => runs.ReadStateVersionQuery()).pipe(
+                Effect.map((found) => found.version),
+              ),
+            },
+          }),
+          (files) =>
+            Effect.gen(function* () {
+              const at = DateTime.formatIso(yield* DateTime.now);
+
+              yield* broadcastDaemonEvents([
+                StatusChanged.make({ eventId: `status:changed:${at}`, files, at }),
+              ]);
+            }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            log(`watching the home for changes failed: ${String(cause)}`),
+          ),
+        ),
+      );
+
       // The schedule a person names: the flow's only persona, or the one asked for.
       const findSchedule = (repoName: string, flowName: string, persona: Option.Option<string>) => {
         const repo = Arr.findFirst(
@@ -1901,6 +1984,7 @@ export const runDaemon = Effect.gen(function* () {
           answer(status.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DaemonStatus)))),
         ),
         runsRoutes(answer),
+        eventsRoute(feed),
         HttpRouter.add(
           "POST",
           "/reload",

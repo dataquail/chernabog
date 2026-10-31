@@ -5,6 +5,12 @@
 
 export { type Enrolled } from "./commands/apply-enrollment.command.ts";
 export { type PauseState } from "./commands/pause-repo.command.ts";
+export {
+  RepoEnrolled,
+  RepoPaused,
+  RepoResumed,
+  RepoUnenrolled,
+} from "./domain/enrolled-repo/enrolled-repo.events.ts";
 export { FLOW_TURNED_OFF } from "./domain/enrolled-repo/team-flows.value-object.ts";
 export { enrollmentCommandGroup, EnrollmentCommands } from "./enrollment.command-handlers.ts";
 export { EnrollmentModule } from "./enrollment.module.ts";

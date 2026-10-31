@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import { writeFileAtomic } from "./atomic-write.ts";
 import { createLock, LockState, lockState, takeOverLock } from "./lock.ts";
+import { noteOwnWrite } from "./state-changes.ts";
 
 export class FileBusy extends Schema.TaggedError<FileBusy, { readonly brand: "FileBusy" }>()(
   "FileBusy",
@@ -132,6 +133,8 @@ export const updateFile = <A, E, R>(
 
       for (const text of Option.toArray(next)) {
         yield* writeFileAtomic(fs, path, text);
+        // So the daemon's watch on the file takes this change for its own.
+        yield* noteOwnWrite(fs, path);
       }
 
       return result;
