@@ -77,6 +77,7 @@ import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
+import { keepDayFolders, TELEMETRY_RETENTION } from "../../platform/retention.ts";
 import { fileIdentity, watchedExecutable } from "../../platform/self.ts";
 import {
   checkFlowSettings,
@@ -458,6 +459,19 @@ export const runDaemon = Effect.gen(function* () {
   if (machine.github.length > 0) {
     yield* log(`acting on GitHub as ${machine.github.join(", ")}`);
   }
+
+  // Keeps <home>/telemetry to its retention, now and once a day, on a fiber
+  // of its own. A failed sweep is logged, and the next day's tries again.
+  yield* Effect.forkScoped(
+    keepDayFolders(paths.telemetry, TELEMETRY_RETENTION, {
+      swept: (removed) =>
+        Effect.when(
+          log(`telemetry: removed ${removed.join(", ")}, past retention`),
+          Effect.succeed(removed.length > 0),
+        ).pipe(Effect.asVoid),
+      failed: (cause) => log(`telemetry: the retention sweep failed: ${String(cause)}`),
+    }),
+  );
 
   const busy = yield* Ref.make(0);
 
