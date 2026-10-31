@@ -1,5 +1,6 @@
 import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -146,6 +147,33 @@ describe("releaseRunMarkersHandler", () => {
           releases,
           releaseFails: ["GitHub is down"],
         }),
+      ),
+    );
+  });
+
+  effect("leaves a release already tried, even one due again, to the sweep", () => {
+    const releases: Array<{ runId: string; name: string; args: Schema.Json }> = [];
+    const ended = run("a", "done");
+
+    return Effect.gen(function* () {
+      yield* releaseRunMarkersHandler(finished(ended));
+
+      expect(released(releases)).toEqual([["a", "fresh"]]);
+    }).pipe(
+      Effect.provide(
+        runtime(
+          [ended],
+          [
+            // Failed long ago, so its retry is due: the sweep's, not this reaction's.
+            RunMarkerRootOps.failed(
+              marker("a", "tried"),
+              "GitHub is down",
+              DateTime.makeUnsafe(AT),
+            ),
+            marker("a", "fresh"),
+          ],
+          { items: [], markers: ["tried", "fresh"], releases },
+        ),
       ),
     );
   });

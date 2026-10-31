@@ -120,7 +120,17 @@ const failed = (marker: RunMarkerRoot, reason: string, now: DateTime.Utc) => {
 // A run's markers newest first, the order they're released in, from the order they were held.
 const releaseOrder = (markers: ReadonlyArray<RunMarkerRoot>) => markers.toReversed();
 
+const SWEEP_GRACE = Duration.minutes(15);
+
+const leftToSweep = (_marker: RunMarkerRoot, _endedAt: Option.Option<string>, _now: DateTime.Utc) =>
+  true;
+
+const untried = (_marker: RunMarkerRoot) => true;
+
 export const RunMarkerRootOps = {
+  SWEEP_GRACE,
+  leftToSweep,
+  untried,
   argsText,
   same,
   hold,

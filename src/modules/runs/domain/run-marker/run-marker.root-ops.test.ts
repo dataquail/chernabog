@@ -84,4 +84,26 @@ describe("RunMarkerRootOps", () => {
 
     expect(RunMarkerRootOps.releaseOrder([first, second])).toEqual([second, first]);
   });
+
+  test("the sweep leaves an untried release to the run's ending, until it has had its chance", () => {
+    const untried = RunMarkerRootOps.hold(holding(), AT);
+    const tried = RunMarkerRootOps.failed(untried, "GitHub is down", NOW);
+    const later = DateTime.addDuration(NOW, RunMarkerRootOps.SWEEP_GRACE);
+
+    // Just ended: its ending's reaction may still be releasing it.
+    expect(RunMarkerRootOps.leftToSweep(untried, Option.some(AT), NOW)).toBe(false);
+    // Once the grace has passed, a crash must have kept the reaction from it.
+    expect(RunMarkerRootOps.leftToSweep(untried, Option.some(AT), later)).toBe(true);
+    // A release the reaction tried and failed is the sweep's to retry.
+    expect(RunMarkerRootOps.leftToSweep(tried, Option.some(AT), NOW)).toBe(true);
+    // A run that kept no end time has nothing to wait for.
+    expect(RunMarkerRootOps.leftToSweep(untried, Option.none(), NOW)).toBe(true);
+  });
+
+  test("a run's ending releases only what nothing has tried yet", () => {
+    const untried = RunMarkerRootOps.hold(holding(), AT);
+
+    expect(RunMarkerRootOps.untried(untried)).toBe(true);
+    expect(RunMarkerRootOps.untried(RunMarkerRootOps.failed(untried, "down", NOW))).toBe(false);
+  });
 });

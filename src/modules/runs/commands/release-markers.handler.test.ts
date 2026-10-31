@@ -183,4 +183,37 @@ describe("releaseMarkersHandler", () => {
         ]),
       ),
   );
+
+  effect(
+    "leaves a run that just ended to its ending's release, and sweeps it once the grace is up",
+    () => {
+      const releases: Array<{ runId: string; name: string; args: Schema.Json }> = [];
+      const now = DateTime.nowUnsafe();
+
+      const justEnded = DateTime.formatIso(now);
+
+      const longAgo = DateTime.formatIso(
+        DateTime.subtractDuration(now, RunMarkerRootOps.SWEEP_GRACE),
+      );
+
+      return Effect.gen(function* () {
+        const done = yield* releaseMarkersHandler();
+
+        expect(done.released.map((view) => view.runId)).toEqual([RunId.make("b")]);
+        expect(releases.map((release) => release.runId)).toEqual(["b"]);
+      }).pipe(
+        Effect.provide([
+          runtime(
+            [
+              RunRoot.make({ ...run("a", "done"), finishedAt: Option.some(justEnded) }),
+              RunRoot.make({ ...run("b", "done"), finishedAt: Option.some(longAgo) }),
+            ],
+            [marker("a", "first"), marker("b", "first")],
+            { items: [], markers: ["first"], releases },
+          ),
+          PassThroughUnitOfWork,
+        ]),
+      );
+    },
+  );
 });
