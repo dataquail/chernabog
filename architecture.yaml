@@ -69,7 +69,7 @@ deny:
     message: >-
       The yaml package is how machine config is stored, not what it means. Only a repository
       adapter (infrastructure/repositories/) writes a YAML document, and only it and a query,
-      which reads its storage directly (docs/adr/0010-queries-read-their-storage.md), read one;
+      which reads its storage directly (docs/adr/0011-queries-read-their-storage.md), read one;
       the domain and the commands see aggregates, never a Document.
   - match: "**/node_modules/@effect/sql*/**"
     except:
@@ -79,7 +79,7 @@ deny:
     message: >-
       SQLite is where runs and the workflow journal are stored. Only the runs module's
       infrastructure and the engine name the SQL client, and the runs module's queries, which
-      read state.db directly (docs/adr/0010-queries-read-their-storage.md); everything else
+      read state.db directly (docs/adr/0011-queries-read-their-storage.md); everything else
       writes runs through the Run repository and reads them through a runs query.
   - match: "**/node_modules/@opentui/**"
     except: ["@/interface/tui/**"]
@@ -152,7 +152,7 @@ graph:
         - "@/interface/**"
         - "@/platform/**"
       # Where chernabog keeps its files, which a query reads directly
-      # (docs/adr/0010-queries-read-their-storage.md). It names no adapter.
+      # (docs/adr/0011-queries-read-their-storage.md). It names no adapter.
       toNot: ["@/platform/home.ts"]
     - name: packages-reach-no-daemon
       message: >-
@@ -316,8 +316,9 @@ defs:
       reset: true
       message: >-
         A handler test names its module, the kernel and the shared test harness
-        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes.
-      external: [effect]
+        (test/*.ts) — scripted askers and fixtures. It runs over the module's fakes, in the
+        unit-of-work library's pass-through unit of work.
+      external: [effect, "@effect-server-utils/unit-of-work"]
       allow: ["@/kernel/**", "@/modules/{module}/**", "test/*.ts"]
 
   # A mapper's test reads a stored row back as its aggregate, with no store.
@@ -371,6 +372,18 @@ defs:
         harness (test/*.ts) — the scratch home and fixtures.
       external: [effect]
       allow: ["@/kernel/**", "@/modules/{module}/**", "@/platform/home.ts", "test/*.ts"]
+
+  # state.db's transaction driver's test runs the unit-of-work library's unit
+  # of work over the driver, against a real SQLite database.
+  transaction-driver-test-file:
+    surface: [{ use: test-exports-nothing }]
+    imports:
+      reset: true
+      message: >-
+        A transaction driver's test names its module, the shared test harness (test/*.ts) — a
+        scratch SQLite database — and the unit-of-work library it runs the driver under.
+      external: [effect, "@effect-server-utils/unit-of-work"]
+      allow: ["@/modules/{module}/**", "test/*.ts"]
 
   # A handler answers with its result; saying it, asking a person or ending
   # the process is the adapter's (docs/adr/0001-ddd-use-cases-and-ports.md,
@@ -468,8 +481,9 @@ tree:
           message: >-
             A platform adapter wraps the machine. It names effect, node, the SDK (for its error
             descriptions and types), the kernel and its siblings, and chernabog's package.json for
-            its version; nothing of the modules, the interface or the legacy tier.
-          external: [effect]
+            its version; nothing of the modules, the interface or the legacy tier. The unit of
+            work the file stores' commands declare names the CQRS and unit-of-work libraries.
+          external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
           allow:
             - "node:**"
             - "~/core/src/**"
@@ -735,10 +749,11 @@ tree:
               reset: true
               message: >-
                 A module's handler map registers its messages' handlers on the bus with the live
-                adapters they need, from its layer. It names its own module, effect and the CQRS
-                library.
-              external: [effect, "@effect-server-utils/cqrs"]
-              allow: ["@/modules/{module}/**"]
+                adapters they need, from its layer, and pins its dispatcher to the unit of work it
+                is built beside. It names its own module, effect, the CQRS and unit-of-work
+                libraries, and the platform's unit of work.
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
+              allow: ["@/modules/{module}/**", "@/platform/unit-of-work.ts"]
 
           # The span attribute extractors the module's dispatchers and event
           # bus are built with, keyed by message and event tag.
@@ -935,12 +950,12 @@ tree:
             imports:
               reset: true
               message: >-
-                A command names effect, the CQRS library, the kernel, its own
+                A command names effect, the CQRS and unit-of-work libraries, the kernel, its own
                 module's domain (aggregates and ports) and its sibling commands. Never a query
                 (what two do together, the adapter that dispatches them composes),
                 never infrastructure (adapters are provided by the handler map), never
                 interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+              external: [effect, "@effect-server-utils/cqrs", "@effect-server-utils/unit-of-work"]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"
@@ -964,7 +979,7 @@ tree:
               reset: true
               message: >-
                 A query reads its storage directly and answers with a read model it owns
-                (docs/adr/0010-queries-read-their-storage.md). It names effect (its FileSystem
+                (docs/adr/0011-queries-read-their-storage.md). It names effect (its FileSystem
                 among it), the CQRS library, the kernel, its sibling queries, its module's
                 storage/ (the file and row schemas it shares with the repositories), where
                 chernabog keeps its files (@/platform/home.ts), and its module's domain: its
@@ -990,7 +1005,7 @@ tree:
 
           # How the module's stores keep things on disk, which its repositories
           # write and its queries read directly: the hexagon's RowSchemas
-          # (docs/adr/0010-queries-read-their-storage.md). Only the format is
+          # (docs/adr/0011-queries-read-their-storage.md). Only the format is
           # shared; each side maps it to its own model.
           "storage/":
             message: >-
@@ -1039,13 +1054,17 @@ tree:
                     machine config, JSON for runtime state. Until the machine
                     module owns machine config, a repository reads and edits it through the
                     legacy machinery in config.ts and repo-config.ts, and nothing else of the
-                    legacy tier.
-                  external: [yaml]
+                    legacy tier. state.db's transaction driver adapts the unit-of-work library's
+                    port to the SQL client the stores share.
+                  external: [yaml, "@effect-server-utils/unit-of-work"]
                   allow: ["@/platform/**", "@/repo-config.ts", "@/modules/{module}/storage/**"]
                 children:
                   "*.repository-live.ts": { members: [{ use: no-in-place-writes }] }
                   "*.repository-fake.ts": { members: [{ use: no-in-place-writes }] }
                   "*.mapper.ts": { members: [{ use: no-in-place-writes }] }
+                  # The transaction a command's unit of work opens in the stores' database.
+                  "*.transaction-driver-live.ts": {}
+                  "*.transaction-driver-live.test.ts": { use: transaction-driver-test-file }
                   "*.repository-live.test.ts": { use: adapter-test-file }
                   "*.mapper.test.ts": { use: mapper-test-file }
                   # What a SQLite repository's reads compile their specification with.
@@ -1195,6 +1214,7 @@ tree:
         - "@effect/platform-bun"
         - "@effect/sql-sqlite-bun"
         - "@effect-server-utils/cqrs"
+        - "@effect-server-utils/unit-of-work"
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:
@@ -1245,13 +1265,13 @@ campaigns:
       every change to an aggregate ripples into what the CLI, the TUI and the daemon show, and a
       read can't be shaped for the one who asks without reshaping the aggregate. A query reads its
       storage itself and answers with a read model it owns, as queries-isolation holds in
-      dataquail/functional-domain-driven-hexagon (docs/adr/0010-queries-read-their-storage.md).
+      dataquail/functional-domain-driven-hexagon (docs/adr/0011-queries-read-their-storage.md).
     how: >-
       Have the handler read the file with effect's FileSystem (and yaml for machine config) or, in
       runs, state.db with SQL, decoding it with the Schema in the module's storage/ that its
       repository writes with. Move the view it answers with, and its read-side errors, into its
       *.query.ts; express any rule it asked a root's ops over the read model, or reclassify it as
-      ADR 10 records. Keep its integration test unchanged, then run `bun run architecture:clear`.
+      ADR 11 records. Keep its integration test unchanged, then run `bun run architecture:clear`.
     owner: "@zacharyweidenbach"
     scope: ["src/modules/**"]
     perimeter: { glob: "src/modules/*/" }

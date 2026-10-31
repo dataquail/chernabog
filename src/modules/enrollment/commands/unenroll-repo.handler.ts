@@ -1,4 +1,5 @@
 import { EventBus } from "@effect-server-utils/cqrs";
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -9,23 +10,29 @@ import { EnrolledRepoSummary } from "../domain/enrolled-repo/enrolled-repo-summa
 import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { type UnenrollRepoPayload } from "./unenroll-repo.command.ts";
 
-export const unenrollRepoHandler = Effect.fn("unenrollRepoHandler")(function* (
-  cmd: UnenrollRepoPayload,
-) {
-  const repository = yield* EnrolledReposRepository;
+export const unenrollRepoHandler = Effect.fn("unenrollRepoHandler")(
+  function* (cmd: UnenrollRepoPayload) {
+    const repository = yield* EnrolledReposRepository;
 
-  const repo = yield* Effect.fromResult(
-    EnrolledRepoRootOps.named(yield* repository.findMany(EnrolledRepoSpecifications.all), cmd.name),
-  );
+    const repo = yield* Effect.fromResult(
+      EnrolledRepoRootOps.named(
+        yield* repository.findMany(EnrolledRepoSpecifications.all),
+        cmd.name,
+      ),
+    );
 
-  yield* repository.deleteOne(repo);
-  yield* (yield* EventBus).dispatch([
-    EnrollmentEvents.unenrolled(repo, DateTime.formatIso(yield* DateTime.now)),
-  ]);
+    yield* repository.deleteOne(repo);
+    yield* (yield* EventBus).dispatch([
+      EnrollmentEvents.unenrolled(repo, DateTime.formatIso(yield* DateTime.now)),
+    ]);
 
-  return EnrolledRepoSummary.make({
-    name: EnrolledRepoRootOps.nameOf(repo),
-    repo: repo.repo,
-    path: repo.path,
-  });
-});
+    return EnrolledRepoSummary.make({
+      name: EnrolledRepoRootOps.nameOf(repo),
+      repo: repo.repo,
+      path: repo.path,
+    });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

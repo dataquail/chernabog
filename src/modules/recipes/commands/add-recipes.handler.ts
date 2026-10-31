@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -10,60 +11,67 @@ import { type AddRecipesPayload, RecipesAdded } from "./add-recipes.command.ts";
 
 const MANIFEST = ".chernabog/package.json";
 
-export const addRecipesHandler = Effect.fn("addRecipesHandler")(function* (cmd: AddRecipesPayload) {
-  const { names, root } = cmd;
-  const dir = yield* ChernabogDirClient;
-  const packages = yield* RecipePackagesClient;
+export const addRecipesHandler = Effect.fn("addRecipesHandler")(
+  function* (cmd: AddRecipesPayload) {
+    const { names, root } = cmd;
+    const dir = yield* ChernabogDirClient;
+    const packages = yield* RecipePackagesClient;
 
-  if (names.length === 0) {
-    return RecipesAdded.make({ files: [] });
-  }
+    if (names.length === 0) {
+      return RecipesAdded.make({ files: [] });
+    }
 
-  yield* packages.restore(root);
+    yield* packages.restore(root);
 
-  const recipes = yield* Effect.fromResult(
-    RecipeRootOps.allNamed(yield* packages.installed(root), names),
-  );
+    const recipes = yield* Effect.fromResult(
+      RecipeRootOps.allNamed(yield* packages.installed(root), names),
+    );
 
-  const files: Array<(typeof RecipesAdded.Type.files)[number]> = [];
-  const records: Record<string, Option.Option<CopiedRecord>> = {};
+    const files: Array<(typeof RecipesAdded.Type.files)[number]> = [];
+    const records: Record<string, Option.Option<CopiedRecord>> = {};
 
-  for (const recipe of recipes) {
-    const ref = RecipeRootOps.refOf(recipe);
+    for (const recipe of recipes) {
+      const ref = RecipeRootOps.refOf(recipe);
 
-    for (const file of RecipeRootOps.filesOf(recipe)) {
-      const path = `.chernabog/${file}`;
+      for (const file of RecipeRootOps.filesOf(recipe)) {
+        const path = `.chernabog/${file}`;
 
-      if (Option.isSome(yield* dir.read(root, path))) {
-        if (file === RecipeRootOps.flowFileOf(recipe)) {
-          files.push({ file: path, recipe: ref, version: recipe.version, outcome: "kept" });
+        if (Option.isSome(yield* dir.read(root, path))) {
+          if (file === RecipeRootOps.flowFileOf(recipe)) {
+            files.push({ file: path, recipe: ref, version: recipe.version, outcome: "kept" });
+          }
+
+          continue;
         }
 
-        continue;
+        const text = yield* Effect.fromOption(
+          yield* packages.file(root, recipe.package, file),
+        ).pipe(
+          Effect.mapError(
+            () =>
+              new RecipeFilesFailed({
+                message: `${recipe.package}@${recipe.version} names ${file} for ${recipe.name}, and hasn't it`,
+              }),
+          ),
+        );
+
+        yield* dir.write(root, path, text);
+        records[file] = Option.some({
+          from: `${recipe.package}/${recipe.name}`,
+          version: recipe.version,
+        });
+        files.push({ file: path, recipe: ref, version: recipe.version, outcome: "wrote" });
       }
-
-      const text = yield* Effect.fromOption(yield* packages.file(root, recipe.package, file)).pipe(
-        Effect.mapError(
-          () =>
-            new RecipeFilesFailed({
-              message: `${recipe.package}@${recipe.version} names ${file} for ${recipe.name}, and hasn't it`,
-            }),
-        ),
-      );
-
-      yield* dir.write(root, path, text);
-      records[file] = Option.some({
-        from: `${recipe.package}/${recipe.name}`,
-        version: recipe.version,
-      });
-      files.push({ file: path, recipe: ref, version: recipe.version, outcome: "wrote" });
     }
-  }
 
-  if (Object.keys(records).length > 0) {
-    const manifest = Option.getOrElse(yield* dir.read(root, MANIFEST), () => "{}\n");
-    yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(manifest, records)));
-  }
+    if (Object.keys(records).length > 0) {
+      const manifest = Option.getOrElse(yield* dir.read(root, MANIFEST), () => "{}\n");
+      yield* dir.write(root, MANIFEST, yield* Effect.fromResult(withCopied(manifest, records)));
+    }
 
-  return RecipesAdded.make({ files });
-});
+    return RecipesAdded.make({ files });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

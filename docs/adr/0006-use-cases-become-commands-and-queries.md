@@ -4,9 +4,11 @@ Status: accepted, 2026-10-29. Issue #228. Supersedes decision 1 of
 [ADR 1](0001-ddd-use-cases-and-ports.md), the CQRS bus, its message definitions
 and the unit-of-work library on that ADR's list of what was left behind, and
 its settled question on folder names. Amends decision 1 of
-[ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md). Its
-consequence that a query may call its aggregate's predicates is superseded by
-[ADR 10](0010-queries-read-their-storage.md).
+[ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md).
+Decision 5 is superseded by [ADR 10](0010-commands-declare-their-unit-of-work.md):
+every command declares its unit of work. Its consequence that a query may call
+its aggregate's predicates is superseded by
+[ADR 11](0011-queries-read-their-storage.md).
 
 ## Context
 
@@ -74,7 +76,7 @@ and an event bus for when the events come.
   move that first needs it.
 - A query may call its aggregate's predicates in `*.root-ops.ts`, as
   `checkTrust` asks `TrustRecordRootOps.trusts`; only commands may change an
-  aggregate. (Superseded by [ADR 10](0010-queries-read-their-storage.md): a
+  aggregate. (Superseded by [ADR 11](0011-queries-read-their-storage.md): a
   query reads its storage directly and never reaches the domain.)
 - The campaign's last phase dispatches domain events from commands, which is
   where ADR 3's "no domain events yet" is next decided, with a durability

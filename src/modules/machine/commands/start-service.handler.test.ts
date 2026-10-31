@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -9,7 +10,7 @@ describe("startServiceHandler", () => {
   effect("starts an installed daemon", () =>
     Effect.gen(function* () {
       expect((yield* startServiceHandler()).installed).toBe(true);
-    }).pipe(Effect.provide(ServiceManagerClientFake(true))),
+    }).pipe(Effect.provide([ServiceManagerClientFake(true), PassThroughUnitOfWork])),
   );
 
   effect("refuses a daemon not installed", () =>
@@ -17,6 +18,6 @@ describe("startServiceHandler", () => {
       expect((yield* Effect.flip(startServiceHandler())).message).toBe(
         "the daemon is not installed; run chernabog install",
       );
-    }).pipe(Effect.provide(ServiceManagerClientFake(false))),
+    }).pipe(Effect.provide([ServiceManagerClientFake(false), PassThroughUnitOfWork])),
   );
 });

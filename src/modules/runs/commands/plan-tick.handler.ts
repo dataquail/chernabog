@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,17 @@ import { decideTick, freeSlots, TickPlan } from "../domain/schedule/tick.value-o
 import { SkipRoot } from "../domain/skip/skip.root.ts";
 import { SkipsRepository } from "../domain/skip/skips.repository.ts";
 import { type PlanTickPayload } from "./plan-tick.command.ts";
+
+// The unit of work around this command's reads and writes in state.db alone.
+// What it asks of GitHub, git, a launcher or the engine stays outside it: a
+// transaction holds state.db's one connection, which the engine's journal
+// waits on (docs/adr/0010-commands-declare-their-unit-of-work.md).
+const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    withUnitOfWork,
+    // state.db is a file on this machine: it has no outage to wait out.
+    Effect.catchTag("PersistenceUnavailable", Effect.die),
+  );
 
 const describeQueued = (item: WorkItem) =>
   Option.match(Option.fromUndefinedOr(item.title), {
@@ -49,7 +61,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
       );
 
       return TickPlan.make({ ...plan, start: [], skipped: Option.some(reason) });
-    });
+    }).pipe(inUnitOfWork);
 
   if (input.gates) {
     const decision = decideTick({ ...input.conditions, now: yield* DateTime.now });
@@ -103,22 +115,22 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
     ...Option.toArray(lookedUp.success),
   ];
 
-  yield* (yield* HoldsRepository).upsertOne(
-    HoldsRoot.make({
-      repo: flow.repo,
-      persona: flow.persona,
-      flow: flow.flow,
-      items: items.flatMap((item) =>
-        Option.toArray(
-          Option.map(Option.fromUndefinedOr(item.held), (reason) => ({
-            itemKey: item.key,
-            reason,
-          })),
-        ),
+  const holding = HoldsRoot.make({
+    repo: flow.repo,
+    persona: flow.persona,
+    flow: flow.flow,
+    items: items.flatMap((item) =>
+      Option.toArray(
+        Option.map(Option.fromUndefinedOr(item.held), (reason) => ({
+          itemKey: item.key,
+          reason,
+        })),
       ),
-      at: DateTime.formatIso(yield* DateTime.now),
-    }),
-  );
+    ),
+    at: DateTime.formatIso(yield* DateTime.now),
+  });
+
+  yield* HoldsRepository.use((holds) => holds.upsertOne(holding)).pipe(inUnitOfWork);
 
   const running = yield* (yield* RunsRepository).findMany(RunSpecifications.running);
 

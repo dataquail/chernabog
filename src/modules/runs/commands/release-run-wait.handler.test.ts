@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -23,7 +24,7 @@ describe("releaseRunWaitHandler", () => {
         ),
       ).toEqual(["d2"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         RunWaitsRepositoryFake([
           RunWaitRoot.make({
             runId,
@@ -40,7 +41,8 @@ describe("releaseRunWaitHandler", () => {
             parkedAt: Option.none(),
           }),
         ]),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

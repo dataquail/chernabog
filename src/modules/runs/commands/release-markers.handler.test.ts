@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -71,13 +72,14 @@ describe("releaseMarkersHandler", () => {
       expect(names((yield* releaseMarkersHandler()).released)).toEqual([]);
       expect((yield* listUnreleasedMarkersHandler()).markers).toEqual([]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(
           [run("a", "failed"), run("b", "running")],
           [marker("a", "first"), marker("b", "first"), marker("a", "second")],
           { items: [], markers: ["first", "second"], releases },
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     );
   });
 
@@ -89,7 +91,7 @@ describe("releaseMarkersHandler", () => {
       expect(done.kept[0]?.runId).toBe(RunId.make("a"));
       expect(done.released.map((view) => view.runId)).toEqual([RunId.make("b")]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(
           [run("a", "needs-human"), run("b", "cancelled")],
           [
@@ -98,7 +100,8 @@ describe("releaseMarkersHandler", () => {
           ],
           { items: [], markers: ["needs-person"], releases: [] },
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -120,14 +123,15 @@ describe("releaseMarkersHandler", () => {
       expect(names((yield* releaseMarkersHandler()).released)).toEqual([]);
       expect(releases).toEqual([]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime([run("a", "failed")], [marker("a", "first")], {
           items: [],
           markers: ["first"],
           releases,
           releaseFails: fails,
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     );
   });
 
@@ -137,7 +141,7 @@ describe("releaseMarkersHandler", () => {
 
       expect(names(done.released)).toEqual(["first"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(
           [run("a", "failed")],
           [
@@ -150,7 +154,8 @@ describe("releaseMarkersHandler", () => {
           ],
           { items: [], markers: ["first"], releases: [] },
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 
@@ -168,13 +173,14 @@ describe("releaseMarkersHandler", () => {
           (yield* listUnreleasedMarkersHandler()).markers.map((view) => [view.name, view.status]),
         ).toEqual([["gone", "unreleasable"]]);
       }).pipe(
-        Effect.provide(
+        Effect.provide([
           runtime([run("a", "done")], [marker("a", "gone")], {
             items: [],
             markers: [],
             releases: [],
           }),
-        ),
+          PassThroughUnitOfWork,
+        ]),
       ),
   );
 });

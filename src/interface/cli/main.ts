@@ -66,6 +66,7 @@ import { GitHubApi } from "../../platform/github-api.ts";
 import { GitHubTokens } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
+import { FileStoresUnitOfWork } from "../../platform/unit-of-work.ts";
 import { VERSION } from "../../platform/version.ts";
 import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
@@ -482,7 +483,8 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 const PlatformLive = Layer.mergeAll(BunServices.layer, HostEnvironment.layer, Home.layer);
 
 // One GitHubTokens for the process, so each persona's token is looked up once,
-// and one bus that enrollment's and trust's commands dispatch their events on.
+// one bus that enrollment's and trust's commands dispatch their events on, and
+// the unit of work the commands over files declare.
 const AppLive = Layer.mergeAll(
   EnrollmentLayer,
   EnrollmentCommandsLive,
@@ -500,7 +502,9 @@ const AppLive = Layer.mergeAll(
   RehearsalsCommandsLive,
   RehearsalsQueriesLive,
 ).pipe(
-  Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus())),
+  Layer.provideMerge(
+    Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer, makeEventBus(), FileStoresUnitOfWork),
+  ),
   Layer.provideMerge(GitHubTokens.layer),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(PlatformLive),

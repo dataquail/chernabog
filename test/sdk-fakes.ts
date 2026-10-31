@@ -66,6 +66,7 @@ import {
   flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { type RunsUnitOfWorkLive } from "../src/modules/runs/runs.command-handlers.ts";
 import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
@@ -966,7 +967,9 @@ export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 // A run as the engine reports it, and the stores a test may read it back from.
 export type EngineRun = RunView | ActiveRun;
 
-export type RunsServices = Layer.Success<typeof RunsLayer>;
+// The runs module's stores, and the unit of work its commands declare over them.
+export type RunsServices =
+  Layer.Success<typeof RunsLayer> | Layer.Success<typeof RunsUnitOfWorkLive>;
 
 // What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
 export type RuntimeServices = RunsServices | Layer.Success<ReturnType<typeof runtimeFor>>;

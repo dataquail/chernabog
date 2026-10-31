@@ -228,7 +228,7 @@ transitive reach), the coverage floors and the baseline.
   adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters, queries (and the legacy tier)
   name `yaml`; only the runs module's infrastructure, its queries and the
   engine name SQL.
-- **Queries read their storage directly** (ADR 10). A query reads its file
+- **Queries read their storage directly** (ADR 11). A query reads its file
   with `FileSystem` (or `state.db` with SQL, in runs), decodes it with the
   Schema in its module's `storage/`, and answers with a read model declared in
   its `*.query.ts`. From the domain it names only ids and client ports; never
@@ -355,6 +355,18 @@ transitive reach), the coverage floors and the baseline.
   refuses to drop a persona an enrolled repo runs as; the CLI passes
   enrollment's `ListPersonasInUseQuery` in, since modules don't read each
   other.
+- **Every command declares its unit of work** (ADR 10): its handler pipes
+  `withUnitOfWork` at the end of its `Effect.fn`, and demotes
+  `PersistenceUnavailable` to a defect beside it. The runs' commands open a
+  `state.db` transaction (`RunsUnitOfWorkLive`, provided by `StateAt`);
+  the file stores' a scope that opens nothing (`FileStoresUnitOfWork`, in
+  `AppLive`), and each dispatcher pins its own (`ownUnitOfWork`). A
+  transaction holds `state.db`'s one connection, which the engine's journal
+  waits on: never call GitHub, git, a launcher or the engine inside one. A
+  command that calls out declares the boundary around its `state.db` reads
+  and writes only. Events are dispatched inside the unit of work; a
+  dispatch outside one is a defect. Handler tests get `PassThroughUnitOfWork`
+  with `RecordedEvents` (`test/events.ts`).
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
@@ -405,7 +417,7 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way. `read-models` (ADR 10, #283) counts the queries still reaching
+  under way. `read-models` (ADR 11, #283) counts the queries still reaching
   their module's domain. `cqrs`, which moved every use-case to a command
   or query and had the commands dispatch their domain events, is retired
   (#273). A campaign's ledger in `.architecture-campaigns/` lists what is

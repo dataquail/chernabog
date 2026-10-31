@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -40,7 +41,7 @@ describe("attachExecutionHandler", () => {
           (found) => found.executionId,
         ),
       ).toEqual(Option.some("x"));
-    }).pipe(Effect.provide(RunsRepositoryFake([run("a")]))),
+    }).pipe(Effect.provide([RunsRepositoryFake([run("a")]), PassThroughUnitOfWork])),
   );
 
   effect("fails for a run no one started", () =>
@@ -50,6 +51,6 @@ describe("attachExecutionHandler", () => {
           attachExecutionHandler({ runId: RunId.make("nope"), executionId: "x" }),
         ))._tag,
       ).toBe("RunNotFound");
-    }).pipe(Effect.provide(RunsRepositoryFake([]))),
+    }).pipe(Effect.provide([RunsRepositoryFake([]), PassThroughUnitOfWork])),
   );
 });

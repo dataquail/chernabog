@@ -1,4 +1,4 @@
-# 10. Queries read their storage directly and never reach the domain
+# 11. Queries read their storage directly and never reach the domain
 
 Status: accepted, 2026-10-31. Issue #283. Supersedes the consequence of
 [ADR 6](0006-use-cases-become-commands-and-queries.md) that "a query may call

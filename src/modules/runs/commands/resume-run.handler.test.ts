@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -65,14 +66,15 @@ describe("resumeRunHandler", () => {
 
       expect(engine.resumed).toEqual(["execution-a"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         runtime(engine, {
           runs: [
             run("a"),
             run("done", { status: "done", finishedAt: Option.some("2026-10-21T00:00:00.000Z") }),
           ],
         }),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });

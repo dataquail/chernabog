@@ -1,3 +1,4 @@
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -35,76 +36,79 @@ const parseAccount = (spec: string, home: string) =>
     return { dir, agent: agent.value } satisfies NewAccount;
   });
 
-export const applySetupHandler = Effect.fn("applySetupHandler")(function* (
-  answers: ApplySetupPayload,
-) {
-  const repository = yield* MachineSetupsRepository;
-  const dirs = yield* AccountDirsClient;
-  const home = yield* dirs.home;
+export const applySetupHandler = Effect.fn("applySetupHandler")(
+  function* (answers: ApplySetupPayload) {
+    const repository = yield* MachineSetupsRepository;
+    const dirs = yield* AccountDirsClient;
+    const home = yield* dirs.home;
 
-  const before = Option.getOrElse(
-    yield* repository.findOne(MachineSetupSpecifications.thisMachine),
-    () => MachineSetupRootOps.unset,
-  );
+    const before = Option.getOrElse(
+      yield* repository.findOne(MachineSetupSpecifications.thisMachine),
+      () => MachineSetupRootOps.unset,
+    );
 
-  const loggedIn = yield* (yield* GitHubLoginsClient).logins;
+    const loggedIn = yield* (yield* GitHubLoginsClient).logins;
 
-  const personas = yield* Option.match(answers.personas, {
-    onSome: (chosen) =>
-      Effect.fromResult(
-        MachineSetupRootOps.choosePersonas(before, chosen, loggedIn, answers.inUse),
-      ).pipe(Effect.asSome),
-    onNone: () =>
-      Effect.succeed(
-        Option.map(
-          Option.liftPredicate(loggedIn, (logins) => logins.length === 1),
-          (only) => MachineSetupRootOps.addPersonas(before, only),
+    const personas = yield* Option.match(answers.personas, {
+      onSome: (chosen) =>
+        Effect.fromResult(
+          MachineSetupRootOps.choosePersonas(before, chosen, loggedIn, answers.inUse),
+        ).pipe(Effect.asSome),
+      onNone: () =>
+        Effect.succeed(
+          Option.map(
+            Option.liftPredicate(loggedIn, (logins) => logins.length === 1),
+            (only) => MachineSetupRootOps.addPersonas(before, only),
+          ),
         ),
-      ),
-  });
+    });
 
-  const known = MachineSetupRootOps.knownDirs(before, home);
+    const known = MachineSetupRootOps.knownDirs(before, home);
 
-  const specs = yield* Option.match(answers.accounts, {
-    onSome: Effect.succeed,
-    onNone: () =>
-      dirs.found.pipe(
-        Effect.map((found) => {
-          const candidates = found.filter(
-            (dir) => !known.includes(dir) && Option.isSome(MachineSetupRootOps.agentOfDir(dir)),
-          );
+    const specs = yield* Option.match(answers.accounts, {
+      onSome: Effect.succeed,
+      onNone: () =>
+        dirs.found.pipe(
+          Effect.map((found) => {
+            const candidates = found.filter(
+              (dir) => !known.includes(dir) && Option.isSome(MachineSetupRootOps.agentOfDir(dir)),
+            );
 
-          return Option.getOrElse(
-            Option.liftPredicate(
-              candidates,
-              (only) => only.length === 1 && !before.accountsWritten,
-            ),
-            (): ReadonlyArray<string> => [],
-          );
+            return Option.getOrElse(
+              Option.liftPredicate(
+                candidates,
+                (only) => only.length === 1 && !before.accountsWritten,
+              ),
+              (): ReadonlyArray<string> => [],
+            );
+          }),
+        ),
+    });
+
+    const adding = yield* Effect.forEach(specs, (spec) => parseAccount(spec, home));
+
+    const { added, setup } = MachineSetupRootOps.addAccounts(
+      Option.getOrElse(personas, () => before),
+      adding,
+      home,
+    );
+
+    yield* repository.upsertOne(setup);
+
+    return SetupOutcome.make({
+      personas: Option.map(personas, (chosen) => chosen.personas),
+      before: before.personas,
+      loggedIn,
+      added: added.map((account) =>
+        AddedAccount.make({
+          name: account.name,
+          display: Option.getOrElse(account.configDir, () => account.name),
+          agent: account.agent,
         }),
       ),
-  });
-
-  const adding = yield* Effect.forEach(specs, (spec) => parseAccount(spec, home));
-
-  const { added, setup } = MachineSetupRootOps.addAccounts(
-    Option.getOrElse(personas, () => before),
-    adding,
-    home,
-  );
-
-  yield* repository.upsertOne(setup);
-
-  return SetupOutcome.make({
-    personas: Option.map(personas, (chosen) => chosen.personas),
-    before: before.personas,
-    loggedIn,
-    added: added.map((account) =>
-      AddedAccount.make({
-        name: account.name,
-        display: Option.getOrElse(account.configDir, () => account.name),
-        agent: account.agent,
-      }),
-    ),
-  });
-});
+    });
+  },
+  withUnitOfWork,
+  // Its stores are files on this machine: they have no outage to wait out.
+  Effect.catchTag("PersistenceUnavailable", Effect.die),
+);

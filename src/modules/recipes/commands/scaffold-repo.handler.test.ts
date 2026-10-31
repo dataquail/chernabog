@@ -1,3 +1,4 @@
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -44,7 +45,7 @@ describe("scaffoldRepoHandler", () => {
         [".gitignore", "ignored"],
       ]);
       expect(fresh.stored["/repo/.gitignore"]).toBe("dist\n.chernabog/node_modules/\n");
-    }).pipe(Effect.provide(fresh.layer)),
+    }).pipe(Effect.provide([fresh.layer, PassThroughUnitOfWork])),
   );
 
   const stale = repoWith({
@@ -63,7 +64,7 @@ describe("scaffoldRepoHandler", () => {
       ]);
       expect(stale.stored["/repo/.chernabog/config.yaml"]).toBe("mine\n");
       expect(stale.stored["/repo/.chernabog/package.json"]).toBe('{ "pinned" }\n');
-    }).pipe(Effect.provide(stale.layer)),
+    }).pipe(Effect.provide([stale.layer, PassThroughUnitOfWork])),
   );
 
   const tooNew = repoWith({ ".chernabog/package.json": '{ "too new" }\n' });
@@ -74,7 +75,7 @@ describe("scaffoldRepoHandler", () => {
 
       expect(refused._tag).toBe("ScaffoldRefused");
       expect(Object.keys(tooNew.stored)).toEqual(["/repo/.chernabog/package.json"]);
-    }).pipe(Effect.provide(tooNew.layer)),
+    }).pipe(Effect.provide([tooNew.layer, PassThroughUnitOfWork])),
   );
 
   const withFlows = {
@@ -88,13 +89,14 @@ describe("scaffoldRepoHandler", () => {
 
       expect(withFlows.stored["/repo/.chernabog/config.schema.json"]).toBe("{flows of /repo}\n");
     }).pipe(
-      Effect.provide(
+      Effect.provide([
         Layer.mergeAll(
           ChernabogDirClientFake(withFlows.stored),
           BundleClientFake(withFlows.scaffold),
           TextDiffClientFake,
         ),
-      ),
+        PassThroughUnitOfWork,
+      ]),
     ),
   );
 });
