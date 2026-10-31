@@ -3,9 +3,8 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { type TrustOutcome } from "../../../modules/trust/commands/trust-repo.command.ts";
-import { TrustCommands } from "../../../modules/trust/trust.command-handlers.ts";
+import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.platform.ts";
+import { TrustCommands, type TrustOutcome } from "../../../modules/trust/trust.platform.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { optionalRepo } from "../repo.arguments.ts";
 

@@ -6,7 +6,7 @@ import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
-import { cronProblem } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
+import { cronProblem } from "../../modules/runs/runs.platform.ts";
 import {
   allRuns,
   flowEnabled,
