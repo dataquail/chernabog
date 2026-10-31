@@ -4,12 +4,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
+import { sqliteAfter } from "../../../../test/sqlite.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type ValidityQuestion } from "../domain/run/work-item.value-object.ts";
 import { RunValidity } from "../domain/schedule/validity.value-object.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
-import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
+import { RunsRepositoryLive } from "../infrastructure/repositories/runs.repository-live.ts";
 import { checkRunValidityHandler } from "./check-run-validity.handler.ts";
 
 const work = { key: "pr-1", data: { pullRequest: 1 } };
@@ -34,8 +36,14 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
+// The runs in a real state.db; the flow's stillValid, which asks GitHub, stays a fake.
 const runtime = (runs: ReadonlyArray<RunRoot>, flow: FakeFlow) =>
-  Layer.mergeAll(RunsRepositoryFake(runs), FlowsClientFake({ "demo/review": flow }));
+  Layer.mergeAll(
+    Layer.effectDiscard(
+      Effect.forEach(runs, (saved) => RunsRepository.use((repository) => repository.save(saved))),
+    ).pipe(Layer.provideMerge(RunsRepositoryLive), Layer.provide(sqliteAfter(Effect.void))),
+    FlowsClientFake({ "demo/review": flow }),
+  );
 
 const checking = (id: string) => checkRunValidityHandler({ runId: RunId.make(id) });
 
