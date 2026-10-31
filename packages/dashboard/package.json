@@ -1,0 +1,16 @@
+{
+  "name": "@chernabog/dashboard",
+  "private": true,
+  "license": "MIT",
+  "description": "The dashboard the daemon serves: a React page over the daemon's protocol, bundled by Bun and embedded in the binary",
+  "type": "module",
+  "dependencies": {
+    "effect": "4.0.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
+}

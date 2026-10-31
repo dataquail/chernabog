@@ -23,6 +23,9 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+// The dashboard's page: Bun bundles it and what it loads, and `bun build
+// --compile` embeds the bundle in the binary.
+import dashboard from "../../../packages/dashboard/index.html";
 import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
@@ -1915,7 +1918,15 @@ export const runDaemon = Effect.gen(function* () {
       );
       yield* Layer.build(
         HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
-          Layer.provide(BunHttpServer.layer({ unix: paths.socket })),
+          Layer.provide(
+            BunHttpServer.layer({
+              unix: paths.socket,
+              // The dashboard at /, and the scripts it loads, which Bun routes
+              // itself; the routes above answer the rest.
+              routes: { "/": dashboard },
+              development: false,
+            }),
+          ),
         ),
       );
       yield* log(`daemon ${process.pid} listening on ${paths.socket}`);
