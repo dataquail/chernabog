@@ -114,6 +114,7 @@ import {
   RunRequest,
   TickResult,
 } from "./daemon.protocol.ts";
+import { commandsRoute } from "./daemon-commands.server.ts";
 import { subscribeMarkerReleases } from "./marker-releases.event-adapter.ts";
 import { subscribeRunEndings } from "./run-endings.event-adapter.ts";
 
@@ -1882,6 +1883,14 @@ export const runDaemon = Effect.gen(function* () {
         return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
       });
 
+      // What changed under the daemon since it started: a repo's trusted
+      // config, its checkout, the enrolled repos, chernabog's binary.
+      const recheck = checkConfig.pipe(
+        Effect.andThen(checkCheckouts),
+        Effect.andThen(checkEnrolled),
+        Effect.andThen(checkExecutable),
+      );
+
       const routes = Layer.mergeAll(
         HttpRouter.add(
           "GET",
@@ -1893,14 +1902,22 @@ export const runDaemon = Effect.gen(function* () {
           "POST",
           "/reload",
           answer(
-            checkConfig.pipe(
-              Effect.andThen(checkCheckouts),
-              Effect.andThen(checkEnrolled),
-              Effect.andThen(checkExecutable),
+            recheck.pipe(
               Effect.andThen(Ref.get(reloadPending)),
               Effect.flatMap((pending) =>
                 HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }),
               ),
+            ),
+          ),
+        ),
+        // A command a client dispatches here changes what /reload checks
+        // (machine config, trust), so the daemon checks it at once, as a
+        // client's /reload would have had it do.
+        commandsRoute(
+          answer,
+          recheck.pipe(
+            Effect.catch((error) =>
+              log(`could not check what a command changed: ${describeError(error)}`),
             ),
           ),
         ),

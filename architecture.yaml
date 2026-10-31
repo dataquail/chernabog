@@ -717,10 +717,12 @@ tree:
               reset: true
               message: >-
                 The daemon's protocol is made of the modules' results, and its client reaches the
-                socket in the chernabog home. They name effect, the value objects and events the
-                modules answer with, through each module's <module>.platform.ts, and home.ts for
-                the home's paths.
-              external: [effect]
+                socket in the chernabog home. They name effect, the CQRS library (for the commands
+                the daemon dispatches for its clients, which cross the socket as their own
+                messages declare them), the value objects, events and command groups the modules
+                answer with, through each module's <module>.platform.ts, and home.ts for the
+                home's paths.
+              external: [effect, "@effect-server-utils/cqrs"]
               allow:
                 - "@/modules/*/*.platform.ts"
                 - "@/interface/daemon/**"
@@ -760,11 +762,12 @@ tree:
                   message: >-
                     The daemon dispatches the modules' commands and queries on a schedule and over
                     its socket, and registers the routes a module serves itself
-                    (interface/daemon/<module>.endpoint-groups.ts). It names effect and Bun's HTTP server, the kernel, the platform,
+                    (interface/daemon/<module>.endpoint-groups.ts). It names effect, Bun's HTTP
+                    server and the CQRS library's CommandBus (for POST /commands/:tag), the kernel, the platform,
                     its own protocol, each module's <module>.platform.ts (its buses, layers and
                     value objects, and the runtime the runs module still publishes there), and
                     the legacy files it still reads, each named here until a module owns it.
-                  external: [effect, "@effect/platform-bun"]
+                  external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
                   allow:
                     - "@/kernel/**"
                     - "@/platform/**"

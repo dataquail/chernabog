@@ -10,7 +10,11 @@ import * as Option from "effect/Option";
 import { Asker, type Choice } from "../../../../interface/cli/asker.prompt.ts";
 import { printLines } from "../../../../interface/cli/cli.output.ts";
 import { listed, listFlag } from "../../../../interface/cli/list.arguments.ts";
-import { daemonReload } from "../../../../interface/daemon/daemon.client.ts";
+import {
+  DaemonEnrollmentCommands,
+  daemonReload,
+  throughDaemon,
+} from "../../../../interface/daemon/daemon.client.ts";
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { type Enrolled } from "../../commands/apply-enrollment.command.ts";
@@ -293,7 +297,7 @@ export const enrollCheckout = (root: string, flags: EnrollFlags) =>
       }
     }
 
-    const enrolled = yield* (yield* EnrollmentCommands).ApplyEnrollmentCommand({
+    const answers = {
       path: root,
       name: flags.name,
       offered: machine,
@@ -306,13 +310,23 @@ export const enrollCheckout = (root: string, flags: EnrollFlags) =>
         accounts: named,
         asked,
       },
-    });
+    };
+
+    // Every question is asked by now. The daemon applies them, and schedules
+    // the repo; here, with none running, a daemon that starts meanwhile
+    // reloads on it.
+    const enrolled = yield* throughDaemon(
+      DaemonEnrollmentCommands.ApplyEnrollmentCommand(answers),
+      EnrollmentCommands.use((enrollment) => enrollment.ApplyEnrollmentCommand(answers)).pipe(
+        Effect.tap(() => daemonReload.pipe(Effect.ignore)),
+      ),
+    );
 
     return { enrolled, lines: describeEnrolled(enrolled) };
   });
 
 // Enrolls the repo at `root` and says what it chose. A running daemon
-// restarts to schedule it; none running is fine.
+// enrolls it, and restarts to schedule it; none running is fine.
 export const enrollHere = (root: string, flags: EnrollFlags) =>
   Effect.gen(function* () {
     const { enrolled, lines } = yield* enrollCheckout(root, flags);
@@ -328,7 +342,6 @@ export const enrollHere = (root: string, flags: EnrollFlags) =>
 
     yield* Console.log(`${action} ${enrolled.repo} (${enrolled.path}) in ${file}`);
     yield* printLines(lines);
-    yield* daemonReload.pipe(Effect.ignore);
 
     return enrolled;
   });

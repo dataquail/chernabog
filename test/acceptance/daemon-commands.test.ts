@@ -112,7 +112,7 @@ describe("a state-changing command", () => {
     expect(paused.code).toBe(0);
     expect(paused.output).toContain("paused demo");
     expect(cliSpans(sandbox, paused.pid)).toContain("event.RepoPaused");
-    expect((await sandbox.runCli(["status"])).output).toContain("paused");
+    expect(readFileSync(join(sandbox.home, "paused.json"), "utf8")).toContain("dataquail/demo");
 
     await sandbox.runCli(["resume", "demo"]);
   }, 30_000);
