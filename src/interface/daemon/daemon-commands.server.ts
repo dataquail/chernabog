@@ -1,4 +1,4 @@
-// POST /commands/:tag: an allowlisted command (daemon-commands.protocol.ts)
+// POST /commands/:tag: an allowlisted command (daemon-commands.client.ts)
 // dispatched on the daemon's merged CommandBus (docs/adr/0015-composition-roots.md),
 // so what it says reaches the daemon's event bus. The body is the command's
 // payload, decoded with its own schema; the answer is its success, encoded
@@ -17,7 +17,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { Refusal } from "./daemon.protocol.ts";
-import { daemonCommand, daemonCommandTags, wireSchemas } from "./daemon-commands.protocol.ts";
+import { daemonCommand, daemonCommandTags, wireSchemas } from "./daemon-commands.client.ts";
 
 const CommandPath = Schema.Struct({ tag: Schema.String });
 

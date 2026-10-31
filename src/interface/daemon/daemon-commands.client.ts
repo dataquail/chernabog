@@ -1,5 +1,5 @@
 // The commands the daemon dispatches for its clients, on its own bus, through
-// one route, POST /commands/:tag (docs/adr/0016-state-changing-commands-go-through-the-daemon.md).
+// one route, POST /commands/:tag (docs/adr/0017-state-changing-commands-go-through-the-daemon.md).
 // Each crosses the socket as its own CQRS message declares it: the payload,
 // the success and the failure are the command's schemas, so no route or
 // protocol type is written per command. A tag not listed here is refused.

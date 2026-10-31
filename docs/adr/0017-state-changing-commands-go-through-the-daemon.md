@@ -1,4 +1,4 @@
-# 16. State-changing CLI commands go through the daemon first
+# 17. State-changing CLI commands go through the daemon first
 
 Status: accepted, 2026-10-31. Issue #326. Generalizes what `start` and
 `cancel` already did (`daemonRun`, `daemonCancel`). Builds on the merged
@@ -34,7 +34,7 @@ with a protocol type of its own beside the command's.
    dispatch that succeeded, the daemon runs the checks `/reload` runs, so a
    command that changed machine config or trust needs no `/reload` after it.
 2. **An allowlist, beside the route**
-   (`src/interface/daemon/daemon-commands.protocol.ts`), as subsets of the
+   (`src/interface/daemon/daemon-commands.client.ts`), as subsets of the
    modules' command groups:
    - enrollment's `ApplyEnrollmentCommand`, `UnenrollRepoCommand`,
      `PauseRepoCommand`, `ResumeRepoCommand`, `SetPersonaFlowCommand`,

@@ -11,7 +11,7 @@
     "test": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json",
     "test:unit": "bun test --parallel --timeout=15000 --path-ignore-patterns 'test/acceptance/**'",
     "test:acceptance": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json test/acceptance",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p packages/dashboard",
     "build": "bun build --compile src/interface/cli/main.ts --outfile dist/chernabog",
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
     "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",

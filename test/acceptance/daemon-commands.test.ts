@@ -1,5 +1,5 @@
 // A state-changing command goes through the daemon first, so what it says
-// reaches the daemon's bus (docs/adr/0016-state-changing-commands-go-through-the-daemon.md):
+// reaches the daemon's bus (docs/adr/0017-state-changing-commands-go-through-the-daemon.md):
 // `chernabog pause` with the daemon running dispatches RepoPaused there, a
 // refusal from it is the answer, and with no daemon the CLI pauses here.
 // Which bus heard an event is read off the telemetry each process writes.

@@ -27,7 +27,7 @@ import {
   daemonEnrollmentCommands,
   daemonTrustCommands,
   wireSchemas,
-} from "./daemon-commands.protocol.ts";
+} from "./daemon-commands.client.ts";
 
 export class DaemonUnavailable extends Schema.TaggedError<
   DaemonUnavailable,

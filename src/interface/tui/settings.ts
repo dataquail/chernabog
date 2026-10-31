@@ -1,7 +1,7 @@
 // What the live view's settings keys change: a persona's flow on or off, its
 // schedule and its accounts, and a repo paused or resumed. Each goes through
 // the daemon first, so its events reach the daemon's bus
-// (docs/adr/0016-state-changing-commands-go-through-the-daemon.md), and is
+// (docs/adr/0017-state-changing-commands-go-through-the-daemon.md), and is
 // written here only when no daemon answers.
 
 import * as Effect from "effect/Effect";

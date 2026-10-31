@@ -1,5 +1,8 @@
-// What the daemon and its clients (the CLI, the TUI) say over the local
-// socket. Both sides decode with these schemas.
+// What the daemon and its clients (the CLI, the TUI, the dashboard) say over
+// the local socket. Every side decodes with these schemas. The dashboard
+// bundles this file for a browser, so it names effect and the modules'
+// <module>.contracts.ts, whose value objects and events reach no adapter,
+// and nothing else.
 
 import * as Schema from "effect/Schema";
 
@@ -15,7 +18,7 @@ import {
   RunStarted,
   RunView,
   SkipView,
-} from "../../modules/runs/runs.platform.ts";
+} from "../../modules/runs/runs.contracts.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 

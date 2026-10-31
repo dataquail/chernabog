@@ -276,6 +276,9 @@ transitive reach), the coverage floors and the baseline.
   exporting one `<verbNoun>Handler`, and `triggers/<publisher>.triggers.ts`
   subscribing them, ADR 13),
   `<module>.platform.ts` (what it publishes to the adapters),
+  `<module>.contracts.ts` (the value objects and events the daemon's protocol
+  carries, re-exported from its domain alone, so the dashboard can bundle
+  them for a browser),
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which bind
   the handlers to their messages and declare the module's dispatchers
   (`TrustCommands`, `TrustQueries`), and
@@ -297,11 +300,18 @@ transitive reach), the coverage floors and the baseline.
   root's to provide. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
+- **The browser tier** (`docs/adr/0016-the-browser-tier.md`).
+  `packages/dashboard` is the React page the daemon serves at `/` on its
+  socket; Bun bundles it from `index.html` and `bun build --compile` embeds
+  it. It has its own tsconfig (DOM, JSX), which `bun run check` runs too, and
+  names effect, React, its own files and the daemon's protocol
+  (`#daemon/protocol`), nothing else of `src/`.
 - **What reaches what.** The domain names effect, the kernel and its own
   module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders: a value object or event in the domain, which the
-  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters, queries (and the legacy tier)
+  adapters name through the module's `*.platform.ts`, and the daemon's
+  protocol through its `*.contracts.ts`. Only repository adapters, queries (and the legacy tier)
   name `yaml`; only the runs module's infrastructure, its queries and the
   engine name SQL.
 - **Queries read their storage directly** (ADR 11). A query reads its file
@@ -427,10 +437,10 @@ transitive reach), the coverage floors and the baseline.
   print it through its schema instead (`printJson` in
   `src/interface/cli/cli.output.ts`).
 - **State-changing commands go through the daemon first**
-  (`docs/adr/0016-state-changing-commands-go-through-the-daemon.md`), so
+  (`docs/adr/0017-state-changing-commands-go-through-the-daemon.md`), so
   their events reach its bus. `POST /commands/:tag`
   (`daemon-commands.server.ts`) dispatches an allowlisted command
-  (`daemon-commands.protocol.ts`) on the daemon's `CommandBus`, coded with
+  (`daemon-commands.client.ts`) on the daemon's `CommandBus`, coded with
   the command's own schemas; the CLI and TUI call it through
   `DaemonEnrollmentCommands` / `DaemonTrustCommands` and `throughDaemon`,
   which dispatches here only on `DaemonUnavailable`, never after a refusal.

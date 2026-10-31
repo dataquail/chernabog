@@ -1,5 +1,5 @@
 // POST /commands/:tag, the daemon's one route for the commands its clients
-// dispatch on its bus (docs/adr/0016-state-changing-commands-go-through-the-daemon.md),
+// dispatch on its bus (docs/adr/0017-state-changing-commands-go-through-the-daemon.md),
 // served over a scratch home's socket on a bus that records what reached it,
 // and the CLI's and TUI's calls through it.
 
