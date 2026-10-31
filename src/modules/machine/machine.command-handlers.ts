@@ -12,7 +12,6 @@ import { StopServiceCommand } from "./commands/stop-service.command.ts";
 import { stopServiceHandler } from "./commands/stop-service.handler.ts";
 import { UninstallServiceCommand } from "./commands/uninstall-service.command.ts";
 import { uninstallServiceHandler } from "./commands/uninstall-service.handler.ts";
-import { MachineLayer } from "./machine.layer.ts";
 
 export const machineCommandGroup = Command.group(
   ApplySetupCommand,
@@ -28,7 +27,7 @@ const MachineCommandHandlersLive = Command.handlersOf(machineCommandGroup, {
   StartServiceCommand: () => startServiceHandler(),
   StopServiceCommand: () => stopServiceHandler(),
   UninstallServiceCommand: () => uninstallServiceHandler(),
-}).pipe(Layer.provide(MachineLayer));
+});
 
 // The machine module's slice of the write side, which setup, install,
 // uninstall, start and stop dispatch.

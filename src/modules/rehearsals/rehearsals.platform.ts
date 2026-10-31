@@ -3,5 +3,6 @@
 // value objects its messages answer with. It declares nothing; anything not
 // re-exported here is private to the module.
 
-export { RehearsalsCommands, RehearsalsCommandsLive } from "./rehearsals.command-handlers.ts";
-export { RehearsalsQueries, RehearsalsQueriesLive } from "./rehearsals.query-handlers.ts";
+export { RehearsalsCommands } from "./rehearsals.command-handlers.ts";
+export { RehearsalsModule } from "./rehearsals.module.ts";
+export { RehearsalsQueries } from "./rehearsals.query-handlers.ts";

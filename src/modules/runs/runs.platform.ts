@@ -41,32 +41,22 @@ export {
   validityDue,
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
-export { withRepo } from "./infrastructure/clients/flows.client-live.ts";
+export { type FlowRegistry } from "./infrastructure/clients/flows.client-live.ts";
 export { RunLog } from "./queries/read-run-log.query.ts";
-export {
-  RunFlowsCommands,
-  RunFlowsCommandsLive,
-  RunsCommands,
-  RunsCommandsLive,
-} from "./runs.command-handlers.ts";
-export {
-  type FlowRegistry,
-  NotificationsLayer,
-  RunLogsLayer,
-  RuntimeLayer,
-  StateAt,
-  StateLive,
-} from "./runs.layer.ts";
+export { RunFlowsCommands, RunsCommands } from "./runs.command-handlers.ts";
+export { RunsModule } from "./runs.module.ts";
 export {
   NotificationsQueries,
-  NotificationsQueriesOver,
   RunFlowsQueries,
-  RunFlowsQueriesLive,
   RunLogsQueries,
-  RunLogsQueriesLive,
   RunsQueries,
-  RunsQueriesLive,
 } from "./runs.query-handlers.ts";
+
+// The services the runs module leaves to each composition root that runs the
+// workflow engine: the engine and its SQL client over state.db, and the runtime
+// of the flows that root loaded.
+export { EngineAt, EngineLive } from "./infrastructure/runtime/engine.ts";
+export { RuntimeLayer } from "./infrastructure/runtime/flow-runtime.ts";
 
 // Interim: the runtime the roots still compose directly (the engine, launchers, run
 // logs, repo runtime, agents, the usage gate, labels, steps and the launch shim).
@@ -120,6 +110,7 @@ export {
   type RepoContext,
   servicesFrom,
   unreportedItem,
+  withRepo,
 } from "./infrastructure/runtime/repo-runtime.ts";
 export { runLogWriting } from "./infrastructure/runtime/runlog.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";

@@ -6,14 +6,13 @@ import { ClaimReloadCommand } from "./commands/claim-reload.command.ts";
 import { claimReloadHandler } from "./commands/claim-reload.handler.ts";
 import { TrustRepoCommand } from "./commands/trust-repo.command.ts";
 import { trustRepoHandler } from "./commands/trust-repo.handler.ts";
-import { TrustLayer } from "./trust.layer.ts";
 
 export const trustCommandGroup = Command.group(ClaimReloadCommand, TrustRepoCommand);
 
 const TrustCommandHandlersLive = Command.handlersOf(trustCommandGroup, {
   ClaimReloadCommand: (payload) => claimReloadHandler(payload),
   TrustRepoCommand: (payload) => trustRepoHandler(payload),
-}).pipe(Layer.provide(TrustLayer));
+});
 
 // The trust module's slice of the write side, which the daemon and `trust`
 // dispatch. TrustRepoCommand is a security gate: only the CLI's `trust`

@@ -18,7 +18,6 @@ import { SetPersonaFlowCommand } from "./commands/set-persona-flow.command.ts";
 import { setPersonaFlowHandler } from "./commands/set-persona-flow.handler.ts";
 import { UnenrollRepoCommand } from "./commands/unenroll-repo.command.ts";
 import { unenrollRepoHandler } from "./commands/unenroll-repo.handler.ts";
-import { EnrollmentLayer } from "./enrollment.layer.ts";
 
 export const enrollmentCommandGroup = Command.group(
   ApplyEnrollmentCommand,
@@ -40,7 +39,7 @@ const EnrollmentCommandHandlersLive = Command.handlersOf(enrollmentCommandGroup,
   SetPersonaAccountCommand: (payload) => setPersonaAccountHandler(payload),
   SetPersonaFlowCommand: (payload) => setPersonaFlowHandler(payload),
   UnenrollRepoCommand: (payload) => unenrollRepoHandler(payload),
-}).pipe(Layer.provide(EnrollmentLayer));
+});
 
 // The enrollment module's slice of the write side, which enroll, init, pause,
 // resume, unenroll, rehearse and the TUI dispatch. Its commands say what

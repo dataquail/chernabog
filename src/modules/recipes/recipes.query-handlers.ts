@@ -6,14 +6,13 @@ import { diffRecipesHandler } from "./queries/diff-recipes.handler.ts";
 import { DiffRecipesQuery } from "./queries/diff-recipes.query.ts";
 import { listRecipesHandler } from "./queries/list-recipes.handler.ts";
 import { ListRecipesQuery } from "./queries/list-recipes.query.ts";
-import { RecipesLayer } from "./recipes.layer.ts";
 
 export const recipesQueryGroup = Query.group(DiffRecipesQuery, ListRecipesQuery);
 
 const RecipesQueryHandlersLive = Query.handlersOf(recipesQueryGroup, {
   DiffRecipesQuery: (payload) => diffRecipesHandler(payload),
   ListRecipesQuery: (payload) => listRecipesHandler(payload),
-}).pipe(Layer.provide(RecipesLayer));
+});
 
 // The recipes module's slice of the read side, which `recipes` and `init` ask.
 export class RecipesQueries extends Context.Service<

@@ -2,7 +2,6 @@ import { Query } from "@effect-server-utils/cqrs";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
-import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { checkRunValidityHandler } from "./queries/check-run-validity.handler.ts";
 import { CheckRunValidityQuery } from "./queries/check-run-validity.query.ts";
 import { findActiveRunHandler } from "./queries/find-active-run.handler.ts";
@@ -38,8 +37,8 @@ import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
 
 // What the runs' stores in state.db answer. Those stores share the SQL client
 // the workflow engine journals to, so the handlers take them from the
-// composition root that holds state.db (the daemon, a foreground run, the
-// engine), not from a layer of their own.
+// module's wiring, which a composition root that holds state.db (the daemon, a
+// foreground run, a rehearsal) provides with its SQL client.
 export const runsQueryGroup = Query.group(
   FindActiveRunQuery,
   FindRunQuery,
@@ -118,17 +117,12 @@ export class RunLogsQueries extends Context.Service<
   Query.Dispatcher<typeof runLogsQueryGroup>
 >()("RunLogsQueries") {}
 
-// The dispatcher over whichever run logs its caller provides, such as a
-// test's in memory.
-export const RunLogsQueriesOver = Layer.effect(
+export const RunLogsQueriesLive = Layer.effect(
   RunLogsQueries,
   Query.dispatcher(runLogsQueryGroup),
 ).pipe(Layer.provideMerge(RunLogsQueryHandlersLive));
 
-export const RunLogsQueriesLive = RunLogsQueriesOver.pipe(Layer.provide(RunLogsClientLive));
-
-// What a persona's GitHub notifications answer, over whichever notifications
-// client its caller provides: the daemon's over GitHub, a test's in memory.
+// What a persona's GitHub notifications answer.
 export const notificationsQueryGroup = Query.group(PollNotificationsQuery);
 
 const NotificationsQueryHandlersLive = Query.handlersOf(notificationsQueryGroup, {
@@ -142,7 +136,7 @@ export class NotificationsQueries extends Context.Service<
   Query.Dispatcher<typeof notificationsQueryGroup>
 >()("NotificationsQueries") {}
 
-export const NotificationsQueriesOver = Layer.effect(
+export const NotificationsQueriesLive = Layer.effect(
   NotificationsQueries,
   Query.dispatcher(notificationsQueryGroup),
 ).pipe(Layer.provideMerge(NotificationsQueryHandlersLive));

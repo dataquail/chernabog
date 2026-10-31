@@ -203,11 +203,11 @@ defs:
     declares: [function, variable]
 
   # A port is consumed by its module's domain, commands and queries,
-  # by the adapter that implements it and by the layer and maps that wire them.
+  # by the adapter that implements it and by the module and maps that wire them.
   port-consumers:
     message: >-
       A port is consumed by its module's commands and queries, the infrastructure adapter that
-      implements it, and the module's layer and handler maps. An adapter in interface/ or another
+      implements it, and the module's wiring and handler maps. An adapter in interface/ or another
       module reaching for one is bypassing the module's boundary: dispatch a command or query
       instead.
     allow:
@@ -215,7 +215,7 @@ defs:
       - "@/modules/*/commands/**"
       - "@/modules/*/queries/**"
       - "@/modules/*/infrastructure/**"
-      - "@/modules/*/*.layer.ts"
+      - "@/modules/*/*.module.ts"
       - "@/modules/*/*.command-handlers.ts"
       - "@/modules/*/*.query-handlers.ts"
       - "**/*.test.ts"
@@ -312,10 +312,11 @@ defs:
     imports:
       reset: true
       message: >-
-        A CLI composition root names each module through its <module>.platform.ts (its layers,
-        its buses and the value objects and events those answer with, and the runtime the runs
-        module still publishes), the interface, the platform and the kernel, and the legacy
-        files it still composes directly, each named here until a module owns it.
+        A CLI composition root merges the modules through src/interface/application-modules.ts
+        and names each module through its <module>.platform.ts (its buses and the value objects
+        and events those answer with, and the runtime the runs module still publishes), the
+        interface, the platform and the kernel, and the legacy files it still composes directly,
+        each named here until a module owns it.
       # @effect-server-utils/cqrs for the EventBus a root provides its modules' commands.
       external: [effect, "@effect/platform-bun", "@effect-server-utils/cqrs"]
       allow:
@@ -402,6 +403,29 @@ tree:
           scheduler and socket and an MCP server later.
         name: kebab-case
         children:
+          # The one list of modules (ADR 9), which every composition root merges
+          # beneath its own services: the CLI's, the daemon's, the *.main.ts
+          # roots' and the tests'. A module added here is wired everywhere.
+          "application-modules.ts":
+            imports:
+              reset: true
+              message: >-
+                The list of modules names each module's <module>.module.ts through its
+                <module>.platform.ts, and effect to merge them. It wires nothing of its own: a
+                service that differs between roots is each root's to provide.
+              external: [effect]
+              allow: ["@/modules/*/*.platform.ts"]
+            importedBy:
+              message: >-
+                The list of modules is for the composition roots: the CLI's main.ts, a
+                *.main.ts that composes its own engine, the daemon's server and the tests. An
+                inbound adapter dispatches a module's commands and queries instead.
+              allow:
+                - "@/interface/cli/main.ts"
+                - "@/interface/cli/*/*.main.ts"
+                - "@/interface/daemon/*.server.ts"
+                - "test/**"
+
           "cli/":
             message: >-
               cli/ holds the shared arguments (*.arguments.ts) and output (*.output.ts) and, per
@@ -505,6 +529,7 @@ tree:
                     - "@/kernel/**"
                     - "@/platform/**"
                     - "@/interface/daemon/**"
+                    - "@/interface/application-modules.ts"
                     - "@/modules/*/*.platform.ts"
                     - "~/core/src/**"
                     - "@/repo-config.ts"
@@ -542,7 +567,7 @@ tree:
         message: >-
           A module admits domain/ (its aggregates, their ops and errors, and its ports),
           commands/ and queries/ (what the adapters dispatch), infrastructure/ (the adapters
-          behind its ports), one <module>.layer.ts that builds the module's live Layer,
+          behind its ports), one <module>.module.ts that wires the module (ADR 9),
           <module>.command-handlers.ts and <module>.query-handlers.ts, its slice of the buses,
           and <module>.platform.ts, the one surface it publishes to the composition roots.
         name: kebab-case
@@ -632,28 +657,51 @@ tree:
                     interface/ makes an adapter part of the module's public surface.
 
           # The module's slice of each bus: its messages grouped, each mapped to
-          # its handler with the adapters it needs, and the dispatcher service
-          # the adapters ask, as the hexagon's <module>.command-handlers.ts does.
+          # its handler, and the dispatcher service the adapters ask, as the
+          # hexagon's <module>.command-handlers.ts does. What the handlers need is
+          # the module's wiring's to provide.
           "*.command-handlers.ts | *.query-handlers.ts":
             name: { like: "{module}" }
             imports:
               reset: true
               message: >-
-                A module's handler map registers its messages' handlers on the bus with the live
-                adapters they need, from its layer. It names its own module, effect and the CQRS
-                library.
+                A module's handler map binds its messages to their handlers on the bus, and
+                provides them nothing: <module>.module.ts provides the live adapters they need.
+                It names its own module, effect and the CQRS library.
               external: [effect, "@effect-server-utils/cqrs"]
               allow: ["@/modules/{module}/**"]
 
-          "*.layer.ts":
+          # The wiring plane (ADR 9): the module assembled, as a record of Layers.
+          # It provides the modules it needs with Layer.provide, which keeps
+          # them a private import; Layer.provideMerge would re-export them. No
+          # module needs another yet, so "@/modules/*/*.module.ts" joins its
+          # allowlist with the first that does (the module-wide prohibition
+          # above already admits it): an allowance nothing imports through is
+          # slack, which the conformance ceiling refuses.
+          "*.module.ts":
             name: { like: "{module}" }
             imports:
               reset: true
               message: >-
-                A module's layer assembles its live adapters: it names its own module, effect
-                to merge them, and the platform.
+                <module>.module.ts wires the module: it provides its handler maps with the live
+                adapters they need, and will provide each module it needs by that module's
+                <module>.module.ts, the wiring plane talking to the wiring plane. It names its
+                own module, effect to merge them, and the platform. A peer's vocabulary is not
+                wiring, and does not belong here.
               external: [effect]
               allow: ["@/modules/{module}/**", "@/platform/**"]
+            importedBy:
+              message: >-
+                <module>.module.ts is the WIRING plane: it holds the module's Layers, and only
+                other wiring needs them. Another module's <module>.module.ts may name it, to
+                provide a module it needs, and its own <module>.platform.ts publishes it to the
+                composition roots, which merge it through src/interface/application-modules.ts.
+                A command, a query, a handler map or an adapter asks a dispatcher instead.
+              # Its own platform surface: a peer's names only its own module.
+              allow:
+                - "@/modules/*/*.module.ts"
+                - "@/modules/*/*.platform.ts"
+                - "**/*.test.ts"
 
           "domain/":
             message: >-

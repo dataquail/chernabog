@@ -39,6 +39,7 @@ import {
   buildPersonaContexts,
   declaredLabels,
   describeElsewhere,
+  EngineAt,
   type FlowHandle,
   flowHandle,
   flowLayer,
@@ -48,14 +49,12 @@ import {
   routeItems,
   runAnswers,
   RunFlowsCommands,
-  RunFlowsCommandsLive,
   runLogFile,
   RunLogsQueries,
   RuntimeLayer,
   runUnanswered,
   type RunView,
   servicesFrom,
-  StateAt,
   syncLabels,
   unreportedItem,
   withRepo,
@@ -77,6 +76,7 @@ import {
   type PersonaRepo,
   repoNameOf,
 } from "../../../repo-config.ts";
+import { applicationModules } from "../../application-modules.ts";
 import { fail } from "../cli.output.ts";
 import { repoFlag } from "../repo.arguments.ts";
 import { choosePersona, tailer } from "../runs/run.main.ts";
@@ -452,20 +452,22 @@ const runRehearsal = (
       Effect.orDie,
     );
 
+    // The modules a process with an engine adds, and the flow it rehearses, over
+    // the rehearsal's own runtime and an engine in the scratch's state.db.
+    const modules = applicationModules.engine;
+
     const engine = yield* Layer.build(
-      RunFlowsCommandsLive.pipe(
-        Layer.provideMerge(
+      Layer.mergeAll(
+        modules,
+        flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provide(modules)),
+      ).pipe(
+        Layer.provide(
           RuntimeLayer({
             handles: [handle],
             services: (_repo, one) => servicesFrom(contexts)(one),
-          }).pipe(
-            Layer.provideMerge(
-              flowLayer(handle, servicesFrom(contexts)).pipe(
-                Layer.provideMerge(StateAt(`${scratch.root}/state.db`)),
-              ),
-            ),
-          ),
+          }),
         ),
+        Layer.provideMerge(EngineAt(`${scratch.root}/state.db`)),
       ),
     );
 

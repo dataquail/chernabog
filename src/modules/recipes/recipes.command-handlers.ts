@@ -16,7 +16,6 @@ import { UpdateRecipesCommand } from "./commands/update-recipes.command.ts";
 import { updateRecipesHandler } from "./commands/update-recipes.handler.ts";
 import { UpgradeRepoCommand } from "./commands/upgrade-repo.command.ts";
 import { upgradeRepoHandler } from "./commands/upgrade-repo.handler.ts";
-import { RecipesLayer } from "./recipes.layer.ts";
 
 export const recipesCommandGroup = Command.group(
   AddRecipePackageCommand,
@@ -36,7 +35,7 @@ const RecipesCommandHandlersLive = Command.handlersOf(recipesCommandGroup, {
   ScaffoldRepoCommand: (payload) => scaffoldRepoHandler(payload),
   UpdateRecipesCommand: (payload) => updateRecipesHandler(payload),
   UpgradeRepoCommand: (payload) => upgradeRepoHandler(payload),
-}).pipe(Layer.provide(RecipesLayer));
+});
 
 // The recipes module's slice of the write side, which `recipes` and `init`
 // dispatch.

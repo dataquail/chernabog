@@ -10,7 +10,6 @@ import { loadScenarioHandler } from "./queries/load-scenario.handler.ts";
 import { LoadScenarioQuery } from "./queries/load-scenario.query.ts";
 import { planRehearsalHandler } from "./queries/plan-rehearsal.handler.ts";
 import { PlanRehearsalQuery } from "./queries/plan-rehearsal.query.ts";
-import { RehearsalsLayer } from "./rehearsals.layer.ts";
 
 export const rehearsalsQueryGroup = Query.group(
   CheckRehearsalQuery,
@@ -24,7 +23,7 @@ const RehearsalsQueryHandlersLive = Query.handlersOf(rehearsalsQueryGroup, {
   ChooseSeededWorkQuery: (payload) => chooseSeededWorkHandler(payload),
   LoadScenarioQuery: (payload) => loadScenarioHandler(payload),
   PlanRehearsalQuery: (payload) => planRehearsalHandler(payload),
-}).pipe(Layer.provide(RehearsalsLayer));
+});
 
 // The rehearsals module's slice of the read side, which `rehearse` asks.
 export class RehearsalsQueries extends Context.Service<

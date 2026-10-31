@@ -27,12 +27,8 @@ import RecipesPackage from "../packages/recipes/package.json" with { type: "json
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
 import { bakeRecipes, diffLines } from "../src/interface/cli/recipes/recipes.command.ts";
 import { RecipePackageManifest } from "../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
-import { RecipesCommandsLive } from "../src/modules/recipes/recipes.command-handlers.ts";
-import { RecipesLayer } from "../src/modules/recipes/recipes.layer.ts";
-import {
-  RecipesQueries,
-  RecipesQueriesLive,
-} from "../src/modules/recipes/recipes.query-handlers.ts";
+import { RecipesModule } from "../src/modules/recipes/recipes.module.ts";
+import { RecipesQueries } from "../src/modules/recipes/recipes.query-handlers.ts";
 import { HostEnvironment } from "../src/platform/environment.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { RELEASED_SDK } from "../src/platform/flow-deps.ts";
@@ -73,7 +69,7 @@ const recipeText = (file: string) =>
   FileSystem.FileSystem.use((fs) => fs.readFileString(`${PACKAGE}/${file}`));
 
 const recipes = (layer: Layer.Layer<Asker>) =>
-  Layer.mergeAll(layer, RecipesLayer, RecipesQueriesLive, RecipesCommandsLive).pipe(
+  Layer.mergeAll(layer, RecipesModule.layer).pipe(
     Layer.provideMerge(Layer.mergeAll(Exec.layer, HostEnvironment.layer)),
   );
 

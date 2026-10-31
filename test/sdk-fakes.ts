@@ -42,6 +42,7 @@ import {
   Worktree,
 } from "@chernabog/core";
 import type { BunServices } from "@effect/platform-bun";
+import { makeEventBus } from "@effect-server-utils/cqrs";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -52,6 +53,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
+import { applicationModules } from "../src/interface/application-modules.ts";
 import { IMPLICIT, type Persona } from "../src/kernel/persona.value-object.ts";
 import { deliverSignalsHandler } from "../src/modules/runs/commands/deliver-signals.handler.ts";
 import { pollRunHandler } from "../src/modules/runs/commands/poll-run.handler.ts";
@@ -61,12 +63,22 @@ import type { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view
 import { DEFAULT_EVENT_TICK_MIN } from "../src/modules/runs/domain/schedule/event-tick.value-object.ts";
 import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
+import { type FlowRegistry } from "../src/modules/runs/infrastructure/clients/flows.client-live.ts";
+import { RunLogsClientLive } from "../src/modules/runs/infrastructure/clients/run-logs.client-live.ts";
+import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/holds.repository-live.ts";
+import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
+import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
+import { RunWaitsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-live.ts";
+import { RunsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/runs.repository-live.ts";
+import { SkipsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/skips.repository-live.ts";
 import {
+  EngineAt,
   type FlowHandle,
   flowLayer,
   forEveryPersona,
+  type ServicesFor,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
-import { type RunsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
+import { RuntimeLayer } from "../src/modules/runs/infrastructure/runtime/flow-runtime.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
 
@@ -966,10 +978,43 @@ export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 // A run as the engine reports it, and the stores a test may read it back from.
 export type EngineRun = RunView | ActiveRun;
 
-export type RunsServices = Layer.Success<typeof RunsLayer>;
+// The runs' stores and logs in a home's state.db, the bus their commands
+// dispatch on, and the engine journalling there: what a test that drives the
+// runs' handlers itself reads and writes.
+export const StateAt = (home: string) =>
+  Layer.mergeAll(
+    RunsRepositoryLive,
+    RunMarkersRepositoryLive,
+    RunStepsRepositoryLive,
+    RunWaitsRepositoryLive,
+    SkipsRepositoryLive,
+    HoldsRepositoryLive,
+    RunLogsClientLive,
+    makeEventBus(),
+  ).pipe(
+    Layer.provideMerge(EngineAt(homePaths(home).state)),
+    Layer.provideMerge(Home.at(home, home)),
+  );
+
+export type RunsServices = Layer.Success<ReturnType<typeof StateAt>>;
+
+// The engine over one flow, as the composition roots build it: the modules a
+// process with an engine adds, from the one list every root merges, and the
+// flow, which takes its runs' steps through them, over the test's runtime and
+// a state.db in `home`.
+export const engineOver = <R>(
+  handle: FlowHandle,
+  registry: FlowRegistry,
+  servicesFor: ServicesFor<R>,
+  home: string,
+) =>
+  Layer.mergeAll(
+    applicationModules.engine,
+    flowLayer(handle, servicesFor).pipe(Layer.provide(applicationModules.engine)),
+  ).pipe(Layer.provideMerge(RuntimeLayer(registry)), Layer.provideMerge(StateAt(home)));
 
 // What a test's `until` can use while a run goes: the runs module and its runtime, to wake runs too.
-export type RuntimeServices = RunsServices | Layer.Success<ReturnType<typeof runtimeFor>>;
+export type RuntimeServices = Layer.Success<ReturnType<typeof engineOver>>;
 
 const isRunning = (run: EngineRun) => run.status === "running";
 
@@ -979,11 +1024,6 @@ const refOf = (handle: FlowHandle, persona: Persona) => ({
   flow: handle.name,
   persona,
 });
-
-// The runs module's runtime over one flow's workflow. These tests start and
-// poll runs themselves, so it runs no trigger or gate.
-export const runtimeFor = (handle: FlowHandle) =>
-  RuntimeLayer({ handles: [handle], services: () => Option.none() });
 
 // Starting, polling and waking runs as the daemon does, through the runs module.
 export const startRun = (handle: FlowHandle, persona: Persona, work: WorkItem) =>
@@ -1031,13 +1071,11 @@ export const runUntil = (
     );
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: () => Option.some(Effect.succeed(releasing)),
-      }).pipe(
-        Layer.provideMerge(flowLayer(handle, services)),
-        Layer.provideMerge(StateAt(homePaths(home).state)),
-        Layer.provideMerge(Home.at(home, home)),
+      engineOver(
+        handle,
+        { handles: [handle], services: () => Option.some(Effect.succeed(releasing)) },
+        services,
+        home,
       ),
     );
 

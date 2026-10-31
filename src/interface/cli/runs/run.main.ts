@@ -21,6 +21,7 @@ import {
   buildPersonaContexts,
   defaultPersona,
   describeElsewhere,
+  EngineLive,
   type FlowHandle,
   flowHandle,
   flowLayer,
@@ -29,15 +30,11 @@ import {
   type RepoContext,
   routeItems,
   RunFlowsCommands,
-  RunFlowsCommandsLive,
   runLogFile,
-  RunsCommandsLive,
   RunsQueries,
-  RunsQueriesLive,
   RuntimeLayer,
   type RunView,
   servicesFrom,
-  StateLive,
   unreportedItem,
   withRepo,
 } from "../../../modules/runs/runs.platform.ts";
@@ -45,6 +42,7 @@ import { ConfigError } from "../../../platform/config-error.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { acquireLock } from "../../../platform/lock.ts";
 import { type EffectiveRepo, findEnrolled, loadMachineConfig } from "../../../repo-config.ts";
+import { applicationModules } from "../../application-modules.ts";
 
 // Prints what a log file gains, from where it was last read.
 export const tailer = (path: string) => {
@@ -338,22 +336,22 @@ export const runInForeground = (options: RunOptions) =>
       return yield* startFirst(handle, persona, options, context);
     });
 
+    // The modules a process with an engine adds, and the one flow it runs, over
+    // this run's own runtime and the engine in this machine's state.db.
+    const modules = applicationModules.engine;
+
     const engine = yield* Layer.build(
-      RunFlowsCommandsLive.pipe(
-        Layer.provideMerge(
+      Layer.mergeAll(
+        modules,
+        flowLayer(handle, servicesFrom(contexts)).pipe(Layer.provide(modules)),
+      ).pipe(
+        Layer.provide(
           RuntimeLayer({
             handles: [handle],
             services: (_repo, one) => servicesFrom(contexts)(one),
-          }).pipe(
-            Layer.provideMerge(
-              Layer.mergeAll(
-                flowLayer(handle, servicesFrom(contexts)),
-                RunsQueriesLive,
-                RunsCommandsLive,
-              ).pipe(Layer.provideMerge(StateLive)),
-            ),
-          ),
+          }),
         ),
+        Layer.provideMerge(EngineLive),
       ),
     );
 
