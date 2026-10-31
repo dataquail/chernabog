@@ -32,5 +32,11 @@ export const logsEndpoint = Command.make(
       }
 
       yield* Console.log(log.text.trimEnd());
-    }).pipe(Effect.catchTag("RunLogMissing", (missing) => fail(missing.message))),
+    }).pipe(
+      // A log pruned past its retention is how its run is now, not an error.
+      Effect.catchTags({
+        RunLogPruned: (pruned) => Console.log(pruned.message),
+        RunLogMissing: (missing) => fail(missing.message),
+      }),
+    ),
 ).pipe(Command.withDescription("Print a run's log"));

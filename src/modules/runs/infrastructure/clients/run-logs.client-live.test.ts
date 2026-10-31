@@ -38,4 +38,25 @@ describe("RunLogsClientLive", () => {
       expect(yield* logs.readFrom(RunId.make("a"), 0)).toEqual(Option.none());
     }),
   );
+
+  effectAtHome("prunes a log to a note, and still lists its run, whose log reads as gone", () =>
+    Effect.gen(function* () {
+      const { fs, logs, paths } = yield* opened;
+      const a = RunId.make("a");
+      yield* fs.makeDirectory(paths.runs, { recursive: true });
+      yield* fs.writeFileString(paths.runLog("a"), "step: implement\n");
+      yield* fs.utimes(paths.runLog("a"), 0, 1);
+
+      expect([yield* logs.modifiedAt(a), yield* logs.pruned(a)]).toEqual([
+        Option.some(1_000),
+        false,
+      ]);
+
+      yield* logs.prune(a);
+
+      expect(yield* logs.ids).toEqual([a]);
+      expect(yield* logs.readFrom(a, 0)).toEqual(Option.none());
+      expect([yield* logs.modifiedAt(a), yield* logs.pruned(a)]).toEqual([Option.none(), true]);
+    }),
+  );
 });

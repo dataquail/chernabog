@@ -9,7 +9,9 @@ import { effect } from "../../test/effect-test.ts";
 import {
   capLog,
   DAEMON_LOG_RETENTION,
+  daily,
   keepDayFolders,
+  reported,
   type RetentionPolicy,
   sweepDayFolders,
   sweepRotatedLogs,
@@ -195,6 +197,44 @@ describe("keepDayFolders", () => {
         expect(yield* keeper.next).toEqual({ swept: ["2026-09-01"] });
 
         yield* keeper.stop;
+      }),
+    ),
+  );
+});
+
+describe("daily", () => {
+  effect("runs each of the day's sweeps, a failed one not keeping the next from its turn", () =>
+    atToday(
+      Effect.gen(function* () {
+        const outcomes = yield* Queue.unbounded<string>();
+        const say = (said: string) => Queue.offer(outcomes, said).pipe(Effect.asVoid);
+
+        const fiber = yield* Effect.forkChild(
+          daily([
+            reported(Effect.fail("full disk"), {
+              swept: () => say("first swept"),
+              failed: () => say("first failed"),
+            }),
+            reported(Effect.succeed(2), {
+              swept: (n) => say(`second removed ${n}`),
+              failed: () => say("second failed"),
+            }),
+          ]),
+        );
+
+        expect([yield* Queue.take(outcomes), yield* Queue.take(outcomes)]).toEqual([
+          "first failed",
+          "second removed 2",
+        ]);
+
+        yield* TestClock.adjust("24 hours");
+
+        expect([yield* Queue.take(outcomes), yield* Queue.take(outcomes)]).toEqual([
+          "first failed",
+          "second removed 2",
+        ]);
+
+        yield* Fiber.interrupt(fiber);
       }),
     ),
   );

@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import { effectAtHome } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
+import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { RunLogsClientLive } from "../infrastructure/clients/run-logs.client-live.ts";
 import { readRunLogHandler } from "./read-run-log.handler.ts";
 
@@ -32,5 +33,24 @@ describe("readRunLogHandler", () => {
 
       expect(refused.message).toBe(`no log for a at ${paths.runLog("a")}`);
     }).pipe(Effect.provide(RunLogsClientLive)),
+  );
+
+  effectAtHome(
+    "fails saying the log was removed after 30 days, for a run a prune removed it of",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const paths = yield* homeOf;
+        yield* fs.makeDirectory(paths.runs, { recursive: true });
+        yield* fs.writeFileString(paths.runLog("a"), "step: implement\n");
+        yield* (yield* RunLogsClient).prune(RunId.make("a"));
+
+        const refused = yield* Effect.flip(readRunLogHandler({ runId: RunId.make("a") }));
+
+        expect([refused._tag, refused.message]).toEqual([
+          "RunLogPruned",
+          "the log of a was removed after 30 days",
+        ]);
+      }).pipe(Effect.provide(RunLogsClientLive)),
   );
 });

@@ -94,6 +94,17 @@ export class RunLogMissing extends Schema.TaggedError<
   }
 }
 
+// A run's log was removed, past its retention: 30 days after the run finished,
+// or, for a log no run in state.db had, 30 days after it was last written.
+export class RunLogPruned extends Schema.TaggedError<
+  RunLogPruned,
+  { readonly brand: "RunLogPruned" }
+>()("RunLogPruned", { runId: RunId, days: Schema.Finite }) {
+  public override get message() {
+    return `the log of ${this.runId} was removed after ${this.days} days`;
+  }
+}
+
 // A flow's trigger, the lookup of an item it didn't report, or its gate
 // failed; the message says how.
 export class FlowFailed extends Schema.TaggedError<FlowFailed, { readonly brand: "FlowFailed" }>()(

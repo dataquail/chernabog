@@ -1,6 +1,7 @@
 // Retention for a folder of day folders, <dir>/<YYYY-MM-DD>/…, such as the
 // telemetry FileTelemetry writes: a sweep that removes the day folders a
-// policy no longer keeps, and a keeper that sweeps once a day. And for the
+// policy no longer keeps, and a keeper that sweeps once a day, beside any
+// other sweep of the day, such as the daemon's of run logs. And for the
 // daemon's logs: daemon.log's daily rotations by age, daemon.out.log by size.
 //
 // A day is judged by the folder's name, a UTC day as FileTelemetry names
@@ -181,11 +182,30 @@ export const capLog = (
     return true;
   });
 
-// Where a keeper says what each sweep did.
-export type SweepReports<A = ReadonlyArray<string>> = {
-  readonly swept: (outcome: A) => Effect.Effect<void>;
-  readonly failed: (cause: Cause.Cause<PlatformError>) => Effect.Effect<void>;
+// Where a keeper says what each sweep did: what it removed, or why it failed.
+export type SweepReports<A = ReadonlyArray<string>, E = PlatformError> = {
+  readonly swept: (removed: A) => Effect.Effect<void>;
+  readonly failed: (cause: Cause.Cause<E>) => Effect.Effect<void>;
 };
+
+// A sweep that says what it did, to `reports`, and never fails: a failure,
+// a defect among them, goes to `reports.failed`.
+export const reported = <A, E, R>(
+  sweep: Effect.Effect<A, E, R>,
+  reports: SweepReports<A, E>,
+): Effect.Effect<void, never, R> =>
+  sweep.pipe(Effect.matchCauseEffect({ onSuccess: reports.swept, onFailure: reports.failed }));
+
+// Runs the day's sweeps now and then once a day, for as long as it runs, each
+// in turn: one reported sweep's failure never keeps the next from running,
+// and the next day's tries it again.
+export const daily = <R>(
+  sweeps: ReadonlyArray<Effect.Effect<void, never, R>>,
+): Effect.Effect<void, never, R> =>
+  Effect.all(sweeps, { discard: true }).pipe(
+    Effect.repeat(Schedule.fixed(SWEEP_EVERY)),
+    Effect.asVoid,
+  );
 
 // Runs `sweep` now and then once a day, for as long as it runs. A failed
 // sweep goes to `reports.failed`, and the next day's sweep tries again: it
@@ -193,12 +213,7 @@ export type SweepReports<A = ReadonlyArray<string>> = {
 export const keepSweeping = <A, R>(
   sweep: Effect.Effect<A, PlatformError, R>,
   reports: SweepReports<A>,
-): Effect.Effect<void, never, R> =>
-  sweep.pipe(
-    Effect.matchCauseEffect({ onSuccess: reports.swept, onFailure: reports.failed }),
-    Effect.repeat(Schedule.fixed(SWEEP_EVERY)),
-    Effect.asVoid,
-  );
+): Effect.Effect<void, never, R> => daily([reported(sweep, reports)]);
 
 // Sweeps `dir`'s day folders now and then once a day, as keepSweeping does.
 export const keepDayFolders = (
