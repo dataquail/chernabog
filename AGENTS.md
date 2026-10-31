@@ -206,20 +206,23 @@ transitive reach), the coverage floors and the baseline.
   `infrastructure/{repositories,clients,acl}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `storage/` (`<name>.schema.ts`, the
   format of a file or table its repositories write and its queries read),
-  `<module>.layer.ts`,
-  `<module>.platform.ts` (what it publishes to the adapters), and
-  `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
-  register the handlers over the layer and declare the module's dispatchers
-  (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`, and
+  `<module>.module.ts`,
+  `<module>.platform.ts` (what it publishes to the adapters),
+  `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which bind
+  the handlers to their messages and declare the module's dispatchers
+  (`TrustCommands`, `TrustQueries`), and
   `<module>.event-span-attributes.ts`, what the dispatchers' and event bus's
   spans say (the runs' name the run, its repo and its flow). Which of the
   hexagon's stereotypes are here, and which aren't yet, is
-  `docs/adr/0009-the-hexagons-remaining-stereotypes.md`. The
-  runs module's stores share the engine's SQL client, so `RunsQueries` is
-  provided where state.db is (the daemon, a foreground run, `flowLayer`);
-  `RunsCommands` and `RunFlowsQueries`, which also ask the loaded flows, by
-  the daemon over its runtime; and `RunLogsQueries`, over run logs alone, in
-  `AppLive`. Shared
+  `docs/adr/0009-the-hexagons-remaining-stereotypes.md`. A module wires itself in its
+  `<module>.module.ts` (`docs/adr/0012-modules-wire-themselves.md`):
+  `<Module>Module.layer` is its dispatchers over the live adapters they
+  need. `src/interface/application-modules.ts` is the one list of modules
+  every root merges: `AppLive` merges its `layer`, and a root that runs the
+  engine (the daemon, `run`, `rehearse`, `cancel`) merges its `engine`, the
+  runs' dispatchers over state.db and the loaded flows, and provides the
+  engine (`EngineLive`) and its flows' runtime (`RuntimeLayer`) beneath it.
+  A service that differs between roots is the root's to provide. Shared
   primitives live in `src/kernel/`, inbound adapters in `src/interface/`.
   Filenames are dot-delimited stereotypes, kebab-case in front.
 - **What reaches what.** The domain names effect, the kernel and its own
@@ -314,7 +317,7 @@ transitive reach), the coverage floors and the baseline.
   (trigger, item lookup, gate) and workflows through `WorkflowsClient`
   (execute, poll, resume, wake, note); the daemon and `chernabog run` build
   both from the flows they loaded (`RuntimeLayer(registry)` in
-  `runs.layer.ts`) and pass in what other modules know, such as whether the
+  `infrastructure/runtime/flow-runtime.ts`) and pass in what other modules know, such as whether the
   repo is paused.
 - **A start survives a crash.** A run is recorded, with the work item it is
   for, before its workflow executes, so a process killed in between leaves a
@@ -401,14 +404,17 @@ Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
   reads.
 - **A module publishes one surface** (`docs/adr/0007-module-gateways.md`):
   `<module>.platform.ts` re-exports, and only re-exports, what the inbound
-  adapters name: its dispatchers and their Layers, its Layers, and the
-  results, value objects and events its messages answer with. Nothing
+  adapters name: its dispatchers, its `<Module>Module`, and the results,
+  value objects and events its messages answer with. Nothing
   outside `src/modules/` but tests (and the legacy `repo-config.ts`) reaches
   past it, and only `src/interface/` names it. To use something new from a
   module, re-export it there. The runs module's runtime the roots still
   compose is published from `runs.platform.ts` for now, in a section marked
-  interim. A module names another only through its `*.exports.ts`, and only
-  from its own `*.imports.ts`.
+  interim. A module names another's vocabulary only through its
+  `*.exports.ts`, and only from its own `*.imports.ts`; its `*.module.ts`
+  provides another module's `layer` by that module's `*.module.ts`, with
+  `Layer.provide` (never `provideMerge`, which re-exports it). A new module
+  joins `src/interface/application-modules.ts` and is wired in every root.
 - **The runtime** a run's flow executes in is the runs module's
   `infrastructure/runtime/`: the workflow engine and step runner, core's
   services over GitHub, git, worktrees and usage, and the agents and

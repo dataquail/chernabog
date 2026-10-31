@@ -6,14 +6,13 @@ import { checkTrustHandler } from "./queries/check-trust.handler.ts";
 import { CheckTrustQuery } from "./queries/check-trust.query.ts";
 import { findTrustedTreeHandler } from "./queries/find-trusted-tree.handler.ts";
 import { FindTrustedTreeQuery } from "./queries/find-trusted-tree.query.ts";
-import { TrustLayer } from "./trust.layer.ts";
 
 export const trustQueryGroup = Query.group(CheckTrustQuery, FindTrustedTreeQuery);
 
 const TrustQueryHandlersLive = Query.handlersOf(trustQueryGroup, {
   CheckTrustQuery: (payload) => checkTrustHandler(payload),
   FindTrustedTreeQuery: (payload) => findTrustedTreeHandler(payload),
-}).pipe(Layer.provide(TrustLayer));
+});
 
 // The trust module's slice of the read side, which `status`, `doctor` and the
 // daemon ask.

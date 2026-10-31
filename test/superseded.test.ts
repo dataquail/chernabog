@@ -32,15 +32,13 @@ import { RunValidity } from "../src/modules/runs/domain/schedule/validity.value-
 import {
   type FlowHandle,
   flowHandle,
-  flowLayer,
   forEveryPersona,
 } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { checkRunValidityHandler } from "../src/modules/runs/queries/check-run-validity.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
-import { RunLogsLayer, RuntimeLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
 import { effect } from "./effect-test.ts";
 import {
+  engineOver,
   type EngineRun,
   type Fake,
   ISSUE,
@@ -85,14 +83,11 @@ const withEngine = <A, E, R>(handle: FlowHandle, fake: Fake, body: Effect.Effect
     const context = Context.merge(platform, services);
 
     const engine = yield* Layer.build(
-      RuntimeLayer({
-        handles: [handle],
-        services: () => Option.some(Effect.succeed(context)),
-      }).pipe(
-        Layer.merge(RunLogsLayer),
-        Layer.provideMerge(flowLayer(handle, forEveryPersona(services))),
-        Layer.provideMerge(StateAt(homePaths(home).state)),
-        Layer.provideMerge(Home.at(home, home)),
+      engineOver(
+        handle,
+        { handles: [handle], services: () => Option.some(Effect.succeed(context)) },
+        forEveryPersona(services),
+        home,
       ),
     );
 

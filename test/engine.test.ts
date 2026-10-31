@@ -45,24 +45,19 @@ import { cancelRunHandler } from "../src/modules/runs/commands/cancel-run.handle
 import { recoverRunsHandler } from "../src/modules/runs/commands/recover-runs.handler.ts";
 import { startRunHandler } from "../src/modules/runs/commands/start-run.handler.ts";
 import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value-object.ts";
-import {
-  flowHandle,
-  flowLayer,
-  forEveryPersona,
-} from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { flowHandle, forEveryPersona } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
-import { RunLogsLayer, StateAt } from "../src/modules/runs/runs.layer.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
-import { Home, homePaths } from "../src/platform/home.ts";
+import { homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
+  engineOver,
   type EngineRun,
   pollRun,
   repoAs,
-  runtimeFor,
   startRun,
 } from "./sdk-fakes.ts";
 
@@ -228,17 +223,11 @@ const withEngine = <A, E, R>(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-engine-" });
-    const homeLayer = Home.at(home, home);
-
     const servicesFor = yield* personas;
 
+    // These tests start and poll runs themselves, so the runtime runs no trigger or gate.
     const engine = yield* Layer.build(
-      runtimeFor(flowsOf).pipe(
-        Layer.provideMerge(flowLayer(flowsOf, servicesFor)),
-        Layer.provideMerge(StateAt(homePaths(home).state)),
-        Layer.merge(RunLogsLayer),
-        Layer.provideMerge(homeLayer),
-      ),
+      engineOver(flowsOf, { handles: [flowsOf], services: () => Option.none() }, servicesFor, home),
     );
 
     const platform = yield* Effect.context<BunServices.BunServices>();

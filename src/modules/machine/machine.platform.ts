@@ -4,7 +4,7 @@
 // re-exported here is private to the module.
 
 export { type SetupOutcome } from "./commands/apply-setup.command.ts";
-export { MachineCommands, MachineCommandsLive } from "./machine.command-handlers.ts";
-export { MachineLayer } from "./machine.layer.ts";
-export { MachineQueries, MachineQueriesLive } from "./machine.query-handlers.ts";
+export { MachineCommands } from "./machine.command-handlers.ts";
+export { MachineModule } from "./machine.module.ts";
+export { MachineQueries } from "./machine.query-handlers.ts";
 export { type SetupPlan } from "./queries/plan-setup.query.ts";

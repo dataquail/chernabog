@@ -29,7 +29,7 @@ needs of it, and it fits in one file.
 1. **Each module publishes `<module>.platform.ts`**, beside its layer and
    handler maps. It only re-exports, from its own module: the dispatcher
    Tags and their live Layers (`TrustQueries`, `TrustQueriesLive`, …), the
-   module's Layers, and the results, value objects and events its messages
+   module's Layers (since ADR 12, its `<Module>Module` in their place), and the results, value objects and events its messages
    answer with and the daemon's protocol carries. It declares nothing (the
    `reexport: false` surface rule), and it re-exports nothing from
    `infrastructure/` or `interface/` but a client's live/fake pair, which a

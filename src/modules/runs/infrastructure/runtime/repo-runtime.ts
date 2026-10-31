@@ -24,6 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { type Persona, samePersona } from "../../../../kernel/persona.value-object.ts";
+import { RunId } from "../../../../kernel/run-id.id.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { snapshotConfig, snapshotTree } from "../../../../platform/config-snapshot.ts";
 import { loadFlows, type PackageOverrides } from "../../../../platform/flow-loader.ts";
@@ -37,6 +38,8 @@ import {
   type PersonaRepo,
 } from "../../../../repo-config.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
+import { RunsQueries } from "../../runs.query-handlers.ts";
+import { withRepoOver } from "../clients/flows.client-live.ts";
 import {
   defaultPersona,
   type FlowOrigin,
@@ -44,6 +47,15 @@ import {
   RunFailed,
   type ServicesFor,
 } from "./engine.ts";
+
+// Runs a flow's trigger with the repo's services, as the runtime does, for a
+// composition root that asks one itself (a foreground run, a rehearsal): it
+// reads this machine's runs through the runs' queries.
+export const withRepo = withRepoOver((runId: string) =>
+  RunsQueries.use((runs) => runs.FindRunQuery({ runId: RunId.make(runId) })).pipe(
+    Effect.map((found) => Option.map(found.run, (run) => run.status === "running")),
+  ),
+);
 
 export type OpenRepo = {
   readonly repo: EffectiveRepo;

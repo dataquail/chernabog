@@ -13,12 +13,8 @@ import {
   type EnrollFlags,
 } from "../src/interface/cli/enrollment/enroll.command.ts";
 import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
-import { EnrollmentCommandsLive } from "../src/modules/enrollment/enrollment.command-handlers.ts";
-import { EnrollmentLayer } from "../src/modules/enrollment/enrollment.layer.ts";
-import { EnrollmentQueriesLive } from "../src/modules/enrollment/enrollment.query-handlers.ts";
-import { MachineCommandsLive } from "../src/modules/machine/machine.command-handlers.ts";
-import { MachineLayer } from "../src/modules/machine/machine.layer.ts";
-import { MachineQueriesLive } from "../src/modules/machine/machine.query-handlers.ts";
+import { EnrollmentModule } from "../src/modules/enrollment/enrollment.module.ts";
+import { MachineModule } from "../src/modules/machine/machine.module.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
 import { Home } from "../src/platform/home.ts";
@@ -26,7 +22,6 @@ import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
 import { MachineConfigFile, machineConfigFile } from "../src/repo-config.ts";
 import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
-import { RecipesPeerLive } from "./recipe-repo.ts";
 
 // git answers for a checkout of dataquail/demo wherever it is, and gh is logged in to `logins`.
 const fakes = (logins: ReadonlyArray<string>) =>
@@ -149,13 +144,10 @@ const enrollAnswering = (layer: Layer.Layer<Asker>, root: string, given: EnrollF
     Effect.provide(
       Layer.mergeAll(
         layer,
-        Layer.fresh(EnrollmentLayer).pipe(Layer.provide(RecipesPeerLive)),
-        Layer.fresh(EnrollmentCommandsLive).pipe(
-          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork, RecipesPeerLive)),
+        Layer.fresh(EnrollmentModule.layer).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
         ),
-        Layer.fresh(EnrollmentQueriesLive).pipe(Layer.provide(RecipesPeerLive)),
-        Layer.fresh(MachineLayer),
-        Layer.fresh(MachineQueriesLive),
+        Layer.fresh(MachineModule.layer).pipe(Layer.provide(FileStoresUnitOfWork)),
       ),
     ),
   );
@@ -165,14 +157,10 @@ const setupAnswering = (layer: Layer.Layer<Asker>, given: SetupFlags) =>
     Effect.provide(
       Layer.mergeAll(
         layer,
-        Layer.fresh(MachineLayer),
-        Layer.fresh(MachineCommandsLive).pipe(Layer.provide(FileStoresUnitOfWork)),
-        Layer.fresh(MachineQueriesLive),
-        Layer.fresh(EnrollmentLayer).pipe(Layer.provide(RecipesPeerLive)),
-        Layer.fresh(EnrollmentCommandsLive).pipe(
-          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork, RecipesPeerLive)),
+        Layer.fresh(MachineModule.layer).pipe(Layer.provide(FileStoresUnitOfWork)),
+        Layer.fresh(EnrollmentModule.layer).pipe(
+          Layer.provide(Layer.mergeAll(makeEventBus(), FileStoresUnitOfWork)),
         ),
-        Layer.fresh(EnrollmentQueriesLive).pipe(Layer.provide(RecipesPeerLive)),
       ),
     ),
   );

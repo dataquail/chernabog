@@ -8,7 +8,6 @@ import { listRecipesHandler } from "./queries/list-recipes.handler.ts";
 import { ListRecipesQuery } from "./queries/list-recipes.query.ts";
 import { readTeamConfigHandler } from "./queries/read-team-config.handler.ts";
 import { ReadTeamConfigQuery } from "./queries/read-team-config.query.ts";
-import { RecipesLayer } from "./recipes.layer.ts";
 
 export const recipesQueryGroup = Query.group(
   DiffRecipesQuery,
@@ -20,7 +19,7 @@ const RecipesQueryHandlersLive = Query.handlersOf(recipesQueryGroup, {
   DiffRecipesQuery: (payload) => diffRecipesHandler(payload),
   ListRecipesQuery: (payload) => listRecipesHandler(payload),
   ReadTeamConfigQuery: (payload) => readTeamConfigHandler(payload),
-}).pipe(Layer.provide(RecipesLayer));
+});
 
 // The recipes module's slice of the read side, which `recipes` and `init` ask,
 // and of which enrollment asks the team's config (recipes.exports.ts).

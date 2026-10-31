@@ -40,6 +40,7 @@ import {
   DEFAULT_LEASE_LIMITS,
   DEFAULT_VALIDITY_EVERY,
   describeLauncher,
+  EngineLive,
   eventTickAt,
   type FlowHandle,
   flowHandle,
@@ -52,29 +53,22 @@ import {
   noteCheckFailure,
   noteEvent,
   type NotificationNews,
-  NotificationsLayer,
   NotificationsQueries,
-  NotificationsQueriesOver,
   type PendingTick,
   type PersonaContext,
   renewalDue,
   RunFlowsCommands,
-  RunFlowsCommandsLive,
   RunFlowsQueries,
-  RunFlowsQueriesLive,
   RunHistory,
   runIsAbout,
   RunLeases,
   runLogWriting,
   RunsCommands,
-  RunsCommandsLive,
   RunsQueries,
-  RunsQueriesLive,
   RuntimeLayer,
   RunValidity,
   type RunView,
   servicesFrom,
-  StateLive,
   validityDue,
 } from "../../modules/runs/runs.platform.ts";
 import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.ts";
@@ -98,6 +92,7 @@ import {
   repoNameOf,
   scheduleFor,
 } from "../../repo-config.ts";
+import { applicationModules } from "../application-modules.ts";
 import {
   CancelRequest,
   DaemonStatus,
@@ -533,17 +528,15 @@ export const runDaemon = Effect.gen(function* () {
       ),
   };
 
+  // The modules a process with an engine adds, and the flows loaded here, which
+  // take their runs' steps through them, over the daemon's own runtime and the
+  // engine in this machine's state.db.
+  const modules = applicationModules.engine;
+
   const engine = yield* Layer.build(
-    Layer.mergeAll(RunFlowsCommandsLive, RunFlowsQueriesLive).pipe(
-      Layer.provideMerge(
-        RuntimeLayer(registry).pipe(
-          Layer.provideMerge(
-            Layer.mergeAll(RunsQueriesLive, RunsCommandsLive, ...flowLayers).pipe(
-              Layer.provideMerge(StateLive),
-            ),
-          ),
-        ),
-      ),
+    Layer.mergeAll(modules, ...flowLayers.map((flow) => flow.pipe(Layer.provide(modules)))).pipe(
+      Layer.provide(RuntimeLayer(registry)),
+      Layer.provideMerge(EngineLive),
     ),
   );
 
@@ -1336,7 +1329,7 @@ export const runDaemon = Effect.gen(function* () {
           });
 
           return yield* Effect.forever(pollOnce.pipe(Effect.flatMap(Effect.sleep)));
-        }).pipe(Effect.provide(NotificationsQueriesOver.pipe(Layer.provide(NotificationsLayer))));
+        });
 
       for (const persona of notifiedPersonas(machine)) {
         yield* Effect.forkScoped(pollNotifications(persona));
