@@ -16,10 +16,13 @@ import { RunsCommands, RunsCommandsLive } from "../src/modules/runs/runs.command
 import { RunsQueries, RunsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effect } from "./effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "./events.ts";
+import { sqliteAfter } from "./sqlite.ts";
 
 // The runs' stores in state.db, their logs, and the bus their commands
 // dispatch on, as the engine provides them beneath RunsCommands and RunsQueries.
 const stores = Layer.mergeAll(
+  // The SQL client ReadStateVersionQuery asks state.db through.
+  sqliteAfter(Effect.void),
   RecordedEvents,
   RunLogsClientFake({}),
   RunsRepositoryFake([]),

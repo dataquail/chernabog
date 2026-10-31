@@ -19,6 +19,7 @@ import { RunsRepositoryFake } from "../src/modules/runs/infrastructure/repositor
 import { SkipsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/skips.repository-fake.ts";
 import { RunsQueries, RunsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effect } from "./effect-test.ts";
+import { sqliteAfter } from "./sqlite.ts";
 
 const AT = "2026-10-20T00:00:00.000Z";
 
@@ -46,6 +47,8 @@ const ended = run("ended", { status: "done", finishedAt: Option.some(AT) });
 
 // The runs' stores in state.db, as the daemon provides them beneath RunsQueries.
 const stores = Layer.mergeAll(
+  // The SQL client ReadStateVersionQuery asks state.db through.
+  sqliteAfter(Effect.void),
   RunsRepositoryFake([run("a"), run("old", { coreVersion: "0.5.2" }), ended]),
   RunMarkersRepositoryFake([
     RunMarkerRootOps.hold({ runId: RunId.make("a"), name: "label", args: 1, keepOn: [] }, AT),

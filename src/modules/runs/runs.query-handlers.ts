@@ -32,6 +32,8 @@ import { readRunHistoryHandler } from "./queries/read-run-history.handler.ts";
 import { ReadRunHistoryQuery } from "./queries/read-run-history.query.ts";
 import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
 import { ReadRunLogQuery } from "./queries/read-run-log.query.ts";
+import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
+import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
 import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
 import {
@@ -56,6 +58,7 @@ export const runsQueryGroup = Query.group(
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
   ReadRunHistoryQuery,
+  ReadStateVersionQuery,
 );
 
 const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
@@ -70,6 +73,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
+  ReadStateVersionQuery: () => readStateVersionHandler(),
 });
 
 // The runs module's slice of the read side over state.db, which the daemon, a
