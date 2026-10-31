@@ -61,8 +61,9 @@ export const releaseRunMarkersHandler = Effect.fn("releaseRunMarkersHandler")(fu
       const now = yield* DateTime.now;
       const at = DateTime.formatIso(now);
 
-      // One that failed before backs off, even for a repeat of the event.
-      if (!RunMarkerRootOps.isDue(marker, now)) {
+      // One tried before is the sweep's, even for a repeat of the event: the
+      // two never release one marker at once.
+      if (!RunMarkerRootOps.untried(marker)) {
         continue;
       }
 
