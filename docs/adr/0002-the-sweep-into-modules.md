@@ -1,7 +1,9 @@
 # 2. Sweeping the rest of src/ into modules, and what's left
 
 Status: accepted, 2026-10-23. Decision 1 superseded, and decision 3 amended, by
-[ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md).
+[ADR 3](0003-use-cases-dont-compose-and-recovery-over-clean-stops.md). The
+decision "What's left" defers is settled for the gateway by
+[ADR 9](0009-modules-import-and-export.md).
 
 ## Context
 

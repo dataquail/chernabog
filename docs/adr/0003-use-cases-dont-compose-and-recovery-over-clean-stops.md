@@ -3,7 +3,10 @@
 Status: accepted, 2026-10-23. Supersedes decision 1 of ADR 2 and amends its
 decision 3. Decision 1 is amended by
 [ADR 6](0006-use-cases-become-commands-and-queries.md): it holds for commands
-and queries too, which never dispatch one another.
+and queries too, which never dispatch one another. It is amended again by
+[ADR 9](0009-modules-import-and-export.md): an ACL adapter does dispatch
+another module's published query, the one sanctioned way a handler reaches
+another module.
 
 ## Context
 

@@ -1,6 +1,9 @@
 # 6. Use-cases become commands and queries
 
-Status: accepted, 2026-10-29. Issue #228. Supersedes decision 1 of
+Status: accepted, 2026-10-29. Issue #228. Decision 4 is amended by
+[ADR 9](0009-modules-import-and-export.md): an ACL adapter dispatches another
+module's published query, the one sanctioned way a handler reaches another
+module. Supersedes decision 1 of
 [ADR 1](0001-ddd-use-cases-and-ports.md), the CQRS bus, its message definitions
 and the unit-of-work library on that ADR's list of what was left behind, and
 its settled question on folder names. Amends decision 1 of
@@ -47,7 +50,9 @@ and an event bus for when the events come.
    dispatch a message it doesn't name, such as the dashboard's.
 4. **A handler doesn't dispatch.** ADR 3's decision 1 carries over: a command
    or query never imports another message, handler or use-case. What several
-   do together, the adapter that dispatches them composes.
+   do together, the adapter that dispatches them composes. (Amended by ADR 9:
+   a handler asks another module through its module's ACL port, whose adapter
+   dispatches that module's published query.)
 5. **No unit of work yet.** `withUnitOfWork` needs a `TransactionDriver`, and
    the stores that commands write so far are JSON and YAML files, changed
    under a lock and replaced whole (ADR 3). `@effect-server-utils/unit-of-work`

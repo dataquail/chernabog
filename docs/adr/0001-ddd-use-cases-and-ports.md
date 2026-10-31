@@ -4,7 +4,9 @@ Status: accepted, 2026-10-22. Decision 1, the CQRS bus, its message
 definitions and the unit-of-work library among what was left behind, and the
 settled question on folder names are superseded by
 [ADR 6](0006-use-cases-become-commands-and-queries.md). The module gateways among
-what was left behind are superseded by [ADR 7](0007-module-gateways.md).
+what was left behind are superseded by [ADR 7](0007-module-gateways.md), and
+`*.exports.ts` and `*.imports.ts` by
+[ADR 9](0009-modules-import-and-export.md).
 Specifications, among what was left behind, are adopted by
 [ADR 8](0008-repository-vocabulary-and-specifications.md).
 

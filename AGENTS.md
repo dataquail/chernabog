@@ -195,7 +195,7 @@ transitive reach), the coverage floors and the baseline.
   (a port is a `Context.Service` and its shape, no values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`),
-  `infrastructure/{repositories,clients}/`
+  `domain/ports/acl/` (what it asks another module), `infrastructure/{repositories,clients,acl}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`,
   `<module>.platform.ts` (what it publishes to the adapters), and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
@@ -335,9 +335,22 @@ transitive reach), the coverage floors and the baseline.
 - **A handler doesn't talk.** The `no-talking` members rule reports a call to
   `log`, `warn`, `exit`, `pick` or `choose` in `commands/`, `queries/` and
   `domain/`.
-- **Modules don't reach into each other.** An adapter composes them: the
-  `trust` command lists its targets with enrollment's
-  `ListEnrolledReposQuery`, then trusts each.
+- **Modules ask each other only through ACL ports**
+  (`docs/adr/0009-modules-import-and-export.md`). An owner grants queries in
+  `<module>.exports.ts` (`recipesAccessQueries =
+Query.subsetOf(recipesQueryGroup, "ReadTeamConfigQuery")`, named
+  `<module>Access<Queries|Commands|DomainEvents|Errors>`, never a bare
+  re-export, and only with a consumer). The asker names that grant in its
+  `<module>.imports.ts`, declares a port in its own words in
+  `domain/ports/acl/<question>.acl.ts` (owing `-live.ts`, `-fake.ts` and
+  `-live.test.ts` in `infrastructure/acl/`), and its live adapter dispatches
+  the grant and translates the answer. Its handlers ask the port; they never
+  name the other module or its messages. `main.ts`'s `AppLive` provides an
+  owner beneath its askers. Owners: enrollment the enrolled repos and their
+  per-persona choices, machine the personas and accounts, recipes the team's
+  `.chernabog/config.yaml` (`ReadTeamConfigQuery`). An adapter may still
+  compose modules itself: the `trust` command lists its targets with
+  enrollment's `ListEnrolledReposQuery`, then trusts each.
 - **The platform** (`src/platform/`) holds the technical adapters everything
   shares: `exec.ts`, the host environment, `home.ts`, `github-api.ts` and
   `github-auth.ts`, `agent-accounts.ts`, `self.ts`, `version.ts`, the
@@ -358,9 +371,8 @@ transitive reach), the coverage floors and the baseline.
   past it, and only `src/interface/` names it. To use something new from a
   module, re-export it there. The runs module's runtime the roots still
   compose is published from `runs.platform.ts` for now, in a section marked
-  interim. A module names another only through its `*.platform.ts`,
-  `*.exports.ts` or `*.module.ts`; the last two arrive with their first
-  consumer.
+  interim. A module names another only through its `*.exports.ts`, and only
+  from its own `*.imports.ts`.
 - **The runtime** a run's flow executes in is the runs module's
   `infrastructure/runtime/`: the workflow engine and step runner, core's
   services over GitHub, git, worktrees and usage, and the agents and
@@ -382,9 +394,11 @@ transitive reach), the coverage floors and the baseline.
   (`bun run architecture:baseline`). Prefer fixing, or a reason written into
   the manifest, to adding a line.
 - **Campaigns** (`campaigns:` in `architecture.yaml`) count a refactor still
-  under way, none at present: `cqrs`, which moved every use-case to a command
-  or query and had the commands dispatch their domain events, is retired
-  (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
+  under way. `repo-config` counts the files under `src/` that still import
+  `src/repo-config.ts`; each moves onto its owner's repository or an ACL port
+  (ADR 9), and the file is deleted when none is left. `cqrs`, which moved
+  every use-case to a command or query and had the commands dispatch their
+  domain events, is retired (#273). A campaign's ledger in `.architecture-campaigns/` lists what is
   left and may only shrink. A change that moves one runs
   `bun run architecture:clear` and commits the ledger with it;
   `bun run architecture:campaigns` shows what's left. Always clear through
