@@ -3,7 +3,7 @@
 // dispatchers in runs.command-handlers.ts and runs.query-handlers.ts, and the
 // runs' event bus, are built with these, so a command, query or event's span
 // can be found by the run it was for
-// (docs/adr/0007-the-hexagons-remaining-stereotypes.md).
+// (docs/adr/0009-the-hexagons-remaining-stereotypes.md).
 
 import { Event } from "@effect-server-utils/cqrs";
 

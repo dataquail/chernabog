@@ -3,13 +3,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { RunStepsRepository } from "../domain/ports/repositories/run-steps.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { RunNotFound } from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunStepEntity } from "../domain/run/run-step.entity.ts";
+import { RunStepSpecifications } from "../domain/run/run-step.specification.ts";
+import { RunStepsRepository } from "../domain/run/run-steps.repository.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type EnterStepPayload } from "./enter-step.command.ts";
 
 export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
@@ -17,7 +19,7 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
   step,
 }: EnterStepPayload) {
   const runs = yield* RunsRepository;
-  const found = yield* runs.findOne(runId);
+  const found = yield* runs.findOne(RunSpecifications.withId(runId));
 
   if (Option.isNone(found)) {
     return yield* new RunNotFound({ runId });
@@ -25,9 +27,12 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
 
   const changed = yield* Effect.fromResult(RunRootOps.enterStep(found.value, step));
   const steps = yield* RunStepsRepository;
+
   // A resumed run re-enters the step it was in when it stopped, and that
   // step's event went out the first time.
-  const again = (yield* steps.findAll(runId)).some((entered) => entered.step === step);
+  const again = (yield* steps.findMany(RunStepSpecifications.forRun(runId))).some(
+    (entered) => entered.step === step,
+  );
 
   const entered = RunStepEntity.make({
     runId,
@@ -35,8 +40,8 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(function* ({
     enteredAt: DateTime.formatIso(yield* DateTime.now),
   });
 
-  yield* runs.save(changed);
-  yield* steps.save(entered);
+  yield* runs.upsertOne(changed);
+  yield* steps.insertOne(entered);
 
   if (!again) {
     yield* (yield* EventBus).dispatch([RunEvents.enteredStep(runId, step, entered.enteredAt)]);

@@ -27,76 +27,57 @@ import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-obj
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { RunId, runLabel } from "../../kernel/run-id.id.ts";
-import { EnrollmentQueries } from "../../modules/enrollment/enrollment.query-handlers.ts";
-import {
-  CancelledRun,
-  CancelTarget,
-} from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
-import { RunHistory } from "../../modules/runs/domain/run/run-history.value-object.ts";
+import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import {
   type ActiveRun,
-  type RunView,
-} from "../../modules/runs/domain/run/run-view.value-object.ts";
-import {
+  adoptRuns,
+  buildPersonaContexts,
+  CancelledRun,
+  CancelTarget,
   causeOf,
-  DEFAULT_EVENT_TICK_MIN,
-  eventTickAt,
-  localCause,
-  noteEvent,
-  type PendingTick,
-} from "../../modules/runs/domain/schedule/event-tick.value-object.ts";
-import {
-  DEFAULT_LEASE_LIMITS,
-  leaseTtlFor,
-  renewalDue,
-  RunLeases,
-} from "../../modules/runs/domain/schedule/lease.value-object.ts";
-import { type NotificationNews } from "../../modules/runs/domain/schedule/notifications.value-object.ts";
-import { nextTick } from "../../modules/runs/domain/schedule/schedule.value-object.ts";
-import {
   type CheckFailures,
+  DEFAULT_EVENT_TICK_MIN,
+  DEFAULT_LEASE_LIMITS,
   DEFAULT_VALIDITY_EVERY,
-  noteCheckFailure,
-  runIsAbout,
-  RunValidity,
-  validityDue,
-} from "../../modules/runs/domain/schedule/validity.value-object.ts";
-import {
+  describeLauncher,
+  eventTickAt,
   type FlowHandle,
   flowHandle,
   flowLayer,
-} from "../../modules/runs/infrastructure/runtime/engine.ts";
-import { describeLauncher } from "../../modules/runs/infrastructure/runtime/launchers.ts";
-import {
-  adoptRuns,
-  buildPersonaContexts,
   flowOrigins,
-  type PersonaContext,
-  servicesFrom,
-} from "../../modules/runs/infrastructure/runtime/repo-runtime.ts";
-import { runLogWriting } from "../../modules/runs/infrastructure/runtime/runlog.ts";
-import {
-  RunFlowsCommands,
-  RunFlowsCommandsLive,
-  RunsCommands,
-  RunsCommandsLive,
-} from "../../modules/runs/runs.command-handlers.ts";
-import {
   type FlowRegistry,
+  leaseTtlFor,
+  localCause,
+  nextTick,
+  noteCheckFailure,
+  noteEvent,
+  type NotificationNews,
   NotificationsLayer,
-  RuntimeLayer,
-  StateLive,
-} from "../../modules/runs/runs.layer.ts";
-import {
   NotificationsQueries,
   NotificationsQueriesOver,
+  type PendingTick,
+  type PersonaContext,
+  renewalDue,
+  RunFlowsCommands,
+  RunFlowsCommandsLive,
   RunFlowsQueries,
   RunFlowsQueriesLive,
+  RunHistory,
+  runIsAbout,
+  RunLeases,
+  runLogWriting,
+  RunsCommands,
+  RunsCommandsLive,
   RunsQueries,
   RunsQueriesLive,
-} from "../../modules/runs/runs.query-handlers.ts";
-import { TrustCommands } from "../../modules/trust/trust.command-handlers.ts";
-import { TrustQueries } from "../../modules/trust/trust.query-handlers.ts";
+  RuntimeLayer,
+  RunValidity,
+  type RunView,
+  servicesFrom,
+  StateLive,
+  validityDue,
+} from "../../modules/runs/runs.platform.ts";
+import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.ts";
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";

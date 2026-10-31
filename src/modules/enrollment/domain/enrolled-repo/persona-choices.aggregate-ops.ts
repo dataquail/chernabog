@@ -1,7 +1,7 @@
 // The rules a persona's choices keep on their own, whichever entry holds
 // them: the repo entry's defaults or a persona's own. Domain-private: the
 // enrolled repo's ops compose them, and nothing outside domain/ names them
-// (docs/adr/0007-the-hexagons-remaining-stereotypes.md).
+// (docs/adr/0009-the-hexagons-remaining-stereotypes.md).
 
 import * as Option from "effect/Option";
 

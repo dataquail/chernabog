@@ -7,17 +7,19 @@ import * as Result from "effect/Result";
 
 import { samePersona } from "../../../kernel/persona.value-object.ts";
 import { Routing } from "../domain/domain-services/routing.domain-service.ts";
+import { HoldsRepository } from "../domain/holds/holds.repository.ts";
 import { HoldsRoot } from "../domain/holds/holds.root.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { HoldsRepository } from "../domain/ports/repositories/holds.repository.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
-import { SkipsRepository } from "../domain/ports/repositories/skips.repository.ts";
 import { type FlowFailed, type PersonaNotReady } from "../domain/run/run.errors.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { describeWaiting, mayStart, type WorkItem } from "../domain/run/work-item.value-object.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { decideTick, freeSlots, TickPlan } from "../domain/schedule/tick.value-object.ts";
 import { SkipRoot } from "../domain/skip/skip.root.ts";
+import { SkipsRepository } from "../domain/skip/skips.repository.ts";
 import { type PlanTickPayload } from "./plan-tick.command.ts";
 
 const describeQueued = (item: WorkItem) =>
@@ -35,7 +37,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
 
   const skip = (reason: string, plan: Pick<TickPlan, "signalled" | "routed">) =>
     Effect.gen(function* () {
-      yield* skips.save(
+      yield* skips.insertOne(
         SkipRoot.make({
           repo: flow.repo,
           persona: flow.persona,
@@ -101,7 +103,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
     ...Option.toArray(lookedUp.success),
   ];
 
-  yield* (yield* HoldsRepository).save(
+  yield* (yield* HoldsRepository).upsertOne(
     HoldsRoot.make({
       repo: flow.repo,
       persona: flow.persona,
@@ -118,7 +120,7 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
     }),
   );
 
-  const running = yield* (yield* RunsRepository).findAll({ running: true });
+  const running = yield* (yield* RunsRepository).findMany(RunSpecifications.running);
 
   // The items a run may start for: not only waking one, not held, and without its run already.
   const waiting = items.filter(
@@ -177,7 +179,9 @@ export const planTickHandler = Effect.fn("planTickHandler")(function* ({
 
   // A run parked on a signal doesn't count against the limits.
   const parked = new Set(
-    (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((wait) => wait.runId),
+    (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+      (wait) => wait.runId,
+    ),
   );
 
   const working = running.filter((run) => !parked.has(run.id));

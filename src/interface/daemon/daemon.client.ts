@@ -10,8 +10,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { CancelledRun } from "../../modules/runs/domain/run/cancelled-run.value-object.ts";
-import { RunHistory } from "../../modules/runs/domain/run/run-history.value-object.ts";
+import { CancelledRun, RunHistory } from "../../modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,

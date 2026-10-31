@@ -6,10 +6,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { type RunId } from "../../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../../domain/ports/repositories/run-waits.repository.ts";
+import { type Specification } from "../../../../kernel/specification.ts";
 import { type RunWaitRoot } from "../../domain/run-wait/run-wait.root.ts";
-import { toRoot, WaitColumns } from "./run-wait.mapper.ts";
+import { RunWaitsRepository } from "../../domain/run-wait/run-waits.repository.ts";
+import { criteriaToWhere } from "./criteria-to-sql.ts";
+import { toRoot, WaitColumns, waitColumns } from "./run-wait.mapper.ts";
 
 const ColumnName = Schema.Struct({ name: Schema.String });
 
@@ -43,24 +44,23 @@ export const RunWaitsRepositoryLive = Layer.effect(
         Effect.orDie,
       );
 
-    const findAll = (runId: Option.Option<RunId>) =>
-      Option.match(runId, {
-        onNone: () => waits(sql`SELECT * FROM om_waits`),
-        onSome: (id) => waits(sql`SELECT * FROM om_waits WHERE run_id = ${id}`),
-      });
+    const findMany = (spec: Specification<RunWaitRoot>) =>
+      criteriaToWhere(sql, spec.criteria, waitColumns).pipe(
+        Effect.flatMap((where) => waits(sql`SELECT * FROM om_waits WHERE ${where} ORDER BY rowid`)),
+      );
 
-    const save = (wait: RunWaitRoot) =>
+    const upsertOne = (wait: RunWaitRoot) =>
       sql`INSERT OR REPLACE INTO om_waits (run_id, signal, deferred, token, parked_at) VALUES (${wait.runId}, ${wait.signal}, ${wait.deferred}, ${wait.token}, ${Option.getOrNull(wait.parkedAt)})`.pipe(
         Effect.asVoid,
         Effect.orDie,
       );
 
-    const remove = (wait: RunWaitRoot) =>
+    const deleteOne = (wait: RunWaitRoot) =>
       sql`DELETE FROM om_waits WHERE run_id = ${wait.runId} AND deferred = ${wait.deferred}`.pipe(
         Effect.asVoid,
         Effect.orDie,
       );
 
-    return RunWaitsRepository.of({ findAll, save, remove });
+    return RunWaitsRepository.of({ findMany, upsertOne, deleteOne });
   }).pipe(Effect.orDie),
 );

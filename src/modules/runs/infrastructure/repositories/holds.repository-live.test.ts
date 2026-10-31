@@ -5,8 +5,9 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
+import { HoldsRepository } from "../../domain/holds/holds.repository.ts";
 import { HoldsRoot } from "../../domain/holds/holds.root.ts";
-import { HoldsRepository } from "../../domain/ports/repositories/holds.repository.ts";
+import { HoldsSpecifications } from "../../domain/holds/holds.specification.ts";
 import { HoldsRepositoryLive } from "./holds.repository-live.ts";
 
 const holds = (persona: Option.Option<string>, ...keys: ReadonlyArray<string>) =>
@@ -24,18 +25,21 @@ describe("HoldsRepositoryLive", () => {
   effect("replaces one flow's holds, as one persona or the implicit one, and no other's", () =>
     Effect.gen(function* () {
       const repository = yield* HoldsRepository;
-      yield* repository.save(holds(bob, "issue-1"));
-      yield* repository.save(holds(Option.none(), "issue-3"));
-      yield* repository.save(holds(bob, "issue-7", "issue-5"));
+      yield* repository.upsertOne(holds(bob, "issue-1"));
+      yield* repository.upsertOne(holds(Option.none(), "issue-3"));
+      yield* repository.upsertOne(holds(bob, "issue-7", "issue-5"));
 
-      expect(yield* repository.findAll).toEqual([
+      expect(yield* repository.findMany(HoldsSpecifications.all)).toEqual([
         holds(Option.none(), "issue-3"),
         holds(bob, "issue-7", "issue-5"),
       ]);
 
-      yield* repository.save(holds(Option.none()));
+      yield* repository.upsertOne(holds(Option.none()));
 
-      expect(yield* repository.findAll).toEqual([holds(bob, "issue-7", "issue-5")]);
+      expect(yield* repository.findMany(HoldsSpecifications.all)).toEqual([
+        holds(bob, "issue-7", "issue-5"),
+      ]);
+      expect(yield* repository.findMany(HoldsSpecifications.forRepo("other"))).toEqual([]);
     }).pipe(Effect.provide(HoldsRepositoryLive.pipe(Layer.provide(sqliteAfter(Effect.void))))),
   );
 });

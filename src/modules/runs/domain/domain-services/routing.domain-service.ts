@@ -1,6 +1,6 @@
 // Whose work a persona's flow starts on this machine: a domain service, since
 // it splits a trigger's items before any run exists, so no aggregate owns it
-// (docs/adr/0007-the-hexagons-remaining-stereotypes.md). Routing is the flow's:
+// (docs/adr/0009-the-hexagons-remaining-stereotypes.md). Routing is the flow's:
 // its trigger leaves an item for another persona or machine by giving the
 // reason (`elsewhere`), as it holds one with `held`, and the engine starts
 // none of those unless a person names one. The claim, its lease and fencing

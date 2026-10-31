@@ -6,16 +6,18 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { RunMarkersRepository } from "../domain/ports/repositories/run-markers.repository.ts";
-import { RunsRepository } from "../domain/ports/repositories/runs.repository.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
+import { RunSpecifications } from "../domain/run/run.specification.ts";
+import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
 import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
 import {
   MarkerReleases,
   RunMarkerView,
 } from "../domain/run-marker/run-marker-view.value-object.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 
 // The run a release is asked about, as the flow's check would be: by its
 // item, or one made from its key for a run that kept none.
@@ -51,12 +53,12 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
     return failed;
   };
 
-  const held = yield* markers.findAll({ runId: Option.none(), status: Option.some("held") });
+  const held = yield* markers.findMany(RunMarkerSpecifications.inStatus("held"));
   const byRun = Arr.groupBy(held, (marker) => marker.runId);
 
   for (const ownMarkers of Object.values(byRun)) {
     const ended = Option.filter(
-      yield* runs.findOne(ownMarkers[0].runId),
+      yield* runs.findOne(RunSpecifications.withId(ownMarkers[0].runId)),
       (run) => !RunRootOps.isRunning(run),
     );
 
@@ -74,7 +76,7 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
 
       if (RunMarkerRootOps.keptOn(marker, run.status)) {
         const stays = RunMarkerRootOps.kept(marker, at);
-        yield* markers.save(stays);
+        yield* markers.upsertOne(stays);
         kept.push(stays);
         continue;
       }
@@ -94,7 +96,7 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
         },
       });
 
-      yield* markers.save(settled);
+      yield* markers.upsertOne(settled);
       sortedBy(settled).push(settled);
     }
   }

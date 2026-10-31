@@ -140,7 +140,12 @@ const choosePersonas = (
 const addPersonas = (setup: MachineSetupRoot, logins: ReadonlyArray<string>) =>
   MachineSetupRoot.make({ ...setup, personas: Arr.dedupe([...setup.personas, ...logins]) });
 
+// The setup of a machine whose config says nothing of it: the implicit
+// persona, and the one default account.
+const unset = MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false });
+
 export const MachineSetupRootOps = {
+  unset,
   expandHome,
   homeRelative,
   agentOfDir,

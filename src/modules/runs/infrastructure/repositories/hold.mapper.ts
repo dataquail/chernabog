@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import { samePersona } from "../../../../kernel/persona.value-object.ts";
 import { HoldsRoot } from "../../domain/holds/holds.root.ts";
+import { type ColumnMap } from "./criteria-to-sql.ts";
 
 export const HoldColumns = Schema.Struct({
   repo: Schema.String,
@@ -40,3 +41,7 @@ export const toRoots = (rows: ReadonlyArray<HoldRow>): ReadonlyArray<HoldsRoot> 
 
   return Arr.groupWith(rows, sameFlow).map(toRoot);
 };
+
+// Each scalar field of a flow's holds, as the om_holds column a spec's WHERE
+// names: every row of the flow carries it.
+export const holdsColumns: ColumnMap = { repo: "repo", persona: "persona", flow: "flow", at: "at" };

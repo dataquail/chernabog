@@ -107,3 +107,9 @@ describe("MachineSetupRootOps personas", () => {
     ]);
   });
 });
+
+describe("MachineSetupRootOps.unset", () => {
+  test("a machine whose config says nothing has no personas and no accounts written", () => {
+    expect(MachineSetupRootOps.unset).toEqual(bare);
+  });
+});

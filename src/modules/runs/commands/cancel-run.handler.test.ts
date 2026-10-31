@@ -6,11 +6,12 @@ import * as Option from "effect/Option";
 import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-object.ts";
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import {
   type FakeHoldings,
   fakeHoldings,
@@ -111,7 +112,9 @@ describe("cancelRunHandler", () => {
       expect(engine.interrupted).toEqual(["execution-a"]);
       expect(engine.notes).toEqual([`a: ${Option.getOrThrow(cancelled.run.summary)}`]);
       expect(
-        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.runId),
+        (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+          (left) => left.runId,
+        ),
       ).toEqual([RunId.make("other")]);
       // A pull request's run holds no claim.
       expect([holdings.cleaned, holdings.released]).toEqual([["a"], []]);

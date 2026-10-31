@@ -6,11 +6,15 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { OFFICIAL_PACKAGE } from "../../../kernel/recipe-package.value-object.ts";
-import { EnrollmentCommands } from "../../../modules/enrollment/enrollment.command-handlers.ts";
-import { EnrollmentQueries } from "../../../modules/enrollment/enrollment.query-handlers.ts";
-import { type RecipePackageAdded } from "../../../modules/recipes/commands/add-recipe-package.command.ts";
-import { type Scaffolded } from "../../../modules/recipes/commands/scaffold-repo.command.ts";
-import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
+import {
+  EnrollmentCommands,
+  EnrollmentQueries,
+} from "../../../modules/enrollment/enrollment.platform.ts";
+import {
+  type RecipePackageAdded,
+  RecipesCommands,
+  type Scaffolded,
+} from "../../../modules/recipes/recipes.platform.ts";
 import { daemonReload } from "../../daemon/daemon.client.ts";
 import { confirm } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";

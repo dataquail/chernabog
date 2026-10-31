@@ -5,10 +5,11 @@ import * as Option from "effect/Option";
 
 import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
-import { RunWaitsRepository } from "../domain/ports/repositories/run-waits.repository.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { type WorkItem } from "../domain/run/work-item.value-object.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
+import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
+import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import {
   type FakeEngine,
@@ -114,7 +115,9 @@ describe("deliverSignalsHandler", () => {
       expect(delivered.count).toBe(1);
       expect(racing.woken).toEqual(["approved:plan-1"]);
       expect(
-        (yield* (yield* RunWaitsRepository).findAll(Option.none())).map((left) => left.deferred),
+        (yield* (yield* RunWaitsRepository).findMany(RunWaitSpecifications.all)).map(
+          (left) => left.deferred,
+        ),
       ).toEqual(["pushed:ci-1"]);
     }).pipe(
       Effect.provide(

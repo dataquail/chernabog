@@ -192,24 +192,26 @@ transitive reach), the coverage floors and the baseline.
   `XRootOps` bag of pure functions returning `Result`; `.entity.ts`, an
   `XEntity` with an identity inside the aggregate; `.aggregate.ts`, a
   constituent aggregate, and its domain-private `.aggregate-ops.ts` bag;
-  `.id.ts` (`XId`), `.errors.ts`, `.value-object.ts`, and `.events.ts`, the
-  domain events its commands dispatch),
+  `.id.ts` (`XId`), `.errors.ts`, `.value-object.ts`, `.events.ts`, the
+  domain events its commands dispatch, `.specification.ts`, the predicates it
+  is read by, and `.repository.ts`, its repository port),
   `domain/domain-services/` (`.domain-service.ts`, a pure free-function bag
   for domain logic no single aggregate owns, such as `Routing`),
-  `domain/ports/{repositories,clients}/` (a `Context.Service` and its shape, no
+  `domain/ports/clients/` (a port is a `Context.Service` and its shape, no
   values), `commands/` and `queries/` (per message, a `<verb-noun>.command.ts`
   or `.query.ts` declaring it and its result schema, and a
   `<verb-noun>.handler.ts` exporting one `<verbNoun>Handler`, its value
   exports camelCase),
   `infrastructure/{repositories,clients}/`
   (`-live.ts`, `-fake.ts`, `.mapper.ts`), `<module>.layer.ts`,
+  `<module>.platform.ts` (what it publishes to the adapters), and
   `<module>.command-handlers.ts` / `<module>.query-handlers.ts`, which
   register the handlers over the layer and declare the module's dispatchers
   (`TrustCommands`, `TrustQueries`), provided in `main.ts`'s `AppLive`, and
   `<module>.event-span-attributes.ts`, what the dispatchers' and event bus's
   spans say (the runs' name the run, its repo and its flow). Which of the
   hexagon's stereotypes are here, and which aren't yet, is
-  `docs/adr/0007-the-hexagons-remaining-stereotypes.md`. The
+  `docs/adr/0009-the-hexagons-remaining-stereotypes.md`. The
   runs module's stores share the engine's SQL client, so `RunsQueries` is
   provided where state.db is (the daemon, a foreground run, `flowLayer`);
   `RunsCommands` and `RunFlowsQueries`, which also ask the loaded flows, by
@@ -221,11 +223,23 @@ transitive reach), the coverage floors and the baseline.
   module's domain. A handler adds its ports; it never names infrastructure or
   interface, never prints, prompts or sets an exit code, and returns a typed
   result an adapter renders: a value object or event in the domain, which the
-  adapters and the daemon's protocol name directly. Only repository adapters (and the legacy tier)
+  adapters and the daemon's protocol name through the module's `*.platform.ts`. Only repository adapters (and the legacy tier)
   name `yaml`; only the runs module's infrastructure and the engine name SQL.
 - **Obligations.** A `.root-ops.ts`, an `.aggregate-ops.ts`, a
-  `.domain-service.ts` and a `.handler.ts` each owe a sibling `.test.ts`; a repository or client port owes its `-live.ts`, `-fake.ts` and
-  `-live.test.ts`. The lint names what is missing.
+  `.domain-service.ts`, a `.specification.ts` and a `.handler.ts` each owe a
+  sibling `.test.ts`; a repository or client port owes its `-live.ts`,
+  `-fake.ts` and `-live.test.ts`. The lint names what is missing.
+- **Repositories speak the persistence vocabulary** (ADR 8). A port declares
+  only `findOne`/`findMany`, each taking a `Specification` from the kernel
+  kit (`src/kernel/specification.ts`), and the writes
+  `insertOne`/`updateOne`/`deleteOne`/`upsertOne` and their `Many` forms. A
+  lookup or variant is a spec in the aggregate's `<aggregate>.specification.ts`
+  (`RunSpecifications.withId(id)`), composed at the call site with `Spec.and`,
+  `Spec.or` and `Spec.not`. The SQLite adapters compile it to a WHERE fragment
+  (`criteriaToWhere`, in the runs module's `infrastructure/repositories/`);
+  the file-backed ones and every fake filter with the spec itself. A store kept
+  where the aggregate says (a scenario at its path, a checkout's flow imports)
+  reads that place from the spec with `pinnedValue`.
 - **Enrollment is the first module.** `EnrolledReposRepository` loads and saves
   an `EnrolledRepoRoot`: its machine-config entry (edited in place, comments
   kept, and written only when the entry changed) and whether it's paused
@@ -265,7 +279,7 @@ transitive reach), the coverage floors and the baseline.
   ones over state.db alone are `RunsQueries` and `RunsCommands`, and the ones
   over the flows a process loaded `RunFlowsQueries` and `RunFlowsCommands`,
   which the daemon, `run` and `rehearse` build over their runtime; a run's
-  `RunView` is what crosses the socket. `RunsRepository.save` never rewrites a
+  `RunView` is what crosses the socket. `RunsRepository.upsertOne` never rewrites a
   run that ended with another ending, so a stale copy can't revive it.
   `RunId`, `shortRunId` and `runLabel` are in `src/kernel/run-id.id.ts`.
   The flow rules the daemon decides by are the runs module's domain too, as
@@ -347,8 +361,19 @@ transitive reach), the coverage floors and the baseline.
 - **The composition roots are adapters too**: the CLI's
   `src/interface/cli/main.ts`, the daemon's `src/interface/daemon/daemon.server.ts`
   and the live view in `src/interface/tui/`. Each has its own allowlist in
-  `architecture.yaml`, which names, file by file, the legacy runtime it still
-  drives; moving a file into a module takes it off those lists.
+  `architecture.yaml`, which names, file by file, the legacy files it still
+  reads.
+- **A module publishes one surface** (`docs/adr/0007-module-gateways.md`):
+  `<module>.platform.ts` re-exports, and only re-exports, what the inbound
+  adapters name: its dispatchers and their Layers, its Layers, and the
+  results, value objects and events its messages answer with. Nothing
+  outside `src/modules/` but tests (and the legacy `repo-config.ts`) reaches
+  past it, and only `src/interface/` names it. To use something new from a
+  module, re-export it there. The runs module's runtime the roots still
+  compose is published from `runs.platform.ts` for now, in a section marked
+  interim. A module names another only through its `*.platform.ts`,
+  `*.exports.ts` or `*.module.ts`; the last two arrive with their first
+  consumer.
 - **The runtime** a run's flow executes in is the runs module's
   `infrastructure/runtime/`: the workflow engine and step runner, core's
   services over GitHub, git, worktrees and usage, and the agents and

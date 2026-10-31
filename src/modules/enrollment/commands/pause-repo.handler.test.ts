@@ -6,7 +6,8 @@ import { effect } from "../../../../test/effect-test.ts";
 import { DispatchedEvents, RecordedEvents } from "../../../../test/events.ts";
 import { RepoSlug } from "../../../kernel/repo-slug.id.ts";
 import { EnrolledRepoRoot } from "../domain/enrolled-repo/enrolled-repo.root.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { EnrolledReposRepositoryFake } from "../infrastructure/repositories/enrolled-repos.repository-fake.ts";
 import { pauseRepoHandler } from "./pause-repo.handler.ts";
 
@@ -39,7 +40,10 @@ describe("pauseRepoHandler", () => {
     Effect.gen(function* () {
       yield* pauseRepoHandler({ name: "demo" });
       const again = yield* pauseRepoHandler({ name: "demo" });
-      const stored = yield* (yield* EnrolledReposRepository).findAll;
+
+      const stored = yield* (yield* EnrolledReposRepository).findMany(
+        EnrolledRepoSpecifications.all,
+      );
 
       expect(again.changed).toBe(false);
       expect(stored.map((repo) => repo.paused)).toEqual([true]);

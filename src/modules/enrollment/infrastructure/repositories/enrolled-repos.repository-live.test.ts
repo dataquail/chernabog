@@ -8,7 +8,8 @@ import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
 import { EnrolledRepoRootOps } from "../../domain/enrolled-repo/enrolled-repo.root-ops.ts";
-import { EnrolledReposRepository } from "../../domain/ports/repositories/enrolled-repos.repository.ts";
+import { EnrolledRepoSpecifications } from "../../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { EnrolledReposRepositoryLive } from "./enrolled-repos.repository-live.ts";
 
 const CONFIG =
@@ -21,7 +22,7 @@ const seeded = Effect.gen(function* () {
   yield* fs.writeFileString(paths.machineConfig, CONFIG);
 
   const repository = yield* EnrolledReposRepository;
-  const repos = yield* repository.findAll;
+  const repos = yield* repository.findMany(EnrolledRepoSpecifications.all);
 
   return { fs, paths, repository, demo: repos[0] };
 }).pipe(Effect.provide(EnrolledReposRepositoryLive));
@@ -30,7 +31,7 @@ describe("EnrolledReposRepositoryLive", () => {
   effectAtHome("reads every entry of machine config, none paused without paused.json", () =>
     Effect.gen(function* () {
       const { repository } = yield* seeded;
-      const repos = yield* repository.findAll;
+      const repos = yield* repository.findMany(EnrolledRepoSpecifications.all);
 
       expect(repos.map((repo) => [repo.repo, repo.path, repo.paused])).toEqual([
         ["dataquail/demo", "/src/demo", false],
@@ -43,13 +44,18 @@ describe("EnrolledReposRepositoryLive", () => {
   effectAtHome("pausing writes paused.json by slug and leaves machine config as it was", () =>
     Effect.gen(function* () {
       const { demo, fs, paths, repository } = yield* seeded;
-      yield* repository.save(EnrolledRepoRootOps.pause(demo));
+      yield* repository.upsertOne(EnrolledRepoRootOps.pause(demo));
 
       expect(yield* fs.readFileString(paths.paused)).toBe('["dataquail/demo"]\n');
       expect(yield* fs.readFileString(paths.machineConfig)).toBe(CONFIG);
-      expect((yield* repository.findAll).map((repo) => repo.paused)).toEqual([true, false]);
+      expect(
+        (yield* repository.findMany(EnrolledRepoSpecifications.all)).map((repo) => repo.paused),
+      ).toEqual([true, false]);
+      expect(
+        (yield* repository.findMany(EnrolledRepoSpecifications.paused)).map((repo) => repo.path),
+      ).toEqual(["/src/demo"]);
 
-      yield* repository.save(EnrolledRepoRootOps.resume(demo));
+      yield* repository.upsertOne(EnrolledRepoRootOps.resume(demo));
       expect(yield* fs.readFileString(paths.paused)).toBe("[]\n");
     }),
   );
@@ -57,12 +63,14 @@ describe("EnrolledReposRepositoryLive", () => {
   effectAtHome("saving a changed entry edits it in place, keeping the comments", () =>
     Effect.gen(function* () {
       const { demo, fs, paths, repository } = yield* seeded;
-      yield* repository.save(EnrolledRepoRootOps.setFlow(demo, Option.none(), "review", true));
+      yield* repository.upsertOne(EnrolledRepoRootOps.setFlow(demo, Option.none(), "review", true));
 
       const text = yield* fs.readFileString(paths.machineConfig);
 
       expect(text).toContain("# the one I work on");
-      expect((yield* repository.findAll)[0].defaults.flows).toEqual({ implement: {}, review: {} });
+      expect(
+        (yield* repository.findMany(EnrolledRepoSpecifications.all))[0].defaults.flows,
+      ).toEqual({ implement: {}, review: {} });
       expect(yield* fs.exists(paths.paused)).toBe(false);
     }),
   );
@@ -70,7 +78,7 @@ describe("EnrolledReposRepositoryLive", () => {
   effectAtHome("saving a repo not enrolled adds its entry at the end", () =>
     Effect.gen(function* () {
       const { demo, fs, paths, repository } = yield* seeded;
-      yield* repository.save(
+      yield* repository.upsertOne(
         EnrolledRepoRoot.make({
           ...demo,
           repo: RepoSlug.make("dataquail/new"),
@@ -88,7 +96,7 @@ describe("EnrolledReposRepositoryLive", () => {
   effectAtHome("removing a repo drops its entry, settings and all, and keeps the rest", () =>
     Effect.gen(function* () {
       const { fs, paths, repository } = yield* seeded;
-      yield* repository.remove((yield* repository.findAll)[1]);
+      yield* repository.deleteOne((yield* repository.findMany(EnrolledRepoSpecifications.all))[1]);
 
       expect(yield* fs.readFileString(paths.machineConfig)).toBe(
         "repos:\n  # the one I work on\n  - repo: dataquail/demo\n    path: /src/demo\n    flows: { implement: {} }\n",

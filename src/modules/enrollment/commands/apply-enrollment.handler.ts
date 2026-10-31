@@ -10,10 +10,11 @@ import {
   EnrolledRepoRootOps,
   type PersonaEnrolment,
 } from "../domain/enrolled-repo/enrolled-repo.root-ops.ts";
+import { EnrolledRepoSpecifications } from "../domain/enrolled-repo/enrolled-repo.specification.ts";
+import { EnrolledReposRepository } from "../domain/enrolled-repo/enrolled-repos.repository.ts";
 import { MachineOffer } from "../domain/enrolled-repo/machine-offer.value-object.ts";
 import { CheckoutsClient } from "../domain/ports/clients/checkouts.client.ts";
 import { ViewerClient } from "../domain/ports/clients/viewer.client.ts";
-import { EnrolledReposRepository } from "../domain/ports/repositories/enrolled-repos.repository.ts";
 import { type ApplyEnrollmentPayload, Enrolled } from "./apply-enrollment.command.ts";
 
 export const applyEnrollmentHandler = Effect.fn("applyEnrollmentHandler")(function* (
@@ -25,7 +26,7 @@ export const applyEnrollmentHandler = Effect.fn("applyEnrollmentHandler")(functi
   const repository = yield* EnrolledReposRepository;
   const checkouts = yield* CheckoutsClient;
   const checkout = yield* checkouts.inspect(yield* checkouts.rootOf(path));
-  const repos = yield* repository.findAll;
+  const repos = yield* repository.findMany(EnrolledRepoSpecifications.all);
   const existing = yield* Effect.fromResult(EnrolledRepoRootOps.entryOf(repos, checkout, name));
 
   const personas = yield* Effect.fromResult(
@@ -108,7 +109,7 @@ export const applyEnrollmentHandler = Effect.fn("applyEnrollmentHandler")(functi
     Option.exists(existing, (found) => Option.isSome(Option.fromUndefinedOr(found.personas)));
 
   const enrolled = EnrolledRepoRootOps.enrolPersonas(repo, chosen, perPersona);
-  yield* repository.save(enrolled);
+  yield* repository.upsertOne(enrolled);
   yield* (yield* EventBus).dispatch([
     EnrollmentEvents.enrolled(enrolled, added, DateTime.formatIso(yield* DateTime.now)),
   ]);

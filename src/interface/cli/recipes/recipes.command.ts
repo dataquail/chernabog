@@ -6,18 +6,18 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { type RecipesAdded } from "../../../modules/recipes/commands/add-recipes.command.ts";
-import { type RecipeEjected } from "../../../modules/recipes/commands/eject-recipe.command.ts";
-import { type RecipesImported } from "../../../modules/recipes/commands/import-recipes.command.ts";
 import {
+  type RecipeEjected,
+  type RecipeList,
+  type RecipesAdded,
+  RecipesCommands,
+  type RecipesDiff,
+  type RecipesImported,
+  RecipesQueries,
   type RecipesUpdated,
+  type RepoUpgraded,
   type Unrecorded,
-} from "../../../modules/recipes/commands/update-recipes.command.ts";
-import { type RepoUpgraded } from "../../../modules/recipes/commands/upgrade-repo.command.ts";
-import { type RecipesDiff } from "../../../modules/recipes/queries/diff-recipes.query.ts";
-import { type RecipeList } from "../../../modules/recipes/queries/list-recipes.query.ts";
-import { RecipesCommands } from "../../../modules/recipes/recipes.command-handlers.ts";
-import { RecipesQueries } from "../../../modules/recipes/recipes.query-handlers.ts";
+} from "../../../modules/recipes/recipes.platform.ts";
 import { VERSION } from "../../../platform/version.ts";
 import { Asker, type Choice } from "../asker.prompt.ts";
 import { printLines } from "../cli.output.ts";

@@ -17,18 +17,16 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  checkAnswer,
   Draft,
   handOver,
+  LaunchSpecJson,
   questionFor,
-  worktreeAt,
-} from "../../../modules/runs/infrastructure/runtime/agents/open-pr-question.ts";
-import {
   readDecoded,
   SESSION_ENV,
   sessionFilesIn,
-} from "../../../modules/runs/infrastructure/runtime/agents/session-files.ts";
-import { checkAnswer } from "../../../modules/runs/infrastructure/runtime/agents/stop-hook.ts";
-import { LaunchSpecJson } from "../../../modules/runs/infrastructure/runtime/launchers/shim.ts";
+  worktreeAt,
+} from "../../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../../platform/config-error.ts";
 import { HostEnvironment } from "../../../platform/environment.ts";
 
