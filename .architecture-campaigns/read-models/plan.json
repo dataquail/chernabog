@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "campaign": "read-models",
+  "phases": [
+    {
+      "id": "isolate",
+      "hash": "103e523e",
+      "defined": true,
+      "concessions": 0
+    }
+  ]
+}
