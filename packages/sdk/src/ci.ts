@@ -8,6 +8,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import * as Schema from "effect/Schema";
 
 import * as Settings from "./settings.ts";
 
@@ -80,3 +81,18 @@ export const pullRequestState = (pullRequest: number) =>
 
     return verdict(facts, policy);
   });
+
+const FollowUp = Schema.fromJsonString(
+  Schema.Struct({ sha: Schema.String, pullRequest: Schema.Finite }),
+);
+
+const FOLLOW_UP = /<!-- chernabog-post-merge (\{.*?\}) -->/;
+
+// Whether an issue's body is a follow-up the post-merge recipe filed for red
+// CI on its base branch: it carries that recipe's marker, naming the merge
+// commit. Its fix is what other merges wait on while the base is red.
+export const isFollowUp = (body: string) =>
+  Option.fromNullishOr(body.match(FOLLOW_UP)).pipe(
+    Option.flatMap((match) => Schema.decodeOption(FollowUp)(match[1])),
+    Option.isSome,
+  );

@@ -359,3 +359,22 @@ export const stackDepth = Effect.gen(function* () {
 
   return own.stackDepth ?? repo.limits.stackDepth;
 });
+
+export const MergeHold = Schema.Struct({
+  holdMergesOnBrokenBase: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Whether an approved pull request waits to merge while CI on its base branch is red: the newest completed push run of a workflow there failed. A follow-up issue's fix still merges. Default: false.",
+    }),
+  ),
+  mergeHoldTimeout: DurationText(
+    'How long a merge may wait on a red base branch before a person takes over, such as "1 day". Default: no limit.',
+  ),
+});
+
+// Whether merges wait while the base branch is red, and for how long at most:
+// none for as long as it stays red.
+export const mergeHold = Effect.map(read(MergeHold), (own) => ({
+  enabled: own.holdMergesOnBrokenBase ?? false,
+  timeout: Option.flatMap(Option.fromUndefinedOr(own.mergeHoldTimeout), parseDuration),
+}));
