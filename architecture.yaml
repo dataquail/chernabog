@@ -470,14 +470,16 @@ defs:
       name: makeEventBus
 
   # A live adapter is chosen where a module is wired, never where it is used
-  # (docs/adr/0015-composition-roots.md): its module's <module>.module.ts names
-  # it, and the tests. The roots reach a module only through its platform
+  # (docs/adr/0015-composition-roots.md): a client's, a repository's, a
+  # transaction driver's or an ACL's *-live.ts is named by its module's
+  # <module>.module.ts, and the tests. The roots reach a module only through its platform
   # surface, which publishes the module's Layers, so they name no Live either.
   lives-at-roots:
     message: >-
-      A live adapter is named only by its module's <module>.module.ts, which wires it, and by
-      tests. Code that uses the adapter asks for its port; a helper several adapters share
-      belongs in a file of its own beside them, not in a Live.
+      A live adapter (a client's, a repository's, a transaction driver's or an ACL's
+      *-live.ts) is named only by its module's <module>.module.ts, which wires it, and by tests.
+      Code that uses the adapter asks for its port; a helper several adapters share belongs in a
+      file of its own beside them, not in a Live.
     # Another module's module.ts is already kept out by the module-wide barrel rule.
     allow:
       - "@/modules/*/*.module.ts"
@@ -1393,7 +1395,7 @@ tree:
                     - "@/modules/{module}/domain/*/*.value-object.ts"
                     - "@/modules/{module}/domain/*/*.errors.ts"
                 children:
-                  "*.acl-live.ts": {}
+                  "*.acl-live.ts": { importedBy: { use: lives-at-roots } }
                   "*.acl-fake.ts": {}
                   "*.test.ts": { use: acl-test-file }
               "repositories/":

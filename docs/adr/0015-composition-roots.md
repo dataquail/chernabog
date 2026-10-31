@@ -47,8 +47,8 @@ messages over JSON.
    reads the call, in every module, the platform and the CLI, TUI and daemon
    adapters.
 4. **Lives are named only where a module is wired.** A
-   `*.client-live.ts`, `*.repository-live.ts` or `*.transaction-driver-live.ts`
-   is imported only by a module's `<module>.module.ts` and by tests
+   `*.client-live.ts`, `*.repository-live.ts`, `*.transaction-driver-live.ts`
+   or `*.acl-live.ts` is imported only by a module's `<module>.module.ts` and by tests
    (`lives-at-roots`). The roots never name one: they reach a module through
    its `platform.ts`, which publishes `<Module>Module`. A helper several
    adapters share lives in a file of its own (`runtime/flow-registry.ts`), and
