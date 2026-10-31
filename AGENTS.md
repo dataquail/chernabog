@@ -42,6 +42,71 @@ edits in flight; one that overlaps an edit fails spuriously.
   gh-stack skill, if it has one) before any stack command, and always use the
   non-interactive forms (`gh stack view --json`, `gh stack submit --auto`).
 
+## Investigating a failure
+
+Look before you guess. Everything below is under the chernabog home,
+`~/.config/chernabog` (`CHERNABOG_HOME` moves it; a sandbox's is its `home/`).
+
+- **`daemon.log`**: what the daemon says, a timestamped line each: runs started
+  and finished, skipped ticks, restarts, retention sweeps. Today's (UTC);
+  earlier days' are `daemon.<YYYY-MM-DD>.log`, deleted after 30 days.
+- **`daemon.out.log`**: the daemon's stdout and stderr as the service manager
+  catches them, which is mostly a crash. Emptied past 10 MB.
+- **`runs/<run>.log`**: one run's steps and agent output, as
+  `chernabog logs <run>` prints it. Kept 30 days from when its run finished
+  (a run still running keeps its log; a log state.db has no run for, 30 days
+  from its last write), pruned by the daemon's daily sweep.
+- **`telemetry/<day>/<process>-<pid>.jsonl`**: every span and Effect log line
+  of one process (`daemon` or `cli`), one JSON object a line, in the folder of
+  the UTC day it was written (`FileTelemetry`, `src/platform/telemetry.ts`).
+  The daemon sweeps it when it starts and every 24 hours
+  (`TELEMETRY_RETENTION`, `src/platform/retention.ts`): day folders older than
+  30 days go, then the oldest while the rest hold more than 500 MB, never
+  today's.
+
+A **span** line is `type: "span"`, `traceId`, `spanId`, `parentSpanId` (absent
+on a root), `name`, `startTime`, `endTime` (ISO), `durationMs`, `status`
+(`ok`, `error`, or `unfinished` for one still open when the process stopped),
+`attributes`, and on an error `error`, the pretty cause. Commands, queries and
+events are `command.<Tag>`, `query.<Tag>` and `event.<Tag>`; the ones about a
+run carry `run.id`, and `run.repo` / `run.flow` where they have them
+(`src/modules/runs/runs.event-span-attributes.ts`). A **log** line is
+`type: "log"`, `time`, `level`, `message`, `annotations`, `cause` when there is
+one, and the `traceId` / `spanId` of the span it was logged in. Chernabog's
+own code narrates to `daemon.log` and the run logs rather than `Effect.log`,
+so log lines are rare.
+
+From the home, with `RUN` a full run id (`chernabog status` shows its first 8
+characters; `ls runs/ | grep ^<prefix>` finds the full one):
+
+```sh
+# Every span and log line of one run: the traces any span naming it is in,
+# then every record of those traces, across the daemon's and the CLI's files.
+jq -n -c --arg run "$RUN" '
+  [inputs] as $all
+  | [$all[] | select(.attributes["run.id"] == $run) | .traceId] as $traces
+  | $all[] | select(.traceId | IN($traces[]))' telemetry/*/*.jsonl
+
+# Every failed span on one day, with its cause. Some are expected, such as a
+# 404 GET for a lease ref that isn't there yet.
+jq -c 'select(.type == "span" and .status == "error")
+  | {startTime, name, traceId, error}' telemetry/2026-10-31/*.jsonl
+
+# One trace as a tree, by parentSpanId: each span's name, status and time.
+jq -n -r --arg trace "$TRACE" '
+  [inputs | select(.type == "span" and .traceId == $trace)] as $spans
+  | ($spans | map(.spanId)) as $ids
+  | def tree($span; $depth):
+      ("  " * $depth) + "\($span.name) \($span.status) \($span.durationMs)ms",
+      ($spans | map(select(.parentSpanId == $span.spanId)) | sort_by(.startTime)[]
+        | tree(.; $depth + 1));
+    $spans | map(select(.parentSpanId == null or (.parentSpanId | IN($ids[]) | not)))
+    | sort_by(.startTime)[] | tree(.; 0)' telemetry/*/*.jsonl
+```
+
+A run's first trace is the one its `event.RunStarted` span is in:
+`jq -r --arg run "$RUN" 'select(.name == "event.RunStarted" and .attributes["run.id"] == $run) | .traceId' telemetry/*/*.jsonl`.
+
 ## Personas (#49, PR #56)
 
 One daemon acts as several GitHub logins. Everything that touches GitHub must
