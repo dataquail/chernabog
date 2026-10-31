@@ -5,7 +5,6 @@ import { ChernabogDirClientLive } from "./infrastructure/clients/chernabog-dir.c
 import { RecipePackagesClientLive } from "./infrastructure/clients/recipe-packages.client-live.ts";
 import { TextDiffClientLive } from "./infrastructure/clients/text-diff.client-live.ts";
 import { FlowImportsRepositoryLive } from "./infrastructure/repositories/flow-imports.repository-live.ts";
-import { TeamConfigsRepositoryLive } from "./infrastructure/repositories/team-configs.repository-live.ts";
 import { RecipesCommandsLive } from "./recipes.command-handlers.ts";
 import { RecipesQueriesLive } from "./recipes.query-handlers.ts";
 
@@ -22,7 +21,6 @@ export const RecipesModule = {
         RecipePackagesClientLive,
         TextDiffClientLive,
         FlowImportsRepositoryLive,
-        TeamConfigsRepositoryLive,
       ),
     ),
   ),

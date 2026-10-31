@@ -39,8 +39,10 @@ takes from them.
      scaffolds the tree, installs its recipe packages, writes
      `flows.<name>.from` into this very file (`FlowImportsRepository`) and
      generates its `config.schema.json`. A second module writing the file
-     would be the shared database again. The team's config is read through
-     `TeamConfigsRepository` and published as `ReadTeamConfigQuery`.
+     would be the shared database again. `ReadTeamConfigQuery` reads the
+     file itself, as [ADR 11](0011-queries-read-their-storage.md) has queries
+     read their storage, decoding it with `recipes/storage/team-config.schema.ts`,
+     and is what recipes publishes of it.
 
    What a module keeps for itself in machine config, such as the runs
    module's agents, launchers and usage gate, stays its own repository's: a

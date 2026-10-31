@@ -7,42 +7,70 @@ import { scratchRecipeRepos } from "../../../../test/recipe-repo.ts";
 import { readTeamConfigHandler } from "./read-team-config.handler.ts";
 import { TeamConfig } from "./read-team-config.query.ts";
 
+const CONFIG = `# The team's config.
+agent: claude
+runners: [alice]
+reviewers: [bob, carol]
+launcher: tmux
+flows:
+  review:
+    from: "@chernabog/recipes/review"
+    agent: codex
+    agents: { reviewer: codex }
+  fix:
+    enabled: false
+    runners: [dave]
+`;
+
+const silent = TeamConfig.make({
+  agent: Option.none(),
+  runners: Option.none(),
+  reviewers: Option.none(),
+  flows: {},
+});
+
 describe("readTeamConfigHandler", () => {
   const repos = scratchRecipeRepos();
 
-  effect("answers what the checkout's config.yaml says of who runs its flows", () =>
+  effect("answers the team's agent, runners, reviewers and each flow's, leaving other keys", () =>
     Effect.gen(function* () {
-      const root = yield* repos.checkout({
-        ".chernabog/config.yaml":
-          "agent: claude\nreviewers: [bob]\nflows:\n  review:\n    agent: codex\n    runners: [bob]\n",
-      });
+      const root = yield* repos.checkout({ ".chernabog/config.yaml": CONFIG });
 
-      const team = yield* readTeamConfigHandler({ root });
-
-      expect(team).toEqual(
+      expect(yield* readTeamConfigHandler({ root })).toEqual(
         TeamConfig.make({
           agent: Option.some("claude"),
-          runners: Option.none(),
-          reviewers: Option.some(["bob"]),
-          flows: { review: { agent: "codex", runners: ["bob"] } },
+          runners: Option.some(["alice"]),
+          reviewers: Option.some(["bob", "carol"]),
+          flows: {
+            review: { agent: "codex", agents: { reviewer: "codex" } },
+            fix: { enabled: false, runners: ["dave"] },
+          },
         }),
       );
     }).pipe(Effect.provide(repos.layer)),
   );
 
-  effect("a checkout without a config.yaml has a team that says nothing", () =>
-    Effect.gen(function* () {
-      const root = yield* repos.checkout({});
-      const team = yield* readTeamConfigHandler({ root });
+  effect(
+    "a checkout without a config.yaml, or with an empty one, has a team that says nothing",
+    () =>
+      Effect.gen(function* () {
+        const absent = yield* repos.checkout({});
+        const empty = yield* repos.checkout({ ".chernabog/config.yaml": "\n" });
 
-      expect(team).toEqual(
-        TeamConfig.make({
-          agent: Option.none(),
-          runners: Option.none(),
-          reviewers: Option.none(),
-          flows: {},
-        }),
-      );
+        expect(yield* readTeamConfigHandler({ root: absent })).toEqual(silent);
+        expect(yield* readTeamConfigHandler({ root: empty })).toEqual(silent);
+      }).pipe(Effect.provide(repos.layer)),
+  );
+
+  effect("a file that doesn't parse, or names a flow's runners wrongly, fails naming it", () =>
+    Effect.gen(function* () {
+      for (const config of ["flows: [", "flows:\n  fix:\n    runners: dave\n"]) {
+        const root = yield* repos.checkout({ ".chernabog/config.yaml": config });
+        const error = yield* Effect.flip(readTeamConfigHandler({ root }));
+
+        expect(error._tag).toBe("PersistenceFailed");
+        expect(error.message).toContain(`${root}/.chernabog/config.yaml`);
+      }
     }).pipe(Effect.provide(repos.layer)),
   );
 });

@@ -1139,9 +1139,10 @@ tree:
                 storage/ (the file and row schemas it shares with the repositories), where
                 chernabog keeps its files (@/platform/home.ts), and its module's domain: its
                 branded ids and its client ports, and, until the `read-models` campaign is
-                done, the rest, which that campaign counts. Never a command, never
-                infrastructure, never interface/, never another module's internals.
-              external: [effect, "@effect-server-utils/cqrs"]
+                done, the rest, which that campaign counts. It names yaml to read a YAML file
+                it reads directly. Never a command, never infrastructure, never interface/,
+                never another module's internals.
+              external: [effect, "@effect-server-utils/cqrs", yaml]
               allow:
                 - "@/kernel/**"
                 - "@/modules/{module}/domain/**"

@@ -24,8 +24,6 @@ import {
 import { TextDiffClientFake } from "../src/modules/recipes/infrastructure/clients/text-diff.client-fake.ts";
 import { FlowImportsRepositoryFake } from "../src/modules/recipes/infrastructure/repositories/flow-imports.repository-fake.ts";
 import { FlowImportsRepositoryLive } from "../src/modules/recipes/infrastructure/repositories/flow-imports.repository-live.ts";
-import { TeamConfigsRepositoryFake } from "../src/modules/recipes/infrastructure/repositories/team-configs.repository-fake.ts";
-import { TeamConfigsRepositoryLive } from "../src/modules/recipes/infrastructure/repositories/team-configs.repository-live.ts";
 import { readTeamConfigHandler } from "../src/modules/recipes/queries/read-team-config.handler.ts";
 import { recipesAccessQueries } from "../src/modules/recipes/recipes.exports.ts";
 
@@ -113,7 +111,6 @@ export const recipeRepo = (
     stored,
     layer: Layer.mergeAll(
       FlowImportsRepositoryFake(imports),
-      TeamConfigsRepositoryFake([]),
       ChernabogDirClientFake(stored),
       BundleClientFake(SCAFFOLD),
       RecipePackagesClientFake(REGISTRY, stored, offline),
@@ -155,15 +152,14 @@ export const scratchRecipeRepos = () => {
     layer: Layer.mergeAll(
       ChernabogDirClientLive,
       FlowImportsRepositoryLive,
-      TeamConfigsRepositoryLive,
       RecipePackagesClientFake(REGISTRY, stored),
     ),
   };
 };
 
 // The recipes module as a peer asks it: the queries it grants (recipes.exports.ts)
-// registered with their live handlers over real storage, as the composition
-// root registers them. A module's ACL adapter dispatches over it.
+// registered with their live handlers, which read the checkout's files for
+// real. A module's ACL adapter dispatches over it.
 export const RecipesPeerLive = Query.handlersOf(recipesAccessQueries, {
   ReadTeamConfigQuery: (payload) => readTeamConfigHandler(payload),
-}).pipe(Layer.provide(TeamConfigsRepositoryLive));
+});
