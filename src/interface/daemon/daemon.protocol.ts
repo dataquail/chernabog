@@ -4,18 +4,26 @@
 import * as Schema from "effect/Schema";
 
 import {
+  RepoEnrolled,
+  RepoPaused,
+  RepoResumed,
+  RepoUnenrolled,
+} from "../../modules/enrollment/enrollment.platform.ts";
+import {
   ActiveRun,
   CancelTarget,
   HoldView,
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
+  RunMarkersReleased,
   RunMarkerView,
   RunNeedsAttention,
   RunStarted,
   RunView,
   SkipView,
 } from "../../modules/runs/runs.platform.ts";
+import { RepoTrusted } from "../../modules/trust/trust.platform.ts";
 
 const Maybe = Schema.OptionFromNullOr(Schema.String);
 
@@ -166,15 +174,89 @@ export const CancelRequest = Schema.Struct({
 
 export type CancelRequest = typeof CancelRequest.Type;
 
-// What the dashboard's /events stream sends: what happened to a run, as the
-// runs' commands dispatch it. A resumed run can say one again, under the same
-// eventId, for a client to drop.
+// What the daemon itself says on the /events stream, beside the modules'
+// events. Each carries an eventId of its own, as theirs do.
+
+// The daemon will restart: a reload is pending (it restarts once nothing is
+// executing), or it is draining to restart on an upgraded chernabog (it starts
+// no new runs meanwhile).
+export const DaemonReloading = Schema.TaggedStruct("DaemonReloading", {
+  eventId: Schema.String,
+  reason: Schema.Literals(["reload-pending", "draining"]),
+  at: Schema.String,
+});
+
+export type DaemonReloading = typeof DaemonReloading.Type;
+
+// A persona's flow ticked: the runs it started, why it started nothing more,
+// if it says, and what its trigger found waiting.
+export const TickRan = Schema.TaggedStruct("TickRan", {
+  eventId: Schema.String,
+  repo: Schema.String,
+  flow: Schema.String,
+  persona: Schema.Option(Schema.String),
+  cause: Schema.String,
+  started: Schema.Array(Schema.String),
+  skipped: Schema.Option(Schema.String),
+  queued: Schema.Array(Schema.String),
+  at: Schema.String,
+});
+
+export type TickRan = typeof TickRan.Type;
+
+// Something the daemon's bus can't hear changed what /status answers: a
+// person edited machine config, paused.json or trust.json by hand, or
+// another process (a foreground `chernabog run --from-checkout`, a rehearsal)
+// wrote to state.db. A client asks /status again.
+export const StatusChanged = Schema.TaggedStruct("StatusChanged", {
+  eventId: Schema.String,
+  // The files under the chernabog home that changed, such as config.yaml.
+  files: Schema.Array(Schema.String),
+  at: Schema.String,
+});
+
+export type StatusChanged = typeof StatusChanged.Type;
+
+// What the dashboard's /events stream sends after its snapshot: what happened
+// to a run, as the runs' commands dispatch it; to an enrolled repo, as
+// enrollment's and trust's do; and what the daemon says itself. A resumed run
+// can say one again, under the same eventId, for a client to drop.
 export const DaemonEvent = Schema.Union([
   RunStarted.schema,
   RunEnteredStep.schema,
   RunNeedsAttention.schema,
   RunFinished.schema,
   PullRequestOpened.schema,
+  RunMarkersReleased.schema,
+  RepoEnrolled,
+  RepoPaused,
+  RepoResumed,
+  RepoUnenrolled,
+  RepoTrusted,
+  DaemonReloading,
+  TickRan,
+  StatusChanged,
 ]);
 
 export type DaemonEvent = typeof DaemonEvent.Type;
+
+// The tag of each event the /events stream sends, which it subscribes to:
+// every member of DaemonEvent, as the compiler checks.
+const sent = {
+  RunStarted: true,
+  RunEnteredStep: true,
+  RunNeedsAttention: true,
+  RunFinished: true,
+  PullRequestOpened: true,
+  RunMarkersReleased: true,
+  RepoEnrolled: true,
+  RepoPaused: true,
+  RepoResumed: true,
+  RepoUnenrolled: true,
+  RepoTrusted: true,
+  DaemonReloading: true,
+  TickRan: true,
+  StatusChanged: true,
+} satisfies { readonly [Tag in DaemonEvent["_tag"]]: true };
+
+export const daemonEventTags: ReadonlyArray<string> = Object.keys(sent);

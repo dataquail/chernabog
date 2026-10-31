@@ -426,6 +426,20 @@ transitive reach), the coverage floors and the baseline.
   `status`, `logs` and the rest print a use-case's result, and with `--json`
   print it through its schema instead (`printJson` in
   `src/interface/cli/cli.output.ts`).
+- **`GET /events` is how clients hear of changes** (#324): a
+  `text/event-stream` of one `snapshot` (what `/status` answers), then each
+  `DaemonEvent` (`daemon.protocol.ts`) as `event: <_tag>`, `id: <eventId>`,
+  and a `: ping` every 15 seconds (`events-stream.event-adapter.ts`). Each
+  client subscribes to the bus before its snapshot; clients connecting within
+  a second share one computation, and one that joins a computation begun
+  before it subscribed is sent what it missed. The daemon's own events
+  (`DaemonReloading`, `TickRan`, `StatusChanged`) are `broadcast` to streams
+  only. `StatusChanged` covers what the bus can't hear: the daemon watches the
+  home (`watchStateChanges`, `src/platform/state-changes.ts`) and says it,
+  once a second at most, when another process changed machine config,
+  `paused.json` or `trust.json` (a file `updateFile` wrote in this process
+  is its own) or committed to `state.db` (`ReadStateVersionQuery`, SQLite's
+  `data_version`).
 - **The machine module** owns this machine's setup: `MachineSetupRoot`
   (`github:` personas and `accounts:`, edited in place in machine config),
   gh's logins, the account directories in the home, and the daemon as a

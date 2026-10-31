@@ -51,3 +51,34 @@ export const RecordedBus = Recording.pipe(
 );
 
 export const RecordedEvents = Layer.mergeAll(RecordedBus, PassThroughUnitOfWork);
+
+export class OpenStreams extends Context.Service<OpenStreams, { count: number }>()(
+  "test/OpenStreams",
+) {}
+
+// A bare event bus that counts the stream subscriptions open on it, for a test
+// that sees one released.
+export const CountedStreamsBus = Layer.effect(
+  EventBus,
+  Effect.gen(function* () {
+    const bus = yield* EventBus;
+    const open = yield* OpenStreams;
+
+    return EventBus.of({
+      ...bus,
+      stream: (tags) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            open.count += 1;
+          }),
+          () =>
+            Effect.sync(() => {
+              open.count -= 1;
+            }),
+        ).pipe(Effect.andThen(bus.stream(tags))),
+    });
+  }),
+).pipe(
+  Layer.provideMerge(Layer.sync(OpenStreams, () => OpenStreams.of({ count: 0 }))),
+  Layer.provide(makeEventBus()),
+);
