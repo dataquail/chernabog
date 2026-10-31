@@ -8,12 +8,15 @@ import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
 import { Asker } from "../src/interface/cli/asker.prompt.ts";
+import { EnrollmentModule } from "../src/modules/enrollment/enrollment.module.ts";
 import {
   enrollCheckout,
   type EnrollFlags,
-} from "../src/interface/cli/enrollment/enroll.command.ts";
-import { type SetupFlags, setUpMachine } from "../src/interface/cli/machine/setup.command.ts";
-import { EnrollmentModule } from "../src/modules/enrollment/enrollment.module.ts";
+} from "../src/modules/enrollment/interface/cli/enroll.endpoint.ts";
+import {
+  type SetupFlags,
+  setUpMachine,
+} from "../src/modules/machine/interface/cli/setup.endpoint.ts";
 import { MachineModule } from "../src/modules/machine/machine.module.ts";
 import { execTestLayer } from "../src/platform/exec.ts";
 import { GitHubApi } from "../src/platform/github-api.ts";
