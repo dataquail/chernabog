@@ -3,7 +3,8 @@
 // when it disagrees, it replies with its reasons and hands the pull request to
 // a person, without pushing. Otherwise it makes the changes, runs the local
 // gate, pushes, waits for CI and asks the reviewer again, whose re-review
-// takes it from there.
+// takes it from there. A run owns the pull request by its claim ref, so
+// resolve-conflicts doesn't merge into the branch while it does.
 //
 // This file is chernabog's address-review recipe, and this repo's to change:
 // `chernabog recipes diff` shows how it differs from the recipe's current
@@ -125,7 +126,9 @@ const workflow = (item: WorkItem) =>
 
     const toPerson = (reason: string) => PullRequest.handToPerson(address.pullRequest, reason);
 
-    // Anything that stops it hands the pull request to a person, unless it closed meanwhile.
+    // Anything that stops it hands the pull request to a person, unless it
+    // closed meanwhile. It owns the pull request throughout, so no other run
+    // pushes to the branch under it; one another run owns is skipped.
     return yield* answerReview(address).pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
@@ -138,6 +141,7 @@ const workflow = (item: WorkItem) =>
         PullRequestClosed: (closed) => Effect.fail(new Skip({ reason: closed.message })),
         NotFound: (gone) => Effect.fail(new Skip({ reason: gone.message })),
       }),
+      PullRequest.owning(address.pullRequest),
     );
   });
 

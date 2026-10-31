@@ -11,6 +11,8 @@ Bakes `.chernabog/flows/address-review.ts`. Its prompts, `consider` and `address
 
 **Picks up** an open pull request the persona wrote whose latest decisive review, an approval or a request for changes (comments don't count), requests changes on the current head, so nothing has been pushed since. It leaves alone a pull request labelled `auto:needs-human` or owned by another flow's run. The trigger checks the persona's own login, and the flow sets `ownWork: true`.
 
+**Owns** the pull request while it runs, by its claim ref (`PullRequest.owning`), and lets it go however the run ends. [`resolve-conflicts`](/chernabog/recipes/resolve-conflicts/) owns it the same way, so it doesn't merge the base into the branch while the review is being answered; it picks the pull request up once this run has finished.
+
 **Ends with** a green push and the reviewer asked again, which starts their [`re-review`](/chernabog/recipes/re-review/), or the pull request handed to a person with `auto:needs-human`.
 
 ## Its steps
