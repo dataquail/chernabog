@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/dataquail/chernabog/compare/recipes-v0.2.1...recipes-v0.3.0) (2026-11-01)
+
+
+### Features
+
+* a post-merge recipe watches CI on a merged pull request's merge commit, and files a follow-up issue when it's red ([#196](https://github.com/dataquail/chernabog/issues/196)) ([9ff6f8a](https://github.com/dataquail/chernabog/commit/9ff6f8a16a548dec50f4d190b3314df187f24738))
+* hold an approved merge while CI on the base branch is red, rather than handing the pull request to a person ([#292](https://github.com/dataquail/chernabog/issues/292)) ([0ec429b](https://github.com/dataquail/chernabog/commit/0ec429b4ababedae53b6ee0ba4a0546a0e0cfe8a))
+
+
+### Bug Fixes
+
+* **recipes:** a re-review requests changes only for a blocking finding, and fixes keep the pull request's description current ([#337](https://github.com/dataquail/chernabog/issues/337)) ([c545d57](https://github.com/dataquail/chernabog/commit/c545d571df549c91806f00882e66086f2c5b8e36))
+* **recipes:** address-review and resolve-conflicts own the pull request they push to, so they never push to its branch at once ([#200](https://github.com/dataquail/chernabog/issues/200)) ([2ca2dc5](https://github.com/dataquail/chernabog/commit/2ca2dc5045c5f8d507489fdc9f2f563cde81da17))
+* the pre-commit hook runs the fast checks, not the tests, so an agent's commit lands before it answers ([#199](https://github.com/dataquail/chernabog/issues/199)) ([e4b56a8](https://github.com/dataquail/chernabog/commit/e4b56a89d13f29e4e9765a632a4ecd52979c8d3f)), closes [#198](https://github.com/dataquail/chernabog/issues/198)
+
 ## [0.2.1](https://github.com/dataquail/chernabog/compare/recipes-v0.2.0...recipes-v0.2.1) (2026-10-30)
 
 
