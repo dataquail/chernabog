@@ -321,8 +321,14 @@ export const ReviewResult = Schema.Struct({
 
 export type ReviewResult = typeof ReviewResult.Type;
 
-// What a re-check found of each earlier finding.
-export const Finding = Schema.Struct({ finding: Schema.String, remediated: Schema.Boolean });
+// What a re-check found of each earlier finding, and of each new one. A
+// blocking finding left open requests changes; a point an approving review
+// made never blocks. Absent, from results saved before it existed, it blocks.
+export const Finding = Schema.Struct({
+  finding: Schema.String,
+  remediated: Schema.Boolean,
+  blocking: Schema.optionalKey(Schema.Boolean),
+});
 
 export type Finding = typeof Finding.Type;
 
@@ -335,17 +341,49 @@ export type RecheckResult = typeof RecheckResult.Type;
 
 const RecheckVerdict = Schema.Struct({ ...Verdict.fields, findings: Schema.Array(Finding) });
 
+// A re-check requests changes only for a blocking finding still open,
+// whatever verdict the reviewer gave: so a point it let an approval through
+// with can't turn into a hand-off when it is asked again. With no findings
+// listed there is nothing to settle it by, and the reviewer's verdict stands.
+export const settledVerdict = (
+  findings: ReadonlyArray<Finding>,
+  given: Verdict["verdict"],
+): Verdict["verdict"] => {
+  if (findings.length === 0) {
+    return given;
+  }
+
+  if (findings.some((finding) => !finding.remediated && finding.blocking !== false)) {
+    return "request-changes";
+  }
+
+  return "approve";
+};
+
+const earlierVerdict = (verdict: Verdict["verdict"]) => {
+  if (verdict === "approve") {
+    return "approved it. Its points did not block that approval, so none of them blocks now";
+  }
+
+  return "asked for changes";
+};
+
 export const recheckJsonSchema = {
   ...verdictJsonSchema,
   properties: {
     ...verdictJsonSchema.properties,
     findings: {
       type: "array",
-      description: "Each finding of the earlier review, and whether the new code remediates it",
+      description:
+        "Each finding of the earlier review, then each new one: whether the new code remediates it, and whether it blocks the merge",
       items: {
         type: "object",
-        properties: { finding: { type: "string" }, remediated: { type: "boolean" } },
-        required: ["finding", "remediated"],
+        properties: {
+          finding: { type: "string" },
+          remediated: { type: "boolean" },
+          blocking: { type: "boolean" },
+        },
+        required: ["finding", "remediated", "blocking"],
         additionalProperties: false,
       },
     },
@@ -524,6 +562,7 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
       const prompt = yield* renderPromptOr("recheck", RECHECK, {
         pullRequest,
         round: round - 1,
+        earlier: earlierVerdict(review.verdict),
         reviewedSha: review.sha,
         headSha: pull.headSha,
       });
@@ -539,7 +578,7 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
         adapter,
       });
 
-      const verdict = yield* Schema.decodeUnknownEffect(RecheckVerdict)(result.output).pipe(
+      const answer = yield* Schema.decodeUnknownEffect(RecheckVerdict)(result.output).pipe(
         Effect.mapError(
           (issue) =>
             new StepFailed({
@@ -548,6 +587,8 @@ export const recheck = (pullRequest: number, review: ReviewResult) => {
             }),
         ),
       );
+
+      const verdict = { ...answer, verdict: settledVerdict(answer.findings, answer.verdict) };
 
       const by = Option.getOrElse(adapter, () => repo.agent);
       const me = yield* reviewerLogin;
