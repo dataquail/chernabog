@@ -2,18 +2,22 @@
 // workflow engine themselves.
 
 import * as Effect from "effect/Effect";
+import * as Sse from "effect/encoding/Sse";
 import * as FileSystem from "effect/FileSystem";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { CancelledRun, RunHistory } from "../../modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,
+  DaemonEvent,
   DaemonStatus,
   DashboardStart,
   DashboardState,
@@ -156,4 +160,42 @@ export const daemonDashboardStop = send(HttpClientRequest.post("/dashboard/stop"
 // A new token, so the URL a browser holds no longer opens it.
 export const daemonDashboardRotateToken = send(HttpClientRequest.post("/dashboard/token")).pipe(
   Effect.flatMap(reply(DashboardState)),
+);
+
+// What GET /events says: what /status answers, once, then each event.
+export type DaemonFeed =
+  | { readonly kind: "snapshot"; readonly status: DaemonStatus }
+  | { readonly kind: "event"; readonly event: DaemonEvent };
+
+const decodeStatusJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.toCodecJson(DaemonStatus)),
+);
+
+const decodeEventJson = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.toCodecJson(DaemonEvent)),
+);
+
+// One event of the stream, as the feed: an event this chernabog doesn't know,
+// from a newer daemon, is left out.
+const feedOf = (frame: Sse.Event): Option.Option<DaemonFeed> => {
+  if (frame.event === "snapshot") {
+    return Option.map(decodeStatusJson(frame.data), (status) => ({ kind: "snapshot", status }));
+  }
+
+  return Option.map(decodeEventJson(frame.data), (event) => ({ kind: "event", event }));
+};
+
+// GET /events, for as long as the daemon keeps it open. It ends, or fails,
+// when the daemon goes; the caller connects again.
+export const daemonEvents = Stream.unwrap(
+  Effect.map(send(HttpClientRequest.get("/events")), (response) =>
+    response.stream.pipe(
+      Stream.decodeText,
+      Stream.pipeThroughChannel(Sse.decode()),
+      Stream.mapError(
+        () => new DaemonUnavailable({ message: "the daemon's event stream dropped" }),
+      ),
+      Stream.filterMap((frame) => Result.fromOption(feedOf(frame), () => frame)),
+    ),
+  ),
 );

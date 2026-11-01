@@ -28,6 +28,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
@@ -46,11 +47,21 @@ import { Home } from "../../platform/home.ts";
 import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
 import {
   daemonCancel,
+  daemonEvents,
   daemonReload,
   daemonRunHistory,
   daemonStatus,
   daemonTick,
 } from "../daemon/daemon.client.ts";
+import {
+  type Feed,
+  feed,
+  type Live,
+  quiet,
+  reconnectDelay,
+  refetched,
+  withStatus,
+} from "./live.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
 
@@ -147,6 +158,7 @@ const readDetail = (runId: string) =>
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
   status: Option.none(),
   error: Option.none(),
+  reconnecting: false,
   usage: [],
   thresholds: {
     fiveHourCeiling: DEFAULT_GATE.fiveHourCeiling,
@@ -175,10 +187,15 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   now,
 });
 
+// What the live view's loop hears: a key, the terminal resizing, the clock's
+// tick for what is relative to now, the /events stream, and the refetch an
+// event asked for coming due.
 type Event =
   | { readonly kind: "key"; readonly key: Key }
   | { readonly kind: "resize" }
-  | { readonly kind: "tick" };
+  | { readonly kind: "tick" }
+  | { readonly kind: "feed"; readonly message: Feed }
+  | { readonly kind: "refetch" };
 
 // What cancelling did, in a line: what it left for a person, and its open
 // sessions, which `chernabog cancel --close-session` closes.
@@ -290,6 +307,7 @@ export const runTui = Effect.gen(function* () {
     Queue.offerUnsafe(events, { kind: "resize" });
   });
 
+  let live: Live = quiet;
   let model = initialModel(renderer.terminalWidth, renderer.terminalHeight, yield* DateTime.now);
   const machine = yield* Effect.option(loadMachineConfig);
 
@@ -307,33 +325,9 @@ export const runTui = Effect.gen(function* () {
     screen.content = toStyled(view(model));
   });
 
-  const refresh = Effect.gen(function* () {
-    const status = yield* Effect.result(daemonStatus);
-    const usage = yield* readUsage;
-
-    model = Result.match(status, {
-      // A daemon that has restarted has picked up every flow turned on or off from here.
-      onSuccess: (found): Model => {
-        const sameDaemon = Option.exists(
-          model.status,
-          (previous) => previous.startedAt === found.startedAt && previous.pid === found.pid,
-        );
-
-        const pendingFlows = Option.getOrElse(
-          Option.liftPredicate(model.pendingFlows, () => sameDaemon),
-          () => ({}),
-        );
-
-        return { ...model, status: Option.some(found), error: Option.none(), usage, pendingFlows };
-      },
-      onFailure: (failure): Model => ({
-        ...model,
-        status: Option.none(),
-        error: Option.some(`${failure.message}. Retrying…`),
-        usage,
-      }),
-    });
-
+  // What the open view shows beyond the status: the run log it follows, and
+  // the steps of the run it details.
+  const refreshOpen = Effect.gen(function* () {
     if (model.view === "log" && Option.isSome(model.logRun)) {
       model = { ...model, logLines: yield* readLog(model.logRun.value) };
     }
@@ -342,8 +336,73 @@ export const runTui = Effect.gen(function* () {
       const { history, worktree } = yield* readDetail(model.detailRun.value);
       model = { ...model, history, worktree };
     }
+  });
 
+  // Asks /status again. One that fails keeps what the view last knew; while
+  // the daemon is away the /events stream says so.
+  const refresh = Effect.gen(function* () {
+    const status = yield* Effect.result(daemonStatus);
+    const usage = yield* readUsage;
+
+    model = Result.match(status, {
+      onSuccess: (found): Model => ({ ...withStatus(model, found), usage }),
+      onFailure: (failure): Model => ({
+        ...model,
+        error: Option.some(`${failure.message}. Retrying…`),
+        usage,
+      }),
+    });
+
+    yield* refreshOpen;
     yield* render;
+  });
+
+  // What /events says, carried out: a snapshot shows at once, an event asks
+  // for a refetch when it comes due.
+  const hear = (message: Feed) =>
+    Effect.gen(function* () {
+      const fed = feed(model, live, message);
+      model = fed.model;
+      live = fed.live;
+
+      for (const delay of Option.toArray(fed.refetchIn)) {
+        yield* Effect.forkScoped(Effect.delay(Queue.offer(events, { kind: "refetch" }), delay));
+      }
+
+      if (message.kind === "snapshot") {
+        model = { ...model, usage: yield* readUsage };
+        yield* refreshOpen;
+      }
+
+      yield* render;
+    });
+
+  // Follows /events for as long as the view is open: each time it drops,
+  // says so and connects again, after 1, 2 and 4 seconds, then every 5,
+  // until a snapshot comes.
+  const follow = Effect.gen(function* () {
+    let attempt = 0;
+
+    for (;;) {
+      const ended = yield* Effect.result(
+        Stream.runForEach(daemonEvents, (message) => {
+          if (message.kind === "snapshot") {
+            attempt = 0;
+          }
+
+          return Queue.offer(events, { kind: "feed", message });
+        }),
+      );
+
+      const reason = Result.match(ended, {
+        onSuccess: () => "the daemon closed its event stream",
+        onFailure: (failure) => failure.message,
+      });
+
+      yield* Queue.offer(events, { kind: "feed", message: { kind: "dropped", reason } });
+      yield* Effect.sleep(reconnectDelay(attempt));
+      attempt += 1;
+    }
   });
 
   const say = (message: string) =>
@@ -563,15 +622,33 @@ export const runTui = Effect.gen(function* () {
       }
     });
 
+  // The clock, for what is relative to now ("3m ago", lease countdowns) and
+  // the run log a person follows. It asks the daemon for nothing.
   yield* Effect.forkScoped(
     Effect.repeat(Queue.offer(events, { kind: "tick" }), Schedule.spaced("1 second")),
   );
-  yield* refresh;
+  yield* Effect.forkScoped(follow);
+  yield* render;
 
   for (;;) {
     const event = yield* Queue.take(events);
 
     if (event.kind === "tick") {
+      if (model.view === "log" && Option.isSome(model.logRun)) {
+        model = { ...model, logLines: yield* readLog(model.logRun.value) };
+      }
+
+      yield* render;
+      continue;
+    }
+
+    if (event.kind === "feed") {
+      yield* hear(event.message);
+      continue;
+    }
+
+    if (event.kind === "refetch") {
+      live = refetched(live);
       yield* refresh;
       continue;
     }
