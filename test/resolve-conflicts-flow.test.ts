@@ -144,6 +144,12 @@ describe("resolve-conflicts", () => {
         const [request] = fake.requests;
         expect(request.prompt).toContain("git merge --no-ff origin/main");
         expect(request.prompt).not.toMatch(/\{\{/);
+
+        // Each step is a line of its own, not a paragraph a formatter joined.
+        for (const step of [2, 3, 4, 5]) {
+          expect(request.prompt).toMatch(new RegExp(`\n${step}\\. `));
+        }
+
         expect(fake.git.pushes).toBe(1);
         expect(
           fake.comments.some((comment) =>
@@ -206,7 +212,9 @@ describe("resolve-conflicts", () => {
       const [request] = fake.requests;
       expect(request.prompt).toContain("The merge is already started");
       expect(request.prompt).toContain("#2, the layer below this pull request");
-      expect(request.prompt).toContain("   - a.txt");
+      // The conflicted files end their own lines, and step 2 starts one of its own.
+      expect(request.prompt).toContain("   - a.txt\n");
+      expect(request.prompt).toMatch(/\n\n?2\. Resolve each conflicted file/);
       expect(request.prompt).not.toContain("git merge --no-ff origin/main");
       expect(request.prompt).not.toMatch(/\{\{/);
       // The record finished, so the agent's commit is all that's left.
