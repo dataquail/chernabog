@@ -113,6 +113,8 @@ import {
   CancelRequest,
   DaemonReloading,
   DaemonStatus,
+  DashboardStart,
+  DashboardState,
   type PersonaStatus,
   Refusal,
   Reloaded,
@@ -123,6 +125,7 @@ import {
   TickResult,
 } from "./daemon.protocol.ts";
 import { commandsRoute } from "./daemon-commands.server.ts";
+import { openDashboardListener } from "./dashboard.server.ts";
 import {
   broadcastDaemonEvents,
   eventsRoute,
@@ -1969,6 +1972,27 @@ export const runDaemon = Effect.gen(function* () {
         return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
       });
 
+      // The dashboard's 127.0.0.1 listener, which only the socket's
+      // /dashboard routes open and close (a browser never reaches them).
+      const dashboardListener = yield* openDashboardListener((yield* Home).root, log);
+
+      const dashboardStart = Effect.gen(function* () {
+        const body = yield* HttpServerRequest.schemaBodyJson(DashboardStart);
+
+        const started = yield* dashboardListener
+          .start(Option.fromUndefinedOr(body.port))
+          .pipe(Effect.result);
+
+        if (Result.isFailure(started)) {
+          return yield* refuse(409, started.failure.message);
+        }
+
+        return yield* HttpServerResponse.schemaJson(DashboardState)(started.success);
+      });
+
+      const dashboardAnswer = <E, R>(found: Effect.Effect<DashboardState, E, R>) =>
+        answer(found.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DashboardState))));
+
       // What changed under the daemon since it started: a repo's trusted
       // config, its checkout, the enrolled repos, chernabog's binary.
       const recheck = checkConfig.pipe(
@@ -1978,6 +2002,10 @@ export const runDaemon = Effect.gen(function* () {
       );
 
       const routes = Layer.mergeAll(
+        HttpRouter.add("GET", "/dashboard", dashboardAnswer(dashboardListener.state)),
+        HttpRouter.add("POST", "/dashboard/start", answer(dashboardStart)),
+        HttpRouter.add("POST", "/dashboard/stop", dashboardAnswer(dashboardListener.stop)),
+        HttpRouter.add("POST", "/dashboard/token", dashboardAnswer(dashboardListener.rotate)),
         HttpRouter.add(
           "GET",
           "/status",
@@ -2031,6 +2059,8 @@ export const runDaemon = Effect.gen(function* () {
         ),
       );
       yield* log(`daemon ${process.pid} listening on ${paths.socket}`);
+      // The dashboard, if a person left it open before this restart.
+      yield* dashboardListener.restore;
 
       yield* Deferred.await(reloaded);
       const upgraded = yield* Ref.get(draining);

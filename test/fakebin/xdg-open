@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stands in for `xdg-open`, which opens a URL in the default browser: records what it was asked to open.
+echo "$@" >> "${FAKE_OPEN_LOG:-/dev/null}"

@@ -31,7 +31,14 @@ export const withStaging = <A, E, R>(
 // Writes `text` beside the file, flushes it to disk, then renames it over the
 // file, which is atomic within a directory. A file that's a symlink, as one
 // kept in a person's dotfiles is, stays one: its target is what's replaced.
-export const writeFileAtomic = (fs: FileSystem.FileSystem, path: string, text: string) =>
+// `mode` is the new file's permissions before the umask, such as 0o600 for a
+// secret only the person may read, which it has from the moment it's written.
+export const writeFileAtomic = (
+  fs: FileSystem.FileSystem,
+  path: string,
+  text: string,
+  mode = 0o666,
+) =>
   Effect.gen(function* () {
     let target = path;
 
@@ -43,7 +50,7 @@ export const writeFileAtomic = (fs: FileSystem.FileSystem, path: string, text: s
       Effect.gen(function* () {
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const file = yield* fs.open(staging, { flag: "w" });
+            const file = yield* fs.open(staging, { flag: "w", mode });
             yield* file.writeAll(encoder.encode(text));
             yield* file.sync;
           }),

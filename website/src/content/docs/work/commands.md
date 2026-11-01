@@ -34,6 +34,9 @@ description: Every chernabog command and flag.
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
+| `ui`                              | Open the [dashboard](/chernabog/operate/daemon/#the-dashboard) in the browser, starting it on 127.0.0.1 if it's off |
+| `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
+| `ui status`                       | Whether the dashboard is running, and its URL                                     |
 
 ## Flags
 
@@ -60,6 +63,9 @@ description: Every chernabog command and flag.
 | `--summary <text>`       | `open-pr` | What changed and how it was tested, for the issue; the title when left out |
 | `--draft`                | `open-pr` | Keep it as a draft and print the question that asks you whether to open it |
 | `-f`, `--follow`         | `logs`   | Keep printing as the log grows                                          |
+| `--port <n>`             | `ui`, `ui start` | The port on 127.0.0.1 to open the dashboard on; the last one asked for when left out, else `4848`. A port in use is refused |
+| `--print`                | `ui`     | Print the dashboard's URL instead of opening it in the browser          |
+| `--rotate-token`         | `ui`     | Make a new token first; the URL a browser or bookmark holds stops working |
 
 ## Files
 
@@ -71,3 +77,5 @@ description: Every chernabog command and flag.
 | `~/.config/chernabog/daemon.out.log`   | The daemon's stdout and stderr, as the service manager catches them |
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log, kept 30 days after the run finishes |
 | `~/.config/chernabog/telemetry/<day>/` | Spans and logs of the daemon and each CLI command, a file a process; kept 30 days and to 500 MB |
+| `~/.config/chernabog/dashboard.json`   | Whether the [dashboard](/chernabog/operate/daemon/#the-dashboard) is to run, and its port, so a restarted daemon opens it again |
+| `~/.config/chernabog/dashboard.token`  | The token in the dashboard's URL, readable only by you; `ui --rotate-token` replaces it |

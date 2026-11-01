@@ -285,6 +285,7 @@ export const openSandbox = (
     FAKE_TMUX_LOG: join(root, "tmux.log"),
     FAKE_ORCA_STATE: join(root, "orca"),
     FAKE_ORCA_LOG: join(root, "orca.log"),
+    FAKE_OPEN_LOG: join(root, "open.log"),
     CHERNABOG_USAGE_URL: `${github.url}/api/oauth/usage`,
     ...registryEnv,
   };

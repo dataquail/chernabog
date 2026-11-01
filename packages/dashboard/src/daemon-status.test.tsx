@@ -55,12 +55,12 @@ const loadFrom = (reply: Response) => {
 
 describe("the daemon's status on the dashboard", () => {
   it.live(
-    "asks the daemon that served the page for /status, and decodes it with the protocol",
+    "asks the daemon that served the page for /api/status, and decodes it with the protocol",
     () =>
       Effect.gen(function* () {
         const { asked, status } = yield* loadFrom(Response.json(canned));
 
-        expect(asked).toEqual(["http://daemon/status"]);
+        expect(asked).toEqual(["http://daemon/api/status"]);
         expect(status.pid).toBe(4242);
         expect(status.repos.map((repo) => repo.slug)).toEqual(["acme/api", "acme/web"]);
       }),

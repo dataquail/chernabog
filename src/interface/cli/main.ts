@@ -69,6 +69,7 @@ import { rehearseCommand } from "./rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { runInForeground } from "./run.main.ts";
 import { openSession, startIssue } from "./start.main.ts";
+import { uiCommand } from "./ui.main.ts";
 
 const printLines = (lines: Iterable<string>) =>
   Effect.forEach(lines, (line) => Console.log(line), { discard: true });
@@ -427,6 +428,7 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
   Command.withDescription("Spends spare coding-agent capacity on queued work across your repos"),
   Command.withSubcommands([
     statusCommand,
+    uiCommand,
     attach,
     run,
     rehearseCommand,

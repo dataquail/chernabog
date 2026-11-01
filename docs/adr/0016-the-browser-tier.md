@@ -60,7 +60,8 @@ browser bundle of it failed on `bun:sqlite`.
 - `GET /` on the daemon's socket answers the page, and the daemon's
   acceptance test fetches the page and its bundle, against the source and,
   in CI's job for the binary, against the compiled binary.
-  `chernabog ui start` opening a TCP listener for a browser is #323.
+  `chernabog ui start` opens a 127.0.0.1 listener for a browser (#323),
+  which serves the page and the socket's routes under `/api/`.
 - A schema the dashboard needs and the protocol doesn't carry yet is added to
   the protocol, and its module's `<module>.contracts.ts`, not to the package.
 - The bundle is built unminified, as the rest of the binary is.

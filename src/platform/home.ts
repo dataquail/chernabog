@@ -51,6 +51,10 @@ export const homePaths = (root: string) => ({
   paused: `${root}/paused.json`,
   reloaded: `${root}/reloaded.json`,
   trust: `${root}/trust.json`,
+  // Whether the dashboard's 127.0.0.1 listener is to run, and its port.
+  dashboard: `${root}/dashboard.json`,
+  // The token a browser opens the dashboard with, only the person may read.
+  dashboardToken: `${root}/dashboard.token`,
   runs: `${root}/runs`,
   runLog: (runId: string) => `${root}/runs/${runId}.log`,
   sessions: `${root}/sessions`,
