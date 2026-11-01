@@ -163,7 +163,16 @@ export type TickResult = typeof TickResult.Type;
 
 export const Reloaded = Schema.Struct({ reloadPending: Schema.Boolean });
 
-export const Refusal = Schema.Struct({ error: Schema.String });
+// Why the daemon refused a request. A command it dispatched that failed also
+// carries its error's tag and the error itself, encoded with the command's own
+// failure schema, for the client to fail with the error the command declares.
+export const Refusal = Schema.Struct({
+  error: Schema.String,
+  tag: Schema.optionalKey(Schema.String),
+  failure: Schema.optionalKey(Schema.Unknown),
+});
+
+export type Refusal = typeof Refusal.Type;
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
 

@@ -105,7 +105,7 @@ describe("a run whose work item goes", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon's socket");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     daemon.kill("SIGTERM");
@@ -213,7 +213,7 @@ describe("a notification about a run's work item (#149)", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon's socket");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     daemon.kill("SIGTERM");

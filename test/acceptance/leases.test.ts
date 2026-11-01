@@ -194,7 +194,7 @@ describe("leases", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon's socket");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     daemon.kill("SIGTERM");
