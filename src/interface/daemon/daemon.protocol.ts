@@ -174,6 +174,9 @@ export const Refusal = Schema.Struct({
   error: Schema.String,
   tag: Schema.optionalKey(Schema.String),
   failure: Schema.optionalKey(Schema.Unknown),
+  // A command refused because another process held a file it writes, such
+  // as machine config, for longer than it waits: trying again shortly will do.
+  busy: Schema.optionalKey(Schema.Boolean),
 });
 
 export type Refusal = typeof Refusal.Type;

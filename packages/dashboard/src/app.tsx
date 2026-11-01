@@ -9,7 +9,7 @@ import { onKey, runOrder } from "./keys.ts";
 import { FILTER_ID, Overview } from "./overview.tsx";
 import { RunDetail } from "./run-detail.tsx";
 import { runHref } from "./runs.tsx";
-import { useDaemon, useNow } from "./use-daemon.ts";
+import { useDaemon, useNow, useSettings } from "./use-daemon.ts";
 
 const RUN_ROUTE = /^#\/runs\/(.+)$/;
 
@@ -43,6 +43,7 @@ const typing = (event: KeyboardEvent) =>
 
 export const App = () => {
   const live = useDaemon(location.origin);
+  const settings = useSettings(location.origin);
   const now = useNow();
   const hash = useHash();
   const [filter, setFilter] = useState<Filter>(everything);
@@ -99,6 +100,8 @@ export const App = () => {
     onSome: (runId) => <RunDetail runId={runId} now={now} status={live.status} />,
     onNone: () => (
       <Overview
+        act={settings.act}
+        notice={settings.notice}
         live={live}
         filter={filter}
         selected={selected}

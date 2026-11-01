@@ -60,6 +60,31 @@ describe("EnrolledReposRepositoryLive", () => {
     }),
   );
 
+  effectAtHome(
+    "a file another process holds too long fails busy, so a caller can say try again",
+    () =>
+      Effect.gen(function* () {
+        const { demo, fs, paths, repository } = yield* seeded;
+
+        for (const file of [paths.machineConfig, paths.paused]) {
+          yield* fs.writeFileString(
+            `${file}.lock`,
+            `{"pid":${process.pid},"purpose":"a stuck edit","since":"2026-10-31T00:00:00Z"}`,
+          );
+        }
+
+        const flow = yield* Effect.flip(
+          repository.upsertOne(EnrolledRepoRootOps.setFlow(demo, Option.none(), "review", true)),
+        );
+
+        const paused = yield* Effect.flip(repository.upsertOne(EnrolledRepoRootOps.pause(demo)));
+
+        expect([flow.busy, paused.busy]).toEqual([true, true]);
+        expect(flow.message).toContain("a stuck edit");
+        expect(yield* fs.readFileString(paths.machineConfig)).toBe(CONFIG);
+      }),
+  );
+
   effectAtHome("saving a changed entry edits it in place, keeping the comments", () =>
     Effect.gen(function* () {
       const { demo, fs, paths, repository } = yield* seeded;

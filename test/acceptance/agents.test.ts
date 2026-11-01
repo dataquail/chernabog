@@ -1,6 +1,6 @@
 // The implement flow on each agent, end to end, with fake CLIs that print the real event shapes.
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -51,7 +51,18 @@ describe("implement on Codex", () => {
     });
 
     await waitFor(() => sandbox.codexCalls().length === 1 && !existsSync(hang), "codex to start");
-    await Bun.sleep(300);
+
+    // Killed only once chernabog has kept the thread Codex started, as it
+    // does on thread.started; a fixed wait lost that race on a loaded machine.
+    const thread = (sandbox.codexCalls()[0] ?? "").split(" ")[1] ?? "";
+    const links = join(sandbox.home, "sessions", "codex");
+
+    await waitFor(
+      () =>
+        existsSync(links) &&
+        readdirSync(links).some((link) => readFileSync(join(links, link), "utf8").includes(thread)),
+      "chernabog to keep the Codex thread",
+    );
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
     const { code, output } = await sandbox.runCli(["run", "implement", "--repo", "demo"]);

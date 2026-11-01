@@ -60,7 +60,7 @@ import { describeNewerStamp, stampState } from "./platform/backups.ts";
 import { ConfigError } from "./platform/config-error.ts";
 import { knownDefaultBranch } from "./platform/config-snapshot.ts";
 import { type Environment, HostEnvironment } from "./platform/environment.ts";
-import { FileBusy, updateFile } from "./platform/file-lock.ts";
+import { updateFile } from "./platform/file-lock.ts";
 import { checkRunnable } from "./platform/flow-deps.ts";
 import { type PackageOverrides } from "./platform/flow-loader.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
@@ -1191,7 +1191,8 @@ export const loadRepo = (
   });
 
 // Edits machine config in place, keeping the file's comments. `edit` changes
-// the document, given the file as it decodes now, and says what it did.
+// the document, given the file as it decodes now, and says what it did. It
+// fails FileBusy when another process holds the file too long.
 export const editMachineConfig = <A, E, R>(
   edit: (document: YAML.Document, current: MachineConfigFile) => Effect.Effect<A, E, R>,
 ) =>
@@ -1233,8 +1234,9 @@ export const editMachineConfig = <A, E, R>(
         return [result, Option.some(document.toString())] as const;
       }),
     ).pipe(
+      // FileBusy stays itself, so a caller can say to try again.
       Effect.mapError((error) => {
-        if (error instanceof FileBusy || PlatformError.isPlatformError(error)) {
+        if (PlatformError.isPlatformError(error)) {
           return new ConfigError({ message: error.message });
         }
 

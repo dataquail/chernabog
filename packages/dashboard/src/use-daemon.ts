@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 
 import { daemonFeed, FeedFailed } from "./feed.ts";
 import { hear, initial, type Live, type Message, reconnectDelay } from "./live.ts";
+import { type Attempt, describeSetting, type Notice, sendSetting } from "./settings.ts";
 import { loadStatus } from "./status.ts";
 
 const ENDED = new FeedFailed({ reason: "dropped", message: "the daemon ended the event stream" });
@@ -91,6 +92,41 @@ export const useDaemon = (origin: string): Live => {
   }, [origin]);
 
   return live;
+};
+
+// The controls' settings, sent to the daemon that served the page at
+// `origin`, and what the page says of the last one. The page hears of the
+// change itself on /api/events, as every other connected page does.
+export const useSettings = (origin: string) => {
+  const [notice, setNotice] = useState<Option.Option<Notice>>(Option.none());
+
+  const said = (kind: Notice["kind"], text: string) => {
+    setNotice(Option.some({ kind, text }));
+  };
+
+  const act = (attempt: Attempt) => {
+    if (attempt.kind === "invalid") {
+      said("problem", attempt.message);
+
+      return;
+    }
+
+    Effect.runFork(
+      sendSetting(origin, attempt.setting).pipe(
+        Effect.match({
+          onFailure: (refused) => {
+            said("problem", refused.message);
+          },
+          onSuccess: () => {
+            said("done", describeSetting(attempt.setting));
+          },
+        }),
+        Effect.provide(FetchHttpClient.layer),
+      ),
+    );
+  };
+
+  return { act, notice };
 };
 
 // The time now, again each second, for what the page shows relative to it.

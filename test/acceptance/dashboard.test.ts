@@ -3,14 +3,14 @@
 // every request on it passes the token, Host, Origin and Content-Type checks.
 
 import { type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
+import { DaemonStatus, Refusal } from "../../src/interface/daemon/daemon.protocol.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // A port nothing listens on now.
@@ -333,29 +333,151 @@ describe("the dashboard's listener", () => {
     ).toBe(200);
   });
 
-  test("leaves the commands the daemon dispatches for the CLI to the socket", async () => {
-    const token = readFileSync(tokenFile(), "utf8").trim();
-    const cookie = await cookieFor(portA, token);
-
-    const json = {
-      cookie,
+  describe("the commands a browser may send", () => {
+    // The listener's headers for a same-origin JSON POST, as the page sends one.
+    const asPage = async () => ({
+      cookie: await cookieFor(portA, readFileSync(tokenFile(), "utf8").trim()),
       origin: `http://127.0.0.1:${portA}`,
       "content-type": "application/json",
-    };
+    });
 
-    for (const path of [
-      "/api/commands/PauseRepoCommand",
-      "/api/%63ommands/PauseRepoCommand",
-      "/api/COMMANDS/PauseRepoCommand",
-    ]) {
-      const response = await fetch(`http://127.0.0.1:${portA}${path}`, {
+    const command = async (path: string, body: string) =>
+      fetch(`http://127.0.0.1:${portA}/api/commands/${path}`, {
         method: "POST",
-        headers: json,
-        body: JSON.stringify({ repo: "demo" }),
+        headers: await asPage(),
+        body,
       });
 
-      expect(response.status).toBe(404);
-    }
+    test("refuses trusting, enrolling and unenrolling: they stay the CLI's", async () => {
+      for (const path of [
+        "TrustRepoCommand",
+        "ApplyEnrollmentCommand",
+        "UnenrollRepoCommand",
+        "RepointRepoCommand",
+        // However the path spells them.
+        "%54rustRepoCommand",
+        "TrustRepoCommand/",
+        "../commands/TrustRepoCommand",
+      ]) {
+        const response = await command(path, '{"repo":"dataquail/demo","name":"demo"}');
+
+        expect(response.status).toBe(404);
+      }
+
+      for (const path of ["/api/COMMANDS/PauseRepoCommand", "/api/commands/pauserepocommand"]) {
+        const response = await fetch(`http://127.0.0.1:${portA}${path}`, {
+          method: "POST",
+          headers: await asPage(),
+          body: '{"name":"demo"}',
+        });
+
+        expect(response.status).toBe(404);
+      }
+
+      // Still enrolled, and unpaused.
+      const status = await fetch(`http://127.0.0.1:${portA}/api/status`, {
+        headers: { cookie: (await asPage()).cookie },
+      });
+
+      expect(
+        Schema.decodeUnknownSync(Schema.toCodecJson(DaemonStatus))(await status.json()).repos.map(
+          (repo) => [repo.name, repo.paused],
+        ),
+      ).toEqual([["demo", false]]);
+    });
+
+    // The bodies the dashboard's controls send (packages/dashboard/src/settings.ts,
+    // whose test pins them), for a repo that isn't enrolled: each reaches the
+    // command, which decodes it and refuses the repo, and nothing changes.
+    test("dispatches the five the page's controls send, decoding the persona each names", async () => {
+      for (const [tag, body] of [
+        ["PauseRepoCommand", '{"name":"nope"}'],
+        ["ResumeRepoCommand", '{"name":"nope"}'],
+        [
+          "SetPersonaFlowCommand",
+          '{"name":"nope","persona":{"_tag":"Some","value":"bob"},"flow":"implement","enabled":false}',
+        ],
+        [
+          "SetFlowScheduleCommand",
+          '{"name":"nope","persona":{"_tag":"Some","value":"bob"},"flow":"implement","schedule":{"_tag":"Some","value":"0 9 * * 1-5"}}',
+        ],
+        [
+          "SetPersonaAccountCommand",
+          '{"name":"nope","persona":{"_tag":"Some","value":"bob"},"role":{"_tag":"Some","value":"reviewer"},"account":{"_tag":"Some","value":"work"},"offered":{"personas":["bob"],"accounts":[{"name":"work","agent":"claude"}]}}',
+        ],
+      ] as const) {
+        const response = await command(tag, body);
+        const refusal = Schema.decodeUnknownSync(Refusal)(await response.json());
+
+        expect([tag, response.status, refusal.tag]).toEqual([tag, 422, "RepoNotEnrolled"]);
+      }
+    });
+
+    test("a pause the page sends reaches another page's /api/events", async () => {
+      const other = await fetch(`http://127.0.0.1:${portA}/api/events`, {
+        headers: { cookie: (await asPage()).cookie },
+      });
+
+      const reader = (other.body ?? new ReadableStream()).getReader();
+      let heard = "";
+      // The read in flight, kept across waits so no chunk is dropped.
+      let reading = reader.read();
+
+      // What the other page has heard by the time it hears an `event` frame,
+      // or by 10 seconds.
+      const until = async (event: string) => {
+        const deadline = Date.now() + 10_000;
+
+        while (!heard.includes(`event: ${event}\n`) && Date.now() < deadline) {
+          const chunk = await Promise.race([
+            reading.then((read) => Option.some(read.value)),
+            Bun.sleep(1000).then(() => Option.none()),
+          ]);
+
+          for (const value of Option.toArray(chunk)) {
+            heard += new TextDecoder().decode(value);
+            reading = reader.read();
+          }
+        }
+
+        return heard;
+      };
+
+      expect(await until("snapshot")).toContain("event: snapshot");
+
+      const paused = await command("PauseRepoCommand", '{"name":"demo"}');
+
+      expect(paused.status).toBe(200);
+      expect(await until("RepoPaused")).toContain(
+        '"_tag":"RepoPaused","eventId":"dataquail/demo:paused',
+      );
+
+      const resumed = await command("ResumeRepoCommand", '{"name":"demo"}');
+
+      expect(resumed.status).toBe(200);
+      expect(await until("RepoResumed")).toContain("event: RepoResumed\n");
+
+      await reader.cancel();
+    }, 30_000);
+
+    test("a file another process holds is refused as busy, for the page to say try again", async () => {
+      const lock = join(sandbox.home, "paused.json.lock");
+
+      writeFileSync(
+        lock,
+        `{"pid":${process.pid},"purpose":"a stuck edit","since":"2026-10-31T00:00:00Z"}`,
+      );
+
+      const response = await command("PauseRepoCommand", '{"name":"demo"}').finally(() => {
+        rmSync(lock, { force: true });
+      });
+
+      const refusal = Schema.decodeUnknownSync(Refusal)(await response.json());
+
+      expect(response.status).toBe(422);
+      expect(refusal.busy).toBe(true);
+      expect(refusal.error).toContain("a stuck edit");
+    }, 30_000);
   });
 
   test("starting it on another port moves it there", async () => {

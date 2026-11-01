@@ -148,6 +148,11 @@ h3 {
   border-color: var(--bad);
 }
 
+.banner.done {
+  border-color: var(--good);
+  background: var(--surface);
+}
+
 .attention {
   margin-top: 16px;
   padding: 8px 12px;
@@ -265,8 +270,27 @@ tr.off {
   background: var(--surface);
 }
 
-.persona + .persona::before {
-  content: ", ";
+.persona + .persona {
+  margin-top: 4px;
+}
+
+.role {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.schedule {
+  margin-top: 4px;
+}
+
+.cron {
+  width: 12em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+button {
+  cursor: pointer;
+  margin-left: 8px;
 }
 
 button {

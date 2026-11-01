@@ -3,8 +3,9 @@
 // so what it says reaches the daemon's event bus. The body is the command's
 // payload, decoded with its own schema; the answer is its success, encoded
 // with its own, or a Refusal carrying its error's tag and the error, encoded
-// with its failure schema. A tag not on the allowlist is refused 404.
-// Socket-only for now (DAEMON_COMMAND_LISTENERS).
+// with its failure schema, and `busy` when a file it writes was held too long.
+// A tag not on the allowlist is refused 404. The socket serves every command
+// on it; the dashboard's TCP listener only some (DAEMON_COMMAND_LISTENERS).
 
 import { describeError } from "@chernabog/core";
 import { CommandBus } from "@effect-server-utils/cqrs";
@@ -26,6 +27,9 @@ const refuse = (status: number, refusal: Refusal) =>
 
 // What a failure carries that names it: every command's errors are tagged.
 const Tagged = Schema.Struct({ _tag: Schema.String });
+
+// What a failure says of a file another process held (PersistenceFailed's busy).
+const Busy = Schema.Struct({ busy: Schema.Literal(true) });
 
 // What the route does with one request; `afterwards` runs once a dispatch
 // succeeded, for the daemon to notice what it changed, as /reload does. The
@@ -69,6 +73,10 @@ export const dispatchCommandEndpoint = <R>(afterwards: Effect.Effect<void, never
         ...Option.match(encoded, {
           onNone: () => ({}),
           onSome: (failure) => ({ failure }),
+        }),
+        ...Option.match(Schema.decodeUnknownOption(Busy)(dispatched.failure), {
+          onNone: () => ({}),
+          onSome: () => ({ busy: true }),
         }),
       });
     }
