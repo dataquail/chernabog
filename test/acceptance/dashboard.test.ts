@@ -364,15 +364,16 @@ describe("the dashboard's listener", () => {
     const token = readFileSync(tokenFile(), "utf8").trim();
     const cookie = await cookieFor(portB, token);
 
+    const listening = `dashboard listening on http://127.0.0.1:${portB}/`;
+    const before = sandbox.daemonLog().split(listening).length;
+
     await stopDaemon();
     expect(await answers(portB)).toBe(false);
     await startDaemon();
-    await waitFor(
-      () => sandbox.daemonLog().includes(`dashboard listening on http://127.0.0.1:${portB}/`),
-      "the dashboard",
-    );
+    await waitFor(() => sandbox.daemonLog().split(listening).length > before, "the dashboard");
 
     expect(readFileSync(tokenFile(), "utf8").trim()).toBe(token);
+
     const status = await fetch(`http://127.0.0.1:${portB}/api/status`, { headers: { cookie } });
     expect(status.status).toBe(200);
   }, 30_000);

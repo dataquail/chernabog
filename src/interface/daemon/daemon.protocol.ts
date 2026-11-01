@@ -167,6 +167,25 @@ export const Refusal = Schema.Struct({ error: Schema.String });
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
 
+// POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
+// on; without one, the last one asked for, else 4848.
+export const DashboardStart = Schema.Struct({
+  port: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65_535 }))),
+});
+
+export type DashboardStart = typeof DashboardStart.Type;
+
+// What GET /dashboard and the routes that start, stop and rotate it answer:
+// whether the listener is open, its port (the last one asked for, when it
+// isn't), and the URL with the token that opens it in a browser.
+export const DashboardState = Schema.Struct({
+  running: Schema.Boolean,
+  port: Schema.Int,
+  url: Schema.String,
+});
+
+export type DashboardState = typeof DashboardState.Type;
+
 // A person cancelling a run in flight: which, who they are, and whether to
 // close the agent sessions it left open.
 export const CancelRequest = Schema.Struct({

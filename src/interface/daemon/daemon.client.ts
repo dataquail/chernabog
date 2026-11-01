@@ -15,6 +15,8 @@ import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,
   DaemonStatus,
+  DashboardStart,
+  DashboardState,
   Refusal,
   Reloaded,
   RunReply,
@@ -129,3 +131,29 @@ export const daemonCancel = (request: CancelRequest) =>
     Effect.flatMap(send),
     Effect.flatMap(reply(CancelledRun)),
   );
+
+// The dashboard's 127.0.0.1 listener: whether it's open, where, and its URL.
+export const daemonDashboard = send(HttpClientRequest.get("/dashboard")).pipe(
+  Effect.flatMap(reply(DashboardState)),
+);
+
+// Opens it at the port asked for, else the last one, else 4848; refused when
+// the port is in use.
+export const daemonDashboardStart = (request: DashboardStart) =>
+  HttpClientRequest.schemaBodyJson(DashboardStart)(
+    HttpClientRequest.post("/dashboard/start"),
+    request,
+  ).pipe(
+    Effect.mapError((error) => new DaemonRefused({ message: error.message })),
+    Effect.flatMap(send),
+    Effect.flatMap(reply(DashboardState)),
+  );
+
+export const daemonDashboardStop = send(HttpClientRequest.post("/dashboard/stop")).pipe(
+  Effect.flatMap(reply(DashboardState)),
+);
+
+// A new token, so the URL a browser holds no longer opens it.
+export const daemonDashboardRotateToken = send(HttpClientRequest.post("/dashboard/token")).pipe(
+  Effect.flatMap(reply(DashboardState)),
+);

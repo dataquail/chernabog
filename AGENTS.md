@@ -107,6 +107,20 @@ jq -n -r --arg trace "$TRACE" '
 A run's first trace is the one its `event.RunStarted` span is in:
 `jq -r --arg run "$RUN" 'select(.name == "event.RunStarted" and .attributes["run.id"] == $run) | .traceId' telemetry/*/*.jsonl`.
 
+## The dashboard's listener (#323)
+
+The daemon's routes answer on its unix socket. `chernabog ui` asks it
+(`POST /dashboard/start`, socket-only) to open a TCP listener on 127.0.0.1
+for a browser (`src/interface/daemon/dashboard.server.ts`). That listener
+passes the page and `/api/<route>` on to the socket's `/<route>`, so a route
+is written once, in the socket's router, and answers on both. A route a
+browser must never reach is listed in `SOCKET_ONLY_ROUTES` there; the
+`/dashboard` routes are. Every TCP request is checked for its `Host`, a
+change for its `Origin` and a JSON `Content-Type`, and `/api/` for the cookie
+the token in `dashboard.token` sets. `dashboard.json` records whether it's to
+run and its port, so a restarted daemon opens it again: runtime state, not
+machine config.
+
 ## Personas (#49, PR #56)
 
 One daemon acts as several GitHub logins. Everything that touches GitHub must

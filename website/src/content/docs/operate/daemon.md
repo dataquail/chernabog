@@ -49,6 +49,22 @@ The daemon reads machine config's enrolled repos when it starts, and checks them
 
 A repo whose checkout is gone shows as `missing`, with `checkout missing at <path>`, and starts no runs. Its settings stay in machine config. When the checkout comes back, or `chernabog init` at its new place points the entry there, the daemon restarts on it.
 
+## The dashboard
+
+The daemon serves a dashboard for a browser, on `127.0.0.1` only, and only while you've asked for it:
+
+| Command | Does |
+| ------- | ---- |
+| `chernabog ui [--port N]` | starts it if it's off (or moves it to `N`), then opens it in the default browser (`open` on macOS, `xdg-open` on Linux); `--print` prints the URL instead |
+| `chernabog ui start [--port N]` | starts it, and prints its URL |
+| `chernabog ui stop` | stops it |
+| `chernabog ui status` | says whether it's running, and where |
+| `chernabog ui --rotate-token` | makes a new token first; the old URL stops working |
+
+Without `--port` it opens on the port you last asked for, else `4848`. A port that's in use is refused; it never picks another. What you asked is kept in `~/.config/chernabog/dashboard.json`, so the daemon opens it again after a restart or an upgrade; if the port is taken then, `daemon.log` says so and the daemon carries on without it.
+
+The URL carries a token, kept in `~/.config/chernabog/dashboard.token` (readable only by you, and the same across restarts, so a bookmark keeps working). Opening it sets a cookie, and the dashboard answers its API only to a browser holding that cookie. It also refuses a request addressed to any host but `127.0.0.1:<port>` or `localhost:<port>`, and a change sent from another origin or not as JSON, so a web page you visit can't use it.
+
 ## The engine
 
 The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.

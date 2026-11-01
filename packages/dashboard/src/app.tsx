@@ -1,4 +1,4 @@
-// The page: the daemon's status once /status answers, or why it didn't.
+// The page: the daemon's status once /api/status answers, or why it didn't.
 
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
