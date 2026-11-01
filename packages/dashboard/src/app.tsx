@@ -1,56 +1,113 @@
-// The page: the daemon's status once /api/status answers, or why it didn't.
+// The page: the overview, or a run's detail when the URL's hash names one
+// (#/runs/<id>), and the keyboard that moves between them.
 
-import * as Data from "effect/Data";
-import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Option from "effect/Option";
 import { useEffect, useState } from "react";
 
-import { type DaemonStatus } from "#daemon/protocol";
+import { everything, type Filter, filtered } from "./filter.ts";
+import { onKey, runOrder } from "./keys.ts";
+import { FILTER_ID, Overview } from "./overview.tsx";
+import { RunDetail } from "./run-detail.tsx";
+import { runHref } from "./runs.tsx";
+import { useDaemon, useNow } from "./use-daemon.ts";
 
-import { DaemonStatusView } from "./daemon-status.tsx";
-import { loadStatus } from "./status.ts";
+const RUN_ROUTE = /^#\/runs\/(.+)$/;
 
-type Page = Data.TaggedEnum<{
-  Asking: Record<never, never>;
-  Answered: { readonly status: DaemonStatus };
-  Unanswered: { readonly message: string };
-}>;
+// The run the hash names, if it names one.
+const routedRun = (hash: string) =>
+  Option.map(Option.fromNullishOr(RUN_ROUTE.exec(hash)?.[1]), decodeURIComponent);
 
-const Page = Data.taggedEnum<Page>();
-
-export const App = () => {
-  const [page, setPage] = useState<Page>(Page.Asking());
+const useHash = () => {
+  const [hash, setHash] = useState(location.hash);
 
   useEffect(() => {
-    const asking = Effect.runFork(
-      loadStatus(location.origin).pipe(
-        Effect.match({
-          onFailure: (error) => Page.Unanswered({ message: error.message }),
-          onSuccess: (status) => Page.Answered({ status }),
-        }),
-        Effect.flatMap((answer) =>
-          Effect.sync(() => {
-            setPage(answer);
-          }),
-        ),
-        Effect.provide(FetchHttpClient.layer),
-      ),
-    );
+    const changed = () => {
+      setHash(location.hash);
+    };
+
+    window.addEventListener("hashchange", changed);
 
     return () => {
-      Effect.runFork(Fiber.interrupt(asking));
+      window.removeEventListener("hashchange", changed);
     };
   }, []);
 
-  return (
-    <main>
-      <h1>Chernabog</h1>
-      {Page.$match(page, {
-        Asking: () => <p>Asking the daemon…</p>,
-        Answered: ({ status }) => <DaemonStatusView status={status} />,
-        Unanswered: ({ message }) => <p role="alert">{message}</p>,
-      })}
-    </main>
-  );
+  return hash;
+};
+
+// Keys typed into a field are the field's.
+const typing = (event: KeyboardEvent) =>
+  event.target instanceof HTMLInputElement ||
+  event.target instanceof HTMLSelectElement ||
+  event.target instanceof HTMLTextAreaElement;
+
+export const App = () => {
+  const live = useDaemon(location.origin);
+  const now = useNow();
+  const hash = useHash();
+  const [filter, setFilter] = useState<Filter>(everything);
+  const [selected, setSelected] = useState<Option.Option<number>>(Option.none());
+
+  const runs = Option.match(live.status, {
+    onNone: () => [],
+    onSome: (status) => runOrder(filtered(status, filter)),
+  });
+
+  const route = routedRun(hash);
+
+  useEffect(() => {
+    const pressed = (event: KeyboardEvent) => {
+      if (Option.isSome(route) || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      if (typing(event) && event.key !== "Escape") {
+        return;
+      }
+
+      const action = onKey(event.key, runs, selected);
+
+      switch (action.kind) {
+        case "select":
+          event.preventDefault();
+          setSelected(Option.some(action.index));
+
+          return;
+        case "open":
+          event.preventDefault();
+          location.hash = runHref(action.runId);
+
+          return;
+        case "focus-filter":
+          event.preventDefault();
+          document.getElementById(FILTER_ID)?.focus();
+
+          return;
+        case "none":
+          return;
+      }
+    };
+
+    document.addEventListener("keydown", pressed);
+
+    return () => {
+      document.removeEventListener("keydown", pressed);
+    };
+  });
+
+  return Option.match(route, {
+    onSome: (runId) => <RunDetail runId={runId} now={now} status={live.status} />,
+    onNone: () => (
+      <Overview
+        live={live}
+        filter={filter}
+        selected={selected}
+        now={now}
+        onFilter={(next) => {
+          setFilter(next);
+          setSelected(Option.none());
+        }}
+      />
+    ),
+  });
 };
