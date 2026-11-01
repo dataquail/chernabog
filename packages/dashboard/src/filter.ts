@@ -41,7 +41,17 @@ export const filtered = (status: DaemonStatus, filter: Filter): DaemonStatus => 
       return [];
     }
 
-    return [{ ...repo, flows }];
+    // The persona's own accounts, which its pickers change, and no one else's.
+    const personas = Option.match(Option.fromUndefinedOr(repo.personas), {
+      onNone: () => ({}),
+      onSome: (all) => ({
+        personas: all.filter((persona) =>
+          passes(filter.persona, Option.fromUndefinedOr(persona.persona)),
+        ),
+      }),
+    });
+
+    return [{ ...repo, flows, ...personas }];
   });
 
   const active = status.active.filter((run) => named(run.repo, run.persona));

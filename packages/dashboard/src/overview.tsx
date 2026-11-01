@@ -9,8 +9,9 @@ import { Attention } from "./attention.tsx";
 import { DaemonStatusView } from "./daemon-status.tsx";
 import { type Filter, filtered, personaChoices, repoChoices } from "./filter.ts";
 import type { Connection, Live } from "./live.ts";
-import { Repos } from "./repos.tsx";
+import { type Act, Repos } from "./repos.tsx";
 import { Runs } from "./runs.tsx";
+import { type Notice, offeredBy } from "./settings.ts";
 
 // The id of the filter `/` focuses.
 export const FILTER_ID = "filter-repo";
@@ -45,6 +46,27 @@ const Banner = ({ connection }: { readonly connection: Connection }) => {
       );
   }
 };
+
+// What the page says of the last setting a control sent.
+const SettingNotice = ({ notice }: { readonly notice: Option.Option<Notice> }) =>
+  Option.match(notice, {
+    onNone: () => <></>,
+    onSome: (said) => {
+      if (said.kind === "problem") {
+        return (
+          <p className="banner stopped" role="alert">
+            {said.text}
+          </p>
+        );
+      }
+
+      return (
+        <p className="banner done" role="status">
+          {said.text}
+        </p>
+      );
+    },
+  });
 
 const choice = (value: string) => Option.liftPredicate(value, (chosen) => chosen !== "");
 
@@ -104,14 +126,20 @@ const Filters = ({
 );
 
 export const Overview = ({
+  act,
   filter,
   live,
+  notice,
   now,
   onFilter,
   selected,
 }: {
+  // Where the repos' controls send what they change.
+  readonly act: Act;
   readonly filter: Filter;
   readonly live: Live;
+  // What the page says of the last setting a control sent.
+  readonly notice: Option.Option<Notice>;
   readonly now: number;
   readonly onFilter: (filter: Filter) => void;
   // The run the keyboard selected, by its place in runOrder.
@@ -126,6 +154,7 @@ export const Overview = ({
       })}
     </header>
     <Banner connection={live.connection} />
+    <SettingNotice notice={notice} />
     {Option.match(live.status, {
       onNone: () => <></>,
       onSome: (status) => {
@@ -136,7 +165,13 @@ export const Overview = ({
             <Attention status={shown} now={now} />
             <Filters status={status} filter={filter} onFilter={onFilter} />
             <Runs status={shown} selected={selected} now={now} />
-            <Repos repos={shown.repos} enrolled={status.repos.length > 0} now={now} />
+            <Repos
+              act={act}
+              repos={shown.repos}
+              enrolled={status.repos.length > 0}
+              offered={offeredBy(status)}
+              now={now}
+            />
           </main>
         );
       },

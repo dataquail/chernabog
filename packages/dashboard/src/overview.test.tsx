@@ -218,7 +218,15 @@ const render = (
   selected: Option.Option<number> = Option.none(),
 ) =>
   renderToStaticMarkup(
-    <Overview live={live} filter={filter} selected={selected} now={NOW} onFilter={() => {}} />,
+    <Overview
+      act={() => {}}
+      notice={Option.none()}
+      live={live}
+      filter={filter}
+      selected={selected}
+      now={NOW}
+      onFilter={() => {}}
+    />,
   );
 
 describe("the overview", () => {
