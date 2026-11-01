@@ -94,6 +94,7 @@ export default defineConfig({
           label: "Operate",
           items: [
             { slug: "operate/daemon" },
+            { slug: "operate/dashboard" },
             { slug: "operate/trust" },
             { slug: "operate/versions" },
           ],

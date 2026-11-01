@@ -51,23 +51,7 @@ A repo whose checkout is gone shows as `missing`, with `checkout missing at <pat
 
 ## The dashboard
 
-The daemon serves a dashboard for a browser, on `127.0.0.1` only, and only while you've asked for it:
-
-| Command | Does |
-| ------- | ---- |
-| `chernabog ui [--port N]` | starts it if it's off (or moves it to `N`), then opens it in the default browser (`open` on macOS, `xdg-open` on Linux); `--print` prints the URL instead |
-| `chernabog ui start [--port N]` | starts it, and prints its URL |
-| `chernabog ui stop` | stops it |
-| `chernabog ui status` | says whether it's running, and where |
-| `chernabog ui --rotate-token` | makes a new token first; the old URL stops working |
-
-Without `--port` it opens on the port you last asked for, else `4848`. A port that's in use is refused; it never picks another. What you asked is kept in `~/.config/chernabog/dashboard.json`, so the daemon opens it again after a restart or an upgrade; if the port is taken then, `daemon.log` says so and the daemon carries on without it.
-
-The URL carries a token, kept in `~/.config/chernabog/dashboard.token` (readable only by you, and the same across restarts, so a bookmark keeps working). Opening it sets a cookie, and the dashboard answers its API only to a browser holding that cookie. It also refuses a request addressed to any host but `127.0.0.1:<port>` or `localhost:<port>`, and a change sent from another origin or not as JSON, so a web page you visit can't use it.
-
-From the dashboard you can pause and resume a repo, and change a persona's settings in it, as the [live view](/chernabog/work/live-view/) can: turn a flow on or off, give it a schedule of its own (checked as cron before it's sent; empty, the team's applies again), and pick the account the persona, or one of its roles, spends. Each change is for the persona whose flow or accounts it's on; filter by persona to see only theirs. If another process is changing machine config at that moment, the dashboard says it's busy: try again. Enrolling, unenrolling and trusting a repo stay on the command line: they name paths on disk, and trusting lets a repo's code run.
-
-Each run on the dashboard links to its own page, `#/runs/<id>` (a unique prefix of the id will do, as with `chernabog logs`): the run, its pull request, subjects and summary, what it's parked on, the steps it went through, and its log as it grows, which stays at the bottom unless you scroll up and keeps the last 10,000 lines. The page updates as the run enters a step, parks or finishes.
+The daemon also serves a [dashboard](/chernabog/operate/dashboard/) for a browser, on `127.0.0.1` only, behind a token, and only while you've asked for it with `chernabog ui`. It stays up across the daemon's restarts until `chernabog ui stop`.
 
 ## The engine
 

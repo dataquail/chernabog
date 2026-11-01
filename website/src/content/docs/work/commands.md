@@ -34,9 +34,23 @@ description: Every chernabog command and flag.
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
-| `ui`                              | Open the [dashboard](/chernabog/operate/daemon/#the-dashboard) in the browser, starting it on 127.0.0.1 if it's off |
+| `ui`                              | Open the [dashboard](/chernabog/operate/dashboard/) in the browser, starting it on 127.0.0.1 if it's off |
 | `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
 | `ui status`                       | Whether the dashboard is running, and its URL                                     |
+
+## Through the daemon
+
+A command that changes state asks the daemon to do it when the daemon is running, so what it changes is said on the daemon's bus, where the [dashboard](/chernabog/operate/dashboard/) and the live view hear it at once:
+
+| Commands | With the daemon stopped |
+| -------- | ----------------------- |
+| `enroll` (once every question is asked, so `init`'s enrolling too), `unenroll`, `pause`, `resume`, `trust`, and the live view's settings (a flow on or off, a schedule, an account, pause) | They run here, in their own process, and the daemon picks up what they changed when it next starts |
+| `run`, `cancel` | They run here: `run` in the foreground, following its run to the end; `cancel` releasing the run itself |
+| `trigger`, `start <issue>`, `ui` | They need the daemon, and say so |
+
+When the daemon is running and refuses a command, such as a repo that isn't enrolled, that refusal is the answer: the command isn't tried again here. A daemon from before this, still running until it restarts on an upgrade, can't take the first row's commands, so they run here as if it were stopped.
+
+Some commands always run here: `setup`, `install`, `uninstall`, `start` and `stop`, which manage the daemon itself; `init` and `recipes`, which work in the checkout you stand in (`init` enrolls through the daemon, as `enroll` does); `rehearse` and `run --from-checkout`, which run their own engine on purpose; and any question asked part-way through a command, such as `init`'s offer to point a moved checkout's entry at its new place.
 
 ## Flags
 
@@ -77,5 +91,5 @@ description: Every chernabog command and flag.
 | `~/.config/chernabog/daemon.out.log`   | The daemon's stdout and stderr, as the service manager catches them |
 | `~/.config/chernabog/runs/<run>.log`   | Each run's log, kept 30 days after the run finishes |
 | `~/.config/chernabog/telemetry/<day>/` | Spans and logs of the daemon and each CLI command, a file a process; kept 30 days and to 500 MB |
-| `~/.config/chernabog/dashboard.json`   | Whether the [dashboard](/chernabog/operate/daemon/#the-dashboard) is to run, and its port, so a restarted daemon opens it again |
+| `~/.config/chernabog/dashboard.json`   | Whether the [dashboard](/chernabog/operate/dashboard/) is to run, and its port, so a restarted daemon opens it again |
 | `~/.config/chernabog/dashboard.token`  | The token in the dashboard's URL, readable only by you; `ui --rotate-token` replaces it |
