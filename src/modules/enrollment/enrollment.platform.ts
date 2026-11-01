@@ -12,7 +12,7 @@ export {
   RepoUnenrolled,
 } from "./domain/enrolled-repo/enrolled-repo.events.ts";
 export { FLOW_TURNED_OFF } from "./domain/enrolled-repo/team-flows.value-object.ts";
-export { EnrollmentCommands } from "./enrollment.command-handlers.ts";
+export { enrollmentCommandGroup, EnrollmentCommands } from "./enrollment.command-handlers.ts";
 export { EnrollmentModule } from "./enrollment.module.ts";
 export { EnrollmentQueries } from "./enrollment.query-handlers.ts";
 export { type EnrollmentPlan, type PersonaPlan } from "./queries/plan-enrollment.query.ts";

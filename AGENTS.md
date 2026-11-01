@@ -436,6 +436,16 @@ transitive reach), the coverage floors and the baseline.
   `status`, `logs` and the rest print a use-case's result, and with `--json`
   print it through its schema instead (`printJson` in
   `src/interface/cli/cli.output.ts`).
+- **State-changing commands go through the daemon first**
+  (`docs/adr/0017-state-changing-commands-go-through-the-daemon.md`), so
+  their events reach its bus. `POST /commands/:tag`
+  (`daemon-commands.server.ts`) dispatches an allowlisted command
+  (`daemon-commands.client.ts`) on the daemon's `CommandBus`, coded with
+  the command's own schemas; the CLI and TUI call it through
+  `DaemonEnrollmentCommands` / `DaemonTrustCommands` and `throughDaemon`,
+  which dispatches here only on `DaemonUnavailable`, never after a refusal.
+  A command the daemon runs runs as the daemon: one that depends on who ran
+  it carries that in its payload, as `CancelRequest.by` does.
 - **`GET /events` is how clients hear of changes** (#324): a
   `text/event-stream` of one `snapshot` (what `/status` answers), then each
   `DaemonEvent` (`daemon.protocol.ts`) as `event: <_tag>`, `id: <eventId>`,
