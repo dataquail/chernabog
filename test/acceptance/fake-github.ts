@@ -1435,14 +1435,30 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     squashMerge: (number: number, message: string) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
 
-      const squash = git(
-        "commit-tree",
-        `refs/heads/${pull.head}^{tree}`,
-        "-p",
-        `refs/heads/${pull.base}`,
-        "-m",
-        message,
-      );
+      // GitHub commits the squash, so it needs no identity of the machine's.
+      const squash = execFileSync(
+        "git",
+        [
+          "--git-dir",
+          options.bare,
+          "commit-tree",
+          `refs/heads/${pull.head}^{tree}`,
+          "-p",
+          `refs/heads/${pull.base}`,
+          "-m",
+          message,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: "GitHub",
+            GIT_AUTHOR_EMAIL: "noreply@github.com",
+            GIT_COMMITTER_NAME: "GitHub",
+            GIT_COMMITTER_EMAIL: "noreply@github.com",
+          },
+        },
+      ).trim();
 
       git("update-ref", `refs/heads/${pull.base}`, squash);
       pull.mergedHead = Option.getOrUndefined(refSha(pull.head));
