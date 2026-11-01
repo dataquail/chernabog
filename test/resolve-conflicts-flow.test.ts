@@ -17,6 +17,7 @@ import {
   PULL,
   repo,
   runToEnd,
+  stackOn,
   summaryOf,
 } from "./sdk-fakes.ts";
 
@@ -33,6 +34,25 @@ const conflicting = () => {
   const fake = makeFake("approve");
   fake.setLabels(PULL, []);
   fake.merge.state = "dirty";
+
+  return fake;
+};
+
+// The persona's pull request, moved onto main after #2, the layer below,
+// squash-merged there as `squash1`: its head, `below0000000`, is in the pull
+// request's history, and `squash1` isn't.
+const belowSquashed = () => {
+  const fake = conflicting();
+  stackOn(fake, "auto/issue-2", "merged");
+  fake.stack.base = "main";
+  fake.closed.push({
+    number: 2,
+    merged_at: "2026-10-31T17:09:00Z",
+    merge_commit_sha: "squash1",
+    head: { sha: "below0000000" },
+  });
+  fake.git.refuses.add("merge-base --is-ancestor squash1 HEAD");
+  fake.git.says.set("rev-list --parents -n 1 squash1", "squash1 main0001\n");
 
   return fake;
 };
@@ -150,6 +170,63 @@ describe("resolve-conflicts", () => {
       expect(summaryOf(finished)).toBe(`#${PULL}: merged auto/issue-2 and resolved its conflicts`);
       expect(fake.requests[0]?.prompt).toContain("git merge --no-ff origin/auto/issue-2");
       expect(fake.based.checkedAgainst).toEqual(["auto/issue-2", "auto/issue-2"]);
+    }),
+  );
+
+  effect(
+    "records a squash-merged layer below as already here, and merges nothing else when nothing else conflicts",
+    () =>
+      Effect.gen(function* () {
+        const fake = belowSquashed();
+        const finished = yield* runToEnd(resolving, fake, work);
+        expect(finished.status).toBe("done");
+        expect(fake.git.ran.filter((command) => command.startsWith("merge "))).toEqual([
+          "merge --no-edit squash1~1",
+          "merge --no-edit -s ours -m Merge squash1, the layer below as main merged it, already here squash1",
+          "merge --no-edit origin/main",
+        ]);
+        // Recording it left nothing to resolve, so no agent ran.
+        expect(fake.requests).toEqual([]);
+        expect(fake.git.pushes).toBe(1);
+        expect(
+          fake.comments.some((comment) =>
+            comment.body.includes("Recorded #2, the layer below as `main` merged it"),
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  effect("leaves the agent the merge in progress after recording a squash-merged layer below", () =>
+    Effect.gen(function* () {
+      const fake = belowSquashed();
+      fake.git.refuses.add("merge --no-edit origin/main");
+      fake.git.says.set("diff --name-only --diff-filter=U", "a.txt\n");
+      const finished = yield* runToEnd(resolving, fake, work);
+      expect(finished.status).toBe("done");
+      const [request] = fake.requests;
+      expect(request.prompt).toContain("The merge is already started");
+      expect(request.prompt).toContain("#2, the layer below this pull request");
+      expect(request.prompt).toContain("   - a.txt");
+      expect(request.prompt).not.toContain("git merge --no-ff origin/main");
+      expect(request.prompt).not.toMatch(/\{\{/);
+      // The record finished, so the agent's commit is all that's left.
+      expect(fake.requests).toHaveLength(1);
+      expect(fake.git.pushes).toBe(1);
+    }),
+  );
+
+  effect("merges again once the agent resolves a conflict that stopped the record short", () =>
+    Effect.gen(function* () {
+      const fake = belowSquashed();
+      fake.git.refuses.add("merge --no-edit squash1~1");
+      fake.git.says.set("diff --name-only --diff-filter=U", "a.txt\n");
+      const finished = yield* runToEnd(resolving, fake, work);
+      expect(finished.status).toBe("done");
+      // Each of the two merges is left to the agent: git here conflicts the same way twice.
+      expect(fake.requests).toHaveLength(2);
+      expect(
+        fake.git.ran.filter((command) => command === "merge --no-edit squash1~1"),
+      ).toHaveLength(2);
     }),
   );
 
