@@ -39,9 +39,13 @@ import { type DashboardState, Refusal } from "./daemon.protocol.ts";
 export const DEFAULT_DASHBOARD_PORT = 4848;
 
 // The routes the socket answers that a browser never reaches: the
-// dashboard's own controls. A route only the person's own tools may call
-// joins them here.
-export const SOCKET_ONLY_ROUTES: ReadonlyArray<RegExp> = [/^\/dashboard(\/|$)/i];
+// dashboard's own controls, and the commands the daemon dispatches for the
+// CLI and the TUI (DAEMON_COMMAND_LISTENERS), until #330 decides which a
+// browser may send. A route only the person's own tools may call joins them here.
+export const SOCKET_ONLY_ROUTES: ReadonlyArray<RegExp> = [
+  /^\/dashboard(\/|$)/i,
+  /^\/commands(\/|$)/i,
+];
 
 const COOKIE = "chernabog_dashboard";
 

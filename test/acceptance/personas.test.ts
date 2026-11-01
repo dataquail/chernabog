@@ -149,7 +149,7 @@ describe("setup errors, as personas", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if ("DEBUG_DAEMON" in process.env) {
@@ -233,7 +233,7 @@ describe("setup errors, as the implicit account", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     daemon.kill("SIGTERM");

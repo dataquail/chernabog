@@ -2,6 +2,7 @@ import { makeEventBus } from "@effect-server-utils/cqrs";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -27,8 +28,10 @@ import { scripted } from "./asker.ts";
 import { effectAtHomeWith } from "./effect-test.ts";
 
 // git answers for a checkout of dataquail/demo wherever it is, and gh is logged in to `logins`.
+// Enrolling asks the daemon first; none answers in a scratch home, so it enrolls here.
 const fakes = (logins: ReadonlyArray<string>) =>
   Layer.mergeAll(
+    FetchHttpClient.layer,
     execTestLayer((command, args) => {
       if (command === "git" && args.includes("--show-toplevel")) {
         return Option.some({ exitCode: 0, stdout: `${args[1]}\n`, stderr: "" });

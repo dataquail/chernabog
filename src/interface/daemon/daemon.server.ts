@@ -127,6 +127,7 @@ import {
   TickRan,
   TickResult,
 } from "./daemon.protocol.ts";
+import { commandsRoute } from "./daemon-commands.server.ts";
 import { openDashboardListener } from "./dashboard.server.ts";
 import {
   broadcastDaemonEvents,
@@ -2017,6 +2018,14 @@ export const runDaemon = Effect.gen(function* () {
       const dashboardAnswer = <E, R>(found: Effect.Effect<DashboardState, E, R>) =>
         answer(found.pipe(Effect.flatMap(HttpServerResponse.schemaJson(DashboardState))));
 
+      // What changed under the daemon since it started: a repo's trusted
+      // config, its checkout, the enrolled repos, chernabog's binary.
+      const recheck = checkConfig.pipe(
+        Effect.andThen(checkCheckouts),
+        Effect.andThen(checkEnrolled),
+        Effect.andThen(checkExecutable),
+      );
+
       const routes = Layer.mergeAll(
         HttpRouter.add("GET", "/dashboard", dashboardAnswer(dashboardListener.state)),
         HttpRouter.add("POST", "/dashboard/start", answer(dashboardStart)),
@@ -2033,14 +2042,22 @@ export const runDaemon = Effect.gen(function* () {
           "POST",
           "/reload",
           answer(
-            checkConfig.pipe(
-              Effect.andThen(checkCheckouts),
-              Effect.andThen(checkEnrolled),
-              Effect.andThen(checkExecutable),
+            recheck.pipe(
               Effect.andThen(Ref.get(reloadPending)),
               Effect.flatMap((pending) =>
                 HttpServerResponse.schemaJson(Reloaded)({ reloadPending: pending }),
               ),
+            ),
+          ),
+        ),
+        // A command a client dispatches here changes what /reload checks
+        // (machine config, trust), so the daemon checks it at once, as a
+        // client's /reload would have had it do.
+        commandsRoute(
+          answer,
+          recheck.pipe(
+            Effect.catch((error) =>
+              log(`could not check what a command changed: ${describeError(error)}`),
             ),
           ),
         ),
