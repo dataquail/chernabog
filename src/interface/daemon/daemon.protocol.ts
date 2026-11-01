@@ -165,6 +165,12 @@ export const Reloaded = Schema.Struct({ reloadPending: Schema.Boolean });
 
 export const Refusal = Schema.Struct({ error: Schema.String });
 
+// POST /runs/:id/attach: the launcher the daemon opened the run's latest
+// session in, on its own machine, and the session.
+export const AttachOpened = Schema.Struct({ launcher: Schema.String, sessionId: Schema.String });
+
+export type AttachOpened = typeof AttachOpened.Type;
+
 export const RunReply = Schema.OptionFromNullOr(RunView);
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener

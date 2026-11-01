@@ -109,6 +109,7 @@ export const orcaLauncher: Launcher = {
   close: (handle) => Effect.asVoid(orca(["terminal", "close", "--terminal", handle, "--json"])),
   attach: (handle) =>
     Option.some({ command: "orca", args: ["terminal", "switch", "--terminal", handle] }),
+  open: () => Option.none(),
   check: Effect.gen(function* () {
     const result = yield* orca(["status", "--json"]);
     const status = yield* decode(Status, "status", result.stdout);

@@ -69,6 +69,8 @@ export {
   type AttachCommand,
   attachCommand,
   liveAttach,
+  OpenRefused,
+  openRunSession,
   runSessions,
 } from "./infrastructure/runtime/agents.ts";
 export { runAnswers, runUnanswered } from "./infrastructure/runtime/agents/answers.ts";

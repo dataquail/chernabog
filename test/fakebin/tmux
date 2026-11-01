@@ -2,6 +2,7 @@
 // Stands in for tmux in end-to-end tests: a "session" is a detached process
 // group whose pid is kept under FAKE_TMUX_STATE. Records each call in FAKE_TMUX_LOG.
 // FAKE_TMUX_MISSING: behave as if tmux were not installed.
+// FAKE_TMUX_NO_CLIENT: no tmux client is attached, for switch-client to move.
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -49,6 +50,15 @@ if (args[0] === '-V') {
   }
   process.kill(-Number(readFileSync(pidFile(name), 'utf8')), 'SIGKILL');
   rmSync(pidFile(name));
+} else if (args[0] === 'switch-client') {
+  if (process.env.FAKE_TMUX_NO_CLIENT) {
+    console.error('no current client');
+    process.exit(1);
+  }
+  if (!alive(flag('-t'))) {
+    console.error(`can't find session: ${flag('-t')}`);
+    process.exit(1);
+  }
 } else if (args[0] === 'attach-session') {
   process.exit(0);
 } else {

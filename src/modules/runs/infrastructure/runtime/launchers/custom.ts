@@ -56,6 +56,7 @@ export const customLauncher = (name: string, commands: LauncherCommands): Launch
 
       return Option.map(Option.fromUndefinedOr(command), (found) => ({ command: found, args }));
     }),
+  open: () => Option.none(),
   check: Effect.gen(function* () {
     const command = Option.getOrElse(Arr.head(commands.start), () => "");
 

@@ -48,6 +48,7 @@ export const tmuxLauncher: Launcher = {
   close: (handle) => Effect.asVoid(runTool(NAME, "tmux", ["kill-session", "-t", target(handle)])),
   attach: (handle) =>
     Option.some({ command: "tmux", args: ["attach-session", "-t", target(handle)] }),
+  open: () => Option.none(),
   check: runTool(NAME, "tmux", ["-V"]).pipe(
     Effect.map((result) => {
       const ok = result.exitCode === 0;

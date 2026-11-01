@@ -14,14 +14,17 @@ import {
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
 import type { StandIns } from "../../../../kernel/stand-in.value-object.ts";
 import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
+import type { Exec } from "../../../../platform/exec.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
@@ -331,5 +334,21 @@ export const attachCommand = (record: SessionRecord) =>
       env: host,
     } satisfies AttachCommand;
   });
+
+// Why a run's session can't be opened in its launcher, for a person.
+export class OpenRefused extends Schema.TaggedError<
+  OpenRefused,
+  { readonly brand: "OpenRefused" }
+>()("OpenRefused", { message: Schema.String }) {}
+
+// A run's latest session, brought up in the launcher it runs under, on this
+// machine: the launcher, and the session.
+export const openRunSession = (
+  _runId: string,
+): Effect.Effect<
+  { readonly launcher: string; readonly sessionId: string },
+  OpenRefused,
+  Home | FileSystem.FileSystem | Exec
+> => Effect.fail(new OpenRefused({ message: "" }));
 
 export { runSessions, type SessionRecord } from "./agents/sessions.ts";
