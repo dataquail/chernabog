@@ -15,6 +15,7 @@ import {
   type ScheduleControl,
   scheduleField,
 } from "./controls.ts";
+import { RunNow } from "./run-actions.tsx";
 import type { Attempt, Offered } from "./settings.ts";
 import { either, present, shownIf } from "./show.tsx";
 import { When } from "./time.tsx";
@@ -326,6 +327,7 @@ const Repo = ({
       </dd>
     </dl>
     <Flows act={act} now={now} repo={repo} />
+    <RunNow repo={repo} />
   </article>
 );
 

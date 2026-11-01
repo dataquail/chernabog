@@ -38,6 +38,11 @@ export type Launcher = {
   readonly close: (handle: Handle) => Effect.Effect<void, LaunchError, Exec>;
   // What `chernabog attach` runs; none falls back to the agent's own resume.
   readonly attach: (handle: Handle) => Option.Option<LauncherAttach>;
+  // Brings the session up where the person looks at it, on this machine, with
+  // no terminal of the caller's: Orca switches to its tab, tmux switches a
+  // client to it. None for a launcher that can't, whose session a person
+  // attaches to from a terminal of their own.
+  readonly open: Option.Option<(handle: Handle) => Effect.Effect<void, LaunchError, Exec>>;
   // Whether the tool it drives is installed and working, for doctor.
   readonly check: Effect.Effect<ToolCheck, never, Exec>;
 };

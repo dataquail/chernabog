@@ -293,6 +293,45 @@ button {
   margin-left: 8px;
 }
 
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+button.danger {
+  color: var(--bad);
+  border-color: currentColor;
+}
+
+.actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.run-now {
+  margin-top: 8px;
+}
+
+.run-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.outcome {
+  color: var(--muted);
+}
+
+.outcome.refused {
+  color: var(--bad);
+}
+
 .log {
   max-height: 70vh;
   overflow: auto;

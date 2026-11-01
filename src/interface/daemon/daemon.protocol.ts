@@ -87,6 +87,9 @@ export const RepoStatus = Schema.Struct({
   tree: Maybe,
   // Where its interactive agent sessions run, and which config layer chose it.
   launcher: Maybe,
+  // Whether that launcher can bring a run's session up itself, on the
+  // daemon's machine (Orca, tmux). Absent from a daemon from before it could.
+  opensSessions: Schema.optionalKey(Schema.Boolean),
   flows: Schema.Array(FlowStatus),
   personas: Schema.optionalKey(Schema.Array(PersonaStatus)),
 });
@@ -177,6 +180,12 @@ export const Refusal = Schema.Struct({
 });
 
 export type Refusal = typeof Refusal.Type;
+
+// POST /runs/:id/attach: the launcher the daemon opened the run's latest
+// session in, on its own machine, and the session.
+export const AttachOpened = Schema.Struct({ launcher: Schema.String, sessionId: Schema.String });
+
+export type AttachOpened = typeof AttachOpened.Type;
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
 

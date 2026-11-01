@@ -14,14 +14,17 @@ import {
 import * as Arr from "effect/Array";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
+import * as Schema from "effect/Schema";
 
 import type { Persona } from "../../../../kernel/persona.value-object.ts";
 import type { StandIns } from "../../../../kernel/stand-in.value-object.ts";
 import { codexHomeOf } from "../../../../platform/agent-accounts.ts";
 import { type Environment, HostEnvironment } from "../../../../platform/environment.ts";
+import type { Exec } from "../../../../platform/exec.ts";
 import { GitHubTokens } from "../../../../platform/github-auth.ts";
 import { Home } from "../../../../platform/home.ts";
 import { type Adapter, type AdapterServices, agentEnvironment } from "./agents/adapter.ts";
@@ -33,7 +36,12 @@ import { customAdapter } from "./agents/custom.ts";
 import { opencodeAdapter } from "./agents/opencode.ts";
 import { REHEARSAL, rehearsalAdapter } from "./agents/rehearsal.ts";
 import { knownLaunch, sessionFiles } from "./agents/session-files.ts";
-import { knownSession, recordRunSession, type SessionRecord } from "./agents/sessions.ts";
+import {
+  knownSession,
+  recordRunSession,
+  runSessions,
+  type SessionRecord,
+} from "./agents/sessions.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
 
 export type AgentsConfig = Readonly<
@@ -330,6 +338,65 @@ export const attachCommand = (record: SessionRecord) =>
       cwd: record.cwd,
       env: host,
     } satisfies AttachCommand;
+  });
+
+// Why a run's session can't be opened in its launcher, for a person.
+export class OpenRefused extends Schema.TaggedError<
+  OpenRefused,
+  { readonly brand: "OpenRefused" }
+>()("OpenRefused", { message: Schema.String }) {}
+
+// A run's latest session, brought up in the launcher it runs under, on this
+// machine: the launcher, and the session.
+export const openRunSession = (
+  runId: string,
+): Effect.Effect<
+  { readonly launcher: string; readonly sessionId: string },
+  OpenRefused,
+  Home | FileSystem.FileSystem | Exec
+> =>
+  Effect.gen(function* () {
+    const refuse = (message: string) => Effect.fail(new OpenRefused({ message }));
+    const session = Arr.last(yield* runSessions(runId));
+
+    if (Option.isNone(session)) {
+      return yield* refuse(`${runId} has opened no agent session yet`);
+    }
+
+    const { sessionId } = session.value;
+    const launch = yield* knownLaunch(sessionFiles((yield* Home).root, sessionId));
+    const launcher = Option.flatMap(launch, (found) => launcherFor(found.launcher));
+
+    if (Option.isNone(launch) || Option.isNone(launcher)) {
+      return yield* refuse(
+        "its session runs headless, with no launcher to open it in: copy the attach command and run it in a terminal",
+      );
+    }
+
+    const { name } = launcher.value;
+    const opening = launcher.value.open;
+
+    if (Option.isNone(opening)) {
+      return yield* refuse(
+        `${name} can't open a session itself: copy the attach command and run it in a terminal`,
+      );
+    }
+
+    const alive = yield* launcher.value
+      .alive(launch.value.handle)
+      .pipe(Effect.orElseSucceed(() => false));
+
+    if (!alive) {
+      return yield* refuse(
+        `its session in ${name} has ended: copy the attach command to resume it in a terminal`,
+      );
+    }
+
+    yield* opening
+      .value(launch.value.handle)
+      .pipe(Effect.catch((error) => refuse(`${name} couldn't open it: ${error.message}`)));
+
+    return { launcher: name, sessionId };
   });
 
 export { runSessions, type SessionRecord } from "./agents/sessions.ts";

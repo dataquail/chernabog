@@ -31,6 +31,13 @@ const Shown = Schema.fromJsonString(
   ]),
 );
 
+const Switched = Schema.fromJsonString(
+  Schema.Union([
+    Schema.Struct({ ok: Schema.Literal(true) }),
+    Schema.Struct({ ok: Schema.Literal(false), error: Failure }),
+  ]),
+);
+
 const Status = Schema.fromJsonString(
   Schema.Struct({
     ok: Schema.Boolean,
@@ -109,6 +116,20 @@ export const orcaLauncher: Launcher = {
   close: (handle) => Effect.asVoid(orca(["terminal", "close", "--terminal", handle, "--json"])),
   attach: (handle) =>
     Option.some({ command: "orca", args: ["terminal", "switch", "--terminal", handle] }),
+  // Brings Orca's tab for the session to the front.
+  open: Option.some((handle) =>
+    Effect.gen(function* () {
+      const result = yield* orca(["terminal", "switch", "--terminal", handle, "--json"]);
+      const switched = yield* decode(Switched, "terminal switch", result.stdout);
+
+      if (!switched.ok) {
+        return yield* new LaunchError({
+          launcher: NAME,
+          message: `orca terminal switch: ${switched.error.message}`,
+        });
+      }
+    }),
+  ),
   check: Effect.gen(function* () {
     const result = yield* orca(["status", "--json"]);
     const status = yield* decode(Status, "status", result.stdout);
