@@ -1,8 +1,9 @@
-// What a key does on the overview (stub).
+// What a key does on the overview: `j` and `k` move through the runs, active
+// ones first, `enter` opens the selected one, and `/` focuses the filter.
 
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
 
-import { type DaemonStatus } from "#daemon/protocol";
+import type { DaemonStatus } from "#daemon/protocol";
 
 export type KeyAction =
   | { readonly kind: "select"; readonly index: number }
@@ -10,10 +11,55 @@ export type KeyAction =
   | { readonly kind: "focus-filter" }
   | { readonly kind: "none" };
 
-export const runOrder = (_status: DaemonStatus): ReadonlyArray<string> => [];
+const NONE: KeyAction = { kind: "none" };
+
+// The runs as the overview lists them: in flight, then recent.
+export const runOrder = (status: DaemonStatus): ReadonlyArray<string> =>
+  [...status.active, ...status.recent].map((run) => run.id);
+
+// Where a move starts with nothing selected: just above the first run for `j`,
+// just below the last for `k`.
+const outside = (runs: ReadonlyArray<string>, by: number) => {
+  if (by > 0) {
+    return -1;
+  }
+
+  return runs.length;
+};
+
+const moved = (runs: ReadonlyArray<string>, selected: Option.Option<number>, by: number) => {
+  if (runs.length === 0) {
+    return NONE;
+  }
+
+  const from = Option.getOrElse(selected, () => outside(runs, by));
+
+  const index = Math.min(Math.max(from + by, 0), runs.length - 1);
+
+  return { kind: "select", index } satisfies KeyAction;
+};
 
 export const onKey = (
-  _key: string,
-  _runs: ReadonlyArray<string>,
-  _selected: Option.Option<number>,
-): KeyAction => ({ kind: "none" });
+  key: string,
+  runs: ReadonlyArray<string>,
+  selected: Option.Option<number>,
+): KeyAction => {
+  switch (key) {
+    case "j":
+      return moved(runs, selected, 1);
+    case "k":
+      return moved(runs, selected, -1);
+    case "Enter":
+      return Option.match(
+        Option.flatMap(selected, (index) => Option.fromUndefinedOr(runs[index])),
+        {
+          onNone: () => NONE,
+          onSome: (runId): KeyAction => ({ kind: "open", runId }),
+        },
+      );
+    case "/":
+      return { kind: "focus-filter" };
+    default:
+      return NONE;
+  }
+};
