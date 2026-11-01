@@ -69,6 +69,8 @@ export {
   type AttachCommand,
   attachCommand,
   liveAttach,
+  OpenRefused,
+  openRunSession,
   runSessions,
 } from "./infrastructure/runtime/agents.ts";
 export { runAnswers, runUnanswered } from "./infrastructure/runtime/agents/answers.ts";
@@ -101,7 +103,11 @@ export {
   planLabelSync,
   syncLabels,
 } from "./infrastructure/runtime/labels.ts";
-export { describeLauncher, launcherFor } from "./infrastructure/runtime/launchers.ts";
+export {
+  describeLauncher,
+  launcherFor,
+  opensSessions,
+} from "./infrastructure/runtime/launchers.ts";
 export { LaunchSpecJson, runLaunch } from "./infrastructure/runtime/launchers/shim.ts";
 export {
   adoptRuns,

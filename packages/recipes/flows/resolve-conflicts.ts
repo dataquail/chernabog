@@ -197,7 +197,11 @@ const unstick = (conflict: ConflictItem) =>
       });
     }
 
-    yield* Implement.localGate(worktree, { id: "resolve", session });
+    yield* Implement.localGate(worktree, {
+      id: "resolve",
+      session,
+      pullRequest: conflict.pullRequest,
+    });
     // Checked against the pull request's base, the layer below's branch for a layer of a stack.
     yield* Implement.push("push-resolved", worktree, conflict.headRef, { base: conflict.baseRef });
     yield* PullRequest.comment(
