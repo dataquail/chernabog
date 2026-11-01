@@ -26,6 +26,7 @@ import {
 import { Refusal } from "../src/interface/daemon/daemon.protocol.ts";
 import { commandsRoute } from "../src/interface/daemon/daemon-commands.server.ts";
 import { applySetting, type SettingAction } from "../src/interface/tui/settings.ts";
+import { PersistenceFailed } from "../src/kernel/persistence.errors.ts";
 import { RepoSlug } from "../src/kernel/repo-slug.id.ts";
 import { PauseState } from "../src/modules/enrollment/commands/pause-repo.command.ts";
 import { RepoNotEnrolled } from "../src/modules/enrollment/domain/enrolled-repo/enrolled-repo.errors.ts";
@@ -51,8 +52,15 @@ const pauseState = (paused: boolean) =>
 
 const notEnrolled = new RepoNotEnrolled({ asked: "nope", enrolled: ["demo"] });
 
+const busy = new PersistenceFailed({
+  message:
+    "config.yaml is being changed by pid 7 (editing machine config); try again once it's done",
+  busy: true,
+});
+
 // A bus over handlers that record each command and answer as enrollment's
-// and trust's do: a repo named "nope" isn't enrolled.
+// and trust's do: a repo named "nope" isn't enrolled, and one named "busy"
+// has its file held by another process.
 const recordingBus = (dispatched: Array<Dispatched>) => {
   const answer =
     <A>(tag: string, success: A) =>
@@ -62,6 +70,12 @@ const recordingBus = (dispatched: Array<Dispatched>) => {
           Effect.mapError(
             Effect.fromOption(Option.liftPredicate(success, () => payload.name !== "nope")),
             () => notEnrolled,
+          ),
+        ),
+        Effect.andThen((answered) =>
+          Effect.mapError(
+            Effect.fromOption(Option.liftPredicate(answered, () => payload.name !== "busy")),
+            () => busy,
           ),
         ),
       );
@@ -254,6 +268,26 @@ describe("POST /commands/:tag", () => {
       expect(refusal.failure).toEqual(
         yield* Schema.encodeEffect(Schema.toCodecJson(RepoNotEnrolled))(notEnrolled),
       );
+    }),
+  );
+
+  effect("says a command refused for a file another process held is busy, to try again", () =>
+    Effect.gen(function* () {
+      const socket = yield* serve([], { count: 0 });
+
+      const held = yield* post(socket, "PauseRepoCommand", { name: "busy" });
+
+      expect(held.status).toBe(422);
+      expect(held.refusal.tag).toBe("PersistenceFailed");
+      expect(held.refusal.busy).toBe(true);
+      // The client fails with the command's own error, busy as the daemon had it.
+      expect(
+        yield* Effect.flip(DaemonEnrollmentCommands.PauseRepoCommand({ name: "busy" })),
+      ).toEqual(busy);
+
+      const other = yield* post(socket, "PauseRepoCommand", { name: "nope" });
+
+      expect(other.refusal.busy).toBeUndefined();
     }),
   );
 

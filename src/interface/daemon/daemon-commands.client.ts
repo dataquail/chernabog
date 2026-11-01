@@ -30,12 +30,6 @@ export const daemonEnrollmentCommands = Command.subsetOf(
 // ClaimReloadCommand, the daemon's own bookkeeping.
 export const daemonTrustCommands = Command.subsetOf(trustCommandGroup, "TrustRepoCommand");
 
-// Where the route listens: the local socket only, which only this machine's
-// user can reach. Nothing reads this yet, because the daemon has no other
-// listener: a TCP listener (#330) must check it, with an allowlist of its own,
-// before it serves /commands/:tag, or every command here goes out over TCP.
-export const DAEMON_COMMAND_LISTENERS = ["socket"] as const;
-
 const allowed: ReadonlyArray<Command.Any> = [
   ...daemonEnrollmentCommands.messages,
   ...daemonTrustCommands.messages,
@@ -43,6 +37,23 @@ const allowed: ReadonlyArray<Command.Any> = [
 
 // The tags the daemon dispatches, for a refusal to list.
 export const daemonCommandTags = allowed.map((command) => command.tag);
+
+// What each of the daemon's listeners may dispatch. The local socket, which
+// only this machine's user reaches, dispatches every command above. The
+// dashboard's TCP listener (dashboard.server.ts) dispatches a repo's pause and
+// a persona's settings, and nothing else: enrolling and unenrolling name
+// paths on disk, and trusting grants a repo's code the right to run, so they
+// stay the CLI's and the TUI's.
+export const DAEMON_COMMAND_LISTENERS = {
+  socket: daemonCommandTags,
+  tcp: [
+    "PauseRepoCommand",
+    "ResumeRepoCommand",
+    "SetPersonaFlowCommand",
+    "SetFlowScheduleCommand",
+    "SetPersonaAccountCommand",
+  ] satisfies ReadonlyArray<(typeof daemonEnrollmentCommands.messages)[number]["tag"]>,
+} as const;
 
 // The allowlisted command a tag names, if it is one.
 export const daemonCommand = (tag: string): Option.Option<Command.Any> =>

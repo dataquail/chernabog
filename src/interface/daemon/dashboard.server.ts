@@ -9,7 +9,8 @@
 // 127.0.0.1:<port> or localhost:<port> as its Host (DNS rebinding sends
 // another name), a request that changes something must come from that origin
 // as JSON, and /api/ answers only a browser holding the cookie the token in
-// dashboard.token sets.
+// dashboard.token sets. Of the commands the socket dispatches, a browser may
+// send only the ones DAEMON_COMMAND_LISTENERS.tcp names.
 
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import * as Cause from "effect/Cause";
@@ -34,18 +35,26 @@ import * as Semaphore from "effect/Semaphore";
 import { writeFileAtomic } from "../../platform/atomic-write.ts";
 import { homePaths } from "../../platform/home.ts";
 import { type DashboardState, Refusal } from "./daemon.protocol.ts";
+import { DAEMON_COMMAND_LISTENERS } from "./daemon-commands.client.ts";
 
 // Where the listener opens when no one has named a port.
 export const DEFAULT_DASHBOARD_PORT = 4848;
 
 // The routes the socket answers that a browser never reaches: the
 // dashboard's own controls, and the commands the daemon dispatches for the
-// CLI and the TUI (DAEMON_COMMAND_LISTENERS), until #330 decides which a
-// browser may send. A route only the person's own tools may call joins them here.
+// CLI and the TUI, but for the ones TCP may (BROWSER_COMMAND_ROUTES). A route
+// only the person's own tools may call joins them here.
 export const SOCKET_ONLY_ROUTES: ReadonlyArray<RegExp> = [
   /^\/dashboard(\/|$)/i,
   /^\/commands(\/|$)/i,
 ];
+
+// The commands a browser may send, each as the socket's router routes it,
+// spelled exactly so (DAEMON_COMMAND_LISTENERS.tcp): a repo's pause and a
+// persona's settings. Enrolling, unenrolling and trusting stay the CLI's.
+const BROWSER_COMMAND_ROUTES: ReadonlyArray<string> = DAEMON_COMMAND_LISTENERS.tcp.map(
+  (tag) => `/commands/${tag}`,
+);
 
 const COOKIE = "chernabog_dashboard";
 
@@ -151,9 +160,11 @@ const decoded = Option.liftThrowable(decodeURIComponent);
 const asRouted = (route: string) =>
   Option.liftPredicate(route, (raw) => !ENCODED_SEPARATOR.test(raw)).pipe(Option.flatMap(decoded));
 
-// A decoded route a browser may reach: one path, none of the socket's own.
+// A decoded route a browser may reach: one path, none of the socket's own
+// but the commands it may send.
 const reachable = (route: string) =>
-  !route.includes("//") && !SOCKET_ONLY_ROUTES.some((only) => only.test(route));
+  !route.includes("//") &&
+  (BROWSER_COMMAND_ROUTES.includes(route) || !SOCKET_ONLY_ROUTES.some((only) => only.test(route)));
 
 // What the listener answers a request with: the checks, the token's
 // landing, /api/ and the page.

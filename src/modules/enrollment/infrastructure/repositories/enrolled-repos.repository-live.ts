@@ -19,7 +19,7 @@ import * as Schema from "effect/Schema";
 import { PersistenceFailed } from "../../../../kernel/persistence.errors.ts";
 import { RepoSlug } from "../../../../kernel/repo-slug.id.ts";
 import { type Specification } from "../../../../kernel/specification.ts";
-import { updateFile } from "../../../../platform/file-lock.ts";
+import { FileBusy, updateFile } from "../../../../platform/file-lock.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { editMachineConfig, entryFor, loadMachineConfig } from "../../../../repo-config.ts";
 import { type EnrolledRepoRoot } from "../../domain/enrolled-repo/enrolled-repo.root.ts";
@@ -28,8 +28,14 @@ import { addEntry, applyEntry, sameEntry, toEntry, toRoot } from "./enrolled-rep
 
 const PausedFile = Schema.fromJsonString(Schema.Array(RepoSlug));
 
-const failed = (error: { readonly message: string }) =>
-  new PersistenceFailed({ message: error.message });
+// A file another process held too long is busy: trying again will do.
+const failed = (error: { readonly message: string }) => {
+  if (error instanceof FileBusy) {
+    return new PersistenceFailed({ message: error.message, busy: true });
+  }
+
+  return new PersistenceFailed({ message: error.message });
+};
 
 export const EnrolledReposRepositoryLive = Layer.effect(
   EnrolledReposRepository,

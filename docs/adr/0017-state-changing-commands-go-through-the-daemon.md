@@ -96,5 +96,10 @@ with a protocol type of its own beside the command's.
 - `DAEMON_COMMAND_LISTENERS` names the socket alone, and nothing reads it yet,
   because the daemon has no other listener. The TCP listener #330 adds must
   check it before it serves this route.
+  Since #330 it does: `DAEMON_COMMAND_LISTENERS.tcp` lets the dashboard's
+  listener send `PauseRepoCommand`, `ResumeRepoCommand`,
+  `SetPersonaFlowCommand`, `SetFlowScheduleCommand` and
+  `SetPersonaAccountCommand`, and refuses the rest 404. A command whose file
+  another process held too long is refused with `busy: true` on its `Refusal`.
 - A command added to the allowlist needs no new route or protocol type, only
   its tag beside the others, and the check in decision 5.
