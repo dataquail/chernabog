@@ -10,6 +10,8 @@ description: chernabog with no arguments — a live view of the daemon, its flow
 - runs, one row per piece of work, with what each is about (`PR 124`, `#144`), its flow, repo and persona, and its current step or how it ended;
 - why recent ticks were skipped.
 
+The [dashboard](/chernabog/operate/dashboard/) shows the same in a browser, with `chernabog ui`.
+
 With more than one repo, a tab row (`All · goodbones · chernabog`) picks a project; with more than one persona, a filter picks one. Both apply to the flows, runs and skips together, and a column a filter fixes is dropped from the runs, giving the title more room.
 
 **Work threads.** An issue, the pull request a run opened or adopted for it, and the runs on that pull request (`review`, `address-review`, `re-review`) are one piece of work. The list shows its latest run, marked `▸` with how many others it has (`re-review +3`); `space` opens it to show them under it.

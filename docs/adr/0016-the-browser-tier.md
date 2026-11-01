@@ -65,3 +65,69 @@ browser bundle of it failed on `bun:sqlite`.
 - A schema the dashboard needs and the protocol doesn't carry yet is added to
   the protocol, and its module's `<module>.contracts.ts`, not to the package.
 - The bundle is built unminified, as the rest of the binary is.
+
+## What the epic changed
+
+The rest of the epic (#321) built on this as follows. Each piece is its
+issue's to explain; this section is the map.
+
+- **On demand, never by default** (#323). The daemon opens no TCP port until
+  a person asks: `chernabog ui start` sends `POST /dashboard/start` on the
+  socket, `ui stop` sends `/dashboard/stop`, and `ui status` asks
+  `GET /dashboard`. The listener is `Bun.serve` on `127.0.0.1` at the port
+  asked for, else the last one, else `4848`, and a port in use is refused,
+  never swapped for another. The daemon restarts on every reload and
+  upgrade, so what was asked is runtime state in the home's `dashboard.json`
+  (`{ running, port }`), not machine config: a daemon that starts with
+  `running: true` opens the listener again, and logs and carries on
+  socket-only when the port is taken. Closing the listener ends its open
+  streams.
+- **The socket's router, under `/api/`** (#323,
+  `src/interface/daemon/dashboard.server.ts`). The TCP listener serves the
+  page at `/` and passes `/api/<route>` on to the socket, so a route is
+  written once and answers on both, and the page's client is the socket's
+  routes with a prefix. `SOCKET_ONLY_ROUTES` keeps `/dashboard` and
+  `/commands` off TCP, matched against the path as the socket's router
+  decodes it, so an encoded spelling can't reach them. The guard in front of
+  `/api/` is a 32-byte token in `dashboard.token` (mode 0600, stable across
+  restarts, `ui --rotate-token` to replace it), which `/?token=…` trades for
+  an `HttpOnly`, `SameSite=Strict` cookie; a `Host` that isn't
+  `127.0.0.1:<port>` or `localhost:<port>` is refused (DNS rebinding), and so
+  is a non-`GET` from another `Origin` or not `application/json` (a form
+  post from a page the person visits).
+- **`/events`, not polling** (#324,
+  `src/interface/daemon/events-stream.event-adapter.ts`). Server-sent
+  events: one `snapshot` holding what `/status` answers, then each bus event
+  as `event: <_tag>`, `id: <eventId>` and the encoded event, and a ping every
+  15 seconds. The client subscribes before the snapshot is computed, clients
+  that connect within a second share one computation, and a reconnect gets a
+  fresh snapshot with no `Last-Event-ID` replay. `DaemonEvent` grew
+  enrollment's and trust's events, `RunMarkersReleased`, and three the
+  daemon dispatches itself: `DaemonReloading`, `TickRan` and
+  **`StatusChanged`**. `StatusChanged` covers what the bus can't hear: the
+  daemon watches machine config, `paused.json`, `trust.json` and `state.db`,
+  and a change from another process (a hand edit, a foreground
+  `run --from-checkout` or `rehearse`) is told once a second at most as
+  "ask `/status` again". A change the daemon made itself is on the bus
+  already and doesn't echo. The page refetches `/api/status` once per burst
+  of events, and backs off and reconnects when the stream drops.
+- **`POST /commands/:tag` and its two allowlists** (#326, #330;
+  [ADR 17](0017-state-changing-commands-go-through-the-daemon.md)). The
+  CLI's state-changing commands go through the daemon so their events reach
+  this bus. `DAEMON_COMMAND_LISTENERS`
+  (`src/interface/daemon/daemon-commands.client.ts`) says which tags each
+  listener dispatches: the socket, enrollment's seven and trust's
+  `TrustRepoCommand`; TCP, at `/api/commands/:tag`, only `PauseRepoCommand`,
+  `ResumeRepoCommand`, `SetPersonaFlowCommand`, `SetFlowScheduleCommand` and
+  `SetPersonaAccountCommand`. Enrolling and unenrolling name paths on disk,
+  and trusting grants a repo's code the right to run, so a browser holding
+  the cookie still can't. TCP lets through exactly those five
+  `/commands/<tag>` paths, and `SOCKET_ONLY_ROUTES` keeps the rest of
+  `/commands` off it.
+- **The routes the page added** (#328, #329). `GET /runs/:id` takes a unique
+  prefix of the id; `GET /runs/:id/log` streams a run's log over SSE until
+  the run ends; `POST /run` and `/cancel` (`by: "dashboard"`) are the CLI's
+  own; `POST /runs/:id/attach` has the daemon bring a run's session up in
+  its launcher on its own machine, because a browser can't take over a
+  terminal. Every refusal is the daemon's `Refusal`, shown beside the
+  control that asked and never retried.
