@@ -4,7 +4,8 @@ You are running **unattended** in the worktree of branch `{{branch}}`, the head 
 
 ## Steps
 
-1. `git fetch origin {{base}}`, then `git merge --no-ff origin/{{base}}`.
+{{merge}}
+
 2. Resolve each conflicted file so it keeps **both** sides' intent: the pull request's change, applied on top of what `{{base}}` now has. Read the pull request's own commits (`git log origin/{{base}}..HEAD`) and what changed on `{{base}}` since the branch was cut (`git log HEAD..origin/{{base}}`) to understand each side before choosing.
 3. Generated files are regenerated, never hand-merged. For a lockfile (`pnpm-lock.yaml`, `package-lock.json`, `bun.lock`, `yarn.lock`), take `{{base}}`'s version (`git checkout --theirs <lockfile>`), then rerun the pull request's dependency change on top of it with the package manager, for example the same `pnpm update …` or `pnpm add …` its commits describe. Then check the install is reproducible (`pnpm install --frozen-lockfile`, or the equivalent).
 4. Make sure nothing is left: no conflict markers (`git diff --check`, and `grep -rn '^<<<<<<< \|^>>>>>>> '` over the files that conflicted), and `git status` shows no unmerged paths.

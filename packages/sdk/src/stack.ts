@@ -103,6 +103,13 @@ const contains = (worktree: string, ancestor: string) =>
     Effect.catchTag("GitError", () => Effect.succeed(false)),
   );
 
+// Whether `descendant` holds `ancestor` in its history.
+const holds = (worktree: string, descendant: string, ancestor: string) =>
+  Git.use((git) => git.run(["merge-base", "--is-ancestor", ancestor, descendant], worktree)).pipe(
+    Effect.as(true),
+    Effect.catchTag("GitError", () => Effect.succeed(false)),
+  );
+
 // Merges `ref` into HEAD. One that conflicts is left in progress, and its
 // conflicted paths returned; any other failure stays a failure.
 const merge = (worktree: string, args: ReadonlyArray<string>) =>
@@ -232,6 +239,84 @@ export const updateFromBase = (worktree: string, options: UpdateOptions = {}) =>
   }).pipe(
     Effect.catchTag("GitError", (error) =>
       Effect.fail(new StepFailed({ step, message: error.message })),
+    ),
+  );
+
+const ClosedPull = Schema.Struct({
+  number: Schema.Finite,
+  merged_at: Schema.OptionFromNullOr(Schema.String),
+  merge_commit_sha: Schema.OptionFromNullOr(Schema.String),
+  head: Schema.Struct({ sha: Schema.String }),
+});
+
+// The pull requests closed lately into `base`, newest first, one page.
+const closedInto = (base: string) =>
+  Effect.gen(function* () {
+    const repo = yield* Repo;
+    const query = `state=closed&base=${encodeURIComponent(base)}&sort=updated&direction=desc&per_page=30`;
+
+    return yield* (yield* GitHub)
+      .request("GET", `/repos/${repo.slug}/pulls?${query}`, Option.none())
+      .pipe(
+        Effect.flatMap((json: Json) => Schema.decodeUnknownEffect(Schema.Array(ClosedPull))(json)),
+        Effect.mapError(
+          (error) => new StepFailed({ step: "merged-below", message: error.message }),
+        ),
+      );
+  });
+
+// The layer below the one checked out in `worktree` that squash- or
+// rebase-merged into `base` without this layer recording it: a pull request
+// merged lately into `base` whose head is in this layer's history and whose
+// merge commit isn't. Its number, for updateFromBase's `lower`; none when
+// there is none. It is for a layer whose pull request already moved onto
+// `base`, as GitHub moves one when the branch below it is deleted, so its
+// layer below is no longer its base: merging `base` plainly would see this
+// layer's edits of lines the layer below added as conflicts, and bring back
+// files `base` has since moved or deleted (#311). With two such layers below,
+// it is the higher one, whose head holds the other's.
+export const mergedBelow = (worktree: string, base: string) =>
+  Effect.gen(function* () {
+    const git = yield* Git;
+    yield* git.run(["fetch", "--quiet", "origin", base], worktree);
+
+    const found: Array<{ number: number; head: string }> = [];
+
+    for (const pull of yield* closedInto(base)) {
+      if (Option.isNone(pull.merged_at) || Option.isNone(pull.merge_commit_sha)) {
+        continue;
+      }
+
+      if (
+        (yield* contains(worktree, pull.head.sha)) &&
+        !(yield* contains(worktree, pull.merge_commit_sha.value))
+      ) {
+        found.push({ number: pull.number, head: pull.head.sha });
+      }
+    }
+
+    // The one no other found head is built on.
+    for (const candidate of found) {
+      let highest = true;
+
+      for (const other of found) {
+        if (
+          other.number !== candidate.number &&
+          (yield* holds(worktree, other.head, candidate.head))
+        ) {
+          highest = false;
+        }
+      }
+
+      if (highest) {
+        return Option.some(candidate.number);
+      }
+    }
+
+    return Option.none<number>();
+  }).pipe(
+    Effect.catchTag("GitError", (error) =>
+      Effect.fail(new StepFailed({ step: "merged-below", message: error.message })),
     ),
   );
 

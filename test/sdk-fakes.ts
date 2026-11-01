@@ -17,6 +17,7 @@ import {
   DEFAULT_LABELS,
   type Flow,
   Git,
+  GitError,
   GitHub,
   HEADLESS,
   type Issue,
@@ -257,6 +258,11 @@ export const makeFake = (
     commits: 0,
     rejects: Option.none<PushRejected>(),
     uncommitted: new Array<string>(),
+    // Every git command run, its arguments joined by spaces; what a test has
+    // git say to one, and the ones git refuses, by the same spelling.
+    ran: new Array<string>(),
+    says: new Map<string, string>(),
+    refuses: new Set<string>(),
   };
 
   // The worktree's head: the pushed one, or a commit of the agent's on top.
@@ -331,6 +337,10 @@ export const makeFake = (
   // Pull requests by head branch, apart from the one pull request, such as
   // those of an epic's other tasks.
   const branchPulls = new Map<string, PullRequest>();
+
+  // Pull requests closed lately other than the one pull request, as GitHub's
+  // REST API lists them, such as a layer below that merged.
+  const closed: Array<{ readonly number: number; readonly [field: string]: Json }> = [];
 
   // The pull request as its author opened it: its branch, who opened it, and
   // whether it is a draft. And the open pull requests GitHub says close the
@@ -787,13 +797,23 @@ export const makeFake = (
             return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
           }
 
-          // The pull requests closed lately: the one pull request, once it merged.
+          const closedOne = Option.fromUndefinedOr(
+            closed.find((other) => path === `/repos/${settings.slug}/pulls/${other.number}`),
+          );
+
+          if (method === "GET" && Option.isSome(closedOne)) {
+            return closedOne.value;
+          }
+
+          // The pull requests closed lately: those a test closed, and the one
+          // pull request, once it merged.
           if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
             if (states.pull !== "merged") {
-              return [];
+              return [...closed];
             }
 
             return [
+              ...closed,
               {
                 number: PULL,
                 title: "feat: a change",
@@ -861,12 +881,19 @@ export const makeFake = (
     Layer.mock(Git)({
       // `git status`, and any other git command, such as cleaning up's: it has nothing else to say.
       run: (args) =>
-        Effect.sync(() => {
-          if (args[0] === "status") {
-            return git.uncommitted.join("\n");
+        Effect.suspend(() => {
+          const command = args.join(" ");
+          git.ran.push(command);
+
+          if (git.refuses.has(command)) {
+            return Effect.fail(new GitError({ message: `git ${command} failed` }));
           }
 
-          return "";
+          if (args[0] === "status") {
+            return Effect.succeed(git.uncommitted.join("\n"));
+          }
+
+          return Effect.succeed(git.says.get(command) ?? "");
         }),
       commitsAhead: (_, base) =>
         Effect.sync(() => {
@@ -973,6 +1000,7 @@ export const makeFake = (
     submitted,
     graph,
     branchPulls,
+    closed,
     merged,
     commitCi,
     ciReads,
