@@ -294,6 +294,45 @@ describe("the dashboard's listener", () => {
     expect(record()).toEqual({ running: true, port: portA });
   });
 
+  test("leaves them off however the path spells them: percent-encoded, or with a slash encoded", async () => {
+    const token = readFileSync(tokenFile(), "utf8").trim();
+    const cookie = await cookieFor(portA, token);
+
+    const json = {
+      cookie,
+      origin: `http://127.0.0.1:${portA}`,
+      "content-type": "application/json",
+    };
+
+    for (const path of ["/api/%64ashboard", "/api/%44ASHBOARD", "/api/%2Fdashboard", "/api/%zz"]) {
+      const response = await fetch(`http://127.0.0.1:${portA}${path}`, { headers: { cookie } });
+
+      expect(response.status).toBe(404);
+    }
+
+    for (const path of [
+      "/api/%64ashboard/stop",
+      "/api/%64ashboard/token",
+      "/api/dashboard%2Fstop",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${portA}${path}`, {
+        method: "POST",
+        headers: json,
+        body: "{}",
+      });
+
+      expect(response.status).toBe(404);
+    }
+
+    // Neither stopped nor rotated.
+    expect(record()).toEqual({ running: true, port: portA });
+    expect(readFileSync(tokenFile(), "utf8").trim()).toBe(token);
+    // A route the socket answers for a browser still answers when encoded.
+    expect(
+      (await fetch(`http://127.0.0.1:${portA}/api/%73tatus`, { headers: { cookie } })).status,
+    ).toBe(200);
+  });
+
   test("starting it on another port moves it there", async () => {
     const { code, output } = await sandbox.runCli(["ui", "start", "--port", String(portB)]);
 
