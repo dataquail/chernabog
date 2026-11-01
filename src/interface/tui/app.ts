@@ -32,8 +32,6 @@ import * as Stream from "effect/Stream";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { RunId } from "../../kernel/run-id.id.ts";
-import { EnrollmentCommands } from "../../modules/enrollment/enrollment.platform.ts";
-import { MachineQueries } from "../../modules/machine/machine.platform.ts";
 import {
   attachCommand,
   type CancelledRun,
@@ -48,7 +46,6 @@ import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
 import {
   daemonCancel,
   daemonEvents,
-  daemonReload,
   daemonRunHistory,
   daemonStatus,
   daemonTick,
@@ -62,6 +59,7 @@ import {
   refetched,
   withStatus,
 } from "./live.ts";
+import { applySetting } from "./settings.ts";
 import { type Action, type Key, update } from "./update.ts";
 import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
 
@@ -226,15 +224,6 @@ const tickMessage = (
 
   return `${repo}/${flow}: ${Option.getOrElse(skipped, () => "nothing to start")}`;
 };
-
-// Records the choice for the persona in machine config; the daemon restarts on it once idle.
-const setFlowEnabled = (repo: string, flow: string, persona: Persona, enabled: boolean) =>
-  Effect.gen(function* () {
-    yield* EnrollmentCommands.use((enrollment) =>
-      enrollment.SetPersonaFlowCommand({ name: repo, persona, flow, enabled }),
-    );
-    yield* daemonReload.pipe(Effect.ignore);
-  });
 
 const toggleMessage = (repo: string, flow: string, persona: Persona, enabled: boolean) => {
   const name = `${repo}/${flow}${asSuffix(persona)}`;
@@ -526,9 +515,7 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "toggle-flow": {
-          const toggled = yield* Effect.result(
-            setFlowEnabled(action.repo, action.flow, action.persona, action.enabled),
-          );
+          const toggled = yield* Effect.result(applySetting(action));
 
           if (Result.isSuccess(toggled)) {
             model = {
@@ -550,19 +537,7 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "set-schedule": {
-          const written = yield* Effect.result(
-            Effect.andThen(
-              EnrollmentCommands.use((enrollment) =>
-                enrollment.SetFlowScheduleCommand({
-                  name: action.repo,
-                  persona: action.persona,
-                  flow: action.flow,
-                  schedule: action.schedule,
-                }),
-              ),
-              daemonReload.pipe(Effect.ignore),
-            ),
-          );
+          const written = yield* Effect.result(applySetting(action));
 
           return yield* say(
             Result.match(written, {
@@ -574,24 +549,7 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "set-account": {
-          const written = yield* Effect.result(
-            Effect.andThen(
-              Effect.flatMap(
-                Effect.flatMap(MachineQueries, (queries) => queries.ReadMachineSetupQuery()),
-                (offered) =>
-                  EnrollmentCommands.use((enrollment) =>
-                    enrollment.SetPersonaAccountCommand({
-                      name: action.repo,
-                      persona: action.persona,
-                      role: action.role,
-                      account: action.account,
-                      offered,
-                    }),
-                  ),
-              ),
-              daemonReload.pipe(Effect.ignore),
-            ),
-          );
+          const written = yield* Effect.result(applySetting(action));
 
           return yield* say(
             Result.match(written, {
@@ -603,14 +561,7 @@ export const runTui = Effect.gen(function* () {
         }
 
         case "pause": {
-          const enrollment = yield* EnrollmentCommands;
-          let toggle = enrollment.ResumeRepoCommand({ name: action.repo });
-
-          if (action.paused) {
-            toggle = enrollment.PauseRepoCommand({ name: action.repo });
-          }
-
-          const paused = yield* Effect.result(toggle);
+          const paused = yield* Effect.result(applySetting(action));
 
           return yield* say(
             Result.match(paused, {

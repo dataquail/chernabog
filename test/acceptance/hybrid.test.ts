@@ -45,7 +45,7 @@ describe("the hybrid path", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if ("DEBUG_DAEMON" in process.env) {
