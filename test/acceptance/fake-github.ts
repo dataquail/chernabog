@@ -292,6 +292,15 @@ export type FakeNotification = {
   readonly updatedAt: number;
 };
 
+// What a test does as a pull request is created, such as merging the layer
+// below in the moment between a run's checks and its call. Answering
+// "refuse-base" has GitHub refuse the base, whatever it is; "check" leaves
+// the fake to check it as GitHub would.
+export type CreatePullHook = (pull: {
+  readonly head: string;
+  readonly base: string;
+}) => "refuse-base" | "check";
+
 // How long the fake asks a poller to wait between polls, in seconds.
 const POLL_INTERVAL = 1;
 
@@ -326,6 +335,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   const repoLabels: Array<string> = [];
   // Who opened each issue through the API.
   const openedBy: Array<string> = [];
+
+  // Runs as a pull request is created, before the fake checks it.
+  let createPullHook = Option.none<CreatePullHook>();
+
   const requests: Array<string> = [];
   // Each request, as "<login> <method> <path>".
   const requestsBy: Array<string> = [];
@@ -780,9 +793,28 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({ ahead_by: Number(counted.stdout.trim()), behind_by: 0 });
   };
 
+  // As GitHub answers a base it doesn't have.
+  const invalidBase = () =>
+    json(
+      {
+        message: "Validation Failed",
+        errors: [{ resource: "PullRequest", field: "base", code: "invalid" }],
+      },
+      422,
+    );
+
   const createPull = withBody(NewPullBody, (body, args) => {
+    const refused = Option.exists(
+      createPullHook,
+      (hook) => hook({ head: body.head, base: body.base }) === "refuse-base",
+    );
+
     if (Option.isNone(refSha(body.head))) {
       return json({ message: `no branch ${body.head}` }, 422);
+    }
+
+    if (refused || Option.isNone(refSha(body.base))) {
+      return invalidBase();
     }
 
     const pull: FakePull = {
@@ -1396,6 +1428,32 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     admins,
     repoLabels,
     openedBy,
+    // Squash-merges the pull request into its base and deletes its branch,
+    // as GitHub's merge button does with branch deletion on: its sha. The
+    // squash is the head's tree on the base, so the base must not have moved
+    // since the head was built on it.
+    squashMerge: (number: number, message: string) => {
+      const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
+
+      const squash = git(
+        "commit-tree",
+        `refs/heads/${pull.head}^{tree}`,
+        "-p",
+        `refs/heads/${pull.base}`,
+        "-m",
+        message,
+      );
+
+      git("update-ref", `refs/heads/${pull.base}`, squash);
+      pull.mergedHead = Option.getOrUndefined(refSha(pull.head));
+
+      git("update-ref", "-d", `refs/heads/${pull.head}`);
+      pull.state = "closed";
+      pull.merged = true;
+      pull.mergeCommit = squash;
+
+      return squash;
+    },
     closePull: (number: number, merged = true) => {
       const pull = required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`);
       pull.state = "closed";
@@ -1404,6 +1462,10 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       if (merged) {
         pull.mergedHead = Option.getOrUndefined(refSha(pull.head));
       }
+    },
+    // Runs `hook` as each pull request is created, before the fake checks it.
+    onCreatePull: (hook: CreatePullHook) => {
+      createPullHook = Option.some(hook);
     },
     requests,
     requestsBy,

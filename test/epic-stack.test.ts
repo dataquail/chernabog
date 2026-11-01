@@ -559,9 +559,18 @@ describe("epic: landing layers that ship", () => {
   );
 });
 
-// While task #3 is implemented on task #2's branch, #2 squash-merges into main
-// and GitHub deletes its branch. #3's agent writes `work`.
-const mergedBelowMidTask = (work: { readonly path: string; readonly contents: string }) =>
+// Task #3 is implemented on task #2's branch, and #2 squash-merges into main
+// and GitHub deletes its branch: while #3's agent works (`mid-task`), or once
+// the run has settled #3's base and pushed, as it opens #3's pull request
+// (`before-open`, #320). #3's agent writes `work`. refuseRetry: GitHub refuses
+// the base of the run's next try at the pull request too.
+type MergedBelow = {
+  readonly work: { readonly path: string; readonly contents: string };
+  readonly when: "mid-task" | "before-open";
+  readonly refuseRetry?: boolean;
+};
+
+const mergedBelow = ({ refuseRetry = false, when, work }: MergedBelow) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-epic-merged-" });
@@ -606,20 +615,30 @@ const mergedBelowMidTask = (work: { readonly path: string; readonly contents: st
 
     const exec = yield* Exec;
 
-    const inClone = (...args: ReadonlyArray<string>) =>
-      exec.run("git", ["-C", clone, ...args]).pipe(
-        Effect.tap((result) =>
-          Effect.when(
-            Effect.die(`git ${args.join(" ")}: ${result.stderr}`),
-            Effect.sync(() => result.exitCode !== 0),
-          ),
-        ),
-        Effect.map((result) => result.stdout.trim()),
-      );
-
-    // While task #3 is implemented on #2's branch, #2 squash-merges into
-    // main and GitHub deletes its branch.
+    // #2 squash-merges into main and GitHub deletes its branch.
     let squash = "";
+
+    const mergeBelow = () => {
+      squash = github.squashMerge(bottom, "Task 2 (#2)");
+      github.issue(2).closed = true;
+    };
+
+    // The pull requests the run asks GitHub for, as "<head> on <base>".
+    const asked: Array<string> = [];
+
+    github.onCreatePull((pull) => {
+      asked.push(`${pull.head} on ${pull.base}`);
+
+      if (when === "before-open" && asked.length === 1) {
+        mergeBelow();
+      }
+
+      if (refuseRetry && asked.length > 1) {
+        return "refuse-base";
+      }
+
+      return "check";
+    });
 
     const agent = Layer.succeed(
       Agent,
@@ -642,15 +661,9 @@ const mergedBelowMidTask = (work: { readonly path: string; readonly contents: st
               "task 3",
             ]);
 
-            yield* inClone("checkout", "--quiet", "main");
-            yield* inClone("merge", "--quiet", "--squash", "auto/issue-2");
-            yield* inClone("commit", "--quiet", "-m", "Task 2 (#2)");
-            yield* inClone("push", "--quiet", "origin", "main");
-            squash = yield* inClone("rev-parse", "HEAD");
-            github.pull(bottom).mergeCommit = squash;
-            github.closePull(bottom);
-            yield* inClone("push", "--quiet", "origin", "--delete", "auto/issue-2");
-            github.issue(2).closed = true;
+            if (when === "mid-task") {
+              mergeBelow();
+            }
 
             return {
               sessionId: request.sessionId,
@@ -693,15 +706,41 @@ const mergedBelowMidTask = (work: { readonly path: string; readonly contents: st
     const opened = () =>
       Arr.findFirst([...github.pulls.values()], (pull) => pull.head === "auto/issue-3");
 
+    const withPerson = () => github.issue(3).labels.includes(DEFAULT_LABELS.needsHuman);
+
+    // What the run told the person who has the task, once it has.
+    const toPerson = () =>
+      Arr.findFirst(github.commentsOn(3), (comment) =>
+        comment.body.startsWith("Chernabog stopped and needs a person"),
+      );
+
     const run = yield* runUntil(
       working,
       fake,
       item(`issue-${epicNumber}`, { issue: epicNumber }),
-      (current) => Effect.succeed(current.status !== "running" || Option.isSome(opened())),
+      (current) =>
+        Effect.succeed(
+          current.status !== "running" || Option.isSome(opened()) || Option.isSome(toPerson()),
+        ),
       STACK_POLLS,
     );
 
     expect(run.status).toBe("running");
+
+    if (refuseRetry) {
+      // One more try, on main, refused again: the task is a person's, with
+      // GitHub's error, as before #320.
+      expect(asked).toEqual(["auto/issue-3 on auto/issue-2", "auto/issue-3 on main"]);
+      expect(Option.isNone(opened())).toBe(true);
+      expect(withPerson()).toBe(true);
+      const told = Option.getOrThrow(toPerson()).body;
+      expect(told).toContain("open-pull-request");
+      expect(told).toContain("422");
+
+      return;
+    }
+
+    expect(withPerson()).toBe(false);
 
     // The pull request is on main, and its head has main's squash merged
     // in, so its diff is task #3's alone.
@@ -717,13 +756,36 @@ const mergedBelowMidTask = (work: { readonly path: string; readonly contents: st
 describe("epic: a layer below that merges while a task is implemented", () => {
   atHome(
     "the task's pull request opens on the branch that layer merged into, brought up to date with it",
-    () => mergedBelowMidTask({ path: "task-3.txt", contents: "task 3\n" }),
+    () => mergedBelow({ work: { path: "task-3.txt", contents: "task 3\n" }, when: "mid-task" }),
     STACK_TIMEOUT,
   );
 
   atHome(
     "a task that edits what that layer added has its squash reconciled, not left in conflict",
-    () => mergedBelowMidTask({ path: "task-2.txt", contents: "task 2, as task 3 needs it\n" }),
+    () =>
+      mergedBelow({
+        work: { path: "task-2.txt", contents: "task 2, as task 3 needs it\n" },
+        when: "mid-task",
+      }),
+    STACK_TIMEOUT,
+  );
+});
+
+describe("epic: a layer below that merges as a task's pull request opens (#320)", () => {
+  atHome(
+    "GitHub refuses the merged branch as the base, and the run settles the base again and opens the pull request on main",
+    () => mergedBelow({ work: { path: "task-3.txt", contents: "task 3\n" }, when: "before-open" }),
+    STACK_TIMEOUT,
+  );
+
+  atHome(
+    "a base refused again on that retry hands the task to a person with GitHub's error",
+    () =>
+      mergedBelow({
+        work: { path: "task-3.txt", contents: "task 3\n" },
+        when: "before-open",
+        refuseRetry: true,
+      }),
     STACK_TIMEOUT,
   );
 });
