@@ -59,14 +59,14 @@
     },
     "packages/recipes": {
       "name": "@chernabog/recipes",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "peerDependencies": {
         "@chernabog/sdk": "^0.9.0",
       },
     },
     "packages/sdk": {
       "name": "@chernabog/sdk",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "devDependencies": {
         "@chernabog/core": "workspace:*",
       },
