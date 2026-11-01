@@ -67,6 +67,8 @@ The URL carries a token, kept in `~/.config/chernabog/dashboard.token` (readable
 
 From the dashboard you can pause and resume a repo, and change a persona's settings in it, as the [live view](/chernabog/work/live-view/) can: turn a flow on or off, give it a schedule of its own (checked as cron before it's sent; empty, the team's applies again), and pick the account the persona, or one of its roles, spends. Each change is for the persona whose flow or accounts it's on; filter by persona to see only theirs. If another process is changing machine config at that moment, the dashboard says it's busy: try again. Enrolling, unenrolling and trusting a repo stay on the command line: they name paths on disk, and trusting lets a repo's code run.
 
+Each run on the dashboard links to its own page, `#/runs/<id>` (a unique prefix of the id will do, as with `chernabog logs`): the run, its pull request, subjects and summary, what it's parked on, the steps it went through, and its log as it grows, which stays at the bottom unless you scroll up and keeps the last 10,000 lines. The page updates as the run enters a step, parks or finishes.
+
 ## The engine
 
 The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.

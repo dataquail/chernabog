@@ -97,7 +97,7 @@ export const App = () => {
   });
 
   return Option.match(route, {
-    onSome: (runId) => <RunDetail runId={runId} />,
+    onSome: (runId) => <RunDetail runId={runId} now={now} status={live.status} />,
     onNone: () => (
       <Overview
         act={settings.act}

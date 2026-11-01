@@ -292,3 +292,23 @@ button {
   cursor: pointer;
   margin-left: 8px;
 }
+
+.log {
+  max-height: 70vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.badge.parked {
+  color: var(--warn-line);
+  border-color: currentColor;
+}
