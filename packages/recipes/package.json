@@ -15,7 +15,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@chernabog/sdk": "^0.8.0"
+    "@chernabog/sdk": "^0.9.0"
   },
   "chernabog": {
     "recipes": {
