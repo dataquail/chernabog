@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/dataquail/chernabog/compare/sdk-v0.9.0...sdk-v0.9.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **recipes:** resolve-conflicts records a squash-merged layer below before merging its base ([#347](https://github.com/dataquail/chernabog/issues/347)) ([94b5d7d](https://github.com/dataquail/chernabog/commit/94b5d7d2793797442d2fa46f792d71e449600101))
+
 ## [0.9.0](https://github.com/dataquail/chernabog/compare/sdk-v0.8.1...sdk-v0.9.0) (2026-11-01)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/dataquail/chernabog/compare/recipes-v0.3.0...recipes-v0.3.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **recipes:** an epic task whose layer below merges as its pull request opens goes onto the branch that layer merged into ([#345](https://github.com/dataquail/chernabog/issues/345)) ([81db861](https://github.com/dataquail/chernabog/commit/81db861597a67f2b7d2887624bedcf1dbadc3866))
+* **recipes:** resolve-conflicts records a squash-merged layer below before merging its base ([#347](https://github.com/dataquail/chernabog/issues/347)) ([94b5d7d](https://github.com/dataquail/chernabog/commit/94b5d7d2793797442d2fa46f792d71e449600101))
+
 ## [0.3.0](https://github.com/dataquail/chernabog/compare/recipes-v0.2.1...recipes-v0.3.0) (2026-11-01)
 
 

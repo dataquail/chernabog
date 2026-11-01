@@ -1,6 +1,6 @@
 {
-  ".": "0.12.0",
+  ".": "0.12.1",
   "packages/core": "1.0.0",
-  "packages/sdk": "0.9.0",
-  "packages/recipes": "0.3.0"
+  "packages/sdk": "0.9.1",
+  "packages/recipes": "0.3.1"
 }
