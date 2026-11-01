@@ -352,6 +352,13 @@ export const makeFake = (
   const logTails = new Map<string, string>();
   // The issue's body, such as a follow-up's marker.
   const issueText = { body: "" };
+  // The pull request's body, which a step may edit.
+  const pullText = { body: "" };
+
+  // What a re-check answers of each finding.
+  const rechecked = {
+    findings: [{ finding: "Mention the change", remediated: true, blocking: true }],
+  };
 
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
@@ -385,6 +392,26 @@ export const makeFake = (
     return queue[Math.min(reviewed, queue.length) - 1] ?? "approve";
   };
 
+  // An edit of a comment, by its id, or of the pull request's body.
+  const edit = (path: string, body: Option.Option<Json>): Json => {
+    const editing = Option.flatMap(body, Schema.decodeUnknownOption(Editing));
+    const commentId = path.match(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/(\d+)$/);
+
+    for (const edited of Option.toArray(editing)) {
+      const index = comments.findIndex((found) => found.id === Number(commentId?.[1]));
+
+      if (index >= 0) {
+        comments[index] = { ...comments[index], body: edited.body };
+      }
+
+      if (path === `/repos/${settings.slug}/pulls/${PULL}`) {
+        pullText.body = edited.body;
+      }
+    }
+
+    return {};
+  };
+
   // What the agent answers, by the shape the step asked for.
   const answerFor = (request: AgentRequest): Json => {
     const schema = Option.match(request.outputSchema, { onNone: () => "", onSome: printJson });
@@ -400,7 +427,7 @@ export const makeFake = (
         verdict: nextVerdict(),
         summary: "Both fixed.",
         comments: [],
-        findings: [{ finding: "Mention the change", remediated: true }],
+        findings: rechecked.findings,
       };
     }
 
@@ -461,7 +488,7 @@ export const makeFake = (
   const pull = (): PullRequest => ({
     number: PULL,
     title: "feat: a change",
-    body: "",
+    body: pullText.body,
     url: `https://github.com/dataquail/demo/pull/${PULL}`,
     state: states.pull,
     headRef: authored.headRef,
@@ -741,20 +768,8 @@ export const makeFake = (
             return {};
           }
 
-          // An edit of a comment, by its id.
-          const edited = Option.fromNullishOr(
-            path.match(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/(\d+)$/),
-          );
-
-          if (method === "PATCH" && Option.isSome(edited)) {
-            const index = comments.findIndex((found) => found.id === Number(edited.value[1]));
-            const edit = Option.flatMap(body, Schema.decodeUnknownOption(Editing));
-
-            if (index >= 0 && Option.isSome(edit)) {
-              comments[index] = { ...comments[index], body: edit.value.body };
-            }
-
-            return {};
+          if (method === "PATCH") {
+            return edit(path, body);
           }
 
           // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
@@ -963,6 +978,8 @@ export const makeFake = (
     ciReads,
     logTails,
     issueText,
+    pullText,
+    rechecked,
     authored,
     closing,
     plans,

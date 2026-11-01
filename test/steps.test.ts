@@ -160,6 +160,20 @@ const flow = defineFlow({
         return `${recheck.round}: ${recheck.findings.map((finding) => `${finding.finding} ${finding.remediated}`).join(", ")}`;
       }
 
+      if (work.key === "recheck-verdict") {
+        const review = yield* Review.round(PULL, 1, { role: "reviewer" });
+        const recheck = yield* Review.recheck(PULL, review);
+
+        return `${review.verdict} then ${recheck.verdict}`;
+      }
+
+      if (work.key === "address") {
+        const review = yield* Review.round(PULL, 1);
+        const addressed = yield* Implement.addressFindings(PULL, review, Implement.thisRunsSession);
+
+        return addressed.summary;
+      }
+
       if (work.key === "consider-and-address") {
         const review = yield* Review.round(PULL, 1);
         const decision = yield* Implement.considerFindings(PULL, review, Implement.thisRunsSession);
@@ -558,6 +572,90 @@ describe("considering findings", () => {
         // Considering changes nothing on GitHub.
         expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
       }),
+  );
+
+  effect(
+    "Review.recheck approves when only a point an approval made is open, whatever the reviewer answers",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake(["approve", "request-changes"], roles);
+        fake.rechecked.findings = [
+          { finding: "Fix the description", remediated: false, blocking: false },
+        ];
+
+        const finished = yield* runToEnd(fake, "recheck-verdict");
+        expect(summaryOf(finished)).toBe("approve then approve");
+
+        const [, recheck] = fake.requests;
+        expect(recheck.prompt).toContain("approved it");
+        expect(fake.submitted.map((review) => review.state)).toEqual(["APPROVED", "APPROVED"]);
+      }),
+  );
+
+  effect("Review.recheck requests changes for a blocking finding left open", () =>
+    Effect.gen(function* () {
+      const fake = makeFake(["request-changes", "approve"], roles);
+      fake.rechecked.findings = [
+        { finding: "Mention the change", remediated: true, blocking: true },
+        { finding: "A new bug", remediated: false, blocking: true },
+      ];
+
+      const finished = yield* runToEnd(fake, "recheck-verdict");
+      expect(summaryOf(finished)).toBe("request-changes then request-changes");
+
+      const [, recheck] = fake.requests;
+      expect(recheck.prompt).toContain("asked for changes");
+    }),
+  );
+
+  effect("Review.settledVerdict keeps the reviewer's verdict when it lists no findings", () =>
+    Effect.sync(() => {
+      expect(Review.settledVerdict([], "request-changes")).toBe("request-changes");
+      expect(Review.settledVerdict([], "approve")).toBe("approve");
+      // Saved before findings said whether they block: an open one blocks.
+      expect(Review.settledVerdict([{ finding: "Old", remediated: false }], "approve")).toBe(
+        "request-changes",
+      );
+    }),
+  );
+
+  effect(
+    "Implement.addressFindings shows the author the description, and its answer replaces it between the Closes lines and the footer",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("request-changes");
+        fake.pullText.body = [
+          "Closes #3\nPart of #9",
+          "The allowlist is in `daemon-commands.protocol.ts`.",
+          "---\nOpened by Chernabog for an unattended run. A person merges.",
+        ].join("\n\n");
+
+        expect(summaryOf(yield* runToEnd(fake, "address"))).toBe("Mentioned the change.");
+
+        const [, address] = fake.requests;
+        expect(address.prompt).toContain("## The pull request's description");
+        expect(address.prompt).toContain("`daemon-commands.protocol.ts`");
+        expect(fake.pullText.body).toBe(
+          [
+            "Closes #3\nPart of #9",
+            "The change.",
+            "---\nOpened by Chernabog for an unattended run. A person merges.",
+          ].join("\n\n"),
+        );
+      }),
+  );
+
+  effect("Implement.addressFindings leaves a description a person wrote alone", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("request-changes");
+      fake.pullText.body = "Written by a person.";
+
+      expect((yield* runToEnd(fake, "address")).status).toBe("done");
+
+      const [, address] = fake.requests;
+      expect(address.prompt).not.toContain("## The pull request's description");
+      expect(fake.pullText.body).toBe("Written by a person.");
+    }),
   );
 
   effect("PullRequest.comment and Issue.comment post once each, and do nothing else", () =>

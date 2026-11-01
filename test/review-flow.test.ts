@@ -333,6 +333,9 @@ describe("re-review", () => {
   effect("requests changes again and hands the pull request to a person", () =>
     Effect.gen(function* () {
       const fake = yield* reviewedOnce(["request-changes"], [DEFAULT_LABELS.ship]);
+      fake.rechecked.findings = [
+        { finding: "Mention the change", remediated: false, blocking: true },
+      ];
 
       const finished = yield* runToEnd(
         reReviewing,
@@ -348,6 +351,36 @@ describe("re-review", () => {
       expect(summaryOf(finished)).toContain("review 2 still requests changes");
       expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
       expect(fake.merge.requests).toEqual([]);
+    }),
+  );
+
+  // A point the approval made was left open, and the reviewer asked for it
+  // anyway once a merge of the base brought it back.
+  effect("approves and merges when only a point that didn't block is open", () =>
+    Effect.gen(function* () {
+      const fake = yield* reviewedOnce(["request-changes"], [DEFAULT_LABELS.ship]);
+      fake.rechecked.findings = [
+        { finding: "Fix the description", remediated: false, blocking: false },
+      ];
+
+      const finished = yield* runToEnd(
+        reReviewing,
+        fake,
+        item(`pr-${PULL}-review-2`, {
+          pullRequest: PULL,
+          headRef: "auto/issue-3",
+          agentWritten: true,
+        }),
+      );
+
+      expect(finished.status).toBe("done");
+      expect(fake.labelsOf(PULL)).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(fake.merge.requests).toHaveLength(1);
+      expect(
+        fake.comments.some((comment) =>
+          comment.body.includes("- Fix the description (doesn't block the merge)"),
+        ),
+      ).toBe(true);
     }),
   );
 
