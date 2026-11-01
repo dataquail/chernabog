@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import type { RepoStatus } from "#daemon/protocol";
 
+import { RunNow } from "./run-actions.tsx";
 import { either, present, shownIf } from "./show.tsx";
 import { When } from "./time.tsx";
 
@@ -159,6 +160,7 @@ const Repo = ({ now, repo }: { readonly now: number; readonly repo: RepoStatus }
       </dd>
     </dl>
     <Flows flows={repo.flows} now={now} />
+    <RunNow repo={repo} />
   </article>
 );
 

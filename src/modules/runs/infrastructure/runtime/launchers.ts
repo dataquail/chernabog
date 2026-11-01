@@ -25,6 +25,13 @@ export const launcherFor = (resolved: ResolvedLauncher): Option.Option<Launcher>
 
 export const isInteractive = (resolved: ResolvedLauncher) => Option.isSome(launcherFor(resolved));
 
+// Whether a repo's sessions run under a launcher that can bring one up itself
+// (Orca, tmux), for the dashboard's "Open in launcher". Only Claude runs
+// interactively; another agent runs headless whatever the launcher.
+export const opensSessions = (settings: RepoSettings) =>
+  settings.agent === "claude" &&
+  Option.exists(launcherFor(settings.launcher), (launcher) => Option.isSome(launcher.open));
+
 // "orca (machine config)", and a note when the repo's agent has no interactive mode to use it.
 export const describeLauncher = (settings: RepoSettings) => {
   const chosen = `${settings.launcher.name} (${settings.launcher.from})`;

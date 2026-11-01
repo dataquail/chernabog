@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import type { DaemonStatus } from "#daemon/protocol";
 
+import { RunActions } from "./run-actions.tsx";
 import { either, present } from "./show.tsx";
 import { span, When } from "./time.tsx";
 
@@ -32,6 +33,10 @@ const doing = (run: DaemonStatus["active"][number]) => {
 
   return Option.getOrElse(run.currentStep, () => "starting");
 };
+
+// Whether the repo a run is in can open its sessions in their launcher.
+const opens = (status: DaemonStatus, repo: string) =>
+  status.repos.some((each) => each.name === repo && each.opensSessions === true);
 
 export const Runs = ({
   now,
@@ -63,6 +68,7 @@ export const Runs = ({
                   <th>Item</th>
                   <th>Step</th>
                   <th>Running for</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -76,6 +82,9 @@ export const Runs = ({
                     </td>
                     <td>{doing(run)}</td>
                     <td>{span(now - Date.parse(run.startedAt))}</td>
+                    <td>
+                      <RunActions run={run} opens={opens(status, run.repo)} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

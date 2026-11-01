@@ -22,6 +22,7 @@
     "test/acceptance/dashboard.test.ts": 9000,
     "test/acceptance/machine-config.test.ts": 7101,
     "test/acceptance/daemon-commands.test.ts": 5400,
-    "test/acceptance/telemetry.test.ts": 4500
+    "test/acceptance/telemetry.test.ts": 4500,
+    "test/acceptance/attach.test.ts": 4223
   }
 }

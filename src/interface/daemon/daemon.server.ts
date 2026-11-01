@@ -30,7 +30,7 @@ import dashboard from "../../../packages/dashboard/index.html";
 import { manualSchedule, nothingNamed } from "../../kernel/manual-flow.value-object.ts";
 import { IMPLICIT, type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
-import { runLabel, shortRunId } from "../../kernel/run-id.id.ts";
+import { RunId, runLabel, shortRunId } from "../../kernel/run-id.id.ts";
 import { EnrollmentQueries } from "../../modules/enrollment/enrollment.platform.ts";
 import { MachineCommands } from "../../modules/machine/machine.platform.ts";
 import { runsRoutes } from "../../modules/runs/interface/daemon/runs.endpoint-groups.ts";
@@ -61,6 +61,8 @@ import {
   noteEvent,
   type NotificationNews,
   NotificationsQueries,
+  openRunSession,
+  opensSessions,
   type PendingTick,
   type PersonaContext,
   renewalDue,
@@ -110,6 +112,7 @@ import {
 } from "../../repo-config.ts";
 import { engineRuntime } from "../application-runtime.ts";
 import {
+  AttachOpened,
   CancelRequest,
   DaemonReloading,
   DaemonStatus,
@@ -1650,6 +1653,10 @@ export const runDaemon = Effect.gen(function* () {
           }),
           tree: repo.tree,
           launcher: Option.map(repo.repo, (loaded) => describeLauncher(loaded.settings)),
+          ...Option.match(repo.repo, {
+            onNone: () => ({}),
+            onSome: (loaded) => ({ opensSessions: opensSessions(loaded.settings) }),
+          }),
           flows: repo.flows.map((flow) => ({
             name: flow.handle.name,
             ...Option.match(flow.persona, {
@@ -1972,6 +1979,24 @@ export const runDaemon = Effect.gen(function* () {
         return yield* HttpServerResponse.schemaJson(CancelledRun)(cancelled.success);
       });
 
+      // POST /runs/:id/attach: the dashboard's "Open in launcher". A browser
+      // can't take over a terminal, so the daemon brings the run's latest
+      // session up in its launcher (Orca's tab, a tmux client), on this machine.
+      const attachRun = Effect.gen(function* () {
+        const { id } = yield* HttpRouter.schemaPathParams(Schema.Struct({ id: RunId }));
+        const opened = yield* openRunSession(id).pipe(Effect.result);
+
+        if (Result.isFailure(opened)) {
+          return yield* refuse(409, opened.failure.message);
+        }
+
+        yield* log(
+          `opened ${id}'s session ${opened.success.sessionId} in ${opened.success.launcher}`,
+        );
+
+        return yield* HttpServerResponse.schemaJson(AttachOpened)(opened.success);
+      });
+
       // The dashboard's 127.0.0.1 listener, which only the socket's
       // /dashboard routes open and close (a browser never reaches them).
       const dashboardListener = yield* openDashboardListener((yield* Home).root, log);
@@ -2039,6 +2064,7 @@ export const runDaemon = Effect.gen(function* () {
         HttpRouter.add("POST", "/run", answer(runOrTick(false))),
         HttpRouter.add("POST", "/cancel", answer(cancel)),
         HttpRouter.add("POST", "/tick", answer(runOrTick(true))),
+        HttpRouter.add("POST", "/runs/:id/attach", answer(attachRun)),
       );
 
       yield* fs.remove(paths.socket, { force: true });
