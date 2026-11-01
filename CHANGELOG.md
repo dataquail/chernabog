@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.12.0](https://github.com/dataquail/chernabog/compare/v0.11.1...v0.12.0) (2026-11-01)
+
+
+### Features
+
+* a post-merge recipe watches CI on a merged pull request's merge commit, and files a follow-up issue when it's red ([#196](https://github.com/dataquail/chernabog/issues/196)) ([9ff6f8a](https://github.com/dataquail/chernabog/commit/9ff6f8a16a548dec50f4d190b3314df187f24738))
+* **cli:** every command writes its spans and logs to telemetry/ in the chernabog home ([#315](https://github.com/dataquail/chernabog/issues/315)) ([6b25f40](https://github.com/dataquail/chernabog/commit/6b25f401fa58d94403e59ad46b3a9a8fca817e66))
+* **cli:** state-changing commands dispatch through the daemon, so their events reach its bus ([#334](https://github.com/dataquail/chernabog/issues/334)) ([006fb73](https://github.com/dataquail/chernabog/commit/006fb7372a97554d69a67ae2bdf6c2d3e215166b))
+* **daemon:** /events streams a snapshot, then every event, over SSE ([#333](https://github.com/dataquail/chernabog/issues/333)) ([0ab80ab](https://github.com/dataquail/chernabog/commit/0ab80ab1f88bde673bc8ee0c3766fb90861f346c))
+* **daemon:** a daily sweep keeps telemetry to 30 days and 500 MB ([#316](https://github.com/dataquail/chernabog/issues/316)) ([73ac86c](https://github.com/dataquail/chernabog/commit/73ac86c2b2d128148472c189984f5ea71e8fabb2))
+* **daemon:** chernabog ui opens a 127.0.0.1 listener for the dashboard, behind a token ([#336](https://github.com/dataquail/chernabog/issues/336)) ([d82e0e7](https://github.com/dataquail/chernabog/commit/d82e0e7bca4a5244d2d88c23a22ef4e584e5b16d))
+* **daemon:** rotate daemon.log daily, keep 30 days, and send the service's output to daemon.out.log ([#317](https://github.com/dataquail/chernabog/issues/317)) ([4f030c0](https://github.com/dataquail/chernabog/commit/4f030c0e7a59edf276298dead155d200c9bb606a))
+* **dashboard:** a run's detail, with its history and a live log ([#342](https://github.com/dataquail/chernabog/issues/342)) ([b93025c](https://github.com/dataquail/chernabog/commit/b93025cf3db43e10ab209382833026d0b67b7045))
+* **dashboard:** packages/dashboard, a React page the daemon serves at / and the binary embeds ([#332](https://github.com/dataquail/chernabog/issues/332)) ([f374e75](https://github.com/dataquail/chernabog/commit/f374e756d24ebe34d70ca3565d542bc6868df9ce))
+* **dashboard:** pause a repo and change a persona's settings from the browser ([#341](https://github.com/dataquail/chernabog/issues/341)) ([37f174c](https://github.com/dataquail/chernabog/commit/37f174cc5662aed3c97c63661227e6dfe0727b27))
+* **dashboard:** the overview of repos, flows, runs and health ([#338](https://github.com/dataquail/chernabog/issues/338)) ([4c380db](https://github.com/dataquail/chernabog/commit/4c380dbc3e5d50a661735b8ae3d59e9e3f1442b5))
+* **dashboard:** trigger, cancel and attach to runs from the browser ([#340](https://github.com/dataquail/chernabog/issues/340)) ([548fc53](https://github.com/dataquail/chernabog/commit/548fc536bbf63eb5d78fc72cfa306fb0d4a93b59))
+* hold an approved merge while CI on the base branch is red, rather than handing the pull request to a person ([#292](https://github.com/dataquail/chernabog/issues/292)) ([0ec429b](https://github.com/dataquail/chernabog/commit/0ec429b4ababedae53b6ee0ba4a0546a0e0cfe8a))
+* **platform:** a tracer and logger that append spans and logs to day-sharded JSONL files ([#314](https://github.com/dataquail/chernabog/issues/314)) ([0aab7ed](https://github.com/dataquail/chernabog/commit/0aab7edf0de052be2c511a50b692691a1ed682e7))
+* **runs:** release an ended run's markers on RunFinished, and the daemon learns of every ending from it ([#303](https://github.com/dataquail/chernabog/issues/303)) ([b002c1e](https://github.com/dataquail/chernabog/commit/b002c1e9050dbce13da03b9066964c2cee207486))
+* **runs:** run logs are deleted 30 days after their run finishes ([#318](https://github.com/dataquail/chernabog/issues/318)) ([71fa896](https://github.com/dataquail/chernabog/commit/71fa896bc6c04f1c83f05a7a0f6ae372baa41d32))
+* **tui:** the live view follows /events instead of asking /status every second ([#335](https://github.com/dataquail/chernabog/issues/335)) ([3e5d440](https://github.com/dataquail/chernabog/commit/3e5d44056b8ab77fc5648d3122a286f82ecb7d1d))
+
+
+### Bug Fixes
+
+* **recipes:** a re-review requests changes only for a blocking finding, and fixes keep the pull request's description current ([#337](https://github.com/dataquail/chernabog/issues/337)) ([c545d57](https://github.com/dataquail/chernabog/commit/c545d571df549c91806f00882e66086f2c5b8e36))
+* **recipes:** address-review and resolve-conflicts own the pull request they push to, so they never push to its branch at once ([#200](https://github.com/dataquail/chernabog/issues/200)) ([2ca2dc5](https://github.com/dataquail/chernabog/commit/2ca2dc5045c5f8d507489fdc9f2f563cde81da17))
+* the pre-commit hook runs the fast checks, not the tests, so an agent's commit lands before it answers ([#199](https://github.com/dataquail/chernabog/issues/199)) ([e4b56a8](https://github.com/dataquail/chernabog/commit/e4b56a89d13f29e4e9765a632a4ecd52979c8d3f)), closes [#198](https://github.com/dataquail/chernabog/issues/198)
+
 ## [0.11.1](https://github.com/dataquail/chernabog/compare/v0.11.0...v0.11.1) (2026-10-30)
 
 
