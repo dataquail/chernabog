@@ -136,6 +136,21 @@ const forward = (socket: string, path: string) =>
     });
   }).pipe(Effect.catch(() => refuse(502, "the daemon didn't answer on its socket")));
 
+// Encoded, a separator or a NUL would split a path differently once the
+// socket's router decodes it.
+const ENCODED_SEPARATOR = /%(2f|5c|00)/i;
+
+const decoded = Option.liftThrowable(decodeURIComponent);
+
+// The route as the socket's router matches it, which decodes what it's sent:
+// none when it doesn't decode, or holds an encoded separator or NUL.
+const asRouted = (route: string) =>
+  Option.liftPredicate(route, (raw) => !ENCODED_SEPARATOR.test(raw)).pipe(Option.flatMap(decoded));
+
+// A decoded route a browser may reach: one path, none of the socket's own.
+const reachable = (route: string) =>
+  !route.includes("//") && !SOCKET_ONLY_ROUTES.some((only) => only.test(route));
+
 // What the listener answers a request with: the checks, the token's
 // landing, /api/ and the page.
 const answer = (socket: string, port: number, tokenNow: Effect.Effect<string>) =>
@@ -193,7 +208,7 @@ const answer = (socket: string, port: number, tokenNow: Effect.Effect<string>) =
 
       const route = url.pathname.slice("/api".length);
 
-      if (route.includes("//") || SOCKET_ONLY_ROUTES.some((only) => only.test(route))) {
+      if (!Option.exists(asRouted(route), reachable)) {
         return yield* refuse(404, `no route ${url.pathname}`);
       }
 
