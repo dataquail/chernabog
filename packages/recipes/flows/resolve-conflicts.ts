@@ -7,6 +7,13 @@
 // another flow waiting on the pull request's CI, such as implement's, carries
 // on from there.
 //
+// A pull request whose layer below squash- or rebase-merged into its base,
+// as one GitHub moved onto the base when the branch below it was deleted,
+// would bring back with a plain merge what the base has since moved or
+// deleted of that layer (#311). The flow records that layer's commits as
+// already here first (Stack.mergedBelow and Stack.syncBase), and the agent
+// resolves only what conflicts after that.
+//
 // A pull request that was already approved goes back to its reviewer, whose
 // re-review merges it if it's on the automated path: review and re-review
 // leave an approved pull request that can't merge for a conflict to this flow
@@ -38,6 +45,7 @@ import {
   Run,
   Settings,
   Skip,
+  Stack,
   StepFailed,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -122,10 +130,32 @@ const resolutionJsonSchema = {
   additionalProperties: false,
 } satisfies Json;
 
-// The agent merges the base into the branch and commits the merge, in its own session.
-const resolve = (conflict: ConflictItem, worktree: string, sessionId: string) =>
+// What the agent is told of the merge: to make it, or that the flow left one
+// in progress, with these conflicts, after recording the layer below.
+type Merge = Option.Option<{ readonly lower: number; readonly conflicts: ReadonlyArray<string> }>;
+
+const describeMerge = (base: string, merge: Merge) =>
+  Option.match(merge, {
+    onNone: () => `1. \`git fetch origin ${base}\`, then \`git merge --no-ff origin/${base}\`.`,
+    onSome: ({ conflicts, lower }) =>
+      [
+        `1. The merge is already started, and left in progress for you. #${lower}, the layer below this pull request, was squash- or rebase-merged into \`${base}\`, and Chernabog recorded its commits as already here, so a merge doesn't bring back what \`${base}\` has since moved or deleted of that layer. Resolve and commit the merge in progress; don't abort it, start another, or merge \`${base}\` yourself, which would undo that. Chernabog merges whatever of \`${base}\` is left. These files are in conflict:`,
+        "",
+        ...conflicts.map((path) => `   - ${path}`),
+      ].join("\n"),
+  });
+
+// The agent merges the base into the branch and commits the merge, in its own
+// session: `step` is "resolve", or "resolve-2" for a second merge the flow left it.
+const resolve = (
+  conflict: ConflictItem,
+  worktree: string,
+  sessionId: string,
+  merge: Merge = Option.none(),
+  step = "resolve",
+) =>
   activity(
-    "resolve",
+    step,
     Effect.gen(function* () {
       const repo = yield* Repo;
       const rules = yield* Settings.rules;
@@ -136,6 +166,7 @@ const resolve = (conflict: ConflictItem, worktree: string, sessionId: string) =>
         pullRequest: conflict.pullRequest,
         branch: conflict.headRef,
         base: conflict.baseRef,
+        merge: describeMerge(conflict.baseRef, merge),
         humanOnly: rules.humanOnly,
         notes: rules.notes,
         localGate: localGate.commands,
@@ -152,7 +183,7 @@ const resolve = (conflict: ConflictItem, worktree: string, sessionId: string) =>
 
       return yield* Schema.decodeUnknownEffect(Resolution)(result.output).pipe(
         Effect.mapError(
-          (issue) => new StepFailed({ step: "resolve", message: `agent answer: ${issue.message}` }),
+          (issue) => new StepFailed({ step, message: `agent answer: ${issue.message}` }),
         ),
       );
     }),
@@ -181,6 +212,77 @@ const askApproverAgain = (pullRequest: number) =>
     Schema.Option(Schema.String),
   );
 
+// Resolves the conflict, after recording a squash- or rebase-merged layer
+// below as already here when there is one. That record is a merge the flow
+// makes (Stack.syncBase), and the agent resolves what it leaves in progress.
+// A conflict in the base before the layer below's commits stops it short:
+// once the agent commits that, the flow merges again to finish, and the agent
+// resolves what that leaves. With nothing left in conflict, no agent runs.
+const resolveWithBelow = (conflict: ConflictItem, worktree: string, sessionId: string) =>
+  Effect.gen(function* () {
+    const below = yield* activity(
+      "merged-below",
+      Stack.mergedBelow(worktree, conflict.baseRef),
+      Schema.Option(Schema.Finite),
+    );
+
+    if (Option.isNone(below)) {
+      return yield* resolve(conflict, worktree, sessionId);
+    }
+
+    const lower = below.value;
+    const recorded = `Recorded #${lower}, the layer below as \`${conflict.baseRef}\` merged it, as already here.`;
+    const summaries: Array<string> = [recorded];
+
+    const round = (id: string, step: string) =>
+      Effect.gen(function* () {
+        const synced = yield* Stack.syncBase(worktree, { base: conflict.baseRef, lower, id }).pipe(
+          Effect.catchTag("NotFound", (gone) =>
+            Effect.fail(new StepFailed({ step: "update-from-base", message: gone.message })),
+          ),
+        );
+
+        if (synced.clean) {
+          return { synced, resolution: Option.none<typeof Resolution.Type>() };
+        }
+
+        const resolution = yield* resolve(
+          conflict,
+          worktree,
+          sessionId,
+          Option.some({ lower, conflicts: synced.conflicts }),
+          step,
+        );
+
+        return { synced, resolution: Option.some(resolution) };
+      });
+
+    const rounds = [yield* round("resolve", "resolve")];
+
+    if (
+      !rounds[0].synced.reconciled &&
+      Option.exists(rounds[0].resolution, (said) => said.status === "resolved")
+    ) {
+      rounds.push(yield* round("resolve-2", "resolve-2"));
+    }
+
+    for (const done of rounds) {
+      if (Option.isSome(done.resolution)) {
+        if (done.resolution.value.status === "needs-human") {
+          return done.resolution.value;
+        }
+
+        summaries.push(done.resolution.value.summary);
+      }
+    }
+
+    if (summaries.length === 1) {
+      summaries.push("Nothing else conflicted.");
+    }
+
+    return { status: "resolved", summary: summaries.join("\n\n") } satisfies typeof Resolution.Type;
+  });
+
 const unstick = (conflict: ConflictItem) =>
   Effect.gen(function* () {
     const run = yield* Run;
@@ -189,7 +291,7 @@ const unstick = (conflict: ConflictItem) =>
     const session = { sessionId: Option.some(sessionId), adapter: Option.none<string>() };
 
     const worktree = yield* Review.prepareAuthorWorktree(conflict.headRef);
-    const resolution = yield* resolve(conflict, worktree, sessionId);
+    const resolution = yield* resolveWithBelow(conflict, worktree, sessionId);
 
     if (resolution.status === "needs-human") {
       return yield* new NeedsHuman({
