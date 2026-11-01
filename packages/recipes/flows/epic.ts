@@ -118,12 +118,13 @@ const releaseTask = (issue: number, id: string) =>
 // (Stack.updateFromBase): a squash or rebase of the layer below is recorded as
 // already here, so its review shows only the task's change, and its edits of
 // lines that layer added are no conflict. A merge that conflicts is undone and
-// left to resolve-conflicts, as any conflict with its base is.
+// left to resolve-conflicts, as any conflict with its base is. `step` is
+// `task-base#<id>`, or `task-base-2#<id>` when GitHub refused that base.
 const TaskBase = Schema.Struct({ base: Schema.String });
 
-const settleBase = (id: string, claimed: Option.Option<string>, worktree: string) =>
+const settleBase = (step: string, claimed: Option.Option<string>, worktree: string) =>
   activity(
-    `task-base#${id}`,
+    step,
     Effect.gen(function* () {
       const github = yield* GitHub;
       const integration = yield* Settings.base;
@@ -162,6 +163,20 @@ const settleBase = (id: string, claimed: Option.Option<string>, worktree: string
     TaskBase,
   );
 
+// Whether the branch a task's pull request was refused on is gone, as the
+// step `task-base-gone#<id>`: the layer below merged, and GitHub deleted its
+// branch, between settleBase and the pull request (#320).
+const baseGone = (id: string, base: string) =>
+  activity(
+    `task-base-gone#${id}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+
+      return Option.isNone(yield* github.branchSha(base));
+    }),
+    Schema.Boolean,
+  );
+
 // Implements one ready task as implement does, on its base, with its own
 // steps and session. A task that needs a person is handed to one, and lets
 // its claim go; the run carries on with the rest either way.
@@ -198,22 +213,65 @@ const implementTask = (
 
       return yield* Effect.gen(function* () {
         yield* Implement.localGate(worktree, { id, session });
-        const settled = yield* settleBase(id, Option.fromUndefinedOr(base), worktree);
-        yield* Implement.push(`push#${id}`, worktree, branch, { base: settled.base });
+        const queued = yield* queuedAs(ships);
 
-        const opened = yield* Implement.openPullRequest(issue, outcome, {
-          base: settled.base,
-          id,
-          partOf: epic,
-          ...(yield* queuedAs(ships)),
-        });
+        const pushAndOpen = (step: string, onBase: string, openId: string) =>
+          Effect.gen(function* () {
+            yield* Implement.push(`${step}#${id}`, worktree, branch, { base: onBase });
+
+            const opened = yield* Implement.openPullRequest(issue, outcome, {
+              base: onBase,
+              id: openId,
+              partOf: epic,
+              ...queued,
+            });
+
+            return { opened, base: onBase };
+          });
+
+        const settled = yield* settleBase(
+          `task-base#${id}`,
+          Option.fromUndefinedOr(base),
+          worktree,
+        );
+
+        // The layer below can merge, and its branch go, after its base is
+        // settled and before the pull request opens: GitHub then refuses the
+        // base. The base is settled again, on what that layer merged into,
+        // and the pull request opened there, once (#320).
+        const { base: openedOn, opened } = yield* pushAndOpen("push", settled.base, id).pipe(
+          Effect.catchTag("StepFailed", (refused) =>
+            Effect.gen(function* () {
+              if (
+                refused.step !== `open-pull-request#${id}` ||
+                !(yield* baseGone(id, settled.base))
+              ) {
+                return yield* refused;
+              }
+
+              const again = yield* settleBase(
+                `task-base-2#${id}`,
+                Option.some(settled.base),
+                worktree,
+              );
+
+              if (again.base === settled.base) {
+                return yield* refused;
+              }
+
+              // openPullRequest names its step `open-pull-request#<id>`
+              // alone, so the retry's id carries the round.
+              return yield* pushAndOpen("push-2", again.base, `${id}-base-2`);
+            }),
+          ),
+        );
 
         pullRequest = Option.some(opened.number);
 
         yield* Implement.waitForCi(
           opened.number,
           worktree,
-          { ...session, branch, base: settled.base },
+          { ...session, branch, base: openedOn },
           { id },
         );
 
