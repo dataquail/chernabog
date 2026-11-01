@@ -100,6 +100,33 @@ const repos = Layer.unwrap(
         pullRequest: () => Effect.sync(() => lower.pull),
         request: (method, path) =>
           Effect.sync(() => {
+            // The pull requests closed lately into main: another layer's, and the lower layer's.
+            if (path.startsWith("/repos/dataquail/demo/pulls?state=closed")) {
+              expect(`${method} ${path}`).toBe(
+                "GET /repos/dataquail/demo/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=30",
+              );
+
+              const mergedAt = Option.map(
+                Option.liftPredicate(lower.pull.state, (state) => state === "merged"),
+                () => "2026-10-31T17:09:00Z",
+              );
+
+              return [
+                {
+                  number: 7,
+                  merged_at: "2026-10-30T09:00:00Z",
+                  merge_commit_sha: "f".repeat(40),
+                  head: { sha: "0".repeat(40) },
+                },
+                {
+                  number: LOWER,
+                  merged_at: Option.getOrNull(mergedAt),
+                  merge_commit_sha: Option.getOrNull(lower.mergeCommit),
+                  head: { sha: lower.pull.headSha },
+                },
+              ];
+            }
+
             expect(`${method} ${path}`).toBe(`GET /repos/dataquail/demo/pulls/${LOWER}`);
 
             return { number: LOWER, merge_commit_sha: Option.getOrNull(lower.mergeCommit) };
@@ -430,6 +457,94 @@ describe("Stack.updateFromBase", () => {
       });
       expect(yield* ownDiff("main")).toBe("a.txt");
     }).pipe(Effect.provide(repos)),
+  );
+});
+
+describe("Stack.mergedBelow", () => {
+  atHome("finds the squash-merged layer below whose head the layer is built on", () =>
+    Effect.gen(function* () {
+      const { upper } = yield* Repos;
+      yield* stack({ "a.txt": aWith(4, "upper") });
+      expect(yield* Stack.mergedBelow(upper, "main")).toEqual(Option.none());
+
+      yield* squashLower;
+      expect(yield* Stack.mergedBelow(upper, "main")).toEqual(Option.some(LOWER));
+
+      // Once the squash is recorded as already here, there is nothing left to reconcile.
+      yield* Stack.updateFromBase(upper, { base: "main", lower: LOWER });
+      expect(yield* Stack.mergedBelow(upper, "main")).toEqual(Option.none());
+    }).pipe(Effect.provide(repos)),
+  );
+
+  atHome("finds none for a layer below whose head the layer isn't built on", () =>
+    Effect.gen(function* () {
+      const { main, upper } = yield* Repos;
+      yield* stack({ "a.txt": aWith(4, "upper") });
+      // The lower layer gets a commit the upper layer isn't built on.
+      yield* git(main, "checkout", "--quiet", LOWER_BRANCH);
+      yield* commit(main, "lower: more", { "c.txt": lines("more") });
+      yield* git(main, "push", "--quiet", "origin", LOWER_BRANCH);
+      lower.pull = { ...lower.pull, headSha: yield* git(main, "rev-parse", "HEAD") };
+      yield* git(main, "checkout", "--quiet", "main");
+      yield* squashLower;
+      expect(yield* Stack.mergedBelow(upper, "main")).toEqual(Option.none());
+    }).pipe(Effect.provide(repos)),
+  );
+
+  // #311: the layer's pull request was retargeted onto main after the layer
+  // below squash-merged, and main has since moved on: it renamed a file the
+  // layer below added, and changed a line the layer changes too.
+  atHome(
+    "a layer whose layer below squash-merged, on a main that also conflicts, keeps only its own change",
+    () =>
+      Effect.gen(function* () {
+        const { main, upper } = yield* Repos;
+        const fs = yield* FileSystem.FileSystem;
+        // The layer below adds an ADR and edits line 2; the layer above edits line 4.
+        yield* commit(main, "base", { "a.txt": aBase, "b.txt": lines("b") });
+        yield* git(main, "push", "--quiet", "origin", "HEAD:refs/heads/main");
+        yield* git(main, "checkout", "--quiet", "-b", LOWER_BRANCH);
+        yield* commit(main, "lower: adr", { "adr-0009.md": lines("the adr") });
+        yield* commit(main, "lower: line 2", { "a.txt": aWith(2, "lower") });
+        yield* git(main, "push", "--quiet", "origin", LOWER_BRANCH);
+        lower.pull = { ...lower.pull, headSha: yield* git(main, "rev-parse", "HEAD") };
+        yield* git(main, "checkout", "--quiet", "main");
+
+        const own = lines(...A_LINES.toSpliced(1, 1, "lower").toSpliced(3, 1, "upper"));
+        yield* git(upper, "fetch", "--quiet", "origin");
+        yield* git(upper, "checkout", "--quiet", "-b", UPPER_BRANCH, `origin/${LOWER_BRANCH}`);
+        yield* commit(upper, "upper", { "a.txt": own });
+
+        yield* squashLower;
+        // After the squash, main renames the ADR and edits line 4 itself.
+        yield* git(main, "mv", "adr-0009.md", "adr-0013.md");
+        yield* onMain("renumber the adr, and edit line 4", {
+          "a.txt": lines(...A_LINES.toSpliced(1, 1, "lower").toSpliced(3, 1, "main")),
+        });
+        const head = yield* git(upper, "rev-parse", "HEAD");
+        // A plain merge conflicts too, and brings the old ADR back beside the renamed one.
+        expect(yield* plainMergeConflicts(head)).toEqual(["a.txt"]);
+
+        const below = yield* Stack.mergedBelow(upper, "main");
+        expect(below).toEqual(Option.some(LOWER));
+
+        const synced = yield* Stack.updateFromBase(upper, {
+          base: "main",
+          lower: Option.getOrThrow(below),
+        });
+
+        expect(synced.clean).toBe(false);
+        expect(synced.conflicts).toEqual(["a.txt"]);
+        expect(synced.reconciled).toBe(true);
+
+        // The agent resolves it, keeping the upper layer's line 4, and commits the merge.
+        yield* fs.writeFileString(`${upper}/a.txt`, own);
+        yield* git(upper, "commit", "--quiet", "--all", "--no-edit");
+
+        expect(yield* ownDiff("main")).toBe("a.txt");
+        expect(yield* fs.exists(`${upper}/adr-0009.md`)).toBe(false);
+        expect(yield* fileIn("adr-0013.md")).toBe(lines("the adr"));
+      }).pipe(Effect.provide(repos)),
   );
 });
 
