@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { DaemonStatus, Refusal } from "../../src/interface/daemon/daemon.protocol.ts";
+import { DEFAULT_DASHBOARD_PORT } from "../../src/interface/daemon/dashboard.server.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // A port nothing listens on now.
@@ -104,7 +105,12 @@ describe("the dashboard's listener", () => {
   const portA = freePort();
   const portB = freePort();
 
+  // Whether something other than the sandbox's daemon, such as this
+  // machine's own Chernabog, answers on the default port already.
+  let defaultPortTaken = false;
+
   beforeAll(async () => {
+    defaultPortTaken = await answers(DEFAULT_DASHBOARD_PORT);
     sandbox = openSandbox();
     await startDaemon();
   });
@@ -124,7 +130,9 @@ describe("the dashboard's listener", () => {
     expect(code).toBe(0);
     expect(output).toContain("the dashboard is not running");
     expect(existsSync(join(sandbox.home, "dashboard.json"))).toBe(false);
-    expect(await answers(4848)).toBe(false);
+    // The sandbox's daemon opened nothing there: the port answers only if
+    // it did before the daemon started.
+    expect(await answers(DEFAULT_DASHBOARD_PORT)).toBe(defaultPortTaken);
   });
 
   test("ui start opens it on 127.0.0.1 at the port asked for, and prints its URL", async () => {
