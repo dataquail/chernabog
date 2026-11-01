@@ -844,29 +844,107 @@ export type AuthorSession = {
 
 export const thisRunsSession: AuthorSession = { sessionId: Option.none(), adapter: Option.none() };
 
-// Sends the agent back into its session with a failure to fix.
+// The description of a pull request Chernabog opened, between the Closes
+// lines and the footer openPullRequest wrote around it. None for one a person
+// opened, or one whose body lost that shape.
+type Described = { readonly head: string; readonly description: string; readonly foot: string };
+
+const FOOT = "\n\n---\nOpened by Chernabog";
+
+const describedIn = (body: string): Option.Option<Described> => {
+  const headEnd = body.indexOf("\n\n");
+  const footStart = body.lastIndexOf(FOOT);
+
+  if (!body.startsWith("Closes #") || headEnd === -1 || footStart < headEnd) {
+    return Option.none();
+  }
+
+  return Option.some({
+    head: body.slice(0, headEnd),
+    description: body.slice(headEnd + "\n\n".length, footStart).trim(),
+    foot: body.slice(footStart),
+  });
+};
+
+const describePrompt = (description: string) =>
+  [
+    "## The pull request's description",
+    "",
+    "Your answer's `body` replaces this description. Give it back as it is, updated wherever your fix makes it wrong: a file, name or number it gives, or a decision it records. Leave out the Closes lines and the footer.",
+    "",
+    "````markdown",
+    description,
+    "````",
+  ].join("\n");
+
+// Sends the agent back into its session with a failure to fix. Given the pull
+// request it fixes, the agent sees its description and answers it, updated,
+// so the description never names what a fix changed: the squash merge puts it
+// on the base.
 export const fixWithAgent = (
   name: string,
   worktree: string,
   prompt: string,
   session: AuthorSession,
+  pullRequest: Option.Option<number> = Option.none(),
 ) =>
   activity(
     name,
     Effect.gen(function* () {
       const run = yield* Run;
+      const github = yield* GitHub;
+      const repo = yield* Repo;
+
+      // A pull request gone meanwhile has no description to keep.
+      const pulls = yield* Effect.forEach(Option.toArray(pullRequest), (number) =>
+        github.pullRequest(number).pipe(
+          Effect.asSome,
+          Effect.catchTag("NotFound", () => Effect.succeedNone),
+        ),
+      );
+
+      const described = pulls.flatMap((pull) =>
+        Option.toArray(
+          Option.flatMap(pull, (found) =>
+            Option.map(describedIn(found.body), (parts) => ({ number: found.number, parts })),
+          ),
+        ),
+      );
+
+      const asked = [
+        prompt,
+        ...described.map(({ parts }) => describePrompt(parts.description)),
+      ].join("\n\n");
 
       const result = yield* (yield* Agent).run({
         cwd: worktree,
-        prompt,
+        prompt: asked,
         sessionId: Option.getOrElse(session.sessionId, () => sessionIdFor(run.runId, "implement")),
-        resumePrompt: Option.some(prompt),
+        resumePrompt: Option.some(asked),
         outputSchema: Option.some(implementOutcomeJsonSchema),
         adapter: session.adapter,
         withPerson: session.withPerson === true,
       });
 
-      return yield* decodeOutcome(result);
+      const outcome = yield* decodeOutcome(result);
+
+      for (const { number, parts } of described) {
+        const description = outcome.body.trim();
+
+        if (
+          outcome.status === "done" &&
+          description.length > 0 &&
+          description !== parts.description
+        ) {
+          yield* github.request(
+            "PATCH",
+            `/repos/${repo.slug}/pulls/${number}`,
+            Option.some({ body: `${parts.head}\n\n${description}${parts.foot}` }),
+          );
+        }
+      }
+
+      return outcome;
     }),
     ImplementOutcome,
   );
@@ -1001,6 +1079,7 @@ export const addressFindings = (
       prepared.worktree,
       prepared.prompt,
       session,
+      Option.some(pullRequest),
     );
   });
 
@@ -1045,8 +1124,13 @@ export const askForClarification = (
 
 const LocalGateResult = Schema.Struct({ ok: Schema.Boolean, failure: Schema.String });
 
-// The session the local gate sends the agent back to: this run's implement session unless given.
-export type LocalGateOptions = RepeatOptions & { readonly session?: AuthorSession };
+// The session the local gate sends the agent back to: this run's implement
+// session unless given. pullRequest: the open pull request it gates, whose
+// description a fix keeps up to date.
+export type LocalGateOptions = RepeatOptions & {
+  readonly session?: AuthorSession;
+  readonly pullRequest?: number;
+};
 
 const runLocalGate = (worktree: string, round: number, options: RepeatOptions) =>
   activity(
@@ -1097,6 +1181,7 @@ export const localGate = (worktree: string, options: LocalGateOptions = {}) =>
         worktree,
         `The local gate failed. Fix the cause, commit, and answer again once \`git log\` shows the commit.\n\n${result.failure}`,
         options.session ?? thisRunsSession,
+        Option.fromUndefinedOr(options.pullRequest),
       );
     }
   });
@@ -1298,9 +1383,10 @@ const waitForCiIn = <E, R>(
           `CI failed on pull request #${pullRequest}: ${failed}.`,
           `Read why with \`gh run list --branch ${target.branch} --limit 5\` and \`gh run view <run id> --log-failed\`.`,
           "Fix the cause and commit. A failure unrelated to your change may be re-run once with `gh run rerun <run id> --failed`. Then answer again, once `git log` shows your commit.",
-          `A check on the pull request's title or body is fixed on the pull request, not in a commit: \`gh pr edit ${pullRequest} --title "<title>"\` (or \`--body-file\`). Your answer's title is not applied again.`,
+          `A check on the pull request's title is fixed on the pull request, not in a commit: \`gh pr edit ${pullRequest} --title "<title>"\`. Your answer's title is not applied again.`,
         ].join("\n"),
         target,
+        Option.some(pullRequest),
       );
       yield* push(named(options, `push-ci-${round}`), worktree, target.branch, {
         base: target.base,

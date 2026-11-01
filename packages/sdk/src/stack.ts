@@ -498,7 +498,13 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
         diff: change.diff,
       });
 
-      const outcome = yield* fixWithAgent(`adjust-${key}`, worktree, prompt, session);
+      const outcome = yield* fixWithAgent(
+        `adjust-${key}`,
+        worktree,
+        prompt,
+        session,
+        Option.some(layer.pullRequest),
+      );
 
       if (outcome.status === "needs-clarification") {
         return yield* new NeedsHuman({
@@ -510,7 +516,7 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
       said = `${said} ${outcome.summary}`;
     }
 
-    yield* localGate(worktree, { id: `refresh-${key}`, session });
+    yield* localGate(worktree, { id: `refresh-${key}`, session, pullRequest: layer.pullRequest });
     // Checked against the base it is now on, so only the layer's own commits count.
     yield* push(`push-refresh-${key}`, worktree, layer.branch, {
       base: synced.base,

@@ -102,7 +102,11 @@ const answerReview = (address: Review.AddressItem) =>
     }
 
     yield* Review.checkChanged(address.pullRequest, round, address.reviewedSha, worktree);
-    yield* Implement.localGate(worktree, { id: `review-${round}`, session });
+    yield* Implement.localGate(worktree, {
+      id: `review-${round}`,
+      session,
+      pullRequest: address.pullRequest,
+    });
     // Only a fix made in front of a person may touch humanOnlyPaths. A layer
     // of a stack is checked against the layer below, so only its own commits count.
     yield* Implement.push(`push-review-${round}`, worktree, address.headRef, {

@@ -112,10 +112,21 @@ const reviewAfresh = (pullRequest: number) =>
     return `#${pullRequest}: review 1 requested changes`;
   });
 
+const nonBlocking = (finding: Review.Finding) => {
+  if (finding.blocking === false) {
+    return " (doesn't block the merge)";
+  }
+
+  return "";
+};
+
 const listed = (findings: ReadonlyArray<Review.Finding>, remediated: boolean) =>
   findings.flatMap((finding) =>
     Option.toArray(
-      Option.liftPredicate(`- ${finding.finding}`, () => finding.remediated === remediated),
+      Option.liftPredicate(
+        `- ${finding.finding}${nonBlocking(finding)}`,
+        () => finding.remediated === remediated,
+      ),
     ),
   );
 
