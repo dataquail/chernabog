@@ -8,6 +8,7 @@ import type * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 
 import { findRunEndpoint } from "./find-run.endpoint.ts";
+import { followRunLogEndpoint } from "./follow-run-log.endpoint.ts";
 import { readRunHistoryEndpoint } from "./read-run-history.endpoint.ts";
 
 // What the server makes of a route's handler: its failures answered as refusals,
@@ -20,4 +21,5 @@ export const runsRoutes = <X>(answer: Answer<X>) =>
   Layer.mergeAll(
     HttpRouter.add("GET", "/runs/:id", answer(findRunEndpoint)),
     HttpRouter.add("GET", "/runs/:id/history", answer(readRunHistoryEndpoint)),
+    HttpRouter.add("GET", "/runs/:id/log", answer(followRunLogEndpoint)),
   );

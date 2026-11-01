@@ -13,6 +13,7 @@ export {
   RunNeedsAttention,
   RunStarted,
 } from "./domain/run/run.events.ts";
+export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";

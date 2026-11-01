@@ -65,6 +65,8 @@ Without `--port` it opens on the port you last asked for, else `4848`. A port th
 
 The URL carries a token, kept in `~/.config/chernabog/dashboard.token` (readable only by you, and the same across restarts, so a bookmark keeps working). Opening it sets a cookie, and the dashboard answers its API only to a browser holding that cookie. It also refuses a request addressed to any host but `127.0.0.1:<port>` or `localhost:<port>`, and a change sent from another origin or not as JSON, so a web page you visit can't use it.
 
+Each run on the dashboard links to its own page, `#/runs/<id>` (a unique prefix of the id will do, as with `chernabog logs`): the run, its pull request, subjects and summary, what it's parked on, the steps it went through, and its log as it grows, which stays at the bottom unless you scroll up and keeps the last 10,000 lines. The page updates as the run enters a step, parks or finishes.
+
 ## The engine
 
 The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a second engine from starting, which is why `run --from-checkout` needs the daemon stopped. Each step a team writes runs in a child process, so a step that crashes or hangs fails only its own activity. Runs in flight when the daemon stops resume when it starts.

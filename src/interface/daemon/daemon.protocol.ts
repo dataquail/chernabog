@@ -19,6 +19,7 @@ import {
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
+  RunHistory,
   RunMarkersReleased,
   RunMarkerView,
   RunNeedsAttention,
@@ -184,6 +185,10 @@ export const AttachOpened = Schema.Struct({ launcher: Schema.String, sessionId: 
 export type AttachOpened = typeof AttachOpened.Type;
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
+
+// GET /runs/:id/history: the steps a run entered and the signals it waits on.
+// And the events about one run that the dashboard's page of it listens for.
+export { RunEnteredStep, RunFinished, RunHistory, RunNeedsAttention };
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
 // on; without one, the last one asked for, else 4848.
