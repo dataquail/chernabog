@@ -333,6 +333,31 @@ describe("the dashboard's listener", () => {
     ).toBe(200);
   });
 
+  test("leaves the commands the daemon dispatches for the CLI to the socket", async () => {
+    const token = readFileSync(tokenFile(), "utf8").trim();
+    const cookie = await cookieFor(portA, token);
+
+    const json = {
+      cookie,
+      origin: `http://127.0.0.1:${portA}`,
+      "content-type": "application/json",
+    };
+
+    for (const path of [
+      "/api/commands/PauseRepoCommand",
+      "/api/%63ommands/PauseRepoCommand",
+      "/api/COMMANDS/PauseRepoCommand",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${portA}${path}`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ repo: "demo" }),
+      });
+
+      expect(response.status).toBe(404);
+    }
+  });
+
   test("starting it on another port moves it there", async () => {
     const { code, output } = await sandbox.runCli(["ui", "start", "--port", String(portB)]);
 

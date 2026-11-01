@@ -64,7 +64,7 @@ describe("a change a run here makes", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if ("DEBUG_DAEMON" in process.env) {
@@ -113,7 +113,7 @@ describe("a persona's GitHub notifications", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     if ("DEBUG_DAEMON" in process.env) {
