@@ -56,7 +56,8 @@ export const customLauncher = (name: string, commands: LauncherCommands): Launch
 
       return Option.map(Option.fromUndefinedOr(command), (found) => ({ command: found, args }));
     }),
-  open: () => Option.none(),
+  // Machine config gives a launcher of one's own no command to open a session.
+  open: Option.none(),
   check: Effect.gen(function* () {
     const command = Option.getOrElse(Arr.head(commands.start), () => "");
 

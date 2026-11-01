@@ -36,7 +36,12 @@ import { customAdapter } from "./agents/custom.ts";
 import { opencodeAdapter } from "./agents/opencode.ts";
 import { REHEARSAL, rehearsalAdapter } from "./agents/rehearsal.ts";
 import { knownLaunch, sessionFiles } from "./agents/session-files.ts";
-import { knownSession, recordRunSession, type SessionRecord } from "./agents/sessions.ts";
+import {
+  knownSession,
+  recordRunSession,
+  runSessions,
+  type SessionRecord,
+} from "./agents/sessions.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
 
 export type AgentsConfig = Readonly<
@@ -344,11 +349,54 @@ export class OpenRefused extends Schema.TaggedError<
 // A run's latest session, brought up in the launcher it runs under, on this
 // machine: the launcher, and the session.
 export const openRunSession = (
-  _runId: string,
+  runId: string,
 ): Effect.Effect<
   { readonly launcher: string; readonly sessionId: string },
   OpenRefused,
   Home | FileSystem.FileSystem | Exec
-> => Effect.fail(new OpenRefused({ message: "" }));
+> =>
+  Effect.gen(function* () {
+    const refuse = (message: string) => Effect.fail(new OpenRefused({ message }));
+    const session = Arr.last(yield* runSessions(runId));
+
+    if (Option.isNone(session)) {
+      return yield* refuse(`${runId} has opened no agent session yet`);
+    }
+
+    const { sessionId } = session.value;
+    const launch = yield* knownLaunch(sessionFiles((yield* Home).root, sessionId));
+    const launcher = Option.flatMap(launch, (found) => launcherFor(found.launcher));
+
+    if (Option.isNone(launch) || Option.isNone(launcher)) {
+      return yield* refuse(
+        "its session runs headless, with no launcher to open it in: copy the attach command and run it in a terminal",
+      );
+    }
+
+    const { name } = launcher.value;
+    const opening = launcher.value.open;
+
+    if (Option.isNone(opening)) {
+      return yield* refuse(
+        `${name} can't open a session itself: copy the attach command and run it in a terminal`,
+      );
+    }
+
+    const alive = yield* launcher.value
+      .alive(launch.value.handle)
+      .pipe(Effect.orElseSucceed(() => false));
+
+    if (!alive) {
+      return yield* refuse(
+        `its session in ${name} has ended: copy the attach command to resume it in a terminal`,
+      );
+    }
+
+    yield* opening
+      .value(launch.value.handle)
+      .pipe(Effect.catch((error) => refuse(`${name} couldn't open it: ${error.message}`)));
+
+    return { launcher: name, sessionId };
+  });
 
 export { runSessions, type SessionRecord } from "./agents/sessions.ts";

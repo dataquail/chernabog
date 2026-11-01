@@ -42,7 +42,7 @@ export type Launcher = {
   // no terminal of the caller's: Orca switches to its tab, tmux switches a
   // client to it. None for a launcher that can't, whose session a person
   // attaches to from a terminal of their own.
-  readonly open: (handle: Handle) => Option.Option<Effect.Effect<void, LaunchError, Exec>>;
+  readonly open: Option.Option<(handle: Handle) => Effect.Effect<void, LaunchError, Exec>>;
   // Whether the tool it drives is installed and working, for doctor.
   readonly check: Effect.Effect<ToolCheck, never, Exec>;
 };

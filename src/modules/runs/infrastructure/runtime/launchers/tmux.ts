@@ -48,7 +48,17 @@ export const tmuxLauncher: Launcher = {
   close: (handle) => Effect.asVoid(runTool(NAME, "tmux", ["kill-session", "-t", target(handle)])),
   attach: (handle) =>
     Option.some({ command: "tmux", args: ["attach-session", "-t", target(handle)] }),
-  open: () => Option.none(),
+  // Moves the client the person last used to the session; tmux refuses when
+  // no client is attached.
+  open: Option.some((handle) =>
+    Effect.gen(function* () {
+      const result = yield* runTool(NAME, "tmux", ["switch-client", "-t", target(handle)]);
+
+      if (result.exitCode !== 0) {
+        return yield* toolFailed(NAME, "tmux switch-client", result);
+      }
+    }),
+  ),
   check: runTool(NAME, "tmux", ["-V"]).pipe(
     Effect.map((result) => {
       const ok = result.exitCode === 0;
