@@ -7,6 +7,7 @@ import { BUNDLED_CORE_VERSION } from "../src/kernel/core-support.value-object.ts
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
+import { RunLanesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-fake.ts";
@@ -27,6 +28,7 @@ const stores = Layer.mergeAll(
   RunLogsClientFake({}),
   RunsRepositoryFake([]),
   RunMarkersRepositoryFake([]),
+  RunLanesRepositoryFake([]),
   RunStepsRepositoryFake([]),
   RunWaitsRepositoryFake([]),
   SkipsRepositoryFake([]),

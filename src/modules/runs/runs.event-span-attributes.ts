@@ -12,6 +12,7 @@ import {
   type PullRequestOpened,
   type RunEnteredStep,
   type RunFinished,
+  type RunFinishedStep,
   type RunNeedsAttention,
   type RunStarted,
 } from "./domain/run/run.events.ts";
@@ -33,8 +34,10 @@ const ofFlowRef = (message: { readonly flow: { readonly repo: string; readonly f
 export const runsCommandSpanAttributes = {
   AdoptImplicitRunsCommand: (payload: { readonly repo: string }) => ({ "run.repo": payload.repo }),
   AttachExecutionCommand: ofRun,
+  DeclareLaneCommand: ofRun,
   EnterStepCommand: ofRun,
   FinishRunCommand: ofRun,
+  FinishStepCommand: ofRun,
   ForgetMarkerCommand: ofRun,
   HoldMarkerCommand: ofRun,
   NameSubjectCommand: ofRun,
@@ -79,6 +82,7 @@ export const runEventSpanAttributes = Event.spanAttributes({
   RunEnteredStep: (event: RunEnteredStep) => ofRun(event),
   RunNeedsAttention: (event: RunNeedsAttention) => ofRun(event),
   RunFinished: (event: RunFinished) => ofRun(event),
+  RunFinishedStep: (event: RunFinishedStep) => ofRun(event),
   RunMarkersReleased: (event: RunMarkersReleased) => ofRun(event),
   PullRequestOpened: (event: PullRequestOpened) => ({
     "run.id": event.runId,

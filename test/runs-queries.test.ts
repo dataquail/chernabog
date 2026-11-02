@@ -11,7 +11,9 @@ import { RunStepEntity } from "../src/modules/runs/domain/run/run-step.entity.ts
 import { RunMarkerRootOps } from "../src/modules/runs/domain/run-marker/run-marker.root-ops.ts";
 import { RunWaitRoot } from "../src/modules/runs/domain/run-wait/run-wait.root.ts";
 import { SkipRoot } from "../src/modules/runs/domain/skip/skip.root.ts";
+import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
+import { RunLanesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-fake.ts";
@@ -54,8 +56,16 @@ const stores = Layer.mergeAll(
     RunMarkerRootOps.hold({ runId: RunId.make("a"), name: "label", args: 1, keepOn: [] }, AT),
     RunMarkerRootOps.hold({ runId: ended.id, name: "label", args: 2, keepOn: [] }, AT),
   ]),
+  RunLogsClientFake({}),
+  RunLanesRepositoryFake([]),
   RunStepsRepositoryFake([
-    RunStepEntity.make({ runId: RunId.make("a"), step: "claim", enteredAt: AT }),
+    RunStepEntity.make({
+      runId: RunId.make("a"),
+      step: "claim",
+      enteredAt: AT,
+      finishedAt: Option.none(),
+      outcome: Option.none(),
+    }),
   ]),
   RunWaitsRepositoryFake([
     RunWaitRoot.make({

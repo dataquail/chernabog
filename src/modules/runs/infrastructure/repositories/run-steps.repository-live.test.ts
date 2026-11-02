@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { effect } from "../../../../../test/effect-test.ts";
 import { sqliteAfter } from "../../../../../test/sqlite.ts";
@@ -11,7 +12,13 @@ import { RunStepsRepository } from "../../domain/run/run-steps.repository.ts";
 import { RunStepsRepositoryLive } from "./run-steps.repository-live.ts";
 
 const step = (runId: string, name: string, enteredAt: string) =>
-  RunStepEntity.make({ runId: RunId.make(runId), step: name, enteredAt });
+  RunStepEntity.make({
+    runId: RunId.make(runId),
+    step: name,
+    enteredAt,
+    finishedAt: Option.none(),
+    outcome: Option.none(),
+  });
 
 describe("RunStepsRepositoryLive", () => {
   effect("keeps each step a run enters, in the order it entered them, repeats included", () =>

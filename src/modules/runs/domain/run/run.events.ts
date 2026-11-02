@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
 import { RunStatus } from "./run-status.value-object.ts";
+import { StepOutcome } from "./step-outcome.value-object.ts";
 import { itemTarget } from "./work-item.value-object.ts";
 
 // What happens to a run, as its commands tell whoever listens: the
@@ -39,6 +40,18 @@ export const RunEnteredStep = Event.make("RunEnteredStep", {
 });
 
 export type RunEnteredStep = typeof RunEnteredStep.Type;
+
+// A step a run entered ending, once, with how: never for one interrupted, nor
+// for one a resumed run reads back from its journal.
+export const RunFinishedStep = Event.make("RunFinishedStep", {
+  eventId: Schema.String,
+  runId: RunId,
+  step: Schema.String,
+  outcome: StepOutcome,
+  finishedAt: Schema.String,
+});
+
+export type RunFinishedStep = typeof RunFinishedStep.Type;
 
 // A run parked on a signal, such as a push to a review's pull request: it
 // waits on someone, and holds no slot until it wakes.
@@ -94,6 +107,14 @@ const started = (run: {
 const enteredStep = (runId: RunId, step: string, enteredAt: string) =>
   RunEnteredStep.make({ eventId: runEventId(runId, `step:${step}`), runId, step, enteredAt });
 
+const finishedStep = (step: {
+  readonly runId: RunId;
+  readonly step: string;
+  readonly outcome: StepOutcome;
+  readonly finishedAt: string;
+}) =>
+  RunFinishedStep.make({ eventId: runEventId(step.runId, `step-finished:${step.step}`), ...step });
+
 const needsAttention = (wait: {
   readonly runId: RunId;
   readonly signal: string;
@@ -136,6 +157,7 @@ const pullRequestOpened = (run: { readonly id: RunId; readonly repo: string }, s
 export const RunEvents = {
   started,
   enteredStep,
+  finishedStep,
   needsAttention,
   finished,
   pullRequestOpened,

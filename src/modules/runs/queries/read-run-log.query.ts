@@ -4,7 +4,8 @@ import * as Schema from "effect/Schema";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunLogMissing, RunLogPruned } from "../domain/run/run.errors.ts";
 
-// A run's log as it is now, and where it's kept.
+// A run's log as it is now, as a person reads it (without the steps its
+// lines are tagged with), and where it's kept.
 export class RunLog extends Schema.Class<RunLog, { readonly brand: "RunLog" }>("RunLog")({
   runId: RunId,
   path: Schema.String,

@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import { daemonRunRow } from "../../../../interface/daemon/daemon.client.ts";
 import { type RunId } from "../../../../kernel/run-id.id.ts";
 import { type RunView } from "../../domain/run/run-view.value-object.ts";
+import { type LogOfStep } from "../../queries/follow-run-log.query.ts";
 import { RunLogsQueries } from "../../runs.query-handlers.ts";
 
 // How often a followed log is read again.
@@ -29,14 +30,23 @@ type Reading = readonly [from: number, first: boolean];
 // run has finished is asked before each read, never by interrupting one, so
 // a run that finishes during a read (or had finished before the first) still
 // gets the read after it, which takes the rest of its log.
-export const followLog = <E, R>(runId: RunId, finished: Effect.Effect<unknown, E, R>) =>
+// With `step`, only that step's lines.
+export const followLog = <E, R>(
+  runId: RunId,
+  finished: Effect.Effect<unknown, E, R>,
+  step: Option.Option<typeof LogOfStep.Type> = Option.none(),
+) =>
   Effect.gen(function* () {
     const logs = yield* RunLogsQueries;
 
     // What the log gained since `from`, and where to read next.
     const read = (from: number) =>
       logs
-        .FollowRunLogQuery({ runId, from })
+        .FollowRunLogQuery({
+          runId,
+          from,
+          ...Option.match(step, { onNone: () => ({}), onSome: (only) => ({ step: only }) }),
+        })
         .pipe(Effect.map((gained) => [Option.toArray(gained.text), gained.next] as const));
 
     // One read, after waiting out the interval unless the run finishes first;

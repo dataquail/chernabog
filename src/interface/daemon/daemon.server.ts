@@ -566,6 +566,7 @@ export const runDaemon = Effect.gen(function* () {
   const hooks = {
     onStep: () => Ref.update(busy, (count) => count + 1),
     onStepDone: () => Ref.update(busy, (count) => count - 1),
+    onStepFinished: () => Effect.void,
     onChange: noteLocal,
   };
 

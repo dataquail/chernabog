@@ -274,6 +274,7 @@ const stderrLog = RunLog.of({
   log: (line) => Console.error(line),
   step: (name) => Console.error(`step: ${name}`),
   stepDone: () => Effect.void,
+  stepFinished: () => Effect.void,
 });
 
 // The SDK services a step can use, for one repo. The step's process already

@@ -57,7 +57,12 @@ const POLLS = { schedule: Schedule.spaced("25 millis"), times: 200 };
 
 const quietLog = Layer.succeed(
   RunLog,
-  RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
+  RunLog.of({
+    log: () => Effect.void,
+    step: () => Effect.void,
+    stepDone: () => Effect.void,
+    stepFinished: () => Effect.void,
+  }),
 );
 
 // A system of a flow's own, outside chernabog: the tickets in progress, and

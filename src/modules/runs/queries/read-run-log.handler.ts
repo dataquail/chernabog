@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import { RunLogLines } from "../../../kernel/run-log-line.value-object.ts";
 import { RunLogsClient } from "../domain/ports/clients/run-logs.client.ts";
 import { RunLogMissing, RunLogPruned } from "../domain/run/run.errors.ts";
 import { RUN_LOG_RETENTION_DAYS } from "../domain/run/run-log-retention.value-object.ts";
@@ -14,7 +15,7 @@ export const readRunLogHandler = Effect.fn("readRunLogHandler")(function* ({
   const text = yield* logs.readFrom(runId, 0);
 
   if (Option.isSome(text)) {
-    return RunLog.make({ runId, path, text: text.value });
+    return RunLog.make({ runId, path, text: RunLogLines.untagged(text.value) });
   }
 
   if (yield* logs.pruned(runId)) {

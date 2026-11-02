@@ -12,12 +12,16 @@ import { CancelRunCommand } from "./commands/cancel-run.command.ts";
 import { cancelRunHandler } from "./commands/cancel-run.handler.ts";
 import { CheckRunLeasesCommand } from "./commands/check-run-leases.command.ts";
 import { checkRunLeasesHandler } from "./commands/check-run-leases.handler.ts";
+import { DeclareLaneCommand } from "./commands/declare-lane.command.ts";
+import { declareLaneHandler } from "./commands/declare-lane.handler.ts";
 import { DeliverSignalsCommand } from "./commands/deliver-signals.command.ts";
 import { deliverSignalsHandler } from "./commands/deliver-signals.handler.ts";
 import { EnterStepCommand } from "./commands/enter-step.command.ts";
 import { enterStepHandler } from "./commands/enter-step.handler.ts";
 import { FinishRunCommand } from "./commands/finish-run.command.ts";
 import { finishRunHandler } from "./commands/finish-run.handler.ts";
+import { FinishStepCommand } from "./commands/finish-step.command.ts";
+import { finishStepHandler } from "./commands/finish-step.handler.ts";
 import { ForgetMarkerCommand } from "./commands/forget-marker.command.ts";
 import { forgetMarkerHandler } from "./commands/forget-marker.handler.ts";
 import { GateFlowCommand } from "./commands/gate-flow.command.ts";
@@ -56,13 +60,15 @@ import {
 // What changes the runs' stores in state.db alone. Those stores share the SQL
 // client the workflow engine journals to, which the composition root that holds
 // state.db provides, as it does for the runs' queries. The commands say what
-// happened to a run (RunStarted, RunEnteredStep, RunNeedsAttention,
-// RunFinished, PullRequestOpened) on the EventBus the root provides.
+// happened to a run (RunStarted, RunEnteredStep, RunFinishedStep,
+// RunNeedsAttention, RunFinished, PullRequestOpened) on the EventBus the root provides.
 export const runsCommandGroup = Command.group(
   AdoptImplicitRunsCommand,
   AttachExecutionCommand,
+  DeclareLaneCommand,
   EnterStepCommand,
   FinishRunCommand,
+  FinishStepCommand,
   ForgetMarkerCommand,
   HoldMarkerCommand,
   NameSubjectCommand,
@@ -76,8 +82,10 @@ export const runsCommandGroup = Command.group(
 const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   AdoptImplicitRunsCommand: (payload) => adoptImplicitRunsHandler(payload),
   AttachExecutionCommand: (payload) => attachExecutionHandler(payload),
+  DeclareLaneCommand: (payload) => declareLaneHandler(payload),
   EnterStepCommand: (payload) => enterStepHandler(payload),
   FinishRunCommand: (payload) => finishRunHandler(payload),
+  FinishStepCommand: (payload) => finishStepHandler(payload),
   ForgetMarkerCommand: (payload) => forgetMarkerHandler(payload),
   HoldMarkerCommand: (payload) => holdMarkerHandler(payload),
   NameSubjectCommand: (payload) => nameSubjectHandler(payload),

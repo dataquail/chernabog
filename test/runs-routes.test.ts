@@ -35,6 +35,19 @@ const OTHER = "5714ffff-0000-4000-8000-000000000000";
 // test adding to it.
 const logs: Record<string, string> = {};
 
+const T = "2026-11-02T10:00:00.000Z";
+
+// A log as the engine tags it: two tasks' lines interleaved, between the run's own.
+const TAGGED = [
+  `${T}\t\tclaimed #12`,
+  `${T}\timplement#task-1\tstep: implement#task-1`,
+  `${T}\timplement#task-2\tstep: implement#task-2`,
+  `${T}\timplement#task-1\tBash(bun test)`,
+  `${T}\timplement#task-2\tBash(git status)`,
+  `${T}\t\tfinished: done`,
+  "",
+].join("\n");
+
 // The modules a daemon adds, over a runtime with no flows and a state.db in a
 // scratch home, and the run logs above.
 const daemonInScratch = Layer.unwrap(
@@ -150,6 +163,54 @@ describe("GET /runs/:id/log", () => {
       expect(yield* Queue.take(frames)).toBe(
         "data: step: implement\ndata: wrote\ndata: the fix\n\n",
       );
+
+      yield* finish(RUN);
+      expect(yield* Queue.take(frames)).toBe("event: end\ndata: \n\n");
+      expect(yield* Queue.take(frames)).toBe("closed");
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+
+  effect("streams a finished run's whole log, without the steps its lines are tagged with", () =>
+    Effect.gen(function* () {
+      logs[RUN] = TAGGED;
+      yield* start(RUN);
+      yield* finish(RUN);
+      const get = yield* serving;
+
+      expect(yield* get(`/runs/${RUN}/log`).pipe(Effect.flatMap(readText))).toBe(
+        [
+          `data: ${T} claimed #12`,
+          `data: ${T} step: implement#task-1`,
+          `data: ${T} step: implement#task-2`,
+          `data: ${T} Bash(bun test)`,
+          `data: ${T} Bash(git status)`,
+          `data: ${T} finished: done`,
+          "",
+          "event: end",
+          "data: ",
+          "",
+          "",
+        ].join("\n"),
+      );
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+
+  effect("with ?step=, streams that step's lines alone, and ends as the run does", () =>
+    Effect.gen(function* () {
+      logs[RUN] = TAGGED;
+      yield* start(RUN);
+      const get = yield* serving;
+
+      const frames = yield* framesOf(
+        yield* get(`/runs/${RUN}/log?step=${encodeURIComponent("implement#task-2")}`),
+      );
+
+      expect(yield* Queue.take(frames)).toBe(
+        `data: ${T} step: implement#task-2\ndata: ${T} Bash(git status)\n\n`,
+      );
+
+      logs[RUN] = `${TAGGED}${T}\timplement#task-1\tmore\n${T}\timplement#task-2\tgreen\n`;
+      expect(yield* Queue.take(frames)).toBe(`data: ${T} green\n\n`);
 
       yield* finish(RUN);
       expect(yield* Queue.take(frames)).toBe("event: end\ndata: \n\n");
