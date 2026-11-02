@@ -67,6 +67,8 @@ The journal is `~/.config/chernabog/state.db`. A lock file next to it keeps a se
 | `~/.config/chernabog/runs/<run>.log` | one run; `chernabog logs <run> -f` |
 | `~/.config/chernabog/telemetry/<day>/<process>-<pid>.jsonl` | the spans and logs of one process, the daemon's or a CLI command's, as JSON lines, in a folder for each UTC day |
 
+A run's log is one line an entry, `<time> <text>` as `chernabog logs` prints it. On disk each line also names the step it was written in, between tabs (`<time>\t<step>\t<text>`, the step empty for a line outside any), so the lines of tasks that run at once can be told apart; `chernabog logs`, the live view and the dashboard show the lines without it. A log from before steps were named on its lines reads as it always did.
+
 The daemon keeps these to a retention policy, sweeping when it starts and every 24 hours:
 
 - **Telemetry:** a day folder goes once it's more than 30 days old, and then the oldest go while the rest hold more than 500 MB. Today's is never removed.
