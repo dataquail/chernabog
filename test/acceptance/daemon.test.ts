@@ -113,6 +113,28 @@ describe("the daemon", () => {
     expect(steps.slice(0, 2)).toEqual(["claim", "prepare-worktree"]);
     expect(steps).toContain("open-pull-request");
 
+    // Each step ended, and how; its log lines name it, so one step's log can be read alone.
+    expect(history.steps.filter((step) => step.outcome !== "ok")).toEqual([]);
+    expect(history.stepLogs).toBe("tagged");
+
+    // The page's log of a run that has finished: the whole of it, then `end`.
+    const log = await (
+      await fetch(`http://daemon/runs/${done?.id}/log`, { unix: socket() })
+    ).text();
+
+    expect(log).toContain("step: claim");
+    expect(log).toContain("step: open-pull-request");
+    expect(log).not.toContain("\t");
+    expect(log.endsWith("event: end\ndata: \n\n")).toBe(true);
+
+    const claimed = await (
+      await fetch(`http://daemon/runs/${done?.id}/log?step=claim`, { unix: socket() })
+    ).text();
+
+    expect(claimed).toContain("step: claim");
+    expect(claimed).not.toContain("step: prepare-worktree");
+    expect(claimed.endsWith("event: end\ndata: \n\n")).toBe(true);
+
     // The SDK's block named the pull request it opened as a subject, so the
     // live view can thread its runs.
     expect(Option.map(Option.fromUndefinedOr(done), (run) => run.subjects)).toEqual(
