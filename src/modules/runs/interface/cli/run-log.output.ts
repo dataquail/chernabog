@@ -2,6 +2,7 @@
 // the one asked whether the run has finished.
 
 import * as Console from "effect/Console";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -19,27 +20,55 @@ const EVERY = "1 second";
 const isRunning = (row: Option.Option<RunView>) =>
   Option.exists(row, (found) => found.status === "running");
 
+// Where a follower reads next, and whether it has read at all.
+type Reading = readonly [from: number, first: boolean];
+
 // A run's log as it grows: what it holds now, then what it gains, each read
 // as one piece without its trailing newline. It ends once `finished` does,
-// with what the log gained last.
+// with what the log gained last. Every piece read is streamed: whether the
+// run has finished is asked before each read, never by interrupting one, so
+// a run that finishes during a read (or had finished before the first) still
+// gets the read after it, which takes the rest of its log.
 export const followLog = <E, R>(runId: RunId, finished: Effect.Effect<unknown, E, R>) =>
   Effect.gen(function* () {
     const logs = yield* RunLogsQueries;
-    const offset = yield* Ref.make(0);
 
-    // What the log gained since the last read. A read finishes once begun, so
-    // ending the stream mid-read loses nothing.
-    const fresh = Effect.gen(function* () {
-      const gained = yield* logs.FollowRunLogQuery({ runId, from: yield* Ref.get(offset) });
-      yield* Ref.set(offset, gained.next);
+    // What the log gained since `from`, and where to read next.
+    const read = (from: number) =>
+      logs
+        .FollowRunLogQuery({ runId, from })
+        .pipe(Effect.map((gained) => [Option.toArray(gained.text), gained.next] as const));
 
-      return Option.toArray(gained.text);
-    }).pipe(Effect.uninterruptible);
+    // One read, after waiting out the interval unless the run finishes first;
+    // the last once it has.
+    const next = (over: Deferred.Deferred<void, E>, [from, first]: Reading) =>
+      Effect.gen(function* () {
+        if (!first) {
+          yield* Deferred.await(over).pipe(
+            Effect.exit,
+            Effect.timeoutOrElse({ duration: EVERY, orElse: () => Effect.void }),
+          );
+        }
 
-    return Stream.fromEffectSchedule(fresh, Schedule.spaced(EVERY)).pipe(
-      Stream.interruptWhen(finished),
-      Stream.concat(Stream.fromEffect(fresh)),
-      Stream.flattenIterable,
+        const done = yield* Deferred.isDone(over);
+        const [pieces, after] = yield* read(from);
+
+        if (done) {
+          yield* Deferred.await(over);
+
+          return [pieces, Option.none<Reading>()] as const;
+        }
+
+        return [pieces, Option.some<Reading>([after, false])] as const;
+      });
+
+    return Stream.unwrap(
+      Effect.gen(function* () {
+        const over = yield* Deferred.make<void, E>();
+        yield* Effect.forkScoped(Deferred.into(Effect.asVoid(finished), over));
+
+        return Stream.paginate<Reading, string, E>([0, true], (state) => next(over, state));
+      }),
     );
   });
 
