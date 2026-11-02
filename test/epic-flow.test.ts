@@ -21,6 +21,7 @@ import epic from "../packages/recipes/flows/epic.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -123,10 +124,16 @@ const workWith = (
 ) => {
   const snapshots: Array<Snapshot> = [];
   const answered = new Set<string>();
+  // The lanes the run declared, by lane, read once it ended.
+  const lanes = new Map<string, ReadonlyArray<string>>();
 
   const run = runUntil(handle, fake, work, (current) =>
     Effect.gen(function* () {
       if (current.status !== "running") {
+        for (const declared of (yield* readRunHistoryHandler({ runId: current.id })).lanes ?? []) {
+          lanes.set(declared.lane, declared.needs);
+        }
+
         return true;
       }
 
@@ -165,7 +172,7 @@ const workWith = (
     }),
   );
 
-  return Effect.map(run, (ended) => ({ run: ended, snapshots }));
+  return Effect.map(run, (ended) => ({ run: ended, snapshots, lanes }));
 };
 
 describe("epic", () => {
@@ -187,7 +194,7 @@ describe("epic", () => {
       Effect.gen(function* () {
         const fake = epicFake();
 
-        const { run, snapshots } = yield* workWith(fake, [
+        const { lanes, run, snapshots } = yield* workWith(fake, [
           // #10 and #12 merge: #13 is no longer blocked.
           (changed) => {
             merge(changed, 10);
@@ -247,6 +254,15 @@ describe("epic", () => {
         ).toEqual([]);
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
 
+        // Each task's lane waited on the lanes of the tasks it waited on: #11
+        // stacked on #10, and #13 held on #10 and #12.
+        expect(Object.fromEntries(lanes)).toEqual({
+          "task-10": [],
+          "task-11": ["task-10"],
+          "task-12": [],
+          "task-13": ["task-10", "task-12"],
+        });
+
         // The run let go of the epic's claim and its tasks'.
         expect(fake.refs.size).toBe(0);
       }),
@@ -260,7 +276,7 @@ describe("epic", () => {
         // #12's agent answers with questions the first time.
         fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
 
-        const { run, snapshots } = yield* workWith(fake, [
+        const { lanes, run, snapshots } = yield* workWith(fake, [
           // A person answers, and hands #12 back.
           (changed) => {
             changed.setLabels(12, [DEFAULT_LABELS.eligible]);
@@ -290,6 +306,8 @@ describe("epic", () => {
         expect(
           ["implement#task-12", "implement#task-12-2"].filter((step) => !steps.has(step)),
         ).toEqual([]);
+        // The second attempt's lane follows the first.
+        expect(lanes.get("task-12-2")).toEqual(["task-12"]);
         // #10, #11, #12 and #12's second attempt; #13 merged without the run.
         expect(new Set(fake.requests.map((request) => request.sessionId)).size).toBe(4);
         expect(fake.refs.size).toBe(0);

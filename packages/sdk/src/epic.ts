@@ -39,8 +39,13 @@ export type Ready = {
   readonly stackedOn: Option.Option<number>;
 };
 
-// A task that waits, and why, as a WorkItem's `held` says it.
-export type Held = { readonly state: "held"; readonly reason: string };
+// A task that waits, and why, as a WorkItem's `held` says it, and the tasks it
+// waits on.
+export type Held = {
+  readonly state: "held";
+  readonly reason: string;
+  readonly waitsOn: ReadonlyArray<number>;
+};
 
 export type Task = { readonly number: number; readonly title: string; readonly kind: Kind } & (
   Ready | Held
@@ -79,7 +84,14 @@ const ready = (base: string, stackedOn: Option.Option<number>): Ready => ({
   stackedOn,
 });
 
-const held = (reason: string): Held => ({ state: "held", reason });
+const held = (reason: string, blockers: ReadonlyArray<number>): Held => ({
+  state: "held",
+  reason,
+  waitsOn: blockers,
+});
+
+// A task held until `blockers` close.
+const heldOn = (blockers: ReadonlyArray<number>) => held(waitsOn(blockers), blockers);
 
 // The tasks an epic run started, whose claim took their queue label off, so
 // they no longer read as auto: a task stacks on one as on an auto task.
@@ -171,23 +183,23 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
         }
 
         if (blockers.length > 1) {
-          return held(waitsOn(blockers.map((blocker) => blocker.number)));
+          return heldOn(blockers.map((blocker) => blocker.number));
         }
 
         const [blocker] = blockers;
 
         if (!auto.has(blocker.number)) {
-          return held(waitsOn([blocker.number]));
+          return heldOn([blocker.number]);
         }
 
         const pull = yield* pullOf(blocker.number);
 
         if (Option.isNone(pull)) {
-          return held(waitsOn([blocker.number]));
+          return heldOn([blocker.number]);
         }
 
         if ((yield* depthOf(pull.value)) + 1 > stackDepth) {
-          return held(`waits for #${blocker.number}'s stack to merge`);
+          return held(`waits for #${blocker.number}'s stack to merge`, [blocker.number]);
         }
 
         return ready(Claims.branchFor(blocker.number), Option.some(blocker.number));
@@ -213,7 +225,7 @@ export const tasks = (epic: number, options: TasksOptions = {}) =>
         return taskOf(issue, ready(base, Option.none()));
       }
 
-      return taskOf(issue, held(waitsOn(others.map((other) => other.number))));
+      return taskOf(issue, heldOn(others.map((other) => other.number)));
     };
 
     return {
@@ -256,6 +268,9 @@ export const Layer = Schema.Struct({
   stackedOn: Schema.optionalKey(Schema.Finite),
   reason: Schema.optionalKey(Schema.String),
   pullRequest: Schema.optionalKey(Schema.Finite),
+  // A held layer's: the sub-issues it waits on. None in a progress read before
+  // layers kept it.
+  waitsOn: Schema.optionalKey(Schema.Array(Schema.Finite)),
 });
 
 export type Layer = typeof Layer.Type;
@@ -382,7 +397,7 @@ export const progressOf = (epic: number) =>
         }
 
         if (task.state === "held") {
-          return { ...head, state: "held", reason: task.reason };
+          return { ...head, state: "held", reason: task.reason, waitsOn: task.waitsOn };
         }
 
         return Option.match(task.stackedOn, {

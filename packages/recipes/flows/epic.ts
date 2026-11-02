@@ -16,6 +16,8 @@
 //
 // Each block is a durable activity from @chernabog/sdk, and a task's carry
 // its number (`implement#task-12`), so tasks in one run never share a step.
+// Each task's id is its lane on the run's page, and the run declares the
+// lanes each waited on (Lanes.declare), which the page draws as arrows.
 // Side effects belong inside activities or steps, never in the workflow body,
 // which runs again whenever the run resumes.
 //
@@ -33,6 +35,7 @@ import {
   Git,
   GitHub,
   Implement,
+  Lanes,
   Plan,
   PullRequest,
   Repo,
@@ -753,6 +756,45 @@ const land = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
     return moved;
   });
 
+// Adds to `waitedOn` what each layer waits on as `progress` reads it: the
+// sub-issues a held one waits on, and the one a stacked one is stacked on.
+const noteWaits = (progress: Epic.Progress, waitedOn: Map<number, Set<number>>) => {
+  for (const layer of progress.layers) {
+    const on = [
+      ...(layer.waitsOn ?? []),
+      ...Option.toArray(Option.fromUndefinedOr(layer.stackedOn)),
+    ];
+
+    if (on.length > 0) {
+      waitedOn.set(layer.number, new Set([...(waitedOn.get(layer.number) ?? []), ...on]));
+    }
+  }
+};
+
+// The lanes of a task's attempts in this run so far, by the ids its steps
+// carry (`task-12`, `task-12-2`): none for one it never started, as a person's.
+const lanesOf = (task: number, attempts: ReadonlyMap<number, number>) =>
+  Array.from({ length: attempts.get(task) ?? 0 }, (_, index) => attemptId(task, index + 1));
+
+// Declares the lane of a task's attempt for the run's page (Lanes.declare): it
+// waited on the lanes of the tasks it waited on, and a later attempt on the
+// one before it. Declaring it again, as a resumed run does, changes nothing.
+const declareLane = (
+  task: number,
+  attempt: number,
+  waitedOn: ReadonlyMap<number, ReadonlySet<number>>,
+  attempts: ReadonlyMap<number, number>,
+) =>
+  Lanes.declare(attemptId(task, attempt), [
+    ...[...(waitedOn.get(task) ?? [])].flatMap((below) => lanesOf(below, attempts)),
+    ...Option.toArray(
+      Option.map(
+        Option.filter(Option.some(attempt), (count) => count > 1),
+        (count) => attemptId(task, count - 1),
+      ),
+    ),
+  ]);
+
 // Round after round: read where the epic stands, write its status comment,
 // carry each moved layer's change up its stack, land the layers that ship
 // and may, start every ready task, and
@@ -770,6 +812,8 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
     const handedBack = new Set<number>();
     // Tasks whose attempt ended with a person.
     const withPerson = new Set<number>();
+    // The sub-issues each task waited on, as the rounds read them.
+    const waitedOn = new Map<number, Set<number>>();
 
     const upkeep: Upkeep = {
       attempts: new Map(),
@@ -782,6 +826,7 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
     for (let round = 1; ; round++) {
       const progress = yield* Epic.progress(epic, round);
       yield* Epic.postStatus(epic, round, progress);
+      noteWaits(progress, waitedOn);
 
       if (Epic.finished(progress)) {
         return `#${epic}: every task is closed`;
@@ -819,6 +864,10 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
 
           return { task, attempt };
         });
+
+        for (const start of starts) {
+          yield* declareLane(start.task.number, start.attempt, waitedOn, attempts);
+        }
 
         yield* Effect.forEach(
           starts,
