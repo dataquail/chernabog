@@ -128,6 +128,7 @@ graph:
         - "scripts/homebrew-formula.ts"
         - "scripts/coverage-summary.ts"
         - "scripts/release-pr-check.ts"
+        - "scripts/dashboard-dev.ts"
         # The acceptance sandbox runs it as a child process, for a lockfile.
         - "test/acceptance/lockfile.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
@@ -1774,6 +1775,13 @@ tree:
       "templates.ts": { members: [{ use: no-talking }] }
       "core-api.ts": { members: [{ use: no-talking }] }
       "coverage.ts": { members: [{ use: no-talking }] }
+      # The dashboard's page with Bun's hot reload, over the installed daemon's API.
+      "dashboard-dev.ts":
+        imports:
+          message: >-
+            The dev dashboard serves the dashboard's page, and names effect and the platform
+            beside it.
+          allow: ["~/dashboard/index.html"]
       # What release-please would release from its PR, read with release-please's own
       # parser, the version its action bundles, since that parser is what goes wrong.
       "release-pr.ts":

@@ -13,6 +13,7 @@
     "test:acceptance": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json test/acceptance",
     "check": "tsc --noEmit && tsc --noEmit -p packages/dashboard",
     "build": "bun build --compile src/interface/cli/main.ts --outfile dist/chernabog",
+    "dev:dashboard": "bun scripts/dashboard-dev.ts",
     "gen:effect-modules": "bun scripts/gen-effect-modules.ts",
     "lint": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --deny-warnings",
     "lint:fix": "NODE_OPTIONS='--experimental-strip-types --no-warnings' oxlint --type-aware --fix",
