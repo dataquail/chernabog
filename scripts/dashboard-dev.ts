@@ -11,6 +11,10 @@
 // holds the token itself, so any program on the machine can read the API
 // through it while it runs: stop it when you're done.
 //
+// It reads the daemon's port and token once, at startup. If chernabog ui
+// stop/start later moves the port or writes a new token, every /api/ call
+// gets a 502 or 401 until you restart it.
+//
 // Run: chernabog ui start, then bun run dev:dashboard
 // (DASHBOARD_DEV_PORT moves it off 4849; CHERNABOG_HOME names another home).
 
