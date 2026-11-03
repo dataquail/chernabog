@@ -3,7 +3,7 @@ title: Introduction
 description: What Chernabog does, and where people stay in the loop.
 ---
 
-Chernabog spends spare coding-agent capacity on queued work across your repos. A daemon on your machine runs **flows**: durable [Effect](https://effect.website) workflows built from an SDK of services for the job — GitHub, coding agents, git worktrees and usage budgets.
+Chernabog runs coding agents on schedules you set, across your repos. A daemon on your machine runs **flows**: durable [Effect](https://effect.website) workflows built from an SDK of services for the job — GitHub, coding agents, git worktrees and usage budgets.
 
 Teams commit flows to each repo in `.chernabog/`, the way husky commits git hooks. People stay at the edges:
 

@@ -10,7 +10,7 @@ export default defineConfig({
     starlight({
       title: "Chernabog",
       description:
-        "Spend spare coding-agent capacity on queued work across your repos, with durable flows committed to each repo.",
+        "Run coding agents on schedules you set, across your repos, with durable flows committed to each repo.",
       logo: {
         light: "./src/assets/mark-light.svg",
         dark: "./src/assets/mark-dark.svg",

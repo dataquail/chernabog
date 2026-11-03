@@ -425,7 +425,7 @@ const live = Effect.gen(function* () {
 });
 
 export const chernabog = Command.make("chernabog", {}, () => live).pipe(
-  Command.withDescription("Spends spare coding-agent capacity on queued work across your repos"),
+  Command.withDescription("Runs coding agents on schedules you set, across your repos"),
   Command.withSubcommands([
     statusCommand,
     uiCommand,

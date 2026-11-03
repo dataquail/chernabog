@@ -85,7 +85,7 @@ export const systemdUnit = (
   env: Environment,
   logPath: string,
 ) => `[Unit]
-Description=Chernabog daemon: spends spare coding-agent capacity on queued work
+Description=Chernabog daemon: runs coding agents on schedules you set
 
 [Service]
 ExecStart=${[...command, "daemon"].map(quote).join(" ")}

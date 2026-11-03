@@ -47,7 +47,7 @@ const formula = (
 ) => `# Written by dataquail/chernabog's release workflow (scripts/homebrew-formula.ts).
 # Edits here are overwritten by the next release.
 class Chernabog < Formula
-  desc "Spends spare coding-agent capacity on queued work across your repos"
+  desc "Runs coding agents on schedules you set, across your repos"
   homepage "https://github.com/dataquail/chernabog"
   license "MIT"
 
