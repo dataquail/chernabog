@@ -1,17 +1,19 @@
-// The runs in flight and the ones that ended lately, each linking to its
-// detail. The keyboard's selection runs through both, active ones first.
+// The runs in flight (the page's home tab) and the ones that ended lately
+// (their own tab), each linking to its detail. The keyboard's selection runs
+// through the tab's list.
 
 import * as Option from "effect/Option";
 
 import type { DaemonStatus } from "#daemon/protocol";
 
+import { runHref } from "./routes.ts";
 import { RunActions } from "./run-actions.tsx";
 import { either, present } from "./show.tsx";
 import { span, When } from "./time.tsx";
 
 type Run = DaemonStatus["active"][number] | DaemonStatus["recent"][number];
 
-export const runHref = (runId: string) => `#/runs/${encodeURIComponent(runId)}`;
+export { runHref } from "./routes.ts";
 
 const Item = ({ run }: { readonly run: Run }) => (
   <>
@@ -38,7 +40,7 @@ const doing = (run: DaemonStatus["active"][number]) => {
 const opens = (status: DaemonStatus, repo: string) =>
   status.repos.some((each) => each.name === repo && each.opensSessions === true);
 
-export const Runs = ({
+export const ActiveRuns = ({
   now,
   selected,
   status,
@@ -50,8 +52,7 @@ export const Runs = ({
   const isSelected = (index: number) => Option.contains(selected, index);
 
   return (
-    <section aria-label="Runs">
-      <h2>Active runs</h2>
+    <section aria-label="Active runs">
       {either(
         status.active.length === 0,
         () => (
@@ -92,7 +93,23 @@ export const Runs = ({
           </div>
         ),
       )}
-      <h2>Recent runs</h2>
+    </section>
+  );
+};
+
+export const RecentRuns = ({
+  now,
+  selected,
+  status,
+}: {
+  readonly now: number;
+  readonly selected: Option.Option<number>;
+  readonly status: DaemonStatus;
+}) => {
+  const isSelected = (index: number) => Option.contains(selected, index);
+
+  return (
+    <section aria-label="Recent runs">
       {either(
         status.recent.length === 0,
         () => (
@@ -114,7 +131,7 @@ export const Runs = ({
               </thead>
               <tbody>
                 {status.recent.map((run, index) => (
-                  <tr key={run.id} aria-selected={isSelected(status.active.length + index)}>
+                  <tr key={run.id} aria-selected={isSelected(index)}>
                     <td>{run.repo}</td>
                     <td>{run.flow}</td>
                     <td>{persona(run)}</td>

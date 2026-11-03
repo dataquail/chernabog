@@ -1,9 +1,11 @@
-// What a key does on the overview: `j` and `k` move through the runs, active
-// ones first, `enter` opens the selected one, and `/` focuses the filter.
+// What a key does on the overview: `j` and `k` move through the runs the tab
+// lists, `enter` opens the selected one, and `/` focuses the filter.
 
 import * as Option from "effect/Option";
 
 import type { DaemonStatus } from "#daemon/protocol";
+
+import type { Tab } from "./routes.ts";
 
 export type KeyAction =
   | { readonly kind: "select"; readonly index: number }
@@ -13,9 +15,18 @@ export type KeyAction =
 
 const NONE: KeyAction = { kind: "none" };
 
-// The runs as the overview lists them: in flight, then recent.
-export const runOrder = (status: DaemonStatus): ReadonlyArray<string> =>
-  [...status.active, ...status.recent].map((run) => run.id);
+// The runs as the tab lists them; the tabs of flows and repos list none.
+export const runOrder = (status: DaemonStatus, tab: Tab): ReadonlyArray<string> => {
+  switch (tab) {
+    case "active":
+      return status.active.map((run) => run.id);
+    case "recent":
+      return status.recent.map((run) => run.id);
+    case "flows":
+    case "repos":
+      return [];
+  }
+};
 
 // Where a move starts with nothing selected: just above the first run for `j`,
 // just below the last for `k`.

@@ -1,5 +1,5 @@
-// The page: the overview, or a run's detail when the URL's hash names one
-// (#/runs/<id>), and the keyboard that moves between them.
+// The page: the overview's tab, a run's detail or one step of it, as the
+// URL's hash names (routes.ts), and the keyboard that moves between them.
 
 import * as Option from "effect/Option";
 import { useEffect, useState } from "react";
@@ -7,15 +7,18 @@ import { useEffect, useState } from "react";
 import { everything, type Filter, filtered } from "./filter.ts";
 import { onKey, runOrder } from "./keys.ts";
 import { FILTER_ID, Overview } from "./overview.tsx";
+import { type Route, routeOf, runHref, type Tab } from "./routes.ts";
 import { RunDetail } from "./run-detail.tsx";
-import { runHref } from "./runs.tsx";
 import { useDaemon, useNow, useSettings } from "./use-daemon.ts";
 
-const RUN_ROUTE = /^#\/runs\/(.+)$/;
+// The tab the route shows, if it shows one.
+const tabOf = (route: Route): Option.Option<Tab> => {
+  if (route.kind === "tab") {
+    return Option.some(route.tab);
+  }
 
-// The run the hash names, if it names one.
-const routedRun = (hash: string) =>
-  Option.map(Option.fromNullishOr(RUN_ROUTE.exec(hash)?.[1]), decodeURIComponent);
+  return Option.none();
+};
 
 const useHash = () => {
   const [hash, setHash] = useState(location.hash);
@@ -49,16 +52,24 @@ export const App = () => {
   const [filter, setFilter] = useState<Filter>(everything);
   const [selected, setSelected] = useState<Option.Option<number>>(Option.none());
 
-  const runs = Option.match(live.status, {
+  const route = routeOf(hash);
+  const tab = tabOf(route);
+
+  const runs = Option.match(Option.all([live.status, tab]), {
     onNone: () => [],
-    onSome: (status) => runOrder(filtered(status, filter)),
+    onSome: ([status, shown]) => runOrder(filtered(status, filter), shown),
   });
 
-  const route = routedRun(hash);
+  // A selection is a place in one tab's list.
+  const tabName = Option.getOrElse(tab, () => "");
+
+  useEffect(() => {
+    setSelected(Option.none());
+  }, [tabName]);
 
   useEffect(() => {
     const pressed = (event: KeyboardEvent) => {
-      if (Option.isSome(route) || event.metaKey || event.ctrlKey || event.altKey) {
+      if (Option.isNone(tab) || event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
 
@@ -96,21 +107,23 @@ export const App = () => {
     };
   });
 
-  return Option.match(route, {
-    onSome: (runId) => <RunDetail runId={runId} now={now} status={live.status} />,
-    onNone: () => (
-      <Overview
-        act={settings.act}
-        notice={settings.notice}
-        live={live}
-        filter={filter}
-        selected={selected}
-        now={now}
-        onFilter={(next) => {
-          setFilter(next);
-          setSelected(Option.none());
-        }}
-      />
-    ),
-  });
+  if (route.kind === "run") {
+    return <RunDetail runId={route.runId} now={now} status={live.status} />;
+  }
+
+  return (
+    <Overview
+      act={settings.act}
+      notice={settings.notice}
+      live={live}
+      filter={filter}
+      selected={selected}
+      now={now}
+      tab={route.tab}
+      onFilter={(next) => {
+        setFilter(next);
+        setSelected(Option.none());
+      }}
+    />
+  );
 };

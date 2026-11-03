@@ -10,6 +10,7 @@ import { everything, type Filter, filtered, personaChoices, repoChoices } from "
 import { onKey, runOrder } from "./keys.ts";
 import { type Connection, initial, type Live } from "./live.ts";
 import { Overview } from "./overview.tsx";
+import type { Tab } from "./routes.ts";
 
 // The schemas of what /status carries, from the protocol, so the canned
 // statuses are built as the daemon builds them.
@@ -214,6 +215,7 @@ const shown = (status: DaemonStatus, connection: Connection = { kind: "live" }):
 
 const render = (
   live: Live,
+  tab: Tab = "active",
   filter: Filter = everything,
   selected: Option.Option<number> = Option.none(),
 ) =>
@@ -225,27 +227,48 @@ const render = (
       filter={filter}
       selected={selected}
       now={NOW}
+      tab={tab}
       onFilter={() => {}}
     />,
   );
 
+// `troubled`'s one skip, on a flow the status has.
+const skipped: DaemonStatus = {
+  ...troubled,
+  repos: [repo("api", { flows: [flow({})] })],
+};
+
 describe("the overview", () => {
   test("of a daemon with nothing enrolled says so, and has no attention panel", () => {
-    const page = render(shown(empty));
-
-    expect(page).toContain("<dt>pid</dt><dd>4242</dd>");
-    expect(page).toContain("No repos are enrolled");
-    expect(page).toContain("No runs in flight");
-    expect(page).not.toContain('aria-label="Attention"');
+    expect(render(shown(empty))).toContain("<dt>pid</dt><dd>4242</dd>");
+    expect(render(shown(empty))).toContain("No runs in flight");
+    expect(render(shown(empty), "repos")).toContain("No repos are enrolled");
+    expect(render(shown(empty), "flows")).toContain("No flows.");
+    expect(render(shown(empty))).not.toContain('aria-label="Attention"');
   });
 
-  test("shows each kind of attention, once, in one panel", () => {
+  test("shows the tabs, the one shown marked, each counting what it lists", () => {
+    const page = render(shown(busy), "recent");
+
+    expect(page).toMatch(/href="#\/">Active <span class="count">2<\/span>/);
+    expect(page).toMatch(
+      /href="#\/recent" aria-current="page">Recent <span class="count">2<\/span>/,
+    );
+    // Only the flows that are on.
+    expect(page).toMatch(/href="#\/flows">Flows <span class="count">2<\/span>/);
+    expect(page).toMatch(/href="#\/repos">Repos <span class="count">2<\/span>/);
+  });
+
+  test("folds what needs a person into one line that counts each kind, and leaves skips out", () => {
     const page = render(shown(troubled));
 
-    expect(page).toContain('aria-label="Attention"');
+    expect(page).toContain('<details class="attention" aria-label="Attention">');
+    expect(page).toContain("5 need attention");
+    expect(page).toContain(
+      "1 held, 1 marker, 1 no longer valid?, 1 lease at risk, 1 notifications",
+    );
 
     for (const [kind, says] of [
-      ["skip", "no free slot"],
       ["hold", "CI is red"],
       ["marker", "no flow releases label"],
       ["validity", "the issue was closed"],
@@ -259,6 +282,13 @@ describe("the overview", () => {
     // The lease that renewed and carol's working poll need no one.
     expect(page.match(/data-kind="lease"/g)).toHaveLength(1);
     expect(page.match(/data-kind="notification"/g)).toHaveLength(1);
+    expect(page).not.toContain("no free slot");
+  });
+
+  test("shows a flow's last skip beside it, and none on the runs' tabs", () => {
+    expect(render(shown(skipped), "flows")).toContain("no free slot");
+    expect(render(shown(skipped), "flows")).toContain("(issue-7)");
+    expect(render(shown(skipped))).not.toContain("no free slot");
   });
 
   test("shows a draining daemon, busy, in the header", () => {
@@ -275,13 +305,24 @@ describe("the overview", () => {
     expect(page).toContain("reload pending");
   });
 
-  test("shows each repo with its status, launcher, personas and flows", () => {
-    const page = render(shown(busy));
+  test("shows each repo with its status, launcher and personas, and how many of its flows are on", () => {
+    const page = render(shown(busy), "repos");
 
     expect(page).toContain("acme/api");
     expect(page).toContain("orca (machine config)");
     expect(page).toContain("bob");
     expect(page).toContain("paused");
+    expect(page).toContain("1 of 2 flows on");
+    expect(page).not.toContain("*/10 * * * *");
+  });
+
+  test("shows every flow in one table, by repo and persona, the ones that are off folded away", () => {
+    const page = render(shown(busy), "flows");
+
+    expect(page).toContain("1 flow is off");
+    expect(page.indexOf("turned off on this machine")).toBeGreaterThan(page.indexOf("<details"));
+    expect(page).toMatch(/<td>api<\/td><td>@bob<\/td>/);
+    expect(page).toMatch(/<td>web<\/td><td>@carol<\/td>/);
 
     for (const says of [
       "*/5 * * * *",
@@ -300,22 +341,29 @@ describe("the overview", () => {
     }
   });
 
-  test("shows active runs with how long they've run, and recent ones with how they ended, each linking to its detail", () => {
+  test("shows active runs with how long they've run, each linking to its detail, and no ended ones", () => {
     const page = render(shown(busy));
 
     expect(page).toContain('href="#/runs/run-api"');
-    expect(page).toContain('href="#/runs/run-done"');
     expect(page).toContain("5m 00s");
     expect(page).toContain("1h 30m");
     expect(page).toContain("Fix the parser");
     expect(page).toContain("implement");
+    expect(page).not.toContain('href="#/runs/run-done"');
+  });
+
+  test("shows recent runs on their own tab, with how they ended, each linking to its detail", () => {
+    const page = render(shown(busy), "recent");
+
+    expect(page).toContain('href="#/runs/run-done"');
     expect(page).toContain("Opened #80");
     expect(page).toContain("the tests failed");
     expect(page).toContain('dateTime="2026-10-31T11:40:00.000Z"');
+    expect(page).not.toContain('href="#/runs/run-api"');
   });
 
-  test("marks the run the keyboard selected", () => {
-    const page = render(shown(busy), everything, Option.some(2));
+  test("marks the run the keyboard selected, in the tab's own list", () => {
+    const page = render(shown(busy), "recent", everything, Option.some(0));
 
     expect(page.match(/aria-selected="true"/g)).toHaveLength(1);
     expect(page).toMatch(/aria-selected="true"[^>]*>(?:(?!<\/tr>).)*run-done/);
@@ -325,7 +373,7 @@ describe("the overview", () => {
     const page = render(shown(busy, { kind: "reconnecting", reason: "the stream dropped" }));
 
     expect(page).toContain("Reconnecting");
-    expect(page).toContain("acme/api");
+    expect(page).toContain("run-api");
   });
 
   test("says when the dashboard was stopped", () => {
@@ -381,10 +429,13 @@ describe("filtering by repo and persona", () => {
 });
 
 describe("the keyboard", () => {
-  const runs = runOrder(busy);
+  const runs = [...runOrder(busy, "active"), ...runOrder(busy, "recent")];
 
-  test("orders active runs before recent ones", () => {
-    expect(runs).toEqual(["run-api", "run-web", "run-done", "run-failed"]);
+  test("moves through the runs the tab lists, and none on the tabs of flows and repos", () => {
+    expect(runOrder(busy, "active")).toEqual(["run-api", "run-web"]);
+    expect(runOrder(busy, "recent")).toEqual(["run-done", "run-failed"]);
+    expect(runOrder(busy, "flows")).toEqual([]);
+    expect(runOrder(busy, "repos")).toEqual([]);
   });
 
   test("j and k move through the runs, and stop at either end", () => {

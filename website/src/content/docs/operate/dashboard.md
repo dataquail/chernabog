@@ -32,7 +32,13 @@ The dashboard's URL carries a token, `?token=…`. Opening it sets a cookie (`Ht
 
 ## What it does
 
-- **The overview.** The daemon, its pid and since when, and a pending reload or drain; what needs attention (skipped ticks, holds, markers left behind, failing validity checks, leases at risk, notification problems); the runs in flight and recent ones; and each repo with its flows. Filter by repo and persona. `j` / `k` move through the runs, `enter` opens one, `/` focuses the filter.
+- **The overview, in tabs.** The header shows the daemon, its pid and since when, and a pending reload or drain. Under it, one folded line counts what needs a person (holds, markers left behind, failing validity checks, leases at risk, notification problems); open it for the list. It's absent when nothing does. Then the tabs, each its own address:
+  - **Active** (`#/`, the home page): the runs in flight.
+  - **Recent** (`#/recent`): the runs that ended lately, and how.
+  - **Flows** (`#/flows`): every flow in one table, with the repo and persona it runs in and as, its schedule, when it ticks next and last, what its work waits on, and why its last tick started nothing. Flows that are off fold away below.
+  - **Repos** (`#/repos`): each repo's own settings: whether it's paused, its launcher, the accounts its personas spend, and Run now.
+
+  Filter any tab by repo and persona. On Active and Recent, `j` / `k` move through the runs, `enter` opens one, and `/` focuses the filter.
 - **A run's page**, `#/runs/<id>` (a unique prefix of the id will do, as with `chernabog logs`): the run, its pull request, subjects and summary, what it's parked on, the steps it went through, and its log as it grows, which stays at the bottom unless you scroll up and keeps the last 10,000 lines. The page updates as the run enters a step, parks or finishes.
 - **Run now.** On a repo, a flow that's on, with a persona picker when several run it and an item (required for a [manual flow](/chernabog/flows/flows/#manual-flows)), as `chernabog run` starts it.
 - **Cancel.** A run in flight, once you confirm in the page, optionally closing its agent sessions, as [`chernabog cancel`](/chernabog/work/commands/) does.

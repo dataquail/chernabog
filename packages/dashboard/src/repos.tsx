@@ -1,164 +1,22 @@
-// Each enrolled repo: its status, whether it's paused, where its sessions run
-// and the personas it runs as; under it, its flows. Each carries the controls
-// that change it (controls.ts), for the persona it belongs to; what one asks
-// for goes to `act`.
+// Each enrolled repo's own settings: its status, whether it's paused, where
+// its sessions run, the accounts its personas spend, and starting one of its
+// flows now. Its flows are the flows tab's (flows.tsx). Each carries the
+// controls that change it (controls.ts), for the persona it belongs to; what
+// one asks for goes to `act`.
 
 import * as Option from "effect/Option";
 
 import type { PersonaStatus, RepoStatus } from "#daemon/protocol";
 
-import {
-  type AccountControl,
-  accountPickers,
-  flowSwitch,
-  pauseControl,
-  type ScheduleControl,
-  scheduleField,
-} from "./controls.ts";
+import { type AccountControl, accountPickers, pauseControl } from "./controls.ts";
+import { type Act, Persona } from "./flows.tsx";
 import { RunNow } from "./run-actions.tsx";
-import type { Attempt, Offered } from "./settings.ts";
+import type { Offered } from "./settings.ts";
 import { either, present, shownIf } from "./show.tsx";
-import { When } from "./time.tsx";
 
-type FlowStatus = RepoStatus["flows"][number];
+export type { Act } from "./flows.tsx";
 
 const optional = Option.fromUndefinedOr;
-
-// Where a control's attempt goes.
-export type Act = (attempt: Attempt) => void;
-
-const Persona = ({ persona }: { readonly persona: Option.Option<string> }) =>
-  Option.match(persona, {
-    onNone: () => <span className="muted">default</span>,
-    onSome: (login) => <>@{login}</>,
-  });
-
-const Time = ({ iso, now }: { readonly iso: Option.Option<string>; readonly now: number }) =>
-  Option.match(iso, {
-    onNone: () => <span className="muted">—</span>,
-    onSome: (at) => <When iso={at} now={now} />,
-  });
-
-// A line of what a flow says, or nothing when it says none.
-const Line = ({ label, text }: { readonly label: string; readonly text: Option.Option<string> }) =>
-  present(text, (says) => (
-    <div>
-      <span className="muted">{label}:</span> {says}
-    </div>
-  ));
-
-const listed = (items: Option.Option<ReadonlyArray<string>>) =>
-  Option.liftPredicate(Option.getOrElse(items, () => []).join(", "), (joined) => joined !== "");
-
-// The persona's own schedule: enter sends what the field holds.
-const ScheduleField = ({
-  act,
-  control,
-}: {
-  readonly act: Act;
-  readonly control: ScheduleControl;
-}) => (
-  <div className="schedule">
-    <input
-      key={Option.getOrElse(control.own, () => "")}
-      type="text"
-      className="cron"
-      aria-label={control.label}
-      defaultValue={Option.getOrElse(control.own, () => "")}
-      placeholder={Option.getOrElse(control.team, () => "")}
-      spellCheck={false}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          act(control.send(event.currentTarget.value));
-        }
-      }}
-    />
-    <div className="muted">
-      team <code>{Option.getOrElse(control.team, () => "—")}</code>, own{" "}
-      <code>{Option.getOrElse(control.own, () => "—")}</code>
-    </div>
-  </div>
-);
-
-// The schedule the flow runs on, and the field for the persona's own.
-const Schedule = ({
-  act,
-  flow,
-  repo,
-}: {
-  readonly act: Act;
-  readonly flow: FlowStatus;
-  readonly repo: RepoStatus;
-}) => (
-  <>
-    <code>{flow.schedule}</code>
-    {present(scheduleField(repo, flow), (control) => (
-      <ScheduleField act={act} control={control} />
-    ))}
-  </>
-);
-
-const offClass = (enabled: boolean) => {
-  if (enabled) {
-    return "";
-  }
-
-  return "off";
-};
-
-const FlowRow = ({
-  act,
-  flow,
-  now,
-  repo,
-}: {
-  readonly act: Act;
-  readonly flow: FlowStatus;
-  readonly now: number;
-  readonly repo: RepoStatus;
-}) => {
-  const control = flowSwitch(repo, flow);
-
-  return (
-    <tr className={offClass(flow.enabled)}>
-      <td>
-        <input
-          type="checkbox"
-          role="switch"
-          aria-label={control.label}
-          checked={control.on}
-          onChange={(event) => {
-            act(control.send(event.currentTarget.checked));
-          }}
-        />{" "}
-        <strong>{flow.name}</strong> <Persona persona={optional(flow.persona)} />
-        {present(optional(flow.source), (source) => (
-          <div className="muted">{source}</div>
-        ))}
-      </td>
-      <td>
-        <Schedule act={act} flow={flow} repo={repo} />
-      </td>
-      <td>
-        <Time iso={flow.next} now={now} />
-      </td>
-      <td>
-        <Time iso={flow.lastTick} now={now} />
-        {present(optional(flow.lastCause), (cause) => (
-          <div className="muted">{cause}</div>
-        ))}
-      </td>
-      <td>
-        <Line label="off" text={optional(flow.offReason)} />
-        <Line label="pending" text={optional(flow.pending)} />
-        <Line label="queued" text={listed(Option.some(flow.queued))} />
-        <Line label="elsewhere" text={listed(optional(flow.assignedElsewhere))} />
-        <Line label="waiting" text={listed(optional(flow.waiting))} />
-      </td>
-    </tr>
-  );
-};
 
 // A picker of the accounts machine config offers, the default first.
 const AccountPicker = ({
@@ -236,46 +94,6 @@ const Personas = ({
   );
 };
 
-const Flows = ({
-  act,
-  now,
-  repo,
-}: {
-  readonly act: Act;
-  readonly now: number;
-  readonly repo: RepoStatus;
-}) =>
-  either(
-    repo.flows.length === 0,
-    () => <p className="muted">No flows.</p>,
-    () => (
-      <div className="scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Flow</th>
-              <th>Schedule</th>
-              <th>Next</th>
-              <th>Last tick</th>
-              <th>Work</th>
-            </tr>
-          </thead>
-          <tbody>
-            {repo.flows.map((flow) => (
-              <FlowRow
-                key={`${flow.name}@${Option.getOrElse(optional(flow.persona), () => "")}`}
-                act={act}
-                flow={flow}
-                now={now}
-                repo={repo}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-    ),
-  );
-
 const PauseButton = ({ act, repo }: { readonly act: Act; readonly repo: RepoStatus }) => {
   const control = pauseControl(repo);
 
@@ -294,12 +112,10 @@ const PauseButton = ({ act, repo }: { readonly act: Act; readonly repo: RepoStat
 
 const Repo = ({
   act,
-  now,
   offered,
   repo,
 }: {
   readonly act: Act;
-  readonly now: number;
   readonly offered: Offered;
   readonly repo: RepoStatus;
 }) => (
@@ -326,7 +142,10 @@ const Repo = ({
         <Personas act={act} offered={offered} repo={repo} />
       </dd>
     </dl>
-    <Flows act={act} now={now} repo={repo} />
+    <p className="muted">
+      {repo.flows.filter((flow) => flow.enabled).length} of {repo.flows.length} flows on;{" "}
+      <a href="#/flows">see them</a>
+    </p>
     <RunNow repo={repo} />
   </article>
 );
@@ -334,20 +153,17 @@ const Repo = ({
 export const Repos = ({
   act,
   enrolled,
-  now,
   offered,
   repos,
 }: {
   readonly act: Act;
   // Whether any repo is enrolled, before the filter.
   readonly enrolled: boolean;
-  readonly now: number;
   // What machine config offers a persona's account pick.
   readonly offered: Offered;
   readonly repos: ReadonlyArray<RepoStatus>;
 }) => (
   <section aria-label="Repos">
-    <h2>Repos</h2>
     {either(
       repos.length === 0,
       () => (
@@ -359,10 +175,7 @@ export const Repos = ({
           )}
         </p>
       ),
-      () =>
-        repos.map((repo) => (
-          <Repo key={repo.name} act={act} offered={offered} repo={repo} now={now} />
-        )),
+      () => repos.map((repo) => <Repo key={repo.name} act={act} offered={offered} repo={repo} />),
     )}
   </section>
 );
