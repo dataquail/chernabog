@@ -6,6 +6,7 @@
 import * as Effect from "effect/Effect";
 import * as Sse from "effect/encoding/Sse";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import { FeedFailed } from "./feed.ts";
@@ -72,13 +73,26 @@ const heardOf = (frame: Sse.Event): LogHeard => {
 const failed = (reason: FeedFailed["reason"], message: string) =>
   new FeedFailed({ reason, message });
 
-// `origin` is where the page came from (`location.origin` in a browser).
+// Where a run's log is, or one step's of it.
+export const logUrl = (origin: string, runId: string, step: Option.Option<string>) => {
+  const url = new URL(`/api/runs/${encodeURIComponent(runId)}/log`, origin);
+
+  for (const name of Option.toArray(step)) {
+    url.searchParams.set("step", name);
+  }
+
+  return url;
+};
+
+// `origin` is where the page came from (`location.origin` in a browser);
+// `step`, the step whose lines alone it follows, for a daemon that keeps them.
 export const runLogFeed = (
   origin: string,
   runId: string,
+  step: Option.Option<string> = Option.none(),
 ): Stream.Stream<LogHeard, FeedFailed, HttpClient.HttpClient> =>
   Stream.unwrap(
-    HttpClient.get(new URL(`/api/runs/${encodeURIComponent(runId)}/log`, origin)).pipe(
+    HttpClient.get(logUrl(origin, runId, step)).pipe(
       Effect.mapError((error) => failed("unreachable", error.message)),
       Effect.filterOrFail(
         (response) => response.status >= 200 && response.status < 300,
@@ -98,3 +112,21 @@ export const runLogFeed = (
       ),
     ),
   );
+
+// A line the run's log starts a step with, its time before it or not.
+const STEP_LINE = /^(?:\S+ )?step: (.+)$/;
+
+// The lines of one step of a run on one line, from the whole log: from the
+// line that starts it to the line that starts the next. For a log the daemon
+// kept no step of each line in, which only a run with no lanes can be split by.
+export const linesOfStep = (lines: ReadonlyArray<string>, step: string): ReadonlyArray<string> => {
+  let current = Option.none<string>();
+
+  return lines.filter((line) => {
+    for (const started of Option.toArray(Option.fromNullishOr(STEP_LINE.exec(line)?.[1]))) {
+      current = Option.some(started);
+    }
+
+    return Option.contains(current, step);
+  });
+};

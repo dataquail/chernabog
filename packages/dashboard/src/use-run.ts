@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -67,6 +68,7 @@ export const followRunLog = (
   origin: string,
   runId: string,
   onHeard: (heard: LogHeard) => void,
+  step: Option.Option<string> = Option.none(),
 ): Effect.Effect<void, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const ended = yield* Ref.make(false);
@@ -79,7 +81,7 @@ export const followRunLog = (
         }),
       );
 
-    const connection = Stream.runForEach(runLogFeed(origin, runId), told).pipe(
+    const connection = Stream.runForEach(runLogFeed(origin, runId, step), told).pipe(
       Effect.ignore,
       Effect.andThen(Ref.get(ended)),
       Effect.tap((done) => Effect.when(told({ kind: "dropped" }), Effect.succeed(!done))),
@@ -113,19 +115,29 @@ export const useRunDetail = (origin: string, asked: string): Detail => {
   return detail;
 };
 
-// The run's log, as the page holds it.
-export const useRunLog = (origin: string, runId: string): LogState => {
+// The run's log, or the one step's of it the daemon keeps, as the page holds it.
+export const useRunLog = (
+  origin: string,
+  runId: string,
+  step: Option.Option<string> = Option.none(),
+): LogState => {
   const [log, setLog] = useState<LogState>(initialLog);
+  const stepName = Option.getOrElse(step, () => "");
 
   useEffect(() => {
     setLog(initialLog);
 
     return runUntilGone(
-      followRunLog(origin, runId, (heard) => {
-        setLog((held) => hearLog(held, heard));
-      }),
+      followRunLog(
+        origin,
+        runId,
+        (heard) => {
+          setLog((held) => hearLog(held, heard));
+        },
+        Option.liftPredicate(stepName, (name) => name !== ""),
+      ),
     );
-  }, [origin, runId]);
+  }, [origin, runId, stepName]);
 
   return log;
 };
