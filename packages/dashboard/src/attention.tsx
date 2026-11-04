@@ -1,15 +1,17 @@
-// What needs a person, in one panel at the top: skips, holds, markers whose
-// release is pending or failing, runs whose stillValid check keeps failing,
-// leases at risk, and notification polls that fail. Absent when all is well.
+// What needs a person, folded into one line at the top that opens to the
+// list: holds, markers whose release is pending or failing, runs whose
+// stillValid check keeps failing, leases at risk, and notification polls
+// that fail. Absent when all is well. Why a tick started nothing is no one's
+// to act on, so skips show beside their flows instead (flows.tsx).
 
 import * as Option from "effect/Option";
 
 import type { DaemonStatus } from "#daemon/protocol";
 
-import { present } from "./show.tsx";
+import { either, present } from "./show.tsx";
 import { When } from "./time.tsx";
 
-type Kind = "skip" | "hold" | "marker" | "validity" | "lease" | "notification";
+type Kind = "hold" | "marker" | "validity" | "lease" | "notification";
 
 type Concern = {
   readonly kind: Kind;
@@ -20,13 +22,14 @@ type Concern = {
 };
 
 const LABEL = {
-  skip: "skipped",
   hold: "held",
   marker: "marker",
   validity: "no longer valid?",
   lease: "lease at risk",
   notification: "notifications",
 } satisfies { readonly [K in Kind]: string };
+
+const KINDS: ReadonlyArray<Kind> = ["hold", "marker", "validity", "lease", "notification"];
 
 const as = (persona: Option.Option<string>) =>
   Option.match(persona, { onNone: () => "", onSome: (login) => `@${login}` });
@@ -45,16 +48,6 @@ const markerWaits = (status: string) => {
 
 // Everything in the status that needs a person, in the order the panel lists it.
 export const concerns = (status: DaemonStatus): ReadonlyArray<Concern> => [
-  ...status.skips.map((skip, index): Concern => ({
-    kind: "skip",
-    key: `skip-${index}`,
-    what: `${where(skip.repo, skip.flow, skip.persona)}${Option.match(skip.itemKey, {
-      onNone: () => "",
-      onSome: (item) => ` ${item}`,
-    })}`,
-    why: skip.reason,
-    at: Option.some(skip.at),
-  })),
   ...(status.holds ?? []).map((hold, index): Concern => ({
     kind: "hold",
     key: `hold-${index}`,
@@ -103,6 +96,19 @@ export const concerns = (status: DaemonStatus): ReadonlyArray<Concern> => [
   ),
 ];
 
+// How many of each kind, as the folded line says it: "2 held, 1 marker".
+const tally = (listed: ReadonlyArray<Concern>) =>
+  KINDS.flatMap((kind) => {
+    const count = listed.filter((concern) => concern.kind === kind).length;
+
+    return Option.toArray(
+      Option.map(
+        Option.liftPredicate(count, (found) => found > 0),
+        (found) => `${found} ${LABEL[kind]}`,
+      ),
+    );
+  }).join(", ");
+
 export const Attention = ({
   now,
   status,
@@ -117,8 +123,19 @@ export const Attention = ({
   }
 
   return (
-    <section className="attention" aria-label="Attention">
-      <h2>Attention</h2>
+    <details className="attention" aria-label="Attention">
+      <summary>
+        <strong>
+          {listed.length}{" "}
+          {either(
+            listed.length === 1,
+            () => "needs",
+            () => "need",
+          )}{" "}
+          attention
+        </strong>{" "}
+        <span className="muted">{tally(listed)}</span>
+      </summary>
       <ul>
         {listed.map((concern) => (
           <li key={concern.key} data-kind={concern.kind}>
@@ -133,6 +150,6 @@ export const Attention = ({
           </li>
         ))}
       </ul>
-    </section>
+    </details>
   );
 };

@@ -17,6 +17,7 @@ import { type DaemonStatus, Refusal, type RepoStatus } from "#daemon/protocol";
 
 import { type Control, controlsOf } from "./controls.ts";
 import { everything, filtered } from "./filter.ts";
+import { Flows } from "./flows.tsx";
 import { initial } from "./live.ts";
 import { Overview } from "./overview.tsx";
 import { Repos } from "./repos.tsx";
@@ -115,8 +116,14 @@ const control = <K extends Control["kind"]>(
 
 const labels = (repos: ReadonlyArray<RepoStatus>) => controlsIn(repos).map((found) => found.label);
 
+// The repos' own controls and their flows', as the two tabs render them.
 const markup = (repos: ReadonlyArray<RepoStatus>) =>
-  renderToStaticMarkup(<Repos act={() => {}} enrolled now={NOW} offered={offered} repos={repos} />);
+  renderToStaticMarkup(
+    <>
+      <Repos act={() => {}} enrolled offered={offered} repos={repos} />
+      <Flows act={() => {}} now={NOW} status={{ ...status, repos, skips: [] }} />
+    </>,
+  );
 
 // The command a control's attempt sends and the setting it carries, or why
 // it sends nothing.
@@ -465,6 +472,7 @@ describe("the page says", () => {
         filter={everything}
         selected={Option.none()}
         now={NOW}
+        tab="flows"
         onFilter={() => {}}
       />,
     );

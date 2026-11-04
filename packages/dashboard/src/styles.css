@@ -154,25 +154,73 @@ h3 {
 }
 
 .attention {
-  margin-top: 16px;
-  padding: 8px 12px;
+  margin: 12px 0 0;
   border: 1px solid var(--warn-line);
   background: var(--warn-bg);
   border-radius: 6px;
+  padding: 6px 12px;
 }
 
-.attention h2 {
-  margin-top: 0;
+.attention summary {
+  cursor: pointer;
 }
 
 .attention ul {
-  margin: 0;
-  padding-left: 0;
-  list-style: none;
+  margin: 8px 0 4px;
+  padding-left: 18px;
 }
 
 .attention li {
-  padding: 2px 0;
+  margin: 2px 0;
+}
+
+/* The overview's tabs, the one the hash names marked. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs a {
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted);
+  text-decoration: none;
+  margin-bottom: -1px;
+}
+
+.tabs a:hover {
+  color: var(--text);
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+  font-weight: 600;
+}
+
+.tabs .count {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--line);
+  font-size: 0.8em;
+  text-align: center;
+  font-weight: normal;
+}
+
+.off-flows {
+  margin-top: 16px;
+}
+
+.off-flows summary {
+  cursor: pointer;
+  color: var(--muted);
 }
 
 .tag,
@@ -201,6 +249,7 @@ h3 {
 }
 
 .badge.ready,
+.badge.ok,
 .badge.done {
   color: var(--good);
   border-color: currentColor;
@@ -350,4 +399,8 @@ button.danger {
 .badge.parked {
   color: var(--warn-line);
   border-color: currentColor;
+}
+
+.badge {
+  white-space: nowrap;
 }

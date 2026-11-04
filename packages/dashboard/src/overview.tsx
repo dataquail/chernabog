@@ -1,5 +1,6 @@
-// The dashboard's main page: the daemon in the header, what needs a person,
-// the filter, the runs and the repos, as the TUI's live view shows them.
+// The dashboard's main page: the daemon in the header, what needs a person
+// folded into one line, the tabs (the runs in flight, the ones that ended,
+// the flows, the repos), the filter, and the tab the hash names.
 
 import * as Option from "effect/Option";
 
@@ -8,10 +9,13 @@ import type { DaemonStatus } from "#daemon/protocol";
 import { Attention } from "./attention.tsx";
 import { DaemonStatusView } from "./daemon-status.tsx";
 import { type Filter, filtered, personaChoices, repoChoices } from "./filter.ts";
+import { Flows } from "./flows.tsx";
 import type { Connection, Live } from "./live.ts";
 import { type Act, Repos } from "./repos.tsx";
-import { Runs } from "./runs.tsx";
+import { type Tab, tabHref, TABS } from "./routes.ts";
+import { ActiveRuns, RecentRuns } from "./runs.tsx";
 import { type Notice, offeredBy } from "./settings.ts";
+import { shownIf } from "./show.tsx";
 
 // The id of the filter `/` focuses.
 export const FILTER_ID = "filter-repo";
@@ -70,14 +74,55 @@ const SettingNotice = ({ notice }: { readonly notice: Option.Option<Notice> }) =
 
 const choice = (value: string) => Option.liftPredicate(value, (chosen) => chosen !== "");
 
+const TAB_NAME = {
+  active: "Active",
+  recent: "Recent",
+  flows: "Flows",
+  repos: "Repos",
+} satisfies { readonly [T in Tab]: string };
+
+// What a tab counts beside its name, as the filter leaves the status.
+const counted = (tab: Tab, status: DaemonStatus) => {
+  switch (tab) {
+    case "active":
+      return status.active.length;
+    case "recent":
+      return status.recent.length;
+    case "flows":
+      return status.repos.flatMap((repo) => repo.flows.filter((flow) => flow.enabled)).length;
+    case "repos":
+      return status.repos.length;
+  }
+};
+
+const Tabs = ({ shown, tab }: { readonly shown: DaemonStatus; readonly tab: Tab }) => (
+  <nav className="tabs" aria-label="Tabs">
+    {TABS.map((each) => (
+      <a
+        key={each}
+        href={tabHref(each)}
+        aria-current={Option.getOrUndefined(
+          Option.liftPredicate("page" as const, () => each === tab),
+        )}
+      >
+        {TAB_NAME[each]} <span className="count">{counted(each, shown)}</span>
+      </a>
+    ))}
+  </nav>
+);
+
+const listsRuns = (tab: Tab) => tab === "active" || tab === "recent";
+
 const Filters = ({
   filter,
   onFilter,
   status,
+  tab,
 }: {
   readonly filter: Filter;
   readonly onFilter: (filter: Filter) => void;
   readonly status: DaemonStatus;
+  readonly tab: Tab;
 }) => (
   <form
     className="filters"
@@ -119,11 +164,48 @@ const Filters = ({
         ))}
       </select>
     </label>
-    <span className="muted keys">
-      <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>enter</kbd> open · <kbd>/</kbd> filter
-    </span>
+    {shownIf(listsRuns(tab), () => (
+      <span className="muted keys">
+        <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>enter</kbd> open · <kbd>/</kbd> filter
+      </span>
+    ))}
   </form>
 );
+
+const TabBody = ({
+  act,
+  now,
+  selected,
+  shown,
+  status,
+  tab,
+}: {
+  readonly act: Act;
+  readonly now: number;
+  readonly selected: Option.Option<number>;
+  // The status as the filter leaves it, and as the daemon sent it.
+  readonly shown: DaemonStatus;
+  readonly status: DaemonStatus;
+  readonly tab: Tab;
+}) => {
+  switch (tab) {
+    case "active":
+      return <ActiveRuns status={shown} selected={selected} now={now} />;
+    case "recent":
+      return <RecentRuns status={shown} selected={selected} now={now} />;
+    case "flows":
+      return <Flows act={act} status={shown} now={now} />;
+    case "repos":
+      return (
+        <Repos
+          act={act}
+          repos={shown.repos}
+          enrolled={status.repos.length > 0}
+          offered={offeredBy(status)}
+        />
+      );
+  }
+};
 
 export const Overview = ({
   act,
@@ -133,6 +215,7 @@ export const Overview = ({
   now,
   onFilter,
   selected,
+  tab,
 }: {
   // Where the repos' controls send what they change.
   readonly act: Act;
@@ -144,6 +227,7 @@ export const Overview = ({
   readonly onFilter: (filter: Filter) => void;
   // The run the keyboard selected, by its place in runOrder.
   readonly selected: Option.Option<number>;
+  readonly tab: Tab;
 }) => (
   <div className="page">
     <header>
@@ -163,14 +247,15 @@ export const Overview = ({
         return (
           <main>
             <Attention status={shown} now={now} />
-            <Filters status={status} filter={filter} onFilter={onFilter} />
-            <Runs status={shown} selected={selected} now={now} />
-            <Repos
+            <Tabs shown={shown} tab={tab} />
+            <Filters status={status} filter={filter} onFilter={onFilter} tab={tab} />
+            <TabBody
               act={act}
-              repos={shown.repos}
-              enrolled={status.repos.length > 0}
-              offered={offeredBy(status)}
               now={now}
+              selected={selected}
+              shown={shown}
+              status={status}
+              tab={tab}
             />
           </main>
         );
