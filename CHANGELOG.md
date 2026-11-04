@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.0](https://github.com/dataquail/chernabog/compare/v0.12.0...v0.13.0) (2026-11-04)
+
+
+### Features
+
+* **dashboard:** a run's steps as a graph, a page per step, and Item and Subjects ([#352](https://github.com/dataquail/chernabog/issues/352)) ([028e2eb](https://github.com/dataquail/chernabog/commit/028e2eb6f370c389dac45310285d4cbd34d4f19e))
+* **dashboard:** bun run dev:dashboard serves the page with hot reload ([#349](https://github.com/dataquail/chernabog/issues/349)) ([59f0d7a](https://github.com/dataquail/chernabog/commit/59f0d7aed1fcaf961748e78d348f1af3eec9bdc3))
+* **dashboard:** the overview in tabs, a Flows tab, and attention folded ([#350](https://github.com/dataquail/chernabog/issues/350)) ([92968aa](https://github.com/dataquail/chernabog/commit/92968aa1d734ac25b809e8ba8fb67d4fb4c38c76))
+* **markers:** a marker can declare how to renew it, and the daemon renews every held marker that does ([#356](https://github.com/dataquail/chernabog/issues/356)) ([06d8996](https://github.com/dataquail/chernabog/commit/06d8996adde311d5435ce7193a9f457c65437352))
+* **runs:** steps' ends and outcomes, a flow's lanes, and run log lines tagged with their step ([#351](https://github.com/dataquail/chernabog/issues/351)) ([871584c](https://github.com/dataquail/chernabog/commit/871584c555c2674a5c7b5afe2c82795516a032ef))
+
+
+### Bug Fixes
+
+* **recipes:** an epic task whose layer below merges as its pull request opens goes onto the branch that layer merged into ([#345](https://github.com/dataquail/chernabog/issues/345)) ([81db861](https://github.com/dataquail/chernabog/commit/81db861597a67f2b7d2887624bedcf1dbadc3866))
+* **recipes:** resolve-conflicts records a squash-merged layer below before merging its base ([#347](https://github.com/dataquail/chernabog/issues/347)) ([94b5d7d](https://github.com/dataquail/chernabog/commit/94b5d7d2793797442d2fa46f792d71e449600101))
+* **release:** stop pinning @chernabog/core to 1.0.0 ([#357](https://github.com/dataquail/chernabog/issues/357)) ([5fba49f](https://github.com/dataquail/chernabog/commit/5fba49f3a78d627662b4c9a014a51a3f47652298))
+
 ## [0.12.0](https://github.com/dataquail/chernabog/compare/v0.11.1...v0.12.0) (2026-11-01)
 
 

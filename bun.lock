@@ -40,7 +40,7 @@
     },
     "packages/core": {
       "name": "@chernabog/core",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "peerDependencies": {
         "effect": "4.0.5",
       },
@@ -59,14 +59,15 @@
     },
     "packages/recipes": {
       "name": "@chernabog/recipes",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "peerDependencies": {
-        "@chernabog/sdk": "^0.9.0",
+        "@chernabog/core": "^1.1.0",
+        "@chernabog/sdk": "^0.10.0",
       },
     },
     "packages/sdk": {
       "name": "@chernabog/sdk",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "devDependencies": {
         "@chernabog/core": "workspace:*",
       },

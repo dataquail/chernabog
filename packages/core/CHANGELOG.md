@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/dataquail/chernabog/compare/core-v1.0.0...core-v1.1.0) (2026-11-04)
+
+
+### Features
+
+* **markers:** a marker can declare how to renew it, and the daemon renews every held marker that does ([#356](https://github.com/dataquail/chernabog/issues/356)) ([06d8996](https://github.com/dataquail/chernabog/commit/06d8996adde311d5435ce7193a9f457c65437352))
+* **runs:** steps' ends and outcomes, a flow's lanes, and run log lines tagged with their step ([#351](https://github.com/dataquail/chernabog/issues/351)) ([871584c](https://github.com/dataquail/chernabog/commit/871584c555c2674a5c7b5afe2c82795516a032ef))
+
 ## 1.0.0 (2026-10-30)
 
 
