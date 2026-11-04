@@ -78,12 +78,13 @@ export const loadDetail = (
 // The events about a run that change its row or its history.
 const RELOADS_ON: ReadonlySet<string> = new Set([
   "RunEnteredStep",
+  "RunFinishedStep",
   "RunNeedsAttention",
   "RunFinished",
 ]);
 
 // Whether what the daemon said means the run `runId` should be loaded again:
-// it entered a step, parked or finished.
+// it entered or finished a step, parked or finished.
 export const refetchesFor = (heard: Heard, runId: string): boolean =>
   heard.kind === "event" &&
   RELOADS_ON.has(heard.event._tag) &&

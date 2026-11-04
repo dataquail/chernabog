@@ -126,7 +126,11 @@ issue's to explain; this section is the map.
   `/commands` off it.
 - **The routes the page added** (#328, #329). `GET /runs/:id` takes a unique
   prefix of the id; `GET /runs/:id/log` streams a run's log over SSE until
-  the run ends; `POST /run` and `/cancel` (`by: "dashboard"`) are the CLI's
+  the run ends, or with `?step=<name>` only that step's lines, by the step
+  the daemon tags each line with; `GET /runs/:id/history` carries each
+  step's end and outcome, the lanes the run's flow declared, and whether its
+  log splits by step, and `RunFinishedStep` on `/events` tells the page to
+  load it again; `POST /run` and `/cancel` (`by: "dashboard"`) are the CLI's
   own; `POST /runs/:id/attach` has the daemon bring a run's session up in
   its launcher on its own machine, because a browser can't take over a
   terminal. Every refusal is the daemon's `Refusal`, shown beside the

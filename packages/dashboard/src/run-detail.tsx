@@ -1,18 +1,24 @@
 // One run's page (#/runs/<id>, a unique prefix of the id will do): its row,
-// its pull request, subjects and summary, what it waits on, the steps it went
-// through, and its log as it grows, followed at its tail unless the person
-// scrolls up.
+// the item it's on and the subjects it named, its summary, what it waits on,
+// its steps as a graph (run-graph.ts), and its log as it grows, followed at its
+// tail unless the person scrolls up. A step's page (#/runs/<id>/steps/<step>)
+// is the run's, with that step marked in the graph, what's known of it, and
+// that step's log alone in place of the run's.
 
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { useEffect, useRef } from "react";
 
-import type { DaemonStatus } from "#daemon/protocol";
+import type { DaemonStatus, RunHistory } from "#daemon/protocol";
 
+import { runHref } from "./routes.ts";
 import { type Detail } from "./run.ts";
-import { atBottom, initialLog, type LogConnection, type LogState } from "./run-log.ts";
+import { laneLabel, type LaneNeeds, runGraph, type StepRecord, took } from "./run-graph.ts";
+import { RunGraphView } from "./run-graph-view.tsx";
+import { atBottom, initialLog, linesOfStep, type LogConnection, type LogState } from "./run-log.ts";
 import { either, present, shownIf } from "./show.tsx";
-import { When } from "./time.tsx";
+import { span, When } from "./time.tsx";
 import { useRunDetail, useRunLog } from "./use-run.ts";
 
 type Found = Extract<Detail, { readonly kind: "found" }>;
@@ -36,28 +42,33 @@ const state = ({ history, run }: Found) =>
     () => run.status,
   );
 
-const PULL_REQUEST = /^pr-(\d+)/;
+// Where GitHub shows an item or subject a run names, by its key: `pr-12` and
+// `issue-7` in the run's repo. Anything else is shown as it is.
+const GITHUB_KEY = /^(pr|issue)-(\d+)$/;
 
-// The pull requests a run is part of: its own item, if it is one, and each it
-// opened, named as its subjects.
-const pullRequests = (run: RunView) =>
-  Arr.dedupe(
-    [run.itemKey, ...run.subjects].flatMap((key) =>
-      Option.toArray(Option.fromNullishOr(PULL_REQUEST.exec(key)?.[1])),
-    ),
+export const githubUrl = (slug: Option.Option<string>, key: string) =>
+  Option.flatMap(Option.fromNullishOr(GITHUB_KEY.exec(key)), (found) =>
+    Option.map(slug, (repo) => {
+      const kind = Option.match(
+        Option.liftPredicate(found[1], (name) => name === "pr"),
+        {
+          onSome: () => "pull",
+          onNone: () => "issues",
+        },
+      );
+
+      return `https://github.com/${repo}/${kind}/${found[2]}`;
+    }),
   );
 
-const PullRequest = ({
-  number,
-  slug,
-}: {
-  readonly number: string;
-  readonly slug: Option.Option<string>;
-}) =>
-  Option.match(slug, {
-    onNone: () => <span>#{number}</span>,
-    onSome: (repo) => <a href={`https://github.com/${repo}/pull/${number}`}>#{number}</a>,
+const Linked = ({ href, text }: { readonly href: Option.Option<string>; readonly text: string }) =>
+  Option.match(href, {
+    onNone: () => <span>{text}</span>,
+    onSome: (url) => <a href={url}>{text}</a>,
   });
+
+// What the run named besides the item it's on.
+const subjectsOf = (run: RunView) => run.subjects.filter((key) => key !== run.itemKey);
 
 const Facts = ({
   found,
@@ -69,7 +80,7 @@ const Facts = ({
   readonly slug: Option.Option<string>;
 }) => {
   const { run } = found;
-  const numbers = pullRequests(run);
+  const subjects = subjectsOf(run);
 
   return (
     <dl className="facts">
@@ -79,10 +90,10 @@ const Facts = ({
       </dd>
       <dt>Item</dt>
       <dd>
-        {Option.match(run.itemUrl, {
-          onNone: () => <span>{run.itemKey}</span>,
-          onSome: (url) => <a href={url}>{run.itemKey}</a>,
-        })}
+        <Linked
+          href={Option.orElse(run.itemUrl, () => githubUrl(slug, run.itemKey))}
+          text={run.itemKey}
+        />
       </dd>
       {present(run.currentStep, (step) => (
         <>
@@ -102,20 +113,14 @@ const Facts = ({
           </dd>
         </>
       ))}
-      {shownIf(numbers.length > 0, () => (
-        <>
-          <dt>Pull request</dt>
-          <dd>
-            {numbers.map((number) => (
-              <PullRequest key={number} number={number} slug={slug} />
-            ))}
-          </dd>
-        </>
-      ))}
-      {shownIf(run.subjects.length > 0, () => (
+      {shownIf(subjects.length > 0, () => (
         <>
           <dt>Subjects</dt>
-          <dd>{run.subjects.join(", ")}</dd>
+          <dd className="subjects">
+            {subjects.map((key) => (
+              <Linked key={key} href={githubUrl(slug, key)} text={key} />
+            ))}
+          </dd>
         </>
       ))}
       {present(run.summary, (summary) => (
@@ -148,7 +153,39 @@ const Waits = ({ found, now }: { readonly found: Found; readonly now: number }) 
     </section>
   ));
 
-const Steps = ({ found, now }: { readonly found: Found; readonly now: number }) => (
+// The steps as the graph takes them. A daemon from before steps' ends were
+// kept sends neither end nor outcome.
+const recordsOf = (history: RunHistory): ReadonlyArray<StepRecord> =>
+  history.steps.map((entered) => ({
+    step: entered.step,
+    enteredAt: entered.enteredAt,
+    finishedAt: Option.fromUndefinedOr(entered.finishedAt),
+    outcome: Option.fromUndefinedOr(entered.outcome),
+  }));
+
+// Which lanes waited on which, as the run's flow declared it.
+const lanesOf = (history: RunHistory): ReadonlyArray<LaneNeeds> => history.lanes ?? [];
+
+// Whether the daemon keeps each line's step, as it says; one from before
+// that says nothing.
+const stepLogsOf = (history: RunHistory) => Option.fromUndefinedOr(history.stepLogs);
+
+// The run's steps as the graph draws them.
+export const graphOf = ({ history, run }: Found) =>
+  runGraph(recordsOf(history), lanesOf(history), {
+    running: run.status === "running",
+    finishedAt: run.finishedAt,
+  });
+
+const Steps = ({
+  chosen,
+  found,
+  now,
+}: {
+  readonly chosen: Option.Option<string>;
+  readonly found: Found;
+  readonly now: number;
+}) => (
   <section aria-label="Steps">
     <h2>Steps</h2>
     {either(
@@ -157,30 +194,71 @@ const Steps = ({ found, now }: { readonly found: Found; readonly now: number }) 
         <p className="muted">No steps were kept for this run.</p>
       ),
       () => (
-        <div className="scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Step</th>
-                <th>Entered</th>
-              </tr>
-            </thead>
-            <tbody>
-              {found.history.steps.map((step) => (
-                <tr key={`${step.step} ${step.enteredAt}`}>
-                  <td>{step.step}</td>
-                  <td>
-                    <When iso={step.enteredAt} now={now} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <RunGraphView chosen={chosen} graph={graphOf(found)} now={now} runId={found.run.id} />
       ),
     )}
   </section>
 );
+
+const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+
+// What's known of the step whose page this is.
+const StepFacts = ({
+  found,
+  now,
+  step,
+}: {
+  readonly found: Found;
+  readonly now: number;
+  readonly step: string;
+}) => {
+  const node = Option.fromUndefinedOr(
+    graphOf(found)
+      .lanes.flatMap((lane) => lane.steps)
+      .find((each) => each.step === step),
+  );
+
+  return (
+    <section aria-label="Step">
+      <h2>
+        {step}{" "}
+        {present(node, (known) => (
+          <span className={`badge ${known.state}`}>{known.state}</span>
+        ))}
+      </h2>
+      {Option.match(node, {
+        onNone: () => <p className="muted">This run has no step {step}.</p>,
+        onSome: (known) => (
+          <dl className="facts">
+            <dt>Lane</dt>
+            <dd>{laneLabel(known.lane)}</dd>
+            <dt>Started</dt>
+            <dd>
+              <When iso={isoOf(known.startedAt)} now={now} />
+            </dd>
+            {present(known.endedAt, (ended) => (
+              <>
+                <dt>Ended</dt>
+                <dd>
+                  <When iso={isoOf(ended)} now={now} />
+                </dd>
+              </>
+            ))}
+            {present(took(known.startedAt, known.endedAt, known.state, now), (millis) => (
+              <>
+                <dt>Took</dt>
+                <dd>{span(millis)}</dd>
+              </>
+            ))}
+          </dl>
+        ),
+      })}
+      <p>
+        <a href={runHref(found.run.id)}>Back to the whole run</a>
+      </p>
+    </section>
+  );
+};
 
 const LogStatus = ({ connection }: { readonly connection: LogConnection }) => {
   switch (connection.kind) {
@@ -199,8 +277,41 @@ const LogStatus = ({ connection }: { readonly connection: LogConnection }) => {
   }
 };
 
+// How a step's page gets that step's log: the daemon follows only its lines
+// (`server`), the page picks them out of the whole log (`page`), or neither
+// can (`none`).
+export type StepLogMode = "server" | "page" | "none";
+
+// A daemon that tags each line with its step follows a step's lines itself,
+// and says when an old log can be split only by its `step:` lines, or not at
+// all. One from before that never says: the page splits the log of a run on
+// one line itself, and can't split a run's whose lanes ran at once.
+export const stepLogMode = (found: Found): StepLogMode =>
+  Option.match(stepLogsOf(found.history), {
+    onSome: (kept): StepLogMode => {
+      if (kept === "unavailable") {
+        return "none";
+      }
+
+      return "server";
+    },
+    onNone: (): StepLogMode => {
+      if (graphOf(found).parallel) {
+        return "none";
+      }
+
+      return "page";
+    },
+  });
+
 // The log, kept at its tail as it grows while the person hasn't scrolled up.
-export const LogView = ({ log }: { readonly log: LogState }) => {
+export const LogView = ({
+  log,
+  title = "Log",
+}: {
+  readonly log: LogState;
+  readonly title?: string;
+}) => {
   const following = useRef(true);
 
   useEffect(() => {
@@ -213,7 +324,7 @@ export const LogView = ({ log }: { readonly log: LogState }) => {
 
   return (
     <section aria-label="Log">
-      <h2>Log</h2>
+      <h2>{title}</h2>
       <pre
         id={LOG_ID}
         className="log"
@@ -228,18 +339,49 @@ export const LogView = ({ log }: { readonly log: LogState }) => {
   );
 };
 
+// The log the page shows: the run's, or the step's whose page this is.
+const Log = ({
+  found,
+  log,
+  step,
+}: {
+  readonly found: Found;
+  readonly log: LogState;
+  readonly step: Option.Option<string>;
+}) =>
+  Option.match(step, {
+    onNone: () => <LogView log={log} />,
+    onSome: (name) => {
+      if (stepLogMode(found) === "none") {
+        return (
+          <section aria-label="Log">
+            <h2>Log of {name}</h2>
+            <p className="muted">
+              This run's steps ran at once and its log doesn't say which step wrote each line, so it
+              can't be split by step. <a href={runHref(found.run.id)}>See the whole log</a>.
+            </p>
+          </section>
+        );
+      }
+
+      return <LogView log={log} title={`Log of ${name}`} />;
+    },
+  });
+
 const Body = ({
   asked,
   detail,
   log,
   now,
   slug,
+  step,
 }: {
   readonly asked: string;
   readonly detail: Detail;
   readonly log: LogState;
   readonly now: number;
   readonly slug: Option.Option<string>;
+  readonly step: Option.Option<string>;
 }) => {
   switch (detail.kind) {
     case "loading":
@@ -266,20 +408,28 @@ const Body = ({
             <Facts found={detail} now={now} slug={slug} />
           </section>
           <Waits found={detail} now={now} />
-          <Steps found={detail} now={now} />
-          <LogView log={log} />
+          <Steps chosen={step} found={detail} now={now} />
+          {present(step, (name) => (
+            <StepFacts found={detail} now={now} step={name} />
+          ))}
+          <Log found={detail} log={log} step={step} />
         </>
       );
   }
 };
 
-// The page, given what it holds: rendered as it is, for the tests.
-export const RunDetailView = (props: {
+// The page, given what it holds: rendered as it is, for the tests. On a
+// step's page, `log` is that step's lines alone.
+export const RunDetailView = ({
+  step = Option.none(),
+  ...props
+}: {
   readonly asked: string;
   readonly detail: Detail;
   readonly log: LogState;
   readonly now: number;
   readonly slug: Option.Option<string>;
+  readonly step?: Option.Option<string>;
 }) => (
   <div className="page">
     <header>
@@ -287,7 +437,7 @@ export const RunDetailView = (props: {
       <a href="#/">Back to the overview</a>
     </header>
     <main>
-      <Body {...props} />
+      <Body {...props} step={step} />
     </main>
   </div>
 );
@@ -306,21 +456,36 @@ const FoundRun = ({
   found,
   now,
   status,
+  step,
 }: {
   readonly asked: string;
   readonly found: Found;
   readonly now: number;
   readonly status: Option.Option<DaemonStatus>;
+  readonly step: Option.Option<string>;
 }) => {
-  const log = useRunLog(location.origin, found.run.id);
+  const mode = Option.map(step, () => stepLogMode(found));
+
+  // Only a daemon that keeps each line's step is asked for one step's lines.
+  const followed = Option.filter(step, () => Option.contains(mode, "server"));
+  const log = useRunLog(location.origin, found.run.id, followed);
+
+  const shown = Option.match(
+    Option.filter(step, () => Option.contains(mode, "page")),
+    {
+      onNone: () => log,
+      onSome: (name) => ({ ...log, lines: linesOfStep(log.lines, name) }),
+    },
+  );
 
   return (
     <RunDetailView
       asked={asked}
       detail={found}
-      log={log}
+      log={shown}
       now={now}
       slug={slugOf(status, found.run.repo)}
+      step={step}
     />
   );
 };
@@ -329,18 +494,27 @@ export const RunDetail = ({
   now,
   runId,
   status,
+  step,
 }: {
   readonly runId: string;
   readonly now: number;
   readonly status: Option.Option<DaemonStatus>;
+  readonly step: Option.Option<string>;
 }) => {
   const detail = useRunDetail(location.origin, runId);
 
   if (detail.kind === "found") {
-    return <FoundRun asked={runId} found={detail} now={now} status={status} />;
+    return <FoundRun asked={runId} found={detail} now={now} status={status} step={step} />;
   }
 
   return (
-    <RunDetailView asked={runId} detail={detail} log={initialLog} now={now} slug={Option.none()} />
+    <RunDetailView
+      asked={runId}
+      detail={detail}
+      log={initialLog}
+      now={now}
+      slug={Option.none()}
+      step={step}
+    />
   );
 };

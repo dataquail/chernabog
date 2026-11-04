@@ -108,7 +108,7 @@ export const App = () => {
   });
 
   if (route.kind === "run") {
-    return <RunDetail runId={route.runId} now={now} status={live.status} />;
+    return <RunDetail runId={route.runId} step={route.step} now={now} status={live.status} />;
   }
 
   return (

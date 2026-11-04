@@ -223,6 +223,145 @@ h3 {
   color: var(--muted);
 }
 
+.subjects a + a,
+.subjects span + a,
+.subjects a + span,
+.subjects span + span {
+  margin-left: 8px;
+}
+
+/* A run's graph: a column per depth, a card per lane, its steps left to
+   right, and the arrows between lanes drawn over them. */
+.graph {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 56px;
+  overflow-x: auto;
+  padding: 4px 4px 12px;
+}
+
+.graph .column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 0 0 auto;
+  max-width: 560px;
+}
+
+.graph .edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.graph .edges path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+
+.graph .edges marker path {
+  fill: var(--muted);
+  stroke: none;
+}
+
+.lane {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 220px;
+}
+
+.lane.ok {
+  border-left-color: var(--good);
+}
+
+.lane.failed {
+  border-left-color: var(--bad);
+}
+
+.lane.running {
+  border-left-color: var(--accent);
+}
+
+.lane header {
+  border: none;
+  padding: 0 0 6px;
+  gap: 6px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each step after the first, joined to the one before it. */
+.chips li + li::before {
+  content: "→";
+  color: var(--muted);
+  margin: 0 4px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+  font-size: 0.92em;
+}
+
+.chip:hover {
+  border-color: var(--accent);
+}
+
+.chip[aria-current="step"] {
+  background: var(--selected);
+  border-color: var(--accent);
+}
+
+.took {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
+.mark.ok {
+  color: var(--good);
+}
+
+.mark.failed {
+  color: var(--bad);
+}
+
+.mark.running {
+  color: var(--accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.mark.ended {
+  color: var(--muted);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .tag,
 .badge {
   display: inline-block;

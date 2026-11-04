@@ -16,6 +16,7 @@ import {
   DaemonStatus,
   RunEnteredStep,
   RunFinished,
+  RunFinishedStep,
   RunHistory,
   RunNeedsAttention,
   RunReply,
@@ -24,11 +25,12 @@ import {
 
 import type { Heard } from "./feed.ts";
 import { type Detail, loadDetail, refetchesFor } from "./run.ts";
-import { RunDetailView } from "./run-detail.tsx";
+import { githubUrl, RunDetailView, stepLogMode } from "./run-detail.tsx";
 import {
   appended,
   hearLog,
   initialLog,
+  linesOfStep,
   type LogHeard,
   type LogState,
   MAX_LOG_LINES,
@@ -82,7 +84,9 @@ const finishedHistory = RunHistory.make({
   waits: [],
 });
 
-const finished: Detail = { kind: "found", run: finishedRun, history: finishedHistory };
+const finishedFound = { kind: "found" as const, run: finishedRun, history: finishedHistory };
+
+const finished: Detail = finishedFound;
 
 const parked: Detail = {
   kind: "found",
@@ -106,7 +110,12 @@ const logOf = (lines: ReadonlyArray<string>, connection: LogState["connection"])
   connection,
 });
 
-const render = (detail: Detail, log: LogState = initialLog, asked = ID) =>
+const render = (
+  detail: Detail,
+  log: LogState = initialLog,
+  asked = ID,
+  shownStep: Option.Option<string> = Option.none(),
+) =>
   renderToStaticMarkup(
     <RunDetailView
       asked={asked}
@@ -114,8 +123,37 @@ const render = (detail: Detail, log: LogState = initialLog, asked = ID) =>
       log={log}
       now={NOW}
       slug={Option.some("acme/api")}
+      step={shownStep}
     />,
   );
+
+// A run on a pull request that named it again, and named another.
+const onPullRequest: Detail = {
+  kind: "found",
+  run: run({
+    flow: "review",
+    itemKey: "pr-12",
+    itemUrl: Option.none(),
+    subjects: ["pr-12", "issue-7", "slack-thread"],
+  }),
+  history: finishedHistory,
+};
+
+// An epic whose tasks ran at once.
+const epicFound = {
+  kind: "found" as const,
+  run: run({ flow: "epic" }),
+  history: RunHistory.make({
+    steps: [
+      step("claim-epic", "2026-10-31T11:00:00.000Z"),
+      step("implement#task-1", "2026-10-31T11:00:05.000Z"),
+      step("implement#task-2", "2026-10-31T11:00:06.000Z"),
+    ],
+    waits: [],
+  }),
+};
+
+const epic: Detail = epicFound;
 
 describe("the run's detail", () => {
   test("renders a finished run: its row, its steps, its pull request, its summary and its log", () => {
@@ -137,6 +175,62 @@ describe("the run's detail", () => {
       /<pre[^>]*class="log"[^>]*>started\nstep: implement\nfinished: done<\/pre>/,
     );
     expect(page).toContain("The log is complete.");
+  });
+
+  test("links the item it's on, and names each other subject once, linked where GitHub has it", () => {
+    const page = render(onPullRequest);
+
+    expect(page).toContain(
+      '<dt>Item</dt><dd><a href="https://github.com/acme/api/pull/12">pr-12</a>',
+    );
+    expect(page.match(/>pr-12</g)).toHaveLength(1);
+    expect(page).toContain('<a href="https://github.com/acme/api/issues/7">issue-7</a>');
+    expect(page).toContain("<span>slack-thread</span>");
+    expect(page).not.toContain("Pull request");
+    expect(githubUrl(Option.none(), "pr-12")).toEqual(Option.none());
+    expect(githubUrl(Option.some("acme/api"), "pr-12-review-2")).toEqual(Option.none());
+  });
+
+  test("draws its steps as lanes, each step linking to its own page", () => {
+    const page = render(epic);
+
+    expect(page).toContain('aria-label="lane run"');
+    expect(page).toContain('aria-label="lane task-1"');
+    expect(page).toContain('aria-label="lane task-2"');
+    expect(page).toContain(`href="#/runs/${ID}/steps/implement%23task-1"`);
+  });
+
+  test("on a step's page, marks the step, says what's known of it, and shows its log alone", () => {
+    const page = render(
+      finished,
+      logOf(["step: open-pr", "opened #12"], { kind: "ended" }),
+      ID,
+      Option.some("open-pr"),
+    );
+
+    expect(page).toMatch(/aria-current="step"[^>]*>(?:(?!<\/a>).)*open-pr/);
+    expect(page).toContain('aria-label="Step"');
+    expect(page).toContain("Log of open-pr");
+    expect(page).toContain(`href="#/runs/${ID}"`);
+    expect(page).toMatch(/<pre[^>]*class="log"[^>]*>step: open-pr\nopened #12<\/pre>/);
+  });
+
+  test("says so on a step's page when the log can't be split by step", () => {
+    const page = render(
+      epic,
+      logOf(["a", "b"], { kind: "ended" }),
+      ID,
+      Option.some("implement#task-1"),
+    );
+
+    expect(page).toContain("can&#x27;t be split by step");
+    expect(page).not.toContain('class="log"');
+  });
+
+  test("names a step the run doesn't have", () => {
+    expect(render(finished, initialLog, ID, Option.some("deploy"))).toContain(
+      "This run has no step deploy.",
+    );
   });
 
   test("renders a parked run: what it waits on, since when", () => {
@@ -258,6 +352,17 @@ describe("what loads the run again", () => {
     }),
   };
 
+  const stepEnded: Heard = {
+    kind: "event",
+    event: RunFinishedStep.make({
+      eventId: "e",
+      runId: RunId.make(ID),
+      step: "open-pr",
+      outcome: "ok",
+      finishedAt: "now",
+    }),
+  };
+
   const ended: Heard = {
     kind: "event",
     event: RunFinished.make({
@@ -269,8 +374,9 @@ describe("what loads the run again", () => {
     }),
   };
 
-  test("its own steps, parking and ending", () => {
-    expect([entered, parkedEvent, ended].map((said) => refetchesFor(said, ID))).toEqual([
+  test("its own steps starting and ending, parking and ending", () => {
+    expect([entered, stepEnded, parkedEvent, ended].map((said) => refetchesFor(said, ID))).toEqual([
+      true,
       true,
       true,
       true,
@@ -349,4 +455,81 @@ describe("the log", () => {
       ]);
     }),
   );
+});
+
+// The epic as a daemon that keeps steps' ends, the lanes and each line's step sends it.
+const keptEpic = {
+  ...epicFound,
+  history: RunHistory.make({
+    steps: [
+      RunStep.make({
+        step: "claim-epic",
+        enteredAt: "2026-10-31T11:00:00.000Z",
+        finishedAt: "2026-10-31T11:00:04.000Z",
+        outcome: "ok",
+      }),
+      RunStep.make({
+        step: "implement#task-1",
+        enteredAt: "2026-10-31T11:00:05.000Z",
+        finishedAt: "2026-10-31T11:10:05.000Z",
+        outcome: "failed",
+      }),
+      step("implement#task-2", "2026-10-31T11:10:06.000Z"),
+    ],
+    waits: [],
+    lanes: [RunHistory.fields.lanes.schema.value.make({ lane: "task-2", needs: ["task-1"] })],
+    stepLogs: "tagged",
+  }),
+};
+
+describe("a run the daemon kept steps' ends and lanes for", () => {
+  test("marks each step by how it ended, and how long it took", () => {
+    const page = render(keptEpic);
+
+    expect(page).toMatch(/class="chip ok"[^>]*>(?:(?!<\/a>).)*claim-epic(?:(?!<\/a>).)*4s/);
+    expect(page).toMatch(/class="chip failed"[^>]*>(?:(?!<\/a>).)*implement(?:(?!<\/a>).)*10m 00s/);
+    expect(page).toContain('class="lane failed"');
+  });
+
+  test("puts a task after the one it waited on", () => {
+    const page = render(keptEpic);
+
+    expect(page.indexOf('data-lane="task-2"')).toBeGreaterThan(page.indexOf('data-lane="task-1"'));
+    expect(page.match(/class="column"/g)).toHaveLength(3);
+  });
+
+  test("asks the daemon for a step's lines, even of lanes that ran at once", () => {
+    expect(stepLogMode(keptEpic)).toBe("server");
+    expect(
+      stepLogMode({ ...keptEpic, history: { ...keptEpic.history, stepLogs: "unavailable" } }),
+    ).toBe("none");
+  });
+});
+
+describe("a step's log", () => {
+  test("of a run on one line, the page splits from the whole log", () => {
+    expect(stepLogMode(finishedFound)).toBe("page");
+  });
+
+  test("of a run whose lanes ran at once, from a daemon that kept no step, can't be had", () => {
+    expect(stepLogMode(epicFound)).toBe("none");
+  });
+
+  test("is the lines from the step's start to the next step's, with or without times", () => {
+    const lines = [
+      "2026-10-31T11:00:00.000Z step: claim",
+      "claimed #7",
+      "2026-10-31T11:00:05.000Z step: implement",
+      "Bash(ls)",
+      "step: open-pr",
+      "opened #12",
+    ];
+
+    expect(linesOfStep(lines, "implement")).toEqual([
+      "2026-10-31T11:00:05.000Z step: implement",
+      "Bash(ls)",
+    ]);
+    expect(linesOfStep(lines, "open-pr")).toEqual(["step: open-pr", "opened #12"]);
+    expect(linesOfStep(lines, "push")).toEqual([]);
+  });
 });
