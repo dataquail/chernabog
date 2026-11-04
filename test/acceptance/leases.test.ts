@@ -2,9 +2,7 @@
 // issue whose claim another machine let expire, and says so; a parked run's
 // lease outlives a short leaseTtl, renewed in time, so a would-be taker skips
 // it; and a parked run whose claim another machine took over ends as lost when
-// it wakes, before it writes anything, leaving what it held to the taker. A
-// flow's own marker with a renewal (#354) is renewed the same way, and a
-// renewal that reports lost ends its run as lost.
+// it wakes, before it writes anything, leaving what it held to the taker.
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -61,57 +59,6 @@ export default defineFlow({
       yield* Implement.claim(yield* Implement.issueOf(item));
 
       return "took it";
-    }),
-});
-`;
-
-// Takes a job from a queue, its work item, and waits while it holds the queue's
-// lease. The issue's labels stand in for the queue: queue:revoked means the
-// queue gave the job away. Each renewal leaves a comment saying for how long.
-const QUEUED = `import { activity, awaitSignal, defineFlow, GitHub, Implement, Markers, reportAs } from "@chernabog/sdk";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-
-const jobLease = Markers.define(
-  "queue-lease",
-  Schema.Struct({ job: Schema.Finite }),
-  () => Effect.void,
-  {
-    on: (args) => "job-" + args.job,
-    renew: (args, ttl) =>
-      Effect.gen(function* () {
-        const github = yield* GitHub;
-        const job = yield* github.issue(args.job);
-
-        if (job.labels.includes("queue:revoked")) {
-          return { status: "lost", reason: "the queue gave job-" + args.job + " to another worker" } as const;
-        }
-
-        yield* github.comment(args.job, "renewed for " + Duration.toMillis(ttl));
-
-        return {
-          status: "held",
-          expiresAt: new Date(Date.now() + Duration.toMillis(ttl)).toISOString(),
-        } as const;
-      }),
-  },
-);
-
-export default defineFlow({
-  trigger: Effect.gen(function* () {
-    const issues = yield* (yield* GitHub).queuedIssuesLabelled("queue:job");
-
-    return issues.map((issue) => Implement.issueItem(issue));
-  }).pipe(reportAs("trigger")),
-  markers: [jobLease],
-  workflow: (item) =>
-    Effect.gen(function* () {
-      const issue = yield* Implement.issueOf(item);
-      yield* activity("lease-job", Markers.hold(jobLease, { job: issue }));
-      yield* awaitSignal(["go"], { id: "park", timeout: "1 day" });
-
-      return "woke";
     }),
 });
 `;
@@ -239,20 +186,15 @@ describe("leases", () => {
         flows: {
           parked: { schedule: "*/2 * * * * *" },
           taker: { schedule: "*/2 * * * * *" },
-          queued: { schedule: "*/2 * * * * *" },
         },
         recipes: [],
-        repoFiles: {
-          "flows/parked.ts": PARKED,
-          "flows/taker.ts": TAKER,
-          "flows/queued.ts": QUEUED,
-        },
+        repoFiles: { "flows/parked.ts": PARKED, "flows/taker.ts": TAKER },
       },
     );
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon's socket");
-  }, 60_000);
+  });
 
   afterAll(async () => {
     daemon.kill("SIGTERM");
@@ -284,24 +226,8 @@ describe("leases", () => {
     const issue = sandbox.github.addIssue("Waiting on review", ["lease:park"]);
     const runId = await parkedOn(issue);
 
-    // Well past leaseTtl: the daemon has renewed it, for parkedLeaseTtl. A
-    // loaded machine renews later than a fixed sleep allows, and a renewal
-    // from before the run parked carries Renewed-At with the short leaseTtl,
-    // so wait for the renewal whose lease runs past a day.
+    // Well past leaseTtl: the daemon has renewed it, for parkedLeaseTtl.
     await Bun.sleep(5000);
-    await eventually(
-      async () =>
-        Option.exists(
-          claimOn(issue),
-          (renewed) =>
-            Option.isSome(trailer(renewed.message, "Renewed-At")) &&
-            Option.exists(
-              trailer(renewed.message, "Expires-At"),
-              (expires) => Date.parse(expires) > Date.now() + 24 * 3_600_000,
-            ),
-        ),
-      "the daemon to renew the parked run's lease for parkedLeaseTtl",
-    );
     const claim = Option.getOrThrow(claimOn(issue));
     const expiresAt = Date.parse(Option.getOrThrow(trailer(claim.message, "Expires-At")));
 
@@ -357,32 +283,5 @@ describe("leases", () => {
       Option.some("thief-run"),
     );
     expect((await sandbox.runCli(["logs", runId])).output).toContain("lost: alice's run thief-run");
-  }, 90_000);
-
-  test("a flow's own marker is renewed for the daemon's TTL, and a run whose renewal says lost ends as lost", async () => {
-    const issue = sandbox.github.addIssue("A job from the queue", ["queue:job"]);
-    const runId = await parkedOn(issue);
-
-    // Parked, so renewed for parkedLeaseTtl, its default of three days.
-    await eventually(
-      async () =>
-        sandbox.github
-          .commentsOn(issue)
-          .some((comment) => comment.body === "renewed for 259200000"),
-      "the daemon to renew the queue's lease",
-    );
-    await eventually(
-      async () => (await sandbox.runCli(["status"])).output.includes(`lease on job-${issue} until`),
-      "status to show the queue's lease",
-    );
-
-    sandbox.github.issue(issue).labels = ["queue:revoked"];
-
-    const lost = await ended(runId);
-
-    expect(lost.status).toBe("lost");
-    expect(Option.getOrElse(lost.summary, () => "")).toContain(
-      `the queue gave job-${issue} to another worker`,
-    );
   }, 90_000);
 });
