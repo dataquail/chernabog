@@ -194,7 +194,7 @@ describe("leases", () => {
     await sandbox.runCli(["trust", "demo"]);
     daemon = sandbox.cli(["daemon"]);
     await waitFor(() => existsSync(join(sandbox.home, "daemon.sock")), "the daemon's socket");
-  });
+  }, 60_000);
 
   afterAll(async () => {
     daemon.kill("SIGTERM");
@@ -226,8 +226,24 @@ describe("leases", () => {
     const issue = sandbox.github.addIssue("Waiting on review", ["lease:park"]);
     const runId = await parkedOn(issue);
 
-    // Well past leaseTtl: the daemon has renewed it, for parkedLeaseTtl.
+    // Well past leaseTtl: the daemon has renewed it, for parkedLeaseTtl. A
+    // loaded machine renews later than a fixed sleep allows, and a renewal
+    // from before the run parked carries Renewed-At with the short leaseTtl,
+    // so wait for the renewal whose lease runs past a day.
     await Bun.sleep(5000);
+    await eventually(
+      async () =>
+        Option.exists(
+          claimOn(issue),
+          (renewed) =>
+            Option.isSome(trailer(renewed.message, "Renewed-At")) &&
+            Option.exists(
+              trailer(renewed.message, "Expires-At"),
+              (expires) => Date.parse(expires) > Date.now() + 24 * 3_600_000,
+            ),
+        ),
+      "the daemon to renew the parked run's lease for parkedLeaseTtl",
+    );
     const claim = Option.getOrThrow(claimOn(issue));
     const expiresAt = Date.parse(Option.getOrThrow(trailer(claim.message, "Expires-At")));
 
