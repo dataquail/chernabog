@@ -21,7 +21,8 @@ import {
 // issue, and, if asked, its agent sessions; and only then says it ended
 // (RunFinished), for its markers' release. What cleaning up can't do is left
 // for a person, and said; it never undoes the cancel. Pull requests are never
-// touched. A run that has already ended only lets go of its claim ref.
+// touched. A run that has already ended only lets go of the markers and claim
+// ref it still holds.
 export const CancelRunCommand = Command.make("CancelRunCommand", {
   payload: {
     target: CancelTarget,

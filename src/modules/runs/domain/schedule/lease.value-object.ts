@@ -1,6 +1,7 @@
-// The leases on the claims a run holds (#134): how long one lasts, executing
-// or parked, how often the daemon renews it, and what a renewal found. A run
-// whose claim names another run has lost its work item and ends as lost.
+// The leases a run holds, each a held marker that declares one (#134, #354),
+// its claim refs first among them: how long one lasts, executing or parked, how
+// often the daemon renews it, and what a renewal found. A run whose lease went
+// to someone else has lost its work and ends as lost.
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -32,12 +33,6 @@ export const DEFAULT_LEASE_LIMITS: LeaseLimits = {
   renewEvery: DEFAULT_LEASE_RENEW_EVERY,
 };
 
-// The name of the marker a run holds for each claim ref it took (core's
-// Claims.refMarker), and the arguments it holds it with.
-export const CLAIM_REF_MARKER = "chernabog/claim-ref";
-
-export const ClaimRefArgs = Schema.Struct({ item: Schema.String, runId: Schema.String });
-
 // The lease a run's renewal asks for: the parked TTL while it waits on a signal.
 export const leaseTtlFor = (limits: LeaseLimits, parked: boolean) => {
   if (parked) {
@@ -47,9 +42,9 @@ export const leaseTtlFor = (limits: LeaseLimits, parked: boolean) => {
   return limits.ttl;
 };
 
-// What a lease on one claim was found to be: still the run's, with when it
-// runs out and was last renewed; another run's, which took it over; or gone,
-// the run or a person having let the claim go.
+// What a lease was found to be: still the run's, with when it runs out and was
+// last renewed; someone else's, which took it over; or gone, the run or a
+// person having let it go.
 export type LeaseState =
   | {
       readonly status: "held";
@@ -71,8 +66,9 @@ export const renewalDue = (
     onSome: (at) => DateTime.isLessThanOrEqualTo(DateTime.addDuration(at, every), now),
   });
 
-// The lease on one claim a run holds: when it runs out and when it was last
-// renewed, as its claim commit says; none for a claim from before leases.
+// One lease a run holds: what it is on (a claim's item, or what the marker
+// names), when it runs out and when it was last renewed, as far as its source
+// says; none for a claim from before leases.
 export const LeaseView = Schema.Struct({
   item: Schema.String,
   expiresAt: Schema.Option(Schema.String),
@@ -83,8 +79,8 @@ export type LeaseView = typeof LeaseView.Type;
 
 // What checking a run's leases found: each still the run's (renewed, when
 // asked); one lost to another run, and how; nothing to check, because the run
-// has ended, has no execution, or holds no claim; or the check failed, which
-// loses nothing.
+// has ended, has no execution, or holds no marker with a lease; or the check
+// failed, which loses nothing.
 export const RunLeases = Schema.TaggedUnion({
   Held: { leases: Schema.Array(LeaseView) },
   Lost: { item: Schema.String, reason: Schema.String },

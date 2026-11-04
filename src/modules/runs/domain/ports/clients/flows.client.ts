@@ -14,6 +14,9 @@ import {
 import { type MarkerUnreleasable } from "../../run-marker/run-marker.errors.ts";
 import { type LeaseState } from "../../schedule/lease.value-object.ts";
 
+// What a marker's lease is on, and what it was found to be.
+export type MarkerLease = { readonly on: string; readonly state: LeaseState };
+
 // A repo's flows, as loaded from its trusted .chernabog/, each run with its
 // persona's services: the work its trigger finds, an item it didn't report,
 // and whether its gate lets a run start. Each fails with PersonaNotReady when
@@ -46,15 +49,18 @@ export type FlowsClientService = {
     name: string,
     args: Schema.Json,
   ) => Effect.Effect<void, FlowFailed | PersonaNotReady | MarkerUnreleasable>;
-  // The lease of the run's claim on `item`, as the persona with a timeout:
-  // renewed for `renew` from now when given (a compare-and-swap, which fails
-  // to another run that took it over first), else only read.
-  readonly lease: (
+  // The lease of a marker a run holds, by the flow's definition of `name` (or
+  // the SDK's), as the persona with a timeout: renewed for `renew` from now when
+  // given, else only read. None when the marker declares no lease, the flow
+  // that would define it isn't loaded or no longer does, or its arguments no
+  // longer fit; a lease that can't be read or renewed fails, and loses nothing.
+  readonly markerLease: (
     flow: FlowRef,
     run: ValidityQuestion,
-    item: string,
+    name: string,
+    args: Schema.Json,
     renew: Option.Option<Duration.Duration>,
-  ) => Effect.Effect<LeaseState, FlowFailed | PersonaNotReady>;
+  ) => Effect.Effect<Option.Option<MarkerLease>, FlowFailed | PersonaNotReady>;
   // Why the flow's gate holds its runs back, if it does.
   readonly gate: (flow: FlowRef) => Effect.Effect<Option.Option<string>>;
 };

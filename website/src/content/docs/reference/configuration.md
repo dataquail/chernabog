@@ -30,7 +30,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
 | `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person |
-| `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight |
+| `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight: their claim refs, and any [marker that is a lease](/chernabog/flows/sdk/#markers) |
 
 `launchers` is refused here: only machine config defines launcher commands.
 

@@ -55,7 +55,9 @@ could make another `incompatible`.
    - **The hooks the daemon calls are as fixed as the ports.**
    - **Claims' and markers' names and arguments are fixed** once a release
      holds them: the daemon releases a run's markers by name, from a newer
-     binary than the one that held them.
+     binary than the one that held them. A definition only grows the same way:
+     `Markers.define` took an optional lease (`renew`, #354), and a marker
+     without one behaves as before.
    - **Removing or changing anything is a major.** A binary that wants to keep
      running the previous major's SDKs adds it to `PROVIDED_CORE` and keeps
      the adapters; one that drops a major is a major of Chernabog's own.

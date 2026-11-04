@@ -309,13 +309,83 @@ export const releaseFor = (item: string, runId: string) =>
     return true;
   });
 
+// Why a run whose claim names another run (or none) stops: it lost the item.
+export const describeLoss = (item: string, held: Option.Option<Holder>) =>
+  Option.match(held, {
+    onNone: () => `its claim on ${item} was taken over, and has been let go since`,
+    onSome: (found) => `${found.persona}'s run ${found.runId} of ${found.flow} took ${item} over`,
+  });
+
+// Renews the lease of `runId`'s claim on `item`, reported as a marker's lease is.
+const renewedReport = (item: string, runId: string, ttl: Duration.Duration) =>
+  Effect.gen(function* () {
+    const renewedAt = DateTime.formatIso(yield* DateTime.now);
+    const renewal = yield* renew(item, runId, ttl);
+
+    if (renewal.status === "renewed") {
+      return {
+        status: "held",
+        expiresAt: renewal.expiresAt,
+        renewedAt,
+      } satisfies Markers.LeaseReport;
+    }
+
+    if (renewal.status === "lost") {
+      return {
+        status: "lost",
+        reason: describeLoss(item, renewal.holder),
+      } satisfies Markers.LeaseReport;
+    }
+
+    return { status: "released" } satisfies Markers.LeaseReport;
+  });
+
+// The lease of `runId`'s claim on `item` as its ref has it now, reported as a marker's lease is.
+const checkedReport = (item: string, runId: string) =>
+  holder(item).pipe(
+    Effect.map((found): Markers.LeaseReport => {
+      if (Option.isNone(found)) {
+        return { status: "released" };
+      }
+
+      if (found.value.runId !== runId) {
+        return { status: "lost", reason: describeLoss(item, found) };
+      }
+
+      return {
+        status: "held",
+        ...optional(Option.fromUndefinedOr(found.value.expiresAt), (at) => ({ expiresAt: at })),
+        ...optional(Option.fromUndefinedOr(found.value.renewedAt), (at) => ({ renewedAt: at })),
+      };
+    }),
+  );
+
+// A hold naming another run isn't this run's lease to renew, or lose.
+const ofThisRun = <E, R>(
+  args: { readonly runId: string },
+  report: Effect.Effect<Markers.LeaseReport, E, R>,
+) =>
+  Run.use((run) => {
+    if (args.runId !== run.runId) {
+      return Effect.succeed<Markers.LeaseReport>({ status: "released" });
+    }
+
+    return report;
+  });
+
 // The claim ref, as a marker: acquire holds it, so the engine lets the claim
 // go however the run ends, cancelled or superseded included. Released only
-// while the run named holds it.
+// while the run named holds it. Its lease is the claim commit's: the daemon
+// renews it while the run is in flight, and one another run took over is lost.
 export const refMarker = Markers.define(
   "chernabog/claim-ref",
   Schema.Struct({ item: Schema.String, runId: Schema.String }),
   (args) => releaseFor(args.item, args.runId).pipe(Effect.asVoid),
+  {
+    on: (args) => args.item,
+    renew: (args, ttl) => ofThisRun(args, renewedReport(args.item, args.runId, ttl)),
+    check: (args) => ofThisRun(args, checkedReport(args.item, args.runId)),
+  },
 );
 
 export type AcquireOptions = {
@@ -438,13 +508,6 @@ export const describeHolder = (item: string, held: Option.Option<Holder>) =>
           Option.map(Option.fromUndefinedOr(found.expiresAt), (at) => `its lease runs to ${at}`),
         ),
       ].join(", "),
-  });
-
-// Why a run whose claim names another run (or none) stops: it lost the item.
-export const describeLoss = (item: string, held: Option.Option<Holder>) =>
-  Option.match(held, {
-    onNone: () => `its claim on ${item} was taken over, and has been let go since`,
-    onSome: (found) => `${found.persona}'s run ${found.runId} of ${found.flow} took ${item} over`,
   });
 
 // What a run that took an item over says on it, for people to read.

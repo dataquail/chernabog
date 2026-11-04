@@ -9,7 +9,7 @@ import { effect } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
-import { CLAIM_REF_MARKER, RunLeases } from "../domain/schedule/lease.value-object.ts";
+import { RunLeases } from "../domain/schedule/lease.value-object.ts";
 import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
@@ -37,7 +37,9 @@ const run = (id: string, fields: Partial<RunRoot> = {}) =>
     ...fields,
   });
 
-const marker = (runId: string, name: string, args: { item: string; runId: string }) =>
+const CLAIM_REF = "chernabog/claim-ref";
+
+const marker = (runId: string, name: string, args: Readonly<Record<string, string>>) =>
   RunMarkerRoot.make({
     runId: RunId.make(runId),
     name,
@@ -51,8 +53,7 @@ const marker = (runId: string, name: string, args: { item: string; runId: string
     settledAt: Option.none(),
   });
 
-const claimOf = (runId: string, item = "issue-7") =>
-  marker(runId, CLAIM_REF_MARKER, { item, runId });
+const claimOf = (runId: string, item = "issue-7") => marker(runId, CLAIM_REF, { item, runId });
 
 const runtime = (
   runs: ReadonlyArray<RunRoot>,
@@ -141,6 +142,92 @@ describe("checkRunLeasesHandler", () => {
             "demo/flaky": { items: [], leaseFails: "rate limited" },
           }),
         ),
+        PassThroughUnitOfWork,
+      ]),
+    ),
+  );
+
+  const queueAsks: NonNullable<FakeFlow["leaseAsks"]> = [];
+
+  effect("renews a flow's own marker that declares a lease, beside the claim", () =>
+    Effect.gen(function* () {
+      const found = yield* checking("a", Option.some(Duration.hours(2)));
+
+      expect(found).toEqual(
+        RunLeases.cases.Held.make({
+          leases: [
+            { item: "issue-7", expiresAt: HELD.expiresAt, renewedAt: HELD.renewedAt },
+            { item: "queue-lease", expiresAt: HELD.expiresAt, renewedAt: HELD.renewedAt },
+          ],
+        }),
+      );
+      expect(queueAsks.map((ask) => ask.item)).toEqual(["issue-7", "queue-lease"]);
+    }).pipe(
+      Effect.provide([
+        runtime([run("a")], [claimOf("a"), marker("a", "queue-lease", { job: "J-1" })], {
+          items: [],
+          leased: [CLAIM_REF, "queue-lease"],
+          leases: { "issue-7": HELD, "queue-lease": HELD },
+          leaseAsks: queueAsks,
+        }),
+        PassThroughUnitOfWork,
+      ]),
+    ),
+  );
+
+  effect("says a flow's own marker whose renewal reports lost is lost, and why", () =>
+    Effect.gen(function* () {
+      expect(yield* checking("a", Option.some(Duration.hours(2)))).toEqual(
+        RunLeases.cases.Lost.make({ item: "queue-lease", reason: "the queue gave J-1 away" }),
+      );
+    }).pipe(
+      Effect.provide([
+        runtime([run("a")], [marker("a", "queue-lease", { job: "J-1" })], {
+          items: [],
+          leased: ["queue-lease"],
+          leases: { "queue-lease": { status: "lost", reason: "the queue gave J-1 away" } },
+        }),
+        PassThroughUnitOfWork,
+      ]),
+    ),
+  );
+
+  const untilFailure: NonNullable<FakeFlow["leaseAsks"]> = [];
+
+  effect("a lease it can't renew leaves the rest renewed, and loses nothing", () =>
+    Effect.gen(function* () {
+      expect(yield* checking("a", Option.some(Duration.hours(2)))).toEqual(
+        RunLeases.cases.CheckFailed.make({ message: "reading the lease on queue-lease failed" }),
+      );
+      expect(untilFailure.map((ask) => ask.item)).toEqual(["queue-lease", "issue-7"]);
+    }).pipe(
+      Effect.provide([
+        runtime([run("a")], [marker("a", "queue-lease", { job: "J-1" }), claimOf("a")], {
+          items: [],
+          leased: [CLAIM_REF, "queue-lease"],
+          leases: { "issue-7": HELD },
+          leaseFailsOn: "queue-lease",
+          leaseAsks: untilFailure,
+        }),
+        PassThroughUnitOfWork,
+      ]),
+    ),
+  );
+
+  const neverAsked: NonNullable<FakeFlow["leaseAsks"]> = [];
+
+  effect("never renews a marker that declares no lease", () =>
+    Effect.gen(function* () {
+      const found = yield* checking("a", Option.some(Duration.hours(2)));
+
+      expect(found._tag).toBe("Unchecked");
+      expect(neverAsked).toEqual([]);
+    }).pipe(
+      Effect.provide([
+        runtime([run("a")], [marker("a", "tracker-in-progress", { key: "T-1" })], {
+          items: [],
+          leaseAsks: neverAsked,
+        }),
         PassThroughUnitOfWork,
       ]),
     ),

@@ -7,6 +7,8 @@
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { type RunId } from "../../../../kernel/run-id.id.ts";
@@ -117,6 +119,27 @@ const failed = (marker: RunMarkerRoot, reason: string, now: DateTime.Utc) => {
   });
 };
 
+// A marker once a release of it was tried at `now`: released; unreleasable, when
+// the flow can't say how; or still held, to try again, otherwise.
+const afterRelease = (
+  marker: RunMarkerRoot,
+  release: Result.Result<void, { readonly _tag: string; readonly message: string }>,
+  now: DateTime.Utc,
+) => {
+  const at = DateTime.formatIso(now);
+
+  return Result.match(release, {
+    onSuccess: () => released(marker, at),
+    onFailure: (error) => {
+      if (Predicate.isTagged(error, "MarkerUnreleasable")) {
+        return unreleasable(marker, error.message, at);
+      }
+
+      return failed(marker, error.message, now);
+    },
+  });
+};
+
 // A run's markers newest first, the order they're released in, from the order they were held.
 const releaseOrder = (markers: ReadonlyArray<RunMarkerRoot>) => markers.toReversed();
 
@@ -158,5 +181,6 @@ export const RunMarkerRootOps = {
   unreleasable,
   backoff,
   failed,
+  afterRelease,
   releaseOrder,
 };

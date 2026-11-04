@@ -86,6 +86,7 @@ export type Holding = {
 };
 export declare const holds: (item: string, runId: string) => Effect.Effect<Holding, GitHubError, GitHub>;
 export declare const releaseFor: (item: string, runId: string) => Effect.Effect<boolean, GitHubError, GitHub>;
+export declare const describeLoss: (item: string, held: Option.Option<Holder>) => string;
 export declare const refMarker: Markers.Definition<{
     readonly item: string;
     readonly runId: string;
@@ -110,7 +111,6 @@ export declare const acquire: (item: string, options?: AcquireOptions) => Effect
 export declare const release: (item: string) => Effect.Effect<boolean, GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
 export declare const releasing: (item: string) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R | import("effect/workflow/WorkflowEngine").WorkflowEngine | import("effect/workflow/WorkflowEngine").WorkflowInstance | Markers.ReleaseServices>;
 export declare const describeHolder: (item: string, held: Option.Option<Holder>) => string;
-export declare const describeLoss: (item: string, held: Option.Option<Holder>) => string;
 export declare const describeTakeover: (previous: Holder) => string;
 ```
 
@@ -632,6 +632,7 @@ export declare const adapterFor: (role: Option.Option<string>) => Effect.Effect<
 
 ```ts
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -642,13 +643,33 @@ import type { Json } from "./json.ts";
 import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type Worktree } from "./services.ts";
 export type Ending = "done" | "skipped" | "needs-human" | "failed" | "cancelled" | "superseded" | "lost";
 export type ReleaseServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner | Run;
+export type LeaseReport = {
+    readonly status: "held";
+    readonly expiresAt?: string;
+    readonly renewedAt?: string;
+} | {
+    readonly status: "lost";
+    readonly reason: string;
+} | {
+    readonly status: "released";
+};
+export type MarkerLease<A> = {
+    readonly renew: (args: A, ttl: Duration.Duration) => Effect.Effect<LeaseReport, unknown, ReleaseServices>;
+    readonly check?: (args: A) => Effect.Effect<LeaseReport, unknown, ReleaseServices>;
+    readonly on?: (args: A) => string;
+};
 export type Marker = {
     readonly name: string;
     readonly releaseJson: (args: Json) => Effect.Effect<void, ArgumentsChanged | unknown, ReleaseServices>;
+    readonly leaseJson?: (args: Json, renew: Option.Option<Duration.Duration>) => Effect.Effect<{
+        readonly on: string;
+        readonly report: LeaseReport;
+    }, ArgumentsChanged | unknown, ReleaseServices>;
 };
 export type Definition<A> = Marker & {
     readonly args: Schema.Codec<A, Json>;
     readonly release: (args: A) => Effect.Effect<void, unknown, ReleaseServices>;
+    readonly lease?: MarkerLease<A>;
 };
 declare const ArgumentsChanged_base: Schema.Class<ArgumentsChanged, Schema.TaggedStruct<"ArgumentsChanged", {
     readonly message: Schema.String;
@@ -657,7 +678,7 @@ declare const ArgumentsChanged_base: Schema.Class<ArgumentsChanged, Schema.Tagge
 }>;
 export declare class ArgumentsChanged extends ArgumentsChanged_base {
 }
-export declare const define: <A>(name: string, args: Schema.Codec<A, Json>, release: (args: A) => Effect.Effect<void, unknown, ReleaseServices>) => Definition<A>;
+export declare const define: <A>(name: string, args: Schema.Codec<A, Json>, release: (args: A) => Effect.Effect<void, unknown, ReleaseServices>, lease?: MarkerLease<A>) => Definition<A>;
 export type HoldOptions = {
     readonly keepOn?: ReadonlyArray<Ending>;
 };

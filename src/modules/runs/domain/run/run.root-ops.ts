@@ -24,7 +24,7 @@ import {
 } from "./run.errors.ts";
 import { RunRoot } from "./run.root.ts";
 import { type RunEnding } from "./run-status.value-object.ts";
-import { itemTarget, type WorkItem } from "./work-item.value-object.ts";
+import { itemTarget, type ValidityQuestion, type WorkItem } from "./work-item.value-object.ts";
 
 const isRunning = (run: RunRoot) => run.status === "running";
 
@@ -236,6 +236,15 @@ const sharingTarget = (runs: ReadonlyArray<RunRoot>, run: RunRoot) =>
       ),
   });
 
+// The run as a flow's hooks are asked about it: by its item, or one made from
+// its key for a run that kept none.
+const questionOf = (run: RunRoot): ValidityQuestion => ({
+  runId: run.id,
+  executionId: Option.getOrElse(run.executionId, () => ""),
+  item: Option.getOrElse(run.item, () => ({ key: run.itemKey, data: {} })),
+  subjects: run.subjects,
+});
+
 // A run from before personas, given the persona a repo's runs now act as, so
 // it keeps resuming and holding that persona's slots. None for a run that
 // already has a persona.
@@ -289,5 +298,6 @@ export const RunRootOps = {
   supersede,
   inFlightFor,
   sharingTarget,
+  questionOf,
   adopt,
 } as const;

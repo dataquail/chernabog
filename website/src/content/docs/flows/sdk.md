@@ -96,7 +96,7 @@ Claimed-At: 2026-10-26T14:00:00.000Z
 
 Creating a ref is the one write GitHub refuses to a second writer, so the run that creates it holds the item, and `Claims.holder(item)` reads who that is. It says nothing about the machine: the ref is as public as the repo. A ref outside `refs/heads/` isn't a branch: it isn't in the branch list, and `push` workflows, which run for branches and tags, don't see it.
 
-`Claims.acquire` holds the ref as a [marker](#markers), so however the run ends, cancelled or superseded included, the daemon deletes it. `Claims.releasing(item)(effect)` deletes it as soon as `effect` ends instead, whatever the ending; a run waiting on a signal keeps it. A run of an earlier version, which held no marker and never wrapped its claim in `releasing`, leaves the ref behind when it ends, and the issue stays held. `chernabog cancel <run>` lets it go: a run in flight is cancelled as ever, with its claim ref; for a run that has already ended, cancel deletes only the claim ref that still names it, and the run keeps its ending. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
+`Claims.acquire` holds the ref as a [marker](#markers), so however the run ends, cancelled or superseded included, the daemon deletes it. `Claims.releasing(item)(effect)` deletes it as soon as `effect` ends instead, whatever the ending; a run waiting on a signal keeps it. A run of an earlier version, which held no marker and never wrapped its claim in `releasing`, leaves the ref behind when it ends, and the issue stays held. `chernabog cancel <run>` lets it go: a run in flight is cancelled as ever, with its claim ref; for a run that has already ended, cancel releases only the markers it still holds and deletes the claim ref that still names it, and the run keeps its ending. The work branch stays, and so does any pull request, so a branch with no claim on it is work a later run takes up. Labels, the assignee and the claim comment are how a person sees a claim, written after it is won.
 
 Runs of an earlier version held an issue by its branch alone. While they may be in flight, a branch whose latest claim comment names no claim ref is still theirs, and `claim` skips it.
 
@@ -129,6 +129,32 @@ export default defineFlow({
 - **Releases run after the run ends**, newest first, from the flow as the base branch has it then, as the run's persona. A release must be safe to repeat: one that fails is tried again, backing off from 30 seconds to an hour, and `chernabog status` shows it under "not yet released" until it succeeds.
 - **`keepOn`** names endings on which a marker stays: `Markers.hold(m, args, { keepOn: ["needs-human"] })` for something put there for a person to see. **`Markers.drop(m, args)`** releases one now, when the run is done with it, and `Markers.dropAll(m)` every hold of it.
 - **A release the flow no longer defines** (it changed since the hold, or the arguments no longer fit its schema) isn't dropped silently: status lists it as unreleasable, with its arguments, for a person to take off.
+
+**A marker that is a lease.** Work from somewhere other than GitHub, such as a job a remote queue leased to the run, is held by that source's own lease: renew it while the run works, ack or nack it at the end. A marker's release is the second half; `renew`, in the fourth argument to `Markers.define`, is the first:
+
+```ts
+const jobLease = Markers.define(
+  "queue-lease",
+  Schema.Struct({ job: Schema.String }),
+  (args) => Queue.ack(args.job),
+  {
+    renew: (args, ttl) =>
+      Queue.extend(args.job, ttl).pipe(
+        Effect.map((extended) =>
+          extended.ok
+            ? ({ status: "held", expiresAt: extended.until } as const)
+            : ({ status: "lost", reason: `the queue gave ${args.job} to ${extended.worker}` } as const),
+        ),
+      ),
+    on: (args) => args.job,
+  },
+);
+```
+
+- **The daemon renews every hold of it** while the run is in flight, parked runs included, as the run's persona with what a release can use, every `limits.leaseRenewEvery`: set that well inside your source's TTL. `ttl` is the daemon's, `limits.leaseTtl`, or `limits.parkedLeaseTtl` while the run waits on a signal. A source whose lease length is its own ignores it.
+- **`renew` reports** `held` (with `expiresAt` and `renewedAt`, if it knows them), `lost` with a `reason`, which ends the run as `lost`, or `released` when nothing holds the lease any more, which is passed over. A run that ends as `lost` keeps its markers, so nothing is released: the work is someone else's now. **Failing** says only that the renewal failed, which loses nothing: `status` shows the lease at risk, the run carries on and the daemon tries again. Fail rather than report `lost` when you can't tell.
+- **`check`**, optional, reads the lease without renewing it, for the checks the daemon makes between renewals, such as before waking a parked run. Without it, only a renewal finds a lease lost. **`on`**, optional, is what `status` calls the lease; the marker's name otherwise.
+- A marker with no `renew` is never renewed. The claim ref is the first marker to use this (`Claims.refMarker`).
 
 The SDK's blocks hold markers of their own, which no flow lists (`Markers.builtIn`): `Implement.claim` and `Hybrid.claim` (and `Plan`, through `Implement.claim`) hold the claim ref, the `auto:in-progress` label, the persona's assignment, the board Status and the claim branch they create. The label goes on every ending; the assignment and board Status stay on a run that's done, since its pull request carries on, and the board moves back to its ready Status otherwise; the claim branch is deleted only while it holds no commits and no pull request, and stays on needs-human. On the hybrid path, a run that fails, as one whose session the person closes does, keeps the issue in progress for their next start.
 

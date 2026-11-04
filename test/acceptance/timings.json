@@ -17,6 +17,7 @@
     "test/acceptance/reload.test.ts": 20305,
     "test/acceptance/recipes.test.ts": 20265,
     "test/acceptance/personas.test.ts": 20064,
+    "test/acceptance/marker-leases.test.ts": 16000,
     "test/acceptance/review-coverage.test.ts": 15684,
     "test/acceptance/dashboard.test.ts": 15049,
     "test/acceptance/versions.test.ts": 10553,

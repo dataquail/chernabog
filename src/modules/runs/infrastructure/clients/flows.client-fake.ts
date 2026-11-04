@@ -6,7 +6,7 @@ import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import type * as Schema from "effect/Schema";
 
-import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
+import { FlowsClient, type MarkerLease } from "../../domain/ports/clients/flows.client.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import {
   type FlowRef,
@@ -41,10 +41,14 @@ export type FakeFlow = {
     readonly args: Schema.Json;
   }>;
   readonly releaseFails?: Array<string>;
-  // What each claim's lease is found to be, by item, released when it isn't
-  // listed, or why reading it fails; each ask is appended to `leaseAsks`.
+  // The markers whose definitions declare a lease, the claim ref's by default.
+  // What each lease is found to be, by what it is on (the arguments' `item`,
+  // else the marker's name), released when it isn't listed; why reading all of
+  // them fails, or the one on `leaseFailsOn`; each ask is appended to `leaseAsks`.
+  readonly leased?: ReadonlyArray<string>;
   readonly leases?: Readonly<Record<string, LeaseState>>;
   readonly leaseFails?: string;
+  readonly leaseFailsOn?: string;
   readonly leaseAsks?: Array<{
     readonly runId: string;
     readonly item: string;
@@ -53,6 +57,15 @@ export type FakeFlow = {
 };
 
 const keyOf = (flow: FlowRef) => `${flow.repo}/${flow.flow}`;
+
+// What a test's marker's lease is on: its arguments' `item`, else its name.
+const onOf = (name: string, args: Schema.Json) => {
+  if (Predicate.isObject(args) && Predicate.hasProperty(args, "item")) {
+    return String(args.item);
+  }
+
+  return name;
+};
 
 // Flows by repo/flow; a flow not listed fails as one never loaded.
 export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
@@ -115,20 +128,37 @@ export const FlowsClientFake = (flows: Readonly<Record<string, FakeFlow>>) => {
             });
           },
         ),
-      lease: (flow, run, item, renew) =>
-        Effect.flatMap(flowOf(flow), (found): Effect.Effect<LeaseState, FlowFailed> => {
-          found.leaseAsks?.push({ runId: run.runId, item, renew });
+      markerLease: (flow, run, name, args, renew) =>
+        Effect.flatMap(
+          flowOf(flow),
+          (found): Effect.Effect<Option.Option<MarkerLease>, FlowFailed> => {
+            if (!(found.leased ?? ["chernabog/claim-ref"]).includes(name)) {
+              return Effect.succeedNone;
+            }
 
-          return Option.match(Option.fromUndefinedOr(found.leaseFails), {
-            onSome: (message) => Effect.fail(new FlowFailed({ message })),
-            onNone: () =>
-              Effect.succeed(
-                Option.getOrElse(Record.get(found.leases ?? {}, item), (): LeaseState => ({
-                  status: "released",
-                })),
+            const on = onOf(name, args);
+
+            found.leaseAsks?.push({ runId: run.runId, item: on, renew });
+
+            const failing = Option.orElse(Option.fromUndefinedOr(found.leaseFails), () =>
+              Option.liftPredicate(
+                `reading the lease on ${on} failed`,
+                () => found.leaseFailsOn === on,
               ),
-          });
-        }),
+            );
+
+            return Option.match(failing, {
+              onSome: (message) => Effect.fail(new FlowFailed({ message })),
+              onNone: () =>
+                Effect.succeedSome({
+                  on,
+                  state: Option.getOrElse(Record.get(found.leases ?? {}, on), (): LeaseState => ({
+                    status: "released",
+                  })),
+                }),
+            });
+          },
+        ),
       gate: (flow) =>
         flowOf(flow).pipe(
           Effect.map((found) => Option.fromUndefinedOr(found.gate)),
