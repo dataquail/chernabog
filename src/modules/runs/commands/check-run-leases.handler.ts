@@ -2,7 +2,6 @@ import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 
 import { Spec } from "../../../kernel/specification.ts";
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
@@ -11,12 +10,7 @@ import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
 import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
-import {
-  CLAIM_REF_MARKER,
-  ClaimRefArgs,
-  type LeaseView,
-  RunLeases,
-} from "../domain/schedule/lease.value-object.ts";
+import { type LeaseView, RunLeases } from "../domain/schedule/lease.value-object.ts";
 import { type CheckRunLeasesPayload } from "./check-run-leases.command.ts";
 
 // The unit of work around this command's reads and writes in state.db alone.
@@ -59,19 +53,6 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
     ),
   ).pipe(inUnitOfWork);
 
-  const items = held.flatMap((marker) =>
-    Option.toArray(
-      Option.filter(
-        Schema.decodeUnknownOption(ClaimRefArgs)(marker.args),
-        (args) => marker.name === CLAIM_REF_MARKER && args.runId === found.id,
-      ),
-    ).map((args) => args.item),
-  );
-
-  if (items.length === 0) {
-    return unchecked;
-  }
-
   const flow = { repo: found.repo, flow: found.flow, persona: found.persona };
 
   const question = {
@@ -82,23 +63,39 @@ export const checkRunLeasesHandler = Effect.fn("checkRunLeasesHandler")(function
   };
 
   const leases: Array<LeaseView> = [];
+  const failures: Array<string> = [];
+  let leased = false;
 
-  for (const item of items) {
-    const lease = yield* Effect.result(flows.lease(flow, question, item, renew));
+  // A failure loses nothing, so it doesn't keep the rest from being renewed.
+  for (const marker of held) {
+    const lease = yield* Effect.result(
+      flows.markerLease(flow, question, marker.name, marker.args, renew),
+    );
 
     if (Result.isFailure(lease)) {
-      return RunLeases.cases.CheckFailed.make({ message: lease.failure.message });
+      failures.push(lease.failure.message);
+      continue;
     }
 
-    const state = lease.success;
+    for (const { on, state } of Option.toArray(lease.success)) {
+      leased = true;
 
-    if (state.status === "lost") {
-      return RunLeases.cases.Lost.make({ item, reason: state.reason });
-    }
+      if (state.status === "lost") {
+        return RunLeases.cases.Lost.make({ item: on, reason: state.reason });
+      }
 
-    if (state.status === "held") {
-      leases.push({ item, expiresAt: state.expiresAt, renewedAt: state.renewedAt });
+      if (state.status === "held") {
+        leases.push({ item: on, expiresAt: state.expiresAt, renewedAt: state.renewedAt });
+      }
     }
+  }
+
+  if (failures.length > 0) {
+    return RunLeases.cases.CheckFailed.make({ message: failures.join("; ") });
+  }
+
+  if (!leased) {
+    return unchecked;
   }
 
   return RunLeases.cases.Held.make({ leases });

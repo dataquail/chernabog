@@ -10,8 +10,15 @@
 //
 // A release must be safe to repeat: one that fails is retried, with backoff,
 // and one interrupted by a crash runs again.
+//
+// A marker that is a lease on someone else's system, such as a job a queue
+// leased to the run, also declares how to renew it. While the run is in flight
+// the daemon renews every hold of such a marker on its cadence
+// (limits.leaseRenewEvery), and a renewal that reports lost ends the run as
+// lost. A marker that declares no renewal is never renewed.
 
 import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -53,13 +60,51 @@ export type ReleaseServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | Run;
 
+// What renewing or checking a marker's lease found: still the run's, with when
+// it runs out and was last renewed, if the source says; lost to someone else,
+// and why, which ends the run as lost; or let go, so nothing holds it any more,
+// which is passed over. Failing the effect instead says only that the check
+// failed, which loses nothing: the daemon tries again.
+export type LeaseReport =
+  | { readonly status: "held"; readonly expiresAt?: string; readonly renewedAt?: string }
+  | { readonly status: "lost"; readonly reason: string }
+  | { readonly status: "released" };
+
+// How a marker that is a lease stays held. Each gets what a release gets, and
+// must fail rather than report lost when it can't tell.
+export type MarkerLease<A> = {
+  // Renews the lease. `ttl` is the daemon's: limits.leaseTtl, or
+  // limits.parkedLeaseTtl while the run waits on a signal. A source whose lease
+  // length is its own ignores it.
+  readonly renew: (
+    args: A,
+    ttl: Duration.Duration,
+  ) => Effect.Effect<LeaseReport, unknown, ReleaseServices>;
+  // Reads the lease without renewing it, for the checks the daemon makes
+  // between renewals, such as before waking a parked run. Without it, those
+  // checks take the lease as held, and only a renewal can find it lost.
+  readonly check?: (args: A) => Effect.Effect<LeaseReport, unknown, ReleaseServices>;
+  // What the lease is on, as status names it; the marker's name by default.
+  readonly on?: (args: A) => string;
+};
+
 // A marker's release, with its arguments as the engine stores them, JSON. It
 // fails with ArgumentsChanged when they no longer fit the definition's schema.
+// `leaseJson`, for a marker that declares a lease, renews it for `renew` when
+// given, else only checks it, and says what the lease is on.
 export type Marker = {
   readonly name: string;
   readonly releaseJson: (
     args: Json,
   ) => Effect.Effect<void, ArgumentsChanged | unknown, ReleaseServices>;
+  readonly leaseJson?: (
+    args: Json,
+    renew: Option.Option<Duration.Duration>,
+  ) => Effect.Effect<
+    { readonly on: string; readonly report: LeaseReport },
+    ArgumentsChanged | unknown,
+    ReleaseServices
+  >;
 };
 
 // A named way to take a marker off. `args` is the schema of the arguments a
@@ -67,6 +112,7 @@ export type Marker = {
 export type Definition<A> = Marker & {
   readonly args: Schema.Codec<A, Json>;
   readonly release: (args: A) => Effect.Effect<void, unknown, ReleaseServices>;
+  readonly lease?: MarkerLease<A>;
 };
 
 // A hold's stored arguments don't fit the marker's schema any more: the flow
@@ -80,23 +126,51 @@ export class ArgumentsChanged extends Schema.TaggedError<
 
 // Defines a marker's release by name, unique among the flow's markers. Keep a
 // name, and its arguments' shape, once runs hold it: a run in flight is
-// released by the name it held, with the arguments it gave.
+// released by the name it held, with the arguments it gave. `lease` is for a
+// marker that must be renewed while the run holds it.
 export const define = <A>(
   name: string,
   args: Schema.Codec<A, Json>,
   release: (args: A) => Effect.Effect<void, unknown, ReleaseServices>,
-): Definition<A> => ({
-  name,
-  args,
-  release,
-  releaseJson: (json) =>
+  lease?: MarkerLease<A>,
+): Definition<A> => {
+  const decoded = (json: Json) =>
     Schema.decodeEffect(args)(json).pipe(
       Effect.mapError(
         (issue) => new ArgumentsChanged({ message: `${name} arguments: ${issue.message}` }),
       ),
-      Effect.flatMap(release),
-    ),
-});
+    );
+
+  const releasing = {
+    name,
+    args,
+    release,
+    releaseJson: (json: Json) => decoded(json).pipe(Effect.flatMap(release)),
+  };
+
+  return Option.match(Option.fromUndefinedOr(lease), {
+    onNone: (): Definition<A> => releasing,
+    onSome: (own): Definition<A> => ({
+      ...releasing,
+      lease: own,
+      leaseJson: (json, renew) =>
+        decoded(json).pipe(
+          Effect.flatMap((decodedArgs) => {
+            const asked = Option.match(renew, {
+              onSome: (ttl) => own.renew(decodedArgs, ttl),
+              onNone: () =>
+                own.check?.(decodedArgs) ?? Effect.succeed<LeaseReport>({ status: "held" }),
+            });
+
+            return Effect.map(asked, (report) => ({
+              on: own.on?.(decodedArgs) ?? name,
+              report,
+            }));
+          }),
+        ),
+    }),
+  });
+};
 
 export type HoldOptions = {
   // The endings on which the marker stays, such as needs-human for something

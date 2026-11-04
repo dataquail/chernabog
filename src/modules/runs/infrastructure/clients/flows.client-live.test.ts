@@ -1,6 +1,17 @@
-import { defineFlow, gone, Run, RunLog, Settings, Skip, valid } from "@chernabog/core";
+import {
+  Claims,
+  defineFlow,
+  gone,
+  Markers,
+  Run,
+  RunLog,
+  Settings,
+  Skip,
+  valid,
+} from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -67,6 +78,50 @@ const queueing = defineFlow({
   workflow: () => Effect.void,
 });
 
+// A flow's own lease, and one it reads between renewals; each answer says what
+// asked it, to show the run and the TTL reach it. A marker with none, and a
+// flow that holds them.
+const leased = Markers.define(
+  "queue-lease",
+  Schema.Struct({ job: Schema.String }),
+  () => Effect.void,
+  {
+    on: (args) => args.job,
+    renew: (args, ttl) =>
+      Effect.gen(function* () {
+        const run = yield* Run;
+
+        if (args.job === "taken") {
+          return { status: "lost", reason: `run ${run.runId} lost ${args.job}` } as const;
+        }
+
+        if (args.job === "down") {
+          return yield* new Skip({ reason: "the queue is down" });
+        }
+
+        return { status: "held", expiresAt: `in ${Duration.toMillis(ttl)}` } as const;
+      }),
+  },
+);
+
+const readable = Markers.define(
+  "readable-lease",
+  Schema.Struct({ job: Schema.String }),
+  () => Effect.void,
+  {
+    renew: () => Effect.succeed({ status: "held" } as const),
+    check: (args) => Effect.succeed({ status: "lost", reason: `${args.job} went` } as const),
+  },
+);
+
+const plain = Markers.define("plain", Schema.Struct({}), () => Effect.void);
+
+const leasing = defineFlow({
+  trigger: Effect.succeed([]),
+  markers: [leased, readable, plain],
+  workflow: () => Effect.void,
+});
+
 // The team shares a queue; bob's machine config gives queueing his own.
 const [bob] = repoAs(settings, [Option.some("bob")]).personas;
 
@@ -106,6 +161,7 @@ const flows = Layer.unwrap(
           flowHandle(repo, "hanging", hanging),
           flowHandle(repo, "failing", failing),
           flowHandle(queues, "queueing", queueing),
+          flowHandle(repo, "leasing", leasing),
         ],
         services: (_repo, persona) =>
           Option.liftPredicate(Effect.succeed(services), () => Option.contains(persona, "bob")),
@@ -116,6 +172,15 @@ const flows = Layer.unwrap(
 ).pipe(Layer.provide(RunsRepositoryFake([])));
 
 const as = (flow: string, persona = Option.some("bob")) => ({ repo: "demo", flow, persona });
+
+const inFlight = {
+  runId: RunId.make("run-1"),
+  executionId: "execution-1",
+  item: item("pr-1"),
+  subjects: [],
+};
+
+const HOUR = Option.some(Duration.hours(1));
 
 describe("FlowsClientLive", () => {
   effect("runs a flow's trigger, its item lookup and its gate with the persona's services", () =>
@@ -187,6 +252,100 @@ describe("FlowsClientLive", () => {
       expect((yield* Effect.flip(client.trigger(as("finding", Option.some("eve")))))._tag).toBe(
         "FlowFailed",
       );
+    }).pipe(Effect.provide(flows)),
+  );
+
+  effect("renews a marker's lease by its definition, as the run, for the TTL asked", () =>
+    Effect.gen(function* () {
+      const client = yield* FlowsClient;
+
+      const leaseOf = (job: string, renew = HOUR) =>
+        client.markerLease(as("leasing"), inFlight, "queue-lease", { job }, renew);
+
+      expect(yield* leaseOf("J-1")).toEqual(
+        Option.some({
+          on: "J-1",
+          state: {
+            status: "held",
+            expiresAt: Option.some("in 3600000"),
+            renewedAt: Option.none(),
+          },
+        }),
+      );
+      expect(yield* leaseOf("taken")).toEqual(
+        Option.some({ on: "taken", state: { status: "lost", reason: "run run-1 lost taken" } }),
+      );
+      // Failing to renew says so, never lost.
+      expect((yield* Effect.flip(leaseOf("down")))._tag).toBe("FlowFailed");
+      // With no way to read it between renewals, a check takes it as held.
+      expect(yield* leaseOf("taken", Option.none())).toEqual(
+        Option.some({
+          on: "taken",
+          state: { status: "held", expiresAt: Option.none(), renewedAt: Option.none() },
+        }),
+      );
+    }).pipe(Effect.provide(flows)),
+  );
+
+  effect("reads a marker's lease by its check, named after the marker unless it says", () =>
+    Effect.gen(function* () {
+      const client = yield* FlowsClient;
+
+      expect(
+        yield* client.markerLease(
+          as("leasing"),
+          inFlight,
+          "readable-lease",
+          { job: "J-2" },
+          Option.none(),
+        ),
+      ).toEqual(
+        Option.some({ on: "readable-lease", state: { status: "lost", reason: "J-2 went" } }),
+      );
+    }).pipe(Effect.provide(flows)),
+  );
+
+  effect(
+    "no lease for a marker without one, unknown, of an unloaded flow, or whose arguments no longer fit",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* FlowsClient;
+
+        for (const [flow, name, args] of [
+          ["leasing", "plain", {}],
+          ["leasing", "no-such-marker", {}],
+          ["missing", "queue-lease", { job: "J-1" }],
+          ["leasing", "queue-lease", { changed: true }],
+        ] as const) {
+          expect(yield* client.markerLease(as(flow), inFlight, name, args, HOUR)).toEqual(
+            Option.none(),
+          );
+        }
+      }).pipe(Effect.provide(flows)),
+  );
+
+  effect("renews and reads the claim ref by the SDK's marker, whatever the flow lists", () =>
+    Effect.gen(function* () {
+      const client = yield* FlowsClient;
+      const args = { item: "issue-7", runId: "run-1" };
+
+      // Nobody holds it.
+      for (const renew of [HOUR, Option.none()]) {
+        expect(
+          yield* client.markerLease(as("finding"), inFlight, Claims.refMarker.name, args, renew),
+        ).toEqual(Option.some({ on: "issue-7", state: { status: "released" } }));
+      }
+
+      // A hold naming another run isn't this run's to renew or lose.
+      expect(
+        yield* client.markerLease(
+          as("finding"),
+          inFlight,
+          Claims.refMarker.name,
+          { item: "issue-7", runId: "run-2" },
+          HOUR,
+        ),
+      ).toEqual(Option.some({ on: "issue-7", state: { status: "released" } }));
     }).pipe(Effect.provide(flows)),
   );
 });

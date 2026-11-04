@@ -3,11 +3,8 @@ import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
-import * as Result from "effect/Result";
 
 import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
-import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
 import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
@@ -30,15 +27,6 @@ const inUnitOfWork = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     // state.db is a file on this machine: it has no outage to wait out.
     Effect.catchTag("PersistenceUnavailable", Effect.die),
   );
-
-// The run a release is asked about, as the flow's check would be: by its
-// item, or one made from its key for a run that kept none.
-const questionOf = (run: RunRoot) => ({
-  runId: run.id,
-  executionId: Option.getOrElse(run.executionId, () => ""),
-  item: Option.getOrElse(run.item, () => ({ key: run.itemKey, data: {} })),
-  subjects: run.subjects,
-});
 
 export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function* () {
   const markers = yield* RunMarkersRepository;
@@ -98,19 +86,10 @@ export const releaseMarkersHandler = Effect.fn("releaseMarkersHandler")(function
       }
 
       const release = yield* flows
-        .releaseMarker(flow, questionOf(run), marker.name, marker.args)
+        .releaseMarker(flow, RunRootOps.questionOf(run), marker.name, marker.args)
         .pipe(Effect.result);
 
-      const settled = Result.match(release, {
-        onSuccess: () => RunMarkerRootOps.released(marker, at),
-        onFailure: (error) => {
-          if (Predicate.isTagged(error, "MarkerUnreleasable")) {
-            return RunMarkerRootOps.unreleasable(marker, error.message, at);
-          }
-
-          return RunMarkerRootOps.failed(marker, error.message, now);
-        },
-      });
+      const settled = RunMarkerRootOps.afterRelease(marker, release, now);
 
       yield* markers.upsertOne(settled).pipe(inUnitOfWork);
       sortedBy(settled).push(settled);

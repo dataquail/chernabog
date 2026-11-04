@@ -507,6 +507,11 @@ describe("cancelRunHandler", () => {
 
         expect(released.alreadyEnded).toBe(true);
         expect(released.run.status).toBe("done");
+        expect(released.releasedMarkers).toEqual([
+          'queue-lease {"of":"queue-lease"}',
+          'chernabog/claim-ref {"of":"chernabog/claim-ref"}',
+        ]);
+        expect(released.releasedClaims).toEqual([]);
         expect(releases.map((one) => [one.runId, one.name, one.args])).toEqual([
           ["ended-2", "queue-lease", { of: "queue-lease" }],
           ["ended-2", "chernabog/claim-ref", { of: "chernabog/claim-ref" }],
@@ -685,6 +690,8 @@ describe("cancelRunHandler", () => {
       RunLogsClientFake({ a: "" }),
       WorkflowsClientFake(stopping),
       RunCleanupClientFake(fakeHoldings()),
+      RunMarkersRepositoryFake([]),
+      FlowsClientFake({}),
     ).pipe(Layer.provideMerge(sqliteAfter(Effect.void)));
 
   const brokenDisk = stoppingEngine("a");

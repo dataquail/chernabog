@@ -114,6 +114,9 @@ const cancelHere = (target: CancelTarget, by: string, closeSessions: boolean) =>
 const deletedRefs = (cancelled: CancelledRun) =>
   cancelled.releasedClaims.map((ref) => `deleted its claim ref ${ref}`);
 
+const releasedMarkers = (cancelled: CancelledRun) =>
+  (cancelled.releasedMarkers ?? []).map((marker) => `released its marker ${marker}`);
+
 // What cancelling did, for a person to read.
 export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string> => {
   const { run } = cancelled;
@@ -121,6 +124,7 @@ export const describeCancelled = (cancelled: CancelledRun): ReadonlyArray<string
   if (cancelled.alreadyEnded) {
     return [
       `${run.id} (${runLabel(run)}) had already ended (${run.status}), and keeps its ending`,
+      ...releasedMarkers(cancelled),
       ...deletedRefs(cancelled),
       ...cancelled.leftForPerson.map((line) => `left for you: ${line}`),
     ];

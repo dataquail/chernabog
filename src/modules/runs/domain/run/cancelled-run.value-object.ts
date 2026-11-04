@@ -37,13 +37,13 @@ const OpenSessionView = Schema.Struct({
 // A cancelled run and what cancelling it cleaned up: the worktrees removed,
 // the claim refs deleted, the claim released on its issue, the sessions
 // closed, and what it left for a person, each with why. For a run that had
-// already ended, only the claim refs it left behind.
+// already ended, only the markers it still held and the claim refs it left behind.
 export class CancelledRun extends Schema.Class<CancelledRun, { readonly brand: "CancelledRun" }>(
   "CancelledRun",
 )({
   run: RunView,
-  // The run had ended before, as its flow left it: cancel only deleted the
-  // claim refs it still held, and the run keeps its ending.
+  // The run had ended before, as its flow left it: cancel only released the
+  // markers and deleted the claim refs it still held, and the run keeps its ending.
   alreadyEnded: Schema.Boolean,
   // Whether its workflow had stopped by the time cancel returned; false for
   // one still stopping, or a flow this process didn't load, which the engine
@@ -53,6 +53,9 @@ export class CancelledRun extends Schema.Class<CancelledRun, { readonly brand: "
   removedWorktrees: Schema.Array(Schema.String),
   // The claim refs it deleted, such as `refs/chernabog/claims/issue-3`.
   releasedClaims: Schema.Array(Schema.String),
+  // The markers of an ended run it released, each its name and arguments. A
+  // daemon from before them says none.
+  releasedMarkers: Schema.optionalKey(Schema.Array(Schema.String)),
   // The issue whose claim it released, and its branch, if deleted.
   released: Schema.OptionFromNullOr(
     Schema.Struct({ issue: Schema.Finite, deletedBranch: Schema.OptionFromNullOr(Schema.String) }),

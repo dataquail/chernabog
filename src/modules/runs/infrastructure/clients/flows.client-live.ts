@@ -4,7 +4,6 @@
 // request a run owns.
 
 import {
-  Claims,
   describeError,
   isSetupError,
   Markers,
@@ -14,7 +13,6 @@ import {
   type TriggerServices,
 } from "@chernabog/core";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,7 +21,7 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { FlowsClient } from "../../domain/ports/clients/flows.client.ts";
+import { FlowsClient, type MarkerLease } from "../../domain/ports/clients/flows.client.ts";
 import { FlowFailed, PersonaNotReady } from "../../domain/run/run.errors.ts";
 import { RunSpecifications } from "../../domain/run/run.specification.ts";
 import { RunsRepository } from "../../domain/run/runs.repository.ts";
@@ -85,53 +83,28 @@ const RELEASE_TIMEOUT = Duration.minutes(1);
 // How long reading or renewing a lease may take before it counts as failed.
 const LEASE_TIMEOUT = Duration.minutes(1);
 
-// The lease of `runId`'s claim on `item`, as the claim ref has it now.
-const leaseOf = (item: string, runId: string) =>
-  Claims.holder(item).pipe(
-    Effect.map((found): LeaseState => {
-      if (Option.isNone(found)) {
-        return { status: "released" };
-      }
+// What a marker's lease reported, as the runs' domain has it.
+const leaseState = (report: Markers.LeaseReport): LeaseState => {
+  if (report.status === "held") {
+    return {
+      status: "held",
+      expiresAt: Option.fromUndefinedOr(report.expiresAt),
+      renewedAt: Option.fromUndefinedOr(report.renewedAt),
+    };
+  }
 
-      if (found.value.runId !== runId) {
-        return { status: "lost", reason: Claims.describeLoss(item, found) };
-      }
-
-      return {
-        status: "held",
-        expiresAt: Option.fromUndefinedOr(found.value.expiresAt),
-        renewedAt: Option.fromUndefinedOr(found.value.renewedAt),
-      };
-    }),
-  );
-
-// Renews the lease of `runId`'s claim on `item` for `ttl` from now.
-const renewing = (item: string, runId: string, ttl: Duration.Duration) =>
-  Effect.gen(function* () {
-    const now = DateTime.formatIso(yield* DateTime.now);
-    const renewal = yield* Claims.renew(item, runId, ttl);
-
-    if (renewal.status === "renewed") {
-      return {
-        status: "held",
-        expiresAt: Option.some(renewal.expiresAt),
-        renewedAt: Option.some(now),
-      } satisfies LeaseState;
-    }
-
-    if (renewal.status === "lost") {
-      return {
-        status: "lost",
-        reason: Claims.describeLoss(item, renewal.holder),
-      } satisfies LeaseState;
-    }
-
-    return { status: "released" } satisfies LeaseState;
-  });
+  return report;
+};
 
 export type FlowsClientOptions = {
   readonly stillValidTimeout?: Duration.Input;
 };
+
+// The marker `name`, if known: the SDK's, or the loaded flow's.
+const findMarker = (handle: Option.Option<FlowHandle>, name: string) =>
+  Option.orElse(Markers.find(Markers.builtIn, name), () =>
+    Option.flatMap(handle, (loaded) => Markers.find(loaded.flow.markers ?? [], name)),
+  );
 
 // The marker `name`: the SDK's, or the loaded flow's; why there is none.
 const markerNamed = (
@@ -139,26 +112,21 @@ const markerNamed = (
   flow: FlowRef,
   name: string,
 ): Effect.Effect<Markers.Marker, FlowFailed | MarkerUnreleasable> =>
-  Option.match(
-    Option.orElse(Markers.find(Markers.builtIn, name), () =>
-      Option.flatMap(handle, (loaded) => Markers.find(loaded.flow.markers ?? [], name)),
-    ),
-    {
-      onSome: Effect.succeed,
-      onNone: () =>
-        Option.match(handle, {
-          // The flow may load again, as a paused or untrusted repo's does.
-          onNone: () =>
-            Effect.fail(new FlowFailed({ message: `${flow.repo}/${flow.flow} isn't loaded` })),
-          onSome: () =>
-            Effect.fail(
-              new MarkerUnreleasable({
-                message: `${flow.flow} no longer defines marker ${name}`,
-              }),
-            ),
-        }),
-    },
-  );
+  Option.match(findMarker(handle, name), {
+    onSome: Effect.succeed,
+    onNone: () =>
+      Option.match(handle, {
+        // The flow may load again, as a paused or untrusted repo's does.
+        onNone: () =>
+          Effect.fail(new FlowFailed({ message: `${flow.repo}/${flow.flow} isn't loaded` })),
+        onSome: () =>
+          Effect.fail(
+            new MarkerUnreleasable({
+              message: `${flow.flow} no longer defines marker ${name}`,
+            }),
+          ),
+      }),
+  });
 
 // The persona's services for the repo, whether or not its flows loaded.
 const servicesOf = (registry: FlowRegistry, flow: FlowRef) =>
@@ -301,23 +269,37 @@ export const FlowsClientLive = (registry: FlowRegistry, options: FlowsClientOpti
               }),
             );
           }).pipe(Effect.provideContext(runs)),
-        lease: (flow, question, item, renew) =>
+        markerLease: (flow, question, name, args, renew) =>
           Effect.gen(function* () {
+            const leaseJson = Option.flatMapNullishOr(
+              findMarker(handleOf(registry.handles, flow), name),
+              (marker) => marker.leaseJson,
+            );
+
+            if (Option.isNone(leaseJson)) {
+              return Option.none<MarkerLease>();
+            }
+
             const services = yield* personaServices(flow);
 
-            const asked = Option.match(renew, {
-              onNone: () => leaseOf(item, question.runId),
-              onSome: (ttl) => renewing(item, question.runId, ttl),
-            });
-
-            return yield* withRepo(Context.add(services, Run, runInfo(flow, question)), asked).pipe(
+            return yield* withRepo(
+              Context.add(services, Run, runInfo(flow, question)),
+              leaseJson.value(args, renew),
+            ).pipe(
+              Effect.map(({ on, report }) => Option.some({ on, state: leaseState(report) })),
+              // Arguments that no longer fit are no lease it can still renew;
+              // what the hold is left with is its release's to say.
+              Effect.catchIf(
+                (error) => Predicate.isTagged(error, "ArgumentsChanged"),
+                () => Effect.succeedNone,
+              ),
               Effect.mapError(failed),
               Effect.timeoutOrElse({
                 duration: LEASE_TIMEOUT,
                 orElse: () =>
                   Effect.fail(
                     new FlowFailed({
-                      message: `the lease on ${item} timed out after ${Duration.format(LEASE_TIMEOUT)}`,
+                      message: `the lease of ${name} timed out after ${Duration.format(LEASE_TIMEOUT)}`,
                     }),
                   ),
               }),

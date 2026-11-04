@@ -7,6 +7,8 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 
 import { RunId, runLabel, shortRunId } from "../../../kernel/run-id.id.ts";
+import { Spec } from "../../../kernel/specification.ts";
+import { FlowsClient } from "../domain/ports/clients/flows.client.ts";
 import {
   type OpenSession,
   RunCleanupClient,
@@ -27,6 +29,9 @@ import { RunSpecifications } from "../domain/run/run.specification.ts";
 import { RunView } from "../domain/run/run-view.value-object.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { claimOf, itemTarget } from "../domain/run/work-item.value-object.ts";
+import { RunMarkerRootOps } from "../domain/run-marker/run-marker.root-ops.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
 import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
 import { type CancelRunPayload } from "./cancel-run.command.ts";
@@ -177,16 +182,65 @@ const releaseIssueClaim = (cancelled: RunRoot, leftForPerson: Array<string>) =>
     return released;
   });
 
-// A run that has ended keeps its ending, but a flow that never let its claim
-// go (one baked before claims were refs) leaves the claim ref behind, which
-// would hold the issue or pull request for good. Cancelling it deletes that
-// ref and nothing else; with no ref to delete, it fails as before.
+// Releases what an ended run still holds, by each marker's definition, newest
+// first: its name and arguments, once each is gone. A marker to stay on the
+// run's ending, or one its ending may still be releasing, is left to that and
+// the sweep; one that fails is told to a person, and the sweep tries it again.
+const releaseHeldMarkers = (found: RunRoot, leftForPerson: Array<string>) =>
+  Effect.gen(function* () {
+    const markers = yield* RunMarkersRepository;
+    const flows = yield* FlowsClient;
+    const now = yield* DateTime.now;
+    const flow = { repo: found.repo, flow: found.flow, persona: found.persona };
+    const released: Array<string> = [];
+
+    const held = yield* markers
+      .findMany(
+        Spec.and(
+          RunMarkerSpecifications.forRun(found.id),
+          RunMarkerSpecifications.inStatus("held"),
+        ),
+      )
+      .pipe(inUnitOfWork);
+
+    for (const marker of RunMarkerRootOps.releaseOrder(held)) {
+      if (
+        RunMarkerRootOps.keptOn(marker, found.status) ||
+        !RunMarkerRootOps.leftToSweep(marker, found.finishedAt, now)
+      ) {
+        continue;
+      }
+
+      const release = yield* flows
+        .releaseMarker(flow, RunRootOps.questionOf(found), marker.name, marker.args)
+        .pipe(Effect.result);
+
+      yield* markers
+        .upsertOne(RunMarkerRootOps.afterRelease(marker, release, now))
+        .pipe(inUnitOfWork);
+
+      if (Result.isFailure(release)) {
+        leftForPerson.push(`releasing ${marker.name} failed: ${release.failure.message}`);
+      } else {
+        released.push(`${marker.name} ${RunMarkerRootOps.argsText(marker.args)}`);
+      }
+    }
+
+    return released;
+  });
+
+// A run that has ended keeps its ending, but it may still hold markers whose
+// release failed or never ran, and a flow that never let its claim go (one baked
+// before claims were refs) holds no marker for the claim ref it leaves behind,
+// which would hold the issue or pull request for good. Cancelling it releases
+// those and nothing else; with neither to let go of, it fails as before.
 const releaseEnded = (found: RunRoot) =>
   Effect.gen(function* () {
     const leftForPerson: Array<string> = [];
+    const releasedMarkers = yield* releaseHeldMarkers(found, leftForPerson);
     const releasedClaims = yield* releaseClaimRefs(found, leftForPerson);
 
-    if (releasedClaims.length === 0 && leftForPerson.length === 0) {
+    if (releasedMarkers.length === 0 && releasedClaims.length === 0 && leftForPerson.length === 0) {
       return yield* new RunAlreadyFinished({ runId: found.id, status: found.status });
     }
 
@@ -197,6 +251,7 @@ const releaseEnded = (found: RunRoot) =>
       wakesCleared: 0,
       removedWorktrees: [],
       releasedClaims,
+      releasedMarkers,
       released: Option.none(),
       closedSessions: [],
       openSessions: [],

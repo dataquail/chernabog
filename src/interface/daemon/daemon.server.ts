@@ -813,8 +813,8 @@ export const runDaemon = Effect.gen(function* () {
       const leaseNotes = new Map<string, ReadonlyArray<LeaseNote>>();
       const leasesRenewed = new Map<string, DateTime.Utc>();
 
-      // Ends a run whose claim another run took over as lost. What it left on
-      // the item, worktree included, stays for the run that took it over.
+      // Ends a run whose lease someone else took over as lost. What it left on
+      // the item, worktree included, stays for whoever took it over.
       const loseRun = (run: ActiveRun, reason: string) =>
         RunFlowsCommands.use((runs) =>
           runs.CancelRunCommand({
@@ -843,8 +843,8 @@ export const runDaemon = Effect.gen(function* () {
           ),
         );
 
-      // Checks, or renews, a run's leases: whether it still holds its work
-      // item. A run that lost it ends as lost; a check that fails leaves the
+      // Checks, or renews, a run's leases: whether it still holds its work. A
+      // run that lost it ends as lost; a check that fails leaves the
       // lease at risk, and the run running.
       const checkLeases = (run: ActiveRun, renew: Option.Option<Duration.Duration>) =>
         Effect.gen(function* () {
@@ -856,11 +856,28 @@ export const runDaemon = Effect.gen(function* () {
           const known = leaseNotes.get(run.id) ?? [];
 
           yield* RunLeases.match(found, {
+            // A check that can't read a lease says nothing of when it runs
+            // out, which its last renewal did.
             Held: ({ leases }) =>
               Effect.sync(() => {
                 leaseNotes.set(
                   run.id,
-                  leases.map((lease) => ({ ...lease, atRisk: Option.none() })),
+                  leases.map((lease) => {
+                    const before = Option.fromUndefinedOr(
+                      known.find((note) => note.item === lease.item),
+                    );
+
+                    return {
+                      ...lease,
+                      expiresAt: Option.orElse(lease.expiresAt, () =>
+                        Option.flatMap(before, (note) => note.expiresAt),
+                      ),
+                      renewedAt: Option.orElse(lease.renewedAt, () =>
+                        Option.flatMap(before, (note) => note.renewedAt),
+                      ),
+                      atRisk: Option.none(),
+                    };
+                  }),
                 );
               }),
             Lost: ({ reason }) => loseRun(run, reason),
@@ -1969,7 +1986,7 @@ export const runDaemon = Effect.gen(function* () {
 
         if (cancelled.success.alreadyEnded) {
           yield* log(
-            `deleted the claim refs ${cancelled.success.releasedClaims.join(", ")} of ended run ${cancelled.success.run.id} (${runLabel(cancelled.success.run)})`,
+            `released ${[...(cancelled.success.releasedMarkers ?? []), ...cancelled.success.releasedClaims].join(", ")} of ended run ${cancelled.success.run.id} (${runLabel(cancelled.success.run)})`,
           );
         } else {
           yield* log(
