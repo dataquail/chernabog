@@ -1,6 +1,7 @@
 // A flow's own marker with a renewal (#354), end to end with the daemon: a run
 // that holds a queue's lease has it renewed for the daemon's TTL, status names
-// it, and a renewal that reports lost ends the run as lost.
+// it, keeping what the last renewal said through the checks between renewals,
+// and a renewal that reports lost ends the run as lost.
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -88,7 +89,10 @@ describe("a marker that is a lease", () => {
 
   beforeAll(async () => {
     sandbox = openSandbox(
-      { limits: { leaseTtl: "2 seconds", leaseRenewEvery: "1 second" } },
+      // Checks far more often than renewals, so status has checks to read between them.
+      {
+        limits: { validityEvery: "1 second", leaseTtl: "2 seconds", leaseRenewEvery: "6 seconds" },
+      },
       {
         flows: { queued: { schedule: "*/2 * * * * *" } },
         recipes: [],
@@ -123,6 +127,13 @@ describe("a marker that is a lease", () => {
       async () => (await sandbox.runCli(["status"])).output.includes(`lease on job-${issue} until`),
       "status to name the queue's lease",
     );
+
+    // This marker has no check, so the checks between renewals can't read when
+    // its lease runs out: status keeps what the last renewal said.
+    for (let looks = 0; looks < 8; looks += 1) {
+      expect((await sandbox.runCli(["status"])).output).toContain(`lease on job-${issue} until`);
+      await Bun.sleep(400);
+    }
 
     sandbox.github.issue(issue).labels = ["queue:revoked"];
 
