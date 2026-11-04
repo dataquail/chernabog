@@ -125,6 +125,13 @@
           "maximum": 9007199254740991,
           "description": "Re-reviews of one pull request before a person takes over."
         },
+        "holdMergesOnBrokenBase": {
+          "type": "boolean",
+          "description": "Whether an approved pull request waits to merge while CI on its base branch is red: the newest completed push run of a workflow there failed. A follow-up issue's fix still merges. Default: false."
+        },
+        "mergeHoldTimeout": {
+          "type": "string"
+        },
         "localGate": {
           "type": "array",
           "items": {
@@ -1025,6 +1032,13 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991,
                   "description": "The most layers one stack may hold before the run stops starting new ones and waits for the bottom to merge."
+                },
+                "holdMergesOnBrokenBase": {
+                  "type": "boolean",
+                  "description": "Whether an approved pull request waits to merge while CI on its base branch is red: the newest completed push run of a workflow there failed. A follow-up issue's fix still merges. Default: false."
+                },
+                "mergeHoldTimeout": {
+                  "type": "string"
                 },
                 "atOnce": {
                   "type": "integer",
@@ -1966,6 +1980,13 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991,
                   "description": "Re-reviews of one pull request before a person takes over."
+                },
+                "holdMergesOnBrokenBase": {
+                  "type": "boolean",
+                  "description": "Whether an approved pull request waits to merge while CI on its base branch is red: the newest completed push run of a workflow there failed. A follow-up issue's fix still merges. Default: false."
+                },
+                "mergeHoldTimeout": {
+                  "type": "string"
                 }
               },
               "additionalProperties": true
@@ -2360,6 +2381,13 @@
                   "minimum": -9007199254740991,
                   "maximum": 9007199254740991,
                   "description": "Re-reviews of one pull request before a person takes over."
+                },
+                "holdMergesOnBrokenBase": {
+                  "type": "boolean",
+                  "description": "Whether an approved pull request waits to merge while CI on its base branch is red: the newest completed push run of a workflow there failed. A follow-up issue's fix still merges. Default: false."
+                },
+                "mergeHoldTimeout": {
+                  "type": "string"
                 }
               },
               "additionalProperties": true
