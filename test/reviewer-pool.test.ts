@@ -142,7 +142,12 @@ describe("review requests no persona here serves", () => {
 
   const quiet = Effect.provideService(
     RunLog,
-    RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
+    RunLog.of({
+      log: () => Effect.void,
+      step: () => Effect.void,
+      stepDone: () => Effect.void,
+      stepFinished: () => Effect.void,
+    }),
   );
 
   effect("wait on the logins this machine isn't, as the review recipe's trigger reports", () =>

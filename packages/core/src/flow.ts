@@ -4,9 +4,11 @@
 // the last completed one. Side effects belong inside activities, never in the
 // workflow body, because the body runs again on every replay.
 
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -40,6 +42,7 @@ import {
   type ReviewerSeat,
   type Run,
   RunLog,
+  type StepOutcome,
   type Usage,
   type WorkItem,
   type Worktree,
@@ -323,6 +326,21 @@ export const CurrentActivity = Context.Reference<Option.Option<string>>(
   },
 );
 
+// How an activity's execute ended, for the run log: none when it was
+// interrupted, as a run stopping or a sibling failing interrupts it, since it
+// runs again when the run resumes.
+const outcomeOfExit = <A, E>(exit: Exit.Exit<A, E>): Option.Option<StepOutcome> => {
+  if (Exit.isSuccess(exit)) {
+    return Option.some("ok");
+  }
+
+  if (Cause.hasInterruptsOnly(exit.cause)) {
+    return Option.none();
+  }
+
+  return Option.some("failed");
+};
+
 // One durable step of a workflow. It runs once; its result is saved, and a
 // replay returns the saved result. Names must be unique within a run, so a
 // step inside a loop carries its round: `fix-ci-2`. `success` is the result's
@@ -341,6 +359,12 @@ export const activity = <S extends Schema.Constraint = typeof Schema.Void, E = n
       error: ActivityError,
       execute: withRunLog((log) => log.step(name)).pipe(
         Effect.andThen(Effect.provideService(execute, CurrentActivity, Option.some(name))),
+        Effect.onExit((exit) =>
+          Option.match(outcomeOfExit(exit), {
+            onNone: () => Effect.void,
+            onSome: (outcome) => withRunLog((log) => log.stepFinished(name, outcome)),
+          }),
+        ),
         Effect.ensuring(withRunLog((log) => log.stepDone(name))),
         Effect.mapError(toActivityError(name)),
       ),

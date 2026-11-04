@@ -15,6 +15,7 @@ import {
   FlowPackage,
   GitHub,
   isSetupError,
+  Lanes,
   Markers,
   NeedsHuman,
   type RepoSettings,
@@ -24,6 +25,7 @@ import {
   type SetupError,
   Signals,
   Skip,
+  type StepOutcome,
   Subjects,
   WorkItem,
 } from "@chernabog/core";
@@ -605,9 +607,21 @@ export const flowLayer = <R>(
         ),
       );
 
+      // A step that ends, and a lane declared, after the run ended change nothing:
+      // neither command refuses one.
+      const finishStep = yield* capturing((step: string, outcome: StepOutcome) =>
+        RunsCommands.use((runs) => runs.FinishStepCommand({ runId, step, outcome })),
+      );
+
+      const declareLane = yield* capturing((lane: string, needs: ReadonlyArray<string>) =>
+        RunsCommands.use((runs) => runs.DeclareLaneCommand({ runId, lane, needs })),
+      );
+
       const runLog = yield* runLogFor(payload.runId, {
         onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
         onStepDone: hooks.onStepDone,
+        onStepFinished: (step, outcome) =>
+          finishStep(step, outcome).pipe(Effect.andThen(hooks.onStepFinished(step, outcome))),
         onChange: hooks.onChange,
       });
 
@@ -642,6 +656,7 @@ export const flowLayer = <R>(
         Effect.provideService(Signals, signals),
         Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
+        Effect.provideService(Lanes.RunLanes, Lanes.RunLanes.of({ declare: declareLane })),
         Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
         Effect.provideContext(
           stoppingWith(

@@ -52,8 +52,11 @@ Look before you guess. Everything below is under the chernabog home,
   earlier days' are `daemon.<YYYY-MM-DD>.log`, deleted after 30 days.
 - **`daemon.out.log`**: the daemon's stdout and stderr as the service manager
   catches them, which is mostly a crash. Emptied past 10 MB.
-- **`runs/<run>.log`**: one run's steps and agent output, as
-  `chernabog logs <run>` prints it. Kept 30 days from when its run finished
+- **`runs/<run>.log`**: one run's steps and agent output, a line an entry,
+  `<ISO>\t<step>\t<text>`: the innermost activity the writing fiber was in
+  (`CurrentActivity`), empty outside any; a log from before tags is
+  `<ISO> <text>`. `chernabog logs <run>` prints it without the tags
+  (`src/kernel/run-log-line.value-object.ts`). Kept 30 days from when its run finished
   (a run still running keeps its log; a log state.db has no run for, 30 days
   from its last write), pruned by the daemon's daily sweep.
 - **`telemetry/<day>/<process>-<pid>.jsonl`**: every span and Effect log line
@@ -377,7 +380,12 @@ transitive reach), the coverage floors and the baseline.
   and ends exactly once, and a persona has one run in flight per flow and item.
   `RunWaitRoot` (`om_waits`, with when it parked) parks a run on a signal;
   `RunStepEntity` (`om_steps`, in `run/`) logs each step a run enters, which
-  `EnterStepCommand` writes beside its current step; `SkipRoot` (`om_skips`)
+  `EnterStepCommand` writes beside its current step, and `FinishStepCommand`
+  ends with its outcome (core's `activity` reports it through
+  `RunLog.stepFinished`; never for an interrupted or replayed step);
+  `RunLaneEntity` (`om_lanes`) is what each lane of a run waited on, as its
+  flow declared with core's `Lanes.declare` (`DeclareLaneCommand`, which only
+  adds); `SkipRoot` (`om_skips`)
   logs why a tick started nothing. A run's `subjects` (`om_run_subjects`)
   are the work items it named with core's `Subjects.name`, such as the pull
   request an SDK block opened or adopted; the engine records them through

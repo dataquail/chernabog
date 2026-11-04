@@ -208,6 +208,7 @@ The daemon records a setup error as that tick's skip reason, and starts nothing;
 - `Claims` holds a run's [claims](/chernabog/flows/sdk/#claims): `Claims.acquire(item)`, `holder(item)` and `release(item)` on `Claims.issue(n)` or `Claims.pullRequest(n)`, and `Claims.releasing(item)(effect)`, which lets a claim go however `effect` ends. `Implement.claim` and `Hybrid.claim` acquire the issue's, and hold it as a marker, so it goes however the run ends; `releasing` lets it go sooner.
 - `Markers` defines, holds and drops [markers](/chernabog/flows/sdk/#markers): what a run put on an item, which the daemon releases however the run ends.
 - `Subjects.name(key)` names a [subject](/chernabog/flows/sdk/#subjects): a work item the run touched besides its own, such as a pull request it opened.
+- `Lanes.declare(lane, needs)` says which of a run's [lanes](/chernabog/flows/sdk/#lanes), the ids its steps carry after `#`, a lane waited on, for the dashboard to draw.
 - `PullRequest.owning(pr)(effect)` holds the pull request's claim while `effect` runs, so the standalone `review`, `re-review` and `address-review` flows leave it alone. A pull request another run owns is skipped.
 
 See [the label contract](/chernabog/flows/sdk/#the-label-contract) for what each ending must leave.

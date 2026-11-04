@@ -798,6 +798,10 @@ export class Machine extends Context.Service<
   }
 >()("@chernabog/sdk/Machine") {}
 
+// How a step ended: it succeeded, or it failed (an error or a defect). A step
+// that was interrupted has no outcome: it runs again when its run resumes.
+export type StepOutcome = "ok" | "failed";
+
 // Writes to the run's log file, which `chernabog logs <run>` prints.
 export class RunLog extends Context.Service<
   RunLog,
@@ -805,5 +809,8 @@ export class RunLog extends Context.Service<
     log(line: string): Effect.Effect<void>;
     step(name: string): Effect.Effect<void>;
     stepDone(name: string): Effect.Effect<void>;
+    // A step ended with `outcome`, before its stepDone. Not called for a step
+    // that was interrupted, nor for one a replay reads back from the journal.
+    stepFinished(name: string, outcome: StepOutcome): Effect.Effect<void>;
   }
 >()("@chernabog/sdk/RunLog") {}

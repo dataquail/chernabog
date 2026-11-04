@@ -83,7 +83,12 @@ const queues = {
 
 const quietLog = Layer.succeed(
   RunLog,
-  RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
+  RunLog.of({
+    log: () => Effect.void,
+    step: () => Effect.void,
+    stepDone: () => Effect.void,
+    stepFinished: () => Effect.void,
+  }),
 );
 
 // The registry a daemon builds: the flows it loaded, and bob's services.

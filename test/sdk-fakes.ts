@@ -66,6 +66,7 @@ import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import { RunLogsClientLive } from "../src/modules/runs/infrastructure/clients/run-logs.client-live.ts";
 import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/holds.repository-live.ts";
+import { RunLanesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-live.ts";
 import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
 import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-live.ts";
@@ -1029,6 +1030,7 @@ export type EngineRun = RunView | ActiveRun;
 export const StateAt = (home: string) =>
   Layer.mergeAll(
     RunsRepositoryLive,
+    RunLanesRepositoryLive,
     RunMarkersRepositoryLive,
     RunStepsRepositoryLive,
     RunWaitsRepositoryLive,
@@ -1095,7 +1097,12 @@ export const deliverSignals = (
 // A run log that keeps nothing, for a flow's trigger run outside the engine.
 const quietLog = Layer.succeed(
   RunLog,
-  RunLog.of({ log: () => Effect.void, step: () => Effect.void, stepDone: () => Effect.void }),
+  RunLog.of({
+    log: () => Effect.void,
+    step: () => Effect.void,
+    stepDone: () => Effect.void,
+    stepFinished: () => Effect.void,
+  }),
 );
 
 // Starts a run of the flow on the fake, and polls until `until` says it has got far enough,

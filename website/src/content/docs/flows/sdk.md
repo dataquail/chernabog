@@ -159,3 +159,13 @@ A run's subjects are the work items it touched besides the one it started for, b
 ```ts
 yield* Subjects.name(`release-${version}`);
 ```
+
+## Lanes
+
+A run that does several things at once draws them as lanes on its page in the dashboard: a step named with an id, `<name>#<id>` (as `step(name, input, output, id)` names one, or an activity named so), is in lane `<id>`, and a step with none is on the run's main line. `Lanes.declare(lane, needs)` says which lanes a lane waited on, by those ids, so the page draws an arrow from each. What a lane needs only grows: declaring it again, or part of it, changes nothing, so a workflow body, which runs again whenever its run resumes, may declare it there; outside a run the daemon records, it does nothing. The [`epic` recipe](/chernabog/recipes/epic/) declares each task's lane (`task-12`) as it starts it, with the lanes of the tasks it was held on or stacked on:
+
+```ts
+yield* Lanes.declare("task-13", ["task-10", "task-12"]);
+```
+
+A step's end is recorded too, with no call of the flow's: when its activity succeeds (`ok`) or fails (`failed`, a failure the flow then handles included). An activity interrupted, as a run stopping interrupts it, has no end, and runs again when the run resumes; one a resumed run reads back from its journal isn't ended twice.

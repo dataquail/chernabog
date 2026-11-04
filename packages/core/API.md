@@ -417,6 +417,7 @@ export * from "./errors.ts";
 export * from "./flow.ts";
 export * as Settings from "./flow-settings.ts";
 export * from "./json.ts";
+export * as Lanes from "./lanes.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";
 export * from "./paths.ts";
@@ -435,6 +436,20 @@ export type Json = Schema.Json;
 export declare const parseJson: (text: string) => Option.Option<Json>;
 export declare const printJson: (value: Json) => string;
 export declare const decodeJsonLines: <A>(schema: Schema.Codec<A, string>, text: string) => ReadonlyArray<A>;
+```
+
+## lanes.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+declare const RunLanes_base: Context.ServiceClass<RunLanes, "@chernabog/sdk/RunLanes", {
+    declare(lane: string, needs: ReadonlyArray<string>): Effect.Effect<void>;
+}>;
+export declare class RunLanes extends RunLanes_base {
+}
+export declare const declare: (lane: string, needs: ReadonlyArray<string>) => Effect.Effect<void, never, never>;
+export {};
 ```
 
 ## markers-api.ts
@@ -1298,10 +1313,12 @@ declare const Machine_base: Context.ServiceClass<Machine, "@chernabog/sdk/Machin
 }>;
 export declare class Machine extends Machine_base {
 }
+export type StepOutcome = "ok" | "failed";
 declare const RunLog_base: Context.ServiceClass<RunLog, "@chernabog/sdk/RunLog", {
     log(line: string): Effect.Effect<void>;
     step(name: string): Effect.Effect<void>;
     stepDone(name: string): Effect.Effect<void>;
+    stepFinished(name: string, outcome: StepOutcome): Effect.Effect<void>;
 }>;
 export declare class RunLog extends RunLog_base {
 }

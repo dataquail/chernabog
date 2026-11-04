@@ -11,6 +11,7 @@ import { RunCleanupClientLive } from "./infrastructure/clients/run-cleanup.clien
 import { RunLogsClientLive } from "./infrastructure/clients/run-logs.client-live.ts";
 import { WorkflowsClientLive } from "./infrastructure/clients/workflows.client-live.ts";
 import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.repository-live.ts";
+import { RunLanesRepositoryLive } from "./infrastructure/repositories/run-lanes.repository-live.ts";
 import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
@@ -44,6 +45,7 @@ import {
 // The runs' stores in state.db.
 const RunsStoresLive = Layer.mergeAll(
   RunsRepositoryLive,
+  RunLanesRepositoryLive,
   RunMarkersRepositoryLive,
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,

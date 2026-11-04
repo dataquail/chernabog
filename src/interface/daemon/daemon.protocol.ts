@@ -19,6 +19,7 @@ import {
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
+  RunFinishedStep,
   RunHistory,
   RunMarkersReleased,
   RunMarkerView,
@@ -191,7 +192,7 @@ export const RunReply = Schema.OptionFromNullOr(RunView);
 
 // GET /runs/:id/history: the steps a run entered and the signals it waits on.
 // And the events about one run that the dashboard's page of it listens for.
-export { RunEnteredStep, RunFinished, RunHistory, RunNeedsAttention };
+export { RunEnteredStep, RunFinished, RunFinishedStep, RunHistory, RunNeedsAttention };
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
 // on; without one, the last one asked for, else 4848.
@@ -272,6 +273,7 @@ export type StatusChanged = typeof StatusChanged.Type;
 export const DaemonEvent = Schema.Union([
   RunStarted.schema,
   RunEnteredStep.schema,
+  RunFinishedStep.schema,
   RunNeedsAttention.schema,
   RunFinished.schema,
   PullRequestOpened.schema,
@@ -293,6 +295,7 @@ export type DaemonEvent = typeof DaemonEvent.Type;
 const sent = {
   RunStarted: true,
   RunEnteredStep: true,
+  RunFinishedStep: true,
   RunNeedsAttention: true,
   RunFinished: true,
   PullRequestOpened: true,

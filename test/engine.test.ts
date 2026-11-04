@@ -8,6 +8,7 @@ import {
   GitHub,
   HEADLESS,
   Implement,
+  Lanes,
   NeedsHuman,
   NotInReviewerPool,
   PersonaUnavailable,
@@ -32,6 +33,7 @@ import type { BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "bun:test";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -48,6 +50,8 @@ import { CancelTarget } from "../src/modules/runs/domain/run/cancelled-run.value
 import { flowHandle, forEveryPersona } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
+import { readRunLogHandler } from "../src/modules/runs/queries/read-run-log.handler.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -153,6 +157,35 @@ const flow = defineFlow({
         yield* activity("release", Subjects.name("release-1.4"));
         yield* Subjects.name("pr-40");
         yield* activity("second-pull", Subjects.name("pr-41"));
+      }
+
+      // Two lanes at once, one forking a fiber that logs and nesting an
+      // activity, then a step that fails, which the flow lets go.
+      if (key === "lanes") {
+        yield* Lanes.declare("b", ["a"]);
+        yield* Effect.all(
+          [
+            activity(
+              "work#a",
+              Effect.gen(function* () {
+                const log = yield* RunLog;
+                yield* Effect.forkChild(log.log("a forked")).pipe(Effect.flatMap(Fiber.join));
+                yield* activity("inner#a", log.log("a inner"));
+                yield* log.log("a after inner");
+              }),
+            ),
+            activity(
+              "work#b",
+              RunLog.use((log) => log.log("b line")),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+        yield* activity(
+          "fails",
+          Effect.fail(new StepFailed({ step: "fails", message: "no" })),
+        ).pipe(Effect.catchTag("StepFailed", () => Effect.void));
+        yield* Lanes.declare("b", ["a"]);
       }
 
       if (key === "seat") {
@@ -282,6 +315,71 @@ describe("the engine", () => {
     }),
   );
 
+  effect(
+    "tags each log line with its innermost step, and keeps each step's end and the lanes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+
+        const { home, value: finished } = yield* withEngine(
+          Effect.gen(function* () {
+            const run = yield* runToEnd(item("lanes"));
+            const history = yield* readRunHistoryHandler({ runId: run.id });
+            const shown = yield* readRunLogHandler({ runId: run.id });
+
+            return { run, history, shown };
+          }),
+        );
+
+        expect(finished.run.status).toBe("done");
+
+        const raw = yield* fs.readFileString(homePaths(home).runLog(finished.run.id));
+
+        // Each line's tag and text, by its text.
+        const tagOf = (text: string) =>
+          raw
+            .split("\n")
+            .map((line) => line.split("\t"))
+            .find((parts) => parts[2] === text)?.[1];
+
+        expect(
+          [
+            "step: who-am-i",
+            "hello from lanes",
+            "a forked",
+            "a inner",
+            "a after inner",
+            "b line",
+            "finished: done: did lanes",
+          ].map(tagOf),
+        ).toEqual(["who-am-i", "log", "work#a", "inner#a", "work#a", "work#b", ""]);
+        expect(finished.shown.text).not.toContain("\t");
+        expect(finished.shown.text).toContain(" b line");
+
+        const ends = Object.fromEntries(
+          finished.history.steps.map((step) => [step.step, step.outcome]),
+        );
+
+        expect(ends).toEqual({
+          "who-am-i": "ok",
+          log: "ok",
+          "work#a": "ok",
+          "inner#a": "ok",
+          "work#b": "ok",
+          fails: "failed",
+        });
+        expect(
+          finished.history.steps.filter((step) =>
+            Option.isNone(Option.fromUndefinedOr(step.finishedAt)),
+          ),
+        ).toEqual([]);
+        expect(finished.history.lanes?.map((lane) => [lane.lane, lane.needs])).toEqual([
+          ["b", ["a"]],
+        ]);
+        expect(finished.history.stepLogs).toBe("tagged");
+      }),
+  );
+
   effect("a Skip ends the run cleanly, and NeedsHuman hands it to a person", () =>
     Effect.gen(function* () {
       const { value } = yield* withEngine(
@@ -334,13 +432,25 @@ describe("the engine", () => {
           }),
         );
         expect(yield* deliverSignals(handle, IMPLICIT, [item("wait", ["pushed"])])).toBe(1);
+        const ended = yield* toEnd(run);
 
-        return yield* toEnd(run);
+        return { ended, history: yield* readRunHistoryHandler({ runId: run.id }) };
       });
 
-      const { value: finished } = yield* withEngine(wakes);
-      expect(finished.status).toBe("done");
-      expect(summaryOf(finished)).toBe("woke by pushed");
+      const { value } = yield* withEngine(wakes);
+      expect(value.ended.status).toBe("done");
+      expect(summaryOf(value.ended)).toBe("woke by pushed");
+
+      // The steps before the wait replay from the journal when it wakes: each
+      // was entered and ended once.
+      expect(
+        value.history.steps
+          .filter((step) => step.step === "who-am-i" || step.step === "log")
+          .map((step) => [step.step, step.outcome]),
+      ).toEqual([
+        ["who-am-i", "ok"],
+        ["log", "ok"],
+      ]);
     }),
   );
   effect("a cancelled waiting run stops in the engine, and no signal wakes it", () =>

@@ -37,6 +37,8 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(
       runId,
       step,
       enteredAt: DateTime.formatIso(yield* DateTime.now),
+      finishedAt: Option.none(),
+      outcome: Option.none(),
     });
 
     yield* runs.upsertOne(changed);

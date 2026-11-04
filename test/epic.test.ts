@@ -262,6 +262,7 @@ describe("an epic's tasks", () => {
           kind: "human",
           state: "held",
           reason: "waits on #10, #11",
+          waitsOn: [10, 11],
         }),
       );
 

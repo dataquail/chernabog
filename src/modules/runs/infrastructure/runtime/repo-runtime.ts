@@ -146,6 +146,7 @@ const consoleRunLog = RunLog.of({
   log: (line) => Console.error(line),
   step: () => Effect.void,
   stepDone: () => Effect.void,
+  stepFinished: () => Effect.void,
 });
 
 // One repo's services as one persona, with its account, agent and launcher,

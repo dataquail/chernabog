@@ -10,6 +10,7 @@ export {
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
+  RunFinishedStep,
   RunNeedsAttention,
   RunStarted,
 } from "./domain/run/run.events.ts";

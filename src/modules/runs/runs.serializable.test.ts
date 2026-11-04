@@ -7,6 +7,7 @@ import {
   PullRequestOpened,
   RunEnteredStep,
   RunFinished,
+  RunFinishedStep,
   RunNeedsAttention,
   RunStarted,
 } from "./domain/run/run.events.ts";
@@ -33,7 +34,14 @@ describe("the runs module's messages and events", () => {
             runLogsQueryGroup,
             runsQueryGroup,
           ],
-          { PullRequestOpened, RunEnteredStep, RunFinished, RunNeedsAttention, RunStarted },
+          {
+            PullRequestOpened,
+            RunEnteredStep,
+            RunFinished,
+            RunFinishedStep,
+            RunNeedsAttention,
+            RunStarted,
+          },
         ),
       ).toEqual([]);
     }),
