@@ -12,9 +12,13 @@ import { CancelTarget, type EndAs } from "../domain/run/cancelled-run.value-obje
 import { RunFinished } from "../domain/run/run.events.ts";
 import { RunRoot } from "../domain/run/run.root.ts";
 import { RunsRepository } from "../domain/run/runs.repository.ts";
+import { RunMarkerRoot } from "../domain/run-marker/run-marker.root.ts";
+import { RunMarkerSpecifications } from "../domain/run-marker/run-marker.specification.ts";
+import { RunMarkersRepository } from "../domain/run-marker/run-markers.repository.ts";
 import { RunWaitRoot } from "../domain/run-wait/run-wait.root.ts";
 import { RunWaitSpecifications } from "../domain/run-wait/run-wait.specification.ts";
 import { RunWaitsRepository } from "../domain/run-wait/run-waits.repository.ts";
+import { type FakeFlow, FlowsClientFake } from "../infrastructure/clients/flows.client-fake.ts";
 import {
   type FakeHoldings,
   fakeHoldings,
@@ -26,6 +30,7 @@ import {
   fakeEngine,
   WorkflowsClientFake,
 } from "../infrastructure/clients/workflows.client-fake.ts";
+import { RunMarkersRepositoryFake } from "../infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunWaitsRepositoryLive } from "../infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
@@ -83,7 +88,12 @@ const stoppingEngine = (...ids: ReadonlyArray<string>) => {
 const runtime = (
   engine: FakeEngine,
   holdings: FakeHoldings,
-  stored: { readonly runs: ReadonlyArray<RunRoot>; readonly waits?: ReadonlyArray<RunWaitRoot> },
+  stored: {
+    readonly runs: ReadonlyArray<RunRoot>;
+    readonly waits?: ReadonlyArray<RunWaitRoot>;
+    readonly markers?: ReadonlyArray<RunMarkerRoot>;
+    readonly flows?: Readonly<Record<string, FakeFlow>>;
+  },
 ) =>
   Layer.mergeAll(
     RecordedEvents,
@@ -92,6 +102,28 @@ const runtime = (
     RunLogsClientFake(Object.fromEntries(stored.runs.map((one) => [one.id, ""]))),
     WorkflowsClientFake(engine),
     RunCleanupClientFake(holdings),
+    RunMarkersRepositoryFake(stored.markers ?? []),
+    FlowsClientFake(stored.flows ?? {}),
+  );
+
+const heldMarker = (runId: string, name: string, fields: Partial<RunMarkerRoot> = {}) =>
+  RunMarkerRoot.make({
+    runId: RunId.make(runId),
+    name,
+    args: { of: name },
+    keepOn: [],
+    status: "held",
+    heldAt: "2026-10-20T00:00:00.000Z",
+    attempts: 0,
+    lastError: Option.none(),
+    nextAttemptAt: Option.none(),
+    settledAt: Option.none(),
+    ...fields,
+  });
+
+const markersOf = (runId: string) =>
+  RunMarkersRepository.use((markers) =>
+    markers.findMany(RunMarkerSpecifications.forRun(RunId.make(runId))),
   );
 
 const byId = (asked: string) => CancelTarget.cases.ById.make({ asked });
@@ -455,6 +487,113 @@ describe("cancelRunHandler", () => {
           }),
         ),
       ),
+  );
+
+  // Ended well past the grace its ending has to release what it held.
+  const endedLongAgo = run("ended-2", {
+    ...finished,
+    id: RunId.make("ended-2"),
+    flow: "implement",
+    itemKey: "issue-7",
+  });
+
+  const releases: NonNullable<FakeFlow["releases"]> = [];
+
+  effect(
+    "a run that ended holding markers has them released by their definitions, newest first",
+    () =>
+      Effect.gen(function* () {
+        const released = yield* cancelRunHandler({ target: byId("ended-2"), ...asAlice });
+
+        expect(released.alreadyEnded).toBe(true);
+        expect(released.run.status).toBe("done");
+        expect(releases.map((one) => [one.runId, one.name, one.args])).toEqual([
+          ["ended-2", "queue-lease", { of: "queue-lease" }],
+          ["ended-2", "chernabog/claim-ref", { of: "chernabog/claim-ref" }],
+        ]);
+
+        // Each is settled, and one to stay on this ending is left to the sweep.
+        expect((yield* markersOf("ended-2")).map((one) => [one.name, one.status])).toEqual([
+          ["chernabog/claim-ref", "released"],
+          ["stays-on-done", "held"],
+          ["queue-lease", "released"],
+        ]);
+
+        // Once they are gone there is nothing left to let go of.
+        const again = yield* Effect.flip(cancelRunHandler({ target: byId("ended-2"), ...asAlice }));
+        expect(again._tag).toBe("RunAlreadyFinished");
+      }).pipe(
+        Effect.provide(
+          runtime(fakeEngine(), fakeHoldings(), {
+            runs: [endedLongAgo],
+            markers: [
+              heldMarker("ended-2", "chernabog/claim-ref"),
+              heldMarker("ended-2", "stays-on-done", { keepOn: ["done"] }),
+              heldMarker("ended-2", "queue-lease"),
+            ],
+            flows: {
+              "demo/implement": {
+                items: [],
+                markers: ["chernabog/claim-ref", "stays-on-done", "queue-lease"],
+                releases,
+              },
+            },
+          }),
+        ),
+      ),
+  );
+
+  effect("a marker that won't release is left for a person and for the sweep to retry", () =>
+    Effect.gen(function* () {
+      const left = yield* cancelRunHandler({ target: byId("ended-2"), ...asAlice });
+
+      expect(left.leftForPerson).toEqual(["releasing queue-lease failed: the queue is down"]);
+      expect((yield* markersOf("ended-2")).map((one) => [one.status, one.attempts])).toEqual([
+        ["held", 1],
+      ]);
+    }).pipe(
+      Effect.provide(
+        runtime(fakeEngine(), fakeHoldings(), {
+          runs: [endedLongAgo],
+          markers: [heldMarker("ended-2", "queue-lease")],
+          flows: {
+            "demo/implement": {
+              items: [],
+              markers: ["queue-lease"],
+              releaseFails: ["the queue is down"],
+            },
+          },
+        }),
+      ),
+    ),
+  );
+
+  const stillReleasing: NonNullable<FakeFlow["releases"]> = [];
+
+  effect("a marker its run's ending is still releasing is left to it", () =>
+    Effect.gen(function* () {
+      const refused = yield* Effect.flip(cancelRunHandler({ target: byId("ended-3"), ...asAlice }));
+
+      expect(refused._tag).toBe("RunAlreadyFinished");
+      expect(stillReleasing).toEqual([]);
+    }).pipe(
+      Effect.provide(
+        runtime(fakeEngine(), fakeHoldings(), {
+          runs: [
+            run("ended-3", {
+              ...finished,
+              id: RunId.make("ended-3"),
+              flow: "implement",
+              finishedAt: Option.some("2999-01-01T00:00:00.000Z"),
+            }),
+          ],
+          markers: [heldMarker("ended-3", "queue-lease")],
+          flows: {
+            "demo/implement": { items: [], markers: ["queue-lease"], releases: stillReleasing },
+          },
+        }),
+      ),
+    ),
   );
 
   const shared = stoppingEngine("review");
