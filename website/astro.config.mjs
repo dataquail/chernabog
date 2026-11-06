@@ -106,6 +106,7 @@ export default defineConfig({
             { slug: "flows/composing" },
             { slug: "flows/steps" },
             { slug: "flows/rehearsing" },
+            { slug: "flows/documents" },
             { slug: "flows/sdk" },
           ],
         },

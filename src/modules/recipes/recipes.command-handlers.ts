@@ -8,6 +8,8 @@ import { AddRecipePackageCommand } from "./commands/add-recipe-package.command.t
 import { addRecipePackageHandler } from "./commands/add-recipe-package.handler.ts";
 import { AddRecipesCommand } from "./commands/add-recipes.command.ts";
 import { addRecipesHandler } from "./commands/add-recipes.handler.ts";
+import { CompileFlowDocumentsCommand } from "./commands/compile-flow-documents.command.ts";
+import { compileFlowDocumentsHandler } from "./commands/compile-flow-documents.handler.ts";
 import { EjectRecipeCommand } from "./commands/eject-recipe.command.ts";
 import { ejectRecipeHandler } from "./commands/eject-recipe.handler.ts";
 import { ImportRecipesCommand } from "./commands/import-recipes.command.ts";
@@ -22,6 +24,7 @@ import { upgradeRepoHandler } from "./commands/upgrade-repo.handler.ts";
 export const recipesCommandGroup = Command.group(
   AddRecipePackageCommand,
   AddRecipesCommand,
+  CompileFlowDocumentsCommand,
   EjectRecipeCommand,
   ImportRecipesCommand,
   ScaffoldRepoCommand,
@@ -32,6 +35,7 @@ export const recipesCommandGroup = Command.group(
 const RecipesCommandHandlersLive = Command.handlersOf(recipesCommandGroup, {
   AddRecipePackageCommand: (payload) => addRecipePackageHandler(payload),
   AddRecipesCommand: (payload) => addRecipesHandler(payload),
+  CompileFlowDocumentsCommand: (payload) => compileFlowDocumentsHandler(payload),
   EjectRecipeCommand: (payload) => ejectRecipeHandler(payload),
   ImportRecipesCommand: (payload) => importRecipesHandler(payload),
   ScaffoldRepoCommand: (payload) => scaffoldRepoHandler(payload),

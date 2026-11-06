@@ -10,6 +10,7 @@
   "scripts": {
     "test": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json",
     "test:unit": "bun test --parallel --timeout=15000 --path-ignore-patterns 'test/acceptance/**'",
+    "test:composed": "CHERNABOG_TEST_COMPOSED=1 bun test --preload ./test/composed-recipes.preload.ts --timeout=60000 test/adopt.test.ts test/claims.test.ts test/epic-flow.test.ts test/epic-stack.test.ts test/hybrid-flow.test.ts test/leases.test.ts test/merge-hold.test.ts test/plan-flow.test.ts test/recipes.test.ts test/review-flow.test.ts test/reviewer-pool.test.ts test/run-markers.test.ts test/steps.test.ts test/still-valid.test.ts test/superseded.test.ts test/composed-recipes.test.ts",
     "test:acceptance": "bun test --parallel --timeout=15000 --timings test/acceptance/timings.json test/acceptance",
     "check": "tsc --noEmit && tsc --noEmit -p packages/dashboard",
     "build": "bun build --compile src/interface/cli/main.ts --outfile dist/chernabog",

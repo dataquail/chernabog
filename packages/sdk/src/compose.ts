@@ -765,7 +765,7 @@ const emitUse = (
   remembered: Remembered,
   step: UseStep,
   indent: string,
-  bodyOf: (branch: Branch) => ReadonlyArray<string>,
+  bodyOf: (outcome: string, branch: Branch) => ReadonlyArray<string>,
 ) => {
   const input = emitObject([
     ...Object.entries(step.in ?? {}),
@@ -781,7 +781,7 @@ const emitUse = (
     ...emitCall(step, input, overrides, indent),
     ...emitRemembered(remembered, step.id, indent),
     ...branchesOf(step).flatMap(([outcome, branch]) =>
-      emitBranch(remembered, step, outcome, branch, indent, bodyOf(branch)),
+      emitBranch(remembered, step, outcome, branch, indent, bodyOf(outcome, branch)),
     ),
   ];
 };
@@ -829,40 +829,60 @@ const emitForEach = (step: ForEachStep, indent: string, body: ReadonlyArray<stri
   `${indent}{ concurrency: ${step.atOnce} });`,
 ];
 
-const emitSteps = (
+type EmitSteps = (
   remembered: Remembered,
   steps: ReadonlyArray<Step>,
+  path: string,
   indent: string,
-): ReadonlyArray<string> =>
-  steps.flatMap((step) => {
-    if (isEnd(step)) {
-      return [emitEnd(step, indent)];
-    }
+) => ReadonlyArray<string>;
 
-    if (isNext(step)) {
-      return emitNext(step, indent);
-    }
+const emitStep = (
+  emitSteps: EmitSteps,
+  remembered: Remembered,
+  step: Step,
+  path: string,
+  indent: string,
+): ReadonlyArray<string> => {
+  if (isEnd(step)) {
+    return [emitEnd(step, indent)];
+  }
 
-    if (isFirst(step)) {
-      return emitFirst(step, indent);
-    }
+  if (isNext(step)) {
+    return emitNext(step, indent);
+  }
 
-    if (isRepeat(step)) {
-      return emitRepeat(step, indent, emitSteps(remembered, step.repeat.steps, `${indent}  `));
-    }
+  if (isFirst(step)) {
+    return emitFirst(step, indent);
+  }
 
-    if (isForEach(step)) {
-      return emitForEach(
-        step,
-        indent,
-        emitSteps(step.failureContext ?? {}, step.steps, `${indent}      `),
-      );
-    }
-
-    return emitUse(remembered, step, indent, (branch) =>
-      emitSteps(remembered, branch.steps, `${indent}  `),
+  if (isRepeat(step)) {
+    return emitRepeat(
+      step,
+      indent,
+      emitSteps(remembered, step.repeat.steps, `${path}.repeat.steps`, `${indent}  `),
     );
-  });
+  }
+
+  if (isForEach(step)) {
+    return emitForEach(
+      step,
+      indent,
+      emitSteps(step.failureContext ?? {}, step.steps, `${path}.steps`, `${indent}      `),
+    );
+  }
+
+  return emitUse(remembered, step, indent, (outcome, branch) =>
+    emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, `${indent}  `),
+  );
+};
+
+// Each step under a comment naming where in the document it came from, which
+// is how `tsc`'s word on this file finds its way back there.
+const emitSteps: EmitSteps = (remembered, steps, path, indent) =>
+  steps.flatMap((step, index) => [
+    `${indent}// ${path}[${index}]`,
+    ...emitStep(emitSteps, remembered, step, `${path}[${index}]`, indent),
+  ]);
 
 const emitSource = (source: FlowDocument["trigger"][number]) => {
   const input = Option.match(Option.fromUndefinedOr(source.with), {
@@ -901,7 +921,7 @@ const emit = (document: FlowDocument, sdk: string) => {
     "",
     `      return yield* ${subject}.scope(trigger, { claims: ${blocks.includes("issue.claim")} }, (failureContext) =>`,
     "        Effect.gen(function* () {",
-    ...emitSteps(document.failureContext ?? {}, document.steps, "          "),
+    ...emitSteps(document.failureContext ?? {}, document.steps, "steps", "          "),
     "        }),",
     "      );",
     "    }),",

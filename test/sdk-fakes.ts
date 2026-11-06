@@ -1019,6 +1019,9 @@ export const makeFake = (
 
 export type Fake = ReturnType<typeof makeFake>;
 
+// makeFake, for a harness of its own: scenarios a test file shares.
+export const repoFake = makeFake;
+
 export const item = (key: string, data: Json = {}): WorkItem => ({ key, data });
 
 // A run as the engine reports it, and the stores a test may read it back from.
