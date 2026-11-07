@@ -242,6 +242,10 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   readonly mustRoute: ReadonlyArray<keyof Outcomes & string>;
   // Whether the block waits, so a loop through it doesn't spin.
   readonly waits?: boolean;
+  // Whether it runs only on a run's way out: in a repeat, no way past it goes
+  // on to another round, which a document is checked for, so it runs once and
+  // its steps needn't carry the round.
+  readonly last?: boolean;
   // The outcomes that changed something, so a loop taking one doesn't spin.
   readonly progressOn?: ReadonlyArray<keyof Outcomes & string>;
   // The outcome it comes to when it changed nothing: any other way past it,
@@ -368,6 +372,7 @@ export const defineBlock = <
     mustRoute: spec.mustRoute,
     exhaustive: spec.exhaustive === true,
     waits: spec.waits === true,
+    last: spec.last === true,
     progressOn: spec.progressOn ?? [],
     progressUnless: Option.fromUndefinedOr(spec.progressUnless),
     stepNames: spec.stepNames ?? [spec.name],

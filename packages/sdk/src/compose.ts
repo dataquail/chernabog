@@ -5,8 +5,8 @@
 // to, and there are no expressions.
 //
 // Experimental: this and the blocks cover implement, review, re-review,
-// address-review, resolve-conflicts, post-merge, human-initiated and epic, and
-// their shape may change until they cover more of the recipes.
+// address-review, resolve-conflicts, post-merge, human-initiated, plan and
+// epic, and their shape may change until they cover more of the recipes.
 //
 // `read` takes a document's shape, `check` what can be said of it without a
 // compiler, with where in the document it is. Whether each wire's type fits is
@@ -710,7 +710,27 @@ type Walked = { readonly ends: boolean; readonly seen: Used };
 
 // Where a walk is: inside a repeat, `next` means something, and its rounds'
 // steps run again each round; inside a lane, they run once for each lane.
-type Place = { readonly inLoop: boolean; readonly inLane: boolean };
+// Past a block that runs only on a run's way out, in a repeat, `leaving`
+// names it, and no way may go on to another round.
+type Place = {
+  readonly inLoop: boolean;
+  readonly inLane: boolean;
+  readonly leaving: Option.Option<string>;
+};
+
+// Where a walk is past a step: past a block that runs only on a run's way
+// out, inside a repeat, it is on its way out of the run.
+const pastStep = (step: Step, place: Place): Place => {
+  if (!place.inLoop || !isUse(step) || Option.isSome(place.leaving)) {
+    return place;
+  }
+
+  if (Option.exists(Record.get(blocksByName, step.use), (block) => block.last)) {
+    return { ...place, leaving: Option.some(step.use) };
+  }
+
+  return place;
+};
 
 // A run resumes by its step names, and a second use of one replays the first's
 // result instead of doing the work. A block that runs steps in every round, or
@@ -742,7 +762,8 @@ const checkStepKey = (
     return;
   }
 
-  if (place.inLoop) {
+  // One that runs only on a run's way out runs once, as checkNext sees to.
+  if (place.inLoop && !block.last) {
     if (!("round" in block.inputs)) {
       say(
         checking,
@@ -875,6 +896,14 @@ const checkNext = (
     say(checking, at, "next means something only inside a repeat");
   }
 
+  for (const leaving of Option.toArray(place.leaving)) {
+    say(
+      checking,
+      at,
+      `${leaving} runs only on a run's way out, and this way goes on to another round`,
+    );
+  }
+
   for (const [name, reference] of Object.entries(step.next)) {
     checkReference(checking, names, reference, `${at}.next.${name}`);
   }
@@ -914,6 +943,7 @@ const checkForEach = (
   walk(step.steps, `${at}.steps`, new Set([...names, step.as]), new Map(), {
     inLoop: false,
     inLane: true,
+    leaving: Option.none(),
   });
 };
 
@@ -929,13 +959,13 @@ const checkRepeat = (
   checkLoop(checking, step, at);
 
   // A round's steps carry its number, as checkStepKey sees to, so each round's
-  // names are its own.
+  // names are its own. Its next goes round this loop, not one it is in.
   const round = walk(
     step.repeat.steps,
     `${at}.repeat.steps`,
     new Set([...names, "round", "state"]),
     new Map(),
-    { ...place, inLoop: true },
+    { ...place, inLoop: true, leaving: Option.none() },
   );
 
   // Running off its steps would go round again, and lose what the round changed.
@@ -1170,7 +1200,7 @@ const checkUse = (
       `${at}.on.${outcome}.steps`,
       new Set([...names, ...Option.toArray(Option.fromUndefinedOr(branch.as))]),
       used,
-      place,
+      pastStep(step, place),
     );
   });
 
@@ -1190,10 +1220,11 @@ const checkUse = (
 // and the blocks it has used.
 const checkSteps =
   (checking: Checking): Walk =>
-  (steps, path, scope, seen, place) => {
+  (steps, path, scope, seen, from) => {
     const walk = checkSteps(checking);
     const names = new Set(scope);
     const used = new Map(seen);
+    let place = from;
 
     const stopsAt = (index: number) => {
       if (index < steps.length - 1) {
@@ -1243,6 +1274,8 @@ const checkSteps =
       for (const id of idOf(step)) {
         names.add(id);
       }
+
+      place = pastStep(step, place);
     }
 
     return { ends: false, seen: used };
@@ -1605,6 +1638,7 @@ export const check = (
   checkSteps(checking)(document.steps, "steps", new Set(["trigger"]), new Map(), {
     inLoop: false,
     inLane: false,
+    leaving: Option.none(),
   });
   checkFailureContext(checking, document, subject.value.failureContext);
   checkOrder(checking, document);
@@ -1658,7 +1692,7 @@ A flow a person starts says start: true and has no trigger: nothing finds its wo
 
 Add if: <step.field>, a boolean output, to run a step only sometimes. Its output is then optional, and { id: x, first: [maybeRan, standIn] } gives the first that ran.
 
-{ id: rounds, repeat: { state: { <name>: <a loop state> }, steps: [...] } } loops: its steps have round and state.<name>, and { next: { <name>: <reference> } } starts the next round with that state changed. Some way must end the loop, and every way round must wait or change something.
+{ id: rounds, repeat: { state: { <name>: <a loop state> }, steps: [...] } } loops: its steps have round and state.<name>, and { next: { <name>: <reference> } } starts the next round with that state changed. Some way must end the loop, and every way round must wait or change something. A block whose listing says runs last runs only on a run's way out: in a repeat it takes no round, and no way past it may go on with next.
 
 { id: x, forEach: <list>, as: item, scope: <a lane scope>, atOnce: <number output>, steps: [...] } runs its steps once per item, beside each other; blocks there wire lane.
 
@@ -1795,6 +1829,8 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
     opens: [...block.opens, ...Object.values(block.opensOn).flat()],
     closes: [...block.closes],
     waits: block.waits,
+    // Whether it runs only on a run's way out, so in a repeat it takes no round.
+    last: block.last,
   })),
   stages: stages.map(describeStage),
 });

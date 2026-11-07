@@ -30,6 +30,8 @@ const CatalogueBlock = Schema.Struct({
   opens: Schema.Array(Schema.String),
   closes: Schema.Array(Schema.String),
   waits: Schema.Boolean,
+  // Whether it runs only on a run's way out; none from an SDK from before.
+  last: Schema.optionalKey(Schema.Boolean),
 });
 
 // One of the repo's own Effect stages, from .chernabog/stages/, which a
