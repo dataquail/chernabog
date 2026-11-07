@@ -39,6 +39,8 @@ steps:
             summary: review.changesAsked
 ```
 
+- `review.requested` finds the pull requests that ask this persona for a review it hasn't given yet. `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
+- `pr.land` merges only a pull request labelled `auto:ship`, and merges nothing otherwise. A flow that must never merge leaves `pr.land` out rather than relying on the label.
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
 - `end` finishes the run or lane, as `done` or `needs-human`. `end: needs-human` stops the run with its `reason`, but labels and comments on nothing, so put a block that tells a person in front of it. On a pull request, `pr.handToPerson` labels it `auto:needs-human`, comments why, and gives the reason to end with:
@@ -51,7 +53,23 @@ steps:
     reason: handed
   ```
 
+  A way that ends `needs-human` owes nothing a block [leaves to do](#order). So a flow that gives every pull request to a person, rather than to a reviewer, follows `pr.open` with `pr.handToPerson` and `end: needs-human` in place of `issue.handOff`. Each of its runs then ends needing a person, by design.
+
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
+- `failureContext` says what a failure going to a person can point them at, when the subject keeps something for it: on `issue`, the pull request a run opened, as `pr: [opened.number]`, the outputs that set it. `chernabog recipes blocks` lists what each subject keeps, after `failureContext keeps`.
+
+## Where the work comes from
+
+`trigger` lists the sources a flow's work comes from, each with what it takes under `with`. `issues.queued` takes `labels`, which are what a label means, not a label's name: `eligible`, the normal queue, and `ship`, whose issues' pull requests merge once approved. They name the repo's labels, `auto:eligible` and `auto:ship` by default. To queue a flow's issues by a label of its own, such as `docs`, keep `labels: [eligible]` and set that flow's `eligible` label in `.chernabog/config.yaml`:
+
+```yaml
+flows:
+  docs-only:
+    settings:
+      labels: { eligible: docs }
+```
+
+The flow's blocks use that name for it too, so `issue.claim` takes `docs` off the issue it claims, and `chernabog labels` creates it. Other flows keep `auto:eligible`.
 
 ## Subjects
 
@@ -325,7 +343,7 @@ chernabog recipes compile --json       # the same result, for an agent or a scri
 
 Compile with the `@chernabog/sdk` your repo pins, from `.chernabog/node_modules`. Change the document, not the generated file, and commit both. A document's `flow:` must match its filename, and a flow can have only one document, `.yaml` or `.yml`. With no documents, the command says so and exits 0, including with `--check`.
 
-A problem is reported at its line in the document, and a document with problems leaves its flow file as it was:
+A problem is reported at its line in the document, and a document with problems leaves its flow file as it was. Its wires' types are checked only once it has no other problems, so fixing those can show more, and the command says so:
 
 ```
 .chernabog/documents/implement.yaml:47:29: steps[2].in.worktree: Type 'BranchName' is not assignable to type 'WorktreePath'.
@@ -363,6 +381,13 @@ Blocks declare the order they need, and the check walks every way through a docu
 - `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off. A way that ends `needs-human` is excused.
 
 In a `repeat`, the check follows each `next` into the round after it, so these rules hold across rounds. What a round leaves to do is carried into the next one: a round that opens a pull request and goes on with `next` still needs a later round to hand it off before it ends `done`. `needs first` holds across the whole run, so a block that needs another is satisfied by an earlier round. `runs before` holds within a round, since each round starts over.
+
+## What the blocks can't do yet
+
+- Open a pull request as a draft. `pr.open` opens it ready for review; a document can't ask for a draft.
+- Give a pull request to a person as a success. `pr.handToPerson` labels it `auto:needs-human` and the run ends `needs-human`, even when what the person is asked to do is merge an approved pull request.
+
+Work no block covers can run as [your own step](#your-own-steps).
 
 ## What the checks don't catch
 

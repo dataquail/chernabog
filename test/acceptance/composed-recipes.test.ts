@@ -63,6 +63,10 @@ describe("chernabog recipes compile", () => {
 
     expect(output).toContain(`.chernabog/documents/composed-review.yaml:${line}:`);
     expect(output).toContain("no block named pr.lands");
+    // An agent fixing these should know more may follow.
+    expect(output).toContain(
+      "Types not checked: a document's wires are checked once its other problems are fixed, so compile again after fixing these.",
+    );
     expect(code).not.toBe(0);
     expect(readFileSync(flow(), "utf8")).toBe(before);
   });
@@ -209,6 +213,9 @@ describe("chernabog recipes blocks", () => {
     );
     expect(output).toContain("hybrid.workWithPerson: Opens a session with the person");
     expect(output).toContain("spec: trigger gives issue, queued");
+    // What failureContext can keep, which only a subject's listing says.
+    expect(output).toContain("chernabog start <issue>; failureContext keeps pr");
+    expect(output).toContain("pull-request: trigger gives pr\n");
     expect(output).toContain(
       "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
     );

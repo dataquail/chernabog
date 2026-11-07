@@ -437,7 +437,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "pr.open": defineBlock({
     name: "pr.open",
-    about: "Opens the pull request for the pushed branch.",
+    about:
+      "Opens the pull request for the pushed branch, ready for review, never as a draft. It leaves the hand-off to do: issue.handOff, or pr.handToPerson and end: needs-human.",
     inputKinds: {
       issue: "IssueNumber",
       outcome: "what the agent said",
@@ -686,6 +687,11 @@ const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources)
   .and("post-merge-blocks.ts", postMergeSources)
   .and("plan-blocks.ts", planSources);
 
+// The labels issues.queued queues by, by what each means.
+const QUEUE_LABELS = ["eligible", "ship"] as const;
+
+type QueueLabel = (typeof QUEUE_LABELS)[number];
+
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = sourcesElsewhere.and("blocks.ts", {
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
@@ -695,7 +701,7 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
   "issues.queued": defineSource(
     "issues.queued",
     "issue",
-    (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }) => ({
+    (input: { readonly labels: ReadonlyArray<QueueLabel> }) => ({
       trigger: Effect.gen(function* () {
         const github = yield* GitHub;
         const names = yield* Settings.labels;
@@ -770,8 +776,9 @@ export const sourceDescriptions = {
       "Open issues carrying each of the labels, oldest first but a post-merge follow-up before the rest.",
     with: {
       labels:
-        "a list of eligible and ship, which name the repo's labels (auto:eligible and auto:ship by default, set in config.yaml). The first is the normal queue; an issue queued by a later one carries that label to its pull request.",
+        "a list of eligible and ship, which name the repo's labels (auto:eligible and auto:ship by default). The first is the normal queue; an issue queued by a later one carries that label to its pull request. To queue a flow's issues by a label of its own, such as docs, set flows.<flow>.settings.labels.eligible to it in .chernabog/config.yaml.",
     },
+    choices: { labels: QUEUE_LABELS },
   },
   "pr.conflicting": {
     about:
@@ -810,6 +817,8 @@ export const sourceDescriptions = {
   readonly [Name in SourceName]: {
     readonly about: string;
     readonly with: { readonly [input: string]: string };
+    // The values a list under with may hold, where they are a closed set.
+    readonly choices?: { readonly [input: string]: ReadonlyArray<string> };
   };
 };
 

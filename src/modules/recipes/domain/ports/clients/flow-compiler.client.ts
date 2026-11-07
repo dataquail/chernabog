@@ -20,7 +20,8 @@ export class DocumentProblem extends Schema.Class<
 
 // What compiling one document came to: the flow file it compiles to, none when
 // it has problems, and whether its wires' types were checked, which takes
-// TypeScript installed beside the repo.
+// TypeScript installed beside the repo and a document with no other problems:
+// with problems, true says they are what the types' check found.
 export type CompiledDocument = {
   readonly source: Option.Option<string>;
   readonly problems: ReadonlyArray<DocumentProblem>;

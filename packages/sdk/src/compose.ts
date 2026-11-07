@@ -528,6 +528,13 @@ const subjectsByName: { readonly [name: string]: Subject } = subjects;
 
 const sourcesByName: { readonly [name: string]: { readonly subject: string } } = sources;
 
+const sourceInputs: {
+  readonly [name: string]: {
+    readonly with: { readonly [input: string]: string };
+    readonly choices?: { readonly [input: string]: ReadonlyArray<string> };
+  };
+} = sourceDescriptions;
+
 const say = (checking: Checking, path: string, message: string) => {
   checking.problems.push({ path, message });
 };
@@ -567,6 +574,34 @@ const checkReference = (
   }
 };
 
+// Where a block's inputs go: under in, under with, or under either.
+const underOf = (block: Block, input: string) => {
+  if (block.fixed.some((fixed) => fixed === input)) {
+    return "with";
+  }
+
+  if (block.either.some((either) => either === input)) {
+    return "in or with";
+  }
+
+  return "in";
+};
+
+// A block's inputs, by where each goes: `pr under in; round under in or with`.
+const inputsSaid = (block: Block) => {
+  const inputs = Object.keys(block.inputs);
+
+  return ["in", "in or with", "with"]
+    .flatMap((under) => {
+      const there = inputs.filter((input) => underOf(block, input) === under);
+
+      return Option.toArray(
+        Option.liftPredicate(`${there.join(", ")} under ${under}`, () => there.length > 0),
+      );
+    })
+    .join("; ");
+};
+
 const checkInputs = (
   checking: Checking,
   step: UseStep,
@@ -576,7 +611,9 @@ const checkInputs = (
 ) => {
   const wired = step.in ?? {};
   const given = step.with ?? {};
-  const takes = Object.keys(block.inputs).join(", ");
+
+  const takes = (input: string) =>
+    `${step.use} has no input ${input}; it takes ${inputsSaid(block)}`;
 
   for (const [input, need] of Object.entries(block.inputs)) {
     if (need === "required" && !(input in wired) && !(input in given)) {
@@ -588,7 +625,7 @@ const checkInputs = (
 
   for (const [input, reference] of Object.entries(wired)) {
     if (!(input in block.inputs)) {
-      say(checking, `${at}.in.${input}`, `${step.use} takes ${takes}`);
+      say(checking, `${at}.in.${input}`, takes(input));
     }
 
     if (fixed.includes(input)) {
@@ -610,7 +647,7 @@ const checkInputs = (
 
   for (const input of Object.keys(given)) {
     if (!(input in block.inputs)) {
-      say(checking, `${at}.with.${input}`, `${step.use} takes ${takes}`);
+      say(checking, `${at}.with.${input}`, takes(input));
     } else if (!fixed.includes(input) && !block.either.includes(input)) {
       say(
         checking,
@@ -1607,6 +1644,69 @@ const checkStart = (checking: Checking, document: FlowDocument) => {
   }
 };
 
+const choicesSaid = (choices: ReadonlyArray<string>) =>
+  [choices.slice(0, -1).join(", "), ...choices.slice(-1)]
+    .filter((each) => each !== "")
+    .join(" and ");
+
+// What a trigger entry gives its source under with: only what it takes, and
+// for a closed set, such as the labels issues.queued queues by, only those.
+const checkSourceWith = (
+  checking: Checking,
+  document: FlowDocument,
+  source: FlowDocument["trigger"][number],
+  at: string,
+) => {
+  const described = Record.get(sourceInputs, source.use);
+
+  const takes: ReadonlyArray<string> = Option.getOrElse(
+    Option.map(described, (each) => Object.keys(each.with)),
+    () => [],
+  );
+
+  const choices: { readonly [input: string]: ReadonlyArray<string> } = Option.getOrElse(
+    Option.flatMap(described, (each) => Option.fromUndefinedOr(each.choices)),
+    () => ({}),
+  );
+
+  for (const [input, value] of Object.entries(source.with ?? {})) {
+    if (!takes.includes(input)) {
+      say(
+        checking,
+        `${at}.${input}`,
+        `${source.use} takes ${Option.getOrElse(
+          Option.liftPredicate(takes.join(", "), () => takes.length > 0),
+          () => "nothing",
+        )} under with`,
+      );
+
+      continue;
+    }
+
+    const allowed = Record.get(choices, input);
+
+    if (Option.isNone(allowed)) {
+      continue;
+    }
+
+    if (!Array.isArray(value)) {
+      say(checking, `${at}.${input}`, `${input} must be a list of ${choicesSaid(allowed.value)}`);
+
+      continue;
+    }
+
+    for (const [position, each] of value.entries()) {
+      if (!allowed.value.some((choice) => choice === each)) {
+        say(
+          checking,
+          `${at}.${input}[${position}]`,
+          `${String(each)} isn't a label ${source.use} queues by: it takes ${choicesSaid(allowed.value)}, which name the repo's labels. To queue this flow's issues by another label, set flows.${document.flow}.settings.labels.eligible to it in .chernabog/config.yaml`,
+        );
+      }
+    }
+  }
+};
+
 const checkTrigger = (checking: Checking, document: FlowDocument) => {
   if (document.start === true) {
     checkStart(checking, document);
@@ -1625,7 +1725,13 @@ const checkTrigger = (checking: Checking, document: FlowDocument) => {
 
     if (Option.isNone(found)) {
       say(checking, at, `must be one of ${Object.keys(sources).join(", ")}`);
-    } else if (found.value.subject !== document.subject) {
+
+      continue;
+    }
+
+    checkSourceWith(checking, document, source, `trigger[${index}].with`);
+
+    if (found.value.subject !== document.subject) {
       // Every item it found would fail on reading it, with nobody told.
       say(
         checking,
