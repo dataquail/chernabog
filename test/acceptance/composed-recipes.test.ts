@@ -63,6 +63,10 @@ describe("chernabog recipes compile", () => {
 
     expect(output).toContain(`.chernabog/documents/composed-review.yaml:${line}:`);
     expect(output).toContain("no block named pr.lands");
+    // An agent fixing these should know more may follow.
+    expect(output).toContain(
+      "Types not checked: a document's wires are checked once its other problems are fixed, so compile again after fixing these.",
+    );
     expect(code).not.toBe(0);
     expect(readFileSync(flow(), "utf8")).toBe(before);
   });

@@ -243,6 +243,8 @@ describe("FlowCompilerClientLive", () => {
           [".chernabog/documents/review.yaml", 7, "steps[0].use"],
         ]);
         expect(compiled.problems[0]?.message).toContain("no block named gate.lint");
+        // Its wires' types wait on the check's problems.
+        expect(compiled.typeChecked).toBe(false);
       }),
     TIMEOUT,
   );
@@ -265,6 +267,8 @@ describe("FlowCompilerClientLive", () => {
         ]);
 
         expect(compiled.problems[0]?.message).toContain("Approved");
+        // The types were checked: these are what they found.
+        expect(compiled.typeChecked).toBe(true);
       }),
     TIMEOUT,
   );

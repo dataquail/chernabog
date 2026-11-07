@@ -311,7 +311,27 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages(wiring(implement, "gate", "colour", "claim.branch"))).toEqual([
-      "gate.local takes worktree, lane",
+      "gate.local has no input colour; it takes worktree, lane under in",
+    ]);
+  });
+
+  test("says where each input of a block goes when one it doesn't take is given", () => {
+    const drafted = changing(implement, "opened", (step) => ({ ...step, with: { draft: true } }));
+
+    expect(messages(drafted)).toEqual([
+      "pr.open has no input draft; it takes issue, outcome, queued, base, pushed under in",
+    ]);
+    expect(paths(drafted)).toEqual([
+      `steps[${implement.steps.findIndex((step) => named(step, "opened"))}].with.draft`,
+    ]);
+
+    const coloured = changing(review, "review", (step) => ({
+      ...step,
+      with: { ...step.with, colour: "red" },
+    }));
+
+    expect(messages(coloured)).toEqual([
+      "review.round has no input colour; it takes pr under in; round under in or with; role under with",
     ]);
   });
 
@@ -557,6 +577,41 @@ describe("Compose.check", () => {
     expect(messages({ ...implement, subject: "release" })).toEqual([
       "must be one of changes-asked, conflict, epic, issue, merged, spec, pull-request",
     ]);
+  });
+
+  test("refuses a label issues.queued doesn't queue by, and says how to queue by one", () => {
+    const docs = {
+      ...implement,
+      trigger: [{ use: "issues.queued", with: { labels: ["eligible", "docs"] } }],
+    };
+
+    expect(paths(docs)).toEqual(["trigger[0].with.labels[1]"]);
+    expect(messages(docs)).toEqual([
+      "docs isn't a label issues.queued queues by: it takes eligible and ship, which name the repo's labels. To queue this flow's issues by another label, set flows.implement.settings.labels.eligible to it in .chernabog/config.yaml",
+    ]);
+
+    const one = { ...implement, trigger: [{ use: "issues.queued", with: { labels: "eligible" } }] };
+
+    expect(paths(one)).toEqual(["trigger[0].with.labels"]);
+    expect(messages(one)).toEqual(["labels must be a list of eligible and ship"]);
+  });
+
+  test("refuses what a source doesn't take under with", () => {
+    const misnamed = {
+      ...implement,
+      trigger: [{ use: "issues.queued", with: { label: ["eligible"] } }],
+    };
+
+    expect(paths(misnamed)).toEqual(["trigger[0].with.label"]);
+    expect(messages(misnamed)).toEqual(["issues.queued takes labels under with"]);
+
+    const given = {
+      ...review,
+      trigger: [{ use: "review.requested", with: { labels: ["eligible"] } }],
+    };
+
+    expect(paths(given)).toEqual(["trigger[0].with.labels"]);
+    expect(messages(given)).toEqual(["review.requested takes nothing under with"]);
   });
 
   test("refuses a source that finds work on another subject", () => {
