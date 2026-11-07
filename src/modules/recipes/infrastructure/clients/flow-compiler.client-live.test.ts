@@ -327,6 +327,19 @@ describe("FlowCompilerClientLive", () => {
     TIMEOUT,
   );
 
+  atHome(
+    "refuses a document whose `flow` isn't the file's name, at the key",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compiling({ other: REVIEW_DOCUMENT }, "other");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([[1, "flow"]]);
+        expect(compiled.problems[0]?.message).toContain("compiles to other");
+      }),
+    TIMEOUT,
+  );
+
   atHome("lists a checkout's documents, and writes a flow file it can read back", () =>
     Effect.gen(function* () {
       const root = yield* checkout({ b: "x", a: "y" }, { typescript: false });

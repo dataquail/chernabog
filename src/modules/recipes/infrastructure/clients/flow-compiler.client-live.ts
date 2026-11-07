@@ -292,6 +292,17 @@ export const FlowCompilerClientLive = Layer.effect(
           return onlyProblems(read.failure.map((each) => problemAt(each.path, each.message)));
         }
 
+        const named = parsed.get("flow");
+
+        if (named !== flow) {
+          return onlyProblems([
+            problemAt(
+              "flow",
+              `says the flow is ${String(named)}, but this file compiles to ${flow}: the two must agree`,
+            ),
+          ]);
+        }
+
         const generated = compose.generate(read.success);
 
         if (Result.isFailure(generated)) {

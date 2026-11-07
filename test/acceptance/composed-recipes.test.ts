@@ -9,6 +9,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { REVIEW_DOCUMENT } from "../compose-harness.ts";
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
+// Its name has to be free in the sandbox's repo, whose flows include `review`.
+const COMPOSED_REVIEW = REVIEW_DOCUMENT.replace("flow: review", "flow: composed-review");
+
 describe("chernabog recipes compile", () => {
   let sandbox: Sandbox;
   const dir = () => join(sandbox.checkout, ".chernabog");
@@ -16,7 +19,7 @@ describe("chernabog recipes compile", () => {
   const document = () => join(dir(), "documents", "composed-review.yaml");
 
   beforeAll(async () => {
-    sandbox = openSandbox({}, { repoFiles: { "documents/composed-review.yaml": REVIEW_DOCUMENT } });
+    sandbox = openSandbox({}, { repoFiles: { "documents/composed-review.yaml": COMPOSED_REVIEW } });
     await sandbox.installCheckout();
   });
 
@@ -51,7 +54,7 @@ describe("chernabog recipes compile", () => {
 
   test("reports a problem at its line in the document, and leaves the flow file alone", async () => {
     const before = readFileSync(flow(), "utf8");
-    const broken = REVIEW_DOCUMENT.replace("use: pr.land", "use: pr.lands");
+    const broken = COMPOSED_REVIEW.replace("use: pr.land", "use: pr.lands");
     writeFileSync(document(), broken);
 
     const line = broken.split("\n").findIndex((each) => each.includes("pr.lands")) + 1;
