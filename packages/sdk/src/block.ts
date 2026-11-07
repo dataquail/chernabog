@@ -2,14 +2,17 @@
 // means. See blocks.ts for the blocks.
 
 import {
+  activity,
   describeError,
   type DoctorCheck,
   type FlowError,
   type FlowLabel,
+  type Json,
   NeedsHuman,
   NothingCommitted,
   Skip,
   StepFailed,
+  StepRunner,
   type TriggeredFlow,
 } from "@chernabog/core";
 import * as Brand from "effect/Brand";
@@ -322,3 +325,62 @@ export const defineBlock = <
     },
   };
 };
+
+// What a document says each failure of a stage means: a stage has no table of
+// its own. Exit 78 is Skip; any other failure is StepFailed.
+export type StageFailures = { readonly Skip: Disposition; readonly StepFailed: Disposition };
+
+// What names a stage's step beside its name: the round of a loop it runs in,
+// `find-work-2`, or the lane, `find-work#task-12`.
+export type StageKey = { readonly round?: number; readonly lane?: LaneId };
+
+const stageStep = (name: string, key: StageKey) =>
+  [
+    name,
+    ...Option.toArray(Option.fromUndefinedOr(key.round)).map((round) => `-${round}`),
+    ...Option.toArray(Option.fromUndefinedOr(key.lane)).map((lane) => `#${lane}`),
+  ].join("");
+
+const stageDisposition = (failures: StageFailures, error: FlowError): Disposition => {
+  if (error instanceof Skip) {
+    return failures.Skip;
+  }
+
+  if (error instanceof StepFailed) {
+    return failures.StepFailed;
+  }
+
+  // A stage's process can't ask for a person; an activity's own can.
+  return "told";
+};
+
+// Runs a step of the repo's own from .chernabog/stages/, as a document does:
+// its input, typed by the stage's schema, crosses to its process as JSON, and
+// what it prints comes back checked against its output schema. Each failure
+// comes to what the document says.
+export const runStage = <I, O>(
+  name: string,
+  stage: { readonly input: Schema.Codec<I, Json>; readonly output: Schema.Codec<O, Json> },
+  input: NoInfer<I>,
+  failures: StageFailures,
+  key: StageKey,
+) =>
+  activity(
+    stageStep(name, key),
+    Effect.gen(function* () {
+      const encoded = yield* Schema.encodeEffect(stage.input)(input).pipe(
+        Effect.mapError(
+          (issue) => new StepFailed({ step: name, message: `input: ${issue.message}` }),
+        ),
+      );
+
+      const raw = yield* StepRunner.use((runner) => runner.run(name, encoded));
+
+      return yield* Schema.decodeEffect(stage.output)(raw).pipe(
+        Effect.mapError(
+          (issue) => new StepFailed({ step: name, message: `output: ${issue.message}` }),
+        ),
+      );
+    }),
+    stage.output,
+  ).pipe(Effect.mapError((error) => settled(name, error, stageDisposition(failures, error))));

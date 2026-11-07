@@ -16,7 +16,7 @@ import YAML from "yaml";
 
 import { HostEnvironment } from "../../../../platform/environment.ts";
 import { Exec } from "../../../../platform/exec.ts";
-import { loadRepoSdk } from "../../../../platform/flow-loader.ts";
+import { loadRepoSdk, loadStage } from "../../../../platform/flow-loader.ts";
 import { bunExecutable } from "../../../../platform/self.ts";
 import {
   type CompiledDocument,
@@ -28,6 +28,11 @@ import { RecipeFilesFailed } from "../../domain/recipe/recipe.errors.ts";
 const DOCUMENT = /^(.+)\.ya?ml$/;
 
 const documentsOf = (root: string) => `${root}/.chernabog/documents`;
+
+const stagesOf = (root: string) => `${root}/.chernabog/stages`;
+
+// An Effect stage's file, as a run finds one; anything else there is a shell stage.
+const EFFECT_STAGE = /^(.+)\.(?:ts|js|mts|mjs)$/;
 
 const TSCONFIG = {
   compilerOptions: {
@@ -198,6 +203,37 @@ export const FlowCompilerClientLive = Layer.effect(
         };
       });
 
+    // The files in the repo's .chernabog/stages/, which a document's stage steps name.
+    const stageFiles = (root: string) =>
+      Effect.gen(function* () {
+        if (!(yield* fs.exists(stagesOf(root)))) {
+          return [];
+        }
+
+        return (yield* fs.readDirectory(stagesOf(root))).toSorted();
+      });
+
+    // Each Effect stage the repo has, loaded for its schemas, by the name a
+    // document runs it by. One that won't load isn't listed: a run of it would
+    // fail the same way.
+    const effectStages = (root: string) =>
+      Effect.gen(function* () {
+        const files = yield* stageFiles(root);
+
+        const loaded = yield* Effect.forEach(files, (file) =>
+          Option.match(Option.fromNullishOr(EFFECT_STAGE.exec(file)?.[1]), {
+            onNone: () => Effect.succeed([]),
+            onSome: (name) =>
+              loadStage(`${stagesOf(root)}/${file}`).pipe(
+                Effect.map((stage) => [{ name, input: stage.input, output: stage.output }]),
+                Effect.orElseSucceed(() => []),
+              ),
+          }),
+        );
+
+        return loaded.flat();
+      });
+
     // TypeScript as the repo has it: beside its flows, or at the checkout's root.
     const findTsc = (root: string) =>
       Effect.filter(
@@ -303,7 +339,7 @@ export const FlowCompilerClientLive = Layer.effect(
           ]);
         }
 
-        const generated = compose.generate(read.success);
+        const generated = compose.generate(read.success, "@chernabog/sdk", yield* stageFiles(root));
 
         if (Result.isFailure(generated)) {
           return onlyProblems(generated.failure.map((each) => problemAt(each.path, each.message)));
@@ -339,10 +375,11 @@ export const FlowCompilerClientLive = Layer.effect(
 
     return FlowCompilerClient.of({
       catalogue: (root) =>
-        loadRepoSdk(`${root}/.chernabog`).pipe(
-          Effect.map((compose) => compose.describe()),
-          Effect.mapError(failed),
-        ),
+        Effect.gen(function* () {
+          const compose = yield* loadRepoSdk(`${root}/.chernabog`);
+
+          return compose.describe(yield* effectStages(root));
+        }).pipe(Effect.mapError(failed)),
 
       documents: (root) =>
         Effect.gen(function* () {

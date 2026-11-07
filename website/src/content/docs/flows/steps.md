@@ -18,6 +18,8 @@ A flow runs a step from `.chernabog/stages/` with `step("name", input, { output 
 
 A step that crashes partway runs again, so every step must be safe to repeat.
 
+A [flow document](/chernabog/flows/documents/#your-own-steps) can run an Effect stage with `stage:`, typed by its `input` and `output` schemas. It can't run a shell stage.
+
 ```ts
 // .chernabog/stages/find-work.ts
 import { defineStage, GitHub, Skip } from "@chernabog/sdk";
