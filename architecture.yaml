@@ -71,11 +71,14 @@ deny:
       - "@/modules/*/queries/**"
       - "@/*.ts"
       - "test/**"
+      # A flow document's problems are reported by where they are in its YAML.
+      - "@/modules/recipes/infrastructure/clients/flow-compiler.client-live.ts"
     message: >-
       The yaml package is how machine config is stored, not what it means. Only a repository
-      adapter (infrastructure/repositories/) writes a YAML document, and only it and a query,
-      which reads its storage directly (docs/adr/0011-queries-read-their-storage.md), read one;
-      the domain and the commands see aggregates, never a Document.
+      adapter (infrastructure/repositories/) writes a YAML document, and only it, a query, which
+      reads its storage directly (docs/adr/0011-queries-read-their-storage.md), and the flow
+      compiler, which reports a flow document's problems by where they are in it, read one; the
+      domain and the commands see aggregates, never a Document.
   - match: "**/node_modules/@effect/sql*/**"
     except:
       - "@/modules/runs/infrastructure/**"
@@ -131,6 +134,8 @@ graph:
         - "scripts/dashboard-dev.ts"
         # The acceptance sandbox runs it as a child process, for a lockfile.
         - "test/acceptance/lockfile.ts"
+        # `bun run test:composed` loads it first, by --preload.
+        - "test/composed-recipes.preload.ts"
         # A repo's flows are loaded by path (src/platform/flow-loader.ts): these
         # are the recipes `chernabog recipes add` copies and a repo's
         # `flows.<name>.from` imports.
@@ -1611,7 +1616,9 @@ tree:
                     snapshot.ts's git helpers, config.ts, loader.ts for a checkout's flows,
                     repo-config.ts for the team's config, and templates.ts and flow-deps.ts for
                     what this binary bundles. It names the published SDK whose flows it runs.
-                    Nothing else of the legacy tier.
+                    Nothing else of the legacy tier. The deny rule above keeps yaml to the one
+                    client that reads a document's positions.
+                  external: [yaml]
                   allow:
                     - "@/platform/**"
                     - "@/repo-config.ts"

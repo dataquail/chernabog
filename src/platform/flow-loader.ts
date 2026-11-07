@@ -19,6 +19,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
+import type * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { parseRecipeRef, RecipePackageManifest } from "../kernel/recipe-package.value-object.ts";
@@ -93,6 +94,50 @@ const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: st
 
       return new LoadError({ path, message: `${what} must be the module's default export` });
     }),
+  );
+
+type DocumentIssue = { readonly path: string; readonly message: string };
+
+// What compiling a flow document takes of the repo's SDK.
+export type DocumentCompiler = {
+  readonly read: (value: Core.Json) => Result.Result<Core.Json, ReadonlyArray<DocumentIssue>>;
+  readonly generate: (document: Core.Json) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
+};
+
+const CompilingSdk = Schema.Struct({
+  Compose: Schema.declare(
+    (compose): compose is DocumentCompiler =>
+      Predicate.hasProperty(compose, "read") &&
+      Predicate.hasProperty(compose, "generate") &&
+      Predicate.isFunction(compose.read) &&
+      Predicate.isFunction(compose.generate),
+    { title: "Compose" },
+  ),
+});
+
+// The flow document compiler of the SDK a repo pins, from its node_modules.
+export const loadRepoSdk = (configDir: string) =>
+  Effect.tryPromise({
+    // Its root index, which a compiled binary's resolver goes by (packages/sdk/index.ts).
+    try: () => importRepoModule(`${configDir}/node_modules/@chernabog/sdk/index.ts`),
+    catch: (error) =>
+      new LoadError({
+        path: configDir,
+        message: `can't load @chernabog/sdk from ${configDir}, which bun install there installs: ${Core.describeError(error)}`,
+      }),
+  }).pipe(
+    Effect.flatMap((module) =>
+      Schema.decodeUnknownEffect(CompilingSdk)(module).pipe(
+        Effect.mapError(
+          () =>
+            new LoadError({
+              path: configDir,
+              message: `the @chernabog/sdk in ${configDir} can't compile flow documents; chernabog recipes upgrade moves it to one that can`,
+            }),
+        ),
+      ),
+    ),
+    Effect.map((sdk) => sdk.Compose),
   );
 
 const MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];

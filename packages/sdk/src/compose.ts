@@ -12,10 +12,13 @@
 // left to `tsc` on what `generate` writes.
 
 import { printJson } from "@chernabog/core";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type * as SchemaIssue from "effect/SchemaIssue";
 
 import { catalogue, laneScopes, loopStates, sources, subjects } from "./blocks.ts";
 
@@ -134,8 +137,98 @@ export const FlowDocument = Schema.Struct({
 
 export type FlowDocument = typeof FlowDocument.Type;
 
-// A document's shape: whatever a parser made of its text, or why it isn't one.
-export const read = Schema.decodeUnknownResult(FlowDocument);
+const pathTo = (keys: ReadonlyArray<PropertyKey>) =>
+  keys.reduce<string>((path, key) => {
+    if (Predicate.isNumber(key)) {
+      return `${path}[${key}]`;
+    }
+
+    if (path === "") {
+      return String(key);
+    }
+
+    return `${path}.${String(key)}`;
+  }, "");
+
+// One thing a document's form got wrong, with how far into the document it got.
+type Mismatch = {
+  readonly keys: ReadonlyArray<PropertyKey>;
+  readonly message: string;
+  readonly missing: boolean;
+};
+
+const saysMoreThan = (each: Mismatch, other: Mismatch) =>
+  each.keys.length > other.keys.length ||
+  (each.keys.length === other.keys.length && other.missing && !each.missing);
+
+// The one that says the most: the one furthest in, and of those, a value that's
+// wrong rather than a key that isn't there.
+const furthest = (mismatches: ReadonlyArray<Mismatch>) =>
+  mismatches.reduce<Option.Option<Mismatch>>(
+    (best, each) =>
+      Option.some(
+        Option.match(best, {
+          onNone: () => each,
+          onSome: (other) => {
+            if (saysMoreThan(each, other)) {
+              return each;
+            }
+
+            return other;
+          },
+        }),
+      ),
+    Option.none(),
+  );
+
+// A step can take several forms, so a mismatch has one account for each. The
+// form it got furthest into is the one it was meant to be. When it got no further
+// than lacking a key of each, it's none of them, and saying which key would
+// send its author after the first form that happened to be listed.
+const mismatchOf = (
+  issue: SchemaIssue.Issue,
+  keys: ReadonlyArray<PropertyKey>,
+): Option.Option<Mismatch> => {
+  const furthestOf = (issues: ReadonlyArray<SchemaIssue.Issue>) =>
+    furthest(issues.flatMap((each) => Option.toArray(mismatchOf(each, keys))));
+
+  return Match.value(issue).pipe(
+    Match.tag("Pointer", (pointer) => mismatchOf(pointer.issue, [...keys, ...pointer.path])),
+    Match.tag("Composite", (composite) => furthestOf(composite.issues)),
+    Match.tag("AnyOf", (anyOf) => {
+      const none = { keys, message: "isn't any of the forms this can take", missing: false };
+
+      return Option.some(
+        Option.match(furthestOf(anyOf.issues), {
+          onNone: () => none,
+          onSome: (best) => {
+            if (best.missing && best.keys.length <= keys.length + 1) {
+              return none;
+            }
+
+            return best;
+          },
+        }),
+      );
+    }),
+    Match.tag("MissingKey", () => Option.some({ keys, message: "is missing", missing: true })),
+    Match.orElse((other) =>
+      Option.some({ keys, message: new Schema.SchemaError(other).message, missing: false }),
+    ),
+  );
+};
+
+const decodeDocument = Schema.decodeUnknownResult(FlowDocument);
+
+// A document's shape: whatever a parser made of its text, or what is wrong with
+// its form and where.
+export const read = (value: Schema.Json): Result.Result<FlowDocument, ReadonlyArray<Problem>> =>
+  Result.mapError(decodeDocument(value), (error) =>
+    Option.toArray(mismatchOf(error.issue, [])).map(({ keys, message }) => ({
+      path: pathTo(keys),
+      message,
+    })),
+  );
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -934,7 +1027,7 @@ const emitUse = (
   remembered: Remembered,
   step: UseStep,
   indent: string,
-  bodyOf: (branch: Branch) => ReadonlyArray<string>,
+  bodyOf: (outcome: string, branch: Branch) => ReadonlyArray<string>,
 ) => {
   const input = emitObject([
     ...Object.entries(step.in ?? {}),
@@ -950,7 +1043,7 @@ const emitUse = (
     ...emitCall(step, input, overrides, indent),
     ...emitRemembered(remembered, step.id, indent),
     ...branchesOf(step).flatMap(([outcome, branch]) =>
-      emitBranch(remembered, step, outcome, branch, indent, bodyOf(branch)),
+      emitBranch(remembered, step, outcome, branch, indent, bodyOf(outcome, branch)),
     ),
   ];
 };
@@ -998,40 +1091,60 @@ const emitForEach = (step: ForEachStep, indent: string, body: ReadonlyArray<stri
   `${indent}{ concurrency: ${step.atOnce} });`,
 ];
 
-const emitSteps = (
+type EmitSteps = (
   remembered: Remembered,
   steps: ReadonlyArray<Step>,
+  path: string,
   indent: string,
-): ReadonlyArray<string> =>
-  steps.flatMap((step) => {
-    if (isEnd(step)) {
-      return [emitEnd(step, indent)];
-    }
+) => ReadonlyArray<string>;
 
-    if (isNext(step)) {
-      return emitNext(step, indent);
-    }
+const emitStep = (
+  emitSteps: EmitSteps,
+  remembered: Remembered,
+  step: Step,
+  path: string,
+  indent: string,
+): ReadonlyArray<string> => {
+  if (isEnd(step)) {
+    return [emitEnd(step, indent)];
+  }
 
-    if (isFirst(step)) {
-      return emitFirst(step, indent);
-    }
+  if (isNext(step)) {
+    return emitNext(step, indent);
+  }
 
-    if (isRepeat(step)) {
-      return emitRepeat(step, indent, emitSteps(remembered, step.repeat.steps, `${indent}  `));
-    }
+  if (isFirst(step)) {
+    return emitFirst(step, indent);
+  }
 
-    if (isForEach(step)) {
-      return emitForEach(
-        step,
-        indent,
-        emitSteps(step.failureContext ?? {}, step.steps, `${indent}      `),
-      );
-    }
-
-    return emitUse(remembered, step, indent, (branch) =>
-      emitSteps(remembered, branch.steps, `${indent}  `),
+  if (isRepeat(step)) {
+    return emitRepeat(
+      step,
+      indent,
+      emitSteps(remembered, step.repeat.steps, `${path}.repeat.steps`, `${indent}  `),
     );
-  });
+  }
+
+  if (isForEach(step)) {
+    return emitForEach(
+      step,
+      indent,
+      emitSteps(step.failureContext ?? {}, step.steps, `${path}.steps`, `${indent}      `),
+    );
+  }
+
+  return emitUse(remembered, step, indent, (outcome, branch) =>
+    emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, `${indent}  `),
+  );
+};
+
+// Each step under a comment naming where in the document it came from, which
+// is how `tsc`'s word on this file finds its way back there.
+const emitSteps: EmitSteps = (remembered, steps, path, indent) =>
+  steps.flatMap((step, index) => [
+    `${indent}// ${path}[${index}]`,
+    ...emitStep(emitSteps, remembered, step, `${path}[${index}]`, indent),
+  ]);
 
 const emitSource = (source: FlowDocument["trigger"][number]) => {
   const input = Option.match(Option.fromUndefinedOr(source.with), {
@@ -1062,7 +1175,13 @@ const emit = (document: FlowDocument, sdk: string) => {
     ...Option.toArray(Option.fromUndefinedOr(document.concurrency)).map(
       (concurrency) => `  concurrency: ${concurrency},`,
     ),
-    `  sources: [${document.trigger.map(emitSource).join(", ")}],`,
+    "  sources: [",
+    ...document.trigger.flatMap((source, index) => [
+      `    // trigger[${index}]`,
+      `    ${emitSource(source)},`,
+    ]),
+    "  ],",
+    "  // steps",
     `  blocks: ${printJson(blocks)},`,
     "  workflow: (item) =>",
     "    Effect.gen(function* () {",
@@ -1070,7 +1189,7 @@ const emit = (document: FlowDocument, sdk: string) => {
     "",
     `      return yield* ${subject}.scope(trigger, { claims: ${blocks.includes("issue.claim")} }, (failureContext) =>`,
     "        Effect.gen(function* () {",
-    ...emitSteps(document.failureContext ?? {}, document.steps, "          "),
+    ...emitSteps(document.failureContext ?? {}, document.steps, "steps", "          "),
     "        }),",
     "      );",
     "    }),",

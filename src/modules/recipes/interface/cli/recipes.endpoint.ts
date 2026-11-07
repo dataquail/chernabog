@@ -6,16 +6,20 @@ import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { Asker, type Choice } from "../../../../interface/cli/asker.prompt.ts";
 import { printLines } from "../../../../interface/cli/cli.output.ts";
 import { listFlag } from "../../../../interface/cli/list.arguments.ts";
+import { jsonFlag } from "../../../../interface/cli/output.arguments.ts";
 import { VERSION } from "../../../../platform/version.ts";
 import { type RecipesAdded } from "../../commands/add-recipes.command.ts";
+import { FlowDocumentsCompiled } from "../../commands/compile-flow-documents.command.ts";
 import { type RecipeEjected } from "../../commands/eject-recipe.command.ts";
 import { type RecipesImported } from "../../commands/import-recipes.command.ts";
 import { type RecipesUpdated, type Unrecorded } from "../../commands/update-recipes.command.ts";
 import { type RepoUpgraded } from "../../commands/upgrade-repo.command.ts";
+import { FlowDocumentsRefused } from "../../domain/recipe/recipe.errors.ts";
 import { type RecipesDiff } from "../../queries/diff-recipes.query.ts";
 import { type RecipeList } from "../../queries/list-recipes.query.ts";
 import { RecipesCommands } from "../../recipes.command-handlers.ts";
@@ -277,6 +281,97 @@ const recipesEject = Command.make(
   ),
 );
 
+const COMPILE_OUTCOME = {
+  wrote: (flow: string) => `.chernabog/flows/${flow}.ts: written`,
+  unchanged: (flow: string) => `.chernabog/flows/${flow}.ts: up to date`,
+  stale: (flow: string) =>
+    `.chernabog/flows/${flow}.ts: not what its document compiles to; chernabog recipes compile ${flow} writes it`,
+};
+
+const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
+  ...Option.toArray(
+    Option.liftPredicate(
+      "no flow documents in .chernabog/documents/",
+      () => flows.length + unknown.length === 0,
+    ),
+  ),
+  ...unknown.map((name) => `no document named ${name} in .chernabog/documents/`),
+  ...flows.flatMap(({ flow, outcome, problems }) => {
+    if (outcome === "problems") {
+      return problems.map((problem) =>
+        [
+          `${problem.file}:${problem.line}:${problem.column}`,
+          // A problem of the document as a whole has no path to say.
+          ...Option.toArray(Option.liftPredicate(problem.path, (path) => path !== "")),
+          problem.message,
+        ].join(": "),
+      );
+    }
+
+    return [COMPILE_OUTCOME[outcome](flow)];
+  }),
+  ...Option.toArray(
+    Option.liftPredicate(
+      "Types not checked: install typescript in .chernabog/ to have each wire's checked too.",
+      () => flows.some((flow) => flow.outcome !== "problems" && !flow.typeChecked),
+    ),
+  ),
+];
+
+const refusal = ({ flows, unknown }: FlowDocumentsCompiled) => {
+  const wrong = flows.filter((flow) => flow.outcome === "problems" || flow.outcome === "stale");
+
+  return Option.liftPredicate(
+    new FlowDocumentsRefused({
+      message: `${wrong.length + unknown.length} of the flow documents named need attention`,
+    }),
+    () => wrong.length + unknown.length > 0,
+  );
+};
+
+const CompiledText = Schema.fromJsonString(Schema.toCodecJson(FlowDocumentsCompiled));
+
+const recipesCompile = Command.make(
+  "compile",
+  {
+    documents: Argument.String("document").pipe(
+      Argument.withDescription(
+        "Documents in .chernabog/documents/ to compile, by flow; all when none is named",
+      ),
+      Argument.variadic(),
+    ),
+    check: Flag.Boolean("check").pipe(
+      Flag.withDescription("Write nothing, and fail when a flow file is out of date"),
+      Flag.withDefault(false),
+    ),
+    json: jsonFlag,
+  },
+  ({ check, documents, json }) =>
+    Effect.gen(function* () {
+      const root = yield* rootOf(Option.none());
+
+      const compiled = yield* (yield* RecipesCommands).CompileFlowDocumentsCommand({
+        root,
+        names: documents,
+        check,
+      });
+
+      if (json) {
+        yield* Console.log(yield* Schema.encodeEffect(CompiledText)(compiled).pipe(Effect.orDie));
+      } else {
+        yield* printLines(describeCompiled(compiled));
+      }
+
+      for (const refused of Option.toArray(refusal(compiled))) {
+        return yield* refused;
+      }
+    }),
+).pipe(
+  Command.withDescription(
+    "Compile this repo's flow documents to flow files, reporting each problem at its line in the document (experimental)",
+  ),
+);
+
 const describeDiff = (diff: RecipesDiff) => {
   const lines = diff.files.flatMap(({ docs, file, recipe, recorded, state, version, ...entry }) => {
     const name = Option.getOrElse(recipe, () => "");
@@ -452,6 +547,7 @@ export const recipesEndpoint = Command.make("recipes", {}, () => Effect.void).pi
     recipesList,
     recipesAdd,
     recipesEject,
+    recipesCompile,
     recipesDiff,
     recipesUpdate,
     recipesUpgrade,

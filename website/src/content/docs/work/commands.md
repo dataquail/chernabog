@@ -30,6 +30,7 @@ description: Every chernabog command and flag.
 | `recipes diff [names…]`           | How this repo's copied flows, and the prompts their recipes render, differ from the versions of the recipes they came from |
 | `recipes update [names…]`         | Move each recipe package to its newest version for the repo's SDK, and merge its changes into the copied recipes, keeping your edits and marking conflicts; in the working tree |
 | `recipes upgrade`                 | Move this repo's `.chernabog/` to the SDK released with this binary, and its core and effect pins to the binary's, then its copied recipes to the newest versions for that SDK |
+| `recipes compile [documents…]` | Compile this repo's [flow documents](/chernabog/flows/documents/) to flow files with the SDK it pins, all when none is named, and report each problem at its line in the document. `--check` writes nothing and fails if a flow file is out of date; `--json` gives the same result to read. Experimental |
 | `enroll [path]`                   | Add a repo to this machine's config: which personas work in it, which flows each runs, which accounts they spend |
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |

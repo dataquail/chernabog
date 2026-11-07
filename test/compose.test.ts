@@ -20,6 +20,7 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import type * as Schema from "effect/Schema";
 
 import {
   compileErrors,
@@ -81,13 +82,68 @@ const messages = (doc: Doc) => Compose.check(doc).map((problem) => problem.messa
 const paths = (doc: Doc) => Compose.check(doc).map((problem) => problem.path);
 
 describe("Compose.read", () => {
+  const problemsOf = (value: Schema.Json) =>
+    Result.match(Compose.read(value), {
+      onSuccess: () => [],
+      onFailure: (problems) => problems,
+    });
+
+  const withStep = (step: Schema.Json) => ({
+    flow: "x",
+    subject: "pull-request",
+    trigger: [],
+    steps: [step],
+  });
+
+  test("says where a document's form is wrong, in a line", () => {
+    expect(problemsOf(withStep({ id: "a", use: 5 }))).toEqual([
+      { path: "steps[0].use", message: "Expected string" },
+    ]);
+
+    expect(
+      problemsOf(
+        withStep({
+          id: "a",
+          use: "b",
+          on: { approve: { steps: [{ id: "c", use: "d", in: { e: 5 } }] } },
+        }),
+      ),
+    ).toEqual([
+      {
+        path: "steps[0].on.approve.steps[0].in.e",
+        message: "Expected string",
+      },
+    ]);
+
+    expect(problemsOf(withStep({ end: "nope" }))[0]?.path).toBe("steps[0]");
+    expect(problemsOf({ flow: "x" })).toEqual([{ path: "subject", message: "is missing" }]);
+    expect(problemsOf({ ...withStep({ end: "done" }), concurrency: 1.5 })[0]?.path).toBe(
+      "concurrency",
+    );
+    expect(problemsOf(["a"])[0]?.path).toBe("");
+  });
+
+  test("says a step is no form of step, rather than lacking the first form's key", () => {
+    expect(problemsOf(withStep({ id: "a" }))).toEqual([
+      { path: "steps[0]", message: "isn't any of the forms this can take" },
+    ]);
+  });
+
   test("takes the implement and review documents", () => {
     expect(implement.flow).toBe("implement");
     expect(review.subject).toBe("pull-request");
   });
 
   test("refuses what isn't a document, without throwing", () => {
-    for (const nonsense of [1, "flow", [], {}, { subject: "issue", steps: 3 }]) {
+    const nonsenses: ReadonlyArray<Schema.Json> = [
+      1,
+      "flow",
+      [],
+      {},
+      { subject: "issue", steps: 3 },
+    ];
+
+    for (const nonsense of nonsenses) {
       expect(Result.isFailure(Compose.read(nonsense))).toBe(true);
     }
   });
