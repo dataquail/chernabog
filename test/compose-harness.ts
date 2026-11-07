@@ -233,7 +233,7 @@ steps:
               in: { issue: task.issue, pr: published.pr, outcome: agent.outcome, lane: task.lane }
         - id: recorded
           use: epic.recordEndings
-          in: { tasks: ready.tasks, endings: started }
+          in: { tasks: ready.started, endings: started }
         - next: { tasks: recorded.tasks, stack: latest.stack }
 `;
 

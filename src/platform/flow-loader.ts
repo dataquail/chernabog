@@ -102,6 +102,7 @@ type DocumentIssue = { readonly path: string; readonly message: string };
 export type DocumentCompiler = {
   readonly read: (value: Core.Json) => Result.Result<Core.Json, ReadonlyArray<DocumentIssue>>;
   readonly generate: (document: Core.Json) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
+  readonly describe: () => Core.Json;
 };
 
 const CompilingSdk = Schema.Struct({
@@ -109,8 +110,10 @@ const CompilingSdk = Schema.Struct({
     (compose): compose is DocumentCompiler =>
       Predicate.hasProperty(compose, "read") &&
       Predicate.hasProperty(compose, "generate") &&
+      Predicate.hasProperty(compose, "describe") &&
       Predicate.isFunction(compose.read) &&
-      Predicate.isFunction(compose.generate),
+      Predicate.isFunction(compose.generate) &&
+      Predicate.isFunction(compose.describe),
     { title: "Compose" },
   ),
 });

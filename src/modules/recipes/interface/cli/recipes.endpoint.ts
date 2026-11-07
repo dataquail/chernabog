@@ -6,6 +6,7 @@ import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { Asker, type Choice } from "../../../../interface/cli/asker.prompt.ts";
@@ -21,6 +22,7 @@ import { type RecipesUpdated, type Unrecorded } from "../../commands/update-reci
 import { type RepoUpgraded } from "../../commands/upgrade-repo.command.ts";
 import { FlowDocumentsRefused } from "../../domain/recipe/recipe.errors.ts";
 import { type RecipesDiff } from "../../queries/diff-recipes.query.ts";
+import { FlowCatalogue } from "../../queries/list-flow-blocks.query.ts";
 import { type RecipeList } from "../../queries/list-recipes.query.ts";
 import { RecipesCommands } from "../../recipes.command-handlers.ts";
 import { enrollmentAccessQueries } from "../../recipes.imports.ts";
@@ -372,6 +374,127 @@ const recipesCompile = Command.make(
   ),
 );
 
+const listedAfter = (label: string, names: ReadonlyArray<string>) =>
+  Option.toArray(Option.liftPredicate(`  ${label}: ${names.join(", ")}`, () => names.length > 0));
+
+const describeGives = (gives: FlowCatalogue["blocks"][number]["gives"]) => {
+  if (Predicate.isString(gives)) {
+    return gives;
+  }
+
+  return Object.entries(gives)
+    .map(([field, kind]) => `${field} (${kind})`)
+    .join(", ");
+};
+
+const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
+  `${block.name}: ${block.about}`,
+  ...block.inputs.map(
+    (input) =>
+      `  ${input.under} ${input.name}${Option.getOrElse(
+        Option.liftPredicate(" (optional)", () => !input.required),
+        () => "",
+      )}: ${input.kind}`,
+  ),
+  `  gives: ${describeGives(block.gives)}`,
+  ...block.outcomes.map(
+    (outcome) =>
+      `  on ${outcome.name}${Option.getOrElse(
+        Option.liftPredicate(" (must route)", () => outcome.mustRoute),
+        () => "",
+      )}: ${outcome.binds}`,
+  ),
+  ...listedAfter(
+    "if it fails",
+    Object.entries(block.failures).map(([error, disposition]) => `${error}: ${disposition}`),
+  ),
+  ...listedAfter("runs before", block.before),
+  ...listedAfter("needs first", block.needs),
+  ...listedAfter("leaves to do", block.opens),
+  ...listedAfter("does", block.closes),
+];
+
+const describeSource = (source: FlowCatalogue["sources"][number]) => [
+  `${source.name}: ${source.about}`,
+  ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
+];
+
+const describeCatalogue = (catalogue: FlowCatalogue) => [
+  catalogue.format,
+  "",
+  "Subjects:",
+  ...catalogue.subjects.map((each) => `  ${each.name}: trigger gives ${each.trigger.join(", ")}`),
+  "Sources:",
+  ...catalogue.sources.flatMap(describeSource).map((line) => `  ${line}`),
+  `Loop states: ${catalogue.loopStates.join(", ")}`,
+  `Lane scopes: ${catalogue.laneScopes.join(", ")}`,
+  "Blocks:",
+  ...catalogue.blocks.flatMap(describeBlock),
+];
+
+const CatalogueText = Schema.fromJsonString(Schema.toCodecJson(FlowCatalogue));
+
+const recipesBlocks = Command.make(
+  "blocks",
+  {
+    names: Argument.String("block").pipe(
+      Argument.withDescription(
+        "Blocks to describe; everything a document can use when none is named",
+      ),
+      Argument.variadic(),
+    ),
+    json: jsonFlag,
+  },
+  ({ json, names }) =>
+    Effect.gen(function* () {
+      const root = yield* rootOf(Option.none());
+      const catalogue = yield* (yield* RecipesQueries).ListFlowBlocksQuery({ root });
+
+      const known = [
+        ...catalogue.blocks.map((block) => block.name),
+        ...catalogue.sources.map((source) => source.name),
+      ];
+
+      const unknown = names.filter((name) => !known.includes(name));
+
+      if (unknown.length > 0) {
+        return yield* new FlowDocumentsRefused({
+          message: `no block or source named ${unknown.join(", ")}; chernabog recipes blocks lists them`,
+        });
+      }
+
+      // Only the blocks and sources named, when any are.
+      const named = (name: string) => names.length === 0 || names.includes(name);
+
+      const shown = new FlowCatalogue({
+        ...catalogue,
+        blocks: catalogue.blocks.filter((block) => named(block.name)),
+        sources: catalogue.sources.filter((source) => named(source.name)),
+      });
+
+      if (json) {
+        yield* Console.log(yield* Schema.encodeEffect(CatalogueText)(shown).pipe(Effect.orDie));
+
+        return;
+      }
+
+      if (names.length === 0) {
+        yield* printLines(describeCatalogue(catalogue));
+
+        return;
+      }
+
+      yield* printLines([
+        ...shown.blocks.flatMap(describeBlock),
+        ...shown.sources.flatMap(describeSource),
+      ]);
+    }),
+).pipe(
+  Command.withDescription(
+    "List what a flow document can use, by the SDK this repo pins, with --json for an agent (experimental)",
+  ),
+);
+
 const describeDiff = (diff: RecipesDiff) => {
   const lines = diff.files.flatMap(({ docs, file, recipe, recorded, state, version, ...entry }) => {
     const name = Option.getOrElse(recipe, () => "");
@@ -548,6 +671,7 @@ export const recipesEndpoint = Command.make("recipes", {}, () => Effect.void).pi
     recipesAdd,
     recipesEject,
     recipesCompile,
+    recipesBlocks,
     recipesDiff,
     recipesUpdate,
     recipesUpgrade,

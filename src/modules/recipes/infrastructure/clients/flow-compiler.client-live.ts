@@ -338,6 +338,12 @@ export const FlowCompilerClientLive = Layer.effect(
       }).pipe(Effect.mapError(failed));
 
     return FlowCompilerClient.of({
+      catalogue: (root) =>
+        loadRepoSdk(`${root}/.chernabog`).pipe(
+          Effect.map((compose) => compose.describe()),
+          Effect.mapError(failed),
+        ),
+
       documents: (root) =>
         Effect.gen(function* () {
           if (!(yield* fs.exists(documentsOf(root)))) {

@@ -20,7 +20,7 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
 
 import {
   compileErrors,
@@ -105,18 +105,22 @@ describe("Compose.read", () => {
         withStep({
           id: "a",
           use: "b",
-          on: { approve: { steps: [{ id: "c", use: "d", in: { e: 5 } }] } },
+          on: { approve: { as: 5, steps: [{ id: "c", use: "d" }] } },
         }),
       ),
     ).toEqual([
       {
-        path: "steps[0].on.approve.steps[0].in.e",
+        path: "steps[0].on.approve.as",
         message: "Expected string",
       },
     ]);
 
     expect(problemsOf(withStep({ end: "nope" }))[0]?.path).toBe("steps[0]");
-    expect(problemsOf({ flow: "x" })).toEqual([{ path: "subject", message: "is missing" }]);
+    expect(problemsOf({ flow: "x" }).map((each) => each.path)).toEqual([
+      "subject",
+      "trigger",
+      "steps",
+    ]);
     expect(problemsOf({ ...withStep({ end: "done" }), concurrency: 1.5 })[0]?.path).toBe(
       "concurrency",
     );
@@ -125,7 +129,10 @@ describe("Compose.read", () => {
 
   test("says a step is no form of step, rather than lacking the first form's key", () => {
     expect(problemsOf(withStep({ id: "a" }))).toEqual([
-      { path: "steps[0]", message: "isn't any of the forms this can take" },
+      {
+        path: "steps[0]",
+        message: "must be a step: use (a block, with an id), end, next, first, repeat or forEach",
+      },
     ]);
   });
 
@@ -146,6 +153,42 @@ describe("Compose.read", () => {
     for (const nonsense of nonsenses) {
       expect(Result.isFailure(Compose.read(nonsense))).toBe(true);
     }
+  });
+
+  const problemsIn = (steps: Schema.Json) =>
+    Result.match(Compose.read({ flow: "x", subject: "issue", trigger: [], steps }), {
+      onSuccess: () => [],
+      onFailure: (problems) => problems.map((each) => [each.path, each.message]),
+    });
+
+  test("says which step has no id, deep in a branch too", () => {
+    expect(problemsIn([{ use: "issue.claim" }])).toEqual([
+      ["steps[0]", "a use step needs an id, which later steps name it by"],
+    ]);
+
+    expect(
+      problemsIn([{ id: "a", use: "b", on: { yes: { steps: [{ use: "issue.claim" }] } } }]),
+    ).toEqual([
+      ["steps[0].on.yes.steps[0]", "a use step needs an id, which later steps name it by"],
+    ]);
+  });
+
+  test("says what a step that is none of them could be", () => {
+    expect(problemsIn([{ id: "a" }])[0]?.[1]).toContain(
+      "must be a step: use (a block, with an id)",
+    );
+  });
+
+  test("says what a document leaves out, and where to find the format", () => {
+    const said = Result.match(Compose.read({ flow: "x" }), {
+      onSuccess: () => [],
+      onFailure: (problems) => problems.map((each) => [each.path, each.message]),
+    });
+
+    expect(said).toContainEqual([
+      "subject",
+      "is missing. chernabog recipes blocks shows the format.",
+    ]);
   });
 });
 
@@ -397,6 +440,32 @@ describe("Compose.check", () => {
   test("knows what a subject's trigger gives", () => {
     expect(messages(wiring(implement, "claim", "issue", "trigger.pr"))).toEqual([
       "the trigger of a flow on issue gives issue, queued",
+    ]);
+  });
+
+  test("says which of in and with an input goes under", () => {
+    expect(
+      messages(
+        changing(review, "review", (step) => ({
+          ...step,
+          in: { ...step.in, role: "reviewer" },
+          with: { round: 1 },
+        })),
+      ),
+    ).toEqual(["role is a fixed value: put it under with, not in"]);
+
+    expect(
+      messages(
+        changing(implement, "gate", () => ({
+          id: "gate",
+          use: "gate.local",
+          with: { worktree: "worktree" },
+        })),
+      ),
+    ).toEqual(["worktree comes from an earlier step: put it under in, as step or step.field"]);
+
+    expect(messages(wiring(implement, "gate", "worktree", "$worktree"))).toEqual([
+      "must name an earlier step by its id, or a field of its output as step.field",
     ]);
   });
 
@@ -807,9 +876,64 @@ describe("a document with a loop and lanes", () => {
         with: { round: 1 },
       }));
 
-      expect(messages(fixed)).toEqual([
+      expect(messages(fixed)).toContain(
         "epic.progress runs in every round here, and must take round",
-      ]);
+      );
+    });
+
+    // Review.round names its steps by its round, so a fixed one would replay the
+    // first round's verdict in every round after it.
+    describe("a review in a loop", () => {
+      const reviewing = (inputs: Pick<UseStep, "in" | "with">): Doc => ({
+        ...review,
+        steps: [
+          {
+            id: "rounds",
+            repeat: {
+              state: {},
+              steps: [
+                {
+                  id: "verdict",
+                  use: "review.round",
+                  ...inputs,
+                  on: {
+                    approve: { steps: [{ end: "done" }] },
+                    changes: {
+                      steps: [
+                        {
+                          id: "parked",
+                          use: "epic.park",
+                          in: { round: "round" },
+                          with: { lookAgainAfter: "1 day" },
+                        },
+                        { next: {} },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      test("takes its round from the loop", () => {
+        expect(
+          messages(
+            reviewing({ in: { pr: "trigger.pr", round: "round" }, with: { role: "reviewer" } }),
+          ),
+        ).toEqual([]);
+      });
+
+      test("refuses a fixed round, which would review once for every round", () => {
+        expect(
+          messages(reviewing({ in: { pr: "trigger.pr" }, with: { round: 1, role: "reviewer" } })),
+        ).toEqual(["review.round runs in every round here, and must take round"]);
+      });
+
+      test("still takes a fixed round for a single review", () => {
+        expect(Compose.check(review)).toEqual([]);
+      });
     });
 
     test("lets a block that runs no step go anywhere", () => {
@@ -908,6 +1032,36 @@ describe("a document with a loop and lanes", () => {
     "tasks",
   );
 
+  // Ending a round without recording how its lanes ended loses the hand-back rule (#249).
+  rejected(
+    "a round that goes on without recording how its lanes ended",
+    {
+      ...epic,
+      steps: everywhere(epic.steps, (step) => {
+        if (Compose.isRepeat(step)) {
+          return {
+            ...step,
+            repeat: {
+              ...step.repeat,
+              steps: step.repeat.steps
+                .filter((each) => !(Compose.isUse(each) && each.id === "recorded"))
+                .map((each) => {
+                  if ("next" in each) {
+                    return { next: { tasks: "ready.started", stack: "latest.stack" } };
+                  }
+
+                  return each;
+                }),
+            },
+          };
+        }
+
+        return step;
+      }),
+    },
+    "started",
+  );
+
   rejected(
     "the wrong state for a block",
     editing("carried", (step) => ({ ...step, in: { ...step.in, stack: "state.tasks" } })),
@@ -974,7 +1128,7 @@ describe("the blocks that decide what an epic starts", () => {
   effect("starts it again when its attempt ended with a person, read ready or not", () =>
     Effect.gen(function* () {
       const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
-        tasks: after([[10, 1]]),
+        tasks: { started: after([[10, 1]]) },
         endings: [{ issue: 10, withPerson: true }],
       });
 
@@ -985,13 +1139,324 @@ describe("the blocks that decide what an epic starts", () => {
   effect("doesn't start it again when its attempt ended otherwise", () =>
     Effect.gen(function* () {
       const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
-        tasks: after([[10, 1]]),
+        tasks: { started: after([[10, 1]]) },
         endings: [{ issue: 10, withPerson: false }],
       });
 
       expect(yield* lanes(tasks, reading([ready(10)]))).toEqual([]);
     }),
   );
+});
+
+describe("the order a document's blocks run in", () => {
+  const epic = documentOf(EPIC_DOCUMENT);
+
+  // A list of steps with the step moved to just before another.
+  const movedIn = (steps: ReadonlyArray<Step>, id: string, before: string) => {
+    const moving = steps.filter((step) => named(step, id));
+    const rest = steps.filter((step) => !named(step, id));
+    const at = rest.findIndex((step) => named(step, before));
+
+    return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+  };
+
+  // The epic with its round's steps changed.
+  const round = (change: (steps: ReadonlyArray<Step>) => ReadonlyArray<Step>) => ({
+    ...epic,
+    steps: epic.steps.map((step) => {
+      if (Compose.isRepeat(step)) {
+        return { ...step, repeat: { ...step.repeat, steps: change(step.repeat.steps) } };
+      }
+
+      return step;
+    }),
+  });
+
+  // The epic with its lane's steps changed.
+  const lane = (change: (steps: ReadonlyArray<Step>) => ReadonlyArray<Step>) =>
+    round((steps) =>
+      steps.map((step) => {
+        if (Compose.isForEach(step)) {
+          return { ...step, steps: change(step.steps) };
+        }
+
+        return step;
+      }),
+    );
+
+  test("finds nothing wrong with the recipes' documents", () => {
+    expect(Compose.check(implement)).toEqual([]);
+    expect(Compose.check(review)).toEqual([]);
+    expect(Compose.check(epic)).toEqual([]);
+  });
+
+  test("refuses the local gate after what it should have stopped", () => {
+    expect(messages(moved(implement, "gate", "ci")).join("\n")).toContain(
+      "gate.local must run before pr.open, and this runs after it",
+    );
+  });
+
+  test("refuses the local gate before the agent has worked", () => {
+    expect(messages(moved(implement, "gate", "agent"))).toContain(
+      "agent.implement must run before gate.local, and this runs after it",
+    );
+  });
+
+  test("refuses a hand-off before CI", () => {
+    const handedOffFirst = withSteps(implement, [
+      ...implement.steps.filter((step) => !named(step, "ci") && Compose.isUse(step)),
+      ...stepOf(implement, "ci"),
+    ]);
+
+    expect(messages(handedOffFirst)).toContain(
+      "ci.waitAndFix must run before issue.handOff, and this runs after it",
+    );
+  });
+
+  test("refuses a pull request that is never handed off, on every way to the end", () => {
+    expect(messages(without(implement, "done"))).toContain(
+      "a way through pr.open finishes here with hand-off not done",
+    );
+  });
+
+  test("refuses an adopted pull request that is never handed off", () => {
+    const dropped = changing(implement, "claim", (step) => ({
+      ...step,
+      on: {
+        adopted: { as: "adopted", steps: [{ end: "done" }] },
+      },
+    }));
+
+    expect(messages(dropped)).toContain(
+      "a way through issue.claim finishes here with hand-off not done",
+    );
+  });
+
+  test("excuses a way that ends with a person", () => {
+    const toPerson = withSteps(implement, [
+      ...implement.steps.filter((step) => Compose.isUse(step) && !named(step, "done")),
+      { end: "needs-human", reason: "opened.url" },
+    ]);
+
+    expect(Compose.check(toPerson)).toEqual([]);
+  });
+
+  test("refuses a lane that keeps its claim after its questions", () => {
+    const keeps = lane((steps) =>
+      steps.map((step) => {
+        if (Compose.isUse(step) && step.id === "agent") {
+          return {
+            ...step,
+            on: {
+              "needs-clarification": {
+                as: "questions",
+                steps: [
+                  {
+                    id: "asked",
+                    use: "issue.askClarification",
+                    in: { issue: "task.issue", outcome: "questions", lane: "task.lane" },
+                  },
+                  { end: "done" as const },
+                ],
+              },
+            },
+          };
+        }
+
+        return step;
+      }),
+    );
+
+    expect(messages(keeps)).toContain(
+      "a way through issue.askClarification finishes here with release-claim not done",
+    );
+  });
+
+  test("refuses questions that are never asked", () => {
+    const unasked = changing(implement, "agent", (step) => ({
+      ...step,
+      on: { "needs-clarification": { as: "questions", steps: [{ end: "done" }] } },
+    }));
+
+    expect(messages(unasked)).toEqual([
+      "a way through agent.implement finishes here with ask-questions not done",
+    ]);
+  });
+
+  test("refuses working through an epic it never claimed", () => {
+    const unclaimed = { ...epic, steps: epic.steps.filter((step) => !named(step, "claimed")) };
+
+    expect(messages(unclaimed)).toContain("epic.progress needs epic.claim to have run first");
+  });
+
+  test("refuses starting tasks before the stack is up to date", () => {
+    const early = round((steps) => movedIn(steps, "ready", "carried"));
+
+    expect(messages(early).join("\n")).toContain("stack.carryUp must run before epic.startable");
+  });
+
+  test("refuses finishing before the last status is posted", () => {
+    const early = round((steps) => movedIn(steps, "closed", "status"));
+
+    expect(messages(early).join("\n")).toContain("epic.postStatus must run before epic.finished");
+  });
+
+  test("sees a hand-off that may not run as one that may not happen", () => {
+    const maybe = changing(implement, "done", (step) => ({ ...step, if: "agent.committed" }));
+
+    expect(messages(maybe)).toContain("a way through pr.open finishes here with hand-off not done");
+  });
+
+  test("sees order down every branch", () => {
+    // Removing a hand-off from one branch alone is still caught.
+    const oneBranch = changing(implement, "claim", (step) => ({
+      ...step,
+      on: {
+        adopted: {
+          as: "adopted",
+          steps: [
+            {
+              id: "adoptedCi",
+              use: "ci.waitPreparing",
+              in: { pr: "adopted.number", branch: "claim.branch", base: "claim.base" },
+            },
+            { end: "done" },
+          ],
+        },
+      },
+    }));
+
+    expect(messages(oneBranch)).toEqual([
+      "a way through issue.claim finishes here with hand-off not done",
+    ]);
+  });
+
+  // A team's to choose, and no order breaks them.
+  test("leaves a team's choices alone", () => {
+    expect(Compose.check(without(implement, "gate"))).toEqual([]);
+    expect(Compose.check(without(implement, "ci"))).toEqual([]);
+    expect(Compose.check(lane((steps) => steps.filter((step) => !named(step, "gate"))))).toEqual(
+      [],
+    );
+    expect(Compose.check(lane((steps) => steps.filter((step) => !named(step, "ci"))))).toEqual([]);
+  });
+
+  test("names only blocks that exist", () => {
+    const names = Object.keys(Blocks.catalogue);
+
+    for (const block of Object.values(Blocks.catalogue)) {
+      for (const other of [...block.before, ...block.needs]) {
+        expect(names).toContain(other);
+      }
+    }
+  });
+
+  test("leaves nothing to do that no block does", () => {
+    const blocks = Object.values(Blocks.catalogue);
+    const closed = blocks.flatMap((block): ReadonlyArray<string> => block.closes);
+
+    for (const block of blocks) {
+      for (const what of [...block.opens, ...Object.values(block.opensOn).flat()]) {
+        expect(closed).toContain(what);
+      }
+    }
+  });
+});
+
+describe("Compose.describe", () => {
+  const SaidBlock = Schema.Struct({
+    name: Schema.String,
+    about: Schema.String,
+    inputs: Schema.Array(Schema.Struct({ name: Schema.String, kind: Schema.String })),
+    outcomes: Schema.Array(Schema.Struct({ name: Schema.String, binds: Schema.String })),
+  });
+
+  const said = Schema.decodeUnknownSync(
+    Schema.Struct({
+      subjects: Schema.Array(Schema.Struct({ name: Schema.String })),
+      sources: Schema.Array(Schema.Struct({ name: Schema.String, about: Schema.String })),
+      blocks: Schema.Array(SaidBlock),
+    }),
+  )(Compose.describe());
+
+  test("lists every block, source and subject there is", () => {
+    expect(said.blocks.map((block) => block.name).toSorted()).toEqual(
+      Object.keys(Blocks.catalogue).toSorted(),
+    );
+    expect(said.sources.map((source) => source.name).toSorted()).toEqual(
+      Object.keys(Blocks.sources).toSorted(),
+    );
+    expect(said.subjects.map((subject) => subject.name).toSorted()).toEqual(
+      Object.keys(Blocks.subjects).toSorted(),
+    );
+  });
+
+  test("shows the format", () => {
+    const { format } = Schema.decodeUnknownSync(Schema.Struct({ format: Schema.String }))(
+      Compose.describe(),
+    );
+
+    for (const part of ["flow:", "subject:", "trigger:", "steps:", "in:", "with:", "as:", "end:"]) {
+      expect(format).toContain(part);
+    }
+  });
+
+  test("says what each block does, and each of its inputs and outcomes", () => {
+    for (const block of said.blocks) {
+      expect(`${block.name}: ${block.about}`).not.toBe(`${block.name}: `);
+
+      for (const input of block.inputs) {
+        expect(`${block.name}.${input.name}: ${input.kind}`).not.toBe(
+          `${block.name}.${input.name}: `,
+        );
+      }
+
+      for (const outcome of block.outcomes) {
+        expect(`${block.name}.${outcome.name}: ${outcome.binds}`).not.toBe(
+          `${block.name}.${outcome.name}: `,
+        );
+      }
+    }
+  });
+
+  // Keeps a block's listing to what it has: `bun run check` runs this file.
+  test("can't name what a block doesn't have", () => {
+    const shared = {
+      name: "test.listing",
+      about: "",
+      inputs: { issue: "required" },
+      run: (_: { readonly issue: number }) => Effect.succeed({ branch: "b" }),
+      failures: {},
+      outcomes: {},
+      mustRoute: [],
+      contributes: {},
+    } as const;
+
+    const right = Blocks.defineBlock({
+      ...shared,
+      inputKinds: { issue: "" },
+      outputKinds: { branch: "" },
+      outcomeKinds: {},
+    });
+
+    const wrongInput = Blocks.defineBlock({
+      ...shared,
+      // @ts-expect-error -- the test: the block takes issue, not pr.
+      inputKinds: { pr: "" },
+      outputKinds: { branch: "" },
+      outcomeKinds: {},
+    });
+
+    const wrongOutput = Blocks.defineBlock({
+      ...shared,
+      inputKinds: { issue: "" },
+      // @ts-expect-error -- the test: the block gives branch, not base.
+      outputKinds: { base: "" },
+      outcomeKinds: {},
+    });
+
+    expect([right.name, wrongInput.name, wrongOutput.name]).toHaveLength(3);
+  });
 });
 
 describe("generate", () => {
@@ -1018,6 +1483,10 @@ describe("a block's failure table", () => {
   const raising = <E extends { readonly _tag: string }>(error: E, failures: Blocks.Failures<E>) =>
     Blocks.defineBlock({
       name: "test.block",
+      about: "",
+      inputKinds: {},
+      outputKinds: "",
+      outcomeKinds: {},
       inputs: {},
       run: (_: Record<never, never>) => Effect.fail(error),
       failures,
@@ -1114,6 +1583,10 @@ describe("a block's failure table", () => {
   // check` runs on this file.
   test("must name exactly the errors the block can raise", () => {
     const pushing = {
+      about: "",
+      inputKinds: { issue: "" },
+      outputKinds: "",
+      outcomeKinds: {},
       inputs: { issue: "required" },
       run: (input: { readonly issue: number }) =>
         Implement.push("push", "/tmp/w", `auto/issue-${input.issue}`),
