@@ -89,6 +89,8 @@ Blocks declare the order they need, and the check walks every way through a docu
 - `needs first`: this block must come after another. A round of an epic needs the epic claimed.
 - `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off. A way that ends `needs-human` is excused.
 
+In a `repeat`, the check follows each `next` into the round after it, so these rules hold across rounds. What a round leaves to do is carried into the next one: a round that opens a pull request and goes on with `next` still needs a later round to hand it off before it ends `done`. `needs first` holds across the whole run, so a block that needs another is satisfied by an earlier round. `runs before` holds within a round, since each round starts over.
+
 ## What the checks don't catch
 
 The checks make sure a flow is wired and ordered correctly, not that it does what your team wants. Removing the local gate or CI is allowed, because those are a team's choices. So is a branch that does nothing useful. For example, a review's `approve` that never lands still passes. [Rehearse](/chernabog/flows/rehearsing/) a flow before you rely on it.
