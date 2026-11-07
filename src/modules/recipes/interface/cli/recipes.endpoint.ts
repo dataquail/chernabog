@@ -440,8 +440,30 @@ const recipesBlocks = Command.make(
       const root = yield* rootOf(Option.none());
       const catalogue = yield* (yield* RecipesQueries).ListFlowBlocksQuery({ root });
 
+      const known = [
+        ...catalogue.blocks.map((block) => block.name),
+        ...catalogue.sources.map((source) => source.name),
+      ];
+
+      const unknown = names.filter((name) => !known.includes(name));
+
+      if (unknown.length > 0) {
+        return yield* new FlowDocumentsRefused({
+          message: `no block or source named ${unknown.join(", ")}; chernabog recipes blocks lists them`,
+        });
+      }
+
+      // Only the blocks and sources named, when any are.
+      const named = (name: string) => names.length === 0 || names.includes(name);
+
+      const shown = new FlowCatalogue({
+        ...catalogue,
+        blocks: catalogue.blocks.filter((block) => named(block.name)),
+        sources: catalogue.sources.filter((source) => named(source.name)),
+      });
+
       if (json) {
-        yield* Console.log(yield* Schema.encodeEffect(CatalogueText)(catalogue).pipe(Effect.orDie));
+        yield* Console.log(yield* Schema.encodeEffect(CatalogueText)(shown).pipe(Effect.orDie));
 
         return;
       }
@@ -452,25 +474,10 @@ const recipesBlocks = Command.make(
         return;
       }
 
-      const known = [
-        ...catalogue.blocks.map((block) => block.name),
-        ...catalogue.sources.map((source) => source.name),
-      ];
-
       yield* printLines([
-        ...catalogue.blocks.filter((block) => names.includes(block.name)).flatMap(describeBlock),
-        ...catalogue.sources
-          .filter((source) => names.includes(source.name))
-          .flatMap(describeSource),
+        ...shown.blocks.flatMap(describeBlock),
+        ...shown.sources.flatMap(describeSource),
       ]);
-
-      const unknown = names.filter((name) => !known.includes(name));
-
-      if (unknown.length > 0) {
-        return yield* new FlowDocumentsRefused({
-          message: `no block or source named ${unknown.join(", ")}; chernabog recipes blocks lists them`,
-        });
-      }
     }),
 ).pipe(
   Command.withDescription(

@@ -125,6 +125,28 @@ describe("chernabog recipes blocks", () => {
     expect(output).toContain('"name":"branch.push"');
     expect(output).toContain('"gives":{"pushed":"Pushed: proof for pr.open"}');
   });
+
+  test("--json gives only the blocks and sources named, and fails on one there isn't", async () => {
+    const named = await sandbox.runCli([
+      "recipes",
+      "blocks",
+      "gate.local",
+      "issues.queued",
+      "--json",
+    ]);
+
+    expect(named.code).toBe(0);
+    expect(named.output).toContain('"name":"gate.local"');
+    expect(named.output).toContain('"name":"issues.queued"');
+    expect(named.output).not.toContain('"name":"agent.implement"');
+    expect(named.output).not.toContain('"name":"review.requested"');
+
+    const unknown = await sandbox.runCli(["recipes", "blocks", "gate.lint", "--json"]);
+
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.output).toContain("no block or source named gate.lint");
+    expect(unknown.output).not.toContain('"name":');
+  });
 });
 
 describe("the recipes' own suites", () => {
