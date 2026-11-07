@@ -5,7 +5,7 @@ description: Write a flow as YAML from the SDK's blocks, and compile it to an or
 
 A flow document is a flow written as data. Each step names a block, every value it takes names the step that value came from, and it branches only on outcomes the block declares. There are no expressions. It compiles to an ordinary flow file, so the engine, `chernabog rehearse` and your editor treat the result like any other flow.
 
-Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review` and `epic` recipes.
+Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review`, `resolve-conflicts` and `epic` recipes.
 
 ## A document
 
@@ -60,6 +60,7 @@ A flow's `subject` is what each run works on. It decides what `trigger` gives th
 - `issue`: `trigger.issue` and `trigger.queued`. A failure going to a person comments on the issue, and a claim on it goes when the run ends.
 - `pull-request`: `trigger.pr`. A failure going to a person labels the pull request `auto:needs-human` and comments why.
 - `changes-asked`: a review that asks for changes on a pull request this persona wrote, found by the `review.changesRequested` source. `trigger.pr`, `trigger.branch` and `trigger.base` are the pull request's, `trigger.reviewer` is who asked for the changes, and `trigger.reviewedSha` is the commit they reviewed. The run owns the pull request from its first step to its end, so `resolve-conflicts` doesn't merge into the branch under it, and a pull request another run owns is skipped. A failure going to a person labels it `auto:needs-human` and comments why, as on `pull-request`.
+- `conflict`: a pull request this persona wrote that GitHub says conflicts with its base, found by the `pr.conflicting` source. `trigger.pr`, `trigger.branch` and `trigger.base` are the pull request's; on a layer of a stack, `trigger.base` is the layer below's branch. The run owns the pull request from its first step to its end, as on `changes-asked`, and a failure going to a person labels it `auto:needs-human` and comments why.
 - `epic`: `trigger.epic`, an issue labelled `auto:epic`.
 
 On `changes-asked`, the `author.*` blocks answer the review in the session that wrote the code. `author.session` finds it from the session marker the run that opened the pull request left: on a layer of an epic's stack, that is the task's own session, and on one a person worked on with the agent, theirs, reopened in front of them. `review.askAgain` asks `trigger.reviewer` to review again, not a reviewer from the pool:
@@ -76,6 +77,25 @@ On `changes-asked`, the `author.*` blocks answer the review in the session that 
 - end: done
   summary: again
 ```
+
+On `conflict`, `conflict.resolve` merges `trigger.base` into the branch, never by a rebase, and has an agent resolve the conflicts and commit the merge in a session of the run's own. A layer of a stack whose layer below squash- or rebase-merged has that layer recorded as already here first, inside the block, so the merge doesn't bring back what the base has since moved or deleted. Its `session` goes to `conflict.localGate` and `conflict.waitForCi`, so failures go back to the session that resolved the conflict, and it can come to `needs-human` when only a person can settle the conflict:
+
+```yaml
+- id: resolved
+  use: conflict.resolve
+  in: { pr: trigger.pr, branch: trigger.branch, base: trigger.base, worktree: worktree }
+  on:
+    needs-human:
+      as: stuck
+      steps:
+        - id: handed
+          use: pr.handToPerson
+          in: { pr: trigger.pr, reason: stuck.reason }
+        - end: needs-human
+          reason: handed
+```
+
+`conflict.askApproverAgain` asks the reviewer whose latest decisive review approved the pull request to review again, since they approved the code before the merge, and asks no one otherwise.
 
 ## Your own steps
 

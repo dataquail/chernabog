@@ -513,7 +513,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of changes-asked, epic, issue, pull-request",
+      "must be one of changes-asked, conflict, epic, issue, pull-request",
     ]);
   });
 

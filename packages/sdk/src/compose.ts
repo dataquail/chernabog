@@ -5,8 +5,8 @@
 // to, and there are no expressions.
 //
 // Experimental: this and the blocks cover implement, review, re-review,
-// address-review and epic, and their shape may change until they cover more of
-// the recipes.
+// address-review, resolve-conflicts and epic, and their shape may change until
+// they cover more of the recipes.
 //
 // `read` takes a document's shape, `check` what can be said of it without a
 // compiler, with where in the document it is. Whether each wire's type fits is
