@@ -30,7 +30,7 @@ export type Branch = { readonly as?: string; readonly steps: ReadonlyArray<Step>
 export type UseStep = {
   readonly id: string;
   readonly use: string;
-  // Runs only when the named boolean output is true. Its output is then
+  // Runs only when the named boolean output is true, which `tsc` holds it to. Its output is then
   // optional, and `first` joins it with what stands in for it.
   readonly if?: string;
   readonly in?: { readonly [input: string]: string };
@@ -326,6 +326,22 @@ const checkInputs = (
   }
 };
 
+// A name the document gives something, which the flow file declares as it is:
+// it must be a name, and one the file doesn't already have.
+const checkName = (
+  checking: Checking,
+  name: string,
+  names: ReadonlySet<string>,
+  at: string,
+  what: string,
+) => {
+  if (!IDENTIFIER.test(name) || RESERVED.has(name)) {
+    say(checking, at, `${name} can't name ${what}`);
+  } else if (names.has(name)) {
+    say(checking, at, `${name} is already a step here`);
+  }
+};
+
 const checkIdentity = (
   checking: Checking,
   step: UseStep,
@@ -334,13 +350,7 @@ const checkIdentity = (
   used: Used,
   at: string,
 ) => {
-  if (!IDENTIFIER.test(step.id) || RESERVED.has(step.id)) {
-    say(checking, `${at}.id`, `${step.id} can't name a step`);
-  }
-
-  if (names.has(step.id)) {
-    say(checking, `${at}.id`, `${step.id} is already a step here`);
-  }
+  checkName(checking, step.id, names, `${at}.id`, "a step");
 
   // A run resumes by its step names, which a block's two uses would share, as
   // would two blocks that use the same ones.
@@ -369,11 +379,7 @@ const checkBinding = (
   at: string,
 ) => {
   for (const name of Option.toArray(Option.fromUndefinedOr(branch.as))) {
-    if (!IDENTIFIER.test(name) || RESERVED.has(name)) {
-      say(checking, at, `${name} can't name what a branch binds`);
-    } else if (names.has(name)) {
-      say(checking, at, `${name} is already a step here`);
-    }
+    checkName(checking, name, names, at, "what a branch binds");
   }
 };
 
@@ -407,64 +413,122 @@ type Used = ReadonlyMap<string, string>;
 
 type Walked = { readonly ends: boolean; readonly seen: Used };
 
-// Where a walk is: inside a repeat, `next` means something, and inside a lane,
-// a block that can carry a lane must, or two lanes' steps would collide.
+// Where a walk is: inside a repeat, `next` means something, and its rounds'
+// steps run again each round; inside a lane, they run once for each lane.
 type Place = { readonly inLoop: boolean; readonly inLane: boolean };
 
-const checkLaneWire = (
+// A run resumes by its step names, and a second use of one replays the first's
+// result instead of doing the work. A block that runs steps in every round, or
+// in every lane, must carry the round or the lane in their names.
+const checkStepKey = (
   checking: Checking,
   step: UseStep,
   block: Block,
   place: Place,
   at: string,
 ) => {
-  if (place.inLane && "lane" in block.inputs && !("lane" in (step.in ?? {}))) {
-    say(checking, `${at}.in`, `${step.use} runs beside others here, and must name its lane`);
+  if (block.stepNames.length === 0) {
+    return;
+  }
+
+  const wired = step.in ?? {};
+
+  if (place.inLane) {
+    if (!("lane" in block.inputs)) {
+      say(
+        checking,
+        `${at}.use`,
+        `${step.use} names its steps the same in every lane, so it can't run beside others`,
+      );
+    } else if (!("lane" in wired)) {
+      say(checking, `${at}.in`, `${step.use} runs beside others here, and must name its lane`);
+    }
+
+    return;
+  }
+
+  if (place.inLoop) {
+    if (!("round" in block.inputs)) {
+      say(
+        checking,
+        `${at}.use`,
+        `${step.use} names its steps the same in every round, so it can't run in a repeat`,
+      );
+    } else if (wired.round !== "round") {
+      say(checking, `${at}.in.round`, `${step.use} runs in every round here, and must take round`);
+    }
   }
 };
 
-// A way round a loop that neither waits nor changes anything would spin.
+// Whether every way past a block's step has waited or changed something.
+// How the steps of a branch are walked for a spin: whether a way reaches
+// their end having neither waited nor changed anything.
+type Spin = (steps: ReadonlyArray<Step>, settled: boolean, path: string) => boolean;
+
+const settledPast = (step: UseStep, settled: boolean, at: string, spin: Spin) => {
+  const found = Record.get(blocksByName, step.use);
+
+  if (Option.isNone(found)) {
+    return settled;
+  }
+
+  const block = found.value;
+  const routed = step.on ?? {};
+
+  // Taking a branch, the block ran, whether or not it had to.
+  const changedOn = (outcome: string) =>
+    block.waits ||
+    block.progressOn.some((each) => each === outcome) ||
+    Option.exists(block.progressUnless, (unless) => unless !== outcome);
+
+  const unsettled = branchesOf(step).map(([outcome, branch]) =>
+    spin(branch.steps, settled || changedOn(outcome), `${at}.on.${outcome}.steps`),
+  );
+
+  // Past it without a branch, a conditional step may not have run at all.
+  const runs = Option.isNone(Option.fromUndefinedOr(step.if));
+
+  const past =
+    settled ||
+    (runs && (block.waits || Option.exists(block.progressUnless, (unless) => unless in routed)));
+
+  return past && !unsettled.some((each) => each);
+};
+
+// A way round a loop that neither waits nor changes anything would spin. Says
+// so of each `next` a way reaches so, and returns whether a way reaches the
+// end of the steps so. Lanes are no way round: there may be none.
 const checkSpin = (
   checking: Checking,
   steps: ReadonlyArray<Step>,
-  waited: boolean,
+  settled: boolean,
   path: string,
-): void => {
-  let settled = waited;
+): boolean => {
+  let still = settled;
 
   for (const [index, step] of steps.entries()) {
     const at = `${path}[${index}]`;
 
-    if (isNext(step) && !settled) {
-      say(checking, at, "this round neither waits nor changes anything, so the loop would spin");
+    if (isNext(step)) {
+      if (!still) {
+        say(checking, at, "this round neither waits nor changes anything, so the loop would spin");
+      }
+
+      return false;
     }
 
-    if (isForEach(step)) {
-      settled = true;
+    if (isEnd(step) || isRepeat(step)) {
+      return false;
     }
 
     if (isUse(step)) {
-      const found = Record.get(blocksByName, step.use);
-
-      const progressOn: ReadonlyArray<string> = Option.match(found, {
-        onNone: () => [],
-        onSome: (block) => block.progressOn,
-      });
-
-      for (const [outcome, branch] of branchesOf(step)) {
-        const walked = settled || Option.exists(found, (block) => block.waits);
-
-        checkSpin(
-          checking,
-          branch.steps,
-          walked || progressOn.includes(outcome),
-          `${at}.on.${outcome}.steps`,
-        );
-      }
-
-      settled = settled || Option.exists(found, (block) => block.waits);
+      still = settledPast(step, still, at, (inner, from, where) =>
+        checkSpin(checking, inner, from, where),
+      );
     }
   }
+
+  return !still;
 };
 
 const checkLoop = (checking: Checking, step: RepeatStep, at: string) => {
@@ -535,11 +599,75 @@ const checkForEach = (
     say(checking, `${at}.scope`, `must be one of ${Object.keys(laneScopes).join(", ")}`);
   }
 
-  // A lane's steps carry its id, so each lane's names are its own.
+  checkName(checking, step.id, names, `${at}.id`, "a step");
+  checkName(checking, step.as, names, `${at}.as`, "each item");
+
+  for (const [field, references] of Object.entries(step.failureContext ?? {})) {
+    if (!IDENTIFIER.test(field)) {
+      say(checking, `${at}.failureContext.${field}`, `${field} can't name what a lane keeps`);
+    }
+
+    for (const reference of references) {
+      if (!REFERENCE.test(reference)) {
+        say(checking, `${at}.failureContext.${field}`, "must name a step's output, as step.field");
+      }
+    }
+  }
+
+  // A lane's steps carry its id, as checkStepKey sees to, so each lane's names
+  // are its own.
   walk(step.steps, `${at}.steps`, new Set([...names, step.as]), new Map(), {
     inLoop: false,
     inLane: true,
   });
+};
+
+const checkRepeat = (
+  checking: Checking,
+  step: RepeatStep,
+  names: ReadonlySet<string>,
+  place: Place,
+  walk: Walk,
+  at: string,
+) => {
+  checkName(checking, step.id, names, `${at}.id`, "a step");
+  checkLoop(checking, step, at);
+
+  // A round's steps carry its number, as checkStepKey sees to, so each round's
+  // names are its own.
+  const round = walk(
+    step.repeat.steps,
+    `${at}.repeat.steps`,
+    new Set([...names, "round", "state"]),
+    new Map(),
+    { ...place, inLoop: true },
+  );
+
+  // Running off its steps would go round again, and lose what the round changed.
+  if (!round.ends) {
+    say(
+      checking,
+      `${at}.repeat.steps`,
+      "a round can run off its steps: end it, or go on with next",
+    );
+  }
+};
+
+const checkFirst = (
+  checking: Checking,
+  step: FirstStep,
+  names: ReadonlySet<string>,
+  at: string,
+) => {
+  checkName(checking, step.id, names, `${at}.id`, "a step");
+
+  if (step.first.length === 0) {
+    say(checking, `${at}.first`, "must name at least one output");
+  }
+
+  for (const reference of step.first) {
+    checkReference(checking, names, reference, `${at}.first`);
+  }
 };
 
 // What a block's step left: whether every run ends in it.
@@ -574,7 +702,7 @@ const checkUse = (
 
   checkInputs(checking, step, block, names, at);
   checkRouting(checking, step, block, at);
-  checkLaneWire(checking, step, block, place, at);
+  checkStepKey(checking, step, block, place, at);
 
   for (const flag of Option.toArray(Option.fromUndefinedOr(step.if))) {
     checkReference(checking, names, flag, `${at}.if`);
@@ -639,27 +767,13 @@ const checkSteps =
       }
 
       if (isRepeat(step)) {
-        checkLoop(checking, step, at);
-
-        // A round's steps carry its number, so each round's names are its own.
-        walk(
-          step.repeat.steps,
-          `${at}.repeat.steps`,
-          new Set([...names, "round", "state"]),
-          new Map(),
-          {
-            ...place,
-            inLoop: true,
-          },
-        );
+        checkRepeat(checking, step, names, place, walk, at);
 
         return stopsAt(index);
       }
 
       if (isFirst(step)) {
-        for (const reference of step.first) {
-          checkReference(checking, names, reference, `${at}.first`);
-        }
+        checkFirst(checking, step, names, at);
       }
 
       if (isForEach(step)) {
@@ -811,7 +925,7 @@ const emitCall = (step: UseStep, input: string, overrides: string, indent: strin
   return Option.match(Option.fromUndefinedOr(step.if), {
     onNone: () => [`${indent}const ${step.id} = ${call};`],
     onSome: (flag) => [
-      `${indent}const ${step.id} = ${flag} ? Option.some(${call}) : Option.none();`,
+      `${indent}const ${step.id} = ${flag} === true ? Option.some(${call}) : Option.none();`,
     ],
   });
 };
