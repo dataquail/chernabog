@@ -345,10 +345,10 @@ steps:
                 steps:
                   - end: done
                     summary: already.summary
-          - id: fixed
+          - id: closes
             use: merged.closesFollowUp
             in: { issue: trigger.issue }
-          - id: details
+          - id: failed
             use: merged.failureDetails
             in: { ci: red }
           - id: filed
@@ -360,8 +360,8 @@ steps:
               sha: trigger.sha
               base: trigger.base
               ci: red
-              details: details
-              fixed: fixed
+              details: failed.details
+              fixed: closes.fixed
           - id: linked
             use: merged.linkFollowUp
             in:
@@ -369,7 +369,7 @@ steps:
               sha: trigger.sha
               base: trigger.base
               followUp: filed
-              fixed: fixed
+              fixed: closes.fixed
           - end: done
             summary: linked
 `;

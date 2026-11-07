@@ -626,14 +626,14 @@ describe("the comparison sees a post-merge flow that", () => {
     "files a follow-up's failed fix for implement, not for a person",
     target,
     fixOfAFollowUp,
-    dropping("fixed", "const fixed = Option.none();"),
+    dropping("closes", "const closes = { fixed: Option.none() };"),
   );
 
   sabotaged(
     "files a follow-up without the failed runs' logs",
     target,
     red,
-    dropping("details", "const details = [];"),
+    dropping("failed", "const failed = { details: [] };"),
   );
 
   sabotaged("files no follow-up", target, red, dropping("filed", "const filed = 100;"));

@@ -499,5 +499,5 @@ export const changesAskedSubject = {
       ),
       PullRequest.owning(trigger.pr),
     ),
-  stillValid: Review.stillValid,
+  stillValid: Option.some(Review.stillValid),
 };

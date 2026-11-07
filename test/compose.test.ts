@@ -878,7 +878,7 @@ describe("tsc on a document's flow file", () => {
 
   rejected(
     "a follow-up filed for CI that wasn't red",
-    postMergeWith("            in: { ci: red }", "            in: { ci: fixed }"),
+    postMergeWith("            in: { ci: red }", "            in: { ci: closes }"),
     "failedRuns",
   );
 

@@ -1204,5 +1204,5 @@ export const epicSubject = {
       ),
       Claims.releasing(Claims.epic(trigger.epic)),
     ),
-  stillValid: Epic.stillValid,
+  stillValid: Option.some(Epic.stillValid),
 };
