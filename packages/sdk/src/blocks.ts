@@ -27,6 +27,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
+  addressReviewBlocks,
+  addressReviewSources,
+  changesAskedSubject,
+} from "./address-review-blocks.ts";
+import {
   Approved,
   BaseBranch,
   BranchName,
@@ -90,10 +95,9 @@ const HAND_OFF_STEPS = "hand-off";
 const WORKTREE_STEPS = "prepare-worktree";
 
 // The blocks of the files beside this one.
-const elsewhere = gather("block", "epic-blocks.ts", epicBlocks).and(
-  "re-review-blocks.ts",
-  reReviewBlocks,
-);
+const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
+  .and("re-review-blocks.ts", reReviewBlocks)
+  .and("address-review-blocks.ts", addressReviewBlocks);
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = elsewhere.and("blocks.ts", {
@@ -646,10 +650,9 @@ export const catalogue = elsewhere.and("blocks.ts", {
 export type BlockName = keyof typeof catalogue;
 
 // The sources of the files beside this one.
-const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources).and(
-  "re-review-blocks.ts",
-  reReviewSources,
-);
+const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources)
+  .and("re-review-blocks.ts", reReviewSources)
+  .and("address-review-blocks.ts", addressReviewSources);
 
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = sourcesElsewhere.and("blocks.ts", {
@@ -749,6 +752,11 @@ export const sourceDescriptions = {
     about: "Pull requests that ask this persona for a review it hasn't given yet.",
     with: {},
   },
+  "review.changesRequested": {
+    about:
+      "Pull requests this persona wrote whose latest approval or request for changes asks for changes on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. Each run's key carries the review: pr-7-changes-2.",
+    with: {},
+  },
   "review.requestedAgain": {
     about:
       "Pull requests that ask this persona to review again after it reviewed them, one run per request, except those labelled auto:needs-human. Each run's key carries the review it asks for: pr-7-review-2.",
@@ -772,6 +780,8 @@ type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;
 // What a flow works on: what a work item says of it, what a failure going to
 // a person does with it, and how the engine tells whether it is still there.
 export const subjects = {
+  "changes-asked": changesAskedSubject,
+
   epic: epicSubject,
 
   issue: {
@@ -865,12 +875,21 @@ export const assemble = (flow: {
     ...unique(contributions.flatMap((each) => Option.toArray(Option.fromUndefinedOr(each.wakes)))),
   ];
 
+  const doctor = unique(contributions.flatMap((each) => each.doctor ?? []));
+
   const common = {
     trigger: Effect.map(Effect.all(triggers), (found) => found.flat()),
     concurrency: flow.concurrency ?? 1,
     labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...labels]),
     settings: Schema.Struct(fields),
-    doctor: unique(contributions.flatMap((each) => each.doctor ?? [])),
+    // None, as a recipe with no checks declares it, when nothing contributes one.
+    ...Option.match(
+      Option.liftPredicate(doctor, (checks) => checks.length > 0),
+      {
+        onNone: () => ({}),
+        onSome: (checks) => ({ doctor: checks }),
+      },
+    ),
     ownWork: contributions.some((each) => each.ownWork === true),
     stillValid: subjects[flow.subject].stillValid,
     workflow: flow.workflow,

@@ -776,7 +776,9 @@ const describeReviewLine = (note: ReviewNote) =>
 
 // The review that asks for changes, as the author considers it: its round,
 // from the reviewer's marker, and what the reviewer said.
-export const changesAsked = (address: AddressItem) =>
+export const changesAsked = (
+  address: Pick<AddressItem, "pullRequest" | "reviewer" | "reviewedSha">,
+) =>
   activity(
     "read-review",
     Effect.gen(function* () {
