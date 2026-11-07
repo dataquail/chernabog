@@ -63,7 +63,7 @@ chernabog recipes compile --check      # write nothing; fail if a flow file is o
 chernabog recipes compile --json       # the same result, for an agent or a script
 ```
 
-Compile with the `@chernabog/sdk` your repo pins, from `.chernabog/node_modules`. Change the document, not the generated file, and commit both.
+Compile with the `@chernabog/sdk` your repo pins, from `.chernabog/node_modules`. Change the document, not the generated file, and commit both. A document's `flow:` must match its filename, and a flow can have only one document, `.yaml` or `.yml`. With no documents, the command says so and exits 0, including with `--check`.
 
 A problem is reported at its line in the document, and a document with problems leaves its flow file as it was:
 
@@ -71,7 +71,7 @@ A problem is reported at its line in the document, and a document with problems 
 .chernabog/documents/implement.yaml:47:29: steps[2].in.worktree: Type 'BranchName' is not assignable to type 'WorktreePath'.
 ```
 
-Checking each wire's type takes TypeScript, in `.chernabog/node_modules` or the repo's own `node_modules`. Without it, the command still catches unknown blocks, unavailable or missing inputs, unrouted outcomes and loops that can't end, and it tells you the types weren't checked.
+Checking each wire's type takes TypeScript, in `.chernabog/node_modules` or the repo's own `node_modules`. Without it, the command still catches unknown blocks, unavailable or missing inputs, unrouted outcomes and loops that can't end, and it tells you the types weren't checked. If TypeScript is installed but can't run the check, for example because it's too old for the generated `tsconfig.json`, that's reported as a problem with the document, and no flow file is written.
 
 ## Loops and lanes
 

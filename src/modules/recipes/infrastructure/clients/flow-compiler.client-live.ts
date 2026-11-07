@@ -1,8 +1,8 @@
 // Flow documents compiled by the SDK the repo pins, from .chernabog/node_modules,
 // as its flows are loaded: this binary holds no blocks of its own. A problem is
 // reported where it is in the document. `check`'s already say their path there;
-// `tsc`'s are about the generated file, whose comments name the step each line
-// came from.
+// `tsc`'s are about the generated file, whose comments name the step or trigger
+// entry each line came from.
 
 import { printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -84,33 +84,43 @@ export const positionOf = (text: string, path: string) => {
 
 const DIAGNOSTIC = /^flow\.ts\((\d+),(\d+)\): error TS\d+: (.*)$/;
 
-const STEP_COMMENT = /^\s*\/\/ ((?:steps|trigger)\S*)$/;
+const LOCATION_COMMENT = /^\s*\/\/ ((?:steps|trigger)\S*)$/;
 
-// The document path a line of the generated flow came from: the step its
-// nearest comment above names, and, at a wire's own key, that wire.
-export const pathOfLine = (source: string, line: number, column: number) => {
+// Where a step's keys can be in its document. A generated call takes `in` and
+// `with` in one object, so its key doesn't say which; the document does.
+const KEYED = ["in", "with", "failure", "next"];
+
+// The document path a line of the generated flow came from: what its nearest
+// comment above names, a step or a trigger entry, and, at a key of that one's,
+// the key where the document has it. Lines above any such comment, such as the
+// file's imports, are about the document as a whole.
+export const pathOfLine = (source: string, text: string, line: number, column: number) => {
   const lines = source.split("\n");
 
   const step = lines
     .slice(0, line)
     .toReversed()
-    .flatMap((each) => Option.toArray(Option.fromNullishOr(STEP_COMMENT.exec(each)?.[1])));
+    .flatMap((each) => Option.toArray(Option.fromNullishOr(LOCATION_COMMENT.exec(each)?.[1])));
 
   const wire = Option.fromNullishOr(
     /^"([^"]+)":/.exec((lines[line - 1] ?? "").slice(column - 1))?.[1],
   );
 
   return Option.match(Arr.head(step), {
-    onNone: () => "steps",
+    onNone: () => "",
     onSome: (found) =>
       Option.match(wire, {
         onNone: () => found,
         onSome: (key) => {
-          if (found === "trigger") {
-            return found;
-          }
+          const document = YAML.parseDocument(text);
 
-          return `${found}.in.${key}`;
+          return Option.getOrElse(
+            Arr.findFirst(
+              KEYED.map((keyed) => `${found}.${keyed}.${key}`),
+              (path) => document.hasIn(pathKeys(path)),
+            ),
+            () => found,
+          );
         },
       }),
   });
@@ -128,6 +138,44 @@ export const diagnosticsOf = (output: string) =>
     ),
   );
 
+const ABOUT_THE_RUN = /^(?:tsconfig\.json\(\d+,\d+\): )?error (TS\d+: .*)$/;
+
+const ABOUT_A_FILE = /^.+\(\d+,\d+\): error TS\d+: /;
+
+// Why a run of `tsc` checked nothing, if it didn't. Its exit code alone can't
+// say: a healthy run exits non-zero on the SDK's own sources, whose node: imports
+// don't resolve under `types: []`, and says so about those files. So a run that
+// fails saying nothing of any file never got to them, and one that says anything
+// of its project, or of no file at all, couldn't trust what it read.
+export const notCheckedBecause = (result: {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}) => {
+  const said = result.stdout.split("\n");
+
+  const aboutTheRun = said.flatMap((each) =>
+    Option.toArray(Option.fromNullishOr(ABOUT_THE_RUN.exec(each)?.[1])),
+  );
+
+  if (aboutTheRun.length > 0) {
+    return Arr.head(aboutTheRun);
+  }
+
+  if (result.exitCode === 0 || said.some((each) => ABOUT_A_FILE.test(each))) {
+    return Option.none();
+  }
+
+  const lines = `${result.stderr}\n${result.stdout}`.split("\n").map((each) => each.trim());
+
+  return Option.some(
+    Option.getOrElse(
+      Arr.findFirst(lines, (each) => each.length > 0),
+      () => `it exited ${result.exitCode}, saying nothing`,
+    ),
+  );
+};
+
 const failed = (error: { readonly message: string }) =>
   new RecipeFilesFailed({ message: error.message });
 
@@ -138,12 +186,16 @@ export const FlowCompilerClientLive = Layer.effect(
     const exec = yield* Exec;
     const host = yield* HostEnvironment;
 
+    // A flow's document, and whether it has another under the other extension.
     const fileOf = (root: string, flow: string) =>
       Effect.gen(function* () {
         const names = [`${flow}.yaml`, `${flow}.yml`].map((name) => `${documentsOf(root)}/${name}`);
         const found = yield* Effect.filter(names, (name) => fs.exists(name));
 
-        return Option.getOrElse(Arr.head(found), () => names[0]);
+        return {
+          file: Option.getOrElse(Arr.head(found), () => names[0]),
+          twice: found.length > 1,
+        };
       });
 
     // TypeScript as the repo has it: beside its flows, or at the checkout's root.
@@ -176,13 +228,16 @@ export const FlowCompilerClientLive = Layer.effect(
             },
           );
 
-          return diagnosticsOf(result.stdout);
+          return {
+            notChecked: notCheckedBecause(result),
+            found: diagnosticsOf(result.stdout),
+          };
         }),
       );
 
     const compile = (root: string, flow: string) =>
       Effect.gen(function* () {
-        const file = yield* fileOf(root, flow);
+        const { file, twice } = yield* fileOf(root, flow);
         const shown = `.chernabog/documents/${file.split("/").at(-1) ?? ""}`;
         const text = yield* fs.readFileString(file);
 
@@ -198,10 +253,30 @@ export const FlowCompilerClientLive = Layer.effect(
           typeChecked: false,
         });
 
-        const parsed = YAML.parseDocument(text);
+        if (twice) {
+          return onlyProblems([
+            problemAt("", `has a twin, ${flow}.yml, for the same flow: keep one of them`),
+          ]);
+        }
+
+        // Its positions are ours to say, so without them and a code frame in its messages.
+        const lines = new YAML.LineCounter();
+        const parsed = YAML.parseDocument(text, { lineCounter: lines, prettyErrors: false });
 
         if (parsed.errors.length > 0) {
-          return onlyProblems(parsed.errors.map((error) => problemAt("", error.message)));
+          return onlyProblems(
+            parsed.errors.map((error) => {
+              const { col, line } = lines.linePos(error.pos[0]);
+
+              return new DocumentProblem({
+                file: shown,
+                line,
+                column: col,
+                path: "",
+                message: error.message,
+              });
+            }),
+          );
         }
 
         const contents = Schema.decodeUnknownOption(Schema.Json)(parsed.toJS());
@@ -215,6 +290,17 @@ export const FlowCompilerClientLive = Layer.effect(
 
         if (Result.isFailure(read)) {
           return onlyProblems(read.failure.map((each) => problemAt(each.path, each.message)));
+        }
+
+        const named = parsed.get("flow");
+
+        if (named !== flow) {
+          return onlyProblems([
+            problemAt(
+              "flow",
+              `says the flow is ${String(named)}, but this file compiles to ${flow}: the two must agree`,
+            ),
+          ]);
         }
 
         const generated = compose.generate(read.success);
@@ -231,12 +317,19 @@ export const FlowCompilerClientLive = Layer.effect(
           return { source: Option.some(source), problems: [], typeChecked: false };
         }
 
-        const found = yield* typeProblems(root, tsc.value, source);
+        const { found, notChecked } = yield* typeProblems(root, tsc.value, source);
+
+        // Saying nothing of the types would pass as having checked them.
+        if (Option.isSome(notChecked)) {
+          return onlyProblems([
+            problemAt("", `TypeScript couldn't check this document's types: ${notChecked.value}`),
+          ]);
+        }
 
         if (found.length > 0) {
           return onlyProblems(
             found.map((each) =>
-              problemAt(pathOfLine(source, each.line, each.column), each.message),
+              problemAt(pathOfLine(source, text, each.line, each.column), each.message),
             ),
           );
         }
@@ -259,9 +352,9 @@ export const FlowCompilerClientLive = Layer.effect(
 
           const names = yield* fs.readDirectory(documentsOf(root));
 
-          return names
-            .flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1])))
-            .toSorted();
+          return Arr.dedupe(
+            names.flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1]))),
+          ).toSorted();
         }).pipe(Effect.mapError(failed)),
 
       compile,

@@ -11,6 +11,7 @@ import { FlowCompilerClient } from "../../domain/ports/clients/flow-compiler.cli
 import {
   diagnosticsOf,
   FlowCompilerClientLive,
+  notCheckedBecause,
   pathKeys,
   pathOfLine,
   positionOf,
@@ -88,6 +89,21 @@ const checkout = (
     return root;
   });
 
+// As `compiling`, with this as the repo's `tsc`.
+const compilingWithTsc = (script: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* checkout({ review: REVIEW_DOCUMENT }, { typescript: false });
+    const bin = `${root}/.chernabog/node_modules/.bin`;
+
+    yield* fs.makeDirectory(bin, { recursive: true });
+    yield* fs.writeFileString(`${bin}/tsc`, script);
+
+    const compiler = yield* FlowCompilerClient;
+
+    return yield* compiler.compile(root, "review");
+  }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive)));
+
 const compiling = (
   documents: { readonly [flow: string]: string },
   flow: string,
@@ -125,6 +141,48 @@ describe("FlowCompilerClientLive", () => {
         expect(compiled.problems).toEqual([]);
         expect(compiled.typeChecked).toBe(false);
         expect(Option.isSome(compiled.source)).toBe(true);
+      }),
+    TIMEOUT,
+  );
+
+  for (const [what, script, says] of [
+    ["crashes", 'console.error("Segfault"); process.exit(1);', "Segfault"],
+    [
+      "rejects its project",
+      "console.log(\"tsconfig.json(4,15): error TS6046: Argument for '--module' must be.\"); process.exit(1);",
+      "TS6046",
+    ],
+    [
+      "fails with a diagnostic of no file",
+      'console.log("error TS5083: Cannot read file."); process.exit(1);',
+      "TS5083",
+    ],
+    ["exits non-zero saying nothing", "process.exit(3);", "exited 3"],
+  ] as const) {
+    atHome(
+      `doesn't say types were checked when tsc ${what}, and writes no flow on its word`,
+      () =>
+        Effect.gen(function* () {
+          const compiled = yield* compilingWithTsc(script);
+
+          expect(compiled.typeChecked).toBe(false);
+          expect(Option.isNone(compiled.source)).toBe(true);
+          expect(compiled.problems.map((each) => each.path)).toEqual([""]);
+          expect(compiled.problems[0]?.message).toContain("couldn't check");
+          expect(compiled.problems[0]?.message).toContain(says);
+        }),
+      TIMEOUT,
+    );
+  }
+
+  atHome(
+    "takes a clean exit from tsc as a check",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compilingWithTsc("process.exit(0);");
+
+        expect(compiled.problems).toEqual([]);
+        expect(compiled.typeChecked).toBe(true);
       }),
     TIMEOUT,
   );
@@ -170,17 +228,116 @@ describe("FlowCompilerClientLive", () => {
   );
 
   atHome(
-    "reports YAML that doesn't parse, and a document of the wrong form, without compiling",
+    "reports a type error in a fixed value at the value, in `with`",
     () =>
       Effect.gen(function* () {
-        const broken = yield* compiling({ broken: "flow: [unclosed\n" }, "broken");
-        expect(broken.problems.length).toBeGreaterThan(0);
+        const text = REVIEW_DOCUMENT.replace("method: squash", "method: bogus");
+        const compiled = yield* compiling({ review: text }, "review");
 
-        const formless = yield* compiling({ formless: "flow: x\n" }, "formless");
+        const wrongLine = text.split("\n").findIndex((line) => line.includes("method: bogus"));
 
-        expect(formless.problems.map((each) => each.message)).toContain(
-          "must say subject. chernabog recipes blocks shows the format.",
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [wrongLine + 1, "steps[0].on.approve.steps[0].with.method"],
+        ]);
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "reports a type error in the trigger at its entry there",
+    () =>
+      Effect.gen(function* () {
+        const text = REVIEW_DOCUMENT.replace(
+          "  - use: review.requested\n",
+          "  - use: review.waitingElsewhere\n  - use: review.requested\n    with: { nope: 1 }\n",
         );
+
+        const compiled = yield* compiling({ review: text }, "review");
+
+        const entry = text.split("\n").indexOf("  - use: review.requested");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [entry + 1, "trigger[1]"],
+        ]);
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "reports YAML that doesn't parse at the line it broke on, in a line of its own",
+    () =>
+      Effect.gen(function* () {
+        const text =
+          "flow: broken\nsubject: pull-request\ntrigger: []\nsteps:\n  - id: a\n    use: b\n    with: { c: [1, 2\n    in: {}\n";
+
+        const { problems, source } = yield* compiling({ broken: text }, "broken");
+
+        expect(Option.isNone(source)).toBe(true);
+        expect(problems.length).toBeGreaterThan(0);
+        expect([problems[0]?.line, problems[0]?.column]).toEqual([8, 5]);
+        expect(problems[0]?.path).toBe("");
+        expect(problems[0]?.message).not.toContain("\n");
+        expect(problems[0]?.message).not.toContain("at line");
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "reports a document of the wrong form at the key, in a line of its own",
+    () =>
+      Effect.gen(function* () {
+        const wrongUse = REVIEW_DOCUMENT.replace("use: pr.land", "use: 5");
+        const wrong = yield* compiling({ review: wrongUse }, "review");
+
+        const line = wrongUse.split("\n").findIndex((each) => each.includes("use: 5"));
+
+        expect(wrong.problems.map((each) => [each.line, each.path])).toEqual([
+          [line + 1, "steps[0].on.approve.steps[0].use"],
+        ]);
+        expect(wrong.problems[0]?.message).toBe("Expected string");
+
+        const lacking = yield* compiling({ lacking: "flow: lacking\n" }, "lacking");
+
+        expect(lacking.problems.map((each) => [each.line, each.path, each.message])).toEqual([
+          [1, "subject", "is missing. chernabog recipes blocks shows the format."],
+          [1, "trigger", "is missing. chernabog recipes blocks shows the format."],
+          [1, "steps", "is missing. chernabog recipes blocks shows the format."],
+        ]);
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "refuses a flow with a document under each extension, listing it once",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* checkout({ review: REVIEW_DOCUMENT }, { typescript: false });
+
+        yield* fs.writeFileString(`${root}/.chernabog/documents/review.yml`, REVIEW_DOCUMENT);
+
+        const compiler = yield* FlowCompilerClient;
+
+        expect(yield* compiler.documents(root)).toEqual(["review"]);
+
+        const compiled = yield* compiler.compile(root, "review");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems[0]?.message).toContain("review.yml");
+      }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+    TIMEOUT,
+  );
+
+  atHome(
+    "refuses a document whose `flow` isn't the file's name, at the key",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compiling({ other: REVIEW_DOCUMENT }, "other");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([[1, "flow"]]);
+        expect(compiled.problems[0]?.message).toContain("compiles to other");
       }),
     TIMEOUT,
   );
@@ -195,6 +352,50 @@ describe("FlowCompilerClientLive", () => {
       yield* compiler.write(root, "a", "source");
       expect(yield* compiler.written(root, "a")).toEqual(Option.some("source"));
     }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+  );
+});
+
+describe("whether tsc checked anything", () => {
+  const run = (exitCode: number, stdout: string, stderr = "") => ({ exitCode, stdout, stderr });
+
+  atHome("a clean run did", () =>
+    Effect.sync(() => {
+      expect(Option.isNone(notCheckedBecause(run(0, "")))).toBe(true);
+    }),
+  );
+
+  atHome("a run that fails about files did, these being the SDK's or the flow's", () =>
+    Effect.sync(() => {
+      const sdk = "../../sdk/src/x.ts(1,20): error TS2307: Cannot find module 'node:crypto'.\n";
+
+      expect(Option.isNone(notCheckedBecause(run(2, sdk)))).toBe(true);
+      expect(Option.isNone(notCheckedBecause(run(2, "flow.ts(3,5): error TS2322: No.\n")))).toBe(
+        true,
+      );
+    }),
+  );
+
+  atHome("a run that said anything of its project, or of no file, didn't", () =>
+    Effect.sync(() => {
+      const beside = "flow.ts(3,5): error TS2322: No.\n";
+
+      expect(
+        notCheckedBecause(run(1, `${beside}tsconfig.json(4,15): error TS6046: Bad module.\n`)),
+      ).toEqual(Option.some("TS6046: Bad module."));
+      expect(notCheckedBecause(run(1, `error TS5083: Cannot read.\n${beside}`))).toEqual(
+        Option.some("TS5083: Cannot read."),
+      );
+    }),
+  );
+
+  atHome("a run that fails saying nothing of any file didn't, whatever else it said", () =>
+    Effect.sync(() => {
+      expect(notCheckedBecause(run(1, "", "\n  Segfault\n  at x\n"))).toEqual(
+        Option.some("Segfault"),
+      );
+      expect(notCheckedBecause(run(1, "Oh no\n"))).toEqual(Option.some("Oh no"));
+      expect(notCheckedBecause(run(9, ""))).toEqual(Option.some("it exited 9, saying nothing"));
+    }),
   );
 });
 
@@ -227,18 +428,35 @@ describe("finding a problem in the document", () => {
     }),
   );
 
-  atHome("traces a line of the generated flow to its step, and a wire's key to the wire", () =>
-    Effect.sync(() => {
-      const source = 'x\n  // steps[1]\n  const a = run({ "issue": 1 });\n  more();\n';
+  atHome(
+    "traces a line of the generated flow to its step, and a key to where the document has it",
+    () =>
+      Effect.sync(() => {
+        const source = 'x\n  // steps[1]\n  const a = run({ "issue": 1 });\n  more();\n';
+        const document = (keyed: string) => `steps:\n  - end: done\n  - id: a\n    ${keyed}\n`;
 
-      expect(pathOfLine(source, 3, 19)).toBe("steps[1].in.issue");
-      expect(pathOfLine(source, 4, 3)).toBe("steps[1]");
-      expect(pathOfLine(source, 1, 1)).toBe("steps");
-
-      const trigger = '  // trigger\n  sources: [run({ "labels": ["x"] })],\n';
-
-      expect(pathOfLine(trigger, 2, 20)).toBe("trigger");
-    }),
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 3, 19)).toBe("steps[1].in.issue");
+        expect(pathOfLine(source, document("with: { issue: 1 }"), 3, 19)).toBe(
+          "steps[1].with.issue",
+        );
+        expect(pathOfLine(source, document("failure: { issue: 1 }"), 3, 19)).toBe(
+          "steps[1].failure.issue",
+        );
+        expect(pathOfLine(source, document("next: { issue: b.c }"), 3, 19)).toBe(
+          "steps[1].next.issue",
+        );
+        expect(pathOfLine(source, document("use: a"), 3, 19)).toBe("steps[1]");
+        expect(
+          pathOfLine(
+            '// trigger[0]\nsources["a"]({ "b": 1 }),\n',
+            "trigger:\n  - use: a\n    with: { b: 1 }\n",
+            2,
+            16,
+          ),
+        ).toBe("trigger[0].with.b");
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 4, 3)).toBe("steps[1]");
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 1, 1)).toBe("");
+      }),
   );
 
   atHome("keeps only what tsc says of the generated flow", () =>

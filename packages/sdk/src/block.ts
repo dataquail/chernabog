@@ -238,9 +238,18 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   readonly waits?: boolean;
   // The outcomes that changed something, so a loop taking one doesn't spin.
   readonly progressOn?: ReadonlyArray<keyof Outcomes & string>;
+  // The outcome it comes to when it changed nothing: any other way past it,
+  // a loop doesn't spin.
+  readonly progressUnless?: keyof Outcomes & string;
   // Whether every run comes to one of the outcomes, so a document whose
   // branches all end has nothing after the block.
   readonly exhaustive?: boolean;
+  // The groups of step names its run uses that another block's also does, or
+  // its own name when none are shared, and none for a block that runs no step.
+  // A second use of a step name replays the first's result instead of doing
+  // the work, so no path takes a group twice, and a block that runs steps in a
+  // loop's rounds or beside others must carry the round or the lane in them.
+  readonly stepNames?: ReadonlyArray<string>;
   readonly contributes: Contribution;
 };
 
@@ -249,6 +258,12 @@ export type Source = {
   readonly trigger: TriggeredFlow["trigger"];
   readonly contributes: Contribution;
 };
+
+// A source, and the subject of the work items it finds.
+export const defineSource = <Subject extends string, Input extends ReadonlyArray<unknown>>(
+  subject: Subject,
+  find: (...input: Input) => Source,
+) => ({ subject, find });
 
 export const defineBlock = <
   Input,
@@ -282,6 +297,8 @@ export const defineBlock = <
     exhaustive: spec.exhaustive === true,
     waits: spec.waits === true,
     progressOn: spec.progressOn ?? [],
+    progressUnless: Option.fromUndefinedOr(spec.progressUnless),
+    stepNames: spec.stepNames ?? [spec.name],
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);

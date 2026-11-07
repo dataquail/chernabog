@@ -27,12 +27,12 @@ import {
   type BranchName,
   type Committed,
   defineBlock,
+  defineSource,
   type FailureContext,
   type IssueNumber,
   IssueNumber as IssueNumberOf,
   LaneId,
   pullRequestRef,
-  type Source,
   ToPerson,
   type WorktreePath,
 } from "./block.ts";
@@ -867,6 +867,7 @@ export const epicBlocks = {
     inputKinds: { progress: "from epic.progress", tasks: "the epic.tasks state" },
     outputKinds: { tasks: "the epic.tasks state, updated" },
     outcomeKinds: {},
+    stepNames: [],
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.sync(() => {
@@ -898,6 +899,7 @@ export const epicBlocks = {
     inputKinds: { epic: "EpicNumber", progress: "from epic.progress" },
     outputKinds: { finished: "boolean", summary: "a summary, for `end`'s summary" },
     outcomeKinds: { finished: "a summary, for `end`'s summary" },
+    stepNames: [],
     inputs: { epic: "required", progress: "required" },
     run: (input: { readonly epic: EpicNumber; readonly progress: Epic.Progress }) =>
       Effect.succeed({
@@ -985,6 +987,7 @@ export const epicBlocks = {
       starts: "the tasks to start, for forEach: issue, base, lane",
     },
     outcomeKinds: { none: "the epic.tasks state, updated" },
+    stepNames: [],
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.gen(function* () {
@@ -1015,6 +1018,8 @@ export const epicBlocks = {
         Option.liftPredicate(planned.tasks, () => planned.starts.length === 0),
     },
     mustRoute: ["none"],
+    // Any task it starts is a new attempt.
+    progressUnless: "none",
     contributes: {},
   }),
 
@@ -1049,6 +1054,7 @@ export const epicBlocks = {
     },
     outputKinds: { tasks: "the epic.tasks state, updated" },
     outcomeKinds: {},
+    stepNames: [],
     inputs: { tasks: "required", endings: "required" },
     run: (input: { readonly tasks: TasksStarted; readonly endings: ReadonlyArray<LaneEnding> }) =>
       Effect.succeed({
@@ -1170,13 +1176,13 @@ export const laneScopes = {
 };
 
 export const epicSources = {
-  "epic.queued": (): Source => ({
+  "epic.queued": defineSource("epic", () => ({
     trigger: Epic.queued.pipe(reportAs("trigger")),
     contributes: {
       settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
       labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
     },
-  }),
+  })),
 };
 
 // However the run ends, its claim on the epic goes, and the engine lets its

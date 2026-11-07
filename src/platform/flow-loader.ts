@@ -96,14 +96,12 @@ const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: st
     }),
   );
 
+type DocumentIssue = { readonly path: string; readonly message: string };
+
 // What compiling a flow document takes of the repo's SDK.
 export type DocumentCompiler = {
-  readonly read: (
-    value: Core.Json,
-  ) => Result.Result<Core.Json, ReadonlyArray<{ readonly path: string; readonly message: string }>>;
-  readonly generate: (
-    document: Core.Json,
-  ) => Result.Result<string, ReadonlyArray<{ readonly path: string; readonly message: string }>>;
+  readonly read: (value: Core.Json) => Result.Result<Core.Json, ReadonlyArray<DocumentIssue>>;
+  readonly generate: (document: Core.Json) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
   readonly describe: () => Core.Json;
 };
 

@@ -226,11 +226,13 @@ writes `flows.<name>.from` in config.yaml), and it runs from the package.
 - **The recipes module** reads installed packages through
   `RecipePackagesClient` (bun, with the repo's `.npmrc`), files through
   `ChernabogDirClient`, `flows.<name>.from` through `FlowImportsRepository`,
-  and what the binary bundles (the scaffold, the pins) through `BundleClient`.
+  what the binary bundles (the scaffold, the pins) through `BundleClient`, and
+  flow documents through `FlowCompilerClient`, with the SDK the repo pins.
   `init` dispatches `ScaffoldRepoCommand` and `AddRecipePackageCommand`;
   `recipes` asks `ListRecipesQuery` and `DiffRecipesQuery`, and dispatches
   `AddRecipesCommand`, `ImportRecipesCommand`, `EjectRecipeCommand`,
-  `UpdateRecipesCommand` and `UpgradeRepoCommand`.
+  `UpdateRecipesCommand`, `UpgradeRepoCommand` and
+  `CompileFlowDocumentsCommand`.
 - **Copied files record where they came from**, under `chernabog.copied` in
   `.chernabog/package.json`. `recipes diff` compares a copy with that version;
   `recipes update` merges the package's changes in 3-way (`git merge-file`).
@@ -329,7 +331,8 @@ transitive reach), the coverage floors and the baseline.
   result an adapter renders: a value object or event in the domain, which the
   adapters name through the module's `*.platform.ts`, and the daemon's
   protocol through its `*.contracts.ts`. Only repository adapters, queries (and the legacy tier)
-  name `yaml`; only the runs module's infrastructure, its queries and the
+  name `yaml`, and the recipes module's `flow-compiler.client-live.ts`, which
+  reports a flow document's problems by where they are in its YAML; only the runs module's infrastructure, its queries and the
   engine name SQL.
 - **Queries read their storage directly** (ADR 11). A query reads its file
   with `FileSystem` (or `state.db` with SQL, in runs), decodes it with the

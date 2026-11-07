@@ -83,10 +83,19 @@ const sabotaged = (
         expect(source).not.toBe(target.source);
 
         const [scenario] = target.scenarios.filter((each) => each.title === scenarioTitle);
-        const { on, setup, wake } = scenario;
+        const { settings, setup, wake } = scenario;
         const flow = yield* loadSource(source);
-        const fromRecipe = yield* observe(target.recipe, target.name, setup, target.work, wake, on);
-        const fromFlow = yield* observe(flow, target.name, setup, target.work, wake, on);
+
+        const fromRecipe = yield* observe(
+          target.recipe,
+          target.name,
+          setup,
+          target.work,
+          wake,
+          settings,
+        );
+
+        const fromFlow = yield* observe(flow, target.name, setup, target.work, wake, settings);
 
         expect(fromFlow).not.toEqual(fromRecipe);
       }),
@@ -145,7 +154,7 @@ describe("the comparison sees an epic flow that", () => {
   );
 
   sabotaged("never lands", target, "when its layers ship", (source) =>
-    source.replace("const landed = ships.value ?", "const landed = false ?"),
+    source.replace("const landed = ships.value === true ?", "const landed = false ?"),
   );
 
   sabotaged("posts no status", target, opens, dropping("status"));
