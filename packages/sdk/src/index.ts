@@ -10,6 +10,7 @@ export * as Blocks from "./blocks.ts";
 export * as Ci from "./ci.ts";
 export * as Compose from "./compose.ts";
 export * as Epic from "./epic.ts";
+export type * as EpicBlocks from "./epic-blocks.ts";
 export * as Hybrid from "./hybrid.ts";
 export * as Implement from "./implement.ts";
 export * as Plan from "./plan.ts";
