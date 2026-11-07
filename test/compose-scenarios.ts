@@ -231,6 +231,12 @@ export const observe = (
           fake.requests[at].withPerson === true,
         ],
       ),
+      // What each agent call was asked: the prompt that starts a session, and
+      // the one that resumes it, which carries a person's changes to a plan.
+      prompts: fake.requests.map((request) => [
+        unsaid(request.prompt),
+        unsaid(Option.getOrElse(request.resumePrompt, () => "")),
+      ]),
       // One of the pool, at random.
       requested: fake.people.requested.length,
       assigned: fake.people.assigned,

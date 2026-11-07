@@ -555,7 +555,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of changes-asked, conflict, epic, issue, merged, pull-request",
+      "must be one of changes-asked, conflict, epic, issue, merged, spec, pull-request",
     ]);
   });
 
@@ -2726,7 +2726,12 @@ describe("the plan document", () => {
       `${DONE_DRAFTING.replaceAll("                ", "        ")}        - id: proposed\n`,
     );
 
+    // It runs again once approved, which is refused on its own.
     expect(Compose.check(early)).toEqual([
+      {
+        path: "steps[1].repeat.steps[3].on.approved.steps[2].use",
+        message: "plan.doneDrafting runs twice on one path, and its step names would collide",
+      },
       {
         path: "steps[1].repeat.steps[3].on.changes.steps[1]",
         message:
@@ -2758,6 +2763,10 @@ describe("the plan document", () => {
     );
 
     expect(Compose.check(fixed)).toEqual([
+      {
+        path: "steps[1].repeat.steps[1].with.round",
+        message: "round comes from an earlier step: put it under in, as step or step.field",
+      },
       {
         path: "steps[1].repeat.steps[1].in.round",
         message: "plan.propose runs in every round here, and must take round",
@@ -2841,7 +2850,7 @@ describe("the plan document", () => {
   rejected(
     "refuses, in tsc, a plan posted that wasn't drafted and checked",
     planWith("draft: drafted.draft", "draft: state.changes"),
-    "draft",
+    "Type 'PlanChanges' is not assignable",
   );
 
   rejected(

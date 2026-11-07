@@ -816,6 +816,6 @@ describe("the comparison sees a plan flow that", () => {
     "fails, rather than skipping, on a spec another run holds",
     target,
     "when another run holds the claim",
-    overriding("issue.claim", '{ Skip: "fail" }'),
+    (source) => source.replace('{"StepFailed":"fail"}', '{"StepFailed":"fail","Skip":"fail"}'),
   );
 });
