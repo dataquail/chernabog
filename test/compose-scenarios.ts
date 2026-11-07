@@ -235,6 +235,9 @@ export const observe = (
       assigned: fake.people.assigned,
       pullAssigned: fake.people.pullAssigned,
       ran: fake.git.ran.map(unsaid),
+      // The issues the run filed, by title and body, and the commits it read CI on.
+      filed: [...fake.graph.made.values()].map((made) => [unsaid(made.title), unsaid(made.body)]),
+      ciReads: fake.ciReads,
     };
   });
 
@@ -1363,6 +1366,207 @@ export const RESOLVE_CONFLICTS_LAYER_SCENARIOS = scenarios((scenario) => {
         `#${PULL}: merged auto/issue-2, resolved its conflicts and asked data-quail to review again`,
       );
       expect(recipe.checkedAgainst).toEqual(["auto/issue-2", "auto/issue-2"]);
+    },
+  );
+});
+
+const MERGE_SHA = "merge5678";
+const FAILED_RUN = "https://github.com/dataquail/demo/actions/runs/41/job/42";
+
+export const POST_MERGE_WORK_ITEM = item(`merged-${PULL}`, {
+  pullRequest: PULL,
+  url: `https://github.com/dataquail/demo/pull/${PULL}`,
+  title: "feat: a change",
+  mergeSha: MERGE_SHA,
+  baseRef: "main",
+  issue: ISSUE,
+});
+
+// The persona's pull request, merged a moment ago.
+const mergedPull = () => {
+  const fake = repoFake("approve");
+  fake.states.pull = "merged";
+
+  return fake;
+};
+
+// A merge commit whose push CI went red, with a link to the failed run.
+const redMerge = () => {
+  const fake = mergedPull();
+  fake.commitCi.set(MERGE_SHA, {
+    state: "red",
+    failedChecks: ["test", "lint"],
+    failedRuns: [
+      { name: "test", url: FAILED_RUN, job: Option.some(42), workflowRun: Option.some(41) },
+    ],
+  });
+  fake.logTails.set(FAILED_RUN, "error: expected 2, got 3\n```\nfenced\n```");
+
+  return fake;
+};
+
+const WATCHED = "<!-- chernabog-post-merge-watched";
+
+export const POST_MERGE_SCENARIOS = scenarios((scenario) => {
+  const watched = (recipe: Observed) => {
+    expect(recipe.steps).toContain("watch-limits");
+    expect(recipe.steps).toContain("ci-1");
+    expect(recipe.comments.some((comment) => comment.includes(WATCHED))).toBe(true);
+    expect(recipe.ciReads[0]).toBe(MERGE_SHA);
+  };
+
+  const filedNothing = (recipe: Observed) => {
+    expect(recipe.filed).toEqual([]);
+    expect(recipe.steps).not.toContain("file-follow-up");
+  };
+
+  scenario("when CI on the merge commit is green", mergedPull, "done", void 0, {}, (recipe) => {
+    watched(recipe);
+    filedNothing(recipe);
+    expect(recipe.summary).toBe(`#${PULL}: CI on merge56 is green`);
+    expect(recipe.steps).not.toContain("ci-before-merge");
+  });
+
+  scenario(
+    "when no CI runs on the merge commit within the grace",
+    () => {
+      const fake = mergedPull();
+      fake.commitCi.set(MERGE_SHA, { state: "pending", waitingOn: [], failedRuns: [] });
+
+      return fake;
+    },
+    "done",
+    void 0,
+    { noCiGrace: "0 millis" },
+    (recipe) => {
+      watched(recipe);
+      filedNothing(recipe);
+      expect(recipe.summary).toBe(
+        `#${PULL}: no CI ran on merge56 within 0; taken as none for this push`,
+      );
+    },
+  );
+
+  scenario(
+    "when CI on the merge commit stays pending past ciTimeout",
+    () => {
+      const fake = mergedPull();
+      fake.commitCi.set(MERGE_SHA, { state: "pending", waitingOn: ["test"], failedRuns: [] });
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    { ciTimeout: "0 millis" },
+    (recipe) => {
+      watched(recipe);
+      filedNothing(recipe);
+      expect(recipe.summary).toContain("stayed pending for 0");
+    },
+  );
+
+  scenario(
+    "when CI on the merge commit is red, so a follow-up goes to implement",
+    redMerge,
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      watched(recipe);
+      expect(recipe.steps).toContain("ci-before-merge");
+      expect(recipe.steps).toContain("closes-follow-up");
+      expect(recipe.steps).toContain("failure-details");
+      expect(recipe.steps).toContain("file-follow-up");
+      expect(recipe.filed).toHaveLength(1);
+      expect(recipe.filed[0]?.[1]).toContain("error: expected 2, got 3");
+      expect(recipe.filed[0]?.[1]).toContain("Also failed: lint.");
+      expect(recipe.labels).toContainEqual([100, [DEFAULT_LABELS.eligible]]);
+      expect(recipe.summary).toBe(`#${PULL}: CI on merge56 is red; filed #100 to fix it`);
+      expect(recipe.comments.at(-1)).toContain("#100 is to fix it");
+    },
+  );
+
+  scenario(
+    "when CI on the merge commit is red, with no log to show",
+    () => {
+      const fake = redMerge();
+      fake.logTails.clear();
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.filed[0]?.[1]).toContain("No log to show");
+    },
+  );
+
+  scenario(
+    "when a run filed the follow-up before it crashed",
+    () => {
+      const fake = redMerge();
+      fake.graph.made.set(100, {
+        number: 100,
+        title: `CI is red on main after #${PULL} merged`,
+        body: `Filed earlier. <!-- chernabog-post-merge {"sha":"${MERGE_SHA}","pullRequest":${PULL}} -->`,
+        url: "https://github.com/dataquail/demo/issues/100",
+        createdAt: "2026-10-21T00:00:00Z",
+        labels: [DEFAULT_LABELS.eligible],
+        assignees: [],
+        state: "open",
+      });
+      fake.graph.next = 101;
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.filed).toHaveLength(1);
+      expect(recipe.summary).toBe(`#${PULL}: CI on merge56 is red; filed #100 to fix it`);
+    },
+  );
+
+  scenario(
+    "when the merge was a follow-up's fix, so the follow-up goes to a person",
+    () => {
+      const fake = redMerge();
+      fake.issueText.body = `<!-- chernabog-post-merge {"sha":"older123","pullRequest":5} -->`;
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.labels).toContainEqual([100, [DEFAULT_LABELS.needsHuman]]);
+      expect(recipe.filed[0]?.[1]).toContain(`was the fix for #${ISSUE}`);
+      expect(recipe.summary).toBe(
+        `#${PULL}: CI on merge56 is red after a follow-up's fix; filed #100 for a person`,
+      );
+      expect(recipe.comments.at(-1)).toContain("#100 is for a person");
+    },
+  );
+
+  scenario(
+    "when CI was already red before the merge",
+    () => {
+      const fake = redMerge();
+      fake.commitCi.set(fake.merged.parent, { state: "red", failedChecks: [], failedRuns: [] });
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      filedNothing(recipe);
+      expect(recipe.steps).toContain("ci-before-merge");
+      expect(recipe.summary).toBe(
+        `#${PULL}: CI on merge56 is red, as it already was before the merge; filed nothing`,
+      );
     },
   );
 });

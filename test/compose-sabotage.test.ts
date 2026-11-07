@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import review from "../packages/recipes/flows/review.ts";
@@ -19,6 +20,7 @@ import {
   generated,
   IMPLEMENT_DOCUMENT,
   loadSource,
+  POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
@@ -34,6 +36,8 @@ import {
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
+  POST_MERGE_SCENARIOS,
+  POST_MERGE_WORK_ITEM,
   RE_REVIEW_SCENARIOS,
   RE_REVIEW_WORK_ITEM,
   RESOLVE_CONFLICTS_LAYER_SCENARIOS,
@@ -106,6 +110,13 @@ const targets = {
     source: generated(documentOf(RESOLVE_CONFLICTS_DOCUMENT)),
     work: RESOLVE_CONFLICTS_LAYER_WORK_ITEM,
     scenarios: RESOLVE_CONFLICTS_LAYER_SCENARIOS,
+  },
+  postMerge: {
+    name: "post-merge",
+    recipe: postMerge,
+    source: generated(documentOf(POST_MERGE_DOCUMENT)),
+    work: POST_MERGE_WORK_ITEM,
+    scenarios: POST_MERGE_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -562,5 +573,75 @@ describe("the checks of a document that runs a stage see a flow that", () => {
       Effect.gen(function* () {
         expect((yield* stageSkipping(flow)).status).not.toBe("skipped");
       }),
+  );
+});
+
+describe("the comparison sees a post-merge flow that", () => {
+  const { postMerge: target } = targets;
+  const green = "when CI on the merge commit is green";
+  const red = "when CI on the merge commit is red, so a follow-up goes to implement";
+  const fixOfAFollowUp = "when the merge was a follow-up's fix, so the follow-up goes to a person";
+
+  // Each branch taken as though the outcome hadn't come.
+  const notTaking = (outcome: string, bound: string) => (source: string) =>
+    source.replace(`catalogue["${outcome}"].outcomes["${bound}"]`, "(() => Option.none())");
+
+  sabotaged(
+    "doesn't mark the pull request watched",
+    target,
+    green,
+    dropping("watching", "const watching = void 0;"),
+  );
+
+  sabotaged("goes on past green CI", target, green, notTaking("merged.awaitCi", "green"));
+
+  sabotaged(
+    "goes on past a merge commit with no CI",
+    target,
+    "when no CI runs on the merge commit within the grace",
+    notTaking("merged.awaitCi", "none"),
+  );
+
+  sabotaged(
+    "skips a run whose CI stays pending, rather than leaving it to a person",
+    target,
+    "when CI on the merge commit stays pending past ciTimeout",
+    (source) =>
+      source.replace(
+        /(catalogue\["merged\.awaitCi"\]\.run\(\{[^}]*\})\)/,
+        '$1, { NeedsHuman: "skip" })',
+      ),
+  );
+
+  sabotaged("ignores red CI", target, red, notTaking("merged.awaitCi", "red"));
+
+  sabotaged(
+    "files a follow-up when CI was already red before the merge",
+    target,
+    "when CI was already red before the merge",
+    notTaking("merged.redBefore", "already-red"),
+  );
+
+  sabotaged(
+    "files a follow-up's failed fix for implement, not for a person",
+    target,
+    fixOfAFollowUp,
+    dropping("closes", "const closes = { fixed: Option.none() };"),
+  );
+
+  sabotaged(
+    "files a follow-up without the failed runs' logs",
+    target,
+    red,
+    dropping("failed", "const failed = { details: [] };"),
+  );
+
+  sabotaged("files no follow-up", target, red, dropping("filed", "const filed = 100;"));
+
+  sabotaged(
+    "doesn't link the follow-up from the merged pull request",
+    target,
+    red,
+    dropping("linked", 'const linked = "#7: CI on merge56 is red; filed #100 to fix it";'),
   );
 });

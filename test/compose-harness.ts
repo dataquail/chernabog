@@ -309,6 +309,71 @@ steps:
     summary: again
 `;
 
+export const POST_MERGE_DOCUMENT = `
+flow: post-merge
+subject: merged
+concurrency: 4
+trigger:
+  - use: pr.mergedRecently
+steps:
+  - id: watching
+    use: merged.markWatched
+    in: { pr: trigger.pr, sha: trigger.sha, base: trigger.base }
+  - id: ci
+    use: merged.awaitCi
+    in: { pr: trigger.pr, sha: trigger.sha, base: trigger.base }
+    on:
+      none:
+        as: quiet
+        steps:
+          - end: done
+            summary: quiet.summary
+      green:
+        as: passed
+        steps:
+          - end: done
+            summary: passed.summary
+      red:
+        as: red
+        steps:
+          - id: before
+            use: merged.redBefore
+            in: { pr: trigger.pr, sha: trigger.sha }
+            on:
+              already-red:
+                as: already
+                steps:
+                  - end: done
+                    summary: already.summary
+          - id: closes
+            use: merged.closesFollowUp
+            in: { issue: trigger.issue }
+          - id: failed
+            use: merged.failureDetails
+            in: { ci: red }
+          - id: filed
+            use: merged.fileFollowUp
+            in:
+              pr: trigger.pr
+              url: trigger.url
+              title: trigger.title
+              sha: trigger.sha
+              base: trigger.base
+              ci: red
+              details: failed.details
+              fixed: closes.fixed
+          - id: linked
+            use: merged.linkFollowUp
+            in:
+              pr: trigger.pr
+              sha: trigger.sha
+              base: trigger.base
+              followUp: filed
+              fixed: closes.fixed
+          - end: done
+            summary: linked
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

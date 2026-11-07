@@ -19,6 +19,7 @@ import {
   NeedsHuman,
   Repo,
   reportAs,
+  type StillValid,
   type WorkflowServices,
   type WorkItem,
 } from "@chernabog/core";
@@ -57,6 +58,7 @@ import {
 } from "./block.ts";
 import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./epic-blocks.ts";
 import * as Implement from "./implement.ts";
+import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
 import * as PullRequest from "./pull-request.ts";
 import { reReviewBlocks, reReviewSources } from "./re-review-blocks.ts";
 import {
@@ -103,7 +105,8 @@ const WORKTREE_STEPS = "prepare-worktree";
 const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
   .and("re-review-blocks.ts", reReviewBlocks)
   .and("address-review-blocks.ts", addressReviewBlocks)
-  .and("resolve-conflicts-blocks.ts", resolveConflictsBlocks);
+  .and("resolve-conflicts-blocks.ts", resolveConflictsBlocks)
+  .and("post-merge-blocks.ts", postMergeBlocks);
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = elsewhere.and("blocks.ts", {
@@ -659,7 +662,8 @@ export type BlockName = keyof typeof catalogue;
 const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources)
   .and("re-review-blocks.ts", reReviewSources)
   .and("address-review-blocks.ts", addressReviewSources)
-  .and("resolve-conflicts-blocks.ts", resolveConflictsSources);
+  .and("resolve-conflicts-blocks.ts", resolveConflictsSources)
+  .and("post-merge-blocks.ts", postMergeSources);
 
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = sourcesElsewhere.and("blocks.ts", {
@@ -760,6 +764,11 @@ export const sourceDescriptions = {
       "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those labelled auto:needs-human or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
     with: {},
   },
+  "pr.mergedRecently": {
+    about:
+      "Pull requests this persona wrote that merged into the flow's base branch (its base setting, or GitHub's default branch) in the last day, among the 30 closed most lately, and that no run has watched yet: merged.markWatched leaves a marker that this looks for. Each run's key is the pull request's: merged-7.",
+    with: {},
+  },
   "review.requested": {
     about: "Pull requests that ask this persona for a review it hasn't given yet.",
     with: {},
@@ -833,8 +842,10 @@ export const subjects = {
 
       return handled;
     },
-    stillValid: Implement.stillValid,
+    stillValid: Option.some(Implement.stillValid),
   },
+
+  merged: mergedSubject,
 
   "pull-request": {
     fields: ["pr"],
@@ -854,13 +865,17 @@ export const subjects = {
           (failure) => PullRequest.handToPerson(trigger.pr, failure.reason),
         ),
       ),
-    stillValid: Review.stillValid,
+    stillValid: Option.some(Review.stillValid),
   },
 };
 
 export type SubjectName = keyof typeof subjects;
 
 const unique = <A>(all: ReadonlyArray<A>) => [...new Set(all)];
+
+// How the engine tells whether a subject's run is still wanted, when it can.
+const stillValidOf = (subject: SubjectName): Option.Option<StillValid> =>
+  subjects[subject].stillValid;
 
 // A flow from what a document says, with what its sources and blocks add:
 // settings, labels, doctor checks, and the wake-ups of runs parked in them.
@@ -905,7 +920,11 @@ export const assemble = (flow: {
       },
     ),
     ownWork: contributions.some((each) => each.ownWork === true),
-    stillValid: subjects[flow.subject].stillValid,
+    // None, as a recipe without one declares it, when the subject has none.
+    ...Option.match(stillValidOf(flow.subject), {
+      onNone: () => ({}),
+      onSome: (stillValid) => ({ stillValid }),
+    }),
     workflow: flow.workflow,
   };
 
