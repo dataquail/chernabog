@@ -1049,20 +1049,50 @@ const checkFailureContext = (
 
 // Goes down every way through the steps, and says where a block's order is
 // broken, or a way that finishes well leaves something it should have done.
+// Ways that meet at a step with the same state go on alike, so each state is
+// walked once: a chain of steps that may not run is as many ways as it has
+// steps, not two to its length, and a round that goes on with nothing new
+// stops.
 type Ordering = {
   readonly say: (path: string, message: string) => void;
+  readonly walked: Set<string>;
 };
 
 type Placed = { readonly step: Step; readonly at: string };
 
 type Way = {
+  // What ran in this round, or since the start for a way in no loop: a block
+  // that runs before another does so within a round.
   readonly seen: ReadonlyArray<string>;
+  // What ran since the start, in any round: a block that needs another needs
+  // it to have run at all.
+  readonly ran: ReadonlyArray<string>;
   // What is left to do, and the block that left it.
   readonly open: ReadonlyMap<string, string>;
   // Where the steps walked end, for a way that runs off them; none in a round,
   // which runs on into the next.
   readonly endsAt: Option.Option<string>;
+  // The loop a next goes round, and what had run when it started.
+  readonly round: Option.Option<Round>;
 };
+
+type Round = { readonly steps: ReadonlyArray<Placed>; readonly seen: ReadonlyArray<string> };
+
+const namesOf = (names: ReadonlyArray<string>) => [...new Set(names)].toSorted().join(",");
+
+// Where a way is and what it carries: all that what's said further on depends on.
+const stateOf = (items: ReadonlyArray<Placed>, way: Way) =>
+  [
+    items.map((item) => item.at).join(","),
+    Option.getOrElse(way.endsAt, () => ""),
+    Option.match(way.round, { onNone: () => "", onSome: (round) => namesOf(round.seen) }),
+    namesOf(way.seen),
+    namesOf(way.ran),
+    [...way.open]
+      .map(([what, by]) => `${what}=${by}`)
+      .toSorted()
+      .join(","),
+  ].join(";");
 
 const placed = (steps: ReadonlyArray<Step>, path: string): ReadonlyArray<Placed> =>
   steps.map((step, index) => ({ step, at: `${path}[${index}]` }));
@@ -1081,7 +1111,7 @@ const entering = (ordering: Ordering, step: UseStep, block: Block, at: string, w
     ordering.say(at, `${step.use} must run before ${later}, and this runs after it`);
   }
 
-  for (const earlier of needs.filter((each) => !way.seen.includes(each))) {
+  for (const earlier of needs.filter((each) => !way.ran.includes(each))) {
     ordering.say(at, `${step.use} needs ${earlier} to have run first`);
   }
 
@@ -1091,6 +1121,7 @@ const entering = (ordering: Ordering, step: UseStep, block: Block, at: string, w
   return {
     ...way,
     seen: [...way.seen, step.use],
+    ran: [...way.ran, step.use],
     open: new Map([
       ...[...way.open].filter(([what]) => !closes.includes(what)),
       ...opens.map((what) => [what, step.use] as const),
@@ -1099,6 +1130,14 @@ const entering = (ordering: Ordering, step: UseStep, block: Block, at: string, w
 };
 
 const walkOrder = (ordering: Ordering, items: ReadonlyArray<Placed>, way: Way): void => {
+  const state = stateOf(items, way);
+
+  if (ordering.walked.has(state)) {
+    return;
+  }
+
+  ordering.walked.add(state);
+
   if (items.length === 0) {
     for (const at of Option.toArray(way.endsAt)) {
       sayUndone(ordering, way, at);
@@ -1117,14 +1156,22 @@ const walkOrder = (ordering: Ordering, items: ReadonlyArray<Placed>, way: Way): 
     return;
   }
 
+  // The next round starts with what this one left to do, and what has run.
   if (isNext(step)) {
+    for (const round of Option.toArray(way.round)) {
+      walkOrder(ordering, round.steps, { ...way, seen: round.seen });
+    }
+
     return;
   }
 
   if (isRepeat(step)) {
-    walkOrder(ordering, placed(step.repeat.steps, `${at}.repeat.steps`), {
+    const steps = placed(step.repeat.steps, `${at}.repeat.steps`);
+
+    walkOrder(ordering, steps, {
       ...way,
       endsAt: Option.none(),
+      round: Option.some({ steps, seen: way.seen }),
     });
 
     return;
@@ -1134,8 +1181,10 @@ const walkOrder = (ordering: Ordering, items: ReadonlyArray<Placed>, way: Way): 
     // A lane ends for itself, with what it left to do its own.
     walkOrder(ordering, placed(step.steps, `${at}.steps`), {
       seen: way.seen,
+      ran: way.ran,
       open: new Map(),
       endsAt: Option.some(`${at}.steps`),
+      round: Option.none(),
     });
   }
 
@@ -1190,9 +1239,16 @@ const checkOrder = (checking: Checking, document: FlowDocument) => {
           say(checking, path, message);
         }
       },
+      walked: new Set(),
     },
     placed(document.steps, "steps"),
-    { seen: [], open: new Map(), endsAt: Option.some("steps") },
+    {
+      seen: [],
+      ran: [],
+      open: new Map(),
+      endsAt: Option.some("steps"),
+      round: Option.none(),
+    },
   );
 };
 
