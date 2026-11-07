@@ -11,6 +11,7 @@ import * as AddressReview from "../packages/recipes/flows/address-review.ts";
 import * as Epic from "../packages/recipes/flows/epic.ts";
 import * as HumanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import * as Implement from "../packages/recipes/flows/implement.ts";
+import * as Plan from "../packages/recipes/flows/plan.ts";
 import * as PostMerge from "../packages/recipes/flows/post-merge.ts";
 import * as ReReview from "../packages/recipes/flows/re-review.ts";
 import * as ResolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
@@ -26,6 +27,7 @@ effect("the recipes these suites import are their documents' flows", () =>
       Epic,
       HumanInitiated,
       Implement,
+      Plan,
       PostMerge,
       Review,
       ReReview,

@@ -412,6 +412,12 @@ const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   ...listedAfter("needs first", block.needs),
   ...listedAfter("leaves to do", block.opens),
   ...listedAfter("does", block.closes),
+  ...Option.toArray(
+    Option.liftPredicate(
+      "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
+      () => block.last === true,
+    ),
+  ),
 ];
 
 type CatalogueStage = NonNullable<FlowCatalogue["stages"]>[number];

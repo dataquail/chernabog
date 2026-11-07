@@ -208,6 +208,10 @@ describe("chernabog recipes blocks", () => {
       "issue: trigger gives issue, queued; or start: true, and a person starts each run with chernabog start <issue>",
     );
     expect(output).toContain("hybrid.workWithPerson: Opens a session with the person");
+    expect(output).toContain("spec: trigger gives issue, queued");
+    expect(output).toContain(
+      "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
+    );
   });
 
   test("describes the blocks and sources named, and fails on one there isn't", async () => {

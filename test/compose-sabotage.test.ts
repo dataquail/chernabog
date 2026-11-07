@@ -10,6 +10,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import plan from "../packages/recipes/flows/plan.ts";
 import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
@@ -22,6 +23,7 @@ import {
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadSource,
+  PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
@@ -40,6 +42,8 @@ import {
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
+  PLAN_SCENARIOS,
+  PLAN_WORK_ITEM,
   POST_MERGE_SCENARIOS,
   POST_MERGE_WORK_ITEM,
   RE_REVIEW_SCENARIOS,
@@ -128,6 +132,13 @@ const targets = {
     source: generated(documentOf(HUMAN_INITIATED_DOCUMENT)),
     work: HUMAN_INITIATED_WORK_ITEM,
     scenarios: HUMAN_INITIATED_SCENARIOS,
+  },
+  plan: {
+    name: "plan",
+    recipe: plan,
+    source: generated(documentOf(PLAN_DOCUMENT)),
+    work: PLAN_WORK_ITEM,
+    scenarios: PLAN_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -716,5 +727,95 @@ describe("the comparison sees a human-initiated flow that", () => {
     target,
     "when the remote rejects the push",
     overriding("hybrid.push", '{ PushRejected: "told" }'),
+  );
+});
+
+describe("the comparison sees a plan flow that", () => {
+  const { plan: target } = targets;
+  const approved = "when a person approves the plan";
+  const changes = "when a person asks for changes, and approves the plan drafted again";
+  const questions = "when the agent has questions";
+
+  // Each branch taken as though the outcome hadn't come.
+  const notTaking = (block: string, outcome: string) => (source: string) =>
+    source.replace(`catalogue["${block}"].outcomes["${outcome}"]`, "(() => Option.none())");
+
+  // A block's run given a failure table of the sabotage's own.
+  const overriding = (block: string, failures: string) => (source: string) =>
+    source.replace(
+      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`),
+      `$1, ${failures})`,
+    );
+
+  sabotaged(
+    "makes no issues once approved",
+    target,
+    approved,
+    dropping("created", "const created = { created: [] };"),
+  );
+
+  sabotaged(
+    "doesn't make the spec an epic",
+    target,
+    approved,
+    dropping("epic", 'const epic = "#42: an epic of 4 sub-issues";'),
+  );
+
+  sabotaged(
+    "leaves the plan's checkout once approved",
+    target,
+    approved,
+    dropping("cleaned", "const cleaned = void 0;"),
+  );
+
+  sabotaged("doesn't let its claim go", target, approved, (source) =>
+    source.replace("{ claims: true }", "{ claims: false }"),
+  );
+
+  sabotaged("takes changes asked for as approval", target, changes, (source) =>
+    source.replace('outcomes["changes"]', 'outcomes["approved"]'),
+  );
+
+  sabotaged("drafts again without what the person asked to change", target, changes, (source) =>
+    source.replace('"changes": asked.changes', '"changes": Option.none()'),
+  );
+
+  sabotaged("posts a plan it has questions about", target, questions, (source) =>
+    notTaking("plan.draft", "needs-clarification")(source),
+  );
+
+  sabotaged(
+    "leaves the plan's checkout when the agent has questions",
+    target,
+    questions,
+    dropping("cleared", "const cleared = void 0;"),
+  );
+
+  sabotaged(
+    "stops, rather than telling a person, when the plan keeps failing its checks",
+    target,
+    "when the plan still fails its checks after planRounds attempts to fix it",
+    overriding("plan.draft", '{ NeedsHuman: "told" }'),
+  );
+
+  sabotaged(
+    "fails, rather than telling a person, when the agent's answer isn't a plan",
+    target,
+    "when the agent's answer isn't a plan",
+    overriding("plan.draft", '{ StepFailed: "fail" }'),
+  );
+
+  sabotaged(
+    "hands a claim that fails to a person, rather than failing",
+    target,
+    "when the base branch is gone",
+    (source) => source.replace(', {"StepFailed":"fail"}', ""),
+  );
+
+  sabotaged(
+    "fails, rather than skipping, on a spec another run holds",
+    target,
+    "when another run holds the claim",
+    (source) => source.replace('{"StepFailed":"fail"}', '{"StepFailed":"fail","Skip":"fail"}'),
   );
 });

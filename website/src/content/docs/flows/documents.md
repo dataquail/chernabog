@@ -5,7 +5,7 @@ description: Write a flow as YAML from the SDK's blocks, and compile it to an or
 
 A flow document is a flow written as data. Each step names a block, every value it takes names the step that value came from, and it branches only on outcomes the block declares. There are no expressions. It compiles to an ordinary flow file, so the engine, `chernabog rehearse` and your editor treat the result like any other flow.
 
-Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review`, `resolve-conflicts`, `post-merge`, `human-initiated` and `epic` recipes.
+Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review`, `resolve-conflicts`, `post-merge`, `human-initiated`, `plan` and `epic` recipes.
 
 ## A document
 
@@ -63,6 +63,7 @@ A flow's `subject` is what each run works on. It decides what `trigger` gives th
 - `conflict`: a pull request this persona wrote that GitHub says conflicts with its base, found by the `pr.conflicting` source. `trigger.pr`, `trigger.branch` and `trigger.base` are the pull request's; on a layer of a stack, `trigger.base` is the layer below's branch. The run owns the pull request from its first step to its end, as on `changes-asked`, and a failure going to a person labels it `auto:needs-human` and comments why.
 - `merged`: a pull request this persona wrote that merged into the flow's base branch in the last day, found by the `pr.mergedRecently` source. `trigger.pr`, `trigger.url` and `trigger.title` are the pull request's, `trigger.sha` is its merge commit, `trigger.base` the branch it merged into, and `trigger.issue` the issue it closes, if it names one. A run owns and claims nothing. A failure going to a person labels the merged pull request `auto:needs-human` and comments why, though the `merged.*` blocks send none there: a run ends needing a person, or failed, as the recipe's does.
 - `epic`: `trigger.epic`, an issue labelled `auto:epic`.
+- `spec`: an issue to plan, found by the `plan.queued` source: `trigger.issue` and `trigger.queued`, as on `issue`. A failure going to a person removes the plan's checkout, labels the spec `auto:needs-human` and comments why, and its claim goes when the run ends; a run parked waiting on its plan keeps it.
 
 On `changes-asked`, the `author.*` blocks answer the review in the session that wrote the code. `author.session` finds it from the session marker the run that opened the pull request left: on a layer of an epic's stack, that is the task's own session, and on one a person worked on with the agent, theirs, reopened in front of them. `review.askAgain` asks `trigger.reviewer` to review again, not a reviewer from the pool:
 
@@ -155,6 +156,60 @@ On `merged`, `merged.markWatched` leaves the marker `pr.mergedRecently` looks fo
         - end: done
           summary: linked
 ```
+
+On `spec`, the `plan.*` blocks plan the work: the `plan` recipe composes them. `plan.draft` has the agent propose the tasks the spec splits into, in a read-only checkout, and checks the plan in code. A plan that fails its checks goes back to the agent with what's wrong, in steps named `fix-plan-<round>-<attempt>`, up to `planRounds` times, and then to a person, all inside the block. It comes to `needs-clarification` when the agent answers with questions. `plan.propose` posts the plan and `plan.awaitAnswer` parks until a person answers. It comes to `approved` or `changes`, each of which a document must route, and nobody answering within `within` goes to a person. Only `approved` gives the `PlanApproved` that `plan.create` takes. `plan.changesAsked` gives the next round what to change, through the `plan.changes` loop state:
+
+```yaml
+- id: rounds
+  repeat:
+    state: { changes: plan.changes }
+    steps:
+      - id: drafted
+        use: plan.draft
+        in: { issue: trigger.issue, round: round, changes: state.changes }
+        on:
+          needs-clarification:
+            as: questions
+            steps:
+              - id: cleared
+                use: plan.doneDrafting
+                in: { issue: trigger.issue }
+              - id: posted
+                use: plan.askClarification
+                in: { issue: trigger.issue, draft: questions }
+              - end: needs-human
+                reason: posted
+      - id: proposed
+        use: plan.propose
+        in: { issue: trigger.issue, round: round, draft: drafted.draft }
+      - id: answer
+        use: plan.awaitAnswer
+        in: { round: round }
+        with: { within: 14 days }
+        on:
+          approved:
+            as: approval
+            steps:
+              - id: created
+                use: plan.create
+                in: { issue: trigger.issue, plan: proposed.plan, approved: approval.approved }
+              - id: epic
+                use: plan.becomeEpic
+                in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+              - id: cleaned
+                use: plan.doneDrafting
+                in: { issue: trigger.issue }
+              - end: done
+                summary: epic
+          changes:
+            steps:
+              - id: asked
+                use: plan.changesAsked
+                in: { issue: trigger.issue, round: round }
+              - next: { changes: asked.changes }
+```
+
+`plan.create`, `plan.becomeEpic`, `plan.doneDrafting` and `plan.askClarification` [run last](#blocks-that-run-last), so they take no `round` in the repeat. `plan.draft` leaves the checkout to remove, so a way that ends `done` must go through `plan.doneDrafting`. The run claims the spec with `issue.claim`, whose `StepFailed` the recipe has fail the run, as `failure: { StepFailed: fail }` does.
 
 ## A flow a person starts
 
@@ -289,11 +344,15 @@ A document with problems gets a warning of its own instead. It's only a warning,
 
 ## Loops and lanes
 
-`repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. Every way through a round must end the run or go on with `next`, and every way to a `next` must wait or change something: a step that may not run, or lanes that may be none, doesn't count. Some round must end the loop. A block that runs steps in a round must take `round` from the loop, and one in a lane must name its lane, since a run resumes by step names. Otherwise the document is refused.
+`repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. Every way through a round must end the run or go on with `next`, and every way to a `next` must wait or change something: a step that may not run, or lanes that may be none, doesn't count. Some round must end the loop. A block that runs steps in a round must take `round` from the loop, unless it [runs last](#blocks-that-run-last), and one in a lane must name its lane, since a run resumes by step names. Otherwise the document is refused.
 
 `forEach` runs its steps once per item, as lanes beside each other. Each lane ends for itself. Blocks that run in a lane must be wired to its `lane`, because a run resumes by its step names.
 
 `if` runs a step only when a boolean output is true. The step's output is then optional, and `first` joins it with what stands in for it. `first: [landed, carried]` is the first of those that ran.
+
+### Blocks that run last
+
+A block whose listing says `runs last` runs only on a run's way out, such as `plan.create`, which makes a plan's issues once a person approves it. It runs once, so in a `repeat` it takes no `round`, and its step names stay the same as its recipe's. The check holds a document to that: a way past it that goes on with `next` is refused, in the branches after it as well as in the steps that follow it. That holds when it sits in a branch that doesn't end, too: the run goes on into the steps after the branch, still on its way out. A `repeat` after it is a loop of its own, and its `next` goes round that loop, so it is checked as any other. Beside others, in a `forEach`, it still names its lane.
 
 ## Order
 

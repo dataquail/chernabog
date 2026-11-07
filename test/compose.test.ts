@@ -20,6 +20,7 @@ import { describe, expect, test } from "bun:test";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -31,6 +32,7 @@ import {
   generated,
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
+  PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
@@ -553,7 +555,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of changes-asked, conflict, epic, issue, merged, pull-request",
+      "must be one of changes-asked, conflict, epic, issue, merged, spec, pull-request",
     ]);
   });
 
@@ -2662,4 +2664,230 @@ describe("a document that runs a stage", () => {
       expect(format).toContain("failure: { Skip: skip, StepFailed: person }");
     });
   });
+});
+
+describe("the plan document", () => {
+  const TIMEOUT = 120_000;
+  const plan = documentOf(PLAN_DOCUMENT);
+
+  // The plan document with a line of it changed.
+  const planWith = (line: string, replacement: string) => {
+    expect(PLAN_DOCUMENT).toContain(line);
+
+    return documentOf(PLAN_DOCUMENT.replace(line, replacement));
+  };
+
+  // What the changes branch says, and the same with a step in front of its next.
+  const CHANGES = `                - id: asked
+                  use: plan.changesAsked
+                  in: { issue: trigger.issue, round: round }
+`;
+
+  const DONE_DRAFTING = `                - id: early
+                  use: plan.doneDrafting
+                  in: { issue: trigger.issue }
+`;
+
+  test("finds nothing wrong with it", () => {
+    expect(Compose.check(plan)).toEqual([]);
+  });
+
+  // plan.create, plan.becomeEpic, plan.doneDrafting and plan.askClarification
+  // name their steps as the recipe does, with no round, and each runs once,
+  // on the way out of the run.
+  test("lets a block that runs only on the way out of a run take no round in a repeat", () => {
+    expect(
+      Object.entries(Blocks.catalogue)
+        .filter(([, block]) => Predicate.hasProperty(block, "last") && block.last === true)
+        .map(([name]) => name)
+        .toSorted(),
+    ).toEqual(["plan.askClarification", "plan.becomeEpic", "plan.create", "plan.doneDrafting"]);
+
+    expect(messages(plan)).not.toContain(
+      "plan.create names its steps the same in every round, so it can't run in a repeat",
+    );
+  });
+
+  test("refuses a way past a block that runs on the way out going on to another round", () => {
+    const goesOn = planWith(CHANGES, `${CHANGES}${DONE_DRAFTING}`);
+
+    expect(Compose.check(goesOn)).toEqual([
+      {
+        path: "steps[1].repeat.steps[2].on.changes.steps[2]",
+        message:
+          "plan.doneDrafting runs only on a run's way out, and this way goes on to another round",
+      },
+    ]);
+  });
+
+  // A branch that doesn't end carries on into the steps after it, still on its way out.
+  test("refuses one in a branch that runs on into a later next", () => {
+    const fallsThrough = planWith(
+      `                - id: epic
+                  use: plan.becomeEpic
+                  in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                - id: cleaned
+                  use: plan.doneDrafting
+                  in: { issue: trigger.issue }
+                - end: done
+                  summary: epic
+            changes:
+              steps:
+                - id: asked
+                  use: plan.changesAsked
+                  in: { issue: trigger.issue, round: round }
+                - next: { changes: asked.changes }
+`,
+      `            changes:
+              steps: []
+        - next: { changes: state.changes }
+`,
+    );
+
+    expect(Compose.check(fallsThrough)).toEqual([
+      {
+        path: "steps[1].repeat.steps[3]",
+        message: "plan.create runs only on a run's way out, and this way goes on to another round",
+      },
+    ]);
+  });
+
+  test("refuses one earlier in the round, whatever branch a later next is in", () => {
+    const early = planWith(
+      "        - id: proposed\n",
+      `${DONE_DRAFTING.replaceAll("                ", "        ")}        - id: proposed\n`,
+    );
+
+    // It runs again once approved, which is refused on its own.
+    expect(Compose.check(early)).toEqual([
+      {
+        path: "steps[1].repeat.steps[3].on.approved.steps[2].use",
+        message: "plan.doneDrafting runs twice on one path, and its step names would collide",
+      },
+      {
+        path: "steps[1].repeat.steps[3].on.changes.steps[1]",
+        message:
+          "plan.doneDrafting runs only on a run's way out, and this way goes on to another round",
+      },
+    ]);
+  });
+
+  test("still wants a block that runs on the way out to name its lane beside others", () => {
+    const epic = documentOf(
+      EPIC_DOCUMENT.replace(
+        "            - id: gate\n",
+        `            - id: early
+              use: plan.doneDrafting
+              in: { issue: task.issue }
+            - id: gate\n`,
+      ),
+    );
+
+    expect(messages(epic)).toEqual([
+      "plan.doneDrafting names its steps the same in every lane, so it can't run beside others",
+    ]);
+  });
+
+  test("still wants a block that doesn't run only on the way out to take a round", () => {
+    const fixed = planWith(
+      "in: { issue: trigger.issue, round: round, draft: drafted.draft }",
+      "in: { issue: trigger.issue, draft: drafted.draft }\n          with: { round: 1 }",
+    );
+
+    expect(Compose.check(fixed)).toEqual([
+      {
+        path: "steps[1].repeat.steps[1].with.round",
+        message: "round comes from an earlier step: put it under in, as step or step.field",
+      },
+      {
+        path: "steps[1].repeat.steps[1].in.round",
+        message: "plan.propose runs in every round here, and must take round",
+      },
+    ]);
+  });
+
+  test("refuses the plan source on a flow about anything but a spec", () => {
+    expect(Compose.check({ ...plan, subject: "issue" })).toContainEqual({
+      path: "trigger[0].use",
+      message: "plan.queued finds work on spec, and this is a flow on issue",
+    });
+  });
+
+  test("refuses a flow on a spec that a person starts", () => {
+    expect(Compose.check({ ...plan, trigger: [], start: true })).toContainEqual({
+      path: "start",
+      message:
+        "a person starts only a flow on issue, with chernabog start <issue>, and this is a flow on spec",
+    });
+  });
+
+  test("says which blocks run only on the way out of a run", () => {
+    const { blocks } = Schema.decodeUnknownSync(
+      Schema.Struct({
+        blocks: Schema.Array(Schema.Struct({ name: Schema.String, last: Schema.Boolean })),
+      }),
+    )(Compose.describe());
+
+    expect(blocks.filter((block) => block.last).map((block) => block.name)).toContain(
+      "plan.create",
+    );
+    expect(blocks.filter((block) => block.name === "plan.draft")).toEqual([
+      { name: "plan.draft", last: false },
+    ]);
+  });
+
+  test("lists the spec subject, its source and its loop state", () => {
+    const listed = Schema.decodeUnknownSync(
+      Schema.Struct({
+        subjects: Schema.Array(
+          Schema.Struct({ name: Schema.String, trigger: Schema.Array(Schema.String) }),
+        ),
+        loopStates: Schema.Array(Schema.String),
+      }),
+    )(Compose.describe());
+
+    expect(listed.subjects.filter((subject) => subject.name === "spec")).toEqual([
+      { name: "spec", trigger: ["issue", "queued"] },
+    ]);
+    expect(listed.loopStates).toContain("plan.changes");
+  });
+
+  effect(
+    "compiles",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* compileErrors(plan)).toEqual([]);
+      }),
+    TIMEOUT,
+  );
+
+  const rejected = (name: string, doc: Doc, says: string) => {
+    effect(
+      name,
+      () =>
+        Effect.gen(function* () {
+          expect(Compose.check(doc)).toEqual([]);
+          expect((yield* compileErrors(doc)).join("\n")).toContain(says);
+        }),
+      TIMEOUT,
+    );
+  };
+
+  rejected(
+    "refuses, in tsc, issues made from a plan nobody approved",
+    planWith("approved: approval.approved", "approved: proposed.plan"),
+    "PlanApproved",
+  );
+
+  rejected(
+    "refuses, in tsc, a plan posted that wasn't drafted and checked",
+    planWith("draft: drafted.draft", "draft: state.changes"),
+    "Type 'PlanChanges' is not assignable",
+  );
+
+  rejected(
+    "refuses, in tsc, a next round given something other than a person's changes",
+    planWith("next: { changes: asked.changes }", "next: { changes: asked }"),
+    "changes",
+  );
 });

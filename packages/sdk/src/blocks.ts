@@ -57,10 +57,17 @@ import {
   ToPerson,
   WorktreePath,
 } from "./block.ts";
-import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./epic-blocks.ts";
+import {
+  epicBlocks,
+  epicSources,
+  epicSubject,
+  laneScopes,
+  loopStates as epicLoopStates,
+} from "./epic-blocks.ts";
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import { planBlocks, planLoopStates, planSources, specSubject } from "./plan-blocks.ts";
 import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
 import * as PullRequest from "./pull-request.ts";
 import { reReviewBlocks, reReviewSources } from "./re-review-blocks.ts";
@@ -114,7 +121,8 @@ const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
   .and("address-review-blocks.ts", addressReviewBlocks)
   .and("resolve-conflicts-blocks.ts", resolveConflictsBlocks)
   .and("post-merge-blocks.ts", postMergeBlocks)
-  .and("human-initiated-blocks.ts", humanInitiatedBlocks);
+  .and("human-initiated-blocks.ts", humanInitiatedBlocks)
+  .and("plan-blocks.ts", planBlocks);
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = elsewhere.and("blocks.ts", {
@@ -675,7 +683,8 @@ const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources)
   .and("re-review-blocks.ts", reReviewSources)
   .and("address-review-blocks.ts", addressReviewSources)
   .and("resolve-conflicts-blocks.ts", resolveConflictsSources)
-  .and("post-merge-blocks.ts", postMergeSources);
+  .and("post-merge-blocks.ts", postMergeSources)
+  .and("plan-blocks.ts", planSources);
 
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = sourcesElsewhere.and("blocks.ts", {
@@ -743,17 +752,10 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
   })),
 } satisfies { readonly [name: string]: { readonly subject: SubjectName } }).entries;
 
-export {
-  Approved,
-  Committed,
-  defineBlock,
-  gather,
-  laneScopes,
-  loopStates,
-  Pushed,
-  runStage,
-  ToPerson,
-};
+// What a loop's state can start from, by the name a document uses it by.
+export const loopStates = { ...epicLoopStates, ...planLoopStates };
+
+export { Approved, Committed, defineBlock, gather, laneScopes, Pushed, runStage, ToPerson };
 
 export type { Disposition, Failures, StageFailures, StageKey } from "./block.ts";
 
@@ -774,6 +776,11 @@ export const sourceDescriptions = {
   "pr.conflicting": {
     about:
       "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those labelled auto:needs-human or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
+    with: {},
+  },
+  "plan.queued": {
+    about:
+      "Open issues labelled auto:plan, oldest first, each a spec to plan; with a board, only those whose Status is its readyStatus. Each is routed by its assignees, and its run's key is the issue's: issue-7.",
     with: {},
   },
   "pr.mergedRecently": {
@@ -858,6 +865,8 @@ export const subjects = {
   },
 
   merged: mergedSubject,
+
+  spec: specSubject,
 
   "pull-request": {
     fields: ["pr"],
@@ -947,7 +956,17 @@ export const assemble = (flow: {
         onSome: (checks) => ({ doctor: checks }),
       },
     ),
-    ownWork: flow.start === true || contributions.some((each) => each.ownWork === true),
+    // None, as a recipe that finds every persona's work declares it, when the flow does.
+    ...Option.match(
+      Option.liftPredicate(
+        true,
+        () => flow.start === true || contributions.some((each) => each.ownWork === true),
+      ),
+      {
+        onNone: () => ({}),
+        onSome: (ownWork) => ({ ownWork }),
+      },
+    ),
     // None, as a recipe without one declares it, when the subject has none.
     ...Option.match(stillValidOf(flow.subject), {
       onNone: () => ({}),
