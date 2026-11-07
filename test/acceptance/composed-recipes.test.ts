@@ -102,6 +102,81 @@ describe("chernabog recipes compile", () => {
   });
 });
 
+describe("chernabog doctor, of flow documents", () => {
+  let sandbox: Sandbox;
+  const dir = () => join(sandbox.checkout, ".chernabog");
+  const flow = () => join(dir(), "flows", "composed-review.ts");
+  const document = () => join(dir(), "documents", "composed-review.yaml");
+
+  const STALE =
+    "demo: .chernabog/flows/composed-review.ts isn't what its flow document compiles to";
+
+  // What doctor says of .chernabog/ as committed and pushed to the base branch,
+  // which the daemon runs.
+  const doctorOnPush = async (message: string) => {
+    sandbox.git(sandbox.checkout, "add", "-A", ".");
+    sandbox.git(sandbox.checkout, "commit", "-qm", message, "--allow-empty");
+    sandbox.git(sandbox.checkout, "push", "-q", "origin", "main");
+
+    return (await sandbox.runCli(["doctor"])).output;
+  };
+
+  beforeAll(async () => {
+    sandbox = openSandbox({}, { repoFiles: { "documents/composed-review.yaml": COMPOSED_REVIEW } });
+    writeFileSync(join(sandbox.checkout, ".gitignore"), ".chernabog/node_modules/\n");
+    await sandbox.installCheckout();
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("says nothing of a flow file up to date with its document", async () => {
+    await sandbox.runCli(["recipes", "compile"]);
+    const said = await doctorOnPush("chore: compile composed-review");
+
+    expect(said).toContain("demo: runs ");
+    expect(said).not.toContain(STALE);
+    expect(said).not.toContain("flow document has problems");
+  }, 90_000);
+
+  test("warns of a document edited and not compiled, naming the flow and the fix", async () => {
+    writeFileSync(document(), COMPOSED_REVIEW.replace("concurrency: 1", "concurrency: 2"));
+    const said = await doctorOnPush("chore: edit the document");
+
+    expect(said).toContain(`! ${STALE}; the daemon runs the flow file`);
+    expect(said).toContain("fix: chernabog recipes compile composed-review, or");
+    // A warning: doctor passes on it.
+    expect(said).not.toContain("✗ demo: .chernabog/flows");
+
+    await sandbox.runCli(["recipes", "compile"]);
+    expect(await doctorOnPush("chore: recompile")).not.toContain(STALE);
+  }, 120_000);
+
+  test("warns of a flow file edited by hand", async () => {
+    writeFileSync(flow(), `${readFileSync(flow(), "utf8")}// by hand\n`);
+
+    expect(await doctorOnPush("chore: edit the flow file")).toContain(`! ${STALE}`);
+  }, 90_000);
+
+  test("reports a document with problems as such, not as stale", async () => {
+    writeFileSync(document(), COMPOSED_REVIEW.replace("use: pr.land", "use: pr.lands"));
+    const said = await doctorOnPush("chore: break the document");
+
+    expect(said).toContain("! demo: the composed-review flow document has problems");
+    expect(said).toContain("no block named pr.lands");
+    expect(said).not.toContain(STALE);
+  }, 90_000);
+
+  test("says nothing of a repo with no documents", async () => {
+    rmSync(document());
+    const said = await doctorOnPush("chore: drop the document");
+
+    expect(said).toContain("demo: runs ");
+    expect(said).not.toContain("flow document");
+  }, 90_000);
+});
+
 describe("chernabog recipes blocks", () => {
   let sandbox: Sandbox;
 

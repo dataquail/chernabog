@@ -36,6 +36,7 @@ import {
   defineBlock,
   defineSource,
   type FailureContext,
+  gather,
   inLane,
   IssueNumber,
   type LaneId,
@@ -88,9 +89,7 @@ const HAND_OFF_STEPS = "hand-off";
 const WORKTREE_STEPS = "prepare-worktree";
 
 // Everything a document can use, by the name it uses it by.
-export const catalogue = {
-  ...epicBlocks,
-
+export const catalogue = gather("block", "epic-blocks.ts", epicBlocks).and("blocks.ts", {
   "issue.claim": defineBlock({
     name: "issue.claim",
     fixed: ["adopt"],
@@ -635,19 +634,18 @@ export const catalogue = {
     outcomes: {},
     mustRoute: [],
   }),
-};
+}).entries;
 
 export type BlockName = keyof typeof catalogue;
 
 // Where a flow's work comes from, by the name a document uses it by.
-export const sources = {
-  ...epicSources,
-
+export const sources = gather("source", "epic-blocks.ts", epicSources).and("blocks.ts", {
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
   // One carrying several comes under the first. Any label but eligible queues
   // its issue by that label, which its pull request carries too.
   "issues.queued": defineSource(
+    "issues.queued",
     "issue",
     (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }) => ({
       trigger: Effect.gen(function* () {
@@ -682,7 +680,7 @@ export const sources = {
 
   // Pull requests that ask this persona for a review it hasn't given yet,
   // routed by their assignees and reviewers.
-  "review.requested": defineSource("pull-request", () => ({
+  "review.requested": defineSource("review.requested", "pull-request", () => ({
     trigger: Effect.gen(function* () {
       const found = yield* Review.reviewRequests;
 
@@ -700,13 +698,23 @@ export const sources = {
 
   // Those waiting on a reviewer no persona on this machine acts as, which
   // status lists.
-  "review.waitingElsewhere": defineSource("pull-request", () => ({
+  "review.waitingElsewhere": defineSource("review.waitingElsewhere", "pull-request", () => ({
     trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
     contributes: {},
   })),
-} satisfies { readonly [name: string]: { readonly subject: SubjectName } };
+} satisfies { readonly [name: string]: { readonly subject: SubjectName } }).entries;
 
-export { Approved, Committed, defineBlock, laneScopes, loopStates, Pushed, runStage, ToPerson };
+export {
+  Approved,
+  Committed,
+  defineBlock,
+  gather,
+  laneScopes,
+  loopStates,
+  Pushed,
+  runStage,
+  ToPerson,
+};
 
 export type { Disposition, Failures, StageFailures, StageKey } from "./block.ts";
 

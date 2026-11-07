@@ -1469,6 +1469,52 @@ describe("the order a document's blocks run in", () => {
   });
 });
 
+describe("the catalogue and the sources", () => {
+  const block = (name: string) => ({ name });
+
+  test("refuses a name defined twice, naming both definitions", () => {
+    expect(() =>
+      Blocks.gather("block", "epic-blocks.ts", { "issue.claim": block("issue.claim") }).and(
+        "blocks.ts",
+        { "issue.claim": block("issue.claim") },
+      ),
+    ).toThrow('block "issue.claim" is defined twice: in epic-blocks.ts and in blocks.ts');
+  });
+
+  test("refuses a name defined twice across more than two files", () => {
+    expect(() =>
+      Blocks.gather("source", "epic-blocks.ts", { "epic.queued": block("epic.queued") })
+        .and("blocks.ts", { "issues.queued": block("issues.queued") })
+        .and("plan-blocks.ts", { "epic.queued": block("epic.queued") }),
+    ).toThrow('source "epic.queued" is defined twice: in epic-blocks.ts and in plan-blocks.ts');
+  });
+
+  test("refuses an entry kept under a key other than its name", () => {
+    expect(() =>
+      Blocks.gather("block", "blocks.ts", { "issue.claim": block("issue.adopt") }),
+    ).toThrow('block "issue.claim" in blocks.ts is named "issue.adopt"; its key must be its name');
+  });
+
+  test("keeps every entry of every file", () => {
+    const gathered = Blocks.gather("block", "a.ts", { one: block("one") }).and("b.ts", {
+      two: block("two"),
+    }).entries;
+
+    expect(Object.keys(gathered)).toEqual(["one", "two"]);
+    expect(gathered.two.name).toBe("two");
+  });
+
+  test("keeps each block and each source under its own name", () => {
+    for (const [key, entry] of Object.entries(Blocks.catalogue)) {
+      expect(entry.name).toBe(key);
+    }
+
+    for (const [key, entry] of Object.entries(Blocks.sources)) {
+      expect(entry.name).toBe(key);
+    }
+  });
+});
+
 describe("Compose.describe", () => {
   const SaidBlock = Schema.Struct({
     name: Schema.String,
