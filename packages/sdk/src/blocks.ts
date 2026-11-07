@@ -14,243 +14,46 @@ import {
   activity,
   Claims,
   defineFlow,
-  describeError,
-  type DoctorCheck,
   type FlowError,
-  type FlowLabel,
   GitHub,
   NeedsHuman,
-  NothingCommitted,
   Repo,
   reportAs,
-  Skip,
-  StepFailed,
-  type TriggeredFlow,
   type WorkflowServices,
   type WorkItem,
 } from "@chernabog/core";
-import * as Brand from "effect/Brand";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
+import {
+  Approved,
+  BaseBranch,
+  BranchName,
+  Committed,
+  type Contribution,
+  type Days,
+  defineBlock,
+  defineSource,
+  type FailureContext,
+  inLane,
+  IssueNumber,
+  type LaneId,
+  laneSession,
+  onBase,
+  PullRequestNumber,
+  pullRequestRef,
+  Pushed,
+  type Source,
+  ToPerson,
+  WorktreePath,
+} from "./block.ts";
+import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./epic-blocks.ts";
 import * as Implement from "./implement.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
-
-export type IssueNumber = number & Brand.Brand<"IssueNumber">;
-
-const IssueNumber = Brand.nominal<IssueNumber>();
-
-export type PullRequestNumber = number & Brand.Brand<"PullRequestNumber">;
-
-const PullRequestNumber = Brand.nominal<PullRequestNumber>();
-
-export type BranchName = string & Brand.Brand<"BranchName">;
-
-const BranchName = Brand.nominal<BranchName>();
-
-export type BaseBranch = string & Brand.Brand<"BaseBranch">;
-
-const BaseBranch = Brand.nominal<BaseBranch>();
-
-export type WorktreePath = string & Brand.Brand<"WorktreePath">;
-
-const WorktreePath = Brand.nominal<WorktreePath>();
-
-// That the agent committed its work, that a branch was pushed, and that a
-// review approved.
-export class Committed extends Schema.TaggedClass<Committed, { readonly brand: "Committed" }>()(
-  "Committed",
-  {},
-) {}
-
-export class Pushed extends Schema.TaggedClass<Pushed, { readonly brand: "Pushed" }>()(
-  "Pushed",
-  {},
-) {}
-
-export class Approved extends Schema.TaggedClass<Approved, { readonly brand: "Approved" }>()(
-  "Approved",
-  {},
-) {}
-
-// A pull request a step can name, by the number it can only be.
-const pullRequestRef = <A extends Implement.PullRequestRef>(ref: A) => ({
-  ...ref,
-  number: PullRequestNumber(ref.number),
-});
-
-// Claim always settles a base; only a run claimed before bases resumes with none.
-const onBase = (base: Option.Option<BaseBranch>) =>
-  Option.match(base, { onNone: () => ({}), onSome: (branch) => ({ base: branch }) });
-
-// Any number of days, as a block's wait is written.
-type Days = `${number} days`;
-
-// What a block's failure comes to:
-// - person: a person is told why, and the enclosing scope ends needing them;
-// - told: a person already knows, and the enclosing scope ends needing them;
-// - skip: nothing is left to do, and the enclosing scope ends skipped;
-// - fail: the enclosing scope ends failed.
-export type Disposition = "person" | "told" | "skip" | "fail";
-
-type Tagged = { readonly _tag: string };
-
-type Tags<E> = E extends Tagged ? E["_tag"] : never;
-
-export type Failures<E> = { readonly [Tag in Tags<E>]: Disposition };
-
-// A block's failure on its way to a person. The scope around the blocks tells
-// them, since what it can tell them depends on what the run got to.
-export class ToPerson extends Schema.TaggedError<ToPerson, { readonly brand: "ToPerson" }>()(
-  "ToPerson",
-  { reason: Schema.String },
-) {}
-
-const reasonOf = (error: Tagged) => {
-  // Each says why in its reason; its message, as an Error's, is empty.
-  if (error instanceof NeedsHuman || error instanceof Skip) {
-    return error.reason;
-  }
-
-  if (error instanceof NothingCommitted) {
-    return `the agent finished without committing anything on ${error.branch}`;
-  }
-
-  return describeError(error);
-};
-
-const told = (error: Tagged) => {
-  if (error instanceof NeedsHuman) {
-    return error;
-  }
-
-  return new NeedsHuman({ reason: reasonOf(error) });
-};
-
-const skipped = (error: Tagged) => {
-  if (error instanceof Skip) {
-    return error;
-  }
-
-  return new Skip({ reason: reasonOf(error) });
-};
-
-const failed = (block: string, error: Tagged) => {
-  if (error instanceof StepFailed) {
-    return error;
-  }
-
-  return new StepFailed({ step: block, message: reasonOf(error) });
-};
-
-const settled = (block: string, error: Tagged, disposition: Disposition): FlowError | ToPerson => {
-  switch (disposition) {
-    case "person":
-      return new ToPerson({ reason: reasonOf(error) });
-    case "told":
-      return told(error);
-    case "skip":
-      return skipped(error);
-    case "fail":
-      return failed(block, error);
-  }
-};
-
-// The fields of a flow's settings a block reads, none of which needs a service.
-type SettingsFields = {
-  readonly [key: string]: Schema.Top & {
-    readonly DecodingServices: never;
-    readonly EncodingServices: never;
-  };
-};
-
-// What using a block adds to its flow, unasked.
-export type Contribution = {
-  readonly settings?: SettingsFields;
-  readonly labels?: ReadonlyArray<FlowLabel>;
-  readonly doctor?: ReadonlyArray<DoctorCheck>;
-  // Finds runs of this flow parked in the block, to wake them.
-  readonly wakes?: TriggeredFlow["trigger"];
-  readonly ownWork?: boolean;
-};
-
-const DispositionTable = Schema.Record(
-  Schema.String,
-  Schema.Literals(["person", "told", "skip", "fail"]),
-);
-
-const InputNeeds = Schema.Record(Schema.String, Schema.Literals(["required", "optional"]));
-
-const dispositionsOf = Schema.decodeUnknownSync(DispositionTable);
-
-const inputNeedsOf = Schema.decodeUnknownSync(InputNeeds);
-
-type BlockSpec<Input, Output, E, R, Outcomes> = {
-  readonly name: string;
-  // Each input and whether a document must wire it. An input it needn't wire
-  // has a default.
-  readonly inputs: { readonly [Name in keyof Input]-?: "required" | "optional" };
-  readonly run: (input: Input) => Effect.Effect<Output, E, R>;
-  readonly failures: Failures<NoInfer<E>>;
-  // The branches a document can take on the block's output, each the value it
-  // binds there, or none when the output didn't take it.
-  readonly outcomes: Outcomes;
-  // The outcomes a document must say what to do about.
-  readonly mustRoute: ReadonlyArray<keyof Outcomes & string>;
-  // Whether every run comes to one of the outcomes, so a document whose
-  // branches all end has nothing after the block.
-  readonly exhaustive?: boolean;
-  // The groups of step names its run uses that another block's also does, or
-  // its own name when none are shared. A second use of a step name replays the
-  // first's result instead of doing the work, so no path takes a group twice.
-  readonly stepNames?: ReadonlyArray<string>;
-  readonly contributes: Contribution;
-};
-
-export const defineBlock = <
-  Input,
-  Output,
-  E extends Tagged,
-  R,
-  const Outcomes extends {
-    readonly [Name in string]: (output: Output) => Option.Option<unknown>;
-  },
->(
-  spec: BlockSpec<Input, Output, E, R, Outcomes>,
-) => {
-  const table = dispositionsOf(spec.failures);
-
-  return {
-    name: spec.name,
-    inputs: inputNeedsOf(spec.inputs),
-    outcomes: spec.outcomes,
-    mustRoute: spec.mustRoute,
-    exhaustive: spec.exhaustive === true,
-    stepNames: spec.stepNames ?? [spec.name],
-    contributes: spec.contributes,
-    run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
-      const own = dispositionsOf(overrides);
-
-      return spec.run(input).pipe(
-        Effect.mapError((error) =>
-          settled(
-            spec.name,
-            error,
-            Option.getOrElse(
-              Option.orElse(Record.get(own, error._tag), () => Record.get(table, error._tag)),
-              (): Disposition => "fail",
-            ),
-          ),
-        ),
-      );
-    },
-  };
-};
 
 const summaryOf = (pullRequest: PullRequestNumber, round: number) =>
   `#${pullRequest}: review ${round} requested changes`;
@@ -285,15 +88,30 @@ const WORKTREE_STEPS = "prepare-worktree";
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = {
+  ...epicBlocks,
+
   "issue.claim": defineBlock({
     name: "issue.claim",
-    inputs: { issue: "required", queued: "required", adopt: "optional" },
+    inputs: {
+      issue: "required",
+      queued: "optional",
+      adopt: "optional",
+      base: "optional",
+      lane: "optional",
+    },
     run: (input: {
       readonly issue: IssueNumber;
-      readonly queued: Implement.QueueOptions;
+      readonly queued?: Implement.QueueOptions;
       readonly adopt?: boolean;
+      readonly base?: Option.Option<BaseBranch>;
+      readonly lane?: LaneId;
     }) =>
-      Implement.claim(input.issue, { ...input.queued, adopt: input.adopt === true }).pipe(
+      Implement.claim(input.issue, {
+        ...input.queued,
+        ...onBase(input.base ?? Option.none()),
+        ...inLane(input.lane),
+        adopt: input.adopt === true,
+      }).pipe(
         Effect.map((claim) => ({
           branch: BranchName(claim.branch),
           base: Option.map(Option.fromUndefinedOr(claim.base), BaseBranch),
@@ -394,9 +212,16 @@ export const catalogue = {
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
     stepNames: [WORKTREE_STEPS],
-    inputs: { branch: "required", base: "required" },
-    run: (input: { readonly branch: BranchName; readonly base: Option.Option<BaseBranch> }) =>
-      Implement.prepareWorktree(input.branch, onBase(input.base)).pipe(Effect.map(WorktreePath)),
+    inputs: { branch: "required", base: "required", lane: "optional" },
+    run: (input: {
+      readonly branch: BranchName;
+      readonly base: Option.Option<BaseBranch>;
+      readonly lane?: LaneId;
+    }) =>
+      Implement.prepareWorktree(input.branch, {
+        ...onBase(input.base),
+        ...inLane(input.lane),
+      }).pipe(Effect.map(WorktreePath)),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
@@ -405,15 +230,17 @@ export const catalogue = {
 
   "agent.implement": defineBlock({
     name: "agent.implement",
-    inputs: { issue: "required", worktree: "required", base: "required" },
+    inputs: { issue: "required", worktree: "required", base: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
       readonly worktree: WorktreePath;
       readonly base: Option.Option<BaseBranch>;
+      readonly lane?: LaneId;
     }) =>
-      Implement.implementWithAgent(input.issue, input.worktree, onBase(input.base)).pipe(
-        Effect.map((outcome) => ({ outcome, committed: new Committed({}) })),
-      ),
+      Implement.implementWithAgent(input.issue, input.worktree, {
+        ...onBase(input.base),
+        ...inLane(input.lane),
+      }).pipe(Effect.map((outcome) => ({ outcome, committed: new Committed({}) }))),
     failures: { NeedsHuman: "told", NotFound: "skip", Skip: "skip", StepFailed: "person" },
     outcomes: {
       "needs-clarification": (done: { readonly outcome: Implement.ImplementOutcome }) =>
@@ -425,12 +252,17 @@ export const catalogue = {
 
   "issue.askClarification": defineBlock({
     name: "issue.askClarification",
-    inputs: { issue: "required", outcome: "required", queued: "required" },
+    inputs: { issue: "required", outcome: "required", queued: "optional", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
       readonly outcome: Implement.ImplementOutcome;
-      readonly queued: Implement.QueueOptions;
-    }) => Implement.askForClarification(input.issue, input.outcome, input.queued),
+      readonly queued?: Implement.QueueOptions;
+      readonly lane?: LaneId;
+    }) =>
+      Implement.askForClarification(input.issue, input.outcome, {
+        ...input.queued,
+        ...inLane(input.lane),
+      }),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
@@ -439,8 +271,13 @@ export const catalogue = {
 
   "gate.local": defineBlock({
     name: "gate.local",
-    inputs: { worktree: "required" },
-    run: (input: { readonly worktree: WorktreePath }) => Implement.localGate(input.worktree),
+    inputs: { worktree: "required", lane: "optional" },
+    run: (input: { readonly worktree: WorktreePath; readonly lane?: LaneId }) =>
+      Effect.gen(function* () {
+        const session = yield* laneSession(input.lane);
+
+        return yield* Implement.localGate(input.worktree, { ...session, ...inLane(input.lane) });
+      }),
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
     contributes: { settings: Settings.LocalGate.fields },
     outcomes: {},
@@ -500,17 +337,29 @@ export const catalogue = {
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
     stepNames: [CI_STEPS],
-    inputs: { pr: "required", worktree: "required", branch: "required", base: "required" },
+    inputs: {
+      pr: "required",
+      worktree: "required",
+      branch: "required",
+      base: "required",
+      lane: "optional",
+    },
     run: (input: {
       readonly pr: PullRequestNumber;
       readonly worktree: WorktreePath;
       readonly branch: BranchName;
       readonly base: Option.Option<BaseBranch>;
+      readonly lane?: LaneId;
     }) =>
-      Implement.waitForCi(input.pr, input.worktree, {
-        ...Implement.thisRunsSession,
-        branch: input.branch,
-        ...onBase(input.base),
+      Effect.gen(function* () {
+        const session = yield* laneSession(input.lane);
+
+        return yield* Implement.waitForCi(
+          input.pr,
+          input.worktree,
+          { ...session, branch: input.branch, ...onBase(input.base) },
+          inLane(input.lane),
+        );
       }),
     failures: {
       CiTimedOut: "person",
@@ -528,12 +377,17 @@ export const catalogue = {
   "issue.handOff": defineBlock({
     name: "issue.handOff",
     stepNames: [HAND_OFF_STEPS],
-    inputs: { issue: "required", pr: "required", outcome: "required" },
+    inputs: { issue: "required", pr: "required", outcome: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
       readonly pr: { readonly number: PullRequestNumber; readonly url: string };
       readonly outcome: Implement.ImplementOutcome;
-    }) => Implement.handOff(input.issue, input.pr, input.outcome),
+      readonly lane?: LaneId;
+    }) =>
+      Implement.handOff(input.issue, input.pr, input.outcome, {
+        needsReview: true,
+        ...inLane(input.lane),
+      }),
     failures: {
       NeedsHuman: "person",
       NotFound: "skip",
@@ -635,19 +489,10 @@ export const catalogue = {
 
 export type BlockName = keyof typeof catalogue;
 
-type Source = {
-  readonly trigger: TriggeredFlow["trigger"];
-  readonly contributes: Contribution;
-};
-
-// A source, and the subject of the work items it finds.
-const defineSource = <Input extends ReadonlyArray<unknown>>(
-  subject: SubjectName,
-  find: (...input: Input) => Source,
-) => ({ subject, find });
-
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = {
+  ...epicSources,
+
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
   // One carrying several comes under the first. Any label but eligible queues
@@ -709,18 +554,21 @@ export const sources = {
     trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
     contributes: {},
   })),
-};
+} satisfies { readonly [name: string]: { readonly subject: SubjectName } };
+
+export { Approved, Committed, defineBlock, laneScopes, loopStates, Pushed, ToPerson };
+
+export type { Disposition, Failures } from "./block.ts";
 
 export type SourceName = keyof typeof sources;
-
-// What a scope's failures can tell a person beyond why: what the run got to.
-type FailureContext = { pr: Option.Option<PullRequestNumber> };
 
 type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;
 
 // What a flow works on: what a work item says of it, what a failure going to
 // a person does with it, and how the engine tells whether it is still there.
 export const subjects = {
+  epic: epicSubject,
+
   issue: {
     fields: ["issue", "queued"],
     failureContext: ["pr"],

@@ -5,6 +5,8 @@
 import {
   Blocks,
   Compose,
+  type Epic,
+  type EpicBlocks,
   type FlowError,
   Implement,
   NeedsHuman,
@@ -22,6 +24,7 @@ import * as Result from "effect/Result";
 import {
   compileErrors,
   documentOf,
+  EPIC_DOCUMENT,
   generated,
   IMPLEMENT_DOCUMENT,
   REVIEW_DOCUMENT,
@@ -37,7 +40,7 @@ type UseStep = Compose.UseStep;
 const implement = documentOf(IMPLEMENT_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
 
-const named = (step: Step, id: string) => !Compose.isEnd(step) && step.id === id;
+const named = (step: Step, id: string) => Compose.isUse(step) && step.id === id;
 
 const withSteps = (doc: Doc, steps: ReadonlyArray<Step>): Doc => ({ ...doc, steps });
 
@@ -46,7 +49,7 @@ const changing = (doc: Doc, id: string, change: (step: UseStep) => UseStep): Doc
   withSteps(
     doc,
     doc.steps.map((step) => {
-      if (!Compose.isEnd(step) && step.id === id) {
+      if (Compose.isUse(step) && step.id === id) {
         return change(step);
       }
 
@@ -136,7 +139,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages(wiring(implement, "gate", "colour", "claim.branch"))).toEqual([
-      "gate.local takes worktree",
+      "gate.local takes worktree, lane",
     ]);
   });
 
@@ -343,20 +346,18 @@ describe("Compose.check", () => {
 
   test("names the blocks there are when one isn't", () => {
     const unknown = changing(implement, "gate", (step) => ({ ...step, use: "gate.lint" }));
-    expect(messages(unknown)[0]).toContain("no block named gate.lint; there are issue.claim");
+    expect(messages(unknown)[0]).toContain("no block named gate.lint; there are");
   });
 
   test("knows the sources and subjects there are", () => {
-    expect(messages({ ...implement, trigger: [{ use: "cron" }] })[0]).toContain(
-      "must be one of issues.queued",
-    );
+    expect(messages({ ...implement, trigger: [{ use: "cron" }] })[0]).toContain("issues.queued");
 
     expect(messages({ ...implement, trigger: [] })).toEqual([
       "must name where the flow's work comes from",
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of issue, pull-request",
+      "must be one of epic, issue, pull-request",
     ]);
   });
 
@@ -503,6 +504,437 @@ describe("tsc on a document's flow file", () => {
         expect(yield* compileErrors(without(implement, "ci"))).toEqual([]);
       }),
     TIMEOUT,
+  );
+});
+
+describe("a document with a loop and lanes", () => {
+  const TIMEOUT = 120_000;
+
+  const epic = documentOf(EPIC_DOCUMENT);
+
+  // The document with every step, however deep, changed.
+  const everywhere = (
+    steps: ReadonlyArray<Step>,
+    change: (step: Step) => Step,
+  ): ReadonlyArray<Step> =>
+    steps.map((step) => {
+      const changed = change(step);
+
+      if (Compose.isRepeat(changed)) {
+        return {
+          ...changed,
+          repeat: { ...changed.repeat, steps: everywhere(changed.repeat.steps, change) },
+        };
+      }
+
+      if (Compose.isForEach(changed)) {
+        return { ...changed, steps: everywhere(changed.steps, change) };
+      }
+
+      if (Compose.isUse(changed)) {
+        return {
+          ...changed,
+          on: Object.fromEntries(
+            Object.entries(changed.on ?? {}).map(([outcome, branch]) => [
+              outcome,
+              { ...branch, steps: everywhere(branch.steps, change) },
+            ]),
+          ),
+        };
+      }
+
+      return changed;
+    });
+
+  const editing = (id: string, change: (step: UseStep) => UseStep) => ({
+    ...epic,
+    steps: everywhere(epic.steps, (step) => {
+      if (Compose.isUse(step) && step.id === id) {
+        return change(step);
+      }
+
+      return step;
+    }),
+  });
+
+  const unwired = (id: string, input: string) =>
+    editing(id, (step) => ({
+      ...step,
+      in: Object.fromEntries(Object.entries(step.in ?? {}).filter(([key]) => key !== input)),
+    }));
+
+  test("finds nothing wrong with the epic document", () => {
+    expect(Compose.check(epic)).toEqual([]);
+  });
+
+  test("refuses a loop with no end", () => {
+    const endless = editing("closed", (step) => ({
+      ...step,
+      on: { finished: { steps: [] } },
+    }));
+
+    expect(messages(endless)).toContain("no round ends this loop");
+  });
+
+  test("refuses a way round a loop that neither waits nor changes anything", () => {
+    const spinning = editing("ready", (step) => ({
+      ...step,
+      on: { none: { as: "waiting", steps: [{ next: { tasks: "waiting" } }] } },
+    }));
+
+    expect(messages(spinning)).toEqual([
+      "this round neither waits nor changes anything, so the loop would spin",
+    ]);
+  });
+
+  test("counts a change as going round: an outcome that moved something is no spin", () => {
+    expect(messages(epic)).not.toContain(
+      "this round neither waits nor changes anything, so the loop would spin",
+    );
+  });
+
+  // The document with a step, of any kind, changed wherever it is.
+  const editingAny = (id: string, change: (step: Step) => Step) => ({
+    ...epic,
+    steps: everywhere(epic.steps, (step) => {
+      if ("id" in step && step.id === id) {
+        return change(step);
+      }
+
+      return step;
+    }),
+  });
+
+  // The document with these steps first in each round, or first in each lane.
+  const leading = (where: "round" | "lane", added: ReadonlyArray<Step>) => ({
+    ...epic,
+    steps: everywhere(epic.steps, (step) => {
+      if (where === "round" && Compose.isRepeat(step)) {
+        return { ...step, repeat: { ...step.repeat, steps: [...added, ...step.repeat.steps] } };
+      }
+
+      if (where === "lane" && Compose.isForEach(step)) {
+        return { ...step, steps: [...added, ...step.steps] };
+      }
+
+      return step;
+    }),
+  });
+
+  const roundSteps = (doc: Doc) =>
+    doc.steps.filter(Compose.isRepeat).flatMap((step) => step.repeat.steps);
+
+  const withRound = (steps: ReadonlyArray<Step>) => ({
+    ...epic,
+    steps: epic.steps.map((step) => {
+      if (Compose.isRepeat(step)) {
+        return { ...step, repeat: { ...step.repeat, steps } };
+      }
+
+      return step;
+    }),
+  });
+
+  const SPINS = "this round neither waits nor changes anything, so the loop would spin";
+
+  const RUNS_OFF = "a round can run off its steps: end it, or go on with next";
+
+  describe("refuses every way round a loop that neither waits nor changes anything", () => {
+    test("a round that runs off its steps, which also loses what it changed", () => {
+      expect(messages(withRound(roundSteps(epic).slice(0, -1)))).toEqual([RUNS_OFF]);
+    });
+
+    test("a round of steps that neither wait nor change anything, and never go on", () => {
+      const reading = roundSteps(epic).filter(
+        (step) => named(step, "progress") || named(step, "closed"),
+      );
+
+      expect(messages(withRound(reading))).toEqual([RUNS_OFF]);
+    });
+
+    test("a wait that may not run", () => {
+      const sometimes = editing("parked", (step) => ({ ...step, if: "ships.value" }));
+
+      expect(messages(sometimes)).toEqual([SPINS]);
+    });
+
+    test("lanes that may be none: nothing started is no change", () => {
+      const nothingStarted = editing("ready", (step) => ({ ...step, on: { none: { steps: [] } } }));
+
+      expect(messages(nothingStarted)).toEqual([SPINS]);
+    });
+  });
+
+  describe("takes only names for what a `first` or a `forEach` declares", () => {
+    test("a first's id that isn't a name", () => {
+      const injected = editingAny("latest", (step) => ({
+        ...step,
+        id: "x = 1; console.log('injected'); const y",
+      }));
+
+      expect(messages(injected)[0]).toBe(
+        "x = 1; console.log('injected'); const y can't name a step",
+      );
+    });
+
+    test("a first's id another step has", () => {
+      const twice = editingAny("latest", (step) => ({ ...step, id: "progress" }));
+
+      expect(messages(twice)).toContain("progress is already a step here");
+    });
+
+    test("a first of nothing", () => {
+      const empty = editingAny("latest", (step) => ({ ...step, first: [] }));
+
+      expect(messages(empty)).toContain("must name at least one output");
+    });
+
+    test("a forEach's id or item that isn't a name, or is one the flow uses", () => {
+      const badId = editingAny("started", (step) => ({ ...step, id: "a b" }));
+      expect(messages(badId)).toContain("a b can't name a step");
+
+      const reserved = editingAny("started", (step) => ({ ...step, as: "item" }));
+      expect(messages(reserved)).toContain("item can't name each item");
+
+      const taken = editingAny("started", (step) => ({ ...step, as: "progress" }));
+      expect(messages(taken)).toContain("progress is already a step here");
+    });
+  });
+
+  // A run resumes by step names, so a second round, or a second lane, would
+  // get the first's saved result instead of doing the work.
+  describe("refuses a block whose step names would be the same in each round or lane", () => {
+    test("a block with no lane beside others", () => {
+      const pushed = leading("lane", [
+        {
+          id: "pushedEarly",
+          use: "branch.push",
+          in: { worktree: "task.lane", branch: "task.lane", base: "task.base", committed: "task" },
+        },
+      ]);
+
+      expect(messages(pushed)).toContain(
+        "branch.push names its steps the same in every lane, so it can't run beside others",
+      );
+    });
+
+    test("a block that carries a round, beside others", () => {
+      const read = leading("lane", [
+        { id: "again", use: "epic.progress", in: { epic: "trigger.epic", round: "round" } },
+      ]);
+
+      expect(messages(read)).toContain(
+        "epic.progress names its steps the same in every lane, so it can't run beside others",
+      );
+    });
+
+    test("a block with no round in a repeat", () => {
+      const atOnce = leading("round", [{ id: "again", use: "epic.atOnce" }]);
+
+      expect(messages(atOnce)).toEqual([
+        "epic.atOnce names its steps the same in every round, so it can't run in a repeat",
+      ]);
+
+      const prepared = leading("round", [
+        { id: "early", use: "worktree.prepare", in: { branch: "progress", base: "progress" } },
+      ]);
+
+      expect(messages(prepared)).toContain(
+        "worktree.prepare names its steps the same in every round, so it can't run in a repeat",
+      );
+    });
+
+    test("a block that takes a round, given a fixed one", () => {
+      const fixed = editing("progress", (step) => ({
+        ...step,
+        in: { epic: "trigger.epic" },
+        with: { round: 1 },
+      }));
+
+      expect(messages(fixed)).toEqual([
+        "epic.progress runs in every round here, and must take round",
+      ]);
+    });
+
+    test("lets a block that runs no step go anywhere", () => {
+      const noted = leading("lane", [
+        {
+          id: "ended",
+          use: "epic.recordEndings",
+          in: { tasks: "state.tasks", endings: "ready.starts" },
+        },
+      ]);
+
+      expect(messages(noted)).toEqual([]);
+    });
+  });
+
+  test("refuses next outside a loop", () => {
+    expect(messages({ ...withSteps(implement, [{ next: {} }]), failureContext: {} })).toEqual([
+      "next means something only inside a repeat",
+    ]);
+  });
+
+  test("wants a block beside others to name its lane, or lanes' step names would collide", () => {
+    expect(messages(unwired("gate", "lane"))).toEqual([
+      "gate.local runs beside others here, and must name its lane",
+    ]);
+  });
+
+  test("keeps a lane's item, and what its steps give, to the lane", () => {
+    const leaked = editing("recorded", (step) => ({
+      ...step,
+      in: { ...step.in, endings: "task" },
+    }));
+
+    expect(messages(leaked)[0]).toContain("task is not available here");
+  });
+
+  test("keeps round and state to the loop", () => {
+    expect(messages(wiring(implement, "gate", "worktree", "round"))[0]).toContain(
+      "round is not available here",
+    );
+  });
+
+  test("knows the loop states and lane scopes there are", () => {
+    const unknownState = {
+      ...epic,
+      steps: everywhere(epic.steps, (step) => {
+        if (Compose.isRepeat(step)) {
+          return { ...step, repeat: { ...step.repeat, state: { tasks: "nothing" } } };
+        }
+
+        return step;
+      }),
+    };
+
+    expect(messages(unknownState)[0]).toContain("must start from one of epic.tasks");
+
+    const unknownScope = {
+      ...epic,
+      steps: everywhere(epic.steps, (step) => {
+        if (Compose.isForEach(step)) {
+          return { ...step, scope: "nothing" };
+        }
+
+        return step;
+      }),
+    };
+
+    expect(messages(unknownScope)).toEqual(["must be one of epic.task"]);
+  });
+
+  const rejected = (name: string, doc: Doc, says: string) => {
+    effect(
+      name,
+      () =>
+        Effect.gen(function* () {
+          expect(Compose.check(doc)).toEqual([]);
+          expect((yield* compileErrors(doc)).join("\n")).toContain(says);
+        }),
+      TIMEOUT,
+    );
+  };
+
+  effect(
+    "compiles the epic document",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* compileErrors(epic)).toEqual([]);
+      }),
+    TIMEOUT,
+  );
+
+  // A step that ran only sometimes has no output to read without `first`.
+  rejected(
+    "a conditional step's output read as though it always ran",
+    editing("ready", (step) => ({ ...step, in: { ...step.in, tasks: "landed.tasks" } })),
+    "tasks",
+  );
+
+  rejected(
+    "the wrong state for a block",
+    editing("carried", (step) => ({ ...step, in: { ...step.in, stack: "state.tasks" } })),
+    "recorded",
+  );
+
+  rejected(
+    "an issue's number where the epic's goes",
+    editing("progress", (step) => ({ ...step, in: { ...step.in, epic: "round" } })),
+    "EpicNumber",
+  );
+
+  // `if` names a boolean, which a document can't test the truth of otherwise.
+  rejected(
+    "an if on what isn't a boolean",
+    editing("landed", (step) => ({ ...step, if: "progress.layers" })),
+    "no overlap",
+  );
+
+  rejected(
+    "a publish from a lane that nothing committed in",
+    editing("published", (step) => ({ ...step, in: { ...step.in, committed: "task.lane" } })),
+    "Committed",
+  );
+});
+
+// How the rounds decide what to start, which a run reaches only when a person
+// hands a task back between two of them (#249).
+describe("the blocks that decide what an epic starts", () => {
+  const ready = (number: number): Epic.Layer => ({
+    number,
+    title: `Task ${number}`,
+    state: "ready",
+    base: "main",
+  });
+
+  const reading = (layers: ReadonlyArray<Epic.Layer>): Epic.Progress => ({
+    layers,
+    fingerprint: "",
+  });
+
+  const after = (attempts: ReadonlyArray<readonly [number, number]>) => ({
+    ...Blocks.loopStates["epic.tasks"](),
+    attempts: new Map(attempts),
+  });
+
+  const lanes = (tasks: EpicBlocks.TaskState, progress: Epic.Progress) =>
+    Blocks.catalogue["epic.startable"]
+      .run({ progress, tasks })
+      .pipe(Effect.map((planned) => planned.starts.map((start) => String(start.lane))));
+
+  effect("starts a task it never attempted", () =>
+    Effect.gen(function* () {
+      expect(yield* lanes(after([]), reading([ready(10)]))).toEqual(["task-10"]);
+    }),
+  );
+
+  effect("leaves a task still ready after its attempt, as one another run holds", () =>
+    Effect.gen(function* () {
+      expect(yield* lanes(after([[10, 1]]), reading([ready(10)]))).toEqual([]);
+    }),
+  );
+
+  effect("starts it again when its attempt ended with a person, read ready or not", () =>
+    Effect.gen(function* () {
+      const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
+        tasks: after([[10, 1]]),
+        endings: [{ issue: 10, withPerson: true }],
+      });
+
+      expect(yield* lanes(tasks, reading([ready(10)]))).toEqual(["task-10-2"]);
+    }),
+  );
+
+  effect("doesn't start it again when its attempt ended otherwise", () =>
+    Effect.gen(function* () {
+      const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
+        tasks: after([[10, 1]]),
+        endings: [{ issue: 10, withPerson: false }],
+      });
+
+      expect(yield* lanes(tasks, reading([ready(10)]))).toEqual([]);
+    }),
   );
 });
 

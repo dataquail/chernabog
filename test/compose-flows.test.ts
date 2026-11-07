@@ -9,10 +9,14 @@ import {
   AgentError,
   Claims,
   DEFAULT_LABELS,
+  Epic,
   type Flow,
   labelsOf,
+  type LinkedIssue,
+  Plan,
   PullRequest,
   PushRejected,
+  reviewMarker,
   Settings,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -23,13 +27,20 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 
+import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import review from "../packages/recipes/flows/review.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
-import { documentOf, IMPLEMENT_DOCUMENT, loadFlow, REVIEW_DOCUMENT } from "./compose-harness.ts";
+import {
+  documentOf,
+  EPIC_DOCUMENT,
+  IMPLEMENT_DOCUMENT,
+  loadFlow,
+  REVIEW_DOCUMENT,
+} from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -49,12 +60,25 @@ const composedImplement = loadFlow(documentOf(IMPLEMENT_DOCUMENT));
 
 const composedReview = loadFlow(documentOf(REVIEW_DOCUMENT));
 
+const composedEpic = loadFlow(documentOf(EPIC_DOCUMENT));
+
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 const ISO_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 
 // A run's own id, and when it did things, differ from run to run.
 const unsaid = (text: string) => text.replaceAll(UUID, "<id>").replaceAll(ISO_TIME, "<time>");
+
+// The labels of every issue and pull request the fake knows.
+const everyLabel = (fake: Fake) =>
+  [
+    ...new Set([
+      ...fake.graph.made.keys(),
+      ...[...fake.branchPulls.values()].map((pull) => pull.number),
+    ]),
+  ]
+    .toSorted((left, right) => left - right)
+    .map((number) => [number, fake.labelsOf(number)] as const);
 
 const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
 
@@ -63,7 +87,21 @@ const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
 
 // What a parked run is waiting for: a change to make, and the signal that
 // tells the run, which the flow's own trigger must find.
-type Wake = { readonly signal: string; readonly change: (fake: Fake) => void };
+type Wake = {
+  readonly signal: string;
+  readonly change: (fake: Fake) => void;
+};
+
+// What a run that parks round after round, as an epic's does, meets at each
+// park in turn: the next change, and the signal that tells the run, each park
+// told apart by the wait it parks on. At the park after the last change, the
+// run is followed no further.
+type Parks = {
+  readonly signal: string;
+  readonly changes: ReadonlyArray<(fake: Fake) => void>;
+};
+
+const isParks = (wake: Wake | Parks): wake is Parks => "changes" in wake;
 
 type FlowInput = Settings.FlowSettings["Service"]["input"];
 
@@ -78,34 +116,79 @@ const observe = (
   name: string,
   setup: () => Fake,
   work: WorkItem,
-  wake?: Wake,
+  wake?: Wake | Parks,
   settings: FlowInput = {},
 ) =>
   Effect.gen(function* () {
     const fake = setup();
     const handle = flowHandle(inRepo(settings), name, flow);
     let steps: ReadonlyArray<string> = [];
+    let lanes: ReadonlyArray<unknown> = [];
+    // The parks already woken, by their waits, and the changes made so far.
+    const answered = new Set<string>();
+    let changed = 0;
+
+    // Delivers what the flow's own trigger then reports as a signal: how many runs it woke.
+    const signal = Effect.gen(function* () {
+      const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
+
+      return yield* deliverSignals(
+        handle,
+        IMPLICIT,
+        found.filter((each) => (each.signals ?? []).length > 0),
+      );
+    });
 
     const finished: EngineRun = yield* runUntil(handle, fake, work, (run) =>
       Effect.gen(function* () {
-        const history = yield* readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie);
-        steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
+        // Read as the run stops being followed, so a step it just entered is in it.
+        const readSteps = readRunHistoryHandler({ runId: run.id }).pipe(
+          Effect.orDie,
+          Effect.map((history) => {
+            steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
+            lanes = history.lanes ?? [];
+          }),
+        );
 
         if (run.status !== "running") {
+          yield* readSteps;
+
           return true;
         }
 
-        for (const { change, signal } of Option.toArray(Option.fromUndefinedOr(wake))) {
-          const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal });
+        for (const waking of Option.toArray(Option.fromUndefinedOr(wake))) {
+          const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: waking.signal });
 
-          if (waits.length > 0) {
-            change(fake);
-            const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
-            yield* deliverSignals(
-              handle,
-              IMPLICIT,
-              found.filter((each) => each.wakeOnly === true),
-            );
+          if (!isParks(waking)) {
+            if (waits.length > 0) {
+              waking.change(fake);
+              yield* signal;
+            }
+
+            continue;
+          }
+
+          const parked = Arr.findFirst(waits, (wait) => !answered.has(wait.deferred));
+
+          if (Option.isNone(parked)) {
+            continue;
+          }
+
+          const change = Arr.get(waking.changes, answered.size);
+
+          if (Option.isNone(change)) {
+            yield* readSteps;
+
+            return true;
+          }
+
+          if (changed === answered.size) {
+            change.value(fake);
+            changed += 1;
+          }
+
+          if ((yield* signal) > 0) {
+            answered.add(parked.value.deferred);
           }
         }
 
@@ -118,8 +201,12 @@ const observe = (
       summary: unsaid(Option.getOrElse(finished.summary, () => "")),
       subjects: finished.subjects,
       steps,
+      // The lanes an epic declared, and the lanes each waited on.
+      lanes,
       issueLabels: fake.labelsOf(ISSUE),
       pullLabels: fake.labelsOf(PULL),
+      labels: everyLabel(fake),
+      pulls: [...fake.branchPulls.values()].map((pull) => [pull.headRef, pull.baseRef, pull.state]),
       comments: fake.comments.map((comment) => unsaid(comment.body)),
       reviews: fake.reviews.map(unsaid),
       submitted: fake.submitted.map((each) => ({ ...each })),
@@ -169,7 +256,7 @@ const closedByPull = (draft = false) => {
   return fake;
 };
 
-// Runs the recipe and the document's flow on the same scenario.
+// Runs the recipe and the document's flow on the same scenario: what the recipe did.
 const same = <E, R>(
   recipe: Flow,
   loading: Effect.Effect<Flow, E, R>,
@@ -177,7 +264,7 @@ const same = <E, R>(
   setup: () => Fake,
   work: WorkItem,
   ends: EngineRun["status"],
-  wake?: Wake,
+  wake?: Wake | Parks,
   settings?: FlowInput,
 ) =>
   Effect.gen(function* () {
@@ -187,7 +274,11 @@ const same = <E, R>(
 
     expect(fromRecipe.status).toBe(ends);
     expect(fromDocument).toEqual(fromRecipe);
+
+    return fromRecipe;
   });
+
+type Observed = Effect.Success<ReturnType<typeof observe>>;
 
 describe("the implement document runs as the recipe does", () => {
   const scenario = (title: string, setup: () => Fake, ends: EngineRun["status"], wake?: Wake) => {
@@ -443,6 +534,335 @@ describe("the review document runs as the recipe does", () => {
   );
 });
 
+describe("the epic document runs as the recipe does", () => {
+  const EPIC = 40;
+  const EPIC_WORK = item(`issue-${EPIC}`, { issue: EPIC });
+
+  // One task at a time, so both runs make their pull requests in one order.
+  const oneAtATime = (shared: Record<string, boolean | number>) => ({ atOnce: 1, ...shared });
+
+  const madeIssue = (number: number, title: string): LinkedIssue => ({
+    number,
+    title,
+    body: "",
+    url: `https://github.com/dataquail/demo/issues/${number}`,
+    createdAt: "2026-10-21T00:00:00Z",
+    labels: [],
+    assignees: [],
+    state: "open",
+  });
+
+  // An epic of these auto tasks, each blocked by the ones it names.
+  const epicOf = (tasks: ReadonlyArray<readonly [number, ReadonlyArray<number>]>) => {
+    const fake = makeFake("approve");
+    fake.graph.made.set(EPIC, madeIssue(EPIC, "An epic"));
+    fake.setLabels(EPIC, [Plan.LABELS.epic]);
+
+    for (const [number, blockedBy] of tasks) {
+      fake.graph.made.set(number, madeIssue(number, `Task ${number}`));
+      fake.setLabels(number, [DEFAULT_LABELS.eligible]);
+      fake.graph.blockedBy.set(number, [...blockedBy]);
+      fake.graph.subIssues.set(EPIC, [...(fake.graph.subIssues.get(EPIC) ?? []), number]);
+    }
+
+    return fake;
+  };
+
+  // #10, then #11 on it; #12 on its own; and #13, which needs both #10 and #12.
+  const epicFake = () =>
+    epicOf([
+      [10, []],
+      [11, [10]],
+      [12, []],
+      [13, [10, 12]],
+    ]);
+
+  // Two tasks on their own: #10, then #12.
+  const twoAlone = () =>
+    epicOf([
+      [10, []],
+      [12, []],
+    ]);
+
+  // The worktree a task's implement session runs in.
+  const worktreeOf = (number: number) => `/tmp/demo-worktrees/${Claims.branchFor(number)}`;
+
+  // The task closed, and its pull request merged, as a person merging it would.
+  const merged = (fake: Fake, number: number) => {
+    for (const found of Option.toArray(Option.fromUndefinedOr(fake.graph.made.get(number)))) {
+      fake.graph.made.set(number, { ...found, state: "closed" });
+    }
+
+    const branch = Claims.branchFor(number);
+
+    for (const pull of Option.toArray(Option.fromUndefinedOr(fake.branchPulls.get(branch)))) {
+      fake.branchPulls.set(branch, { ...pull, state: "merged" });
+    }
+  };
+
+  const mergeAll = (fake: Fake) => {
+    for (const number of [10, 11, 12, 13]) {
+      merged(fake, number);
+    }
+  };
+
+  // A person hands the task back with auto:eligible.
+  const handBack = (fake: Fake, number: number) => {
+    fake.setLabels(number, [DEFAULT_LABELS.eligible]);
+  };
+
+  // Whether the run took any step whose name has this in it.
+  const tookStep = (observed: Observed, part: string) =>
+    observed.steps.some((step) => step.includes(part));
+
+  const scenario = (
+    title: string,
+    setup: () => Fake,
+    ends: EngineRun["status"],
+    changes: Parks["changes"],
+    shared: Record<string, boolean | number> = {},
+    // What the recipe must have done, so a match isn't two runs doing nothing.
+    did: (recipe: Observed) => void = () => void 0,
+  ) => {
+    effect(
+      title,
+      () =>
+        same(
+          epic,
+          composedEpic,
+          "epic",
+          setup,
+          EPIC_WORK,
+          ends,
+          { signal: Epic.LAYER_CHANGED, changes },
+          oneAtATime(shared),
+        ).pipe(Effect.map(did)),
+      60_000,
+    );
+  };
+
+  scenario("when it opens every ready task's pull request and parks", epicFake, "running", []);
+
+  scenario("when its layers ship", epicFake, "running", [], { ship: true });
+
+  scenario("when every task merges, and the run wakes and ends", epicFake, "done", [mergeAll]);
+
+  scenario(
+    "when a task's agent has questions",
+    () => {
+      const fake = epicFake();
+      fake.author.asks.push(worktreeOf(12));
+
+      return fake;
+    },
+    "running",
+    [],
+  );
+
+  // A failure after the pull request opened labels it too.
+  scenario(
+    "when a task's CI stays red, and it goes to a person",
+    () => {
+      const fake = epicFake();
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+
+      return fake;
+    },
+    "running",
+    [],
+  );
+
+  scenario(
+    "when the remote rejects a task's push",
+    () => {
+      const fake = epicFake();
+      fake.git.rejects = Option.some(
+        new PushRejected({ branch: "auto/issue-10", reason: "! [remote rejected]" }),
+      );
+
+      return fake;
+    },
+    "running",
+    [],
+  );
+
+  // The round that first reads #12 as waiting for answers is the round that
+  // parks, so only what that park carries to the next round says #12 was
+  // handed back.
+  scenario(
+    "when a task's agent has questions, the run parks on them, and a person hands it back",
+    () => {
+      const fake = twoAlone();
+      fake.author.asks.push(worktreeOf(12));
+
+      return fake;
+    },
+    "running",
+    [
+      (fake) => {
+        handBack(fake, 12);
+      },
+    ],
+    {},
+    (recipe) => {
+      expect(recipe.agentSteps).toContain("implement#task-12-2");
+    },
+  );
+
+  // #10's attempt ends with a person, who hands it back while #12 works, so
+  // no round ever reads #10 with the person: only how its attempt ended says
+  // it was handed back (#249).
+  scenario(
+    "when a person hands back a task whose attempt went to them before the next round reads it",
+    () => {
+      const fake = twoAlone();
+      fake.git.rejects = Option.some(
+        new PushRejected({ branch: "auto/issue-10", reason: "! [remote rejected]" }),
+      );
+      fake.author.meanwhile.set(worktreeOf(12), () => {
+        fake.git.rejects = Option.none();
+        handBack(fake, 10);
+      });
+
+      return fake;
+    },
+    "running",
+    [],
+    {},
+    (recipe) => {
+      expect(recipe.agentSteps).toContain("implement#task-10-2");
+    },
+  );
+
+  // #10, then #11 on it, its branch's head at `ten0000000`.
+  const twoStacked = () => {
+    const fake = epicOf([
+      [10, []],
+      [11, [10]],
+    ]);
+
+    fake.remote.heads.set(Claims.branchFor(10), "ten0000000");
+
+    return fake;
+  };
+
+  // A fix pushed on #10's branch: its head moves, and bringing #11 up to
+  // date with it makes a merge commit to push.
+  const fixBelow = (fake: Fake) => {
+    const branch = Claims.branchFor(10);
+    fake.remote.heads.set(branch, "fix1000000");
+
+    for (const pull of Option.toArray(Option.fromUndefinedOr(fake.branchPulls.get(branch)))) {
+      fake.branchPulls.set(branch, { ...pull, headSha: "fix1000000" });
+    }
+
+    fake.git.makes.add(`merge --no-edit origin/${branch}`);
+  };
+
+  // The first park reads #11 up to date with #10; a fix then lands on #10,
+  // and the next round carries it up, pushing #11, and reads the epic again.
+  scenario(
+    "when a fix pushed on a layer is carried up to the layer above",
+    twoStacked,
+    "running",
+    [fixBelow],
+    {},
+    (recipe) => {
+      expect(tookStep(recipe, "push-refresh-201-fix1000000")).toBe(true);
+    },
+  );
+
+  // The refresh's push is rejected, so #11 goes to a person, and the run
+  // parks; the person hands it back, and the refresh runs again as a new
+  // attempt. Only the stack the park kept says #11 went to a person.
+  scenario(
+    "when carrying a fix up goes to a person, who hands the layer back",
+    twoStacked,
+    "running",
+    [
+      (fake) => {
+        fixBelow(fake);
+        fake.git.rejects = Option.some(
+          new PushRejected({ branch: Claims.branchFor(11), reason: "! [remote rejected]" }),
+        );
+      },
+      (fake) => {
+        const branch = Claims.branchFor(11);
+        fake.git.rejects = Option.none();
+        fake.git.makes.add(`merge --no-edit origin/${Claims.branchFor(10)}`);
+
+        for (const pull of Option.toArray(Option.fromUndefinedOr(fake.branchPulls.get(branch)))) {
+          fake.setLabels(
+            pull.number,
+            fake.labelsOf(pull.number).filter((label) => label !== DEFAULT_LABELS.needsHuman),
+          );
+          fake.branchPulls.set(branch, { ...pull, headSha: "person1100" });
+        }
+      },
+    ],
+    {},
+    (recipe) => {
+      expect(tookStep(recipe, "needs-human#refresh-201-fix1000000")).toBe(true);
+      expect(tookStep(recipe, "push-refresh-201-fix1000000-2")).toBe(true);
+    },
+  );
+
+  // A round reads #11 stacked on #10 and starts #12 on #11; while #12 is
+  // implemented, #10 squash-merges, GitHub moves #11 onto main, and #11's
+  // review approves it. Only the stack the round that started #12 kept says
+  // #11 was on #10, so #11 is brought up to date with main, which pushes,
+  // and lands the round after; #12 is then moved onto main.
+  scenario(
+    "when the layer below a shipping layer merges while a task on that layer is implemented",
+    () => {
+      const fake = epicOf([
+        [10, []],
+        [11, [10]],
+        [12, [11]],
+      ]);
+
+      fake.remote.heads.set(Claims.branchFor(10), "ten0000000");
+      fake.author.meanwhile.set(worktreeOf(12), () => {
+        merged(fake, 10);
+
+        for (const below of Option.toArray(
+          Option.fromUndefinedOr(fake.branchPulls.get(Claims.branchFor(10))),
+        )) {
+          fake.closed.push({
+            number: below.number,
+            merged_at: "2026-10-22T00:00:00Z",
+            merge_commit_sha: "squash1000",
+            head: { sha: below.headSha },
+            base: { ref: "main" },
+          });
+        }
+
+        fake.remote.gone.add(Claims.branchFor(10));
+
+        for (const above of Option.toArray(
+          Option.fromUndefinedOr(fake.branchPulls.get(Claims.branchFor(11))),
+        )) {
+          fake.branchPulls.set(above.headRef, { ...above, baseRef: "main" });
+          fake.comment(reviewMarker.write({ sha: above.headSha, round: 1, verdict: "approve" }));
+        }
+
+        fake.git.makes.add("merge --no-edit origin/main");
+      });
+
+      return fake;
+    },
+    "running",
+    [],
+    { ship: true },
+    (recipe) => {
+      expect(tookStep(recipe, "push-refresh-201-base1234")).toBe(true);
+      expect(tookStep(recipe, "merge-pr-201")).toBe(true);
+      expect(tookStep(recipe, "retarget-")).toBe(true);
+      expect(recipe.pulls).toContainEqual(["auto/issue-11", "main", "merged"]);
+    },
+  );
+});
+
 describe("a document's sources find what its recipe's trigger does", () => {
   const found = (flow: Flow, setup: () => Fake) => flowTriggered(setup(), flow);
 
@@ -559,6 +979,14 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedImplement;
       expect(declared(composed)).toEqual(declared(implement));
       expect(yield* labelled(composed)).toEqual(yield* labelled(implement));
+    }),
+  );
+
+  effect("epic", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedEpic;
+      expect(declared(composed)).toEqual(declared(epic));
+      expect(yield* labelled(composed)).toEqual(yield* labelled(epic));
     }),
   );
 
