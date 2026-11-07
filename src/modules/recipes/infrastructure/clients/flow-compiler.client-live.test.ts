@@ -178,7 +178,9 @@ describe("FlowCompilerClientLive", () => {
 
         const formless = yield* compiling({ formless: "flow: x\n" }, "formless");
 
-        expect(formless.problems.length).toBe(1);
+        expect(formless.problems.map((each) => each.message)).toContain(
+          "must say subject. chernabog recipes blocks shows the format.",
+        );
       }),
     TIMEOUT,
   );
@@ -232,6 +234,10 @@ describe("finding a problem in the document", () => {
       expect(pathOfLine(source, 3, 19)).toBe("steps[1].in.issue");
       expect(pathOfLine(source, 4, 3)).toBe("steps[1]");
       expect(pathOfLine(source, 1, 1)).toBe("steps");
+
+      const trigger = '  // trigger\n  sources: [run({ "labels": ["x"] })],\n';
+
+      expect(pathOfLine(trigger, 2, 20)).toBe("trigger");
     }),
   );
 

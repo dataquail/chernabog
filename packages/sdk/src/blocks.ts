@@ -86,6 +86,26 @@ export const catalogue = {
 
   "issue.claim": defineBlock({
     name: "issue.claim",
+    fixed: ["adopt"],
+    about:
+      "Claims the issue, so only this run works on it, and settles its branch and base. With adopt, takes on an open pull request that already closes the issue instead.",
+    inputKinds: {
+      issue: "IssueNumber",
+      queued: "how the issue was queued, from the trigger",
+      adopt: "boolean: adopt a pull request that closes the issue",
+      base: "Option<BaseBranch>: the base to build on",
+      lane: "LaneId",
+    },
+    outputKinds: {
+      branch: "BranchName",
+      base: "Option<BaseBranch>",
+      adopted: "the adopted pull request, if any",
+    },
+    outcomeKinds: {
+      adopted:
+        "an object: with as: adopted, adopted.number (PullRequestNumber), adopted.url, adopted.draft",
+    },
+    opensOn: { adopted: ["hand-off"] },
     inputs: {
       issue: "required",
       queued: "optional",
@@ -123,6 +143,17 @@ export const catalogue = {
 
   "pr.awaitReady": defineBlock({
     name: "pr.awaitReady",
+    fixed: ["within"],
+    about:
+      "Waits, parked, for the author of an adopted draft to mark it ready, up to `within`; goes to a person if they don't. Doesn't wait for one that isn't a draft.",
+    inputKinds: {
+      issue: "IssueNumber",
+      adopted: "the adopted pull request",
+      within: 'how long, as "14 days"',
+    },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    before: ["ci.waitPreparing", "issue.handOffAdopted"],
     inputs: { issue: "required", adopted: "required", within: "required" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -152,6 +183,12 @@ export const catalogue = {
 
   "ci.waitPreparing": defineBlock({
     name: "ci.waitPreparing",
+    about:
+      "Waits for CI on a pull request with no worktree yet, making one only if CI needs a fix.",
+    inputKinds: { pr: "PullRequestNumber", branch: "BranchName", base: "Option<BaseBranch>" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    before: ["issue.handOffAdopted"],
     inputs: { pr: "required", branch: "required", base: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -179,6 +216,12 @@ export const catalogue = {
 
   "issue.handOffAdopted": defineBlock({
     name: "issue.handOffAdopted",
+    about:
+      "Hands an adopted pull request to review, marks it the persona's to answer reviews on, and tells the issue.",
+    inputKinds: { issue: "IssueNumber", adopted: "the adopted pull request", branch: "BranchName" },
+    outputKinds: "a summary of the hand-off, for `end`'s summary",
+    outcomeKinds: {},
+    closes: ["hand-off"],
     inputs: { issue: "required", adopted: "required", branch: "required" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -203,6 +246,10 @@ export const catalogue = {
 
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
+    about: "Makes a worktree on the branch.",
+    inputKinds: { branch: "BranchName", base: "Option<BaseBranch>", lane: "LaneId" },
+    outputKinds: "WorktreePath",
+    outcomeKinds: {},
     inputs: { branch: "required", base: "required", lane: "optional" },
     run: (input: {
       readonly branch: BranchName;
@@ -221,6 +268,21 @@ export const catalogue = {
 
   "agent.implement": defineBlock({
     name: "agent.implement",
+    about:
+      "Has the agent implement the issue in the worktree and commit. It finishes done, or with questions for a person.",
+    inputKinds: {
+      issue: "IssueNumber",
+      worktree: "WorktreePath",
+      base: "Option<BaseBranch>",
+      lane: "LaneId",
+    },
+    outputKinds: {
+      outcome: "what the agent said: status, summary, title, body, questions",
+      committed: "Committed: proof for a push",
+    },
+    outcomeKinds: { "needs-clarification": "what the agent said, with its questions" },
+    before: ["gate.local"],
+    opensOn: { "needs-clarification": ["ask-questions"] },
     inputs: { issue: "required", worktree: "required", base: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -243,6 +305,18 @@ export const catalogue = {
 
   "issue.askClarification": defineBlock({
     name: "issue.askClarification",
+    about:
+      "Posts the agent's questions as a comment on the issue, where its author sees them. Its output is the reason to end with. On a run's main path, end: needs-human and the run lets the claim go; in a lane, which goes on, follow it with issue.releaseClaim.",
+    inputKinds: {
+      issue: "IssueNumber",
+      outcome: "what the agent said",
+      queued: "how the issue was queued",
+      lane: "LaneId",
+    },
+    outputKinds: "the reason, for `end: needs-human`",
+    outcomeKinds: {},
+    opens: ["release-claim"],
+    closes: ["ask-questions"],
     inputs: { issue: "required", outcome: "required", queued: "optional", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -262,6 +336,11 @@ export const catalogue = {
 
   "gate.local": defineBlock({
     name: "gate.local",
+    about: "Runs the repo's local gate in the worktree, resuming the agent to fix a failure.",
+    inputKinds: { worktree: "WorktreePath", lane: "LaneId" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    before: ["branch.push", "pr.open", "stack.publish"],
     inputs: { worktree: "required", lane: "optional" },
     run: (input: { readonly worktree: WorktreePath; readonly lane?: LaneId }) =>
       Effect.gen(function* () {
@@ -277,6 +356,15 @@ export const catalogue = {
 
   "branch.push": defineBlock({
     name: "branch.push",
+    about: "Pushes the branch.",
+    inputKinds: {
+      worktree: "WorktreePath",
+      branch: "BranchName",
+      base: "Option<BaseBranch>",
+      committed: "Committed: from agent.implement",
+    },
+    outputKinds: { pushed: "Pushed: proof for pr.open" },
+    outcomeKinds: {},
     inputs: { worktree: "required", branch: "required", base: "required", committed: "required" },
     run: (input: {
       readonly worktree: WorktreePath;
@@ -301,6 +389,17 @@ export const catalogue = {
 
   "pr.open": defineBlock({
     name: "pr.open",
+    about: "Opens the pull request for the pushed branch.",
+    inputKinds: {
+      issue: "IssueNumber",
+      outcome: "what the agent said",
+      queued: "how the issue was queued",
+      base: "Option<BaseBranch>",
+      pushed: "Pushed: from branch.push",
+    },
+    outputKinds: { number: "PullRequestNumber", url: "its URL" },
+    outcomeKinds: {},
+    opens: ["hand-off"],
     inputs: {
       issue: "required",
       outcome: "required",
@@ -327,6 +426,18 @@ export const catalogue = {
 
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
+    about:
+      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds.",
+    inputKinds: {
+      pr: "PullRequestNumber",
+      worktree: "WorktreePath",
+      branch: "BranchName",
+      base: "Option<BaseBranch>",
+      lane: "LaneId",
+    },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    before: ["issue.handOff"],
     inputs: {
       pr: "required",
       worktree: "required",
@@ -366,6 +477,16 @@ export const catalogue = {
 
   "issue.handOff": defineBlock({
     name: "issue.handOff",
+    about: "Asks a reviewer from the pool for a review, and tells the issue.",
+    inputKinds: {
+      issue: "IssueNumber",
+      pr: "a pull request, from pr.open or stack.publish",
+      outcome: "what the agent said",
+      lane: "LaneId",
+    },
+    outputKinds: "a summary of the hand-off, for `end`'s summary",
+    outcomeKinds: {},
+    closes: ["hand-off"],
     inputs: { issue: "required", pr: "required", outcome: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -391,6 +512,21 @@ export const catalogue = {
 
   "review.round": defineBlock({
     name: "review.round",
+    fixed: ["round", "role"],
+    about: "Has a fresh agent session review the pull request and post a real GitHub review.",
+    inputKinds: {
+      pr: "PullRequestNumber",
+      round: "1 for a first review; it names the review's steps",
+      role: "any name, such as reviewer. Optional in config: flows.<flow>.agents.<role> picks the agent for it, and without that it's the flow's agent",
+    },
+    outputKinds: {
+      verdict: "approve or request-changes",
+      changesAsked: "a summary, for `end`'s summary",
+    },
+    outcomeKinds: {
+      approve: "an object: with as: verdict, verdict.approved is the Approved proof for pr.land",
+      changes: "nothing",
+    },
     inputs: { pr: "required", round: "required", role: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -430,6 +566,16 @@ export const catalogue = {
   // base is left to resolve-conflicts.
   "pr.land": defineBlock({
     name: "pr.land",
+    fixed: ["method"],
+    about:
+      "Merges an approved pull request only if it is labelled auto:ship (the repo's ship label), and when that's safe. Without the label it merges nothing: a person does. One that conflicts is left to resolve-conflicts.",
+    inputKinds: {
+      pr: "PullRequestNumber",
+      approved: "Approved: from review.round",
+      method: "squash, merge or rebase",
+    },
+    outputKinds: "a summary, for `end`'s summary",
+    outcomeKinds: {},
     inputs: { pr: "required", approved: "required", method: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -545,6 +691,35 @@ export const sources = {
 export { Approved, Committed, defineBlock, laneScopes, loopStates, Pushed, ToPerson };
 
 export type { Disposition, Failures } from "./block.ts";
+
+// What each source does and takes, for someone choosing one.
+export const sourceDescriptions = {
+  "epic.queued": {
+    about: "Open issues labelled auto:epic with an open task, and wakes a run parked on one.",
+    with: {},
+  },
+  "issues.queued": {
+    about:
+      "Open issues carrying each of the labels, oldest first but a post-merge follow-up before the rest.",
+    with: {
+      labels:
+        "a list of eligible and ship, which name the repo's labels (auto:eligible and auto:ship by default, set in config.yaml). The first is the normal queue; an issue queued by a later one carries that label to its pull request.",
+    },
+  },
+  "review.requested": {
+    about: "Pull requests that ask this persona for a review it hasn't given yet.",
+    with: {},
+  },
+  "review.waitingElsewhere": {
+    about: "Pull requests waiting on a reviewer no persona on this machine acts as, for status.",
+    with: {},
+  },
+} satisfies {
+  readonly [Name in SourceName]: {
+    readonly about: string;
+    readonly with: { readonly [input: string]: string };
+  };
+};
 
 export type SourceName = keyof typeof sources;
 

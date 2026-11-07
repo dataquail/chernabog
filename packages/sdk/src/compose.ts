@@ -13,11 +13,19 @@
 
 import { printJson } from "@chernabog/core";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-import { catalogue, laneScopes, loopStates, sources, subjects } from "./blocks.ts";
+import {
+  catalogue,
+  laneScopes,
+  loopStates,
+  sourceDescriptions,
+  sources,
+  subjects,
+} from "./blocks.ts";
 
 export type Problem = { readonly path: string; readonly message: string };
 
@@ -33,7 +41,7 @@ export type UseStep = {
   // Runs only when the named boolean output is true. Its output is then
   // optional, and `first` joins it with what stands in for it.
   readonly if?: string;
-  readonly in?: { readonly [input: string]: string };
+  readonly in?: { readonly [input: string]: Schema.Json };
   readonly with?: { readonly [input: string]: Schema.Json };
   readonly failure?: { readonly [tag: string]: Schema.Json };
   readonly on?: { readonly [outcome: string]: Branch };
@@ -101,7 +109,7 @@ const Step: Schema.Codec<Step> = Schema.Union([
     id: Schema.String,
     use: Schema.String,
     if: Schema.optionalKey(Schema.String),
-    in: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+    in: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     failure: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     on: Schema.optionalKey(
@@ -134,8 +142,115 @@ export const FlowDocument = Schema.Struct({
 
 export type FlowDocument = typeof FlowDocument.Type;
 
-// A document's shape: whatever a parser made of its text, or why it isn't one.
-export const read = Schema.decodeUnknownResult(FlowDocument);
+const decodeDocument = Schema.decodeUnknownResult(FlowDocument);
+
+type JsonObject = { readonly [key: string]: Schema.Json };
+
+const isObject = (value: Schema.Json): value is JsonObject =>
+  Predicate.isObject(value) && !Array.isArray(value);
+
+const FORMAT_HINT = "chernabog recipes blocks shows the format.";
+
+const STEP_KINDS = "use (a block, with an id), end, next, first, repeat or forEach";
+
+type StepsAt = (value: Option.Option<Schema.Json>, path: string) => ReadonlyArray<Problem>;
+
+const fieldOf = (object: JsonObject, key: string) => Record.get(object, key);
+
+// The steps nested in a step: its lanes', its rounds' and its branches'.
+const nestedProblems = (step: JsonObject, at: string, stepsAt: StepsAt): ReadonlyArray<Problem> => {
+  const lanes = Option.match(fieldOf(step, "forEach"), {
+    onNone: () => [],
+    onSome: () => stepsAt(fieldOf(step, "steps"), `${at}.steps`),
+  });
+
+  const rounds = Option.match(Option.filter(fieldOf(step, "repeat"), isObject), {
+    onNone: () => [],
+    onSome: (repeat) => stepsAt(fieldOf(repeat, "steps"), `${at}.repeat.steps`),
+  });
+
+  const branches = Option.match(Option.filter(fieldOf(step, "on"), isObject), {
+    onNone: () => [],
+    onSome: (on) =>
+      Object.entries(on).flatMap(([outcome, branch]): ReadonlyArray<Problem> => {
+        if (!isObject(branch)) {
+          return [{ path: `${at}.on.${outcome}`, message: "must have steps, and may have as" }];
+        }
+
+        return stepsAt(fieldOf(branch, "steps"), `${at}.on.${outcome}.steps`);
+      }),
+  });
+
+  return [...lanes, ...rounds, ...branches];
+};
+
+const stepProblems = (step: JsonObject, at: string, stepsAt: StepsAt): ReadonlyArray<Problem> => {
+  const kinds = ["use", "end", "next", "first", "repeat", "forEach"].filter((key) => key in step);
+
+  if (kinds.length === 0) {
+    return [{ path: at, message: `must be a step: ${STEP_KINDS}` }];
+  }
+
+  if (!("end" in step || "next" in step) && !Predicate.isString(step.id)) {
+    return [{ path: at, message: `a ${kinds[0]} step needs an id, which later steps name it by` }];
+  }
+
+  return nestedProblems(step, at, stepsAt);
+};
+
+const stepsAt: StepsAt = (value, path) => {
+  const steps = Option.filter(value, (found) => Array.isArray(found));
+
+  if (Option.isNone(steps) || !Array.isArray(steps.value)) {
+    return [{ path, message: "must be a list of steps" }];
+  }
+
+  return steps.value.flatMap((step: Schema.Json, index): ReadonlyArray<Problem> => {
+    const at = `${path}[${index}]`;
+
+    if (!isObject(step)) {
+      return [{ path: at, message: `must be a step: ${STEP_KINDS}` }];
+    }
+
+    return stepProblems(step, at, stepsAt);
+  });
+};
+
+const documentProblems = (value: Schema.Json): ReadonlyArray<Problem> => {
+  if (!isObject(value)) {
+    return [{ path: "", message: `must be a flow document. ${FORMAT_HINT}` }];
+  }
+
+  const missing = ["flow", "subject", "trigger", "steps"].flatMap((key): ReadonlyArray<Problem> => {
+    if (key in value) {
+      return [];
+    }
+
+    return [{ path: "", message: `must say ${key}. ${FORMAT_HINT}` }];
+  });
+
+  return [
+    ...missing,
+    ...Option.match(fieldOf(value, "steps"), {
+      onNone: () => [],
+      onSome: (steps) => stepsAt(Option.some(steps), "steps"),
+    }),
+  ];
+};
+
+// A document's form, or what is wrong with it and where: whatever a parser made
+// of its text.
+export const read = (value: Schema.Json): Result.Result<FlowDocument, ReadonlyArray<Problem>> => {
+  const problems = documentProblems(value);
+
+  if (problems.length > 0) {
+    return Result.fail(problems);
+  }
+
+  return Result.mapError(decodeDocument(value), (error) => [
+    { path: "", message: `${error.message}. ${FORMAT_HINT}` },
+  ]);
+};
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -265,7 +380,11 @@ const checkReference = (
   at: string,
 ) => {
   if (!REFERENCE.test(reference)) {
-    say(checking, at, "must name an earlier step's output, as step.field");
+    say(
+      checking,
+      at,
+      "must name an earlier step by its id, or a field of its output as step.field",
+    );
 
     return;
   }
@@ -306,17 +425,39 @@ const checkInputs = (
     }
   }
 
+  const fixed: ReadonlyArray<string> = block.fixed;
+
   for (const [input, reference] of Object.entries(wired)) {
     if (!(input in block.inputs)) {
       say(checking, `${at}.in.${input}`, `${step.use} takes ${takes}`);
     }
 
-    checkReference(checking, names, reference, `${at}.in.${input}`);
+    if (fixed.includes(input)) {
+      say(checking, `${at}.in.${input}`, `${input} is a fixed value: put it under with, not in`);
+
+      continue;
+    }
+
+    if (Predicate.isString(reference)) {
+      checkReference(checking, names, reference, `${at}.in.${input}`);
+    } else {
+      say(
+        checking,
+        `${at}.in.${input}`,
+        "in names an earlier step's output; a fixed value goes under with",
+      );
+    }
   }
 
   for (const input of Object.keys(given)) {
     if (!(input in block.inputs)) {
       say(checking, `${at}.with.${input}`, `${step.use} takes ${takes}`);
+    } else if (!fixed.includes(input)) {
+      say(
+        checking,
+        `${at}.with.${input}`,
+        `${input} comes from an earlier step: put it under in, as step or step.field`,
+      );
     }
   }
 };
@@ -662,6 +803,155 @@ const checkFailureContext = (
   }
 };
 
+// Goes down every way through the steps, and says where a block's order is
+// broken, or a way that finishes well leaves something it should have done.
+type Ordering = {
+  readonly say: (path: string, message: string) => void;
+};
+
+type Placed = { readonly step: Step; readonly at: string };
+
+type Way = {
+  readonly seen: ReadonlyArray<string>;
+  // What is left to do, and the block that left it.
+  readonly open: ReadonlyMap<string, string>;
+  // Where the steps walked end, for a way that runs off them; none in a round,
+  // which runs on into the next.
+  readonly endsAt: Option.Option<string>;
+};
+
+const placed = (steps: ReadonlyArray<Step>, path: string): ReadonlyArray<Placed> =>
+  steps.map((step, index) => ({ step, at: `${path}[${index}]` }));
+
+const sayUndone = (ordering: Ordering, way: Way, at: string) => {
+  for (const [what, by] of way.open) {
+    ordering.say(at, `a way through ${by} finishes here with ${what} not done`);
+  }
+};
+
+const entering = (ordering: Ordering, step: UseStep, block: Block, at: string, way: Way): Way => {
+  const before: ReadonlyArray<string> = block.before;
+  const needs: ReadonlyArray<string> = block.needs;
+
+  for (const later of before.filter((each) => way.seen.includes(each))) {
+    ordering.say(at, `${step.use} must run before ${later}, and this runs after it`);
+  }
+
+  for (const earlier of needs.filter((each) => !way.seen.includes(each))) {
+    ordering.say(at, `${step.use} needs ${earlier} to have run first`);
+  }
+
+  const closes: ReadonlyArray<string> = block.closes;
+  const opens: ReadonlyArray<string> = block.opens;
+
+  return {
+    ...way,
+    seen: [...way.seen, step.use],
+    open: new Map([
+      ...[...way.open].filter(([what]) => !closes.includes(what)),
+      ...opens.map((what) => [what, step.use] as const),
+    ]),
+  };
+};
+
+const walkOrder = (ordering: Ordering, items: ReadonlyArray<Placed>, way: Way): void => {
+  if (items.length === 0) {
+    for (const at of Option.toArray(way.endsAt)) {
+      sayUndone(ordering, way, at);
+    }
+
+    return;
+  }
+
+  const [{ at, step }, ...rest] = items;
+
+  if (isEnd(step)) {
+    if (step.end === "done") {
+      sayUndone(ordering, way, at);
+    }
+
+    return;
+  }
+
+  if (isNext(step)) {
+    return;
+  }
+
+  if (isRepeat(step)) {
+    walkOrder(ordering, placed(step.repeat.steps, `${at}.repeat.steps`), {
+      ...way,
+      endsAt: Option.none(),
+    });
+
+    return;
+  }
+
+  if (isForEach(step)) {
+    // A lane ends for itself, with what it left to do its own.
+    walkOrder(ordering, placed(step.steps, `${at}.steps`), {
+      seen: way.seen,
+      open: new Map(),
+      endsAt: Option.some(`${at}.steps`),
+    });
+  }
+
+  if (!isUse(step)) {
+    walkOrder(ordering, rest, way);
+
+    return;
+  }
+
+  const found = Record.get(blocksByName, step.use);
+
+  if (Option.isNone(found)) {
+    walkOrder(ordering, rest, way);
+
+    return;
+  }
+
+  const block = found.value;
+  const entered = entering(ordering, step, block, at, way);
+
+  for (const [outcome, branch] of branchesOf(step)) {
+    const opened: ReadonlyArray<string> = Record.get(block.opensOn, outcome).pipe(
+      Option.getOrElse((): ReadonlyArray<string> => []),
+    );
+
+    walkOrder(ordering, [...placed(branch.steps, `${at}.on.${outcome}.steps`), ...rest], {
+      ...entered,
+      open: new Map([...entered.open, ...opened.map((what) => [what, step.use] as const)]),
+    });
+  }
+
+  const everyOutcome = Object.keys(block.outcomes).every((key) => key in (step.on ?? {}));
+
+  if (!(block.exhaustive && everyOutcome)) {
+    walkOrder(ordering, rest, entered);
+  }
+
+  // A step that may not run leaves the way as it was.
+  if (Option.isSome(Option.fromUndefinedOr(step.if))) {
+    walkOrder(ordering, rest, way);
+  }
+};
+
+const checkOrder = (checking: Checking, document: FlowDocument) => {
+  const said = new Set<string>();
+
+  walkOrder(
+    {
+      say: (path, message) => {
+        if (!said.has(`${path}:${message}`)) {
+          said.add(`${path}:${message}`);
+          say(checking, path, message);
+        }
+      },
+    },
+    placed(document.steps, "steps"),
+    { seen: [], open: new Map(), endsAt: Option.some("steps") },
+  );
+};
+
 const checkTrigger = (checking: Checking, document: FlowDocument) => {
   const names = Object.keys(sources);
 
@@ -696,9 +986,99 @@ export const check = (document: FlowDocument): ReadonlyArray<Problem> => {
     inLane: false,
   });
   checkFailureContext(checking, document, subject.value.failureContext);
+  checkOrder(checking, document);
 
   return checking.problems;
 };
+
+// How a document is written, for someone with nothing else to go on.
+const FORMAT = `A flow document is YAML at .chernabog/documents/<flow>.yaml. chernabog recipes compile <flow> checks it and writes its flow file.
+
+flow: quick-fix                  # the file's name
+subject: issue                   # one of the subjects below: what a run works on
+gate: usage                      # optional: hold runs while the agent's usage is low
+concurrency: 1                   # optional
+trigger:                         # the sources below: where its work comes from
+  - use: issues.queued
+    with: { labels: [eligible] }
+failureContext:                  # optional, when the subject keeps one: what a failure can tell a person
+  pr: [opened.number]            # the outputs that set it
+steps:
+  - id: claim                    # your name for the step; later steps name it
+    use: issue.claim             # a block below
+    in: { issue: trigger.issue, queued: trigger.queued }   # inputs wired to earlier outputs
+    with: { adopt: false }       # inputs that are fixed values; the listing says which
+  - id: worktree
+    use: worktree.prepare
+    in: { branch: claim.branch, base: claim.base }
+  - id: agent
+    use: agent.implement
+    in: { issue: trigger.issue, worktree: worktree, base: claim.base }
+    on:                          # outcomes the block lists; "must route" ones are required
+      needs-clarification:
+        as: questions            # optional: names what the outcome binds
+        steps:
+          - id: asked
+            use: issue.askClarification
+            in: { issue: trigger.issue, outcome: questions, queued: trigger.queued }
+          - end: needs-human     # stops, waiting on a person
+            reason: asked
+  - end: done                    # optional at the very end
+    summary: agent.outcome.summary
+
+A reference under in, summary or reason is a step's id, for its whole output, or step.field for one field of it, or trigger.<field>. A step's output is available to the steps after it, and an outcome's steps can use what the steps before them gave. After a branch's steps, a run goes on to the next step unless they end.
+
+A block's failures are handled as it lists them: person tells a person and stops, told stops because a person already knows, skip ends with nothing to do, fail ends failed. Add failure: { <error>: <one of those> } to a step only to change one.
+
+A compiled flow runs once the flow file is on the default branch and a persona's flows in machine config list it.
+
+Add if: <step.field>, a boolean output, to run a step only sometimes. Its output is then optional, and { id: x, first: [maybeRan, standIn] } gives the first that ran.
+
+{ id: rounds, repeat: { state: { <name>: <a loop state> }, steps: [...] } } loops: its steps have round and state.<name>, and { next: { <name>: <reference> } } starts the next round with that state changed. Some way must end the loop, and every way round must wait or change something.
+
+{ id: x, forEach: <list>, as: item, scope: <a lane scope>, atOnce: <number output>, steps: [...] } runs its steps once per item, beside each other; blocks there wire lane.`;
+
+// Everything a document can use, for an agent or a person composing one.
+export const describe = (): Schema.Json => ({
+  format: FORMAT,
+  subjects: Object.entries(subjects).map(([name, subject]) => ({
+    name,
+    trigger: [...subject.fields],
+    failureContext: [...subject.failureContext],
+  })),
+  sources: Object.entries(sourceDescriptions).map(([name, source]) => ({
+    name,
+    about: source.about,
+    with: source.with,
+  })),
+  loopStates: Object.keys(loopStates),
+  laneScopes: Object.keys(laneScopes),
+  blocks: Object.values(blocksByName).map((block) => ({
+    name: block.name,
+    about: block.about,
+    inputs: Object.entries(block.inputs).map(([name, need]) => ({
+      name,
+      required: need === "required",
+      under: Option.getOrElse(
+        Option.liftPredicate("with", () => block.fixed.includes(name)),
+        () => "in",
+      ),
+      kind: block.inputKinds[name] ?? "",
+    })),
+    gives: block.outputKinds,
+    outcomes: Object.keys(block.outcomes).map((name) => ({
+      name,
+      mustRoute: block.mustRoute.some((routed) => routed === name),
+      binds: block.outcomeKinds[name] ?? "",
+    })),
+    failures: block.failures,
+    before: [...block.before],
+    needs: [...block.needs],
+    opens: [...block.opens, ...Object.values(block.opensOn).flat()],
+    closes: [...block.closes],
+    waits: block.waits,
+  })),
+});
 
 const emitObject = (entries: ReadonlyArray<readonly [string, string]>) =>
   `{ ${entries.map(([key, code]) => `${printJson(key)}: ${code}`).join(", ")} }`;
@@ -768,7 +1148,14 @@ const emitUse = (
   bodyOf: (outcome: string, branch: Branch) => ReadonlyArray<string>,
 ) => {
   const input = emitObject([
-    ...Object.entries(step.in ?? {}),
+    ...Object.entries(step.in ?? {}).flatMap(([key, reference]) =>
+      Option.toArray(
+        Option.map(
+          Option.liftPredicate(reference, Predicate.isString),
+          (code) => [key, code] as const,
+        ),
+      ),
+    ),
     ...Object.entries(step.with ?? {}).map(([key, value]) => [key, printJson(value)] as const),
   ]);
 
@@ -913,6 +1300,7 @@ const emit = (document: FlowDocument, sdk: string) => {
     ...Option.toArray(Option.fromUndefinedOr(document.concurrency)).map(
       (concurrency) => `  concurrency: ${concurrency},`,
     ),
+    "  // trigger",
     `  sources: [${document.trigger.map(emitSource).join(", ")}],`,
     `  blocks: ${printJson(blocks)},`,
     "  workflow: (item) =>",

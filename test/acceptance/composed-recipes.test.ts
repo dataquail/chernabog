@@ -79,6 +79,54 @@ describe("chernabog recipes compile", () => {
   });
 });
 
+describe("chernabog recipes blocks", () => {
+  let sandbox: Sandbox;
+
+  beforeAll(async () => {
+    sandbox = openSandbox();
+    await sandbox.installCheckout();
+  });
+
+  afterAll(async () => {
+    await sandbox.github.stop();
+  });
+
+  test("lists what a document can use, by the SDK the repo pins", async () => {
+    const { code, output } = await sandbox.runCli(["recipes", "blocks"]);
+
+    expect(code).toBe(0);
+    expect(output).toContain("A flow document is YAML");
+    expect(output).toContain("Blocks:");
+    expect(output).toContain("agent.implement: Has the agent implement");
+    expect(output).toContain("on needs-clarification (must route)");
+    expect(output).toContain("runs before: branch.push");
+    expect(output).toContain("issues.queued: Open issues");
+  });
+
+  test("describes the blocks and sources named, and fails on one there isn't", async () => {
+    const named = await sandbox.runCli(["recipes", "blocks", "gate.local", "issues.queued"]);
+
+    expect(named.code).toBe(0);
+    expect(named.output).toContain("gate.local: Runs the repo's local gate");
+    expect(named.output).toContain("if it fails: ");
+    expect(named.output).toContain("with labels: a list of eligible and ship");
+    expect(named.output).not.toContain("agent.implement");
+
+    const unknown = await sandbox.runCli(["recipes", "blocks", "gate.lint"]);
+
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.output).toContain("no block or source named gate.lint");
+  });
+
+  test("--json gives an agent the catalogue to read", async () => {
+    const { code, output } = await sandbox.runCli(["recipes", "blocks", "--json"]);
+
+    expect(code).toBe(0);
+    expect(output).toContain('"name":"branch.push"');
+    expect(output).toContain('"gives":{"pushed":"Pushed: proof for pr.open"}');
+  });
+});
+
 describe("the recipes' own suites", () => {
   test("pass on the flows their documents compile to", async () => {
     const child = Bun.spawn([process.execPath, "run", "test:composed"], {

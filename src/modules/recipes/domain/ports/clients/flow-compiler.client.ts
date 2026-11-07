@@ -30,6 +30,8 @@ export type CompiledDocument = {
 // The flow documents in a checkout's .chernabog/documents/, compiled by the
 // @chernabog/sdk the repo pins, which is the one its flows run with.
 export type FlowCompilerClientService = {
+  // Everything a document can use, as the repo's SDK says it.
+  readonly catalogue: (root: string) => Effect.Effect<Schema.Json, RecipeFilesFailed>;
   // Each document's flow name, in name order.
   readonly documents: (root: string) => Effect.Effect<ReadonlyArray<string>, RecipeFilesFailed>;
   readonly compile: (

@@ -84,7 +84,7 @@ export const positionOf = (text: string, path: string) => {
 
 const DIAGNOSTIC = /^flow\.ts\((\d+),(\d+)\): error TS\d+: (.*)$/;
 
-const STEP_COMMENT = /^\s*\/\/ (steps\S*)$/;
+const STEP_COMMENT = /^\s*\/\/ ((?:steps|trigger)\S*)$/;
 
 // The document path a line of the generated flow came from: the step its
 // nearest comment above names, and, at a wire's own key, that wire.
@@ -105,7 +105,13 @@ export const pathOfLine = (source: string, line: number, column: number) => {
     onSome: (found) =>
       Option.match(wire, {
         onNone: () => found,
-        onSome: (key) => `${found}.in.${key}`,
+        onSome: (key) => {
+          if (found === "trigger") {
+            return found;
+          }
+
+          return `${found}.in.${key}`;
+        },
       }),
   });
 };
@@ -208,7 +214,7 @@ export const FlowCompilerClientLive = Layer.effect(
         const read = compose.read(contents.value);
 
         if (Result.isFailure(read)) {
-          return onlyProblems([problemAt("", read.failure.message)]);
+          return onlyProblems(read.failure.map((each) => problemAt(each.path, each.message)));
         }
 
         const generated = compose.generate(read.success);
@@ -239,6 +245,12 @@ export const FlowCompilerClientLive = Layer.effect(
       }).pipe(Effect.mapError(failed));
 
     return FlowCompilerClient.of({
+      catalogue: (root) =>
+        loadRepoSdk(`${root}/.chernabog`).pipe(
+          Effect.map((compose) => compose.describe()),
+          Effect.mapError(failed),
+        ),
+
       documents: (root) =>
         Effect.gen(function* () {
           if (!(yield* fs.exists(documentsOf(root)))) {

@@ -98,10 +98,13 @@ const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: st
 
 // What compiling a flow document takes of the repo's SDK.
 export type DocumentCompiler = {
-  readonly read: (value: Core.Json) => Result.Result<Core.Json, { readonly message: string }>;
+  readonly read: (
+    value: Core.Json,
+  ) => Result.Result<Core.Json, ReadonlyArray<{ readonly path: string; readonly message: string }>>;
   readonly generate: (
     document: Core.Json,
   ) => Result.Result<string, ReadonlyArray<{ readonly path: string; readonly message: string }>>;
+  readonly describe: () => Core.Json;
 };
 
 const CompilingSdk = Schema.Struct({
@@ -109,8 +112,10 @@ const CompilingSdk = Schema.Struct({
     (compose): compose is DocumentCompiler =>
       Predicate.hasProperty(compose, "read") &&
       Predicate.hasProperty(compose, "generate") &&
+      Predicate.hasProperty(compose, "describe") &&
       Predicate.isFunction(compose.read) &&
-      Predicate.isFunction(compose.generate),
+      Predicate.isFunction(compose.generate) &&
+      Predicate.isFunction(compose.describe),
     { title: "Compose" },
   ),
 });
