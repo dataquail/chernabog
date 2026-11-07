@@ -207,6 +207,10 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // Whether every run comes to one of the outcomes, so a document whose
   // branches all end has nothing after the block.
   readonly exhaustive?: boolean;
+  // The groups of step names its run uses that another block's also does, or
+  // its own name when none are shared. A second use of a step name replays the
+  // first's result instead of doing the work, so no path takes a group twice.
+  readonly stepNames?: ReadonlyArray<string>;
   readonly contributes: Contribution;
 };
 
@@ -215,6 +219,12 @@ export type Source = {
   readonly trigger: TriggeredFlow["trigger"];
   readonly contributes: Contribution;
 };
+
+// A source, and the subject of the work items it finds.
+export const defineSource = <Subject extends string, Input extends ReadonlyArray<unknown>>(
+  subject: Subject,
+  find: (...input: Input) => Source,
+) => ({ subject, find });
 
 export const defineBlock = <
   Input,
@@ -237,6 +247,7 @@ export const defineBlock = <
     exhaustive: spec.exhaustive === true,
     waits: spec.waits === true,
     progressOn: spec.progressOn ?? [],
+    stepNames: spec.stepNames ?? [spec.name],
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);

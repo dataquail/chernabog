@@ -34,6 +34,7 @@ import {
   type Contribution,
   type Days,
   defineBlock,
+  defineSource,
   type FailureContext,
   inLane,
   IssueNumber,
@@ -79,6 +80,11 @@ const conflicts = (pullRequest: number) =>
     }),
     Schema.Boolean,
   );
+
+// Step names more than one block uses.
+const CI_STEPS = "ci";
+const HAND_OFF_STEPS = "hand-off";
+const WORKTREE_STEPS = "prepare-worktree";
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = {
@@ -152,6 +158,7 @@ export const catalogue = {
 
   "ci.waitPreparing": defineBlock({
     name: "ci.waitPreparing",
+    stepNames: [CI_STEPS, WORKTREE_STEPS],
     inputs: { pr: "required", branch: "required", base: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -179,6 +186,7 @@ export const catalogue = {
 
   "issue.handOffAdopted": defineBlock({
     name: "issue.handOffAdopted",
+    stepNames: [HAND_OFF_STEPS],
     inputs: { issue: "required", adopted: "required", branch: "required" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -203,6 +211,7 @@ export const catalogue = {
 
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
+    stepNames: [WORKTREE_STEPS],
     inputs: { branch: "required", base: "required", lane: "optional" },
     run: (input: {
       readonly branch: BranchName;
@@ -327,6 +336,7 @@ export const catalogue = {
 
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
+    stepNames: [CI_STEPS],
     inputs: {
       pr: "required",
       worktree: "required",
@@ -366,6 +376,7 @@ export const catalogue = {
 
   "issue.handOff": defineBlock({
     name: "issue.handOff",
+    stepNames: [HAND_OFF_STEPS],
     inputs: { issue: "required", pr: "required", outcome: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -484,41 +495,44 @@ export const sources = {
 
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
-  // One carrying several comes under the first; any but the first queues
+  // One carrying several comes under the first. Any label but eligible queues
   // its issue by that label, which its pull request carries too.
-  "issues.queued": (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }): Source => ({
-    trigger: Effect.gen(function* () {
-      const github = yield* GitHub;
-      const names = yield* Settings.labels;
-      const found = new Set<number>();
-      const items: Array<WorkItem> = [];
+  "issues.queued": defineSource(
+    "issue",
+    (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }) => ({
+      trigger: Effect.gen(function* () {
+        const github = yield* GitHub;
+        const names = yield* Settings.labels;
+        const found = new Set<number>();
+        const items: Array<WorkItem> = [];
 
-      for (const [index, key] of input.labels.entries()) {
-        const issues = (yield* github.queuedIssuesLabelled(names[key])).filter(
-          (issue) => !found.has(issue.number),
-        );
+        for (const key of input.labels) {
+          const issues = (yield* github.queuedIssuesLabelled(names[key])).filter(
+            (issue) => !found.has(issue.number),
+          );
 
-        for (const issue of issues) {
-          found.add(issue.number);
+          for (const issue of issues) {
+            found.add(issue.number);
+          }
+
+          const queuedAs = Option.liftPredicate(names[key], () => key !== "eligible");
+
+          for (const item of yield* Implement.queued(Implement.followUpsFirst(issues), queuedAs)) {
+            items.push(item);
+          }
         }
 
-        const queuedAs = Option.liftPredicate(names[key], () => index > 0);
-
-        for (const item of yield* Implement.queued(Implement.followUpsFirst(issues), queuedAs)) {
-          items.push(item);
-        }
-      }
-
-      return items;
-    }).pipe(reportAs("trigger")),
-    contributes: {
-      settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
-    },
-  }),
+        return items;
+      }).pipe(reportAs("trigger")),
+      contributes: {
+        settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
+      },
+    }),
+  ),
 
   // Pull requests that ask this persona for a review it hasn't given yet,
   // routed by their assignees and reviewers.
-  "review.requested": (): Source => ({
+  "review.requested": defineSource("pull-request", () => ({
     trigger: Effect.gen(function* () {
       const found = yield* Review.reviewRequests;
 
@@ -532,15 +546,15 @@ export const sources = {
       doctor: [Review.reviewerCheck],
       ownWork: true,
     },
-  }),
+  })),
 
   // Those waiting on a reviewer no persona on this machine acts as, which
   // status lists.
-  "review.waitingElsewhere": (): Source => ({
+  "review.waitingElsewhere": defineSource("pull-request", () => ({
     trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
     contributes: {},
-  }),
-};
+  })),
+} satisfies { readonly [name: string]: { readonly subject: SubjectName } };
 
 export { Approved, Committed, defineBlock, laneScopes, loopStates, Pushed, ToPerson };
 

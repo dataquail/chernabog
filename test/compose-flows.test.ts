@@ -14,6 +14,7 @@ import {
   labelsOf,
   type LinkedIssue,
   Plan,
+  PullRequest,
   PushRejected,
   Settings,
   type WorkItem,
@@ -78,6 +79,11 @@ const everyLabel = (fake: Fake) =>
     .toSorted((left, right) => left - right)
     .map((number) => [number, fake.labelsOf(number)] as const);
 
+const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
+
+// A comment's step is named by a hash of its text, which can say the run's id.
+const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
+
 // What a parked run is waiting for: a change to make, and the signal that
 // tells the run, which the flow's own trigger must find.
 type Wake = {
@@ -87,17 +93,25 @@ type Wake = {
   readonly stops?: boolean;
 };
 
+type FlowInput = Settings.FlowSettings["Service"]["input"];
+
+// The settings of a repo's config.yaml, for every flow.
+const inRepo = (shared: FlowInput) => ({
+  ...repo,
+  personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared })),
+});
+
 const observe = (
   flow: Flow,
   name: string,
   setup: () => Fake,
   work: WorkItem,
   wake?: Wake,
-  on: typeof repo = repo,
+  settings: FlowInput = {},
 ) =>
   Effect.gen(function* () {
     const fake = setup();
-    const handle = flowHandle(on, name, flow);
+    const handle = flowHandle(inRepo(settings), name, flow);
     let steps: ReadonlyArray<string> = [];
 
     const finished: EngineRun = yield* runUntil(handle, fake, work, (run) =>
@@ -106,7 +120,7 @@ const observe = (
         const readSteps = readRunHistoryHandler({ runId: run.id }).pipe(
           Effect.orDie,
           Effect.map((history) => {
-            steps = [...new Set(history.steps.map((step) => step.step))];
+            steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
           }),
         );
 
@@ -127,7 +141,7 @@ const observe = (
             }
 
             change(fake);
-            const found = yield* flowTriggered(fake, flow).pipe(Effect.orDie);
+            const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
             yield* deliverSignals(
               handle,
               IMPLICIT,
@@ -207,12 +221,12 @@ const same = <E, R>(
   work: WorkItem,
   ends: EngineRun["status"],
   wake?: Wake,
-  on: typeof repo = repo,
+  settings?: FlowInput,
 ) =>
   Effect.gen(function* () {
     const composed = yield* loading;
-    const fromRecipe = yield* observe(recipe, name, setup, work, wake, on);
-    const fromDocument = yield* observe(composed, name, setup, work, wake, on);
+    const fromRecipe = yield* observe(recipe, name, setup, work, wake, settings);
+    const fromDocument = yield* observe(composed, name, setup, work, wake, settings);
 
     expect(fromRecipe.status).toBe(ends);
     expect(fromDocument).toEqual(fromRecipe);
@@ -383,8 +397,18 @@ describe("the review document runs as the recipe does", () => {
     return fake;
   };
 
-  const scenario = (title: string, setup: () => Fake, ends: EngineRun["status"]) => {
-    effect(title, () => same(review, composedReview, "review", setup, WORK, ends), 60_000);
+  const scenario = (
+    title: string,
+    setup: () => Fake,
+    ends: EngineRun["status"],
+    wake?: Wake,
+    settings?: FlowInput,
+  ) => {
+    effect(
+      title,
+      () => same(review, composedReview, "review", setup, WORK, ends, wake, settings),
+      60_000,
+    );
   };
 
   scenario("when it approves, and a person merges", () => asked("approve"), "done");
@@ -431,6 +455,25 @@ describe("the review document runs as the recipe does", () => {
     "done",
   );
 
+  // The one wake pr.land contributes: it must find the run, or the run stays parked.
+  scenario(
+    "when the merge holds on a red base, and the base turns green",
+    () => {
+      const fake = asked("approve", [DEFAULT_LABELS.ship]);
+      fake.merge.baseCi = Option.some({ state: "red", failedChecks: ["test"] });
+
+      return fake;
+    },
+    "done",
+    {
+      signal: PullRequest.BASE_GREEN,
+      change: (fake) => {
+        fake.merge.baseCi = Option.some({ state: "green" });
+      },
+    },
+    { holdMergesOnBrokenBase: true },
+  );
+
   scenario(
     "when the pull request closes before it can land",
     () => {
@@ -448,13 +491,7 @@ describe("the epic document runs as the recipe does", () => {
   const EPIC_WORK = item(`issue-${EPIC}`, { issue: EPIC });
 
   // One task at a time, so both runs make their pull requests in one order.
-  const oneAtATime = (shared: Record<string, boolean | number>) => ({
-    ...repo,
-    personas: Arr.map(repo.personas, (persona) => ({
-      ...persona,
-      shared: { atOnce: 1, ...shared },
-    })),
-  });
+  const oneAtATime = (shared: Record<string, boolean | number>) => ({ atOnce: 1, ...shared });
 
   const madeIssue = (number: number, title: string): LinkedIssue => ({
     number,
@@ -571,6 +608,91 @@ describe("the epic document runs as the recipe does", () => {
     "running",
     STOP_PARKED,
   );
+});
+
+describe("a document's sources find what its recipe's trigger does", () => {
+  const found = (flow: Flow, setup: () => Fake) => flowTriggered(setup(), flow);
+
+  const both = () => {
+    const fake = queued();
+    fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible, DEFAULT_LABELS.ship]);
+
+    return fake;
+  };
+
+  const requested = () => {
+    const fake = makeFake("approve");
+    fake.people.me = "data-quail";
+    fake.people.requested = ["data-quail"];
+
+    return fake;
+  };
+
+  for (const [title, setup] of [
+    ["an eligible issue", () => queued()],
+    ["an issue on the automated path", () => queued(DEFAULT_LABELS.ship)],
+    ["an issue with both labels", both],
+  ] as const) {
+    effect(`implement, on ${title}`, () =>
+      Effect.gen(function* () {
+        const fromRecipe = yield* found(implement, setup);
+        expect(fromRecipe).toHaveLength(1);
+        expect(yield* found(yield* composedImplement, setup)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
+  effect("review, on a pull request that asks for one", () =>
+    Effect.gen(function* () {
+      const fromRecipe = yield* found(review, requested);
+      expect(fromRecipe).toHaveLength(1);
+      expect(yield* found(yield* composedReview, requested)).toEqual(fromRecipe);
+    }),
+  );
+
+  // Which label queues an issue doesn't depend on where a document lists it.
+  describe("whatever order a document lists the labels in", () => {
+    const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
+      loadFlow({
+        ...documentOf(IMPLEMENT_DOCUMENT),
+        trigger: [{ use: "issues.queued", with: { labels } }],
+      });
+
+    const dataOf = (flow: Flow, setup: () => Fake) =>
+      found(flow, setup).pipe(Effect.map((items) => items.map((each) => each.data)));
+
+    const SHIPPING = { issue: ISSUE, label: DEFAULT_LABELS.ship };
+
+    effect("an issue on the automated path is queued by its label", () =>
+      Effect.gen(function* () {
+        const shipping = () => queued(DEFAULT_LABELS.ship);
+        expect(yield* dataOf(yield* listing(["ship"]), shipping)).toEqual([SHIPPING]);
+        expect(yield* dataOf(yield* listing(["ship", "eligible"]), shipping)).toEqual([SHIPPING]);
+      }),
+    );
+
+    effect("an eligible issue is queued by no label", () =>
+      Effect.gen(function* () {
+        const flow = yield* listing(["ship", "eligible"]);
+        expect(yield* dataOf(flow, () => queued())).toEqual([{ issue: ISSUE }]);
+      }),
+    );
+
+    effect(
+      "a run of what a ship-only source finds does as the recipe's does",
+      () =>
+        Effect.gen(function* () {
+          const flow = yield* listing(["ship"]);
+          const shipping = () => queued(DEFAULT_LABELS.ship);
+          const work = Option.getOrThrow(Arr.head(yield* found(flow, shipping)));
+          const fromDocument = yield* observe(flow, "implement", shipping, work);
+          expect(fromDocument).toEqual(yield* observe(implement, "implement", shipping, work));
+          expect(fromDocument.issueLabels).toEqual([]);
+          expect(fromDocument.pullLabels).toEqual([DEFAULT_LABELS.ship]);
+        }),
+      60_000,
+    );
+  });
 });
 
 describe("a document's flow declares what its recipe does", () => {

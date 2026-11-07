@@ -27,12 +27,12 @@ import {
   type BranchName,
   type Committed,
   defineBlock,
+  defineSource,
   type FailureContext,
   type IssueNumber,
   IssueNumber as IssueNumberOf,
   LaneId,
   pullRequestRef,
-  type Source,
   ToPerson,
   type WorktreePath,
 } from "./block.ts";
@@ -1063,13 +1063,13 @@ export const laneScopes = {
 };
 
 export const epicSources = {
-  "epic.queued": (): Source => ({
+  "epic.queued": defineSource("epic", () => ({
     trigger: Epic.queued.pipe(reportAs("trigger")),
     contributes: {
       settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
       labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
     },
-  }),
+  })),
 };
 
 // However the run ends, its claim on the epic goes, and the engine lets its
