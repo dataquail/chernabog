@@ -2720,6 +2720,38 @@ describe("the plan document", () => {
     ]);
   });
 
+  // A branch that doesn't end carries on into the steps after it, still on its way out.
+  test("refuses one in a branch that runs on into a later next", () => {
+    const fallsThrough = planWith(
+      `                - id: epic
+                  use: plan.becomeEpic
+                  in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                - id: cleaned
+                  use: plan.doneDrafting
+                  in: { issue: trigger.issue }
+                - end: done
+                  summary: epic
+            changes:
+              steps:
+                - id: asked
+                  use: plan.changesAsked
+                  in: { issue: trigger.issue, round: round }
+                - next: { changes: asked.changes }
+`,
+      `            changes:
+              steps: []
+        - next: { changes: state.changes }
+`,
+    );
+
+    expect(Compose.check(fallsThrough)).toEqual([
+      {
+        path: "steps[1].repeat.steps[3]",
+        message: "plan.create runs only on a run's way out, and this way goes on to another round",
+      },
+    ]);
+  });
+
   test("refuses one earlier in the round, whatever branch a later next is in", () => {
     const early = planWith(
       "        - id: proposed\n",
