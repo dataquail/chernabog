@@ -59,6 +59,11 @@ import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./
 import * as Implement from "./implement.ts";
 import * as PullRequest from "./pull-request.ts";
 import { reReviewBlocks, reReviewSources } from "./re-review-blocks.ts";
+import {
+  conflictSubject,
+  resolveConflictsBlocks,
+  resolveConflictsSources,
+} from "./resolve-conflicts-blocks.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
@@ -97,7 +102,8 @@ const WORKTREE_STEPS = "prepare-worktree";
 // The blocks of the files beside this one.
 const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
   .and("re-review-blocks.ts", reReviewBlocks)
-  .and("address-review-blocks.ts", addressReviewBlocks);
+  .and("address-review-blocks.ts", addressReviewBlocks)
+  .and("resolve-conflicts-blocks.ts", resolveConflictsBlocks);
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = elsewhere.and("blocks.ts", {
@@ -652,7 +658,8 @@ export type BlockName = keyof typeof catalogue;
 // The sources of the files beside this one.
 const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources)
   .and("re-review-blocks.ts", reReviewSources)
-  .and("address-review-blocks.ts", addressReviewSources);
+  .and("address-review-blocks.ts", addressReviewSources)
+  .and("resolve-conflicts-blocks.ts", resolveConflictsSources);
 
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = sourcesElsewhere.and("blocks.ts", {
@@ -748,6 +755,11 @@ export const sourceDescriptions = {
         "a list of eligible and ship, which name the repo's labels (auto:eligible and auto:ship by default, set in config.yaml). The first is the normal queue; an issue queued by a later one carries that label to its pull request.",
     },
   },
+  "pr.conflicting": {
+    about:
+      "Pull requests this persona wrote that GitHub says conflict with their base (mergeable_state dirty), except those labelled auto:needs-human or owned by another run. One GitHub hasn't checked yet is left for the next tick. Each run's key carries the head: pr-7-abc1234, so a conflict that comes back after a later push is new work.",
+    with: {},
+  },
   "review.requested": {
     about: "Pull requests that ask this persona for a review it hasn't given yet.",
     with: {},
@@ -781,6 +793,8 @@ type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;
 // a person does with it, and how the engine tells whether it is still there.
 export const subjects = {
   "changes-asked": changesAskedSubject,
+
+  conflict: conflictSubject,
 
   epic: epicSubject,
 

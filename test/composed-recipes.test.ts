@@ -11,6 +11,7 @@ import * as AddressReview from "../packages/recipes/flows/address-review.ts";
 import * as Epic from "../packages/recipes/flows/epic.ts";
 import * as Implement from "../packages/recipes/flows/implement.ts";
 import * as ReReview from "../packages/recipes/flows/re-review.ts";
+import * as ResolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import * as Review from "../packages/recipes/flows/review.ts";
 import { effect } from "./effect-test.ts";
 
@@ -18,7 +19,7 @@ effect("the recipes these suites import are their documents' flows", () =>
   Effect.gen(function* () {
     const composed = yield* Config.option(Config.String("CHERNABOG_TEST_COMPOSED"));
 
-    for (const recipe of [AddressReview, Epic, Implement, Review, ReReview]) {
+    for (const recipe of [AddressReview, Epic, Implement, Review, ReReview, ResolveConflicts]) {
       expect(Predicate.hasProperty(recipe, "composedFromDocument")).toBe(Option.isSome(composed));
     }
   }),

@@ -31,6 +31,7 @@ import {
   generated,
   IMPLEMENT_DOCUMENT,
   RE_REVIEW_DOCUMENT,
+  RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
   STAGE_FILES,
@@ -47,12 +48,20 @@ const implement = documentOf(IMPLEMENT_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
 const reReview = documentOf(RE_REVIEW_DOCUMENT);
 const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
+const resolveConflicts = documentOf(RESOLVE_CONFLICTS_DOCUMENT);
 
 // The address-review document with a line of it changed.
 const addressReviewWith = (line: string, replacement: string) => {
   expect(ADDRESS_REVIEW_DOCUMENT).toContain(line);
 
   return documentOf(ADDRESS_REVIEW_DOCUMENT.replace(line, replacement));
+};
+
+// The resolve-conflicts document with a line of it changed.
+const resolveConflictsWith = (line: string, replacement: string) => {
+  expect(RESOLVE_CONFLICTS_DOCUMENT).toContain(line);
+
+  return documentOf(RESOLVE_CONFLICTS_DOCUMENT.replace(line, replacement));
 };
 
 // The re-review document with a line of it changed, for a change deep in its branches.
@@ -504,7 +513,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of changes-asked, epic, issue, pull-request",
+      "must be one of changes-asked, conflict, epic, issue, pull-request",
     ]);
   });
 
@@ -642,6 +651,62 @@ describe("Compose.check", () => {
     );
   });
 
+  test("refuses a resolve-conflicts that doesn't say what happens when a person must settle the conflict", () => {
+    const unsettled = resolveConflictsWith(
+      `    in: { pr: trigger.pr, branch: trigger.branch, base: trigger.base, worktree: worktree }
+    on:
+      needs-human:
+        as: stuck
+        steps:
+          - id: handed
+            use: pr.handToPerson
+            in: { pr: trigger.pr, reason: stuck.reason }
+          - end: needs-human
+            reason: handed
+`,
+      "    in: { pr: trigger.pr, branch: trigger.branch, base: trigger.base, worktree: worktree }\n",
+    );
+
+    expect(Compose.check(unsettled)).toEqual([
+      {
+        path: "steps[1].on",
+        message: "conflict.resolve can come to needs-human, and this doesn't say what then",
+      },
+    ]);
+  });
+
+  test("knows what the trigger of a flow on conflict gives", () => {
+    const headRef = resolveConflictsWith(
+      "in: { branch: trigger.branch }",
+      "in: { branch: trigger.headRef }",
+    );
+
+    expect(Compose.check(headRef)).toEqual([
+      {
+        path: "steps[0].in.branch",
+        message: "the trigger of a flow on conflict gives pr, branch, base",
+      },
+    ]);
+  });
+
+  test("refuses pr.conflicting on a flow that isn't on conflict", () => {
+    expect(messages({ ...review, trigger: resolveConflicts.trigger })).toEqual([
+      "pr.conflicting finds work on conflict, and this is a flow on pull-request",
+    ]);
+  });
+
+  test("refuses the push of a merge before it is resolved", () => {
+    expect(messages(moved(resolveConflicts, "pushed", "resolved")).join("\n")).toContain(
+      "conflict.resolve must run before conflict.push, and this runs after it",
+    );
+  });
+
+  test("refuses asking the approver again before CI", () => {
+    expect(messages(moved(resolveConflicts, "again", "ci")).join("\n")).toContain(
+      "conflict.waitForCi must run before conflict.askApproverAgain, and this runs after it",
+    );
+  });
+
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
@@ -665,13 +730,14 @@ describe("tsc on a document's flow file", () => {
   };
 
   effect(
-    "compiles the implement, review, re-review and address-review documents",
+    "compiles the implement, review, re-review, address-review and resolve-conflicts documents",
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(implement)).toEqual([]);
         expect(yield* compileErrors(review)).toEqual([]);
         expect(yield* compileErrors(reReview)).toEqual([]);
         expect(yield* compileErrors(addressReview)).toEqual([]);
+        expect(yield* compileErrors(resolveConflicts)).toEqual([]);
       }),
     TIMEOUT,
   );
@@ -695,6 +761,30 @@ describe("tsc on a document's flow file", () => {
       "in: { pr: trigger.pr, review: asked, session: trigger.pr }\n    on:\n      needs",
     ),
     "AuthorSession",
+  );
+
+  rejected(
+    "a push of a merge that wasn't resolved",
+    resolveConflictsWith("committed: resolved.committed", "committed: resolved.summary"),
+    "Committed",
+  );
+
+  rejected(
+    "asking the approver again about a merge that wasn't pushed",
+    resolveConflictsWith(
+      "in: { pr: trigger.pr, base: trigger.base, pushed: pushed.pushed }",
+      "in: { pr: trigger.pr, base: trigger.base, pushed: resolved.committed }",
+    ),
+    "Pushed",
+  );
+
+  rejected(
+    "a merge resolved in something other than the pull request's worktree",
+    resolveConflictsWith(
+      "base: trigger.base, worktree: worktree }",
+      "base: trigger.base, worktree: trigger.branch }",
+    ),
+    "WorktreePath",
   );
 
   rejected(
