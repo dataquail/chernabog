@@ -289,6 +289,12 @@ const COMPILE_OUTCOME = {
 };
 
 const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
+  ...Option.toArray(
+    Option.liftPredicate(
+      "no flow documents in .chernabog/documents/",
+      () => flows.length + unknown.length === 0,
+    ),
+  ),
   ...unknown.map((name) => `no document named ${name} in .chernabog/documents/`),
   ...flows.flatMap(({ flow, outcome, problems }) => {
     if (outcome === "problems") {

@@ -1,7 +1,7 @@
 // Flow documents through the CLI, and the recipes' own suites on the flows their
 // documents compile to.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -79,6 +79,26 @@ describe("chernabog recipes compile", () => {
       unknown: [],
     });
     expect(code).not.toBe(0);
+  });
+
+  test("says a document that doesn't parse is broken at its line, with no path to say", async () => {
+    writeFileSync(document(), "flow: composed-review\nsteps: [\n  - id: a\n");
+
+    const { code, output } = await sandbox.runCli(["recipes", "compile"]);
+
+    expect(output).toMatch(/\.chernabog\/documents\/composed-review\.yaml:[2-4]:\d+: \S/);
+    expect(code).not.toBe(0);
+  });
+
+  test("says when there are no documents, and that's no failure", async () => {
+    rmSync(document());
+
+    for (const args of [[], ["--check"]]) {
+      const { code, output } = await sandbox.runCli(["recipes", "compile", ...args]);
+
+      expect(output).toContain("no flow documents in .chernabog/documents/");
+      expect(code).toBe(0);
+    }
   });
 });
 
