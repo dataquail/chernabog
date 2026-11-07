@@ -257,15 +257,18 @@ const writeFlow = (source: string) =>
 export const generated = (document: Compose.FlowDocument) =>
   Result.getOrThrow(Compose.generate(document));
 
-// A document as the engine would load it.
-export const loadFlow = (document: Compose.FlowDocument) =>
+// A flow file's source as the engine would load it.
+export const loadSource = (source: string) =>
   Effect.gen(function* () {
-    const file = yield* writeFlow(generated(document));
+    const file = yield* writeFlow(source);
 
     const module = yield* Effect.promise((): Promise<{ readonly default: Flow }> => import(file));
 
     return module.default;
   });
+
+// A document as the engine would load it.
+export const loadFlow = (document: Compose.FlowDocument) => loadSource(generated(document));
 
 const options = Effect.gen(function* () {
   const path = yield* Path.Path;

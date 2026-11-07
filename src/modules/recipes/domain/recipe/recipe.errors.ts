@@ -59,3 +59,9 @@ export class FlowNotImported extends Schema.TaggedError<
     return `config.yaml doesn't import a flow named ${this.flow} (it imports: ${imported})`;
   }
 }
+
+// Flow documents that don't compile, or flow files out of date with theirs.
+export class FlowDocumentsRefused extends Schema.TaggedError<
+  FlowDocumentsRefused,
+  { readonly brand: "FlowDocumentsRefused" }
+>()("FlowDocumentsRefused", { message: Schema.String }) {}
