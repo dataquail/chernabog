@@ -419,7 +419,11 @@ describe("FlowCompilerClientLive", () => {
 
         expect(lacking.problems.map((each) => [each.line, each.path, each.message])).toEqual([
           [1, "subject", "is missing. chernabog recipes blocks shows the format."],
-          [1, "trigger", "is missing. chernabog recipes blocks shows the format."],
+          [
+            1,
+            "trigger",
+            "is missing: name where the flow's work comes from, or say start: true for a flow a person starts with chernabog start <issue>. chernabog recipes blocks shows the format.",
+          ],
           [1, "steps", "is missing. chernabog recipes blocks shows the format."],
         ]);
       }),

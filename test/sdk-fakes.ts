@@ -268,6 +268,9 @@ export const makeFake = (
     commits: 0,
     rejects: Option.none<PushRejected>(),
     uncommitted: new Array<string>(),
+    // Whether the branch has nothing past its base, whatever was committed, as
+    // when a person reset their commits away before open-pr.
+    nothingAhead: false,
     // Every git command run, its arguments joined by spaces; what a test has
     // git say to one, and the ones git refuses, by the same spelling.
     ran: new Array<string>(),
@@ -290,7 +293,7 @@ export const makeFake = (
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
   // `asks` are worktrees whose next implement session answers with questions.
-  // `leaves` is what an implement session leaves in the worktree, as `git status
+  // `leaves` is what an implement session, or a person's, leaves in the worktree, as `git status
   // --porcelain` lists it, instead of committing it. `meanwhile` is what
   // happens elsewhere while the next implement session in a worktree runs, by
   // worktree, as a person or GitHub acting while an epic's lane works.
@@ -521,7 +524,11 @@ export const makeFake = (
 
     // The hybrid path's open-pr, once the person and the agent are done.
     if (schema.includes('"title"')) {
-      git.commits += 1;
+      if (author.leaves.length > 0) {
+        git.uncommitted = [...author.leaves];
+      } else {
+        git.commits += 1;
+      }
 
       return {
         title: "feat: worked out together",
@@ -966,7 +973,7 @@ export const makeFake = (
           based.checkedAgainst.push(base);
 
           // Nothing, once the author left its work in the worktree on a branch it never pushed.
-          if (git.pushes + git.commits === 0 && git.uncommitted.length > 0) {
+          if (git.nothingAhead || (git.pushes + git.commits === 0 && git.uncommitted.length > 0)) {
             return 0;
           }
 

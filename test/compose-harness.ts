@@ -374,6 +374,58 @@ steps:
             summary: linked
 `;
 
+// Started by a person, with chernabog start <issue>, rather than found by a
+// trigger. Until the session with the person ends, a failure fails the run or
+// stops it as it is, as the recipe's does; after it, one goes to a person.
+export const HUMAN_INITIATED_DOCUMENT = `
+flow: human-initiated
+subject: issue
+start: true
+failureContext:
+  pr: [opened.number]
+steps:
+  - id: claim
+    use: hybrid.claim
+    in: { issue: trigger.issue }
+  - id: worktree
+    use: worktree.prepare
+    in: { branch: claim.branch, base: claim.base }
+    failure: { StepFailed: fail }
+  - id: session
+    use: hybrid.workWithPerson
+    in: { issue: trigger.issue, worktree: worktree, base: claim.base }
+  - id: gate
+    use: hybrid.localGate
+    in: { issue: trigger.issue, worktree: worktree }
+  - id: push
+    use: hybrid.push
+    in:
+      worktree: worktree
+      branch: claim.branch
+      base: claim.base
+      committed: session.committed
+  - id: opened
+    use: hybrid.openPullRequest
+    in:
+      issue: trigger.issue
+      finished: session.finished
+      base: claim.base
+      pushed: push.pushed
+  - id: ci
+    use: hybrid.waitForCi
+    in:
+      issue: trigger.issue
+      pr: opened.number
+      worktree: worktree
+      branch: claim.branch
+      base: claim.base
+  - id: handed
+    use: hybrid.handOff
+    in: { issue: trigger.issue, pr: opened, finished: session.finished }
+  - end: done
+    summary: handed
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
+import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
@@ -18,6 +19,7 @@ import {
   documentOf,
   EPIC_DOCUMENT,
   generated,
+  HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadSource,
   POST_MERGE_DOCUMENT,
@@ -33,6 +35,8 @@ import {
   ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
+  HUMAN_INITIATED_SCENARIOS,
+  HUMAN_INITIATED_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
@@ -117,6 +121,13 @@ const targets = {
     source: generated(documentOf(POST_MERGE_DOCUMENT)),
     work: POST_MERGE_WORK_ITEM,
     scenarios: POST_MERGE_SCENARIOS,
+  },
+  humanInitiated: {
+    name: "human-initiated",
+    recipe: humanInitiated,
+    source: generated(documentOf(HUMAN_INITIATED_DOCUMENT)),
+    work: HUMAN_INITIATED_WORK_ITEM,
+    scenarios: HUMAN_INITIATED_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -643,5 +654,67 @@ describe("the comparison sees a post-merge flow that", () => {
     target,
     red,
     dropping("linked", 'const linked = "#7: CI on merge56 is red; filed #100 to fix it";'),
+  );
+});
+
+describe("the comparison sees a human-initiated flow that", () => {
+  const { humanInitiated: target } = targets;
+  const done = "when the person and the agent are done";
+  const red = "when CI is red and stays red";
+
+  // A block's run given a failure table of the sabotage's own.
+  const overriding = (block: string, failures: string) => (source: string) =>
+    source.replace(
+      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`),
+      `$1, ${failures})`,
+    );
+
+  sabotaged("doesn't hand off", target, done, dropping("handed", 'const handed = "x";'));
+
+  sabotaged("skips the local gate", target, "when the local gate keeps failing", dropping("gate"));
+
+  sabotaged("doesn't let its claim go", target, done, (source) =>
+    source.replace("{ claims: true }", "{ claims: false }"),
+  );
+
+  sabotaged("doesn't wait for CI", target, red, dropping("ci"));
+
+  sabotaged("forgets its pull request when it fails", target, red, (source) =>
+    source.replace("failureContext.pr = Option.some(opened.number);", ""),
+  );
+
+  sabotaged(
+    "hands a failure before the session to a person, rather than failing",
+    target,
+    "when the worktree's install fails",
+    (source) => source.replace(', {"StepFailed":"fail"}', ""),
+  );
+
+  sabotaged(
+    "hands a session the person closed to a person, rather than failing",
+    target,
+    "when the person closes the session before open-pr",
+    overriding("hybrid.workWithPerson", '{ StepFailed: "person" }'),
+  );
+
+  sabotaged(
+    "fails, rather than skipping, on an issue another run holds",
+    target,
+    "when another run holds the claim",
+    overriding("hybrid.claim", '{ Skip: "fail" }'),
+  );
+
+  sabotaged(
+    "stops, rather than telling a person, when nothing was committed",
+    target,
+    "when nothing was committed before open-pr",
+    overriding("hybrid.push", '{ NeedsHuman: "told" }'),
+  );
+
+  sabotaged(
+    "stops, rather than telling a person, when the push is rejected",
+    target,
+    "when the remote rejects the push",
+    overriding("hybrid.push", '{ PushRejected: "told" }'),
   );
 });

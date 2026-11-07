@@ -16,6 +16,7 @@ import {
   defineFlow,
   type FlowError,
   GitHub,
+  type ItemLookup,
   NeedsHuman,
   Repo,
   reportAs,
@@ -57,6 +58,8 @@ import {
   WorktreePath,
 } from "./block.ts";
 import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./epic-blocks.ts";
+import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
+import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
 import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
 import * as PullRequest from "./pull-request.ts";
@@ -98,7 +101,11 @@ const conflicts = (pullRequest: number) =>
 
 // Step names more than one block uses.
 const CI_STEPS = "ci";
+const CLAIM_STEPS = "claim";
 const HAND_OFF_STEPS = "hand-off";
+const LOCAL_GATE_STEPS = "local-gate";
+const OPEN_STEPS = "open-pull-request";
+const PUSH_STEPS = "push";
 const WORKTREE_STEPS = "prepare-worktree";
 
 // The blocks of the files beside this one.
@@ -106,7 +113,8 @@ const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
   .and("re-review-blocks.ts", reReviewBlocks)
   .and("address-review-blocks.ts", addressReviewBlocks)
   .and("resolve-conflicts-blocks.ts", resolveConflictsBlocks)
-  .and("post-merge-blocks.ts", postMergeBlocks);
+  .and("post-merge-blocks.ts", postMergeBlocks)
+  .and("human-initiated-blocks.ts", humanInitiatedBlocks);
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = elsewhere.and("blocks.ts", {
@@ -132,6 +140,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
         "an object: with as: adopted, adopted.number (PullRequestNumber), adopted.url, adopted.draft",
     },
     opensOn: { adopted: ["hand-off"] },
+    stepNames: [CLAIM_STEPS],
     inputs: {
       issue: "required",
       queued: "optional",
@@ -370,6 +379,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     outputKinds: "nothing",
     outcomeKinds: {},
     before: ["branch.push", "pr.open", "stack.publish"],
+    stepNames: [LOCAL_GATE_STEPS],
     inputs: { worktree: "required", lane: "optional" },
     run: (input: { readonly worktree: WorktreePath; readonly lane?: LaneId }) =>
       Effect.gen(function* () {
@@ -394,6 +404,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     },
     outputKinds: { pushed: "Pushed: proof for pr.open" },
     outcomeKinds: {},
+    stepNames: [PUSH_STEPS],
     inputs: { worktree: "required", branch: "required", base: "required", committed: "required" },
     run: (input: {
       readonly worktree: WorktreePath;
@@ -429,6 +440,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     outputKinds: { number: "PullRequestNumber", url: "its URL" },
     outcomeKinds: {},
     opens: ["hand-off"],
+    stepNames: [OPEN_STEPS],
     inputs: {
       issue: "required",
       outcome: "required",
@@ -871,6 +883,13 @@ export const subjects = {
 
 export type SubjectName = keyof typeof subjects;
 
+// How a person names the work of a flow they start, rather than a trigger
+// finding it, by the subject it's on: `chernabog start <issue>` names an issue,
+// whatever its labels. A subject without one can't be started; so far only an
+// issue can.
+export const startOf = (subject: string): Option.Option<ItemLookup> =>
+  Option.liftPredicate(Hybrid.itemFor, () => subject === "issue");
+
 const unique = <A>(all: ReadonlyArray<A>) => [...new Set(all)];
 
 // How the engine tells whether a subject's run is still wanted, when it can.
@@ -878,17 +897,23 @@ const stillValidOf = (subject: SubjectName): Option.Option<StillValid> =>
   subjects[subject].stillValid;
 
 // A flow from what a document says, with what its sources and blocks add:
-// settings, labels, doctor checks, and the wake-ups of runs parked in them.
+// settings, labels, doctor checks, and the wake-ups of runs parked in them. A
+// flow a person starts has no sources and no trigger: it runs only when they
+// name its work, which its subject's item lookup finds, and each run is
+// theirs, so it finds only its own persona's work.
 export const assemble = (flow: {
   readonly subject: SubjectName;
   readonly gate?: "usage";
   readonly concurrency?: number;
-  readonly sources: ReadonlyArray<Source>;
+  readonly start?: boolean;
+  readonly sources?: ReadonlyArray<Source>;
   readonly blocks: ReadonlyArray<BlockName>;
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 }) => {
+  const flowSources = flow.sources ?? [];
+
   const contributions: ReadonlyArray<Contribution> = [
-    ...flow.sources.map((source) => source.contributes),
+    ...flowSources.map((source) => source.contributes),
     ...flow.blocks.map((block) => catalogue[block].contributes),
   ];
 
@@ -900,15 +925,18 @@ export const assemble = (flow: {
   };
 
   const triggers = [
-    ...flow.sources.map((source) => source.trigger),
+    ...flowSources.map((source) => source.trigger),
     ...unique(contributions.flatMap((each) => Option.toArray(Option.fromUndefinedOr(each.wakes)))),
   ];
 
   const doctor = unique(contributions.flatMap((each) => each.doctor ?? []));
 
   const common = {
-    trigger: Effect.map(Effect.all(triggers), (found) => found.flat()),
-    concurrency: flow.concurrency ?? 1,
+    // None, as a recipe without one declares it, when the document gives none; the engine's default is 1.
+    ...Option.match(Option.fromUndefinedOr(flow.concurrency), {
+      onNone: () => ({}),
+      onSome: (concurrency) => ({ concurrency }),
+    }),
     labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...labels]),
     settings: Schema.Struct(fields),
     // None, as a recipe with no checks declares it, when nothing contributes one.
@@ -919,18 +947,30 @@ export const assemble = (flow: {
         onSome: (checks) => ({ doctor: checks }),
       },
     ),
-    ownWork: contributions.some((each) => each.ownWork === true),
+    ownWork: flow.start === true || contributions.some((each) => each.ownWork === true),
     // None, as a recipe without one declares it, when the subject has none.
     ...Option.match(stillValidOf(flow.subject), {
       onNone: () => ({}),
       onSome: (stillValid) => ({ stillValid }),
     }),
     workflow: flow.workflow,
+    ...Option.match(
+      Option.liftPredicate(Implement.gate, () => flow.gate === "usage"),
+      {
+        onNone: () => ({}),
+        onSome: (gate) => ({ gate }),
+      },
+    ),
   };
 
-  if (flow.gate === "usage") {
-    return defineFlow({ ...common, gate: Implement.gate });
-  }
+  const started = Option.flatMap(
+    Option.liftPredicate(flow.subject, () => flow.start === true),
+    startOf,
+  );
 
-  return defineFlow(common);
+  return Option.match(started, {
+    onNone: () =>
+      defineFlow({ ...common, trigger: Effect.map(Effect.all(triggers), (found) => found.flat()) }),
+    onSome: (item) => defineFlow({ ...common, item, start: true }),
+  });
 };

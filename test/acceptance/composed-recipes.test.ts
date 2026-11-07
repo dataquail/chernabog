@@ -204,6 +204,10 @@ describe("chernabog recipes blocks", () => {
     expect(output).toContain("on needs-clarification (must route)");
     expect(output).toContain("runs before: branch.push");
     expect(output).toContain("issues.queued: Open issues");
+    expect(output).toContain(
+      "issue: trigger gives issue, queued; or start: true, and a person starts each run with chernabog start <issue>",
+    );
+    expect(output).toContain("hybrid.workWithPerson: Opens a session with the person");
   });
 
   test("describes the blocks and sources named, and fails on one there isn't", async () => {
