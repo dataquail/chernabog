@@ -1747,6 +1747,7 @@ tree:
         - "@effect/sql-sqlite-bun"
         - "@effect-server-utils/cqrs"
         - "@effect-server-utils/unit-of-work"
+        - typescript
         - yaml
       allow: ["node:**", "@/**", "~/core/**", "~/sdk/**", "~/recipes/**", "test/**", "scripts/**"]
     children:

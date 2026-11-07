@@ -1111,7 +1111,9 @@ export const runUntil = (
   handle: FlowHandle,
   fake: Fake,
   work: WorkItem,
-  until: (run: EngineRun) => Effect.Effect<boolean, never, RuntimeServices>,
+  until: (
+    run: EngineRun,
+  ) => Effect.Effect<boolean, never, RuntimeServices | BunServices.BunServices>,
   polls = 200,
 ) =>
   Effect.gen(function* () {
