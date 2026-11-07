@@ -88,8 +88,12 @@ const watching = Effect.gen(function* () {
     Effect.repeat({ until: Option.isSome, times: 20 }),
   );
 
-  // The next batch said.
-  const next = Queue.take(said);
+  // The next batch said. A slow watch can still say the edits that armed it, and
+  // nothing edits trust.json from here on, so those aren't part of it.
+  const next = Queue.take(said).pipe(
+    Effect.map((changed) => changed.filter((name) => name !== "trust.json")),
+    Effect.repeat({ until: (changed) => changed.length > 0 }),
+  );
 
   return { dir, ownSql, next };
 });
