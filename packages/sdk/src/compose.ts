@@ -158,6 +158,8 @@ const blocksByName: { readonly [name: string]: Block } = catalogue;
 
 const subjectsByName: { readonly [name: string]: Subject } = subjects;
 
+const sourcesByName: { readonly [name: string]: { readonly subject: string } } = sources;
+
 const say = (checking: Checking, path: string, message: string) => {
   checking.problems.push({ path, message });
 };
@@ -401,15 +403,24 @@ const checkFailureContext = (
 };
 
 const checkTrigger = (checking: Checking, document: FlowDocument) => {
-  const names = Object.keys(sources);
-
   if (document.trigger.length === 0) {
     say(checking, "trigger", "must name where the flow's work comes from");
   }
 
   for (const [index, source] of document.trigger.entries()) {
-    if (!names.includes(source.use)) {
-      say(checking, `trigger[${index}].use`, `must be one of ${names.join(", ")}`);
+    const at = `trigger[${index}].use`;
+
+    const found = Record.get(sourcesByName, source.use);
+
+    if (Option.isNone(found)) {
+      say(checking, at, `must be one of ${Object.keys(sources).join(", ")}`);
+    } else if (found.value.subject !== document.subject) {
+      // Every item it found would fail on reading it, with nobody told.
+      say(
+        checking,
+        at,
+        `${source.use} finds work on ${found.value.subject}, and this is a flow on ${document.subject}`,
+      );
     }
   }
 };
@@ -523,7 +534,7 @@ const emitSource = (source: FlowDocument["trigger"][number]) => {
     onSome: printJson,
   });
 
-  return `sources[${printJson(source.use)}](${input})`;
+  return `sources[${printJson(source.use)}].find(${input})`;
 };
 
 const emit = (document: FlowDocument, sdk: string) => {

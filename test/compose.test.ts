@@ -316,6 +316,24 @@ describe("Compose.check", () => {
     ]);
   });
 
+  test("refuses a source that finds work on another subject", () => {
+    expect(messages({ ...review, trigger: implement.trigger })).toEqual([
+      "issues.queued finds work on issue, and this is a flow on pull-request",
+    ]);
+
+    expect(
+      messages({
+        ...implement,
+        trigger: [...implement.trigger, { use: "review.requested" }],
+      }),
+    ).toEqual(["review.requested finds work on pull-request, and this is a flow on issue"]);
+
+    expect(paths({ ...implement, trigger: review.trigger })).toEqual([
+      "trigger[0].use",
+      "trigger[1].use",
+    ]);
+  });
+
   test("checks what keeps the failure context", () => {
     expect(messages({ ...implement, failureContext: { branch: ["claim.branch"] } })[0]).toBe(
       "a flow on issue keeps pr for its failures",

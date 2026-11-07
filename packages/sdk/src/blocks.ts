@@ -625,45 +625,54 @@ type Source = {
   readonly contributes: Contribution;
 };
 
+// A source, and the subject of the work items it finds.
+const defineSource = <Input extends ReadonlyArray<unknown>>(
+  subject: SubjectName,
+  find: (...input: Input) => Source,
+) => ({ subject, find });
+
 // Where a flow's work comes from, by the name a document uses it by.
 export const sources = {
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
   // One carrying several comes under the first. Any label but eligible queues
   // its issue by that label, which its pull request carries too.
-  "issues.queued": (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }): Source => ({
-    trigger: Effect.gen(function* () {
-      const github = yield* GitHub;
-      const names = yield* Settings.labels;
-      const found = new Set<number>();
-      const items: Array<WorkItem> = [];
+  "issues.queued": defineSource(
+    "issue",
+    (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }) => ({
+      trigger: Effect.gen(function* () {
+        const github = yield* GitHub;
+        const names = yield* Settings.labels;
+        const found = new Set<number>();
+        const items: Array<WorkItem> = [];
 
-      for (const key of input.labels) {
-        const issues = (yield* github.queuedIssuesLabelled(names[key])).filter(
-          (issue) => !found.has(issue.number),
-        );
+        for (const key of input.labels) {
+          const issues = (yield* github.queuedIssuesLabelled(names[key])).filter(
+            (issue) => !found.has(issue.number),
+          );
 
-        for (const issue of issues) {
-          found.add(issue.number);
+          for (const issue of issues) {
+            found.add(issue.number);
+          }
+
+          const queuedAs = Option.liftPredicate(names[key], () => key !== "eligible");
+
+          for (const item of yield* Implement.queued(Implement.followUpsFirst(issues), queuedAs)) {
+            items.push(item);
+          }
         }
 
-        const queuedAs = Option.liftPredicate(names[key], () => key !== "eligible");
-
-        for (const item of yield* Implement.queued(Implement.followUpsFirst(issues), queuedAs)) {
-          items.push(item);
-        }
-      }
-
-      return items;
-    }).pipe(reportAs("trigger")),
-    contributes: {
-      settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
-    },
-  }),
+        return items;
+      }).pipe(reportAs("trigger")),
+      contributes: {
+        settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
+      },
+    }),
+  ),
 
   // Pull requests that ask this persona for a review it hasn't given yet,
   // routed by their assignees and reviewers.
-  "review.requested": (): Source => ({
+  "review.requested": defineSource("pull-request", () => ({
     trigger: Effect.gen(function* () {
       const found = yield* Review.reviewRequests;
 
@@ -677,14 +686,14 @@ export const sources = {
       doctor: [Review.reviewerCheck],
       ownWork: true,
     },
-  }),
+  })),
 
   // Those waiting on a reviewer no persona on this machine acts as, which
   // status lists.
-  "review.waitingElsewhere": (): Source => ({
+  "review.waitingElsewhere": defineSource("pull-request", () => ({
     trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
     contributes: {},
-  }),
+  })),
 };
 
 export type SourceName = keyof typeof sources;
