@@ -88,6 +88,9 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const REFERENCE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 
+// As a flow's name is anywhere else.
+const FLOW_NAME = /^[a-z0-9][\w.-]*$/;
+
 // The names a generated flow uses itself.
 const RESERVED = new Set([
   "Blocks",
@@ -247,6 +250,22 @@ const checkIdentity = (
   }
 };
 
+// What a branch calls its outcome's value is a name in the flow, as a step's id is.
+const checkBinding = (
+  checking: Checking,
+  branch: Branch,
+  names: ReadonlySet<string>,
+  at: string,
+) => {
+  for (const name of Option.toArray(Option.fromUndefinedOr(branch.as))) {
+    if (!IDENTIFIER.test(name) || RESERVED.has(name)) {
+      say(checking, at, `${name} can't name what a branch binds`);
+    } else if (names.has(name)) {
+      say(checking, at, `${name} is already a step here`);
+    }
+  }
+};
+
 const checkRouting = (checking: Checking, step: UseStep, block: Block, at: string) => {
   const routed = step.on ?? {};
   const outcomes = Object.keys(block.outcomes);
@@ -330,6 +349,8 @@ const checkSteps = (
     names.add(step.id);
 
     const walked = branchesOf(step).map(([outcome, branch]) => {
+      checkBinding(checking, branch, names, `${at}.on.${outcome}.as`);
+
       const inBranch = new Set([...names, ...Option.toArray(Option.fromUndefinedOr(branch.as))]);
 
       return checkSteps(checking, branch.steps, `${at}.on.${outcome}.steps`, inBranch, used);
@@ -370,7 +391,9 @@ const checkFailureContext = (
     }
 
     for (const reference of references) {
-      if (!declared.has(rootOf(reference))) {
+      if (!REFERENCE.test(reference)) {
+        say(checking, `failureContext.${field}`, "must name a step's output, as step.field");
+      } else if (!declared.has(rootOf(reference))) {
         say(checking, `failureContext.${field}`, `no step named ${rootOf(reference)} sets it`);
       }
     }
@@ -404,6 +427,10 @@ export const check = (document: FlowDocument): ReadonlyArray<Problem> => {
     subject: document.subject,
     fields: subject.value.fields,
   };
+
+  if (!FLOW_NAME.test(document.flow)) {
+    say(checking, "flow", "must be a flow name");
+  }
 
   checkTrigger(checking, document);
   checkSteps(checking, document.steps, "steps", new Set(["trigger"]), new Set());

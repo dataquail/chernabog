@@ -213,6 +213,84 @@ describe("Compose.check", () => {
     );
   });
 
+  describe("takes only names where the generated flow writes a name", () => {
+    const INJECTED = "x = console.log('PWN'), y";
+
+    const binding = (doc: Doc, as: string) =>
+      changing(doc, "claim", (step) => ({
+        ...step,
+        on: {
+          adopted: { as, steps: [{ end: "needs-human", reason: "trigger.issue" }] },
+        },
+      }));
+
+    test("in what a branch binds", () => {
+      for (const name of [INJECTED, "a.b", "", "x\ny"]) {
+        expect(paths(binding(implement, name))).toContain("steps[0].on.adopted.as");
+      }
+    });
+
+    test("and refuses what the generated flow relies on", () => {
+      for (const name of ["trigger", "Option", "Effect", "failureContext"]) {
+        expect(messages(binding(implement, name))).toContain(
+          `${name} can't name what a branch binds`,
+        );
+      }
+    });
+
+    test("and refuses a name already in scope", () => {
+      expect(messages(binding(implement, "claim"))).toContain("claim is already a step here");
+    });
+
+    test("and allows the same name on another path", () => {
+      const twice = withSteps(implement, [
+        ...changing(implement, "claim", (step) => ({
+          ...step,
+          on: { adopted: { as: "found", steps: [{ end: "done" }] } },
+        })).steps.slice(0, 1),
+        {
+          id: "again",
+          use: "review.round",
+          in: { pr: "claim.adopted" },
+          with: { round: 1, role: "reviewer" },
+          on: {
+            approve: { as: "found", steps: [{ end: "done" }] },
+            changes: { steps: [{ end: "done" }] },
+          },
+        },
+      ]);
+
+      expect(paths(twice)).not.toContain("steps[1].on.approve.as");
+    });
+
+    test("in a reference that keeps the failure context", () => {
+      const injected =
+        "opened.number); console.log('PWN'); failureContext.pr = Option.some(opened.number";
+
+      expect(messages({ ...implement, failureContext: { pr: [injected] } })).toEqual([
+        "must name a step's output, as step.field",
+      ]);
+    });
+
+    test("in the flow's name, which the generated flow's header says", () => {
+      for (const flow of ["x\nconsole.log('PWN'); //", "x\r\ny", "x y", "*/", ""]) {
+        expect(paths({ ...implement, flow })).toEqual(["flow"]);
+      }
+    });
+
+    test("so generate writes none of it", () => {
+      const refused = [
+        binding(implement, INJECTED),
+        { ...implement, failureContext: { pr: ["opened.number); evil("] } },
+        { ...implement, flow: "x\nevil();" },
+      ];
+
+      for (const document of refused) {
+        expect(Result.isFailure(Compose.generate(document))).toBe(true);
+      }
+    });
+  });
+
   test("knows what a subject's trigger gives", () => {
     expect(messages(wiring(implement, "claim", "issue", "trigger.pr"))).toEqual([
       "the trigger of a flow on issue gives issue, queued",
