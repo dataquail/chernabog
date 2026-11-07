@@ -73,6 +73,15 @@ A problem is reported at its line in the document, and a document with problems 
 
 Checking each wire's type takes TypeScript, in `.chernabog/node_modules` or the repo's own `node_modules`. Without it, the command still catches unknown blocks, unavailable or missing inputs, unrouted outcomes and loops that can't end, and it tells you the types weren't checked. If TypeScript is installed but can't run the check, for example because it's too old for the generated `tsconfig.json`, that's reported as a problem with the document, and no flow file is written.
 
+The daemon runs the flow file, not the document. `chernabog doctor` runs the same check as `--check` on `.chernabog/` as your default branch has it, and warns about each flow file that isn't what its document compiles to. That happens when someone edits the document without recompiling, or edits the flow file by hand:
+
+```
+! demo: .chernabog/flows/review.ts isn't what its flow document compiles to; the daemon runs the flow file
+    fix: chernabog recipes compile review, or, if the flow file was edited by hand, move the edit into .chernabog/documents/ and compile it
+```
+
+A document with problems gets a warning of its own instead. It's only a warning, so doctor still passes, and a repo with no documents gets none.
+
 ## Loops and lanes
 
 `repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. Every way through a round must end the run or go on with `next`, and every way to a `next` must wait or change something: a step that may not run, or lanes that may be none, doesn't count. Some round must end the loop. A block that runs steps in a round must take `round` from the loop, and one in a lane must name its lane, since a run resumes by step names. Otherwise the document is refused.
