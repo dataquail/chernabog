@@ -262,11 +262,76 @@ export type Source = {
   readonly contributes: Contribution;
 };
 
-// A source, and the subject of the work items it finds.
+// A source, by the name a document uses it by, and the subject of the work
+// items it finds.
 export const defineSource = <Subject extends string, Input extends ReadonlyArray<unknown>>(
+  name: string,
   subject: Subject,
   find: (...input: Input) => Source,
-) => ({ subject, find });
+) => ({ name, subject, find });
+
+type Named = { readonly [key: string]: { readonly name: string } };
+
+// What a document can use by name, gathered from the files that define it, a
+// file at a time. Spreading the files together would let a later file's entry
+// quietly replace an earlier one's, so a document compiled against a block its
+// author didn't mean; a name defined twice, or kept under a key other than its
+// own, is refused instead, when the module loads.
+export type Gathered<Entries> = {
+  readonly entries: Entries;
+  readonly and: <More extends Named>(file: string, more: More) => Gathered<Entries & More>;
+};
+
+// What a catalogue gets wrong, refused the way a block's tables are: by
+// decoding, when the module loads.
+const refuseMistakes = Schema.decodeUnknownSync(
+  Schema.Array(Schema.String).pipe(
+    Schema.check(
+      Schema.makeFilter(
+        (mistakes: ReadonlyArray<string>) => mistakes.length === 0 || mistakes.join("; "),
+      ),
+    ),
+  ),
+);
+
+const gatherOnto = <Before extends Named, Entries extends Named>(
+  kind: string,
+  where: ReadonlyMap<string, string>,
+  before: Before,
+  file: string,
+  entries: Entries,
+): Gathered<Before & Entries> => {
+  const found = new Map(where);
+  const mistakes: Array<string> = [];
+
+  for (const [key, entry] of Object.entries(entries)) {
+    if (entry.name !== key) {
+      mistakes.push(
+        `${kind} "${key}" in ${file} is named "${entry.name}"; its key must be its name`,
+      );
+    }
+
+    const earlier = Option.fromUndefinedOr(found.get(key));
+
+    if (Option.isSome(earlier)) {
+      mistakes.push(`${kind} "${key}" is defined twice: in ${earlier.value} and in ${file}`);
+    }
+
+    found.set(key, file);
+  }
+
+  refuseMistakes(mistakes);
+
+  const all = { ...before, ...entries };
+
+  return {
+    entries: all,
+    and: (next, more) => gatherOnto(kind, found, all, next, more),
+  };
+};
+
+export const gather = <Entries extends Named>(kind: string, file: string, entries: Entries) =>
+  gatherOnto(kind, new Map(), {}, file, entries);
 
 export const defineBlock = <
   Input,

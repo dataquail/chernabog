@@ -1176,7 +1176,7 @@ export const laneScopes = {
 };
 
 export const epicSources = {
-  "epic.queued": defineSource("epic", () => ({
+  "epic.queued": defineSource("epic.queued", "epic", () => ({
     trigger: Epic.queued.pipe(reportAs("trigger")),
     contributes: {
       settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
