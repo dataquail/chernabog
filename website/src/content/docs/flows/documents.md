@@ -39,6 +39,8 @@ steps:
             summary: review.changesAsked
 ```
 
+- `review.requested` finds the pull requests that ask this persona for a review it hasn't given yet. `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
+- `pr.land` merges only a pull request labelled `auto:ship`, and merges nothing otherwise. A flow that must never merge leaves `pr.land` out rather than relying on the label.
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
 - `end` finishes the run or lane, as `done` or `needs-human`. `end: needs-human` stops the run with its `reason`, but labels and comments on nothing, so put a block that tells a person in front of it. On a pull request, `pr.handToPerson` labels it `auto:needs-human`, comments why, and gives the reason to end with:
@@ -383,6 +385,7 @@ In a `repeat`, the check follows each `next` into the round after it, so these r
 ## What the blocks can't do yet
 
 - Open a pull request as a draft. `pr.open` opens it ready for review; a document can't ask for a draft.
+- Give a pull request to a person as a success. `pr.handToPerson` labels it `auto:needs-human` and the run ends `needs-human`, even when what the person is asked to do is merge an approved pull request.
 
 Work no block covers can run as [your own step](#your-own-steps).
 
