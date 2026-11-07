@@ -363,11 +363,14 @@ export const FlowCompilerClientLive = Layer.effect(
         }
 
         if (found.length > 0) {
-          return onlyProblems(
-            found.map((each) =>
+          return {
+            source: Option.none(),
+            problems: found.map((each) =>
               problemAt(pathOfLine(source, text, each.line, each.column), each.message),
             ),
-          );
+            // These are what the check of its types found.
+            typeChecked: true,
+          };
         }
 
         return { source: Option.some(source), problems: [], typeChecked: true };

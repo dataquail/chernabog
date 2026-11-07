@@ -366,7 +366,7 @@ describe("FlowCompilerClientLive", () => {
   );
 
   atHome(
-    "reports a type error in the trigger at its entry there",
+    "reports what a trigger entry doesn't take at its line there, before its types",
     () =>
       Effect.gen(function* () {
         const text = REVIEW_DOCUMENT.replace(
@@ -376,12 +376,13 @@ describe("FlowCompilerClientLive", () => {
 
         const compiled = yield* compiling({ review: text }, "review");
 
-        const entry = text.split("\n").indexOf("  - use: review.requested");
+        const entry = text.split("\n").indexOf("    with: { nope: 1 }");
 
         expect(Option.isNone(compiled.source)).toBe(true);
-        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
-          [entry + 1, "trigger[1]"],
+        expect(compiled.problems.map((each) => [each.line, each.path, each.message])).toEqual([
+          [entry + 1, "trigger[1].with.nope", "review.requested takes nothing under with"],
         ]);
+        expect(compiled.typeChecked).toBe(false);
       }),
     TIMEOUT,
   );

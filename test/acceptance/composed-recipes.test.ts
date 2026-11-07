@@ -213,6 +213,9 @@ describe("chernabog recipes blocks", () => {
     );
     expect(output).toContain("hybrid.workWithPerson: Opens a session with the person");
     expect(output).toContain("spec: trigger gives issue, queued");
+    // What failureContext can keep, which only a subject's listing says.
+    expect(output).toContain("chernabog start <issue>; failureContext keeps pr");
+    expect(output).toContain("pull-request: trigger gives pr\n");
     expect(output).toContain(
       "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
     );

@@ -318,6 +318,14 @@ const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
       () => flows.some((flow) => flow.outcome !== "problems" && !flow.typeChecked),
     ),
   ),
+  // The check of a document's types waits on its other problems, so fixing
+  // these can show more.
+  ...Option.toArray(
+    Option.liftPredicate(
+      "Types not checked: a document's wires are checked once its other problems are fixed, so compile again after fixing these.",
+      () => flows.some((flow) => flow.outcome === "problems" && !flow.typeChecked),
+    ),
+  ),
 ];
 
 const refusal = ({ flows, unknown }: FlowDocumentsCompiled) => {
@@ -442,16 +450,24 @@ const describeSource = (source: FlowCatalogue["sources"][number]) => [
   ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
 ];
 
-// A subject, with how a run on it starts: from a trigger, and by a person too when they can.
-const describeSubject = (subject: FlowCatalogue["subjects"][number]) => {
-  const said = `  ${subject.name}: trigger gives ${subject.trigger.join(", ")}`;
-
-  if (subject.start === true) {
-    return `${said}; or start: true, and a person starts each run with chernabog start <issue>`;
-  }
-
-  return said;
-};
+// A subject, with how a run on it starts: from a trigger, and by a person too
+// when they can; and what a failure on it can keep, under failureContext.
+const describeSubject = (subject: FlowCatalogue["subjects"][number]) =>
+  [
+    `  ${subject.name}: trigger gives ${subject.trigger.join(", ")}`,
+    ...Option.toArray(
+      Option.liftPredicate(
+        "or start: true, and a person starts each run with chernabog start <issue>",
+        () => subject.start === true,
+      ),
+    ),
+    ...Option.toArray(
+      Option.liftPredicate(
+        `failureContext keeps ${subject.failureContext.join(", ")}`,
+        () => subject.failureContext.length > 0,
+      ),
+    ),
+  ].join("; ");
 
 const describeCatalogue = (catalogue: FlowCatalogue) => [
   catalogue.format,
