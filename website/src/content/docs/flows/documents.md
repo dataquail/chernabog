@@ -352,7 +352,7 @@ A document with problems gets a warning of its own instead. It's only a warning,
 
 ### Blocks that run last
 
-A block whose listing says `runs last` runs only on a run's way out, such as `plan.create`, which makes a plan's issues once a person approves it. It runs once, so in a `repeat` it takes no `round`, and its step names stay the same as its recipe's. The check holds a document to that: a way past it that goes on with `next` is refused, in the branches after it as well as in the steps that follow it. A `repeat` after it is a loop of its own, and its `next` goes round that loop, so it is checked as any other. Beside others, in a `forEach`, it still names its lane.
+A block whose listing says `runs last` runs only on a run's way out, such as `plan.create`, which makes a plan's issues once a person approves it. It runs once, so in a `repeat` it takes no `round`, and its step names stay the same as its recipe's. The check holds a document to that: a way past it that goes on with `next` is refused, in the branches after it as well as in the steps that follow it. That holds when it sits in a branch that doesn't end, too: the run goes on into the steps after the branch, still on its way out. A `repeat` after it is a loop of its own, and its `next` goes round that loop, so it is checked as any other. Beside others, in a `forEach`, it still names its lane.
 
 ## Order
 

@@ -706,7 +706,14 @@ const checkRouting = (checking: Checking, step: UseStep, block: Block, at: strin
 // Each group of step names a path has used, and the block that used it.
 type Used = ReadonlyMap<string, string>;
 
-type Walked = { readonly ends: boolean; readonly seen: Used };
+// How a walk came out of its steps: whether every way ends, what it used, and,
+// for a way that runs off them, the block that runs last it passed, which
+// puts what follows on the run's way out too.
+type Walked = {
+  readonly ends: boolean;
+  readonly seen: Used;
+  readonly leaving: Option.Option<string>;
+};
 
 // Where a walk is: inside a repeat, `next` means something, and its rounds'
 // steps run again each round; inside a lane, they run once for each lane.
@@ -717,6 +724,13 @@ type Place = {
   readonly inLane: boolean;
   readonly leaving: Option.Option<string>;
 };
+
+// Where a walk is once a branch runs on into what follows: on its way out if
+// it was, or if the branch passed a block that runs last.
+const stillLeaving = (place: Place, leaving: Option.Option<string>): Place => ({
+  ...place,
+  leaving: Option.orElse(place.leaving, () => leaving),
+});
 
 // Where a walk is past a step: past a block that runs only on a run's way
 // out, inside a repeat, it is on its way out of the run.
@@ -1152,7 +1166,8 @@ const checkStage = (
   }
 };
 
-// What a block's step left: whether every run ends in it.
+// What a block's step left: whether every run ends in it, and, when one of its
+// branches runs on into what follows, a block that runs last it passed there.
 const checkUse = (
   checking: Checking,
   step: UseStep,
@@ -1171,7 +1186,7 @@ const checkUse = (
       `no block named ${step.use}; there are ${Object.keys(catalogue).join(", ")}`,
     );
 
-    return false;
+    return { ends: false, leaving: Option.none<string>() };
   }
 
   const block = found.value;
@@ -1204,16 +1219,21 @@ const checkUse = (
     );
   });
 
-  // A branch that doesn't end carries on into what follows, with what it used.
-  for (const [name, use] of walked.filter((branch) => !branch.ends).flatMap((b) => [...b.seen])) {
+  // A branch that doesn't end carries on into what follows, with what it used,
+  // and still on its way out if it passed a block that runs last.
+  const runsOn = walked.filter((branch) => !branch.ends);
+
+  for (const [name, use] of runsOn.flatMap((b) => [...b.seen])) {
     used.set(name, use);
   }
 
-  return (
-    block.exhaustive &&
-    Object.keys(block.outcomes).every((key) => key in (step.on ?? {})) &&
-    walked.every((branch) => branch.ends)
-  );
+  return {
+    ends:
+      block.exhaustive &&
+      Object.keys(block.outcomes).every((key) => key in (step.on ?? {})) &&
+      walked.every((branch) => branch.ends),
+    leaving: Option.firstSomeOf(runsOn.map((branch) => branch.leaving)),
+  };
 };
 
 // Walks the steps as a run goes through them, with the names it has at each
@@ -1231,7 +1251,7 @@ const checkSteps =
         say(checking, `${path}[${index + 1}]`, "no run can reach this step");
       }
 
-      return { ends: true, seen: used };
+      return { ends: true, seen: used, leaving: Option.none<string>() };
     };
 
     for (const [index, step] of steps.entries()) {
@@ -1267,8 +1287,14 @@ const checkSteps =
         checkStage(checking, step, names, used, place, at);
       }
 
-      if (isUse(step) && checkUse(checking, step, names, used, place, walk, at)) {
-        return stopsAt(index);
+      if (isUse(step)) {
+        const passed = checkUse(checking, step, names, used, place, walk, at);
+
+        if (passed.ends) {
+          return stopsAt(index);
+        }
+
+        place = stillLeaving(place, passed.leaving);
       }
 
       for (const id of idOf(step)) {
@@ -1278,7 +1304,7 @@ const checkSteps =
       place = pastStep(step, place);
     }
 
-    return { ends: false, seen: used };
+    return { ends: false, seen: used, leaving: place.leaving };
   };
 
 const checkFailureContext = (
