@@ -414,6 +414,23 @@ const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   ...listedAfter("does", block.closes),
 ];
 
+type CatalogueStage = NonNullable<FlowCatalogue["stages"]>[number];
+
+const describeStage = (stage: CatalogueStage) => [
+  `${stage.name}: .chernabog/stages/${stage.name}, run with stage: ${stage.name}`,
+  ...stage.inputs.map(
+    (input) =>
+      `  ${input.under} ${input.name}${Option.getOrElse(
+        Option.liftPredicate(" (optional)", () => !input.required),
+        () => "",
+      )}: ${input.kind}`,
+  ),
+  `  gives: ${describeGives(stage.gives)}`,
+  ...listedAfter("say under failure what each means", stage.failures),
+];
+
+const stagesOf = (catalogue: FlowCatalogue) => catalogue.stages ?? [];
+
 const describeSource = (source: FlowCatalogue["sources"][number]) => [
   `${source.name}: ${source.about}`,
   ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
@@ -430,6 +447,11 @@ const describeCatalogue = (catalogue: FlowCatalogue) => [
   `Lane scopes: ${catalogue.laneScopes.join(", ")}`,
   "Blocks:",
   ...catalogue.blocks.flatMap(describeBlock),
+  "Stages, this repo's own:",
+  ...Option.getOrElse(
+    Option.liftPredicate(stagesOf(catalogue).flatMap(describeStage), (lines) => lines.length > 0),
+    () => ["  none in .chernabog/stages/"],
+  ),
 ];
 
 const CatalogueText = Schema.fromJsonString(Schema.toCodecJson(FlowCatalogue));
@@ -453,13 +475,14 @@ const recipesBlocks = Command.make(
       const known = [
         ...catalogue.blocks.map((block) => block.name),
         ...catalogue.sources.map((source) => source.name),
+        ...stagesOf(catalogue).map((stage) => stage.name),
       ];
 
       const unknown = names.filter((name) => !known.includes(name));
 
       if (unknown.length > 0) {
         return yield* new FlowDocumentsRefused({
-          message: `no block or source named ${unknown.join(", ")}; chernabog recipes blocks lists them`,
+          message: `no block, source or stage named ${unknown.join(", ")}; chernabog recipes blocks lists them`,
         });
       }
 
@@ -470,6 +493,7 @@ const recipesBlocks = Command.make(
         ...catalogue,
         blocks: catalogue.blocks.filter((block) => named(block.name)),
         sources: catalogue.sources.filter((source) => named(source.name)),
+        stages: stagesOf(catalogue).filter((stage) => named(stage.name)),
       });
 
       if (json) {
@@ -487,6 +511,7 @@ const recipesBlocks = Command.make(
       yield* printLines([
         ...shown.blocks.flatMap(describeBlock),
         ...shown.sources.flatMap(describeSource),
+        ...stagesOf(shown).flatMap(describeStage),
       ]);
     }),
 ).pipe(

@@ -98,11 +98,25 @@ const importDefault = <A>(path: string, definition: Schema.Codec<A, A>, what: st
 
 type DocumentIssue = { readonly path: string; readonly message: string };
 
-// What compiling a flow document takes of the repo's SDK.
+// A repo's Effect stage as the SDK describes it: the name a document runs it
+// by, and its schemas.
+export type DescribedStage = {
+  readonly name: string;
+  readonly input: Core.Stage<unknown, unknown, unknown>["input"];
+  readonly output: Core.Stage<unknown, unknown, unknown>["output"];
+};
+
+// What compiling a flow document takes of the repo's SDK. An SDK from before
+// stages ignores what it isn't given room for, and reads no stage step.
 export type DocumentCompiler = {
   readonly read: (value: Core.Json) => Result.Result<Core.Json, ReadonlyArray<DocumentIssue>>;
-  readonly generate: (document: Core.Json) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
-  readonly describe: () => Core.Json;
+  readonly generate: (
+    document: Core.Json,
+    sdk?: string,
+    // The files in the repo's .chernabog/stages/.
+    stages?: ReadonlyArray<string>,
+  ) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
+  readonly describe: (stages?: ReadonlyArray<DescribedStage>) => Core.Json;
 };
 
 const CompilingSdk = Schema.Struct({

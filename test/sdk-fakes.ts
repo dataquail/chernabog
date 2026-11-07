@@ -35,6 +35,8 @@ import {
   RunLog,
   Runs,
   Settings,
+  type Skip,
+  StepFailed,
   StepRunner,
   type SubmittedReview,
   triggerOf,
@@ -239,6 +241,10 @@ export const makeFake = (
   const requests: Array<AgentRequest> = [];
   // The activity each agent call came from, as the Agent service sees it.
   const steps: Array<Option.Option<string>> = [];
+  // The repo's own steps in .chernabog/stages/, by name, as their processes
+  // would answer, and each run of one: its name and the input it was given.
+  const stages = new Map<string, (input: Json) => Effect.Effect<Json, Skip | StepFailed>>();
+  const stageRuns: Array<{ readonly name: string; readonly input: Json }> = [];
   const labelsOf = (number: number) => labels.get(number) ?? [];
 
   const merge: MergeFake = {
@@ -1029,7 +1035,20 @@ export const makeFake = (
           };
         }),
     }),
-    Layer.mock(StepRunner)({}),
+    Layer.succeed(
+      StepRunner,
+      StepRunner.of({
+        run: (name, input) =>
+          Effect.suspend(() => {
+            stageRuns.push({ name, input });
+
+            return Option.match(Option.fromUndefinedOr(stages.get(name)), {
+              onNone: () => Effect.fail(new StepFailed({ step: name, message: "no such stage" })),
+              onSome: (run) => run(input),
+            });
+          }),
+      }),
+    ),
     Layer.succeed(ReviewerSeat, ReviewerSeat.of({ login: Effect.sync(() => people.me) })),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
@@ -1049,6 +1068,8 @@ export const makeFake = (
     merge,
     requests,
     steps,
+    stages,
+    stageRuns,
     knowRun,
     labelsOf,
     setLabels,

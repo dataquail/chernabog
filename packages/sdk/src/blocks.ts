@@ -45,6 +45,7 @@ import {
   PullRequestNumber,
   pullRequestRef,
   Pushed,
+  runStage,
   type Source,
   ToPerson,
   WorktreePath,
@@ -703,9 +704,19 @@ export const sources = gather("source", "epic-blocks.ts", epicSources).and("bloc
   })),
 } satisfies { readonly [name: string]: { readonly subject: SubjectName } }).entries;
 
-export { Approved, Committed, defineBlock, gather, laneScopes, loopStates, Pushed, ToPerson };
+export {
+  Approved,
+  Committed,
+  defineBlock,
+  gather,
+  laneScopes,
+  loopStates,
+  Pushed,
+  runStage,
+  ToPerson,
+};
 
-export type { Disposition, Failures } from "./block.ts";
+export type { Disposition, Failures, StageFailures, StageKey } from "./block.ts";
 
 // What each source does and takes, for someone choosing one.
 export const sourceDescriptions = {

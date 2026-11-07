@@ -32,6 +32,16 @@ const CatalogueBlock = Schema.Struct({
   waits: Schema.Boolean,
 });
 
+// One of the repo's own Effect stages, from .chernabog/stages/, which a
+// document runs with `stage:`: what it takes and gives, by its schemas, and
+// the failures a document must say what to do about.
+const CatalogueStage = Schema.Struct({
+  name: Schema.String,
+  inputs: Schema.Array(BlockInput),
+  gives: Schema.Union([Schema.String, Kinds]),
+  failures: Schema.Array(Schema.String),
+});
+
 // Everything a flow document can use in this repo, as its SDK says.
 export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand: "FlowCatalogue" }>(
   "FlowCatalogue",
@@ -49,6 +59,8 @@ export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand:
   loopStates: Schema.Array(Schema.String),
   laneScopes: Schema.Array(Schema.String),
   blocks: Schema.Array(CatalogueBlock),
+  // None from an SDK from before stages.
+  stages: Schema.optionalKey(Schema.Array(CatalogueStage)),
 }) {}
 
 // The repo's SDK couldn't say what a document can use.
@@ -59,7 +71,8 @@ export class FlowBlocksUnavailable extends Schema.TaggedError<
 
 // Everything a flow document can use in the repo at `root`, by the SDK it pins:
 // the blocks, each with what it takes, gives and comes to and the order it runs
-// in, the sources, the subjects, and what its loops and lanes can name.
+// in, the sources, the subjects, what its loops and lanes can name, and the
+// repo's own Effect stages.
 export const ListFlowBlocksQuery = Query.make("ListFlowBlocksQuery", {
   payload: { root: Schema.String },
   success: FlowCatalogue,

@@ -12,12 +12,14 @@
 // left to `tsc` on what `generate` writes.
 
 import { printJson } from "@chernabog/core";
+import * as Arr from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
 
 import {
@@ -42,6 +44,21 @@ export type UseStep = {
   readonly use: string;
   // Runs only when the named boolean output is true, which `tsc` holds it to. Its output is then
   // optional, and `first` joins it with what stands in for it.
+  readonly if?: string;
+  readonly in?: { readonly [input: string]: Schema.Json };
+  readonly with?: { readonly [input: string]: Schema.Json };
+  readonly failure?: { readonly [tag: string]: Schema.Json };
+  readonly on?: { readonly [outcome: string]: Branch };
+};
+
+// Runs a step of the repo's own, from .chernabog/stages/: an Effect stage, whose
+// input and output schemas type its wires as a block's types are. It comes to
+// no outcomes, and says what each of its failures means, as a stage has no
+// table of its own. Under `in`, `round` and `lane` name its step, as a block's
+// do, rather than going into its input.
+export type StageStep = {
+  readonly id: string;
+  readonly stage: string;
   readonly if?: string;
   readonly in?: { readonly [input: string]: Schema.Json };
   readonly with?: { readonly [input: string]: Schema.Json };
@@ -78,7 +95,7 @@ export type ForEachStep = {
 // The first of these that ran: a conditional step's output, or what stands in for it.
 export type FirstStep = { readonly id: string; readonly first: ReadonlyArray<string> };
 
-export type Step = UseStep | EndStep | RepeatStep | NextStep | ForEachStep | FirstStep;
+export type Step = UseStep | StageStep | EndStep | RepeatStep | NextStep | ForEachStep | FirstStep;
 
 const EndStep = Schema.Union([
   Schema.Struct({ end: Schema.Literal("done"), summary: Schema.optionalKey(Schema.String) }),
@@ -86,6 +103,14 @@ const EndStep = Schema.Union([
 ]);
 
 const Steps = Schema.Array(Schema.suspend((): Schema.Codec<Step> => Step));
+
+const Branches = Schema.Record(
+  Schema.String,
+  Schema.Struct({
+    as: Schema.optionalKey(Schema.String),
+    steps: Steps,
+  }),
+);
 
 const Step: Schema.Codec<Step> = Schema.Union([
   EndStep,
@@ -114,15 +139,16 @@ const Step: Schema.Codec<Step> = Schema.Union([
     in: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     failure: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
-    on: Schema.optionalKey(
-      Schema.Record(
-        Schema.String,
-        Schema.Struct({
-          as: Schema.optionalKey(Schema.String),
-          steps: Steps,
-        }),
-      ),
-    ),
+    on: Schema.optionalKey(Branches),
+  }),
+  Schema.Struct({
+    id: Schema.String,
+    stage: Schema.String,
+    if: Schema.optionalKey(Schema.String),
+    in: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+    with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+    failure: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+    on: Schema.optionalKey(Branches),
   }),
 ]);
 
@@ -151,7 +177,8 @@ const isObject = (value: Schema.Json): value is JsonObject =>
 
 const FORMAT_HINT = "chernabog recipes blocks shows the format.";
 
-const STEP_KINDS = "use (a block, with an id), end, next, first, repeat or forEach";
+const STEP_KINDS =
+  "use (a block, with an id), stage (a step of the repo's own, with an id), end, next, first, repeat or forEach";
 
 type StepsAt = (value: Option.Option<Schema.Json>, path: string) => ReadonlyArray<Problem>;
 
@@ -185,10 +212,16 @@ const nestedProblems = (step: JsonObject, at: string, stepsAt: StepsAt): Readonl
 };
 
 const stepProblems = (step: JsonObject, at: string, stepsAt: StepsAt): ReadonlyArray<Problem> => {
-  const kinds = ["use", "end", "next", "first", "repeat", "forEach"].filter((key) => key in step);
+  const kinds = ["use", "stage", "end", "next", "first", "repeat", "forEach"].filter(
+    (key) => key in step,
+  );
 
   if (kinds.length === 0) {
     return [{ path: at, message: `must be a step: ${STEP_KINDS}` }];
+  }
+
+  if ("use" in step && "stage" in step) {
+    return [{ path: at, message: "uses a block or runs a stage, not both" }];
   }
 
   if (!("end" in step || "next" in step) && !Predicate.isString(step.id)) {
@@ -354,6 +387,7 @@ const RESERVED = new Set([
   "NeedsHuman",
   "Option",
   "assemble",
+  "runStage",
   "catalogue",
   "failureContext",
   "item",
@@ -377,6 +411,13 @@ export const isEnd = (step: Step): step is EndStep => "end" in step;
 
 export const isUse = (step: Step): step is UseStep => "use" in step;
 
+export const isStage = (step: Step): step is StageStep => "stage" in step;
+
+// A step that runs something and may branch on it: a block's, or a stage's.
+type CallStep = UseStep | StageStep;
+
+const isCall = (step: Step): step is CallStep => isUse(step) || isStage(step);
+
 const isNext = (step: Step): step is NextStep => "next" in step;
 
 export const isRepeat = (step: Step): step is RepeatStep => "repeat" in step;
@@ -387,7 +428,7 @@ const isFirst = (step: Step): step is FirstStep => "first" in step;
 
 const rootOf = (reference: string) => reference.split(".")[0];
 
-const branchesOf = (step: UseStep): ReadonlyArray<readonly [string, Branch]> =>
+const branchesOf = (step: CallStep): ReadonlyArray<readonly [string, Branch]> =>
   Object.entries(step.on ?? {});
 
 const inside = (step: Step): ReadonlyArray<Step> => {
@@ -399,7 +440,7 @@ const inside = (step: Step): ReadonlyArray<Step> => {
     return step.steps;
   }
 
-  if (isUse(step)) {
+  if (isCall(step)) {
     return branchesOf(step).flatMap(([, branch]) => branch.steps);
   }
 
@@ -407,7 +448,7 @@ const inside = (step: Step): ReadonlyArray<Step> => {
 };
 
 const boundBy = (step: Step): ReadonlyArray<string> => {
-  if (!isUse(step)) {
+  if (!isCall(step)) {
     return [];
   }
 
@@ -436,6 +477,15 @@ const usedIn = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
     return usedIn(inside(step));
   });
 
+const stagesIn = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
+  steps.flatMap((step) => {
+    if (isStage(step)) {
+      return [step.stage, ...stagesIn(inside(step))];
+    }
+
+    return stagesIn(inside(step));
+  });
+
 const hasEnd = (steps: ReadonlyArray<Step>): boolean =>
   steps.some((step) => {
     if (isForEach(step)) {
@@ -450,6 +500,8 @@ type Checking = {
   readonly problems: Array<Problem>;
   readonly subject: string;
   readonly fields: ReadonlyArray<string>;
+  // The files in the repo's .chernabog/stages/.
+  readonly stages: ReadonlyArray<string>;
 };
 
 type Block = (typeof catalogue)[keyof typeof catalogue];
@@ -899,6 +951,163 @@ const checkFirst = (
   }
 };
 
+// A stage is .chernabog/stages/<name>.ts (or .js, .mts, .mjs), an Effect stage,
+// or an executable <name>, a shell stage, as a run finds it.
+const STAGE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
+
+// The file of the Effect stage a name finds among the stages' files.
+const stageFileOf = (stages: ReadonlyArray<string>, name: string) =>
+  Arr.findFirst(
+    STAGE_EXTENSIONS.map((extension) => `${name}${extension}`),
+    (file) => stages.includes(file),
+  );
+
+// The Effect stages there are, by name.
+const effectStages = (stages: ReadonlyArray<string>) =>
+  [
+    ...new Set(
+      stages.flatMap((file) =>
+        Option.toArray(
+          Option.map(
+            Arr.findFirst(STAGE_EXTENSIONS, (extension) => file.endsWith(extension)),
+            (extension) => file.slice(0, -extension.length),
+          ),
+        ),
+      ),
+    ),
+  ].toSorted();
+
+// What a stage can fail with: exit 78 skips, any other failure fails. A stage
+// has no table of its own, so a document must say what each means.
+const STAGE_FAILURES = ["Skip", "StepFailed"];
+
+const DISPOSITIONS = ["person", "told", "skip", "fail"];
+
+const DISPOSITIONS_SAID = "person, told, skip or fail";
+
+// Whether the stage is there, and one a document can type: an executable's
+// output has no types to check its wires by.
+const checkStageFile = (checking: Checking, step: StageStep, at: string) => {
+  if (Option.isSome(stageFileOf(checking.stages, step.stage))) {
+    return true;
+  }
+
+  const extension = Arr.findFirst(STAGE_EXTENSIONS, (each) => step.stage.endsWith(each));
+
+  if (Option.isSome(extension)) {
+    say(
+      checking,
+      `${at}.stage`,
+      `names a stage by its file without the extension: ${step.stage.slice(0, -extension.value.length)}`,
+    );
+  } else if (checking.stages.includes(step.stage)) {
+    say(
+      checking,
+      `${at}.stage`,
+      `${step.stage} is a shell stage, whose output has no types: wrap it in an Effect stage, .chernabog/stages/${step.stage}.ts, that default-exports defineStage({ name, input, output, run })`,
+    );
+  } else {
+    say(
+      checking,
+      `${at}.stage`,
+      `no stage named ${step.stage} in .chernabog/stages/; there are ${listed(effectStages(checking.stages), "none")}`,
+    );
+  }
+
+  return false;
+};
+
+const checkStageFailures = (checking: Checking, step: StageStep, at: string) => {
+  const failure = step.failure ?? {};
+
+  for (const tag of STAGE_FAILURES.filter((each) => !(each in failure))) {
+    say(
+      checking,
+      `${at}.failure`,
+      `${step.stage} can fail with ${tag}, and this doesn't say what that means: give failure.${tag} as ${DISPOSITIONS_SAID}`,
+    );
+  }
+
+  for (const [tag, disposition] of Object.entries(failure)) {
+    if (!STAGE_FAILURES.includes(tag)) {
+      say(checking, `${at}.failure.${tag}`, "a stage fails only with Skip or StepFailed");
+    } else if (!(Predicate.isString(disposition) && DISPOSITIONS.includes(disposition))) {
+      say(checking, `${at}.failure.${tag}`, `must be ${DISPOSITIONS_SAID}`);
+    }
+  }
+};
+
+// As checkStepKey has a block's: a stage's step is named by its round or lane,
+// which it takes under `in`.
+const checkStageKey = (checking: Checking, step: StageStep, place: Place, at: string) => {
+  const wired = step.in ?? {};
+
+  if (place.inLane) {
+    if (!("lane" in wired)) {
+      say(checking, `${at}.in`, `${step.stage} runs beside others here, and must name its lane`);
+    }
+
+    return;
+  }
+
+  if (place.inLoop && wired.round !== "round") {
+    say(checking, `${at}.in.round`, `${step.stage} runs in every round here, and must take round`);
+  }
+};
+
+// The group of step names a stage's run uses: its own name.
+const stageSteps = (step: StageStep) => `stage ${step.stage}`;
+
+const checkStage = (
+  checking: Checking,
+  step: StageStep,
+  names: Set<string>,
+  used: Map<string, string>,
+  place: Place,
+  at: string,
+) => {
+  if (!checkStageFile(checking, step, at)) {
+    return;
+  }
+
+  checkName(checking, step.id, names, `${at}.id`, "a step");
+
+  if (used.has(stageSteps(step))) {
+    say(
+      checking,
+      `${at}.stage`,
+      `${step.stage} runs twice on one path, and its step names would collide`,
+    );
+  }
+
+  used.set(stageSteps(step), step.stage);
+
+  for (const [input, reference] of Object.entries(step.in ?? {})) {
+    if (Predicate.isString(reference)) {
+      checkReference(checking, names, reference, `${at}.in.${input}`);
+    } else {
+      say(
+        checking,
+        `${at}.in.${input}`,
+        "in names an earlier step's output; a fixed value goes under with",
+      );
+    }
+  }
+
+  checkStageFailures(checking, step, at);
+
+  // Its output is whatever its schema says, with no outcomes declared.
+  for (const outcome of Object.keys(step.on ?? {})) {
+    say(checking, `${at}.on.${outcome}`, `${step.stage} comes to nothing to route`);
+  }
+
+  checkStageKey(checking, step, place, at);
+
+  for (const flag of Option.toArray(Option.fromUndefinedOr(step.if))) {
+    checkReference(checking, names, flag, `${at}.if`);
+  }
+};
+
 // What a block's step left: whether every run ends in it.
 const checkUse = (
   checking: Checking,
@@ -1007,6 +1216,10 @@ const checkSteps =
 
       if (isForEach(step)) {
         checkForEach(checking, step, names, walk, at);
+      }
+
+      if (isStage(step)) {
+        checkStage(checking, step, names, used, place, at);
       }
 
       if (isUse(step) && checkUse(checking, step, names, used, place, walk, at)) {
@@ -1276,7 +1489,12 @@ const checkTrigger = (checking: Checking, document: FlowDocument) => {
 };
 
 // What is wrong with a document, short of what only its types can say.
-export const check = (document: FlowDocument): ReadonlyArray<Problem> => {
+// `stages` are the files in the repo's .chernabog/stages/, which a stage step
+// names.
+export const check = (
+  document: FlowDocument,
+  stages: ReadonlyArray<string> = [],
+): ReadonlyArray<Problem> => {
   const subject = Record.get(subjectsByName, document.subject);
 
   if (Option.isNone(subject)) {
@@ -1287,6 +1505,7 @@ export const check = (document: FlowDocument): ReadonlyArray<Problem> => {
     problems: [],
     subject: document.subject,
     fields: subject.value.fields,
+    stages,
   };
 
   if (!FLOW_NAME.test(document.flow)) {
@@ -1349,10 +1568,99 @@ Add if: <step.field>, a boolean output, to run a step only sometimes. Its output
 
 { id: rounds, repeat: { state: { <name>: <a loop state> }, steps: [...] } } loops: its steps have round and state.<name>, and { next: { <name>: <reference> } } starts the next round with that state changed. Some way must end the loop, and every way round must wait or change something.
 
-{ id: x, forEach: <list>, as: item, scope: <a lane scope>, atOnce: <number output>, steps: [...] } runs its steps once per item, beside each other; blocks there wire lane.`;
+{ id: x, forEach: <list>, as: item, scope: <a lane scope>, atOnce: <number output>, steps: [...] } runs its steps once per item, beside each other; blocks there wire lane.
 
-// Everything a document can use, for an agent or a person composing one.
-export const describe = (): Schema.Json => ({
+A step of the repo's own, for work no block covers, runs from .chernabog/stages/ with stage: in place of use:
+  - id: found
+    stage: find-work             # .chernabog/stages/find-work.ts, which default-exports defineStage
+    in: { issue: trigger.issue } # wired, as a block's inputs are; fixed values go under with
+    failure: { Skip: skip, StepFailed: person }
+Only an Effect stage can run here: its input and output schemas type its wires both ways, as a block's types do. A shell stage has no types; wrap it in an Effect stage. A stage has no failure table of its own, so failure must say what each of its failures means: Skip (it exited 78) and StepFailed (any other failure), each person, told, skip or fail. A stage comes to no outcomes; branch on a boolean output of it with if on a later step. In a repeat, in: { round: round } names its step each round; beside others, in: { lane: <item>.lane } names it each lane; neither goes into its input.`;
+
+// A stage as `describe` lists it: its name, and the schemas of its input and
+// output, as its module's defineStage gives them.
+export type StageDefinition = {
+  readonly name: string;
+  readonly input: Schema.Top;
+  readonly output: Schema.Top;
+};
+
+const optionalMark = (ast: SchemaAST.AST) =>
+  Option.getOrElse(
+    Option.liftPredicate("?", () => SchemaAST.isOptional(ast)),
+    () => "",
+  );
+
+// A word for what a value is, from its schema: what a document wires to it.
+const kindOf = (ast: SchemaAST.AST): string =>
+  Match.value(ast).pipe(
+    Match.tag("Objects", (objects) => {
+      const fields = objects.propertySignatures.map(
+        (property) =>
+          `${String(property.name)}${optionalMark(property.type)}: ${kindOf(property.type)}`,
+      );
+
+      return `{ ${fields.join(", ")} }`;
+    }),
+    Match.tag("Arrays", (arrays) => {
+      const rest = arrays.rest.map(kindOf);
+
+      if (arrays.elements.length === 0 && rest.length === 1) {
+        return `Array<${rest.join("")}>`;
+      }
+
+      return `[${[...arrays.elements.map(kindOf), ...rest.map((each) => `...${each}[]`)].join(", ")}]`;
+    }),
+    Match.tag("Union", (union) => union.types.map(kindOf).join(" | ")),
+    Match.tag("Literal", (literal) => printJson(String(literal.literal))),
+    Match.tag("Suspend", (suspended) => kindOf(suspended.thunk())),
+    Match.tag("Declaration", (declaration) => {
+      const name = Option.getOrElse(
+        Option.filter(Option.fromNullishOr(declaration.annotations?.expected), Predicate.isString),
+        () => "a value",
+      );
+
+      if (declaration.typeParameters.length === 0) {
+        return name;
+      }
+
+      return `${name}<${declaration.typeParameters.map(kindOf).join(", ")}>`;
+    }),
+    Match.orElse((other) => other._tag.toLowerCase()),
+  );
+
+const fieldsOf = (ast: SchemaAST.AST) =>
+  Option.map(Option.liftPredicate(ast, SchemaAST.isObjects), (objects) =>
+    objects.propertySignatures.map((property) => ({
+      name: String(property.name),
+      optional: SchemaAST.isOptional(property.type),
+      kind: kindOf(property.type),
+    })),
+  );
+
+const describeStage = (stage: StageDefinition) => {
+  const output = SchemaAST.toType(stage.output.ast);
+
+  const inputs = Option.getOrElse(fieldsOf(SchemaAST.toType(stage.input.ast)), () => []).map(
+    (field) => ({
+      name: field.name,
+      required: !field.optional,
+      under: "in or with",
+      kind: field.kind,
+    }),
+  );
+
+  const gives: Schema.Json = Option.match(fieldsOf(output), {
+    onNone: () => kindOf(output),
+    onSome: (fields) => Object.fromEntries(fields.map((field) => [field.name, field.kind])),
+  });
+
+  return { name: stage.name, inputs, gives, failures: STAGE_FAILURES };
+};
+
+// Everything a document can use, for an agent or a person composing one, with
+// the repo's Effect stages when given them.
+export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Json => ({
   format: FORMAT,
   subjects: Object.entries(subjects).map(([name, subject]) => ({
     name,
@@ -1394,6 +1702,7 @@ export const describe = (): Schema.Json => ({
     closes: [...block.closes],
     waits: block.waits,
   })),
+  stages: stages.map(describeStage),
 });
 
 const emitObject = (entries: ReadonlyArray<readonly [string, string]>) =>
@@ -1489,6 +1798,50 @@ const emitUse = (
   ];
 };
 
+// The name a generated flow imports a stage by: its own, with what can't be
+// in a name spelled out, so no two stages share one.
+const stageImport = (name: string) =>
+  `stage_${name.replaceAll(/\W/g, (character) => `$${character.charCodeAt(0)}$`)}`;
+
+// Under `in`, what names a stage's step rather than going into its input.
+const STAGE_KEYS = ["round", "lane"];
+
+const wiresOf = (step: StageStep) =>
+  Object.entries(step.in ?? {}).flatMap(([key, reference]) =>
+    Option.toArray(
+      Option.map(
+        Option.liftPredicate(reference, Predicate.isString),
+        (code) => [key, code] as const,
+      ),
+    ),
+  );
+
+const emitStage = (remembered: Remembered, step: StageStep, indent: string) => {
+  const wires = wiresOf(step);
+
+  const input = emitObject([
+    ...wires.filter(([key]) => !STAGE_KEYS.includes(key)),
+    ...Object.entries(step.with ?? {}).map(([key, value]) => [key, printJson(value)] as const),
+  ]);
+
+  const keyed = wires.filter(([key]) => STAGE_KEYS.includes(key));
+
+  const key = Option.getOrElse(
+    Option.liftPredicate(emitObject(keyed), () => keyed.length > 0),
+    () => "{}",
+  );
+
+  const call = `yield* runStage(${printJson(step.stage)}, ${stageImport(step.stage)}, ${input}, ${printJson(step.failure ?? {})}, ${key})`;
+
+  const ran = Option.match(Option.fromUndefinedOr(step.if), {
+    onNone: () => `${indent}const ${step.id} = ${call};`,
+    onSome: (flag) =>
+      `${indent}const ${step.id} = ${flag} === true ? Option.some(${call}) : Option.none();`,
+  });
+
+  return [ran, ...emitRemembered(remembered, step.id, indent)];
+};
+
 const emitFirst = (step: FirstStep, indent: string) => {
   const last = step.first.at(-1) ?? "";
 
@@ -1574,6 +1927,10 @@ const emitStep = (
     );
   }
 
+  if (isStage(step)) {
+    return emitStage(remembered, step, indent);
+  }
+
   return emitUse(remembered, step, indent, (outcome, branch) =>
     emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, `${indent}  `),
   );
@@ -1596,17 +1953,32 @@ const emitSource = (source: FlowDocument["trigger"][number]) => {
   return `sources[${printJson(source.use)}].find(${input})`;
 };
 
-const emit = (document: FlowDocument, sdk: string) => {
+const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>) => {
   const blocks = [...new Set(usedIn(document.steps))];
+  const staged = [...new Set(stagesIn(document.steps))];
   const subject = `subjects[${printJson(document.subject)}]`;
+
+  // Each stage the document runs, for its input and output schemas, which type
+  // its wires, from .chernabog/stages/ beside .chernabog/flows/.
+  const stageImports = staged.flatMap((name) =>
+    Option.toArray(stageFileOf(stages, name)).map(
+      (file) => `import ${stageImport(name)} from ${printJson(`../stages/${file}`)};`,
+    ),
+  );
+
+  const runStage = Option.getOrElse(
+    Option.liftPredicate(" runStage,", () => staged.length > 0),
+    () => "",
+  );
 
   return [
     `// Generated from the flow document ${document.flow}; change the document, not this file.`,
     `import { Blocks, NeedsHuman } from ${printJson(sdk)};`,
     `import * as Effect from "effect/Effect";`,
     `import * as Option from "effect/Option";`,
+    ...stageImports,
     "",
-    "const { assemble, catalogue, laneScopes: lanes, loopStates, sources, subjects } = Blocks;",
+    `const { assemble, catalogue, laneScopes: lanes, loopStates,${runStage} sources, subjects } = Blocks;`,
     "",
     "export default assemble({",
     `  subject: ${printJson(document.subject)},`,
@@ -1640,13 +2012,18 @@ const emit = (document: FlowDocument, sdk: string) => {
 };
 
 // The flow file a document compiles to, or what is wrong with the document.
-// `sdk` is where the file imports the SDK from.
-export const generate = (document: FlowDocument, sdk = "@chernabog/sdk") => {
-  const problems = check(document);
+// `sdk` is where the file imports the SDK from, and `stages` the files in the
+// repo's .chernabog/stages/.
+export const generate = (
+  document: FlowDocument,
+  sdk = "@chernabog/sdk",
+  stages: ReadonlyArray<string> = [],
+) => {
+  const problems = check(document, stages);
 
   if (problems.length > 0) {
     return Result.fail(problems);
   }
 
-  return Result.succeed(emit(document, sdk));
+  return Result.succeed(emit(document, sdk, stages));
 };

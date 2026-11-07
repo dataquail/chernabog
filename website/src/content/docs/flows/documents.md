@@ -44,15 +44,57 @@ steps:
 - `end` finishes the run or lane, as `done` or `needs-human`.
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
 
+## Your own steps
+
+When no block does what your team needs, a document can run a step of your own from `.chernabog/stages/`. Name the stage with `stage:` where a block's step has `use:`:
+
+```yaml
+steps:
+  - id: found
+    stage: find-work
+    in: { issue: trigger.issue }
+    with: { label: auto:eligible }
+    failure: { Skip: skip, StepFailed: person }
+  - id: claim
+    use: issue.claim
+    in: { issue: found.issue }
+```
+
+`.chernabog/stages/find-work.ts` is an Effect stage, as [Steps](/chernabog/flows/steps/) describes:
+
+```ts
+import { defineStage } from "@chernabog/sdk";
+import { Effect, Schema } from "effect";
+
+const Output = Schema.Struct({ issue: Schema.Number.pipe(Schema.brand("IssueNumber")) });
+
+export default defineStage({
+  name: "find-work",
+  input: Schema.Struct({ issue: Schema.Number, label: Schema.String }),
+  output: Output,
+  run: (input) => Effect.succeed(Schema.decodeSync(Output)({ issue: input.issue })),
+});
+```
+
+- `in` and `with` work as they do for a block: `in` wires an input to an earlier step's output, and `with` gives it a fixed value. Every input of a stage takes either.
+- The stage's `input` and `output` schemas type its wires, both ways. The generated flow imports the stage, so a wire of the wrong type into it or out of it is reported at its line in the document, as a block's is. To wire a stage's output into an input that takes an `IssueNumber`, a `PullRequestNumber` or another of the blocks' types, brand the output field with that name, as `find-work` does.
+- A stage has no table of failures, so `failure` must say what each of its two failures means. `Skip` is a stage that exits 78, and `StepFailed` is any other failure. Each takes `person`, `told`, `skip` or `fail`, as a block's do. A document that leaves one out is refused.
+- A stage comes to no outcomes, so it has no `on`. To branch on what it found, give it a boolean output and put `if` on a later step.
+- In a `repeat`, a stage takes `in: { round: round }`, and in a lane, `in: { lane: <item>.lane }`, as blocks do. These name its step in each round or lane and aren't passed to its input.
+- Only an Effect stage can run in a document. A shell stage's output has no types to check its wires by, so a document that runs one is refused. Wrap it in an Effect stage.
+- A stage counts as neither waiting nor changing anything, so a round of a `repeat` needs a block that waits or changes something, as it would without the stage.
+
+`chernabog recipes blocks` lists your Effect stages after the blocks, with what each takes and gives.
+
 ## What a document can use
 
 ```sh
 chernabog recipes blocks              # everything: subjects, sources, loop states, blocks
-chernabog recipes blocks gate.local   # one block
+chernabog recipes blocks gate.local   # one block, or one of your stages
 chernabog recipes blocks --json       # the same, for an agent
 ```
 
-Each block says what it does, what each input takes, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with.
+Each block says what it does, what each input takes, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
 
 ## Compiling
 
