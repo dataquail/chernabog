@@ -108,6 +108,134 @@ steps:
             summary: review.changesAsked
 `;
 
+export const EPIC_DOCUMENT = `
+flow: epic
+subject: epic
+gate: usage
+concurrency: 1
+trigger:
+  - use: epic.queued
+steps:
+  - id: claimed
+    use: epic.claim
+    in: { epic: trigger.epic }
+  - id: ships
+    use: epic.ships
+  - id: howMany
+    use: epic.atOnce
+  - id: rounds
+    repeat:
+      state: { tasks: epic.tasks, stack: stack.upkeep }
+      steps:
+        - id: progress
+          use: epic.progress
+          in: { epic: trigger.epic, round: round }
+        - id: status
+          use: epic.postStatus
+          in: { epic: trigger.epic, round: round, progress: progress }
+        - id: noted
+          use: epic.noteWaits
+          in: { progress: progress, tasks: state.tasks }
+        - id: closed
+          use: epic.finished
+          in: { epic: trigger.epic, progress: progress }
+          on:
+            finished:
+              as: summary
+              steps:
+                - end: done
+                  summary: summary
+        - id: carried
+          use: stack.carryUp
+          in: { round: round, progress: progress, stack: state.stack }
+          on:
+            moved:
+              as: moved
+              steps:
+                - next: { tasks: noted.tasks, stack: moved }
+        - id: landed
+          use: stack.land
+          if: ships.value
+          in: { round: round, progress: progress, stack: carried.stack }
+          on:
+            moved:
+              as: moved
+              steps:
+                - next: { tasks: noted.tasks, stack: moved }
+        - id: latest
+          first: [landed, carried]
+        - id: ready
+          use: epic.startable
+          in: { progress: progress, tasks: noted.tasks }
+          on:
+            none:
+              as: waiting
+              steps:
+                - id: parked
+                  use: epic.park
+                  in: { round: round }
+                  with: { lookAgainAfter: 1 day }
+                - next: { tasks: waiting, stack: latest.stack }
+        - id: started
+          forEach: ready.starts
+          as: task
+          scope: epic.task
+          atOnce: howMany.value
+          failureContext:
+            pr: [published.pr.number]
+          steps:
+            - id: claim
+              use: issue.claim
+              in: { issue: task.issue, base: task.base, lane: task.lane }
+            - id: worktree
+              use: worktree.prepare
+              in: { branch: claim.branch, base: claim.base, lane: task.lane }
+            - id: agent
+              use: agent.implement
+              in: { issue: task.issue, worktree: worktree, base: claim.base, lane: task.lane }
+              on:
+                needs-clarification:
+                  as: questions
+                  steps:
+                    - id: asked
+                      use: issue.askClarification
+                      in: { issue: task.issue, outcome: questions, lane: task.lane }
+                    - id: released
+                      use: issue.releaseClaim
+                      in: { issue: task.issue, lane: task.lane }
+                    - end: done
+            - id: gate
+              use: gate.local
+              in: { worktree: worktree, lane: task.lane }
+            - id: published
+              use: stack.publish
+              in:
+                issue: task.issue
+                epic: trigger.epic
+                worktree: worktree
+                branch: claim.branch
+                base: claim.base
+                outcome: agent.outcome
+                ship: ships.value
+                lane: task.lane
+                committed: agent.committed
+            - id: ci
+              use: ci.waitAndFix
+              in:
+                pr: published.pr.number
+                worktree: worktree
+                branch: claim.branch
+                base: published.base
+                lane: task.lane
+            - id: done
+              use: issue.handOff
+              in: { issue: task.issue, pr: published.pr, outcome: agent.outcome, lane: task.lane }
+        - id: recorded
+          use: epic.recordEndings
+          in: { tasks: ready.tasks, endings: started }
+        - next: { tasks: recorded.tasks, stack: latest.stack }
+`;
+
 export const documentOf = (source: string) => Result.getOrThrow(Compose.read(YAML.parse(source)));
 
 // A generated flow's file, under node_modules, so it resolves the SDK and effect

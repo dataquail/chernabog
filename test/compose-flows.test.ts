@@ -9,8 +9,11 @@ import {
   AgentError,
   Claims,
   DEFAULT_LABELS,
+  Epic,
   type Flow,
   labelsOf,
+  type LinkedIssue,
+  Plan,
   PullRequest,
   PushRejected,
   Settings,
@@ -23,13 +26,20 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 
+import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import review from "../packages/recipes/flows/review.ts";
 import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
-import { documentOf, IMPLEMENT_DOCUMENT, loadFlow, REVIEW_DOCUMENT } from "./compose-harness.ts";
+import {
+  documentOf,
+  EPIC_DOCUMENT,
+  IMPLEMENT_DOCUMENT,
+  loadFlow,
+  REVIEW_DOCUMENT,
+} from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
@@ -49,12 +59,25 @@ const composedImplement = loadFlow(documentOf(IMPLEMENT_DOCUMENT));
 
 const composedReview = loadFlow(documentOf(REVIEW_DOCUMENT));
 
+const composedEpic = loadFlow(documentOf(EPIC_DOCUMENT));
+
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
 const ISO_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 
 // A run's own id, and when it did things, differ from run to run.
 const unsaid = (text: string) => text.replaceAll(UUID, "<id>").replaceAll(ISO_TIME, "<time>");
+
+// The labels of every issue and pull request the fake knows.
+const everyLabel = (fake: Fake) =>
+  [
+    ...new Set([
+      ...fake.graph.made.keys(),
+      ...[...fake.branchPulls.values()].map((pull) => pull.number),
+    ]),
+  ]
+    .toSorted((left, right) => left - right)
+    .map((number) => [number, fake.labelsOf(number)] as const);
 
 const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
 
@@ -63,7 +86,12 @@ const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
 
 // What a parked run is waiting for: a change to make, and the signal that
 // tells the run, which the flow's own trigger must find.
-type Wake = { readonly signal: string; readonly change: (fake: Fake) => void };
+type Wake = {
+  readonly signal: string;
+  readonly change: (fake: Fake) => void;
+  // Whether to stop following the run once it parks, rather than wake it.
+  readonly stops?: boolean;
+};
 
 type FlowInput = Settings.FlowSettings["Service"]["input"];
 
@@ -88,10 +116,17 @@ const observe = (
 
     const finished: EngineRun = yield* runUntil(handle, fake, work, (run) =>
       Effect.gen(function* () {
-        const history = yield* readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie);
-        steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
+        // Read as the run stops being followed, so a step it just entered is in it.
+        const readSteps = readRunHistoryHandler({ runId: run.id }).pipe(
+          Effect.orDie,
+          Effect.map((history) => {
+            steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
+          }),
+        );
 
         if (run.status !== "running") {
+          yield* readSteps;
+
           return true;
         }
 
@@ -99,12 +134,18 @@ const observe = (
           const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal });
 
           if (waits.length > 0) {
+            if (wake?.stops === true) {
+              yield* readSteps;
+
+              return true;
+            }
+
             change(fake);
             const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
             yield* deliverSignals(
               handle,
               IMPLICIT,
-              found.filter((each) => each.wakeOnly === true),
+              found.filter((each) => (each.signals ?? []).length > 0),
             );
           }
         }
@@ -120,6 +161,8 @@ const observe = (
       steps,
       issueLabels: fake.labelsOf(ISSUE),
       pullLabels: fake.labelsOf(PULL),
+      labels: everyLabel(fake),
+      pulls: [...fake.branchPulls.values()].map((pull) => [pull.headRef, pull.baseRef, pull.state]),
       comments: fake.comments.map((comment) => unsaid(comment.body)),
       reviews: fake.reviews.map(unsaid),
       submitted: fake.submitted.map((each) => ({ ...each })),
@@ -443,6 +486,130 @@ describe("the review document runs as the recipe does", () => {
   );
 });
 
+describe("the epic document runs as the recipe does", () => {
+  const EPIC = 40;
+  const EPIC_WORK = item(`issue-${EPIC}`, { issue: EPIC });
+
+  // One task at a time, so both runs make their pull requests in one order.
+  const oneAtATime = (shared: Record<string, boolean | number>) => ({ atOnce: 1, ...shared });
+
+  const madeIssue = (number: number, title: string): LinkedIssue => ({
+    number,
+    title,
+    body: "",
+    url: `https://github.com/dataquail/demo/issues/${number}`,
+    createdAt: "2026-10-21T00:00:00Z",
+    labels: [],
+    assignees: [],
+    state: "open",
+  });
+
+  // #10, then #11 on it; #12 on its own; and #13, which needs both #10 and #12.
+  const epicFake = () => {
+    const fake = makeFake("approve");
+    fake.graph.made.set(EPIC, madeIssue(EPIC, "An epic"));
+    fake.setLabels(EPIC, [Plan.LABELS.epic]);
+
+    const task = (number: number, blockedBy: ReadonlyArray<number> = []) => {
+      fake.graph.made.set(number, madeIssue(number, `Task ${number}`));
+      fake.setLabels(number, [DEFAULT_LABELS.eligible]);
+      fake.graph.blockedBy.set(number, [...blockedBy]);
+      fake.graph.subIssues.set(EPIC, [...(fake.graph.subIssues.get(EPIC) ?? []), number]);
+    };
+
+    task(10);
+    task(11, [10]);
+    task(12);
+    task(13, [10, 12]);
+
+    return fake;
+  };
+
+  // Every task closed, and its pull request merged, as a person merging them would.
+  const mergeAll = (fake: Fake) => {
+    for (const number of [10, 11, 12, 13]) {
+      for (const found of Option.toArray(Option.fromUndefinedOr(fake.graph.made.get(number)))) {
+        fake.graph.made.set(number, { ...found, state: "closed" });
+      }
+
+      const branch = Claims.branchFor(number);
+
+      for (const pull of Option.toArray(Option.fromUndefinedOr(fake.branchPulls.get(branch)))) {
+        fake.branchPulls.set(branch, { ...pull, state: "merged" });
+      }
+    }
+  };
+
+  const STOP_PARKED: Wake = { signal: Epic.LAYER_CHANGED, change: () => void 0, stops: true };
+
+  const scenario = (
+    title: string,
+    setup: () => Fake,
+    ends: EngineRun["status"],
+    wake: Wake,
+    shared: Record<string, boolean | number> = {},
+  ) => {
+    effect(
+      title,
+      () => same(epic, composedEpic, "epic", setup, EPIC_WORK, ends, wake, oneAtATime(shared)),
+      60_000,
+    );
+  };
+
+  scenario(
+    "when it opens every ready task's pull request and parks",
+    epicFake,
+    "running",
+    STOP_PARKED,
+  );
+
+  scenario("when its layers ship", epicFake, "running", STOP_PARKED, { ship: true });
+
+  scenario("when every task merges, and the run wakes and ends", epicFake, "done", {
+    signal: Epic.LAYER_CHANGED,
+    change: mergeAll,
+  });
+
+  scenario(
+    "when a task's agent has questions",
+    () => {
+      const fake = epicFake();
+      fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
+
+      return fake;
+    },
+    "running",
+    STOP_PARKED,
+  );
+
+  // A failure after the pull request opened labels it too.
+  scenario(
+    "when a task's CI stays red, and it goes to a person",
+    () => {
+      const fake = epicFake();
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+
+      return fake;
+    },
+    "running",
+    STOP_PARKED,
+  );
+
+  scenario(
+    "when the remote rejects a task's push",
+    () => {
+      const fake = epicFake();
+      fake.git.rejects = Option.some(
+        new PushRejected({ branch: "auto/issue-10", reason: "! [remote rejected]" }),
+      );
+
+      return fake;
+    },
+    "running",
+    STOP_PARKED,
+  );
+});
+
 describe("a document's sources find what its recipe's trigger does", () => {
   const found = (flow: Flow, setup: () => Fake) => flowTriggered(setup(), flow);
 
@@ -559,6 +726,14 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedImplement;
       expect(declared(composed)).toEqual(declared(implement));
       expect(yield* labelled(composed)).toEqual(yield* labelled(implement));
+    }),
+  );
+
+  effect("epic", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedEpic;
+      expect(declared(composed)).toEqual(declared(epic));
+      expect(yield* labelled(composed)).toEqual(yield* labelled(epic));
     }),
   );
 
