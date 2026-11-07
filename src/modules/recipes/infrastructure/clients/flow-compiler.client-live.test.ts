@@ -244,6 +244,27 @@ describe("FlowCompilerClientLive", () => {
   );
 
   atHome(
+    "reports a type error in the trigger at its entry there",
+    () =>
+      Effect.gen(function* () {
+        const text = REVIEW_DOCUMENT.replace(
+          "  - use: review.requested\n",
+          "  - use: review.waitingElsewhere\n  - use: review.requested\n    with: { nope: 1 }\n",
+        );
+
+        const compiled = yield* compiling({ review: text }, "review");
+
+        const entry = text.split("\n").indexOf("  - use: review.requested");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [entry + 1, "trigger[1]"],
+        ]);
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
     "reports YAML that doesn't parse, and a document of the wrong form, without compiling",
     () =>
       Effect.gen(function* () {
@@ -361,8 +382,16 @@ describe("finding a problem in the document", () => {
           "steps[1].next.issue",
         );
         expect(pathOfLine(source, document("use: a"), 3, 19)).toBe("steps[1]");
+        expect(
+          pathOfLine(
+            '// trigger[0]\nsources["a"]({ "b": 1 }),\n',
+            "trigger:\n  - use: a\n    with: { b: 1 }\n",
+            2,
+            16,
+          ),
+        ).toBe("trigger[0].with.b");
         expect(pathOfLine(source, document("in: { issue: b.c }"), 4, 3)).toBe("steps[1]");
-        expect(pathOfLine(source, document("in: { issue: b.c }"), 1, 1)).toBe("steps");
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 1, 1)).toBe("");
       }),
   );
 

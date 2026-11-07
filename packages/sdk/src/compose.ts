@@ -913,7 +913,13 @@ const emit = (document: FlowDocument, sdk: string) => {
     ...Option.toArray(Option.fromUndefinedOr(document.concurrency)).map(
       (concurrency) => `  concurrency: ${concurrency},`,
     ),
-    `  sources: [${document.trigger.map(emitSource).join(", ")}],`,
+    "  sources: [",
+    ...document.trigger.flatMap((source, index) => [
+      `    // trigger[${index}]`,
+      `    ${emitSource(source)},`,
+    ]),
+    "  ],",
+    "  // steps",
     `  blocks: ${printJson(blocks)},`,
     "  workflow: (item) =>",
     "    Effect.gen(function* () {",

@@ -1,8 +1,8 @@
 // Flow documents compiled by the SDK the repo pins, from .chernabog/node_modules,
 // as its flows are loaded: this binary holds no blocks of its own. A problem is
 // reported where it is in the document. `check`'s already say their path there;
-// `tsc`'s are about the generated file, whose comments name the step each line
-// came from.
+// `tsc`'s are about the generated file, whose comments name the step or trigger
+// entry each line came from.
 
 import { printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -84,29 +84,30 @@ export const positionOf = (text: string, path: string) => {
 
 const DIAGNOSTIC = /^flow\.ts\((\d+),(\d+)\): error TS\d+: (.*)$/;
 
-const STEP_COMMENT = /^\s*\/\/ (steps\S*)$/;
+const LOCATION_COMMENT = /^\s*\/\/ ((?:steps|trigger)\S*)$/;
 
 // Where a step's keys can be in its document. A generated call takes `in` and
 // `with` in one object, so its key doesn't say which; the document does.
 const KEYED = ["in", "with", "failure", "next"];
 
-// The document path a line of the generated flow came from: the step its
-// nearest comment above names, and, at a key of that step's, the key where the
-// document has it.
+// The document path a line of the generated flow came from: what its nearest
+// comment above names, a step or a trigger entry, and, at a key of that one's,
+// the key where the document has it. Lines above any such comment, such as the
+// file's imports, are about the document as a whole.
 export const pathOfLine = (source: string, text: string, line: number, column: number) => {
   const lines = source.split("\n");
 
   const step = lines
     .slice(0, line)
     .toReversed()
-    .flatMap((each) => Option.toArray(Option.fromNullishOr(STEP_COMMENT.exec(each)?.[1])));
+    .flatMap((each) => Option.toArray(Option.fromNullishOr(LOCATION_COMMENT.exec(each)?.[1])));
 
   const wire = Option.fromNullishOr(
     /^"([^"]+)":/.exec((lines[line - 1] ?? "").slice(column - 1))?.[1],
   );
 
   return Option.match(Arr.head(step), {
-    onNone: () => "steps",
+    onNone: () => "",
     onSome: (found) =>
       Option.match(wire, {
         onNone: () => found,
