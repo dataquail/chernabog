@@ -53,6 +53,7 @@ import {
 import { epicBlocks, epicSources, epicSubject, laneScopes, loopStates } from "./epic-blocks.ts";
 import * as Implement from "./implement.ts";
 import * as PullRequest from "./pull-request.ts";
+import { reReviewBlocks, reReviewSources } from "./re-review-blocks.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
@@ -88,8 +89,14 @@ const CI_STEPS = "ci";
 const HAND_OFF_STEPS = "hand-off";
 const WORKTREE_STEPS = "prepare-worktree";
 
+// The blocks of the files beside this one.
+const elsewhere = gather("block", "epic-blocks.ts", epicBlocks).and(
+  "re-review-blocks.ts",
+  reReviewBlocks,
+);
+
 // Everything a document can use, by the name it uses it by.
-export const catalogue = gather("block", "epic-blocks.ts", epicBlocks).and("blocks.ts", {
+export const catalogue = elsewhere.and("blocks.ts", {
   "issue.claim": defineBlock({
     name: "issue.claim",
     fixed: ["adopt"],
@@ -638,8 +645,14 @@ export const catalogue = gather("block", "epic-blocks.ts", epicBlocks).and("bloc
 
 export type BlockName = keyof typeof catalogue;
 
+// The sources of the files beside this one.
+const sourcesElsewhere = gather("source", "epic-blocks.ts", epicSources).and(
+  "re-review-blocks.ts",
+  reReviewSources,
+);
+
 // Where a flow's work comes from, by the name a document uses it by.
-export const sources = gather("source", "epic-blocks.ts", epicSources).and("blocks.ts", {
+export const sources = sourcesElsewhere.and("blocks.ts", {
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
   // One carrying several comes under the first. Any label but eligible queues
@@ -734,6 +747,11 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about: "Pull requests that ask this persona for a review it hasn't given yet.",
+    with: {},
+  },
+  "review.requestedAgain": {
+    about:
+      "Pull requests that ask this persona to review again after it reviewed them, one run per request, except those labelled auto:needs-human. Each run's key carries the review it asks for: pr-7-review-2.",
     with: {},
   },
   "review.waitingElsewhere": {
