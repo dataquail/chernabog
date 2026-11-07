@@ -35,6 +35,7 @@ import {
   type EngineRun,
   type Fake,
   flowTriggered,
+  HEAD,
   ISSUE,
   item,
   PULL,
@@ -498,6 +499,219 @@ export const REVIEW_SCENARIOS = scenarios((scenario) => {
     "when the pull request closes before it can land",
     () => {
       const fake = asked("approve", [DEFAULT_LABELS.ship]);
+      fake.states.pull = "closed";
+
+      return fake;
+    },
+    "skipped",
+  );
+});
+
+const RE_REVIEW_WORK = item(`pr-${PULL}-review-2`, {
+  pullRequest: PULL,
+  headRef: "auto/issue-3",
+  agentWritten: true,
+});
+
+export const RE_REVIEW_WORK_ITEM = RE_REVIEW_WORK;
+
+// An earlier review's marker: data-quail's, with the session to resume, unless said otherwise.
+type Earlier = { readonly round: number; readonly reviewer?: string; readonly session?: boolean };
+
+export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
+  // A pull request that asks data-quail, the persona the run acts as, to
+  // review it again, after the `earlier` reviews; its next review answers
+  // `verdict`, and a re-check settles its verdict by `findings`.
+  const askedAgain = (
+    verdict: "approve" | "request-changes",
+    {
+      earlier = [{ round: 1 }],
+      findings = [{ finding: "Mention the change", remediated: true, blocking: true }],
+      labels = [],
+    }: {
+      readonly earlier?: ReadonlyArray<Earlier>;
+      readonly labels?: ReadonlyArray<string>;
+      readonly findings?: ReadonlyArray<{
+        finding: string;
+        remediated: boolean;
+        blocking: boolean;
+      }>;
+    } = {},
+  ) => {
+    const fake = repoFake(verdict);
+    fake.people.me = "data-quail";
+    fake.people.requested = ["data-quail"];
+    fake.setLabels(PULL, [...labels]);
+    fake.rechecked.findings = [...findings];
+
+    for (const each of earlier) {
+      const session = Option.liftPredicate("earlier-session", () => each.session !== false);
+
+      fake.comment(
+        reviewMarker.write({
+          sha: HEAD,
+          round: each.round,
+          verdict: "request-changes",
+          reviewer: each.reviewer ?? "data-quail",
+          ...Option.match(session, {
+            onNone: () => ({}),
+            onSome: (sessionId) => ({ sessionId }),
+          }),
+          adapter: "claude",
+        }),
+      );
+    }
+
+    return fake;
+  };
+
+  const SHIP = [DEFAULT_LABELS.ship];
+
+  // A first review, as review's, when there is none of its own to resume.
+  const firstReview = (recipe: Observed) => {
+    expect(recipe.steps).toContain("review-1");
+    expect(recipe.steps).not.toContain("review-2");
+  };
+
+  // A re-check in the earlier review's session, and the comment on its findings.
+  const rechecked = (recipe: Observed) => {
+    expect(recipe.steps).toContain("review-2");
+    expect(recipe.agentSteps).toEqual(["review-2"]);
+    expect(recipe.comments).toContainEqual(
+      "Review 1's findings, re-reviewed.\n\nRemediated:\n- Mention the change\n\nStill open:",
+    );
+  };
+
+  const OPEN = [{ finding: "Mention the change", remediated: false, blocking: true }];
+
+  scenario(
+    "when it has no review of its own, and a first review approves",
+    () => askedAgain("approve", { earlier: [{ round: 1, reviewer: "zach" }] }),
+    "done",
+    void 0,
+    {},
+    firstReview,
+  );
+
+  scenario(
+    "when it has no review of its own, and a first review asks for changes",
+    () => askedAgain("request-changes", { earlier: [] }),
+    "done",
+  );
+
+  scenario(
+    "when its review carries no session to resume, and a first review merges",
+    () => askedAgain("approve", { labels: SHIP, earlier: [{ round: 1, session: false }] }),
+    "done",
+  );
+
+  scenario(
+    "when it approves on the re-review, and a person merges",
+    () => askedAgain("approve"),
+    "done",
+    void 0,
+    {},
+    rechecked,
+  );
+
+  scenario(
+    "when it approves a pull request on the automated path",
+    () => askedAgain("approve", { labels: SHIP }),
+    "done",
+  );
+
+  scenario(
+    "when only a point that doesn't block the merge is open",
+    () =>
+      askedAgain("request-changes", {
+        labels: SHIP,
+        findings: [{ finding: "Fix the description", remediated: false, blocking: false }],
+      }),
+    "done",
+  );
+
+  scenario(
+    "when it still asks for changes",
+    () => askedAgain("request-changes", { labels: SHIP, findings: OPEN }),
+    "needs-human",
+  );
+
+  scenario(
+    "when the approved pull request conflicts with its base",
+    () => {
+      const fake = askedAgain("approve", { labels: SHIP });
+      fake.merge.refusal = Option.some("Pull Request is not mergeable");
+      fake.merge.state = "dirty";
+
+      return fake;
+    },
+    "done",
+  );
+
+  scenario(
+    "when GitHub refuses the merge for another reason",
+    () => {
+      const fake = askedAgain("approve", { labels: SHIP });
+      fake.merge.refusal = Option.some("Required status check is expected");
+
+      return fake;
+    },
+    "needs-human",
+  );
+
+  scenario(
+    "when the pull request waits on the layer below",
+    () => {
+      const fake = askedAgain("approve", { labels: SHIP });
+      stackOn(fake, "auto/issue-2");
+
+      return fake;
+    },
+    "done",
+  );
+
+  scenario(
+    "when the merge holds on a red base, and the base turns green",
+    () => {
+      const fake = askedAgain("approve", { labels: SHIP });
+      fake.merge.baseCi = Option.some({ state: "red", failedChecks: ["test"] });
+
+      return fake;
+    },
+    "done",
+    {
+      signal: PullRequest.BASE_GREEN,
+      change: (fake) => {
+        fake.merge.baseCi = Option.some({ state: "green" });
+      },
+    },
+    { holdMergesOnBrokenBase: true },
+  );
+
+  scenario(
+    "when it has had as many re-reviews as reviewRounds allows",
+    () => askedAgain("approve", { earlier: [{ round: 1 }, { round: 2 }] }),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.steps).toEqual(["find-review", `needs-human-pr-${PULL}`]);
+      expect(recipe.pullLabels).toContain(DEFAULT_LABELS.needsHuman);
+    },
+  );
+
+  scenario(
+    "when reviewRounds allows no re-review",
+    () => askedAgain("approve"),
+    "needs-human",
+    void 0,
+    { reviewRounds: 0 },
+  );
+
+  scenario(
+    "when the pull request closes before it can land",
+    () => {
+      const fake = askedAgain("approve", { labels: SHIP });
       fake.states.pull = "closed";
 
       return fake;

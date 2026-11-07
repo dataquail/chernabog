@@ -109,6 +109,75 @@ steps:
             summary: review.changesAsked
 `;
 
+export const RE_REVIEW_DOCUMENT = `
+flow: re-review
+subject: pull-request
+concurrency: 1
+trigger:
+  - use: review.requestedAgain
+steps:
+  - id: earlier
+    use: review.latestOwn
+    in: { pr: trigger.pr }
+    on:
+      none:
+        steps:
+          - id: review
+            use: review.round
+            in: { pr: trigger.pr }
+            with: { round: 1, role: reviewer }
+            on:
+              approve:
+                as: verdict
+                steps:
+                  - id: land
+                    use: pr.land
+                    in: { pr: trigger.pr, approved: verdict.approved }
+                    with: { method: squash }
+                  - end: done
+                    summary: land
+              changes:
+                steps:
+                  - end: done
+                    summary: review.changesAsked
+      found:
+        as: own
+        steps:
+          - id: rounds
+            use: review.roundsLeft
+            in: { review: own }
+            on:
+              exhausted:
+                as: why
+                steps:
+                  - id: capped
+                    use: pr.handToPerson
+                    in: { pr: trigger.pr, reason: why }
+                  - end: needs-human
+                    reason: capped
+          - id: recheck
+            use: review.recheck
+            in: { pr: trigger.pr, review: own }
+            on:
+              approve:
+                as: approval
+                steps:
+                  - id: landed
+                    use: pr.land
+                    in: { pr: trigger.pr, approved: approval.approved }
+                    with: { method: squash }
+                  - end: done
+                    summary: landed
+              changes:
+                as: open
+                steps:
+                  - id: handed
+                    use: pr.handToPerson
+                    in: { pr: trigger.pr, reason: open.reason }
+                  - end: needs-human
+                    reason: handed
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

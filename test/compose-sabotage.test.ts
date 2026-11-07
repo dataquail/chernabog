@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import reReview from "../packages/recipes/flows/re-review.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
   documentOf,
@@ -15,6 +16,7 @@ import {
   generated,
   IMPLEMENT_DOCUMENT,
   loadSource,
+  RE_REVIEW_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
@@ -24,6 +26,8 @@ import {
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
+  RE_REVIEW_SCENARIOS,
+  RE_REVIEW_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
@@ -55,6 +59,13 @@ const targets = {
     source: generated(documentOf(REVIEW_DOCUMENT)),
     work: REVIEW_WORK_ITEM,
     scenarios: REVIEW_SCENARIOS,
+  },
+  reReview: {
+    name: "re-review",
+    recipe: reReview,
+    source: generated(documentOf(RE_REVIEW_DOCUMENT)),
+    work: RE_REVIEW_WORK_ITEM,
+    scenarios: RE_REVIEW_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -143,6 +154,82 @@ describe("the comparison sees a review flow that", () => {
 
   sabotaged("takes changes asked for as approval", target, "when it asks for changes", (source) =>
     source.replace('outcomes["changes"]', 'outcomes["approve"]'),
+  );
+});
+
+describe("the comparison sees a re-review flow that", () => {
+  const { reReview: target } = targets;
+
+  sabotaged(
+    "reviews afresh when it has a review of its own to resume",
+    target,
+    "when it approves on the re-review, and a person merges",
+    (source) =>
+      source.replace(
+        'catalogue["review.latestOwn"].outcomes["none"](earlier)',
+        'catalogue["review.latestOwn"].outcomes["found"](earlier)',
+      ),
+  );
+
+  sabotaged(
+    "never lands a first review's approval",
+    target,
+    "when its review carries no session to resume, and a first review merges",
+    dropping("land", 'const land = "x";'),
+  );
+
+  sabotaged(
+    "takes a first review's changes asked for as approval",
+    target,
+    "when it has no review of its own, and a first review asks for changes",
+    (source) =>
+      source.replace(
+        'catalogue["review.round"].outcomes["changes"]',
+        'catalogue["review.round"].outcomes["approve"]',
+      ),
+  );
+
+  sabotaged(
+    "re-reviews past reviewRounds",
+    target,
+    "when it has had as many re-reviews as reviewRounds allows",
+    (source) =>
+      source.replace(
+        'outcomes["exhausted"](rounds)',
+        'outcomes["exhausted"]({ reReviews: 0, limit: 1 })',
+      ),
+  );
+
+  sabotaged(
+    "stops at reviewRounds without telling the pull request",
+    target,
+    "when it has had as many re-reviews as reviewRounds allows",
+    dropping("capped", "const capped = why;"),
+  );
+
+  sabotaged(
+    "never lands a re-review's approval",
+    target,
+    "when it approves a pull request on the automated path",
+    dropping("landed", 'const landed = "x";'),
+  );
+
+  sabotaged(
+    "stops on changes asked for again without telling the pull request",
+    target,
+    "when it still asks for changes",
+    dropping("handed", "const handed = open.reason;"),
+  );
+
+  sabotaged(
+    "takes changes asked for again as approval",
+    target,
+    "when it still asks for changes",
+    (source) =>
+      source.replace(
+        'catalogue["review.recheck"].outcomes["changes"]',
+        'catalogue["review.recheck"].outcomes["approve"]',
+      ),
   );
 });
 
