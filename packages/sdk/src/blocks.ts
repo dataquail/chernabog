@@ -523,11 +523,14 @@ export const catalogue = {
 
   "review.round": defineBlock({
     name: "review.round",
-    fixed: ["round", "role"],
+    fixed: ["role"],
+    // A single review gives its round; a loop's rounds take theirs from the loop.
+    either: ["round"],
     about: "Has a fresh agent session review the pull request and post a real GitHub review.",
     inputKinds: {
       pr: "PullRequestNumber",
-      round: "1 for a first review; it names the review's steps",
+      round:
+        "it names the review's steps: 1 for a single review, and in a repeat, round from the loop, so each round's review is a new one",
       role: "any name, such as reviewer. Optional in config: flows.<flow>.agents.<role> picks the agent for it, and without that it's the flow's agent",
     },
     outputKinds: {

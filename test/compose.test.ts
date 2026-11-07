@@ -881,6 +881,61 @@ describe("a document with a loop and lanes", () => {
       );
     });
 
+    // Review.round names its steps by its round, so a fixed one would replay the
+    // first round's verdict in every round after it.
+    describe("a review in a loop", () => {
+      const reviewing = (inputs: Pick<UseStep, "in" | "with">): Doc => ({
+        ...review,
+        steps: [
+          {
+            id: "rounds",
+            repeat: {
+              state: {},
+              steps: [
+                {
+                  id: "verdict",
+                  use: "review.round",
+                  ...inputs,
+                  on: {
+                    approve: { steps: [{ end: "done" }] },
+                    changes: {
+                      steps: [
+                        {
+                          id: "parked",
+                          use: "epic.park",
+                          in: { round: "round" },
+                          with: { lookAgainAfter: "1 day" },
+                        },
+                        { next: {} },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+
+      test("takes its round from the loop", () => {
+        expect(
+          messages(
+            reviewing({ in: { pr: "trigger.pr", round: "round" }, with: { role: "reviewer" } }),
+          ),
+        ).toEqual([]);
+      });
+
+      test("refuses a fixed round, which would review once for every round", () => {
+        expect(
+          messages(reviewing({ in: { pr: "trigger.pr" }, with: { round: 1, role: "reviewer" } })),
+        ).toEqual(["review.round runs in every round here, and must take round"]);
+      });
+
+      test("still takes a fixed round for a single review", () => {
+        expect(Compose.check(review)).toEqual([]);
+      });
+    });
+
     test("lets a block that runs no step go anywhere", () => {
       const noted = leading("lane", [
         {

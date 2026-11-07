@@ -214,6 +214,9 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // The inputs a document gives as a fixed value, under `with`, rather than
   // wiring them to an earlier step's output, under `in`.
   readonly fixed?: ReadonlyArray<keyof Input & string>;
+  // The inputs a document may give either way: a fixed value under `with`, or
+  // an earlier step's output under `in`.
+  readonly either?: ReadonlyArray<keyof Input & string>;
   // The blocks that, on a path with both, must run after this one.
   readonly before?: ReadonlyArray<string>;
   // The blocks that must already have run on any path to this one.
@@ -286,6 +289,7 @@ export const defineBlock = <
     outputKinds: outputKindsOf(spec.outputKinds),
     outcomeKinds: kindsOf(spec.outcomeKinds),
     fixed: (spec.fixed ?? []).map(String),
+    either: (spec.either ?? []).map(String),
     before: spec.before ?? [],
     needs: spec.needs ?? [],
     opens: spec.opens ?? [],

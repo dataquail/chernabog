@@ -545,7 +545,7 @@ const checkInputs = (
   for (const input of Object.keys(given)) {
     if (!(input in block.inputs)) {
       say(checking, `${at}.with.${input}`, `${step.use} takes ${takes}`);
-    } else if (!fixed.includes(input)) {
+    } else if (!fixed.includes(input) && !block.either.includes(input)) {
       say(
         checking,
         `${at}.with.${input}`,
@@ -1317,8 +1317,11 @@ export const describe = (): Schema.Json => ({
       name,
       required: need === "required",
       under: Option.getOrElse(
-        Option.liftPredicate("with", () => block.fixed.includes(name)),
-        () => "in",
+        Option.orElse(
+          Option.liftPredicate("with" as const, () => block.fixed.includes(name)),
+          () => Option.liftPredicate("in or with" as const, () => block.either.includes(name)),
+        ),
+        () => "in" as const,
       ),
       kind: block.inputKinds[name] ?? "",
     })),

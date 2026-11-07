@@ -39,7 +39,7 @@ steps:
             summary: review.changesAsked
 ```
 
-- `in` wires an input to an earlier step's output. `with` gives it a fixed value.
+- `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
 - `end` finishes the run or lane, as `done` or `needs-human`.
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
@@ -75,7 +75,7 @@ Checking each wire's type takes TypeScript, in `.chernabog/node_modules` or the 
 
 ## Loops and lanes
 
-`repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. A round must wait or change something, and some round must end the loop, or the document is refused.
+`repeat` runs its steps round after round, with explicit `state`, until a step ends the run. `next` goes to the next round, with what changed of the state. Every way through a round must end the run or go on with `next`, and every way to a `next` must wait or change something: a step that may not run, or lanes that may be none, doesn't count. Some round must end the loop. A block that runs steps in a round must take `round` from the loop, and one in a lane must name its lane, since a run resumes by step names. Otherwise the document is refused.
 
 `forEach` runs its steps once per item, as lanes beside each other. Each lane ends for itself. Blocks that run in a lane must be wired to its `lane`, because a run resumes by its step names.
 

@@ -6,7 +6,7 @@ const Kinds = Schema.Record(Schema.String, Schema.String);
 const BlockInput = Schema.Struct({
   name: Schema.String,
   required: Schema.Boolean,
-  under: Schema.Literals(["in", "with"]),
+  under: Schema.Literals(["in", "with", "in or with"]),
   kind: Schema.String,
 });
 
