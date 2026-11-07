@@ -11,6 +11,7 @@ import {
   DEFAULT_LABELS,
   type Flow,
   labelsOf,
+  PullRequest,
   PushRejected,
   Settings,
   type WorkItem,
@@ -55,20 +56,40 @@ const ISO_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 // A run's own id, and when it did things, differ from run to run.
 const unsaid = (text: string) => text.replaceAll(UUID, "<id>").replaceAll(ISO_TIME, "<time>");
 
+const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
+
+// A comment's step is named by a hash of its text, which can say the run's id.
+const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
+
 // What a parked run is waiting for: a change to make, and the signal that
 // tells the run, which the flow's own trigger must find.
 type Wake = { readonly signal: string; readonly change: (fake: Fake) => void };
 
-const observe = (flow: Flow, name: string, setup: () => Fake, work: WorkItem, wake?: Wake) =>
+type FlowInput = Settings.FlowSettings["Service"]["input"];
+
+// The settings of a repo's config.yaml, for every flow.
+const inRepo = (shared: FlowInput) => ({
+  ...repo,
+  personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared })),
+});
+
+const observe = (
+  flow: Flow,
+  name: string,
+  setup: () => Fake,
+  work: WorkItem,
+  wake?: Wake,
+  settings: FlowInput = {},
+) =>
   Effect.gen(function* () {
     const fake = setup();
-    const handle = flowHandle(repo, name, flow);
+    const handle = flowHandle(inRepo(settings), name, flow);
     let steps: ReadonlyArray<string> = [];
 
     const finished: EngineRun = yield* runUntil(handle, fake, work, (run) =>
       Effect.gen(function* () {
         const history = yield* readRunHistoryHandler({ runId: run.id }).pipe(Effect.orDie);
-        steps = [...new Set(history.steps.map((step) => step.step))];
+        steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
 
         if (run.status !== "running") {
           return true;
@@ -79,7 +100,7 @@ const observe = (flow: Flow, name: string, setup: () => Fake, work: WorkItem, wa
 
           if (waits.length > 0) {
             change(fake);
-            const found = yield* flowTriggered(fake, flow).pipe(Effect.orDie);
+            const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
             yield* deliverSignals(
               handle,
               IMPLICIT,
@@ -157,11 +178,12 @@ const same = <E, R>(
   work: WorkItem,
   ends: EngineRun["status"],
   wake?: Wake,
+  settings?: FlowInput,
 ) =>
   Effect.gen(function* () {
     const composed = yield* loading;
-    const fromRecipe = yield* observe(recipe, name, setup, work, wake);
-    const fromDocument = yield* observe(composed, name, setup, work, wake);
+    const fromRecipe = yield* observe(recipe, name, setup, work, wake, settings);
+    const fromDocument = yield* observe(composed, name, setup, work, wake, settings);
 
     expect(fromRecipe.status).toBe(ends);
     expect(fromDocument).toEqual(fromRecipe);
@@ -332,8 +354,18 @@ describe("the review document runs as the recipe does", () => {
     return fake;
   };
 
-  const scenario = (title: string, setup: () => Fake, ends: EngineRun["status"]) => {
-    effect(title, () => same(review, composedReview, "review", setup, WORK, ends), 60_000);
+  const scenario = (
+    title: string,
+    setup: () => Fake,
+    ends: EngineRun["status"],
+    wake?: Wake,
+    settings?: FlowInput,
+  ) => {
+    effect(
+      title,
+      () => same(review, composedReview, "review", setup, WORK, ends, wake, settings),
+      60_000,
+    );
   };
 
   scenario("when it approves, and a person merges", () => asked("approve"), "done");
@@ -378,6 +410,25 @@ describe("the review document runs as the recipe does", () => {
       return fake;
     },
     "done",
+  );
+
+  // The one wake pr.land contributes: it must find the run, or the run stays parked.
+  scenario(
+    "when the merge holds on a red base, and the base turns green",
+    () => {
+      const fake = asked("approve", [DEFAULT_LABELS.ship]);
+      fake.merge.baseCi = Option.some({ state: "red", failedChecks: ["test"] });
+
+      return fake;
+    },
+    "done",
+    {
+      signal: PullRequest.BASE_GREEN,
+      change: (fake) => {
+        fake.merge.baseCi = Option.some({ state: "green" });
+      },
+    },
+    { holdMergesOnBrokenBase: true },
   );
 
   scenario(
