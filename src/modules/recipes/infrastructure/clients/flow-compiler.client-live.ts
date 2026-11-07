@@ -186,12 +186,16 @@ export const FlowCompilerClientLive = Layer.effect(
     const exec = yield* Exec;
     const host = yield* HostEnvironment;
 
+    // A flow's document, and whether it has another under the other extension.
     const fileOf = (root: string, flow: string) =>
       Effect.gen(function* () {
         const names = [`${flow}.yaml`, `${flow}.yml`].map((name) => `${documentsOf(root)}/${name}`);
         const found = yield* Effect.filter(names, (name) => fs.exists(name));
 
-        return Option.getOrElse(Arr.head(found), () => names[0]);
+        return {
+          file: Option.getOrElse(Arr.head(found), () => names[0]),
+          twice: found.length > 1,
+        };
       });
 
     // TypeScript as the repo has it: beside its flows, or at the checkout's root.
@@ -233,7 +237,7 @@ export const FlowCompilerClientLive = Layer.effect(
 
     const compile = (root: string, flow: string) =>
       Effect.gen(function* () {
-        const file = yield* fileOf(root, flow);
+        const { file, twice } = yield* fileOf(root, flow);
         const shown = `.chernabog/documents/${file.split("/").at(-1) ?? ""}`;
         const text = yield* fs.readFileString(file);
 
@@ -248,6 +252,12 @@ export const FlowCompilerClientLive = Layer.effect(
           problems,
           typeChecked: false,
         });
+
+        if (twice) {
+          return onlyProblems([
+            problemAt("", `has a twin, ${flow}.yml, for the same flow: keep one of them`),
+          ]);
+        }
 
         // Its positions are ours to say, so without them and a code frame in its messages.
         const lines = new YAML.LineCounter();
@@ -325,9 +335,9 @@ export const FlowCompilerClientLive = Layer.effect(
 
           const names = yield* fs.readDirectory(documentsOf(root));
 
-          return names
-            .flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1])))
-            .toSorted();
+          return Arr.dedupe(
+            names.flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1]))),
+          ).toSorted();
         }).pipe(Effect.mapError(failed)),
 
       compile,

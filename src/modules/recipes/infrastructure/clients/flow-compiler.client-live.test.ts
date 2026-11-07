@@ -306,6 +306,27 @@ describe("FlowCompilerClientLive", () => {
     TIMEOUT,
   );
 
+  atHome(
+    "refuses a flow with a document under each extension, listing it once",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* checkout({ review: REVIEW_DOCUMENT }, { typescript: false });
+
+        yield* fs.writeFileString(`${root}/.chernabog/documents/review.yml`, REVIEW_DOCUMENT);
+
+        const compiler = yield* FlowCompilerClient;
+
+        expect(yield* compiler.documents(root)).toEqual(["review"]);
+
+        const compiled = yield* compiler.compile(root, "review");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems[0]?.message).toContain("review.yml");
+      }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+    TIMEOUT,
+  );
+
   atHome("lists a checkout's documents, and writes a flow file it can read back", () =>
     Effect.gen(function* () {
       const root = yield* checkout({ b: "x", a: "y" }, { typescript: false });
