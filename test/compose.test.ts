@@ -153,6 +153,50 @@ describe("Compose.check", () => {
     expect(messages(again).join("\n")).toContain("branch.push runs twice on one path");
   });
 
+  describe("refuses two blocks on one path that use the same step names", () => {
+    const before = (doc: Doc, id: string, step: UseStep) => {
+      const at = doc.steps.findIndex((each) => named(each, id));
+
+      return withSteps(doc, [...doc.steps.slice(0, at), step, ...doc.steps.slice(at)]);
+    };
+
+    const ciAgain = {
+      id: "ciAgain",
+      use: "ci.waitPreparing",
+      in: { pr: "opened.number", branch: "claim.branch", base: "claim.base" },
+    };
+
+    test("waiting on CI both ways", () => {
+      expect(messages(before(implement, "done", ciAgain))).toEqual([
+        "ci.waitPreparing runs on one path with ci.waitAndFix, and their step names would collide",
+      ]);
+    });
+
+    test("preparing a worktree and a block that prepares its own", () => {
+      expect(messages(before(implement, "gate", ciAgain))).toContain(
+        "ci.waitPreparing runs on one path with worktree.prepare, and their step names would collide",
+      );
+    });
+
+    test("handing off both ways", () => {
+      const handOffAgain = {
+        id: "handOffAgain",
+        use: "issue.handOffAdopted",
+        in: { issue: "trigger.issue", adopted: "opened", branch: "claim.branch" },
+      };
+
+      const after = withSteps(implement, [
+        ...implement.steps.slice(0, -1),
+        handOffAgain,
+        ...implement.steps.slice(-1),
+      ]);
+
+      expect(messages(after)).toEqual([
+        "issue.handOffAdopted runs on one path with issue.handOff, and their step names would collide",
+      ]);
+    });
+  });
+
   test("catches a branch that falls through into the rest of the flow", () => {
     // Without its end, the adopted path runs on into the main path, and a
     // block on both collides.

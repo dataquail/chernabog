@@ -230,8 +230,9 @@ const checkInputs = (
 const checkIdentity = (
   checking: Checking,
   step: UseStep,
+  block: Block,
   names: ReadonlySet<string>,
-  used: ReadonlySet<string>,
+  used: Used,
   at: string,
 ) => {
   if (!IDENTIFIER.test(step.id) || RESERVED.has(step.id)) {
@@ -242,13 +243,22 @@ const checkIdentity = (
     say(checking, `${at}.id`, `${step.id} is already a step here`);
   }
 
-  // A run resumes by its step names, which a block's two uses would share.
-  if (used.has(step.use)) {
-    say(
-      checking,
-      `${at}.use`,
-      `${step.use} runs twice on one path, and its step names would collide`,
-    );
+  // A run resumes by its step names, which a block's two uses would share, as
+  // would two blocks that use the same ones.
+  const earlier = block.stepNames.flatMap((name) =>
+    Option.toArray(Option.fromUndefinedOr(used.get(name))),
+  );
+
+  for (const use of earlier.slice(0, 1)) {
+    if (use === step.use) {
+      say(checking, `${at}.use`, `${use} runs twice on one path, and its step names would collide`);
+    } else {
+      say(
+        checking,
+        `${at}.use`,
+        `${step.use} runs on one path with ${use}, and their step names would collide`,
+      );
+    }
   }
 };
 
@@ -293,7 +303,10 @@ const checkRouting = (checking: Checking, step: UseStep, block: Block, at: strin
   }
 };
 
-type Walked = { readonly ends: boolean; readonly seen: ReadonlySet<string> };
+// Each group of step names a path has used, and the block that used it.
+type Used = ReadonlyMap<string, string>;
+
+type Walked = { readonly ends: boolean; readonly seen: Used };
 
 // Walks the steps as a run goes through them, with the names it has at each
 // and the blocks it has used.
@@ -302,10 +315,10 @@ const checkSteps = (
   steps: ReadonlyArray<Step>,
   path: string,
   scope: ReadonlySet<string>,
-  seen: ReadonlySet<string>,
+  seen: Used,
 ): Walked => {
   const names = new Set(scope);
-  const used = new Set(seen);
+  const used = new Map(seen);
 
   const unreachableAfter = (index: number) => {
     if (index < steps.length - 1) {
@@ -344,8 +357,12 @@ const checkSteps = (
 
     const block = found.value;
 
-    checkIdentity(checking, step, names, used, at);
-    used.add(step.use);
+    checkIdentity(checking, step, block, names, used, at);
+
+    for (const name of block.stepNames) {
+      used.set(name, step.use);
+    }
+
     checkInputs(checking, step, block, names, at);
     checkRouting(checking, step, block, at);
     names.add(step.id);
@@ -359,8 +376,8 @@ const checkSteps = (
     });
 
     // A branch that doesn't end carries on into what follows, with what it used.
-    for (const each of walked.filter((branch) => !branch.ends).flatMap((b) => [...b.seen])) {
-      used.add(each);
+    for (const [name, use] of walked.filter((branch) => !branch.ends).flatMap((b) => [...b.seen])) {
+      used.set(name, use);
     }
 
     const covered =
@@ -444,7 +461,7 @@ export const check = (document: FlowDocument): ReadonlyArray<Problem> => {
   }
 
   checkTrigger(checking, document);
-  checkSteps(checking, document.steps, "steps", new Set(["trigger"]), new Set());
+  checkSteps(checking, document.steps, "steps", new Set(["trigger"]), new Map());
   checkFailureContext(checking, document, subject.value.failureContext);
 
   return checking.problems;

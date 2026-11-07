@@ -205,6 +205,10 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // Whether every run comes to one of the outcomes, so a document whose
   // branches all end has nothing after the block.
   readonly exhaustive?: boolean;
+  // The groups of step names its run uses that another block's also does, or
+  // its own name when none are shared. A second use of a step name replays the
+  // first's result instead of doing the work, so no path takes a group twice.
+  readonly stepNames?: ReadonlyArray<string>;
   readonly contributes: Contribution;
 };
 
@@ -227,6 +231,7 @@ export const defineBlock = <
     outcomes: spec.outcomes,
     mustRoute: spec.mustRoute,
     exhaustive: spec.exhaustive === true,
+    stepNames: spec.stepNames ?? [spec.name],
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);
@@ -272,6 +277,11 @@ const conflicts = (pullRequest: number) =>
     }),
     Schema.Boolean,
   );
+
+// Step names more than one block uses.
+const CI_STEPS = "ci";
+const HAND_OFF_STEPS = "hand-off";
+const WORKTREE_STEPS = "prepare-worktree";
 
 // Everything a document can use, by the name it uses it by.
 export const catalogue = {
@@ -330,6 +340,7 @@ export const catalogue = {
 
   "ci.waitPreparing": defineBlock({
     name: "ci.waitPreparing",
+    stepNames: [CI_STEPS, WORKTREE_STEPS],
     inputs: { pr: "required", branch: "required", base: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -357,6 +368,7 @@ export const catalogue = {
 
   "issue.handOffAdopted": defineBlock({
     name: "issue.handOffAdopted",
+    stepNames: [HAND_OFF_STEPS],
     inputs: { issue: "required", adopted: "required", branch: "required" },
     run: (input: {
       readonly issue: IssueNumber;
@@ -381,6 +393,7 @@ export const catalogue = {
 
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
+    stepNames: [WORKTREE_STEPS],
     inputs: { branch: "required", base: "required" },
     run: (input: { readonly branch: BranchName; readonly base: Option.Option<BaseBranch> }) =>
       Implement.prepareWorktree(input.branch, onBase(input.base)).pipe(Effect.map(WorktreePath)),
@@ -486,6 +499,7 @@ export const catalogue = {
 
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
+    stepNames: [CI_STEPS],
     inputs: { pr: "required", worktree: "required", branch: "required", base: "required" },
     run: (input: {
       readonly pr: PullRequestNumber;
@@ -513,6 +527,7 @@ export const catalogue = {
 
   "issue.handOff": defineBlock({
     name: "issue.handOff",
+    stepNames: [HAND_OFF_STEPS],
     inputs: { issue: "required", pr: "required", outcome: "required" },
     run: (input: {
       readonly issue: IssueNumber;
