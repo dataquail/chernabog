@@ -1,7 +1,8 @@
 // Runs the recipes' own test suites on what their documents compile to:
 // `bun run test:composed` loads this first, so a suite's import of a recipe gets
 // the document's flow. Only for epic, implement, review, re-review,
-// address-review, resolve-conflicts and post-merge, which have documents.
+// address-review, resolve-conflicts, post-merge and human-initiated, which have
+// documents.
 
 import { Compose } from "@chernabog/sdk";
 import * as Result from "effect/Result";
@@ -10,6 +11,7 @@ import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
   EPIC_DOCUMENT,
+  HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
@@ -25,10 +27,11 @@ const DOCUMENTS = {
   "address-review": ADDRESS_REVIEW_DOCUMENT,
   "resolve-conflicts": RESOLVE_CONFLICTS_DOCUMENT,
   "post-merge": POST_MERGE_DOCUMENT,
+  "human-initiated": HUMAN_INITIATED_DOCUMENT,
 };
 
 const PATTERN =
-  /packages\/recipes\/flows\/(epic|implement|review|re-review|address-review|resolve-conflicts|post-merge)\.ts$/;
+  /packages\/recipes\/flows\/(epic|implement|review|re-review|address-review|resolve-conflicts|post-merge|human-initiated)\.ts$/;
 
 const nameOf = (path: string) => {
   const name = PATTERN.exec(path)?.[1];
@@ -40,7 +43,8 @@ const nameOf = (path: string) => {
     name === "re-review" ||
     name === "address-review" ||
     name === "resolve-conflicts" ||
-    name === "post-merge"
+    name === "post-merge" ||
+    name === "human-initiated"
   ) {
     return name;
   }

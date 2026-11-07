@@ -6,6 +6,7 @@
 import {
   Agent,
   AgentError,
+  claimMarker,
   Claims,
   DEFAULT_LABELS,
   Epic,
@@ -1568,6 +1569,201 @@ export const POST_MERGE_SCENARIOS = scenarios((scenario) => {
         `#${PULL}: CI on merge56 is red, as it already was before the merge; filed nothing`,
       );
     },
+  );
+});
+
+// The issue a person names with chernabog start, as Hybrid.itemFor finds it.
+export const HUMAN_INITIATED_WORK_ITEM = item(`issue-${ISSUE}`, { issue: ISSUE });
+
+const started = () => repoFake("approve", POOL);
+
+// The issue's branch, and the claim marker of the run that left it.
+const startedEarlier = (claim: Parameters<typeof claimMarker.write>[0]) => {
+  const fake = started();
+  fake.existing.branch = true;
+  fake.comment(claimMarker.write(claim));
+
+  return fake;
+};
+
+const EARLIER_CLAIM = {
+  runId: "an-earlier-run",
+  claimedAt: "2026-10-20T00:00:00Z",
+  branch: `auto/issue-${ISSUE}`,
+};
+
+export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
+  scenario("when the person and the agent are done", started, "done", void 0, {}, (recipe) => {
+    expect(recipe.summary).toBe(
+      `#${ISSUE}: https://github.com/dataquail/demo/pull/${PULL} is ready for review; a person merges`,
+    );
+    expect(recipe.pullLabels).toContain(DEFAULT_LABELS.hybrid);
+    expect(recipe.requested).toBe(1);
+    // One session, the person's.
+    expect(recipe.sessions.map(([, , withPerson]) => withPerson)).toEqual([true]);
+  });
+
+  scenario(
+    "when the person closes the session before open-pr",
+    () => {
+      const fake = started();
+      fake.author.closes = true;
+
+      return fake;
+    },
+    "failed",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain("the person closed the session");
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.inProgress]);
+    },
+  );
+
+  scenario(
+    "when another run holds the claim",
+    () => {
+      const fake = started();
+      fake.refs.set(Claims.refFor(Claims.issue(ISSUE)), "held0000");
+
+      return fake;
+    },
+    "skipped",
+  );
+
+  scenario(
+    "when an earlier start left the issue's branch",
+    () => startedEarlier({ ...EARLIER_CLAIM, withPerson: true }),
+    "done",
+  );
+
+  scenario(
+    "when an earlier unattended run left the issue's branch",
+    () => startedEarlier(EARLIER_CLAIM),
+    "skipped",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain("already claimed by an unattended run");
+    },
+  );
+
+  // Before the session, a failure fails the run rather than going to a person.
+  scenario(
+    "when the worktree's install fails",
+    started,
+    "failed",
+    void 0,
+    { install: "exit 3" },
+    (recipe) => {
+      expect(recipe.issueLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+      expect(recipe.sessions).toEqual([]);
+    },
+  );
+
+  scenario(
+    "when the local gate keeps failing",
+    started,
+    "needs-human",
+    void 0,
+    { localGate: ["exit 3"], localGateRounds: 1 },
+    (recipe) => {
+      expect(recipe.pushes).toBe(0);
+      expect(recipe.issueLabels).toContain(DEFAULT_LABELS.needsHuman);
+    },
+  );
+
+  scenario(
+    "when the person committed nothing",
+    () => {
+      const fake = started();
+      fake.author.leaves.push("?? a.ts");
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain(`before open-pr`);
+    },
+  );
+
+  scenario(
+    "when the remote rejects the push",
+    () => {
+      const fake = started();
+      fake.git.rejects = Option.some(
+        new PushRejected({
+          branch: `auto/issue-${ISSUE}`,
+          reason: "! [remote rejected]",
+          missingScope: "workflow",
+        }),
+      );
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.opened).toBe(false);
+      expect(recipe.issueLabels).toContain(DEFAULT_LABELS.needsHuman);
+    },
+  );
+
+  scenario(
+    "when a change to humanOnlyPaths was made in front of the person",
+    () => {
+      const fake = started();
+      fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+
+      return fake;
+    },
+    "done",
+  );
+
+  scenario(
+    "when CI is red and stays red",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain("CI is still red after 3 fix attempts");
+      // The person's fixes, on the pull request the hand-off names.
+      expect(recipe.comments.some((comment) => comment.includes(`#${PULL}`))).toBe(true);
+    },
+  );
+
+  scenario(
+    "when CI stays pending past ciTimeout",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    { ciTimeout: "0 millis" },
+  );
+
+  scenario(
+    "when the pull request is closed while CI runs",
+    () => {
+      const fake = started();
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.states.pull = "closed";
+
+      return fake;
+    },
+    "needs-human",
   );
 });
 

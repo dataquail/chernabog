@@ -29,6 +29,7 @@ import {
   documentOf,
   EPIC_DOCUMENT,
   generated,
+  HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
@@ -51,6 +52,7 @@ const reReview = documentOf(RE_REVIEW_DOCUMENT);
 const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
 const resolveConflicts = documentOf(RESOLVE_CONFLICTS_DOCUMENT);
 const postMerge = documentOf(POST_MERGE_DOCUMENT);
+const humanInitiated = documentOf(HUMAN_INITIATED_DOCUMENT);
 
 // The address-review document with a line of it changed.
 const addressReviewWith = (line: string, replacement: string) => {
@@ -71,6 +73,13 @@ const postMergeWith = (line: string, replacement: string) => {
   expect(POST_MERGE_DOCUMENT).toContain(line);
 
   return documentOf(POST_MERGE_DOCUMENT.replace(line, replacement));
+};
+
+// The human-initiated document with a line of it changed.
+const humanInitiatedWith = (line: string, replacement: string) => {
+  expect(HUMAN_INITIATED_DOCUMENT).toContain(line);
+
+  return documentOf(HUMAN_INITIATED_DOCUMENT.replace(line, replacement));
 };
 
 // The re-review document with a line of it changed, for a change deep in its branches.
@@ -217,6 +226,28 @@ describe("Compose.read", () => {
     expect(problemsIn([{ id: "a" }])[0]?.[1]).toContain(
       "must be a step: use (a block, with an id)",
     );
+  });
+
+  test("takes a flow a person starts in place of a trigger", () => {
+    const started = Result.getOrThrow(
+      Compose.read({ flow: "x", subject: "issue", start: true, steps: [{ end: "done" }] }),
+    );
+
+    expect(started).toMatchObject({ start: true, trigger: [] });
+
+    expect(
+      problemsOf({ flow: "x", subject: "issue", start: false, steps: [{ end: "done" }] }),
+    ).toEqual([{ path: "start", message: "Expected true, got false" }]);
+  });
+
+  test("says a document with neither a trigger nor start is missing its trigger", () => {
+    expect(problemsOf({ flow: "x", subject: "issue", steps: [{ end: "done" }] })).toEqual([
+      {
+        path: "trigger",
+        message:
+          "is missing: name where the flow's work comes from, or say start: true for a flow a person starts with chernabog start <issue>. chernabog recipes blocks shows the format.",
+      },
+    ]);
   });
 
   test("says what a document leaves out, and where to find the format", () => {
@@ -780,6 +811,57 @@ describe("Compose.check", () => {
     ]);
   });
 
+  test("finds nothing wrong with the human-initiated document", () => {
+    expect(Compose.check(humanInitiated)).toEqual([]);
+  });
+
+  test("refuses a flow a person starts that also has a trigger", () => {
+    expect(Compose.check({ ...humanInitiated, trigger: implement.trigger })).toEqual([
+      {
+        path: "start",
+        message:
+          "a flow a person starts has no trigger: say start: true or name a trigger, not both",
+      },
+    ]);
+  });
+
+  test("refuses a flow a person starts on a subject they can't name", () => {
+    const started = documentOf(
+      REVIEW_DOCUMENT.replace(
+        "trigger:\n  - use: review.requested\n  - use: review.waitingElsewhere\n",
+        "start: true\n",
+      ),
+    );
+
+    expect(Compose.check(started)).toEqual([
+      {
+        path: "start",
+        message:
+          "a person starts only a flow on issue, with chernabog start <issue>, and this is a flow on pull-request",
+      },
+    ]);
+  });
+
+  test("refuses a flow a person starts that parks in a block only a trigger wakes", () => {
+    const parked = humanInitiatedWith(
+      "  - id: worktree\n",
+      `  - id: ready
+    use: pr.awaitReady
+    in: { issue: trigger.issue, adopted: claim }
+    with: { within: 14 days }
+  - id: worktree
+`,
+    );
+
+    expect(Compose.check(parked)).toEqual([
+      {
+        path: "steps[1].use",
+        message:
+          "pr.awaitReady waits for the flow's trigger to wake it, and a flow a person starts has no trigger",
+      },
+    ]);
+  });
+
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
@@ -803,7 +885,7 @@ describe("tsc on a document's flow file", () => {
   };
 
   effect(
-    "compiles the implement, review, re-review, address-review, resolve-conflicts and post-merge documents",
+    "compiles the implement, review, re-review, address-review, resolve-conflicts, post-merge and human-initiated documents",
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(implement)).toEqual([]);
@@ -812,8 +894,27 @@ describe("tsc on a document's flow file", () => {
         expect(yield* compileErrors(addressReview)).toEqual([]);
         expect(yield* compileErrors(postMerge)).toEqual([]);
         expect(yield* compileErrors(resolveConflicts)).toEqual([]);
+        expect(yield* compileErrors(humanInitiated)).toEqual([]);
       }),
     TIMEOUT,
+  );
+
+  rejected(
+    "a push of what the person's session didn't commit",
+    humanInitiatedWith("committed: session.committed", "committed: session.finished"),
+    "Committed",
+  );
+
+  rejected(
+    "a hybrid pull request opened without the push",
+    humanInitiatedWith("pushed: push.pushed", "pushed: session.committed"),
+    "Pushed",
+  );
+
+  rejected(
+    "a hand-off without what open-pr recorded",
+    humanInitiatedWith("finished: session.finished }", "finished: session.committed }"),
+    "finished",
   );
 
   rejected(
@@ -1891,9 +1992,31 @@ describe("Compose.describe", () => {
       Compose.describe(),
     );
 
-    for (const part of ["flow:", "subject:", "trigger:", "steps:", "in:", "with:", "as:", "end:"]) {
+    for (const part of [
+      "flow:",
+      "subject:",
+      "trigger:",
+      "start:",
+      "steps:",
+      "in:",
+      "with:",
+      "as:",
+      "end:",
+    ]) {
       expect(format).toContain(part);
     }
+  });
+
+  test("says which subjects a person can start a flow on", () => {
+    const { subjects } = Schema.decodeUnknownSync(
+      Schema.Struct({
+        subjects: Schema.Array(Schema.Struct({ name: Schema.String, start: Schema.Boolean })),
+      }),
+    )(Compose.describe());
+
+    expect(subjects.filter((subject) => subject.start).map((subject) => subject.name)).toEqual([
+      "issue",
+    ]);
   });
 
   test("says what each block does, and each of its inputs and outcomes", () => {

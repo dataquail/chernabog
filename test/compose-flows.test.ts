@@ -5,6 +5,7 @@
 import {
   DEFAULT_LABELS,
   type Flow,
+  isManual,
   labelsOf,
   ownerMarker,
   Settings,
@@ -18,6 +19,7 @@ import * as Predicate from "effect/Predicate";
 
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
+import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
@@ -27,6 +29,7 @@ import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
   EPIC_DOCUMENT,
+  HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadFlow,
   POST_MERGE_DOCUMENT,
@@ -42,6 +45,8 @@ import {
   ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
+  HUMAN_INITIATED_SCENARIOS,
+  HUMAN_INITIATED_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
@@ -77,6 +82,8 @@ const composedAddressReview = loadFlow(documentOf(ADDRESS_REVIEW_DOCUMENT));
 const composedResolveConflicts = loadFlow(documentOf(RESOLVE_CONFLICTS_DOCUMENT));
 
 const composedPostMerge = loadFlow(documentOf(POST_MERGE_DOCUMENT));
+
+const composedHumanInitiated = loadFlow(documentOf(HUMAN_INITIATED_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -187,6 +194,23 @@ describe("the post-merge document runs as the recipe does", () => {
       scenario.title,
       () =>
         runsAsTheRecipe("post-merge", postMerge, composedPostMerge, POST_MERGE_WORK_ITEM, scenario),
+      60_000,
+    );
+  }
+});
+
+describe("the human-initiated document runs as the recipe does", () => {
+  for (const scenario of HUMAN_INITIATED_SCENARIOS) {
+    effect(
+      scenario.title,
+      () =>
+        runsAsTheRecipe(
+          "human-initiated",
+          humanInitiated,
+          composedHumanInitiated,
+          HUMAN_INITIATED_WORK_ITEM,
+          scenario,
+        ),
       60_000,
     );
   }
@@ -629,6 +653,20 @@ describe("a document's flow declares what its recipe does", () => {
       expect(declared(composed)).toEqual(declared(postMerge));
       expect(Object.keys(composed).toSorted()).toEqual(Object.keys(postMerge).toSorted());
       expect(yield* labelled(composed)).toEqual(yield* labelled(postMerge));
+    }),
+  );
+
+  // A person starts it: it has no trigger, finds the issue they name as the
+  // recipe does, and declares no concurrency, as its recipe doesn't.
+  effect("human-initiated", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedHumanInitiated;
+      expect(declared(composed)).toEqual(declared(humanInitiated));
+      expect(Object.keys(composed).toSorted()).toEqual(Object.keys(humanInitiated).toSorted());
+      expect(isManual(composed)).toBe(true);
+      expect(composed.start).toBe(true);
+      expect(composed.item).toBe(humanInitiated.item);
+      expect(yield* labelled(composed)).toEqual(yield* labelled(humanInitiated));
     }),
   );
 

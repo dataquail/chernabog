@@ -290,7 +290,7 @@ export const makeFake = (
   // How the author answers a review it is asked to consider, how it answers a
   // merge conflict, and whether the person closes a session with them before it answers.
   // `asks` are worktrees whose next implement session answers with questions.
-  // `leaves` is what an implement session leaves in the worktree, as `git status
+  // `leaves` is what an implement session, or a person's, leaves in the worktree, as `git status
   // --porcelain` lists it, instead of committing it. `meanwhile` is what
   // happens elsewhere while the next implement session in a worktree runs, by
   // worktree, as a person or GitHub acting while an epic's lane works.
@@ -521,7 +521,11 @@ export const makeFake = (
 
     // The hybrid path's open-pr, once the person and the agent are done.
     if (schema.includes('"title"')) {
-      git.commits += 1;
+      if (author.leaves.length > 0) {
+        git.uncommitted = [...author.leaves];
+      } else {
+        git.commits += 1;
+      }
 
       return {
         title: "feat: worked out together",
