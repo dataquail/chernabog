@@ -1,12 +1,13 @@
 // Runs the recipes' own test suites on what their documents compile to:
 // `bun run test:composed` loads this first, so a suite's import of a recipe gets
-// the document's flow. Only for epic, implement, review and re-review, which
-// have documents.
+// the document's flow. Only for epic, implement, review, re-review and
+// address-review, which have documents.
 
 import { Compose } from "@chernabog/sdk";
 import * as Result from "effect/Result";
 
 import {
+  ADDRESS_REVIEW_DOCUMENT,
   documentOf,
   EPIC_DOCUMENT,
   IMPLEMENT_DOCUMENT,
@@ -19,14 +20,21 @@ const DOCUMENTS = {
   implement: IMPLEMENT_DOCUMENT,
   review: REVIEW_DOCUMENT,
   "re-review": RE_REVIEW_DOCUMENT,
+  "address-review": ADDRESS_REVIEW_DOCUMENT,
 };
 
-const PATTERN = /packages\/recipes\/flows\/(epic|implement|review|re-review)\.ts$/;
+const PATTERN = /packages\/recipes\/flows\/(epic|implement|review|re-review|address-review)\.ts$/;
 
 const nameOf = (path: string) => {
   const name = PATTERN.exec(path)?.[1];
 
-  if (name === "epic" || name === "implement" || name === "review" || name === "re-review") {
+  if (
+    name === "epic" ||
+    name === "implement" ||
+    name === "review" ||
+    name === "re-review" ||
+    name === "address-review"
+  ) {
     return name;
   }
 

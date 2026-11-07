@@ -178,6 +178,86 @@ steps:
                     reason: handed
 `;
 
+export const ADDRESS_REVIEW_DOCUMENT = `
+flow: address-review
+subject: changes-asked
+gate: usage
+concurrency: 1
+trigger:
+  - use: review.changesRequested
+steps:
+  - id: asked
+    use: review.changesAsked
+    in: { pr: trigger.pr, reviewer: trigger.reviewer, reviewedSha: trigger.reviewedSha }
+  - id: author
+    use: author.session
+    in: { pr: trigger.pr }
+  - id: worktree
+    use: author.worktree
+    in: { branch: trigger.branch }
+  - id: considered
+    use: author.consider
+    in: { pr: trigger.pr, review: asked, session: author }
+    on:
+      decline:
+        as: dispute
+        steps:
+          - id: replied
+            use: author.dispute
+            in: { pr: trigger.pr, review: asked, dispute: dispute }
+          - id: disputed
+            use: pr.handToPerson
+            in: { pr: trigger.pr, reason: replied }
+          - end: needs-human
+            reason: disputed
+  - id: addressed
+    use: author.address
+    in: { pr: trigger.pr, review: asked, session: author }
+    on:
+      needs-clarification:
+        as: questions
+        steps:
+          - id: asking
+            use: pr.handToPerson
+            in: { pr: trigger.pr, reason: questions.reason }
+          - end: needs-human
+            reason: asking
+  - id: changed
+    use: author.checkChanged
+    in: { pr: trigger.pr, review: asked, reviewedSha: trigger.reviewedSha, worktree: worktree }
+  - id: gate
+    use: author.localGate
+    in: { pr: trigger.pr, review: asked, worktree: worktree, session: author }
+  - id: pushed
+    use: author.push
+    in:
+      worktree: worktree
+      branch: trigger.branch
+      base: trigger.base
+      review: asked
+      session: author
+      committed: addressed.committed
+  - id: ci
+    use: author.waitForCi
+    in:
+      pr: trigger.pr
+      worktree: worktree
+      branch: trigger.branch
+      base: trigger.base
+      review: asked
+      session: author
+  - id: again
+    use: review.askAgain
+    in:
+      pr: trigger.pr
+      review: asked
+      reviewer: trigger.reviewer
+      summary: addressed.summary
+      pushed: pushed.pushed
+  - end: done
+    summary: again
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

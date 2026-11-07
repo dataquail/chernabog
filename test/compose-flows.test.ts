@@ -9,11 +9,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
+  ADDRESS_REVIEW_DOCUMENT,
   documentOf,
   EPIC_DOCUMENT,
   IMPLEMENT_DOCUMENT,
@@ -23,6 +25,10 @@ import {
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
 import {
+  ADDRESS_REVIEW_LAYER_SCENARIOS,
+  ADDRESS_REVIEW_LAYER_WORK_ITEM,
+  ADDRESS_REVIEW_SCENARIOS,
+  ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
@@ -48,6 +54,8 @@ const composedReview = loadFlow(documentOf(REVIEW_DOCUMENT));
 const composedEpic = loadFlow(documentOf(EPIC_DOCUMENT));
 
 const composedReReview = loadFlow(documentOf(RE_REVIEW_DOCUMENT));
+
+const composedAddressReview = loadFlow(documentOf(ADDRESS_REVIEW_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -93,6 +101,38 @@ describe("the re-review document runs as the recipe does", () => {
     effect(
       scenario.title,
       () => runsAsTheRecipe("re-review", reReview, composedReReview, RE_REVIEW_WORK_ITEM, scenario),
+      60_000,
+    );
+  }
+});
+
+describe("the address-review document runs as the recipe does", () => {
+  for (const scenario of ADDRESS_REVIEW_SCENARIOS) {
+    effect(
+      scenario.title,
+      () =>
+        runsAsTheRecipe(
+          "address-review",
+          addressReview,
+          composedAddressReview,
+          ADDRESS_REVIEW_WORK_ITEM,
+          scenario,
+        ),
+      60_000,
+    );
+  }
+
+  for (const scenario of ADDRESS_REVIEW_LAYER_SCENARIOS) {
+    effect(
+      scenario.title,
+      () =>
+        runsAsTheRecipe(
+          "address-review",
+          addressReview,
+          composedAddressReview,
+          ADDRESS_REVIEW_LAYER_WORK_ITEM,
+          scenario,
+        ),
       60_000,
     );
   }
@@ -226,6 +266,53 @@ describe("a document's sources find what its recipe's trigger does", () => {
     );
   }
 
+  // Its own pull request with changes asked on the head, unless a person has it,
+  // or a push or an approval came since.
+  for (const [title, change, items] of [
+    ["address-review, on its own pull request with changes asked", (_fake: Fake) => void 0, 1],
+    [
+      "address-review, on one a person has",
+      (fake: Fake) => {
+        fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      },
+      0,
+    ],
+    [
+      "address-review, on one pushed to since",
+      (fake: Fake) => {
+        fake.git.head = "fix20000000";
+      },
+      0,
+    ],
+    [
+      "address-review, on one approved since",
+      (fake: Fake) => {
+        fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
+      },
+      0,
+    ],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const asked = () => {
+          const fake = makeFake("approve");
+          fake.submitted.push({
+            author: "data-quail",
+            state: "CHANGES_REQUESTED",
+            commitSha: HEAD,
+          });
+          change(fake);
+
+          return fake;
+        };
+
+        const fromRecipe = yield* found(addressReview, asked);
+        expect(fromRecipe).toHaveLength(items);
+        expect(yield* found(yield* composedAddressReview, asked)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Which label queues an issue doesn't depend on where a document lists it.
   describe("whatever order a document lists the labels in", () => {
     const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
@@ -318,6 +405,14 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedReReview;
       expect(declared(composed)).toEqual(declared(reReview));
       expect(yield* labelled(composed)).toEqual(yield* labelled(reReview));
+    }),
+  );
+
+  effect("address-review", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedAddressReview;
+      expect(declared(composed)).toEqual(declared(addressReview));
+      expect(yield* labelled(composed)).toEqual(yield* labelled(addressReview));
     }),
   );
 
