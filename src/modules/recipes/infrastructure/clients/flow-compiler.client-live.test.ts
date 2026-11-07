@@ -11,6 +11,7 @@ import { FlowCompilerClient } from "../../domain/ports/clients/flow-compiler.cli
 import {
   diagnosticsOf,
   FlowCompilerClientLive,
+  notCheckedBecause,
   pathKeys,
   pathOfLine,
   positionOf,
@@ -88,6 +89,21 @@ const checkout = (
     return root;
   });
 
+// As `compiling`, with this as the repo's `tsc`.
+const compilingWithTsc = (script: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* checkout({ review: REVIEW_DOCUMENT }, { typescript: false });
+    const bin = `${root}/.chernabog/node_modules/.bin`;
+
+    yield* fs.makeDirectory(bin, { recursive: true });
+    yield* fs.writeFileString(`${bin}/tsc`, script);
+
+    const compiler = yield* FlowCompilerClient;
+
+    return yield* compiler.compile(root, "review");
+  }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive)));
+
 const compiling = (
   documents: { readonly [flow: string]: string },
   flow: string,
@@ -125,6 +141,48 @@ describe("FlowCompilerClientLive", () => {
         expect(compiled.problems).toEqual([]);
         expect(compiled.typeChecked).toBe(false);
         expect(Option.isSome(compiled.source)).toBe(true);
+      }),
+    TIMEOUT,
+  );
+
+  for (const [what, script, says] of [
+    ["crashes", 'console.error("Segfault"); process.exit(1);', "Segfault"],
+    [
+      "rejects its project",
+      "console.log(\"tsconfig.json(4,15): error TS6046: Argument for '--module' must be.\"); process.exit(1);",
+      "TS6046",
+    ],
+    [
+      "fails with a diagnostic of no file",
+      'console.log("error TS5083: Cannot read file."); process.exit(1);',
+      "TS5083",
+    ],
+    ["exits non-zero saying nothing", "process.exit(3);", "exited 3"],
+  ] as const) {
+    atHome(
+      `doesn't say types were checked when tsc ${what}, and writes no flow on its word`,
+      () =>
+        Effect.gen(function* () {
+          const compiled = yield* compilingWithTsc(script);
+
+          expect(compiled.typeChecked).toBe(false);
+          expect(Option.isNone(compiled.source)).toBe(true);
+          expect(compiled.problems.map((each) => each.path)).toEqual([""]);
+          expect(compiled.problems[0]?.message).toContain("couldn't check");
+          expect(compiled.problems[0]?.message).toContain(says);
+        }),
+      TIMEOUT,
+    );
+  }
+
+  atHome(
+    "takes a clean exit from tsc as a check",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compilingWithTsc("process.exit(0);");
+
+        expect(compiled.problems).toEqual([]);
+        expect(compiled.typeChecked).toBe(true);
       }),
     TIMEOUT,
   );
@@ -193,6 +251,50 @@ describe("FlowCompilerClientLive", () => {
       yield* compiler.write(root, "a", "source");
       expect(yield* compiler.written(root, "a")).toEqual(Option.some("source"));
     }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+  );
+});
+
+describe("whether tsc checked anything", () => {
+  const run = (exitCode: number, stdout: string, stderr = "") => ({ exitCode, stdout, stderr });
+
+  atHome("a clean run did", () =>
+    Effect.sync(() => {
+      expect(Option.isNone(notCheckedBecause(run(0, "")))).toBe(true);
+    }),
+  );
+
+  atHome("a run that fails about files did, these being the SDK's or the flow's", () =>
+    Effect.sync(() => {
+      const sdk = "../../sdk/src/x.ts(1,20): error TS2307: Cannot find module 'node:crypto'.\n";
+
+      expect(Option.isNone(notCheckedBecause(run(2, sdk)))).toBe(true);
+      expect(Option.isNone(notCheckedBecause(run(2, "flow.ts(3,5): error TS2322: No.\n")))).toBe(
+        true,
+      );
+    }),
+  );
+
+  atHome("a run that said anything of its project, or of no file, didn't", () =>
+    Effect.sync(() => {
+      const beside = "flow.ts(3,5): error TS2322: No.\n";
+
+      expect(
+        notCheckedBecause(run(1, `${beside}tsconfig.json(4,15): error TS6046: Bad module.\n`)),
+      ).toEqual(Option.some("TS6046: Bad module."));
+      expect(notCheckedBecause(run(1, `error TS5083: Cannot read.\n${beside}`))).toEqual(
+        Option.some("TS5083: Cannot read."),
+      );
+    }),
+  );
+
+  atHome("a run that fails saying nothing of any file didn't, whatever else it said", () =>
+    Effect.sync(() => {
+      expect(notCheckedBecause(run(1, "", "\n  Segfault\n  at x\n"))).toEqual(
+        Option.some("Segfault"),
+      );
+      expect(notCheckedBecause(run(1, "Oh no\n"))).toEqual(Option.some("Oh no"));
+      expect(notCheckedBecause(run(9, ""))).toEqual(Option.some("it exited 9, saying nothing"));
+    }),
   );
 });
 

@@ -122,6 +122,44 @@ export const diagnosticsOf = (output: string) =>
     ),
   );
 
+const ABOUT_THE_RUN = /^(?:tsconfig\.json\(\d+,\d+\): )?error (TS\d+: .*)$/;
+
+const ABOUT_A_FILE = /^.+\(\d+,\d+\): error TS\d+: /;
+
+// Why a run of `tsc` checked nothing, if it didn't. Its exit code alone can't
+// say: a healthy run exits non-zero on the SDK's own sources, whose node: imports
+// don't resolve under `types: []`, and says so about those files. So a run that
+// fails saying nothing of any file never got to them, and one that says anything
+// of its project, or of no file at all, couldn't trust what it read.
+export const notCheckedBecause = (result: {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}) => {
+  const said = result.stdout.split("\n");
+
+  const aboutTheRun = said.flatMap((each) =>
+    Option.toArray(Option.fromNullishOr(ABOUT_THE_RUN.exec(each)?.[1])),
+  );
+
+  if (aboutTheRun.length > 0) {
+    return Arr.head(aboutTheRun);
+  }
+
+  if (result.exitCode === 0 || said.some((each) => ABOUT_A_FILE.test(each))) {
+    return Option.none();
+  }
+
+  const lines = `${result.stderr}\n${result.stdout}`.split("\n").map((each) => each.trim());
+
+  return Option.some(
+    Option.getOrElse(
+      Arr.findFirst(lines, (each) => each.length > 0),
+      () => `it exited ${result.exitCode}, saying nothing`,
+    ),
+  );
+};
+
 const failed = (error: { readonly message: string }) =>
   new RecipeFilesFailed({ message: error.message });
 
@@ -170,7 +208,10 @@ export const FlowCompilerClientLive = Layer.effect(
             },
           );
 
-          return diagnosticsOf(result.stdout);
+          return {
+            notChecked: notCheckedBecause(result),
+            found: diagnosticsOf(result.stdout),
+          };
         }),
       );
 
@@ -225,7 +266,14 @@ export const FlowCompilerClientLive = Layer.effect(
           return { source: Option.some(source), problems: [], typeChecked: false };
         }
 
-        const found = yield* typeProblems(root, tsc.value, source);
+        const { found, notChecked } = yield* typeProblems(root, tsc.value, source);
+
+        // Saying nothing of the types would pass as having checked them.
+        if (Option.isSome(notChecked)) {
+          return onlyProblems([
+            problemAt("", `TypeScript couldn't check this document's types: ${notChecked.value}`),
+          ]);
+        }
 
         if (found.length > 0) {
           return onlyProblems(
