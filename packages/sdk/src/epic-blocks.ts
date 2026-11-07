@@ -27,12 +27,12 @@ import {
   type BranchName,
   type Committed,
   defineBlock,
+  defineSource,
   type FailureContext,
   type IssueNumber,
   IssueNumber as IssueNumberOf,
   LaneId,
   pullRequestRef,
-  type Source,
   ToPerson,
   type WorktreePath,
 } from "./block.ts";
@@ -834,6 +834,7 @@ export const epicBlocks = {
   // waits on, and the one a stacked one is stacked on.
   "epic.noteWaits": defineBlock({
     name: "epic.noteWaits",
+    stepNames: [],
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.sync(() => {
@@ -861,6 +862,7 @@ export const epicBlocks = {
   // Whether every task is closed, which ends the run.
   "epic.finished": defineBlock({
     name: "epic.finished",
+    stepNames: [],
     inputs: { epic: "required", progress: "required" },
     run: (input: { readonly epic: EpicNumber; readonly progress: Epic.Progress }) =>
       Effect.succeed({
@@ -914,6 +916,7 @@ export const epicBlocks = {
 
   "epic.startable": defineBlock({
     name: "epic.startable",
+    stepNames: [],
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.gen(function* () {
@@ -944,6 +947,8 @@ export const epicBlocks = {
         Option.liftPredicate(planned.tasks, () => planned.starts.length === 0),
     },
     mustRoute: ["none"],
+    // Any task it starts is a new attempt.
+    progressUnless: "none",
     contributes: {},
   }),
 
@@ -966,6 +971,7 @@ export const epicBlocks = {
 
   "epic.recordEndings": defineBlock({
     name: "epic.recordEndings",
+    stepNames: [],
     inputs: { tasks: "required", endings: "required" },
     run: (input: { readonly tasks: TaskState; readonly endings: ReadonlyArray<LaneEnding> }) =>
       Effect.succeed({
@@ -1063,13 +1069,13 @@ export const laneScopes = {
 };
 
 export const epicSources = {
-  "epic.queued": (): Source => ({
+  "epic.queued": defineSource("epic", () => ({
     trigger: Epic.queued.pipe(reportAs("trigger")),
     contributes: {
       settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
       labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
     },
-  }),
+  })),
 };
 
 // However the run ends, its claim on the epic goes, and the engine lets its

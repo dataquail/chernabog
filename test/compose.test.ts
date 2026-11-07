@@ -212,6 +212,50 @@ describe("Compose.check", () => {
     expect(messages(again).join("\n")).toContain("branch.push runs twice on one path");
   });
 
+  describe("refuses two blocks on one path that use the same step names", () => {
+    const before = (doc: Doc, id: string, step: UseStep) => {
+      const at = doc.steps.findIndex((each) => named(each, id));
+
+      return withSteps(doc, [...doc.steps.slice(0, at), step, ...doc.steps.slice(at)]);
+    };
+
+    const ciAgain = {
+      id: "ciAgain",
+      use: "ci.waitPreparing",
+      in: { pr: "opened.number", branch: "claim.branch", base: "claim.base" },
+    };
+
+    test("waiting on CI both ways", () => {
+      expect(messages(before(implement, "done", ciAgain))).toEqual([
+        "ci.waitPreparing runs on one path with ci.waitAndFix, and their step names would collide",
+      ]);
+    });
+
+    test("preparing a worktree and a block that prepares its own", () => {
+      expect(messages(before(implement, "gate", ciAgain))).toContain(
+        "ci.waitPreparing runs on one path with worktree.prepare, and their step names would collide",
+      );
+    });
+
+    test("handing off both ways", () => {
+      const handOffAgain = {
+        id: "handOffAgain",
+        use: "issue.handOffAdopted",
+        in: { issue: "trigger.issue", adopted: "opened", branch: "claim.branch" },
+      };
+
+      const after = withSteps(implement, [
+        ...implement.steps.slice(0, -1),
+        handOffAgain,
+        ...implement.steps.slice(-1),
+      ]);
+
+      expect(messages(after)).toEqual([
+        "issue.handOffAdopted runs on one path with issue.handOff, and their step names would collide",
+      ]);
+    });
+  });
+
   test("catches a branch that falls through into the rest of the flow", () => {
     // Without its end, the adopted path runs on into the main path, and a
     // block on both collides.
@@ -272,6 +316,84 @@ describe("Compose.check", () => {
     );
   });
 
+  describe("takes only names where the generated flow writes a name", () => {
+    const INJECTED = "x = console.log('PWN'), y";
+
+    const binding = (doc: Doc, as: string) =>
+      changing(doc, "claim", (step) => ({
+        ...step,
+        on: {
+          adopted: { as, steps: [{ end: "needs-human", reason: "trigger.issue" }] },
+        },
+      }));
+
+    test("in what a branch binds", () => {
+      for (const name of [INJECTED, "a.b", "", "x\ny"]) {
+        expect(paths(binding(implement, name))).toContain("steps[0].on.adopted.as");
+      }
+    });
+
+    test("and refuses what the generated flow relies on", () => {
+      for (const name of ["trigger", "Option", "Effect", "failureContext"]) {
+        expect(messages(binding(implement, name))).toContain(
+          `${name} can't name what a branch binds`,
+        );
+      }
+    });
+
+    test("and refuses a name already in scope", () => {
+      expect(messages(binding(implement, "claim"))).toContain("claim is already a step here");
+    });
+
+    test("and allows the same name on another path", () => {
+      const twice = withSteps(implement, [
+        ...changing(implement, "claim", (step) => ({
+          ...step,
+          on: { adopted: { as: "found", steps: [{ end: "done" }] } },
+        })).steps.slice(0, 1),
+        {
+          id: "again",
+          use: "review.round",
+          in: { pr: "claim.adopted" },
+          with: { round: 1, role: "reviewer" },
+          on: {
+            approve: { as: "found", steps: [{ end: "done" }] },
+            changes: { steps: [{ end: "done" }] },
+          },
+        },
+      ]);
+
+      expect(paths(twice)).not.toContain("steps[1].on.approve.as");
+    });
+
+    test("in a reference that keeps the failure context", () => {
+      const injected =
+        "opened.number); console.log('PWN'); failureContext.pr = Option.some(opened.number";
+
+      expect(messages({ ...implement, failureContext: { pr: [injected] } })).toEqual([
+        "must name a step's output, as step.field",
+      ]);
+    });
+
+    test("in the flow's name, which the generated flow's header says", () => {
+      for (const flow of ["x\nconsole.log('PWN'); //", "x\r\ny", "x y", "*/", ""]) {
+        expect(paths({ ...implement, flow })).toEqual(["flow"]);
+      }
+    });
+
+    test("so generate writes none of it", () => {
+      const refused = [
+        binding(implement, INJECTED),
+        { ...implement, failureContext: { pr: ["opened.number); evil("] } },
+        { ...implement, flow: "x\nevil();" },
+      ];
+
+      for (const document of refused) {
+        expect(Result.isFailure(Compose.generate(document))).toBe(true);
+      }
+    });
+  });
+
   test("knows what a subject's trigger gives", () => {
     expect(messages(wiring(implement, "claim", "issue", "trigger.pr"))).toEqual([
       "the trigger of a flow on issue gives issue, queued",
@@ -292,6 +414,24 @@ describe("Compose.check", () => {
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
       "must be one of epic, issue, pull-request",
+    ]);
+  });
+
+  test("refuses a source that finds work on another subject", () => {
+    expect(messages({ ...review, trigger: implement.trigger })).toEqual([
+      "issues.queued finds work on issue, and this is a flow on pull-request",
+    ]);
+
+    expect(
+      messages({
+        ...implement,
+        trigger: [...implement.trigger, { use: "review.requested" }],
+      }),
+    ).toEqual(["review.requested finds work on pull-request, and this is a flow on issue"]);
+
+    expect(paths({ ...implement, trigger: review.trigger })).toEqual([
+      "trigger[0].use",
+      "trigger[1].use",
     ]);
   });
 
@@ -509,6 +649,182 @@ describe("a document with a loop and lanes", () => {
     );
   });
 
+  // The document with a step, of any kind, changed wherever it is.
+  const editingAny = (id: string, change: (step: Step) => Step) => ({
+    ...epic,
+    steps: everywhere(epic.steps, (step) => {
+      if ("id" in step && step.id === id) {
+        return change(step);
+      }
+
+      return step;
+    }),
+  });
+
+  // The document with these steps first in each round, or first in each lane.
+  const leading = (where: "round" | "lane", added: ReadonlyArray<Step>) => ({
+    ...epic,
+    steps: everywhere(epic.steps, (step) => {
+      if (where === "round" && Compose.isRepeat(step)) {
+        return { ...step, repeat: { ...step.repeat, steps: [...added, ...step.repeat.steps] } };
+      }
+
+      if (where === "lane" && Compose.isForEach(step)) {
+        return { ...step, steps: [...added, ...step.steps] };
+      }
+
+      return step;
+    }),
+  });
+
+  const roundSteps = (doc: Doc) =>
+    doc.steps.filter(Compose.isRepeat).flatMap((step) => step.repeat.steps);
+
+  const withRound = (steps: ReadonlyArray<Step>) => ({
+    ...epic,
+    steps: epic.steps.map((step) => {
+      if (Compose.isRepeat(step)) {
+        return { ...step, repeat: { ...step.repeat, steps } };
+      }
+
+      return step;
+    }),
+  });
+
+  const SPINS = "this round neither waits nor changes anything, so the loop would spin";
+
+  const RUNS_OFF = "a round can run off its steps: end it, or go on with next";
+
+  describe("refuses every way round a loop that neither waits nor changes anything", () => {
+    test("a round that runs off its steps, which also loses what it changed", () => {
+      expect(messages(withRound(roundSteps(epic).slice(0, -1)))).toEqual([RUNS_OFF]);
+    });
+
+    test("a round of steps that neither wait nor change anything, and never go on", () => {
+      const reading = roundSteps(epic).filter(
+        (step) => named(step, "progress") || named(step, "closed"),
+      );
+
+      expect(messages(withRound(reading))).toEqual([RUNS_OFF]);
+    });
+
+    test("a wait that may not run", () => {
+      const sometimes = editing("parked", (step) => ({ ...step, if: "ships.value" }));
+
+      expect(messages(sometimes)).toEqual([SPINS]);
+    });
+
+    test("lanes that may be none: nothing started is no change", () => {
+      const nothingStarted = editing("ready", (step) => ({ ...step, on: { none: { steps: [] } } }));
+
+      expect(messages(nothingStarted)).toEqual([SPINS]);
+    });
+  });
+
+  describe("takes only names for what a `first` or a `forEach` declares", () => {
+    test("a first's id that isn't a name", () => {
+      const injected = editingAny("latest", (step) => ({
+        ...step,
+        id: "x = 1; console.log('injected'); const y",
+      }));
+
+      expect(messages(injected)[0]).toBe(
+        "x = 1; console.log('injected'); const y can't name a step",
+      );
+    });
+
+    test("a first's id another step has", () => {
+      const twice = editingAny("latest", (step) => ({ ...step, id: "progress" }));
+
+      expect(messages(twice)).toContain("progress is already a step here");
+    });
+
+    test("a first of nothing", () => {
+      const empty = editingAny("latest", (step) => ({ ...step, first: [] }));
+
+      expect(messages(empty)).toContain("must name at least one output");
+    });
+
+    test("a forEach's id or item that isn't a name, or is one the flow uses", () => {
+      const badId = editingAny("started", (step) => ({ ...step, id: "a b" }));
+      expect(messages(badId)).toContain("a b can't name a step");
+
+      const reserved = editingAny("started", (step) => ({ ...step, as: "item" }));
+      expect(messages(reserved)).toContain("item can't name each item");
+
+      const taken = editingAny("started", (step) => ({ ...step, as: "progress" }));
+      expect(messages(taken)).toContain("progress is already a step here");
+    });
+  });
+
+  // A run resumes by step names, so a second round, or a second lane, would
+  // get the first's saved result instead of doing the work.
+  describe("refuses a block whose step names would be the same in each round or lane", () => {
+    test("a block with no lane beside others", () => {
+      const pushed = leading("lane", [
+        {
+          id: "pushedEarly",
+          use: "branch.push",
+          in: { worktree: "task.lane", branch: "task.lane", base: "task.base", committed: "task" },
+        },
+      ]);
+
+      expect(messages(pushed)).toContain(
+        "branch.push names its steps the same in every lane, so it can't run beside others",
+      );
+    });
+
+    test("a block that carries a round, beside others", () => {
+      const read = leading("lane", [
+        { id: "again", use: "epic.progress", in: { epic: "trigger.epic", round: "round" } },
+      ]);
+
+      expect(messages(read)).toContain(
+        "epic.progress names its steps the same in every lane, so it can't run beside others",
+      );
+    });
+
+    test("a block with no round in a repeat", () => {
+      const atOnce = leading("round", [{ id: "again", use: "epic.atOnce" }]);
+
+      expect(messages(atOnce)).toEqual([
+        "epic.atOnce names its steps the same in every round, so it can't run in a repeat",
+      ]);
+
+      const prepared = leading("round", [
+        { id: "early", use: "worktree.prepare", in: { branch: "progress", base: "progress" } },
+      ]);
+
+      expect(messages(prepared)).toContain(
+        "worktree.prepare names its steps the same in every round, so it can't run in a repeat",
+      );
+    });
+
+    test("a block that takes a round, given a fixed one", () => {
+      const fixed = editing("progress", (step) => ({
+        ...step,
+        in: { epic: "trigger.epic" },
+        with: { round: 1 },
+      }));
+
+      expect(messages(fixed)).toEqual([
+        "epic.progress runs in every round here, and must take round",
+      ]);
+    });
+
+    test("lets a block that runs no step go anywhere", () => {
+      const noted = leading("lane", [
+        {
+          id: "ended",
+          use: "epic.recordEndings",
+          in: { tasks: "state.tasks", endings: "ready.starts" },
+        },
+      ]);
+
+      expect(messages(noted)).toEqual([]);
+    });
+  });
+
   test("refuses next outside a loop", () => {
     expect(messages({ ...withSteps(implement, [{ next: {} }]), failureContext: {} })).toEqual([
       "next means something only inside a repeat",
@@ -602,6 +918,13 @@ describe("a document with a loop and lanes", () => {
     "an issue's number where the epic's goes",
     editing("progress", (step) => ({ ...step, in: { ...step.in, epic: "round" } })),
     "EpicNumber",
+  );
+
+  // `if` names a boolean, which a document can't test the truth of otherwise.
+  rejected(
+    "an if on what isn't a boolean",
+    editing("landed", (step) => ({ ...step, if: "progress.layers" })),
+    "no overlap",
   );
 
   rejected(

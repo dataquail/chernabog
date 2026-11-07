@@ -12,7 +12,9 @@ import {
   type Flow,
   type LinkedIssue,
   Plan,
+  PullRequest,
   PushRejected,
+  type Settings,
   type WorkItem,
 } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
@@ -56,6 +58,11 @@ const everyLabel = (fake: Fake) =>
     .toSorted((left, right) => left - right)
     .map((number) => [number, fake.labelsOf(number)] as const);
 
+const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
+
+// A comment's step is named by a hash of its text, which can say the run's id.
+const stepNamed = (step: string) => step.replace(COMMENT_STEP, "$1");
+
 // What a parked run is waiting for: a change to make, and the signal that
 // tells the run, which the flow's own trigger must find.
 export type Wake = {
@@ -65,17 +72,25 @@ export type Wake = {
   readonly stops?: boolean;
 };
 
+export type FlowInput = Settings.FlowSettings["Service"]["input"];
+
+// The settings of a repo's config.yaml, for every flow.
+const inRepo = (shared: FlowInput) => ({
+  ...repo,
+  personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared })),
+});
+
 export const observe = (
   flow: Flow,
   name: string,
   setup: () => Fake,
   work: WorkItem,
   wake?: Wake,
-  on: typeof repo = repo,
+  settings: FlowInput = {},
 ) =>
   Effect.gen(function* () {
     const fake = setup();
-    const handle = flowHandle(on, name, flow);
+    const handle = flowHandle(inRepo(settings), name, flow);
     let steps: ReadonlyArray<string> = [];
     let lanes: ReadonlyArray<readonly [string, ReadonlyArray<string>]> = [];
 
@@ -85,7 +100,7 @@ export const observe = (
         const readSteps = readRunHistoryHandler({ runId: run.id }).pipe(
           Effect.orDie,
           Effect.map((history) => {
-            steps = [...new Set(history.steps.map((step) => step.step))];
+            steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
             lanes = (history.lanes ?? []).map((lane) => [lane.lane, lane.needs] as const);
           }),
         );
@@ -107,7 +122,7 @@ export const observe = (
             }
 
             change(fake);
-            const found = yield* flowTriggered(fake, flow).pipe(Effect.orDie);
+            const found = yield* flowTriggered(fake, flow, settings).pipe(Effect.orDie);
             yield* deliverSignals(
               handle,
               IMPLICIT,
@@ -149,7 +164,7 @@ const POOL = { reviewers: ["zach", "data-quail"] };
 const BRANCH = "zach/fix-it";
 const IMPLEMENT_WORK = item(`issue-${ISSUE}`, { issue: ISSUE });
 
-const queued = (label: string = DEFAULT_LABELS.eligible) => {
+export const queued = (label: string = DEFAULT_LABELS.eligible) => {
   const fake = repoFake("approve", POOL);
   fake.setLabels(ISSUE, [label]);
   fake.setLabels(PULL, []);
@@ -185,7 +200,7 @@ export type Scenario = {
   readonly setup: () => Fake;
   readonly ends: EngineRun["status"];
   readonly wake?: Wake;
-  readonly on: typeof repo;
+  readonly settings: FlowInput;
 };
 
 type Define = (
@@ -193,14 +208,14 @@ type Define = (
   setup: () => Fake,
   ends: EngineRun["status"],
   wake?: Wake,
-  on?: typeof repo,
+  settings?: FlowInput,
 ) => void;
 
 const scenarios = (define: (scenario: Define) => void) => {
   const found: Array<Scenario> = [];
 
-  define((title, setup, ends, wake, on = repo) => {
-    found.push({ title, setup, ends, wake, on });
+  define((title, setup, ends, wake, settings = {}) => {
+    found.push({ title, setup, ends, wake, settings });
   });
 
   return found;
@@ -411,6 +426,25 @@ export const REVIEW_SCENARIOS = scenarios((scenario) => {
     "done",
   );
 
+  // The one wake pr.land contributes: it must find the run, or the run stays parked.
+  scenario(
+    "when the merge holds on a red base, and the base turns green",
+    () => {
+      const fake = asked("approve", [DEFAULT_LABELS.ship]);
+      fake.merge.baseCi = Option.some({ state: "red", failedChecks: ["test"] });
+
+      return fake;
+    },
+    "done",
+    {
+      signal: PullRequest.BASE_GREEN,
+      change: (fake) => {
+        fake.merge.baseCi = Option.some({ state: "green" });
+      },
+    },
+    { holdMergesOnBrokenBase: true },
+  );
+
   scenario(
     "when the pull request closes before it can land",
     () => {
@@ -426,13 +460,7 @@ export const REVIEW_SCENARIOS = scenarios((scenario) => {
 const EPIC_NUMBER = 40;
 
 // One task at a time, so both runs make their pull requests in one order.
-const oneAtATime = (shared: Record<string, boolean | number>) => ({
-  ...repo,
-  personas: Arr.map(repo.personas, (persona) => ({
-    ...persona,
-    shared: { atOnce: 1, ...shared },
-  })),
-});
+const oneAtATime = (shared: Record<string, boolean | number>) => ({ atOnce: 1, ...shared });
 
 export const EPIC_WORK_ITEM = item(`issue-${EPIC_NUMBER}`, { issue: EPIC_NUMBER });
 
