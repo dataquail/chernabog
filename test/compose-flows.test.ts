@@ -11,12 +11,14 @@ import * as Predicate from "effect/Predicate";
 
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import reReview from "../packages/recipes/flows/re-review.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
   documentOf,
   EPIC_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadFlow,
+  RE_REVIEW_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
@@ -27,6 +29,8 @@ import {
   IMPLEMENT_WORK_ITEM,
   observe,
   queued,
+  RE_REVIEW_SCENARIOS,
+  RE_REVIEW_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
@@ -35,13 +39,15 @@ import {
   throughStage,
 } from "./compose-scenarios.ts";
 import { effect } from "./effect-test.ts";
-import { type Fake, flowTriggered, ISSUE, makeFake, PULL } from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, HEAD, ISSUE, makeFake, PULL } from "./sdk-fakes.ts";
 
 const composedImplement = loadFlow(documentOf(IMPLEMENT_DOCUMENT));
 
 const composedReview = loadFlow(documentOf(REVIEW_DOCUMENT));
 
 const composedEpic = loadFlow(documentOf(EPIC_DOCUMENT));
+
+const composedReReview = loadFlow(documentOf(RE_REVIEW_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -77,6 +83,16 @@ describe("the review document runs as the recipe does", () => {
     effect(
       scenario.title,
       () => runsAsTheRecipe("review", review, composedReview, REVIEW_WORK_ITEM, scenario),
+      60_000,
+    );
+  }
+});
+
+describe("the re-review document runs as the recipe does", () => {
+  for (const scenario of RE_REVIEW_SCENARIOS) {
+    effect(
+      scenario.title,
+      () => runsAsTheRecipe("re-review", reReview, composedReReview, RE_REVIEW_WORK_ITEM, scenario),
       60_000,
     );
   }
@@ -184,6 +200,32 @@ describe("a document's sources find what its recipe's trigger does", () => {
     }),
   );
 
+  // Asked again after its review, one item per request, unless a person has it.
+  for (const [title, labels, items] of [
+    ["re-review, on a pull request that asks again", [], 1],
+    ["re-review, on one a person has", [DEFAULT_LABELS.needsHuman], 0],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const reviewed = () => {
+          const fake = requested();
+          fake.submitted.push({
+            author: "data-quail",
+            state: "CHANGES_REQUESTED",
+            commitSha: HEAD,
+          });
+          fake.setLabels(PULL, [...labels]);
+
+          return fake;
+        };
+
+        const fromRecipe = yield* found(reReview, reviewed);
+        expect(fromRecipe).toHaveLength(items);
+        expect(yield* found(yield* composedReReview, reviewed)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Which label queues an issue doesn't depend on where a document lists it.
   describe("whatever order a document lists the labels in", () => {
     const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
@@ -268,6 +310,14 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedEpic;
       expect(declared(composed)).toEqual(declared(epic));
       expect(yield* labelled(composed)).toEqual(yield* labelled(epic));
+    }),
+  );
+
+  effect("re-review", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedReReview;
+      expect(declared(composed)).toEqual(declared(reReview));
+      expect(yield* labelled(composed)).toEqual(yield* labelled(reReview));
     }),
   );
 

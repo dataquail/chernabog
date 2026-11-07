@@ -5,7 +5,7 @@ description: Write a flow as YAML from the SDK's blocks, and compile it to an or
 
 A flow document is a flow written as data. Each step names a block, every value it takes names the step that value came from, and it branches only on outcomes the block declares. There are no expressions. It compiles to an ordinary flow file, so the engine, `chernabog rehearse` and your editor treat the result like any other flow.
 
-Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review` and `epic` recipes.
+Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review` and `epic` recipes.
 
 ## A document
 
@@ -41,7 +41,16 @@ steps:
 
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
-- `end` finishes the run or lane, as `done` or `needs-human`.
+- `end` finishes the run or lane, as `done` or `needs-human`. `end: needs-human` stops the run with its `reason`, but labels and comments on nothing, so put a block that tells a person in front of it. On a pull request, `pr.handToPerson` labels it `auto:needs-human`, comments why, and gives the reason to end with:
+
+  ```yaml
+  - id: handed
+    use: pr.handToPerson
+    in: { pr: trigger.pr, reason: open.reason }
+  - end: needs-human
+    reason: handed
+  ```
+
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
 
 ## Your own steps

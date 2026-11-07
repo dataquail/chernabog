@@ -29,6 +29,7 @@ import {
   EPIC_DOCUMENT,
   generated,
   IMPLEMENT_DOCUMENT,
+  RE_REVIEW_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
   STAGE_FILES,
@@ -43,6 +44,14 @@ type UseStep = Compose.UseStep;
 
 const implement = documentOf(IMPLEMENT_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
+const reReview = documentOf(RE_REVIEW_DOCUMENT);
+
+// The re-review document with a line of it changed, for a change deep in its branches.
+const reReviewWith = (line: string, replacement: string) => {
+  expect(RE_REVIEW_DOCUMENT).toContain(line);
+
+  return documentOf(RE_REVIEW_DOCUMENT.replace(line, replacement));
+};
 
 const named = (step: Step, id: string) => Compose.isUse(step) && step.id === id;
 
@@ -522,6 +531,39 @@ describe("Compose.check", () => {
     ]);
   });
 
+  test("refuses a re-review that doesn't say what happens past reviewRounds", () => {
+    const uncapped = reReviewWith(
+      `            in: { review: own }
+            on:
+              exhausted:
+                as: why
+                steps:
+                  - id: capped
+                    use: pr.handToPerson
+                    in: { pr: trigger.pr, reason: why }
+                  - end: needs-human
+                    reason: capped
+`,
+      "            in: { review: own }\n",
+    );
+
+    expect(Compose.check(uncapped)).toEqual([
+      {
+        path: "steps[0].on.found.steps[0].on",
+        message: "review.roundsLeft can come to exhausted, and this doesn't say what then",
+      },
+    ]);
+  });
+
+  test("refuses a re-review that has no first review for a pull request it never reviewed", () => {
+    const resumeOnly = reReviewWith("      none:\n", "      nothing:\n");
+
+    expect(messages(resumeOnly)).toEqual([
+      "review.latestOwn can come to none, and this doesn't say what then",
+      "review.latestOwn comes to found, none",
+    ]);
+  });
+
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
@@ -545,13 +587,29 @@ describe("tsc on a document's flow file", () => {
   };
 
   effect(
-    "compiles the implement and review documents",
+    "compiles the implement, review and re-review documents",
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(implement)).toEqual([]);
         expect(yield* compileErrors(review)).toEqual([]);
+        expect(yield* compileErrors(reReview)).toEqual([]);
       }),
     TIMEOUT,
+  );
+
+  rejected(
+    "a re-check of something other than an earlier review",
+    reReviewWith(
+      "in: { pr: trigger.pr, review: own }",
+      "in: { pr: trigger.pr, review: trigger.pr }",
+    ),
+    "Resumable",
+  );
+
+  rejected(
+    "a merge a re-check didn't approve",
+    reReviewWith("approved: approval.approved", "approved: recheck.verdict"),
+    "Approved",
   );
 
   rejected(
