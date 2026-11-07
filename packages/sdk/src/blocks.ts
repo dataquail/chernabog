@@ -629,7 +629,7 @@ type Source = {
 export const sources = {
   // Issues carrying each of `labels` of the repo's labels, oldest first but a
   // post-merge follow-up before the rest, the first label's before the next's.
-  // One carrying several comes under the first; any but the first queues
+  // One carrying several comes under the first. Any label but eligible queues
   // its issue by that label, which its pull request carries too.
   "issues.queued": (input: { readonly labels: ReadonlyArray<"eligible" | "ship"> }): Source => ({
     trigger: Effect.gen(function* () {
@@ -638,7 +638,7 @@ export const sources = {
       const found = new Set<number>();
       const items: Array<WorkItem> = [];
 
-      for (const [index, key] of input.labels.entries()) {
+      for (const key of input.labels) {
         const issues = (yield* github.queuedIssuesLabelled(names[key])).filter(
           (issue) => !found.has(issue.number),
         );
@@ -647,7 +647,7 @@ export const sources = {
           found.add(issue.number);
         }
 
-        const queuedAs = Option.liftPredicate(names[key], () => index > 0);
+        const queuedAs = Option.liftPredicate(names[key], () => key !== "eligible");
 
         for (const item of yield* Implement.queued(Implement.followUpsFirst(issues), queuedAs)) {
           items.push(item);
