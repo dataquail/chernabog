@@ -7,6 +7,7 @@ import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -15,6 +16,7 @@ import { providedRange } from "../../kernel/core-support.value-object.ts";
 import { asSuffix } from "../../kernel/persona.value-object.ts";
 import { RepoSlug } from "../../kernel/repo-slug.id.ts";
 import { MachineQueries } from "../../modules/machine/machine.platform.ts";
+import { RecipesCommands } from "../../modules/recipes/recipes.platform.ts";
 import {
   checkAccount,
   checkCodexAccount,
@@ -97,6 +99,56 @@ const when = (condition: boolean, text: string) =>
     Option.liftPredicate(text, () => condition),
     () => "",
   );
+
+// What `recipes compile --check` made of one flow document.
+type CheckedDocument = {
+  readonly flow: string;
+  readonly outcome: "wrote" | "unchanged" | "stale" | "problems";
+  readonly problems: ReadonlyArray<{
+    readonly file: string;
+    readonly line: number;
+    readonly column: number;
+    readonly path: string;
+    readonly message: string;
+  }>;
+};
+
+// A flow file that isn't what its document compiles to is what the daemon
+// runs all the same, so it's a warning, as is a document with problems, which
+// can't be compared at all. One up to date says nothing.
+export const flowDocumentWarnings = (name: string, flows: ReadonlyArray<CheckedDocument>) =>
+  flows.flatMap(({ flow, outcome, problems }) => {
+    if (outcome === "stale") {
+      return [
+        {
+          label: `${name}: .chernabog/flows/${flow}.ts isn't what its flow document compiles to; the daemon runs the flow file`,
+          fix: `chernabog recipes compile ${flow}, or, if the flow file was edited by hand, move the edit into .chernabog/documents/ and compile it`,
+        },
+      ];
+    }
+
+    if (outcome !== "problems") {
+      return [];
+    }
+
+    const first = Option.match(Arr.head(problems), {
+      onNone: () => "",
+      onSome: (problem) =>
+        ` (${[
+          `${problem.file}:${problem.line}:${problem.column}`,
+          // A problem of the document as a whole has no path to say.
+          ...Option.toArray(Option.liftPredicate(problem.path, (path) => path !== "")),
+          problem.message,
+        ].join(": ")}${when(problems.length > 1, `, and ${problems.length - 1} more`)})`,
+    });
+
+    return [
+      {
+        label: `${name}: the ${flow} flow document has problems, so its flow file can't be checked against it${first}`,
+        fix: `chernabog recipes compile ${flow} says where each one is; fix them in the document`,
+      },
+    ];
+  });
 
 const homeOf = (account: MachineAccount, fallback: string) =>
   Option.getOrElse(account.configDir, () => fallback);
@@ -400,6 +452,30 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // Whether each flow file is what its document compiles to, as `recipes
+  // compile --check` says, of the snapshot the daemon runs.
+  const checkFlowDocuments = (name: string, configDir: string) =>
+    Effect.gen(function* () {
+      const root = (yield* Path.Path).dirname(configDir);
+
+      const compiled = yield* Effect.result(
+        (yield* RecipesCommands).CompileFlowDocumentsCommand({ root, names: [], check: true }),
+      );
+
+      if (Result.isFailure(compiled)) {
+        warn(
+          `${name}: the flow documents couldn't be compiled to check their flow files (${compiled.failure.message})`,
+          "chernabog recipes compile, in the checkout, says why",
+        );
+
+        return;
+      }
+
+      for (const { fix, label } of flowDocumentWarnings(name, compiled.success.flows)) {
+        warn(label, fix);
+      }
+    });
+
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
@@ -427,6 +503,7 @@ export const doctor = Effect.gen(function* () {
       yield* checkFlows(loaded.success, name, loaded.success.settings.configDir);
       yield* checkReviewers(repo, name, loaded.success.settings.reviewers ?? []);
       yield* checkFlowDiagnostics(loaded.success, name, loaded.success.settings.configDir);
+      yield* checkFlowDocuments(name, loaded.success.settings.configDir);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
