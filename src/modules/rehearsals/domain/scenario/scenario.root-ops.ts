@@ -70,13 +70,13 @@ const standIns = (scenario: ScenarioRoot, replay: StandIns = {}): StandIns => ({
   ...scenario.agent,
 });
 
-const ITEM_NUMBER = /^(?:issue|pr)-(\d+)(?:-|$)/;
+const ITEM_NUMBER = /^(?:issue|pr|merged)-(\d+)(?:-|$)/;
 
 // The issue or pull request a work item is about, by its key.
 const numberOf = (key: string) =>
   Option.map(Option.fromNullishOr(ITEM_NUMBER.exec(key)), (match) => Number(match[1]));
 
-// Whether a work item is about something seeding made: `issue-12`, `pr-7`,
+// Whether a work item is about something seeding made: `issue-12`, `pr-7`, `merged-7`,
 // `pr-7-changes-2`. On an enrolled repo, a rehearsal works on nothing else.
 const isSeeded = (seeded: Seeded, key: string) =>
   Option.exists(numberOf(key), (number) =>
