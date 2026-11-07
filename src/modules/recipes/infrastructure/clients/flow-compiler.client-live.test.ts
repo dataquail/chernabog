@@ -46,11 +46,44 @@ steps:
             summary: review.changesAsked
 `;
 
+// An Effect stage of a repo's own, in .chernabog/stages/.
+const WHICH_PR_STAGE = `import { defineStage } from "@chernabog/sdk";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+const Output = Schema.Struct({ pr: Schema.Number.pipe(Schema.brand("PullRequestNumber")) });
+
+export default defineStage({
+  name: "which-pr",
+  input: Schema.Struct({ pr: Schema.Number }),
+  output: Output,
+  run: (input) => Effect.succeed(Schema.decodeSync(Output)({ pr: input.pr })),
+});
+`;
+
+// The review document with that stage in front, naming the pull request.
+const STAGED_DOCUMENT = REVIEW_DOCUMENT.replace(
+  `steps:
+  - id: review
+    use: review.round
+    in: { pr: trigger.pr }`,
+  `steps:
+  - id: which
+    stage: which-pr
+    in: { pr: trigger.pr }
+    failure: { Skip: skip, StepFailed: person }
+  - id: review
+    use: review.round
+    in: { pr: which.pr }`,
+);
+
 // A checkout with these documents, under node_modules so that what it installs
-// is this repo's: its SDK, effect and, when `typescript`, TypeScript.
+// is this repo's: its SDK, effect and, when `typescript`, TypeScript; and
+// these files in .chernabog/stages/.
 const checkout = (
   documents: { readonly [flow: string]: string },
   options: { readonly typescript: boolean },
+  stages: { readonly [file: string]: string } = {},
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -86,6 +119,14 @@ const checkout = (
       yield* fs.writeFileString(path.join(dir, "documents", `${flow}.yaml`), text);
     }
 
+    if (Object.keys(stages).length > 0) {
+      yield* fs.makeDirectory(path.join(dir, "stages"));
+    }
+
+    for (const [file, text] of Object.entries(stages)) {
+      yield* fs.writeFileString(path.join(dir, "stages", file), text);
+    }
+
     return root;
   });
 
@@ -108,9 +149,10 @@ const compiling = (
   documents: { readonly [flow: string]: string },
   flow: string,
   options = { typescript: true },
+  stages: { readonly [file: string]: string } = {},
 ) =>
   Effect.gen(function* () {
-    const root = yield* checkout(documents, options);
+    const root = yield* checkout(documents, options, stages);
     const compiler = yield* FlowCompilerClient;
 
     return yield* compiler.compile(root, flow);
@@ -223,6 +265,82 @@ describe("FlowCompilerClientLive", () => {
         ]);
 
         expect(compiled.problems[0]?.message).toContain("Approved");
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "compiles a document that runs a stage, typed by the stage's schemas",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compiling(
+          { review: STAGED_DOCUMENT },
+          "review",
+          { typescript: true },
+          {
+            "which-pr.ts": WHICH_PR_STAGE,
+          },
+        );
+
+        expect(compiled.problems).toEqual([]);
+        expect(compiled.typeChecked).toBe(true);
+        expect(Option.getOrElse(compiled.source, () => "")).toContain('"../stages/which-pr.ts"');
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "traces a type error at a stage's input back to the wire in the document",
+    () =>
+      Effect.gen(function* () {
+        const text = STAGED_DOCUMENT.replace(
+          "in: { pr: trigger.pr }\n    failure",
+          "with: { pr: two }\n    failure",
+        );
+
+        expect(text).not.toBe(STAGED_DOCUMENT);
+
+        const compiled = yield* compiling(
+          { review: text },
+          "review",
+          { typescript: true },
+          {
+            "which-pr.ts": WHICH_PR_STAGE,
+          },
+        );
+
+        const wrongLine = text.split("\n").findIndex((line) => line.includes("pr: two"));
+
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [wrongLine + 1, "steps[0].with.pr"],
+        ]);
+        expect(compiled.problems[0]?.message).toContain("number");
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "refuses a shell stage at its line, before any type is checked",
+    () =>
+      Effect.gen(function* () {
+        const compiled = yield* compiling(
+          { review: STAGED_DOCUMENT },
+          "review",
+          { typescript: true },
+          {
+            "which-pr": "#!/bin/sh\necho '{}'\n",
+          },
+        );
+
+        const line = STAGED_DOCUMENT.split("\n").findIndex((each) =>
+          each.includes("stage: which-pr"),
+        );
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [line + 1, "steps[0].stage"],
+        ]);
+        expect(compiled.problems[0]?.message).toContain("wrap it in an Effect stage");
       }),
     TIMEOUT,
   );

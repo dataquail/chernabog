@@ -237,12 +237,83 @@ steps:
         - next: { tasks: recorded.tasks, stack: latest.stack }
 `;
 
+// A repo's own steps, in .chernabog/stages/ by file name: two Effect stages,
+// typed, and a shell stage, which isn't.
+export const STAGES = {
+  "which-pr.ts": `import { defineStage } from "@chernabog/sdk";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+const Output = Schema.Struct({ pr: Schema.Number.pipe(Schema.brand("PullRequestNumber")) });
+
+export default defineStage({
+  name: "which-pr",
+  input: Schema.Struct({ pr: Schema.Number, note: Schema.optionalKey(Schema.String) }),
+  output: Output,
+  run: (input) => Effect.succeed(Schema.decodeSync(Output)({ pr: input.pr })),
+});
+`,
+  "count-words.ts": `import { defineStage } from "@chernabog/sdk";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export default defineStage({
+  name: "count-words",
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ words: Schema.Number, long: Schema.Boolean }),
+  run: (input) => {
+    const words = input.text.split(" ").length;
+
+    return Effect.succeed({ words, long: words > 100 });
+  },
+});
+`,
+  notify: "#!/bin/sh\necho '{}'\n",
+};
+
+export const STAGE_FILES = Object.keys(STAGES);
+
+// The review document with a stage of the repo's own in front, which names the
+// pull request the review and the merge then take.
+export const REVIEW_WITH_STAGE_DOCUMENT = `
+flow: review
+subject: pull-request
+concurrency: 1
+trigger:
+  - use: review.requested
+  - use: review.waitingElsewhere
+steps:
+  - id: which
+    stage: which-pr
+    in: { pr: trigger.pr }
+    failure: { Skip: skip, StepFailed: fail }
+  - id: review
+    use: review.round
+    in: { pr: which.pr }
+    with: { round: 1, role: reviewer }
+    on:
+      approve:
+        as: verdict
+        steps:
+          - id: land
+            use: pr.land
+            in: { pr: which.pr, approved: verdict.approved }
+            with: { method: squash }
+          - end: done
+            summary: land
+      changes:
+        steps:
+          - end: done
+            summary: review.changesAsked
+`;
+
 export const documentOf = (source: string) =>
   Result.getOrThrow(Compose.read(Schema.decodeUnknownSync(Schema.Json)(YAML.parse(source))));
 
 // A generated flow's file, under node_modules, so it resolves the SDK and effect
-// as a repo's does and nothing that checks the source tree sees it. It goes
-// when the test's scope does.
+// as a repo's does and nothing that checks the source tree sees it, in flows/
+// beside the stages, as a repo's .chernabog/ has them. It goes when the
+// test's scope does.
 const writeFlow = (source: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -250,14 +321,20 @@ const writeFlow = (source: string) =>
     const cache = yield* path.fromFileUrl(new URL("../node_modules/.cache", import.meta.url));
     yield* fs.makeDirectory(cache, { recursive: true });
     const directory = yield* fs.makeTempDirectoryScoped({ directory: cache, prefix: "compose-" });
-    const file = path.join(directory, "flow.ts");
+    yield* fs.makeDirectory(path.join(directory, "flows"));
+    yield* fs.makeDirectory(path.join(directory, "stages"));
+    const file = path.join(directory, "flows", "flow.ts");
     yield* fs.writeFileString(file, source);
+
+    for (const [name, stage] of Object.entries(STAGES)) {
+      yield* fs.writeFileString(path.join(directory, "stages", name), stage);
+    }
 
     return file;
   });
 
 export const generated = (document: Compose.FlowDocument) =>
-  Result.getOrThrow(Compose.generate(document));
+  Result.getOrThrow(Compose.generate(document, "@chernabog/sdk", STAGE_FILES));
 
 // A flow file's source as the engine would load it.
 export const loadSource = (source: string) =>

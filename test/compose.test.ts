@@ -30,6 +30,8 @@ import {
   generated,
   IMPLEMENT_DOCUMENT,
   REVIEW_DOCUMENT,
+  REVIEW_WITH_STAGE_DOCUMENT,
+  STAGE_FILES,
 } from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 
@@ -132,7 +134,8 @@ describe("Compose.read", () => {
     expect(problemsOf(withStep({ id: "a" }))).toEqual([
       {
         path: "steps[0]",
-        message: "must be a step: use (a block, with an id), end, next, first, repeat or forEach",
+        message:
+          "must be a step: use (a block, with an id), stage (a step of the repo's own, with an id), end, next, first, repeat or forEach",
       },
     ]);
   });
@@ -1737,5 +1740,408 @@ describe("a block's failure table", () => {
     });
 
     expect([complete.name, missing.name, stale.name]).toEqual(["complete", "missing", "stale"]);
+  });
+});
+
+describe("a document that runs a stage", () => {
+  const TIMEOUT = 120_000;
+
+  const staged = documentOf(REVIEW_WITH_STAGE_DOCUMENT);
+  const epic = documentOf(EPIC_DOCUMENT);
+
+  const FAILURE = { Skip: "skip", StepFailed: "person" };
+
+  const checked = (doc: Doc) => Compose.check(doc, STAGE_FILES);
+
+  const said = (doc: Doc) => checked(doc).map((problem) => problem.message);
+
+  const stagePaths = (doc: Doc) => checked(doc).map((problem) => problem.path);
+
+  // The document with a step put first.
+  const leading = (doc: Doc, step: Step) => withSteps(doc, [step, ...doc.steps]);
+
+  // The epic with a step put first in its round, or in its lanes.
+  const inEpic = (where: "round" | "lane", step: Step): Doc => {
+    const into = (steps: ReadonlyArray<Step>): ReadonlyArray<Step> =>
+      steps.map((each) => {
+        if (where === "round" && Compose.isRepeat(each)) {
+          return { ...each, repeat: { ...each.repeat, steps: [step, ...into(each.repeat.steps)] } };
+        }
+
+        if (where === "lane" && Compose.isForEach(each)) {
+          return { ...each, steps: [step, ...each.steps] };
+        }
+
+        if (Compose.isRepeat(each)) {
+          return { ...each, repeat: { ...each.repeat, steps: into(each.repeat.steps) } };
+        }
+
+        if (Compose.isUse(each)) {
+          return {
+            ...each,
+            on: Object.fromEntries(
+              Object.entries(each.on ?? {}).map(([outcome, branch]) => [
+                outcome,
+                { ...branch, steps: into(branch.steps) },
+              ]),
+            ),
+          };
+        }
+
+        return each;
+      });
+
+    return withSteps(epic, into(epic.steps));
+  };
+
+  // The stage step, changed.
+  const changingStage = (doc: Doc, change: (step: Compose.StageStep) => Compose.StageStep): Doc =>
+    withSteps(
+      doc,
+      doc.steps.map((step) => {
+        if (Compose.isStage(step)) {
+          return change(step);
+        }
+
+        return step;
+      }),
+    );
+
+  test("reads a step that names a stage", () => {
+    const read = Compose.read({
+      flow: "x",
+      subject: "pull-request",
+      trigger: [],
+      steps: [{ id: "a", stage: "which-pr", in: { pr: "trigger.pr" }, failure: FAILURE }],
+    });
+
+    expect(Result.isSuccess(read)).toBe(true);
+  });
+
+  test("refuses a step that names a block and a stage", () => {
+    const read = Compose.read({
+      flow: "x",
+      subject: "pull-request",
+      trigger: [],
+      steps: [{ id: "a", use: "review.round", stage: "which-pr" }],
+    });
+
+    expect(Result.isFailure(read) && read.failure).toEqual([
+      { path: "steps[0]", message: "uses a block or runs a stage, not both" },
+    ]);
+  });
+
+  test("finds nothing wrong with a stage wired correctly", () => {
+    expect(checked(staged)).toEqual([]);
+  });
+
+  test("refuses a stage the repo doesn't have", () => {
+    expect(Compose.check(staged)).toEqual([
+      {
+        path: "steps[0].stage",
+        message: "no stage named which-pr in .chernabog/stages/; there are none",
+      },
+    ]);
+
+    expect(checked(changingStage(staged, (step) => ({ ...step, stage: "find-work" })))).toEqual([
+      {
+        path: "steps[0].stage",
+        message: "no stage named find-work in .chernabog/stages/; there are count-words, which-pr",
+      },
+    ]);
+  });
+
+  test("names a stage without its extension", () => {
+    expect(said(changingStage(staged, (step) => ({ ...step, stage: "which-pr.ts" })))).toEqual([
+      "names a stage by its file without the extension: which-pr",
+    ]);
+  });
+
+  test("refuses a shell stage, whose output has no types", () => {
+    expect(checked(changingStage(staged, (step) => ({ ...step, stage: "notify" })))).toEqual([
+      {
+        path: "steps[0].stage",
+        message:
+          "notify is a shell stage, whose output has no types: wrap it in an Effect stage, .chernabog/stages/notify.ts, that default-exports defineStage({ name, input, output, run })",
+      },
+    ]);
+  });
+
+  describe("wants what each of a stage's failures means", () => {
+    test("with no failure table", () => {
+      const unsaid = changingStage(staged, ({ failure: _, ...step }) => step);
+
+      expect(checked(unsaid)).toEqual([
+        {
+          path: "steps[0].failure",
+          message:
+            "which-pr can fail with Skip, and this doesn't say what that means: give failure.Skip as person, told, skip or fail",
+        },
+        {
+          path: "steps[0].failure",
+          message:
+            "which-pr can fail with StepFailed, and this doesn't say what that means: give failure.StepFailed as person, told, skip or fail",
+        },
+      ]);
+    });
+
+    test("with one failure left out", () => {
+      const half = changingStage(staged, (step) => ({ ...step, failure: { Skip: "skip" } }));
+
+      expect(stagePaths(half)).toEqual(["steps[0].failure"]);
+      expect(said(half)).toEqual([
+        "which-pr can fail with StepFailed, and this doesn't say what that means: give failure.StepFailed as person, told, skip or fail",
+      ]);
+    });
+
+    test("with a failure a stage can't come to, or a disposition there isn't", () => {
+      const wrong = changingStage(staged, (step) => ({
+        ...step,
+        failure: { Skip: "skip", StepFailed: "ignore", NeedsHuman: "told" },
+      }));
+
+      expect(checked(wrong)).toEqual([
+        { path: "steps[0].failure.StepFailed", message: "must be person, told, skip or fail" },
+        {
+          path: "steps[0].failure.NeedsHuman",
+          message: "a stage fails only with Skip or StepFailed",
+        },
+      ]);
+    });
+  });
+
+  test("checks what a stage is wired to", () => {
+    const unwired = changingStage(staged, (step) => ({ ...step, in: { pr: "nothing.pr" } }));
+
+    expect(stagePaths(unwired)).toEqual(["steps[0].in.pr"]);
+    expect(said(unwired)[0]).toStartWith("nothing is not available here");
+  });
+
+  test("refuses an outcome, which a stage has none of", () => {
+    const routed = changingStage(staged, (step) => ({
+      ...step,
+      on: { done: { steps: [{ end: "done" }] } },
+    }));
+
+    expect(checked(routed)).toEqual([
+      { path: "steps[0].on.done", message: "which-pr comes to nothing to route" },
+    ]);
+  });
+
+  test("refuses a stage twice on one path, whose step names would collide", () => {
+    const twice = leading(staged, {
+      id: "first",
+      stage: "which-pr",
+      in: { pr: "trigger.pr" },
+      failure: FAILURE,
+    });
+
+    expect(checked(twice)).toEqual([
+      {
+        path: "steps[1].stage",
+        message: "which-pr runs twice on one path, and its step names would collide",
+      },
+    ]);
+  });
+
+  describe("wants a stage in a loop or a lane to carry its round or lane", () => {
+    const counted = (wired: { readonly [input: string]: string }): Step => ({
+      id: "counted",
+      stage: "count-words",
+      in: wired,
+      failure: FAILURE,
+    });
+
+    test("a stage in a loop without its round", () => {
+      const roundless = inEpic("round", counted({ text: "trigger.epic" }));
+
+      expect(Compose.check(roundless, STAGE_FILES)).toEqual([
+        {
+          path: "steps[3].repeat.steps[0].in.round",
+          message: "count-words runs in every round here, and must take round",
+        },
+      ]);
+    });
+
+    test("and not with it", () => {
+      expect(said(inEpic("round", counted({ text: "trigger.epic", round: "round" })))).toEqual([]);
+    });
+
+    test("a stage in a lane without its lane", () => {
+      const laneless = inEpic("lane", counted({ text: "task.issue" }));
+
+      expect(said(laneless)).toEqual([
+        "count-words runs beside others here, and must name its lane",
+      ]);
+      expect(stagePaths(laneless).filter((path) => path.endsWith("[0].in"))).toHaveLength(1);
+    });
+
+    test("and not with it", () => {
+      expect(said(inEpic("lane", counted({ text: "task.issue", lane: "task.lane" })))).toEqual([]);
+    });
+  });
+
+  describe("generate", () => {
+    const flow = Result.getOrThrow(Compose.generate(staged, "@chernabog/sdk", STAGE_FILES));
+
+    test("imports the stage, for its input and output", () => {
+      expect(flow).toContain('from "../stages/which-pr.ts";');
+      expect(flow).toContain('runStage("which-pr", ');
+    });
+
+    test("refuses a document whose stage isn't there", () => {
+      expect(Result.isFailure(Compose.generate(staged))).toBe(true);
+    });
+
+    test("names a stage's step by its round, which isn't its input", () => {
+      const looped = Result.getOrThrow(
+        Compose.generate(
+          inEpic("round", {
+            id: "counted",
+            stage: "count-words",
+            in: { text: "trigger.epic", round: "round" },
+            failure: FAILURE,
+          }),
+          "@chernabog/sdk",
+          STAGE_FILES,
+        ),
+      );
+
+      expect(looped).toContain(
+        '{ "text": trigger.epic }, {"Skip":"skip","StepFailed":"person"}, { "round": round })',
+      );
+    });
+  });
+
+  describe("tsc", () => {
+    const rejected = (name: string, doc: Doc, says: string) => {
+      effect(
+        name,
+        () =>
+          Effect.gen(function* () {
+            expect(checked(doc)).toEqual([]);
+            expect((yield* compileErrors(doc)).join("\n")).toContain(says);
+          }),
+        TIMEOUT,
+      );
+    };
+
+    const counting = (text: string): Step => ({
+      id: "counted",
+      stage: "count-words",
+      in: { text },
+      failure: FAILURE,
+    });
+
+    effect(
+      "compiles a stage wired correctly, in and out",
+      () =>
+        Effect.gen(function* () {
+          expect(yield* compileErrors(staged)).toEqual([]);
+          expect(
+            yield* compileErrors(
+              changingStage(staged, (step) => ({ ...step, with: { note: "from the document" } })),
+            ),
+          ).toEqual([]);
+        }),
+      TIMEOUT,
+    );
+
+    rejected(
+      "a number where a stage takes text",
+      leading(staged, counting("trigger.pr")),
+      "not assignable to type 'string'",
+    );
+
+    rejected(
+      "a stage's output where a pull request goes",
+      changing(
+        leading(staged, {
+          id: "counted",
+          stage: "count-words",
+          with: { text: "a few words" },
+          failure: FAILURE,
+        }),
+        "review",
+        (step) => ({ ...step, in: { pr: "counted.words" } }),
+      ),
+      "PullRequestNumber",
+    );
+
+    rejected(
+      "an output a stage doesn't have",
+      changing(staged, "review", (step) => ({ ...step, in: { pr: "which.number" } })),
+      "number",
+    );
+
+    rejected(
+      "an input a stage doesn't take",
+      changingStage(staged, (step) => ({ ...step, with: { title: "x" } })),
+      "title",
+    );
+
+    rejected(
+      "a stage's input left out",
+      changingStage(staged, (step) => ({ ...step, in: {} })),
+      "pr",
+    );
+  });
+
+  describe("Compose.describe", () => {
+    test("lists the repo's Effect stages, with what each takes and gives", () => {
+      const Input = Schema.Struct({ pr: Schema.Finite, note: Schema.optionalKey(Schema.String) });
+      const Output = Schema.Struct({ pr: Schema.Finite, labels: Schema.Array(Schema.String) });
+
+      const { stages } = Schema.decodeUnknownSync(
+        Schema.Struct({
+          stages: Schema.Array(
+            Schema.Struct({
+              name: Schema.String,
+              inputs: Schema.Array(
+                Schema.Struct({
+                  name: Schema.String,
+                  required: Schema.Boolean,
+                  under: Schema.String,
+                  kind: Schema.String,
+                }),
+              ),
+              gives: Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)]),
+              failures: Schema.Array(Schema.String),
+            }),
+          ),
+        }),
+      )(
+        Compose.describe([
+          { name: "which-pr", input: Input, output: Output },
+          { name: "say", input: Schema.Struct({}), output: Schema.String },
+        ]),
+      );
+
+      expect(stages).toEqual([
+        {
+          name: "which-pr",
+          inputs: [
+            { name: "pr", required: true, under: "in or with", kind: "number" },
+            { name: "note", required: false, under: "in or with", kind: "string" },
+          ],
+          gives: { pr: "number", labels: "Array<string>" },
+          failures: ["Skip", "StepFailed"],
+        },
+        { name: "say", inputs: [], gives: "string", failures: ["Skip", "StepFailed"] },
+      ]);
+    });
+
+    test("lists none when there are none", () => {
+      expect(Compose.describe()).toMatchObject({ stages: [] });
+    });
+
+    test("explains stages in the format", () => {
+      const { format } = Schema.decodeUnknownSync(Schema.Struct({ format: Schema.String }))(
+        Compose.describe(),
+      );
+
+      expect(format).toContain("stage: find-work");
+      expect(format).toContain("failure: { Skip: skip, StepFailed: person }");
+    });
   });
 });

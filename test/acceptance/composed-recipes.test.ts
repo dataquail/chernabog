@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
-import { REVIEW_DOCUMENT } from "../compose-harness.ts";
+import { REVIEW_DOCUMENT, STAGES } from "../compose-harness.ts";
 import { openSandbox, type Sandbox } from "./sandbox.ts";
 
 // Its name has to be free in the sandbox's repo, whose flows include `review`.
@@ -106,7 +106,12 @@ describe("chernabog recipes blocks", () => {
   let sandbox: Sandbox;
 
   beforeAll(async () => {
-    sandbox = openSandbox();
+    sandbox = openSandbox(
+      {},
+      {
+        repoFiles: { "stages/which-pr.ts": STAGES["which-pr.ts"], "stages/notify": STAGES.notify },
+      },
+    );
     await sandbox.installCheckout();
   });
 
@@ -138,7 +143,27 @@ describe("chernabog recipes blocks", () => {
     const unknown = await sandbox.runCli(["recipes", "blocks", "gate.lint"]);
 
     expect(unknown.code).not.toBe(0);
-    expect(unknown.output).toContain("no block or source named gate.lint");
+    expect(unknown.output).toContain("no block, source or stage named gate.lint");
+  });
+
+  test("lists the repo's Effect stages, with what each takes and gives", async () => {
+    const all = await sandbox.runCli(["recipes", "blocks"]);
+
+    expect(all.code).toBe(0);
+    expect(all.output).toContain("Stages, this repo's own:");
+    expect(all.output).toContain("which-pr: .chernabog/stages/which-pr, run with stage: which-pr");
+    expect(all.output).toContain("in or with pr: number");
+    expect(all.output).toContain("in or with note (optional): string");
+    expect(all.output).toContain("gives: pr (number)");
+    expect(all.output).toContain("say under failure what each means: Skip, StepFailed");
+    // A shell stage has no types to list.
+    expect(all.output).not.toContain("notify:");
+
+    const named = await sandbox.runCli(["recipes", "blocks", "which-pr", "--json"]);
+
+    expect(named.code).toBe(0);
+    expect(named.output).toContain('"stages":[{"name":"which-pr"');
+    expect(named.output).not.toContain('"name":"agent.implement"');
   });
 
   test("--json gives an agent the catalogue to read", async () => {
@@ -167,7 +192,7 @@ describe("chernabog recipes blocks", () => {
     const unknown = await sandbox.runCli(["recipes", "blocks", "gate.lint", "--json"]);
 
     expect(unknown.code).not.toBe(0);
-    expect(unknown.output).toContain("no block or source named gate.lint");
+    expect(unknown.output).toContain("no block, source or stage named gate.lint");
     expect(unknown.output).not.toContain('"name":');
   });
 });

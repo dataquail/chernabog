@@ -10,12 +10,14 @@ import {
   DEFAULT_LABELS,
   Epic,
   type Flow,
+  type Json,
   type LinkedIssue,
   Plan,
   PullRequest,
   PushRejected,
   reviewMarker,
   type Settings,
+  Skip,
   type WorkItem,
 } from "@chernabog/sdk";
 import { expect } from "bun:test";
@@ -819,3 +821,63 @@ export const EPIC_SCENARIOS = scenarios((define) => {
     },
   );
 });
+
+// A review flow with the repo's which-pr stage in front, whose answer is the
+// fake's: a stage runs in its own process.
+const answering = (setup: () => Fake, answer: (input: Json) => Effect.Effect<Json, Skip>) => () => {
+  const fake = setup();
+  fake.stages.set("which-pr", answer);
+
+  return fake;
+};
+
+const [APPROVED] = REVIEW_SCENARIOS.filter(
+  (scenario) => scenario.title === "when it approves a pull request on the automated path",
+);
+
+// What a run that went through the stage did, and what the recipe did, the
+// stage's step aside: with a stage that names the trigger's pull request, the
+// two must be the same.
+export const throughStage = (flow: Flow, recipe: Flow, scenario: Scenario) =>
+  Effect.gen(function* () {
+    const setup = answering(scenario.setup, Effect.succeed);
+    const { settings, wake } = scenario;
+    const fromRecipe = yield* observe(recipe, "review", setup, REVIEW_WORK_ITEM, wake, settings);
+    const fromFlow = yield* observe(flow, "review", setup, REVIEW_WORK_ITEM, wake, settings);
+
+    const steps: ReadonlyArray<string> = fromFlow.steps.filter((step) => step !== "which-pr");
+
+    return { first: fromFlow.steps[0], flow: { ...fromFlow, steps }, recipe: fromRecipe };
+  });
+
+// A stage that answers another pull request than the trigger's: what it was
+// given, and the steps of the run after it, which name the pull request they
+// work on.
+export const stageElsewhere = (flow: Flow) =>
+  Effect.gen(function* () {
+    const given: Array<Json> = [];
+
+    const setup = answering(APPROVED.setup, (input) =>
+      Effect.sync(() => {
+        given.push(input);
+
+        return { pr: PULL + 100 };
+      }),
+    );
+
+    const observed = yield* observe(flow, "review", setup, REVIEW_WORK_ITEM);
+
+    return { given, steps: observed.steps };
+  });
+
+// A stage that skips the run, as exit 78 does.
+export const stageSkipping = (flow: Flow) =>
+  Effect.gen(function* () {
+    const setup = answering(APPROVED.setup, () =>
+      Effect.fail(new Skip({ reason: "nothing to do" })),
+    );
+
+    const observed = yield* observe(flow, "review", setup, REVIEW_WORK_ITEM);
+
+    return { status: observed.status, steps: observed.steps, reviews: observed.reviews };
+  });

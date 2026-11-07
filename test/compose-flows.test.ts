@@ -18,6 +18,7 @@ import {
   IMPLEMENT_DOCUMENT,
   loadFlow,
   REVIEW_DOCUMENT,
+  REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
 import {
   EPIC_SCENARIOS,
@@ -29,9 +30,12 @@ import {
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
+  stageElsewhere,
+  stageSkipping,
+  throughStage,
 } from "./compose-scenarios.ts";
 import { effect } from "./effect-test.ts";
-import { type Fake, flowTriggered, ISSUE, makeFake } from "./sdk-fakes.ts";
+import { type Fake, flowTriggered, ISSUE, makeFake, PULL } from "./sdk-fakes.ts";
 
 const composedImplement = loadFlow(documentOf(IMPLEMENT_DOCUMENT));
 
@@ -86,6 +90,58 @@ describe("the epic document runs as the recipe does", () => {
       60_000,
     );
   }
+});
+
+const composedWithStage = loadFlow(documentOf(REVIEW_WITH_STAGE_DOCUMENT));
+
+describe("a document that runs a stage", () => {
+  // The stage names the pull request the recipe takes from its trigger, so
+  // the run is the recipe's, with the stage's step besides.
+  for (const scenario of REVIEW_SCENARIOS) {
+    effect(
+      `runs as the recipe does, ${scenario.title}`,
+      () =>
+        Effect.gen(function* () {
+          const { first, flow, recipe } = yield* throughStage(
+            yield* composedWithStage,
+            review,
+            scenario,
+          );
+
+          expect(first).toBe("which-pr");
+          expect(flow).toEqual(recipe);
+        }),
+      60_000,
+    );
+  }
+
+  effect(
+    "gives the stage its input, and the next block its output",
+    () =>
+      Effect.gen(function* () {
+        const { given, steps } = yield* stageElsewhere(yield* composedWithStage);
+
+        // The review and the merge name the pull request they work on.
+        expect(given).toEqual([{ pr: PULL }]);
+        expect(steps).toContain(`ships-pr-${PULL + 100}`);
+        expect(steps).toContain(`merge-pr-${PULL + 100}`);
+        expect(steps.filter((step) => step.includes(`-pr-${PULL}`))).toEqual([]);
+      }),
+    60_000,
+  );
+
+  effect(
+    "skips the run when the stage skips it, and the document says skip",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* stageSkipping(yield* composedWithStage)).toEqual({
+          status: "skipped",
+          steps: ["which-pr"],
+          reviews: [],
+        });
+      }),
+    60_000,
+  );
 });
 
 describe("a document's sources find what its recipe's trigger does", () => {

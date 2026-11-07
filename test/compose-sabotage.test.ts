@@ -16,6 +16,7 @@ import {
   IMPLEMENT_DOCUMENT,
   loadSource,
   REVIEW_DOCUMENT,
+  REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
 import {
   EPIC_SCENARIOS,
@@ -26,6 +27,9 @@ import {
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
+  stageElsewhere,
+  stageSkipping,
+  throughStage,
 } from "./compose-scenarios.ts";
 import { effect } from "./effect-test.ts";
 
@@ -178,5 +182,63 @@ describe("the comparison sees an epic flow that", () => {
     target,
     "when a task's CI stays red, and it goes to a person",
     (source) => source.replace("failureContext.pr = Option.some(published.pr.number);", ""),
+  );
+});
+
+describe("the checks of a document that runs a stage see a flow that", () => {
+  const source = generated(documentOf(REVIEW_WITH_STAGE_DOCUMENT));
+
+  const [approved] = REVIEW_SCENARIOS.filter(
+    (each) => each.title === "when it approves a pull request on the automated path",
+  );
+
+  const breaking = <E>(
+    title: string,
+    sabotage: (source: string) => string,
+    check: (
+      flow: Flow,
+    ) => Effect.Effect<void, E, Effect.Services<ReturnType<typeof stageSkipping>>>,
+  ) => {
+    effect(
+      title,
+      () =>
+        Effect.gen(function* () {
+          const broken = sabotage(source);
+
+          expect(broken).not.toBe(source);
+
+          yield* check(yield* loadSource(broken));
+        }),
+      60_000,
+    );
+  };
+
+  breaking(
+    "doesn't run its stage",
+    dropping("which", "const which = { pr: trigger.pr };"),
+    (flow) =>
+      Effect.gen(function* () {
+        const { first, flow: fromFlow, recipe } = yield* throughStage(flow, review, approved);
+
+        expect({ first, fromFlow }).not.toEqual({ first: "which-pr", fromFlow: recipe });
+      }),
+  );
+
+  breaking(
+    "takes the trigger's pull request instead of its stage's",
+    (text) => text.replaceAll('"pr": which.pr', '"pr": trigger.pr'),
+    (flow) =>
+      Effect.gen(function* () {
+        expect((yield* stageElsewhere(flow)).steps).not.toContain("merge-pr-107");
+      }),
+  );
+
+  breaking(
+    "fails the run where its stage skips it",
+    (text) => text.replace('"Skip":"skip"', '"Skip":"fail"'),
+    (flow) =>
+      Effect.gen(function* () {
+        expect((yield* stageSkipping(flow)).status).not.toBe("skipped");
+      }),
   );
 });
