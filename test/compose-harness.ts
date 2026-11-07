@@ -426,6 +426,72 @@ steps:
     summary: handed
 `;
 
+// Drafts a plan, checks it and posts it, and parks until a person answers:
+// approved, the spec becomes an epic of sub-issues; changes asked, the next
+// round drafts it again. The checks and their fixes are plan.draft's own, and
+// what runs only on the way out of the run (creating the issues, the epic, the
+// checkout's removal, the questions) carries no round.
+export const PLAN_DOCUMENT = `
+flow: plan
+subject: spec
+gate: usage
+concurrency: 1
+trigger:
+  - use: plan.queued
+steps:
+  - id: claim
+    use: issue.claim
+    in: { issue: trigger.issue, queued: trigger.queued }
+    failure: { StepFailed: fail }
+  - id: rounds
+    repeat:
+      state: { changes: plan.changes }
+      steps:
+        - id: drafted
+          use: plan.draft
+          in: { issue: trigger.issue, round: round, changes: state.changes }
+          on:
+            needs-clarification:
+              as: questions
+              steps:
+                - id: cleared
+                  use: plan.doneDrafting
+                  in: { issue: trigger.issue }
+                - id: posted
+                  use: plan.askClarification
+                  in: { issue: trigger.issue, draft: questions }
+                - end: needs-human
+                  reason: posted
+        - id: proposed
+          use: plan.propose
+          in: { issue: trigger.issue, round: round, draft: drafted.draft }
+        - id: answer
+          use: plan.awaitAnswer
+          in: { round: round }
+          with: { within: 14 days }
+          on:
+            approved:
+              as: approval
+              steps:
+                - id: created
+                  use: plan.create
+                  in: { issue: trigger.issue, plan: proposed.plan, approved: approval.approved }
+                - id: epic
+                  use: plan.becomeEpic
+                  in: { issue: trigger.issue, plan: proposed.plan, created: created.created }
+                - id: cleaned
+                  use: plan.doneDrafting
+                  in: { issue: trigger.issue }
+                - end: done
+                  summary: epic
+            changes:
+              steps:
+                - id: asked
+                  use: plan.changesAsked
+                  in: { issue: trigger.issue, round: round }
+                - next: { changes: asked.changes }
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

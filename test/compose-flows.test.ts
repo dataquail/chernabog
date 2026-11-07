@@ -8,6 +8,7 @@ import {
   isManual,
   labelsOf,
   ownerMarker,
+  Plan,
   Settings,
   type WorkItem,
 } from "@chernabog/sdk";
@@ -21,6 +22,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import humanInitiated from "../packages/recipes/flows/human-initiated.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import plan from "../packages/recipes/flows/plan.ts";
 import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
@@ -32,6 +34,7 @@ import {
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadFlow,
+  PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
@@ -50,6 +53,8 @@ import {
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
+  PLAN_SCENARIOS,
+  PLAN_WORK_ITEM,
   POST_MERGE_SCENARIOS,
   POST_MERGE_WORK_ITEM,
   queued,
@@ -84,6 +89,8 @@ const composedResolveConflicts = loadFlow(documentOf(RESOLVE_CONFLICTS_DOCUMENT)
 const composedPostMerge = loadFlow(documentOf(POST_MERGE_DOCUMENT));
 
 const composedHumanInitiated = loadFlow(documentOf(HUMAN_INITIATED_DOCUMENT));
+
+const composedPlan = loadFlow(documentOf(PLAN_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -214,6 +221,51 @@ describe("the human-initiated document runs as the recipe does", () => {
       60_000,
     );
   }
+});
+
+describe("the plan document runs as the recipe does", () => {
+  for (const scenario of PLAN_SCENARIOS) {
+    effect(
+      scenario.title,
+      () => runsAsTheRecipe("plan", plan, composedPlan, PLAN_WORK_ITEM, scenario),
+      60_000,
+    );
+  }
+});
+
+// The recipe waits 14 days for a person's answer, which no run here can, so
+// the document's own wait is shortened to see where its timeout goes: to a
+// person, with the checkout removed and the claim let go, as the recipe's does.
+describe("the plan document's wait for a person", () => {
+  effect(
+    "hands the spec to a person once nobody answers within its time",
+    () =>
+      Effect.gen(function* () {
+        const document = documentOf(PLAN_DOCUMENT.replace("within: 14 days", "within: 0 days"));
+        const [approved] = PLAN_SCENARIOS;
+
+        const observed = yield* observe(
+          yield* loadFlow(document),
+          "plan",
+          approved.setup,
+          PLAN_WORK_ITEM,
+        );
+
+        expect(observed.status).toBe("needs-human");
+        expect(observed.summary).toBe(
+          `#${ISSUE} needs a person: nobody answered the plan within 0 days`,
+        );
+        expect(observed.issueLabels).toEqual([DEFAULT_LABELS.needsHuman]);
+        expect(observed.steps).toContain("propose-plan-1");
+        expect(observed.steps).toContain(`clean-up-plan-issue-${ISSUE}`);
+        expect(observed.steps).toContain("needs-human");
+        expect(observed.steps).not.toContain("create-issues");
+        expect(observed.comments.at(-1)).toContain(
+          "Chernabog stopped planning and needs a person: nobody answered the plan within 0 days",
+        );
+      }),
+    60_000,
+  );
 });
 
 describe("the epic document runs as the recipe does", () => {
@@ -535,6 +587,59 @@ describe("a document's sources find what its recipe's trigger does", () => {
     );
   }
 
+  // Specs labelled auto:plan, and those whose posted plan a person answered,
+  // which wake the run waiting on it.
+  for (const [title, change, items] of [
+    ["plan, on a spec labelled auto:plan", (_fake: Fake) => void 0, 1],
+    [
+      "plan, on a spec whose plan a person approved",
+      (fake: Fake) => {
+        fake.setLabels(ISSUE, [Plan.LABELS.proposed, Plan.LABELS.approved]);
+      },
+      1,
+    ],
+    [
+      "plan, on a spec whose plan a person commented on",
+      (fake: Fake) => {
+        fake.setLabels(ISSUE, [Plan.LABELS.proposed]);
+        fake.comment('## Proposed plan\n\n<!-- chernabog-plan {"round":1} -->');
+        fake.comment("Split the API in two.", "zach");
+      },
+      1,
+    ],
+    [
+      "plan, on a spec whose plan nobody has answered",
+      (fake: Fake) => {
+        fake.setLabels(ISSUE, [Plan.LABELS.proposed]);
+        fake.comment('## Proposed plan\n\n<!-- chernabog-plan {"round":1} -->');
+      },
+      0,
+    ],
+    [
+      "plan, on an issue not labelled auto:plan",
+      (fake: Fake) => {
+        fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+      },
+      0,
+    ],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const spec = () => {
+          const fake = makeFake("approve");
+          fake.setLabels(ISSUE, [Plan.LABELS.plan]);
+          change(fake);
+
+          return fake;
+        };
+
+        const fromRecipe = yield* found(plan, spec);
+        expect(fromRecipe).toHaveLength(items);
+        expect(yield* found(yield* composedPlan, spec)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Which label queues an issue doesn't depend on where a document lists it.
   describe("whatever order a document lists the labels in", () => {
     const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
@@ -667,6 +772,16 @@ describe("a document's flow declares what its recipe does", () => {
       expect(composed.start).toBe(true);
       expect(composed.item).toBe(humanInitiated.item);
       expect(yield* labelled(composed)).toEqual(yield* labelled(humanInitiated));
+    }),
+  );
+
+  // Its stillValid is the recipe's own: a spec closed, or claimed by another run.
+  effect("plan", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedPlan;
+      expect(declared(composed)).toEqual(declared(plan));
+      expect(Object.keys(composed).toSorted()).toEqual(Object.keys(plan).toSorted());
+      expect(yield* labelled(composed)).toEqual(yield* labelled(plan));
     }),
   );
 

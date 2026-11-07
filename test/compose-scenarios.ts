@@ -1775,6 +1775,205 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
   );
 });
 
+export const PLAN_WORK_ITEM = item(`issue-${ISSUE}`, { issue: ISSUE, label: Plan.LABELS.plan });
+
+const task = (key: string, kind: string, blockedBy: ReadonlyArray<string> = []) => ({
+  key,
+  title: `Do ${key}`,
+  body: `What ${key} is.`,
+  kind,
+  blockedBy: [...blockedBy],
+});
+
+const PLAN: Json = {
+  status: "plan",
+  summary: "The schema first, then the API on it; the name is a person's.",
+  nodes: [
+    task("api-schema", "auto"),
+    task("api", "hybrid", ["api-schema"]),
+    task("pick-name", "human"),
+  ],
+};
+
+const QUESTIONS: Json = {
+  status: "needs-clarification",
+  summary: "The spec has no acceptance criteria.",
+  nodes: [],
+  questions: "1. What does done look like?",
+};
+
+// A spec queued with auto:plan, and the agent's answers to its plan steps in turn.
+const specWith =
+  (...plans: ReadonlyArray<Json>) =>
+  () => {
+    const fake = repoFake("approve");
+    fake.setLabels(ISSUE, [Plan.LABELS.plan]);
+
+    for (const answer of plans) {
+      fake.plans.push(answer);
+    }
+
+    return fake;
+  };
+
+// A person's answers to each plan the run posts, as it parks on each.
+const personAnswers = (...changes: Parks["changes"]): Parks => ({ signal: "approved", changes });
+
+const approve = (fake: Fake) => {
+  fake.setLabels(ISSUE, [...fake.labelsOf(ISSUE), Plan.LABELS.approved]);
+};
+
+const askFor = (change: string) => (fake: Fake) => {
+  fake.comment(change, "zach");
+};
+
+export const PLAN_SCENARIOS = scenarios((scenario) => {
+  scenario(
+    "when a person approves the plan",
+    specWith(PLAN),
+    "done",
+    personAnswers(approve),
+    {},
+    (recipe) => {
+      expect(recipe.summary).toBe(`#${ISSUE}: an epic of 4 sub-issues`);
+      expect(recipe.filed).toHaveLength(4);
+      expect(recipe.issueLabels).toEqual([Plan.LABELS.epic]);
+      expect(recipe.steps).toContain(`clean-up-${Plan.planCheckout(ISSUE)}`);
+    },
+  );
+
+  scenario(
+    "when a person asks for changes, and approves the plan drafted again",
+    specWith(PLAN, { ...PLAN, nodes: [task("api-schema", "auto")] }),
+    "done",
+    personAnswers(askFor("Leave the API for later."), approve),
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("changes-asked-1");
+      expect(recipe.steps).toContain("draft-plan-2");
+      expect(recipe.steps).toContain("propose-plan-2");
+      expect(recipe.filed).toHaveLength(2);
+    },
+  );
+
+  scenario(
+    "when the plan fails its checks, and the agent fixes it",
+    specWith({ ...PLAN, nodes: [task("a", "auto", ["b"]), task("b", "auto", ["a"])] }, PLAN),
+    "done",
+    personAnswers(approve),
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("fix-plan-1-1");
+      expect(recipe.steps).not.toContain("fix-plan-1-2");
+    },
+  );
+
+  scenario(
+    "when the plan still fails its checks after planRounds attempts to fix it",
+    specWith({ ...PLAN, nodes: [task("verify", "auto")] }),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("fix-plan-1-2");
+      expect(recipe.summary).toContain("still fails its checks after 2 attempts");
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsHuman]);
+      expect(recipe.filed).toEqual([]);
+    },
+  );
+
+  scenario(
+    "when the agent has questions",
+    specWith(QUESTIONS),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsClarification]);
+      expect(recipe.comments.at(-1)).toContain("1. What does done look like?");
+    },
+  );
+
+  scenario(
+    "when the agent has questions about the changes a person asked for",
+    specWith(PLAN, QUESTIONS),
+    "needs-human",
+    personAnswers(askFor("Split the API by resource.")),
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("draft-plan-2");
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsClarification]);
+    },
+  );
+
+  scenario(
+    "when the agent's answer isn't a plan",
+    specWith(),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain("draft-plan-1: agent answer");
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsHuman]);
+    },
+  );
+
+  scenario(
+    "when the agent fails",
+    () => {
+      const fake = specWith(PLAN)();
+
+      return {
+        ...fake,
+        services: Layer.merge(
+          fake.services,
+          Layer.succeed(
+            Agent,
+            Agent.of({
+              adapters: [],
+              run: () => Effect.fail(new AgentError({ message: "claude: it broke" })),
+            }),
+          ),
+        ),
+      };
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.issueLabels).toEqual([DEFAULT_LABELS.needsHuman]);
+    },
+  );
+
+  scenario(
+    "when another run holds the claim",
+    () => {
+      const fake = specWith(PLAN)();
+      fake.refs.set(Claims.refFor(Claims.issue(ISSUE)), "held0000");
+
+      return fake;
+    },
+    "skipped",
+  );
+
+  // Before the claim, a failure fails the run rather than going to a person.
+  scenario(
+    "when the base branch is gone",
+    () => {
+      const fake = specWith(PLAN)();
+      fake.remote.gone.add("main");
+
+      return fake;
+    },
+    "failed",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.issueLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+    },
+  );
+});
+
 const EPIC = 40;
 
 export const EPIC_WORK_ITEM = item(`issue-${EPIC}`, { issue: EPIC });
