@@ -275,7 +275,7 @@ describe("FlowCompilerClientLive", () => {
 
         expect(Option.isNone(source)).toBe(true);
         expect(problems.length).toBeGreaterThan(0);
-        expect(problems[0]?.line).toBeGreaterThanOrEqual(7);
+        expect([problems[0]?.line, problems[0]?.column]).toEqual([8, 5]);
         expect(problems[0]?.path).toBe("");
         expect(problems[0]?.message).not.toContain("\n");
         expect(problems[0]?.message).not.toContain("at line");
