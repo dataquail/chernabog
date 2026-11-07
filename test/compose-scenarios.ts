@@ -48,6 +48,8 @@ import {
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
 
+const UUID_ONLY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 const ISO_TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g;
 
 // A run's own id, and when it did things, differ from run to run.
@@ -63,6 +65,26 @@ const everyLabel = (fake: Fake) =>
   ]
     .toSorted((left, right) => left - right)
     .map((number) => [number, fake.labelsOf(number)] as const);
+
+// Session ids, a run's own made from its id: each told apart from the others by
+// the order it first appears in, so two runs that resume the same sessions in
+// the same order match, and one that starts another session where the other
+// resumed doesn't.
+const sameSessions = (sessionIds: ReadonlyArray<string>) => {
+  const seen: Array<string> = [];
+
+  return sessionIds.map((sessionId) => {
+    if (!UUID_ONLY.test(sessionId)) {
+      return unsaid(sessionId);
+    }
+
+    if (!seen.includes(sessionId)) {
+      seen.push(sessionId);
+    }
+
+    return `<session ${seen.indexOf(sessionId) + 1}>`;
+  });
+};
 
 const COMMENT_STEP = /^(comment-pr-\d+)-[0-9a-f]+$/;
 
@@ -201,11 +223,13 @@ export const observe = (
       opened: fake.git.opened,
       agentSteps: fake.steps.map((step) => Option.getOrElse(step, () => "")),
       // The session each agent call resumed or started, in the agent it ran, and with whom.
-      sessions: fake.requests.map((request) => [
-        unsaid(request.sessionId),
-        Option.getOrElse(request.adapter, () => ""),
-        request.withPerson === true,
-      ]),
+      sessions: sameSessions(fake.requests.map((request) => request.sessionId)).map(
+        (sessionId, at) => [
+          sessionId,
+          Option.getOrElse(fake.requests[at].adapter, () => ""),
+          fake.requests[at].withPerson === true,
+        ],
+      ),
       // One of the pool, at random.
       requested: fake.people.requested.length,
       assigned: fake.people.assigned,
