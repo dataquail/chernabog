@@ -228,6 +228,22 @@ describe("FlowCompilerClientLive", () => {
   );
 
   atHome(
+    "reports a type error in a fixed value at the value, in `with`",
+    () =>
+      Effect.gen(function* () {
+        const text = REVIEW_DOCUMENT.replace("method: squash", "method: bogus");
+        const compiled = yield* compiling({ review: text }, "review");
+
+        const wrongLine = text.split("\n").findIndex((line) => line.includes("method: bogus"));
+
+        expect(compiled.problems.map((each) => [each.line, each.path])).toEqual([
+          [wrongLine + 1, "steps[0].on.approve.steps[0].with.method"],
+        ]);
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
     "reports YAML that doesn't parse, and a document of the wrong form, without compiling",
     () =>
       Effect.gen(function* () {
@@ -327,14 +343,27 @@ describe("finding a problem in the document", () => {
     }),
   );
 
-  atHome("traces a line of the generated flow to its step, and a wire's key to the wire", () =>
-    Effect.sync(() => {
-      const source = 'x\n  // steps[1]\n  const a = run({ "issue": 1 });\n  more();\n';
+  atHome(
+    "traces a line of the generated flow to its step, and a key to where the document has it",
+    () =>
+      Effect.sync(() => {
+        const source = 'x\n  // steps[1]\n  const a = run({ "issue": 1 });\n  more();\n';
+        const document = (keyed: string) => `steps:\n  - end: done\n  - id: a\n    ${keyed}\n`;
 
-      expect(pathOfLine(source, 3, 19)).toBe("steps[1].in.issue");
-      expect(pathOfLine(source, 4, 3)).toBe("steps[1]");
-      expect(pathOfLine(source, 1, 1)).toBe("steps");
-    }),
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 3, 19)).toBe("steps[1].in.issue");
+        expect(pathOfLine(source, document("with: { issue: 1 }"), 3, 19)).toBe(
+          "steps[1].with.issue",
+        );
+        expect(pathOfLine(source, document("failure: { issue: 1 }"), 3, 19)).toBe(
+          "steps[1].failure.issue",
+        );
+        expect(pathOfLine(source, document("next: { issue: b.c }"), 3, 19)).toBe(
+          "steps[1].next.issue",
+        );
+        expect(pathOfLine(source, document("use: a"), 3, 19)).toBe("steps[1]");
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 4, 3)).toBe("steps[1]");
+        expect(pathOfLine(source, document("in: { issue: b.c }"), 1, 1)).toBe("steps");
+      }),
   );
 
   atHome("keeps only what tsc says of the generated flow", () =>

@@ -86,9 +86,14 @@ const DIAGNOSTIC = /^flow\.ts\((\d+),(\d+)\): error TS\d+: (.*)$/;
 
 const STEP_COMMENT = /^\s*\/\/ (steps\S*)$/;
 
+// Where a step's keys can be in its document. A generated call takes `in` and
+// `with` in one object, so its key doesn't say which; the document does.
+const KEYED = ["in", "with", "failure", "next"];
+
 // The document path a line of the generated flow came from: the step its
-// nearest comment above names, and, at a wire's own key, that wire.
-export const pathOfLine = (source: string, line: number, column: number) => {
+// nearest comment above names, and, at a key of that step's, the key where the
+// document has it.
+export const pathOfLine = (source: string, text: string, line: number, column: number) => {
   const lines = source.split("\n");
 
   const step = lines
@@ -105,7 +110,17 @@ export const pathOfLine = (source: string, line: number, column: number) => {
     onSome: (found) =>
       Option.match(wire, {
         onNone: () => found,
-        onSome: (key) => `${found}.in.${key}`,
+        onSome: (key) => {
+          const document = YAML.parseDocument(text);
+
+          return Option.getOrElse(
+            Arr.findFirst(
+              KEYED.map((keyed) => `${found}.${keyed}.${key}`),
+              (path) => document.hasIn(pathKeys(path)),
+            ),
+            () => found,
+          );
+        },
       }),
   });
 };
@@ -278,7 +293,7 @@ export const FlowCompilerClientLive = Layer.effect(
         if (found.length > 0) {
           return onlyProblems(
             found.map((each) =>
-              problemAt(pathOfLine(source, each.line, each.column), each.message),
+              problemAt(pathOfLine(source, text, each.line, each.column), each.message),
             ),
           );
         }
