@@ -30,6 +30,7 @@ import {
   EPIC_DOCUMENT,
   generated,
   IMPLEMENT_DOCUMENT,
+  POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
@@ -49,6 +50,7 @@ const review = documentOf(REVIEW_DOCUMENT);
 const reReview = documentOf(RE_REVIEW_DOCUMENT);
 const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
 const resolveConflicts = documentOf(RESOLVE_CONFLICTS_DOCUMENT);
+const postMerge = documentOf(POST_MERGE_DOCUMENT);
 
 // The address-review document with a line of it changed.
 const addressReviewWith = (line: string, replacement: string) => {
@@ -62,6 +64,13 @@ const resolveConflictsWith = (line: string, replacement: string) => {
   expect(RESOLVE_CONFLICTS_DOCUMENT).toContain(line);
 
   return documentOf(RESOLVE_CONFLICTS_DOCUMENT.replace(line, replacement));
+};
+
+// The post-merge document with a line of it changed.
+const postMergeWith = (line: string, replacement: string) => {
+  expect(POST_MERGE_DOCUMENT).toContain(line);
+
+  return documentOf(POST_MERGE_DOCUMENT.replace(line, replacement));
 };
 
 // The re-review document with a line of it changed, for a change deep in its branches.
@@ -513,7 +522,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of changes-asked, conflict, epic, issue, pull-request",
+      "must be one of changes-asked, conflict, epic, issue, merged, pull-request",
     ]);
   });
 
@@ -707,6 +716,70 @@ describe("Compose.check", () => {
     );
   });
 
+  test("finds nothing wrong with the post-merge document", () => {
+    expect(Compose.check(postMerge)).toEqual([]);
+  });
+
+  test("refuses a post-merge that doesn't say what happens when the merge commit's CI is red", () => {
+    const [watching, ci] = postMerge.steps;
+
+    const unrouted = Option.getOrThrow(
+      Option.liftPredicate(ci, (step): step is UseStep => Compose.isUse(step)),
+    );
+
+    const on = Object.fromEntries(
+      Object.entries(unrouted.on ?? {}).filter(([outcome]) => outcome !== "red"),
+    );
+
+    expect(Compose.check({ ...postMerge, steps: [watching, { ...unrouted, on }] })).toEqual([
+      {
+        path: "steps[1].on",
+        message: "merged.awaitCi can come to red, and this doesn't say what then",
+      },
+    ]);
+  });
+
+  test("refuses a post-merge that doesn't say what happens when CI was already red", () => {
+    const unsaid = postMergeWith(
+      `            in: { pr: trigger.pr, sha: trigger.sha }
+            on:
+              already-red:
+                as: already
+                steps:
+                  - end: done
+                    summary: already.summary
+`,
+      "            in: { pr: trigger.pr, sha: trigger.sha }\n",
+    );
+
+    expect(Compose.check(unsaid)).toEqual([
+      {
+        path: "steps[1].on.red.steps[0].on",
+        message: "merged.redBefore can come to already-red, and this doesn't say what then",
+      },
+    ]);
+  });
+
+  test("knows what the trigger of a flow on merged gives", () => {
+    const head = postMergeWith(
+      "use: merged.markWatched\n    in: { pr: trigger.pr, sha: trigger.sha",
+      "use: merged.markWatched\n    in: { pr: trigger.pr, sha: trigger.head",
+    );
+
+    expect(Compose.check(head)).toEqual([
+      {
+        path: "steps[0].in.sha",
+        message: "the trigger of a flow on merged gives pr, url, title, sha, base, issue",
+      },
+    ]);
+  });
+
+  test("refuses pr.mergedRecently on a flow that isn't on merged", () => {
+    expect(messages({ ...review, trigger: postMerge.trigger })).toEqual([
+      "pr.mergedRecently finds work on merged, and this is a flow on pull-request",
+    ]);
+  });
+
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
@@ -730,13 +803,14 @@ describe("tsc on a document's flow file", () => {
   };
 
   effect(
-    "compiles the implement, review, re-review, address-review and resolve-conflicts documents",
+    "compiles the implement, review, re-review, address-review, resolve-conflicts and post-merge documents",
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(implement)).toEqual([]);
         expect(yield* compileErrors(review)).toEqual([]);
         expect(yield* compileErrors(reReview)).toEqual([]);
         expect(yield* compileErrors(addressReview)).toEqual([]);
+        expect(yield* compileErrors(postMerge)).toEqual([]);
         expect(yield* compileErrors(resolveConflicts)).toEqual([]);
       }),
     TIMEOUT,
@@ -785,6 +859,27 @@ describe("tsc on a document's flow file", () => {
       "base: trigger.base, worktree: trigger.branch }",
     ),
     "WorktreePath",
+  );
+
+  rejected(
+    "a follow-up linked by the merged pull request's number",
+    postMergeWith("followUp: filed", "followUp: trigger.pr"),
+    "IssueNumber",
+  );
+
+  rejected(
+    "CI watched on the base branch's name rather than the merge commit",
+    postMergeWith(
+      "use: merged.awaitCi\n    in: { pr: trigger.pr, sha: trigger.sha",
+      "use: merged.awaitCi\n    in: { pr: trigger.pr, sha: trigger.base",
+    ),
+    "CommitSha",
+  );
+
+  rejected(
+    "a follow-up filed for CI that wasn't red",
+    postMergeWith("            in: { ci: red }", "            in: { ci: fixed }"),
+    "failedRuns",
   );
 
   rejected(

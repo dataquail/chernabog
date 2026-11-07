@@ -19,6 +19,7 @@ import * as Predicate from "effect/Predicate";
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
+import postMerge from "../packages/recipes/flows/post-merge.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import review from "../packages/recipes/flows/review.ts";
@@ -28,6 +29,7 @@ import {
   EPIC_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   loadFlow,
+  POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
@@ -43,6 +45,8 @@ import {
   IMPLEMENT_SCENARIOS,
   IMPLEMENT_WORK_ITEM,
   observe,
+  POST_MERGE_SCENARIOS,
+  POST_MERGE_WORK_ITEM,
   queued,
   RE_REVIEW_SCENARIOS,
   RE_REVIEW_WORK_ITEM,
@@ -71,6 +75,8 @@ const composedReReview = loadFlow(documentOf(RE_REVIEW_DOCUMENT));
 const composedAddressReview = loadFlow(documentOf(ADDRESS_REVIEW_DOCUMENT));
 
 const composedResolveConflicts = loadFlow(documentOf(RESOLVE_CONFLICTS_DOCUMENT));
+
+const composedPostMerge = loadFlow(documentOf(POST_MERGE_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -172,6 +178,17 @@ describe("the resolve-conflicts document runs as the recipe does", () => {
         60_000,
       );
     }
+  }
+});
+
+describe("the post-merge document runs as the recipe does", () => {
+  for (const scenario of POST_MERGE_SCENARIOS) {
+    effect(
+      scenario.title,
+      () =>
+        runsAsTheRecipe("post-merge", postMerge, composedPostMerge, POST_MERGE_WORK_ITEM, scenario),
+      60_000,
+    );
   }
 });
 
@@ -415,6 +432,85 @@ describe("a document's sources find what its recipe's trigger does", () => {
     );
   }
 
+  // Its own pull request that merged into the base branch in the last day, and
+  // that no run has watched yet; the key is the pull request's.
+  for (const [title, setup, items] of [
+    [
+      "post-merge, on its own pull request that merged",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+
+        return fake;
+      },
+      1,
+    ],
+    [
+      "post-merge, on one that closes no issue",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+        fake.authored.headRef = "zach/a-change";
+
+        return fake;
+      },
+      1,
+    ],
+    ["post-merge, on one still open", () => makeFake("approve"), 0],
+    [
+      "post-merge, on one a run has watched",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+        fake.comment('<!-- chernabog-post-merge-watched {"sha":"merge5678"} -->');
+
+        return fake;
+      },
+      0,
+    ],
+    [
+      "post-merge, on one another login wrote",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+        fake.authored.author = "zach";
+
+        return fake;
+      },
+      0,
+    ],
+    [
+      "post-merge, on one merged into another branch",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+        fake.stack.base = "auto/issue-2";
+
+        return fake;
+      },
+      0,
+    ],
+    [
+      "post-merge, on one that merged long ago",
+      () => {
+        const fake = makeFake("approve");
+        fake.states.pull = "merged";
+        fake.merged.at = "2026-01-01T00:00:00Z";
+
+        return fake;
+      },
+      0,
+    ],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const fromRecipe = yield* found(postMerge, setup);
+        expect(fromRecipe).toHaveLength(items);
+        expect(yield* found(yield* composedPostMerge, setup)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Which label queues an issue doesn't depend on where a document lists it.
   describe("whatever order a document lists the labels in", () => {
     const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
@@ -523,6 +619,16 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedResolveConflicts;
       expect(declared(composed)).toEqual(declared(resolveConflicts));
       expect(yield* labelled(composed)).toEqual(yield* labelled(resolveConflicts));
+    }),
+  );
+
+  // Its recipe declares no stillValid and no doctor checks, and not as empty ones.
+  effect("post-merge", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedPostMerge;
+      expect(declared(composed)).toEqual(declared(postMerge));
+      expect(Object.keys(composed).toSorted()).toEqual(Object.keys(postMerge).toSorted());
+      expect(yield* labelled(composed)).toEqual(yield* labelled(postMerge));
     }),
   );
 
