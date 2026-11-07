@@ -74,6 +74,9 @@ describe("a rehearsal's work", () => {
     expect(ScenarioRootOps.isSeeded(seeded, "issue-12")).toBe(true);
     expect(ScenarioRootOps.isSeeded(seeded, "pr-7")).toBe(true);
     expect(ScenarioRootOps.isSeeded(seeded, "pr-7-changes-2")).toBe(true);
+    // post-merge keys a merged pull request as merged-<number>.
+    expect(ScenarioRootOps.isSeeded(seeded, "merged-7")).toBe(true);
+    expect(ScenarioRootOps.isSeeded(seeded, "merged-70")).toBe(false);
     expect(ScenarioRootOps.isSeeded(seeded, "issue-120")).toBe(false);
     expect(ScenarioRootOps.isSeeded(seeded, "nightly")).toBe(false);
   });
