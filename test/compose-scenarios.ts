@@ -16,6 +16,7 @@ import {
   PullRequest,
   PushRejected,
   reviewMarker,
+  sessionMarker,
   type Settings,
   Skip,
   type WorkItem,
@@ -195,8 +196,16 @@ export const observe = (
       submitted: fake.submitted.map((each) => ({ ...each })),
       merges: fake.merge.requests,
       pushes: fake.git.pushes,
+      // The base each push was checked against: a layer's, the layer below.
+      checkedAgainst: fake.based.checkedAgainst,
       opened: fake.git.opened,
       agentSteps: fake.steps.map((step) => Option.getOrElse(step, () => "")),
+      // The session each agent call resumed or started, in the agent it ran, and with whom.
+      sessions: fake.requests.map((request) => [
+        unsaid(request.sessionId),
+        Option.getOrElse(request.adapter, () => ""),
+        request.withPerson === true,
+      ]),
       // One of the pool, at random.
       requested: fake.people.requested.length,
       assigned: fake.people.assigned,
@@ -717,6 +726,302 @@ export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
       return fake;
     },
     "skipped",
+  );
+});
+
+const ADDRESS_WORK = item(`pr-${PULL}-changes-1`, {
+  pullRequest: PULL,
+  headRef: `auto/issue-${ISSUE}`,
+  agentWritten: true,
+  reviewer: "data-quail",
+  reviewedSha: HEAD,
+});
+
+export const ADDRESS_REVIEW_WORK_ITEM = ADDRESS_WORK;
+
+// The work of a layer of a stack, based on the layer below's branch.
+export const ADDRESS_REVIEW_LAYER_WORK_ITEM = item(`pr-${PULL}-changes-1`, {
+  pullRequest: PULL,
+  headRef: `auto/issue-${ISSUE}`,
+  baseRef: "auto/issue-2",
+  agentWritten: true,
+  reviewer: "data-quail",
+  reviewedSha: HEAD,
+});
+
+// The session marker the run that opened the pull request left: implement's,
+// an epic task's, whose session is the task's own, or a person's on the
+// hybrid path.
+const IMPLEMENT_SESSION = { sessionId: "implement-session", adapter: "claude" };
+
+const EPIC_TASK_SESSION = { sessionId: "epic-run-implement#task-3", adapter: "codex" };
+
+export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
+  // A pull request this persona wrote, whose latest review, by data-quail,
+  // asks for changes on its head; the author answers `consider`, and the run
+  // that opened it left `session`, or none.
+  const changesAsked = ({
+    consider = "address",
+    session = Option.some<{
+      readonly sessionId: string;
+      readonly adapter: string;
+      readonly withPerson?: boolean;
+    }>(IMPLEMENT_SESSION),
+  }: {
+    readonly consider?: "address" | "decline";
+    readonly session?: Option.Option<{
+      readonly sessionId: string;
+      readonly adapter: string;
+      readonly withPerson?: boolean;
+    }>;
+  } = {}) => {
+    const fake = repoFake(["approve"]);
+    fake.author.consider = consider;
+    fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+    fake.comment(
+      reviewMarker.write({
+        sha: HEAD,
+        round: 1,
+        verdict: "request-changes",
+        reviewer: "data-quail",
+        sessionId: "review-session",
+        adapter: "codex",
+      }),
+    );
+
+    for (const marker of Option.toArray(session)) {
+      fake.comment(
+        `Implemented for #${ISSUE}. ${sessionMarker.write({ ...marker, issue: ISSUE, branch: `auto/issue-${ISSUE}` })}`,
+      );
+    }
+
+    // The implement run's push; the fix moves the head.
+    fake.git.pushes = 1;
+
+    return fake;
+  };
+
+  const WORKTREE = `/tmp/demo-worktrees/auto/issue-${ISSUE}`;
+
+  // Answered in the author's session, pushed, and the reviewer asked again.
+  const askedAgain = (recipe: Observed) => {
+    expect(recipe.summary).toBe(`#${PULL}: addressed review 1; asked data-quail to review again`);
+    expect(recipe.steps).toContain("push-review-1");
+    expect(recipe.steps).toContain("ask-again-1");
+    expect(recipe.pushes).toBe(2);
+  };
+
+  const toPerson = (recipe: Observed) => {
+    expect(recipe.pullLabels).toContain(DEFAULT_LABELS.needsHuman);
+    expect(recipe.steps).toContain(`needs-human-pr-${PULL}`);
+    expect(recipe.steps).not.toContain("ask-again-1");
+  };
+
+  scenario(
+    "when the author agrees, fixes, and CI is green",
+    () => changesAsked(),
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      askedAgain(recipe);
+      expect(recipe.sessions).toEqual([
+        ["implement-session", "claude", false],
+        ["implement-session", "claude", false],
+      ]);
+    },
+  );
+
+  scenario(
+    "when the pull request is an epic task's, whose own session answers",
+    () => changesAsked({ session: Option.some(EPIC_TASK_SESSION) }),
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      askedAgain(recipe);
+      expect(recipe.sessions.map(([sessionId]) => sessionId)).toEqual([
+        EPIC_TASK_SESSION.sessionId,
+        EPIC_TASK_SESSION.sessionId,
+      ]);
+    },
+  );
+
+  scenario(
+    "when no run left a session, so a fresh one answers",
+    () => changesAsked({ session: Option.none() }),
+    "done",
+  );
+
+  scenario(
+    "when a person worked on the pull request with the agent, and the fix touches humanOnlyPaths",
+    () => {
+      const fake = changesAsked({
+        session: Option.some({ ...IMPLEMENT_SESSION, withPerson: true }),
+      });
+
+      fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      askedAgain(recipe);
+      expect(recipe.sessions.every(([, , withPerson]) => withPerson === true)).toBe(true);
+    },
+  );
+
+  scenario(
+    "when the author disputes the review",
+    () => changesAsked({ consider: "decline" }),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.comments).toContainEqual("Not addressing review 1:\n\nThe review is right.");
+      expect(recipe.pushes).toBe(1);
+    },
+  );
+
+  scenario(
+    "when the author needs a person to answer the review",
+    () => {
+      const fake = changesAsked();
+      fake.author.asks.push(WORKTREE);
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.summary).toContain("the author agent needs a person to answer review 1");
+    },
+  );
+
+  scenario(
+    "when the author leaves its changes uncommitted",
+    () => {
+      const fake = changesAsked();
+      fake.author.leaves.push(" M src/b.ts");
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.steps).toContain("check-changed-1");
+      expect(recipe.pushes).toBe(1);
+    },
+  );
+
+  scenario(
+    "when the fix touches humanOnlyPaths on a pull request nobody worked on",
+    () => {
+      const fake = changesAsked();
+      fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.pushes).toBe(1);
+    },
+  );
+
+  scenario(
+    "when the remote rejects the push",
+    () => {
+      const fake = changesAsked();
+      fake.git.rejects = Option.some(
+        new PushRejected({ branch: `auto/issue-${ISSUE}`, reason: "! [remote rejected]" }),
+      );
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    toPerson,
+  );
+
+  scenario(
+    "when CI is red and stays red",
+    () => {
+      const fake = changesAsked();
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    toPerson,
+  );
+
+  scenario(
+    "when the agent fails",
+    () => {
+      const fake = changesAsked();
+
+      return {
+        ...fake,
+        services: Layer.merge(
+          fake.services,
+          Layer.succeed(
+            Agent,
+            Agent.of({
+              adapters: [],
+              run: () => Effect.fail(new AgentError({ message: "claude: it broke" })),
+            }),
+          ),
+        ),
+      };
+    },
+    "needs-human",
+    void 0,
+    {},
+    toPerson,
+  );
+
+  scenario(
+    "when another run owns the pull request",
+    () => {
+      const fake = changesAsked();
+      fake.refs.set(Claims.refFor(Claims.pullRequest(PULL)), "held0000");
+
+      return fake;
+    },
+    "skipped",
+  );
+});
+
+// A layer of a stack: its push and CI are checked against the layer below.
+export const ADDRESS_REVIEW_LAYER_SCENARIOS = scenarios((scenario) => {
+  scenario(
+    "when a layer of a stack is addressed",
+    () => {
+      const fake = repoFake(["approve"]);
+      fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+      fake.comment(
+        `Implemented for #${ISSUE}. ${sessionMarker.write({ ...EPIC_TASK_SESSION, issue: ISSUE, branch: `auto/issue-${ISSUE}` })}`,
+      );
+      fake.git.pushes = 1;
+      fake.stack.base = "auto/issue-2";
+      fake.stack.below = [".github/workflows/ci.yml"];
+
+      return fake;
+    },
+    "done",
   );
 });
 

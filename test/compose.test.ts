@@ -24,6 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
+  ADDRESS_REVIEW_DOCUMENT,
   compileErrors,
   documentOf,
   EPIC_DOCUMENT,
@@ -45,6 +46,14 @@ type UseStep = Compose.UseStep;
 const implement = documentOf(IMPLEMENT_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
 const reReview = documentOf(RE_REVIEW_DOCUMENT);
+const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
+
+// The address-review document with a line of it changed.
+const addressReviewWith = (line: string, replacement: string) => {
+  expect(ADDRESS_REVIEW_DOCUMENT).toContain(line);
+
+  return documentOf(ADDRESS_REVIEW_DOCUMENT.replace(line, replacement));
+};
 
 // The re-review document with a line of it changed, for a change deep in its branches.
 const reReviewWith = (line: string, replacement: string) => {
@@ -495,7 +504,7 @@ describe("Compose.check", () => {
     ]);
 
     expect(messages({ ...implement, subject: "release" })).toEqual([
-      "must be one of epic, issue, pull-request",
+      "must be one of changes-asked, epic, issue, pull-request",
     ]);
   });
 
@@ -564,6 +573,75 @@ describe("Compose.check", () => {
     ]);
   });
 
+  test("refuses an address-review that doesn't say what happens when the author disputes", () => {
+    const undisputed = addressReviewWith(
+      `    in: { pr: trigger.pr, review: asked, session: author }
+    on:
+      decline:
+        as: dispute
+        steps:
+          - id: replied
+            use: author.dispute
+            in: { pr: trigger.pr, review: asked, dispute: dispute }
+          - id: disputed
+            use: pr.handToPerson
+            in: { pr: trigger.pr, reason: replied }
+          - end: needs-human
+            reason: disputed
+`,
+      "    in: { pr: trigger.pr, review: asked, session: author }\n",
+    );
+
+    expect(Compose.check(undisputed)).toEqual([
+      {
+        path: "steps[3].on",
+        message: "author.consider can come to decline, and this doesn't say what then",
+      },
+    ]);
+  });
+
+  test("refuses an address-review that doesn't say what happens to the author's questions", () => {
+    const unasked = addressReviewWith("      needs-clarification:\n", "      questions:\n");
+
+    expect(messages(unasked)).toEqual([
+      "author.address can come to needs-clarification, and this doesn't say what then",
+      "author.address comes to needs-clarification",
+    ]);
+  });
+
+  test("knows what the trigger of a flow on changes-asked gives", () => {
+    const headRef = addressReviewWith(
+      "in: { branch: trigger.branch }",
+      "in: { branch: trigger.headRef }",
+    );
+
+    expect(Compose.check(headRef)).toEqual([
+      {
+        path: "steps[2].in.branch",
+        message:
+          "the trigger of a flow on changes-asked gives pr, branch, base, reviewer, reviewedSha",
+      },
+    ]);
+  });
+
+  test("refuses review.changesRequested on a flow that isn't on changes-asked", () => {
+    expect(messages({ ...review, trigger: addressReview.trigger })).toEqual([
+      "review.changesRequested finds work on changes-asked, and this is a flow on pull-request",
+    ]);
+  });
+
+  test("refuses the push of a fix before the author made it", () => {
+    expect(messages(moved(addressReview, "pushed", "addressed")).join("\n")).toContain(
+      "author.address must run before author.push, and this runs after it",
+    );
+  });
+
+  test("refuses asking the reviewer again before CI", () => {
+    expect(messages(moved(addressReview, "again", "ci")).join("\n")).toContain(
+      "author.waitForCi must run before review.askAgain, and this runs after it",
+    );
+  });
+
   test("generate refuses a document with problems, and says them", () => {
     expect(Result.isSuccess(Compose.generate(without(implement, "gate")))).toBe(true);
     expect(Result.isFailure(Compose.generate({ ...implement, trigger: [] }))).toBe(true);
@@ -587,14 +665,36 @@ describe("tsc on a document's flow file", () => {
   };
 
   effect(
-    "compiles the implement, review and re-review documents",
+    "compiles the implement, review, re-review and address-review documents",
     () =>
       Effect.gen(function* () {
         expect(yield* compileErrors(implement)).toEqual([]);
         expect(yield* compileErrors(review)).toEqual([]);
         expect(yield* compileErrors(reReview)).toEqual([]);
+        expect(yield* compileErrors(addressReview)).toEqual([]);
       }),
     TIMEOUT,
+  );
+
+  rejected(
+    "a push of a fix the author didn't commit",
+    addressReviewWith("committed: addressed.committed", "committed: asked"),
+    "Committed",
+  );
+
+  rejected(
+    "asking the reviewer again for a fix that wasn't pushed",
+    addressReviewWith("pushed: pushed.pushed", "pushed: addressed.committed"),
+    "Pushed",
+  );
+
+  rejected(
+    "a fix answered in something other than the author's session",
+    addressReviewWith(
+      "in: { pr: trigger.pr, review: asked, session: author }\n    on:\n      needs",
+      "in: { pr: trigger.pr, review: asked, session: trigger.pr }\n    on:\n      needs",
+    ),
+    "AuthorSession",
   );
 
   rejected(

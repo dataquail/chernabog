@@ -6,11 +6,13 @@ import { type Flow } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
+  ADDRESS_REVIEW_DOCUMENT,
   documentOf,
   EPIC_DOCUMENT,
   generated,
@@ -21,6 +23,10 @@ import {
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
 import {
+  ADDRESS_REVIEW_LAYER_SCENARIOS,
+  ADDRESS_REVIEW_LAYER_WORK_ITEM,
+  ADDRESS_REVIEW_SCENARIOS,
+  ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
@@ -66,6 +72,20 @@ const targets = {
     source: generated(documentOf(RE_REVIEW_DOCUMENT)),
     work: RE_REVIEW_WORK_ITEM,
     scenarios: RE_REVIEW_SCENARIOS,
+  },
+  addressReview: {
+    name: "address-review",
+    recipe: addressReview,
+    source: generated(documentOf(ADDRESS_REVIEW_DOCUMENT)),
+    work: ADDRESS_REVIEW_WORK_ITEM,
+    scenarios: ADDRESS_REVIEW_SCENARIOS,
+  },
+  addressReviewLayer: {
+    name: "address-review",
+    recipe: addressReview,
+    source: generated(documentOf(ADDRESS_REVIEW_DOCUMENT)),
+    work: ADDRESS_REVIEW_LAYER_WORK_ITEM,
+    scenarios: ADDRESS_REVIEW_LAYER_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -229,6 +249,118 @@ describe("the comparison sees a re-review flow that", () => {
       source.replace(
         'catalogue["review.recheck"].outcomes["changes"]',
         'catalogue["review.recheck"].outcomes["approve"]',
+      ),
+  );
+});
+
+describe("the comparison sees an address-review flow that", () => {
+  const { addressReview: target, addressReviewLayer: layer } = targets;
+  const agrees = "when the author agrees, fixes, and CI is green";
+
+  sabotaged(
+    "pushes the fix of a review the author disputes",
+    target,
+    "when the author disputes the review",
+    (source) =>
+      source.replace(
+        'catalogue["author.consider"].outcomes["decline"](considered)',
+        "Option.none()",
+      ),
+  );
+
+  sabotaged(
+    "hands a dispute to a person without its reasons",
+    target,
+    "when the author disputes the review",
+    dropping("replied", 'const replied = "the author disputes review 1; see its reasons above";'),
+  );
+
+  sabotaged(
+    "stops on a dispute without telling the pull request",
+    target,
+    "when the author disputes the review",
+    dropping("disputed", "const disputed = replied;"),
+  );
+
+  sabotaged(
+    "goes on when the author has questions",
+    target,
+    "when the author needs a person to answer the review",
+    (source) =>
+      source.replace(
+        'catalogue["author.address"].outcomes["needs-clarification"](addressed)',
+        "Option.none()",
+      ),
+  );
+
+  sabotaged(
+    "stops on the author's questions without telling the pull request",
+    target,
+    "when the author needs a person to answer the review",
+    dropping("asking", "const asking = questions.reason;"),
+  );
+
+  sabotaged(
+    "pushes changes the author left uncommitted",
+    target,
+    "when the author leaves its changes uncommitted",
+    dropping("changed"),
+  );
+
+  sabotaged(
+    "pushes without waiting for CI",
+    target,
+    "when CI is red and stays red",
+    dropping("ci"),
+  );
+
+  sabotaged(
+    "asks the reviewer again without pushing",
+    target,
+    agrees,
+    dropping("pushed", "const pushed = { pushed: addressed.committed };"),
+  );
+
+  sabotaged(
+    "never asks the reviewer again",
+    target,
+    agrees,
+    dropping("again", 'const again = "x";'),
+  );
+
+  sabotaged("asks another persona to review again", target, agrees, (source) =>
+    source.replace('"reviewer": trigger.reviewer, "summary"', '"reviewer": "zach", "summary"'),
+  );
+
+  sabotaged(
+    "answers an epic task's review in a fresh session, not the task's own",
+    target,
+    "when the pull request is an epic task's, whose own session answers",
+    dropping(
+      "author",
+      "const author = { sessionId: Option.none(), adapter: Option.none(), withPerson: false };",
+    ),
+  );
+
+  sabotaged(
+    "answers outside the session a person worked in",
+    target,
+    "when a person worked on the pull request with the agent, and the fix touches humanOnlyPaths",
+    (source) =>
+      source.replace(
+        '"session": author, "committed"',
+        '"session": { ...author, withPerson: false }, "committed"',
+      ),
+  );
+
+  sabotaged(
+    "checks a layer's push against the repo's base, not the layer below",
+    layer,
+    "when a layer of a stack is addressed",
+    (source) =>
+      source.replace(
+        '"base": trigger.base, "review": asked, "session": author, "committed"',
+        '"base": Option.none(), "review": asked, "session": author, "committed"',
       ),
   );
 });
