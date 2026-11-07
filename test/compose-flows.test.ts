@@ -2,7 +2,14 @@
 // runs through the engine twice, once as the recipe and once as its document's
 // flow, and what each left must match.
 
-import { DEFAULT_LABELS, type Flow, labelsOf, Settings, type WorkItem } from "@chernabog/sdk";
+import {
+  DEFAULT_LABELS,
+  type Flow,
+  labelsOf,
+  ownerMarker,
+  Settings,
+  type WorkItem,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -13,6 +20,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
+import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
@@ -21,6 +29,7 @@ import {
   IMPLEMENT_DOCUMENT,
   loadFlow,
   RE_REVIEW_DOCUMENT,
+  RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
@@ -37,6 +46,10 @@ import {
   queued,
   RE_REVIEW_SCENARIOS,
   RE_REVIEW_WORK_ITEM,
+  RESOLVE_CONFLICTS_LAYER_SCENARIOS,
+  RESOLVE_CONFLICTS_LAYER_WORK_ITEM,
+  RESOLVE_CONFLICTS_SCENARIOS,
+  RESOLVE_CONFLICTS_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
@@ -56,6 +69,8 @@ const composedEpic = loadFlow(documentOf(EPIC_DOCUMENT));
 const composedReReview = loadFlow(documentOf(RE_REVIEW_DOCUMENT));
 
 const composedAddressReview = loadFlow(documentOf(ADDRESS_REVIEW_DOCUMENT));
+
+const composedResolveConflicts = loadFlow(documentOf(RESOLVE_CONFLICTS_DOCUMENT));
 
 const runsAsTheRecipe = <E, R>(
   name: string,
@@ -135,6 +150,28 @@ describe("the address-review document runs as the recipe does", () => {
         ),
       60_000,
     );
+  }
+});
+
+describe("the resolve-conflicts document runs as the recipe does", () => {
+  for (const [scenarios, work] of [
+    [RESOLVE_CONFLICTS_SCENARIOS, RESOLVE_CONFLICTS_WORK_ITEM],
+    [RESOLVE_CONFLICTS_LAYER_SCENARIOS, RESOLVE_CONFLICTS_LAYER_WORK_ITEM],
+  ] as const) {
+    for (const scenario of scenarios) {
+      effect(
+        scenario.title,
+        () =>
+          runsAsTheRecipe(
+            "resolve-conflicts",
+            resolveConflicts,
+            composedResolveConflicts,
+            work,
+            scenario,
+          ),
+        60_000,
+      );
+    }
   }
 });
 
@@ -313,6 +350,71 @@ describe("a document's sources find what its recipe's trigger does", () => {
     );
   }
 
+  // Its own pull request that conflicts with its base, unless a person has it,
+  // a run owns it, or GitHub hasn't said yet; the key carries the head.
+  for (const [title, change, items] of [
+    ["resolve-conflicts, on its own pull request that conflicts", (_fake: Fake) => void 0, 1],
+    [
+      "resolve-conflicts, on one pushed to since",
+      (fake: Fake) => {
+        fake.git.head = "fix20000000";
+      },
+      1,
+    ],
+    [
+      "resolve-conflicts, on a layer of a stack",
+      (fake: Fake) => {
+        fake.stack.base = "auto/issue-2";
+      },
+      1,
+    ],
+    [
+      "resolve-conflicts, on one a person has",
+      (fake: Fake) => {
+        fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      },
+      0,
+    ],
+    [
+      "resolve-conflicts, on one a run owns",
+      (fake: Fake) => {
+        fake.comment(ownerMarker.write({ flow: "implement", runId: "run-1", released: false }));
+      },
+      0,
+    ],
+    [
+      "resolve-conflicts, on one GitHub hasn't checked yet",
+      (fake: Fake) => {
+        fake.merge.state = "unknown";
+      },
+      0,
+    ],
+    [
+      "resolve-conflicts, on one another login wrote",
+      (fake: Fake) => {
+        fake.people.me = "zach";
+      },
+      0,
+    ],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const dirty = () => {
+          const fake = makeFake("approve");
+          fake.setLabels(PULL, []);
+          fake.merge.state = "dirty";
+          change(fake);
+
+          return fake;
+        };
+
+        const fromRecipe = yield* found(resolveConflicts, dirty);
+        expect(fromRecipe).toHaveLength(items);
+        expect(yield* found(yield* composedResolveConflicts, dirty)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Which label queues an issue doesn't depend on where a document lists it.
   describe("whatever order a document lists the labels in", () => {
     const listing = (labels: ReadonlyArray<"eligible" | "ship">) =>
@@ -413,6 +515,14 @@ describe("a document's flow declares what its recipe does", () => {
       const composed = yield* composedAddressReview;
       expect(declared(composed)).toEqual(declared(addressReview));
       expect(yield* labelled(composed)).toEqual(yield* labelled(addressReview));
+    }),
+  );
+
+  effect("resolve-conflicts", () =>
+    Effect.gen(function* () {
+      const composed = yield* composedResolveConflicts;
+      expect(declared(composed)).toEqual(declared(resolveConflicts));
+      expect(yield* labelled(composed)).toEqual(yield* labelled(resolveConflicts));
     }),
   );
 

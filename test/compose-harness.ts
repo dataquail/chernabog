@@ -258,6 +258,57 @@ steps:
     summary: again
 `;
 
+export const RESOLVE_CONFLICTS_DOCUMENT = `
+flow: resolve-conflicts
+subject: conflict
+gate: usage
+concurrency: 1
+trigger:
+  - use: pr.conflicting
+steps:
+  - id: worktree
+    use: author.worktree
+    in: { branch: trigger.branch }
+  - id: resolved
+    use: conflict.resolve
+    in: { pr: trigger.pr, branch: trigger.branch, base: trigger.base, worktree: worktree }
+    on:
+      needs-human:
+        as: stuck
+        steps:
+          - id: handed
+            use: pr.handToPerson
+            in: { pr: trigger.pr, reason: stuck.reason }
+          - end: needs-human
+            reason: handed
+  - id: gate
+    use: conflict.localGate
+    in: { pr: trigger.pr, worktree: worktree, session: resolved.session }
+  - id: pushed
+    use: conflict.push
+    in:
+      worktree: worktree
+      branch: trigger.branch
+      base: trigger.base
+      committed: resolved.committed
+  - id: said
+    use: conflict.report
+    in: { pr: trigger.pr, base: trigger.base, summary: resolved.summary, pushed: pushed.pushed }
+  - id: ci
+    use: conflict.waitForCi
+    in:
+      pr: trigger.pr
+      worktree: worktree
+      branch: trigger.branch
+      base: trigger.base
+      session: resolved.session
+  - id: again
+    use: conflict.askApproverAgain
+    in: { pr: trigger.pr, base: trigger.base, pushed: pushed.pushed }
+  - end: done
+    summary: again
+`;
+
 export const EPIC_DOCUMENT = `
 flow: epic
 subject: epic

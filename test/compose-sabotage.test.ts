@@ -10,6 +10,7 @@ import addressReview from "../packages/recipes/flows/address-review.ts";
 import epic from "../packages/recipes/flows/epic.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
+import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import review from "../packages/recipes/flows/review.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
@@ -19,6 +20,7 @@ import {
   IMPLEMENT_DOCUMENT,
   loadSource,
   RE_REVIEW_DOCUMENT,
+  RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
 } from "./compose-harness.ts";
@@ -34,6 +36,10 @@ import {
   observe,
   RE_REVIEW_SCENARIOS,
   RE_REVIEW_WORK_ITEM,
+  RESOLVE_CONFLICTS_LAYER_SCENARIOS,
+  RESOLVE_CONFLICTS_LAYER_WORK_ITEM,
+  RESOLVE_CONFLICTS_SCENARIOS,
+  RESOLVE_CONFLICTS_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
   type Scenario,
@@ -86,6 +92,20 @@ const targets = {
     source: generated(documentOf(ADDRESS_REVIEW_DOCUMENT)),
     work: ADDRESS_REVIEW_LAYER_WORK_ITEM,
     scenarios: ADDRESS_REVIEW_LAYER_SCENARIOS,
+  },
+  resolveConflicts: {
+    name: "resolve-conflicts",
+    recipe: resolveConflicts,
+    source: generated(documentOf(RESOLVE_CONFLICTS_DOCUMENT)),
+    work: RESOLVE_CONFLICTS_WORK_ITEM,
+    scenarios: RESOLVE_CONFLICTS_SCENARIOS,
+  },
+  resolveConflictsLayer: {
+    name: "resolve-conflicts",
+    recipe: resolveConflicts,
+    source: generated(documentOf(RESOLVE_CONFLICTS_DOCUMENT)),
+    work: RESOLVE_CONFLICTS_LAYER_WORK_ITEM,
+    scenarios: RESOLVE_CONFLICTS_LAYER_SCENARIOS,
   },
   epic: {
     name: "epic",
@@ -362,6 +382,89 @@ describe("the comparison sees an address-review flow that", () => {
         '"base": trigger.base, "review": asked, "session": author, "committed"',
         '"base": Option.none(), "review": asked, "session": author, "committed"',
       ),
+  );
+});
+
+describe("the comparison sees a resolve-conflicts flow that", () => {
+  const { resolveConflicts: target, resolveConflictsLayer: layer } = targets;
+  const approved = "when it was approved, so its reviewer is asked again";
+  const settle = "when only a person can settle the conflict";
+
+  sabotaged("pushes a merge only a person can settle", target, settle, (source) =>
+    source.replace(
+      'catalogue["conflict.resolve"].outcomes["needs-human"](resolved)',
+      "Option.none()",
+    ),
+  );
+
+  sabotaged(
+    "stops on a conflict only a person can settle without telling the pull request",
+    target,
+    settle,
+    dropping("handed", "const handed = stuck.reason;"),
+  );
+
+  sabotaged(
+    "pushes what a person must settle of the layer below's record",
+    target,
+    "when only a person can settle what the record of the layer below left",
+    (source) =>
+      source.replace(
+        'catalogue["conflict.resolve"].outcomes["needs-human"](resolved)',
+        "Option.none()",
+      ),
+  );
+
+  sabotaged("skips the local gate", target, approved, dropping("gate"));
+
+  sabotaged(
+    "pushes without saying how it resolved the conflicts",
+    target,
+    approved,
+    dropping("said"),
+  );
+
+  sabotaged(
+    "pushes without waiting for CI",
+    target,
+    "when CI is red and stays red",
+    dropping("ci"),
+  );
+
+  sabotaged(
+    "fixes red CI outside the session that resolved the conflict",
+    target,
+    "when CI is red and stays red",
+    (source) =>
+      source.replace(
+        '"base": trigger.base, "session": resolved.session',
+        '"base": trigger.base, "session": { sessionId: Option.none(), adapter: Option.none() }',
+      ),
+  );
+
+  sabotaged(
+    "never asks the approver again",
+    target,
+    approved,
+    dropping("again", 'const again = "#7: merged main and resolved its conflicts";'),
+  );
+
+  sabotaged(
+    "merges the repo's base into a layer of a stack, not the layer below",
+    layer,
+    "when a layer of a stack conflicts with the layer below",
+    (source) =>
+      source.replace(
+        '"base": trigger.base, "worktree": worktree',
+        '"base": "main", "worktree": worktree',
+      ),
+  );
+
+  sabotaged(
+    "checks a layer's push against the repo's base, not the layer below",
+    layer,
+    "when a layer of a stack conflicts with the layer below",
+    (source) => source.replace('"base": trigger.base, "committed"', '"base": "main", "committed"'),
   );
 });
 

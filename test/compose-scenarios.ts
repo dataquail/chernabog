@@ -1025,6 +1025,324 @@ export const ADDRESS_REVIEW_LAYER_SCENARIOS = scenarios((scenario) => {
   );
 });
 
+const CONFLICT = {
+  pullRequest: PULL,
+  headRef: `auto/issue-${ISSUE}`,
+  baseRef: "main",
+};
+
+export const RESOLVE_CONFLICTS_WORK_ITEM = item(`pr-${PULL}-${HEAD.slice(0, 7)}`, CONFLICT);
+
+// The work of a layer of an epic's stack, based on the layer below's branch.
+export const RESOLVE_CONFLICTS_LAYER_WORK_ITEM = item(`pr-${PULL}-${HEAD.slice(0, 7)}`, {
+  ...CONFLICT,
+  baseRef: "auto/issue-2",
+});
+
+// The persona's own pull request, which GitHub says conflicts with its base.
+const conflicting = () => {
+  const fake = repoFake("approve");
+  fake.setLabels(PULL, []);
+  fake.merge.state = "dirty";
+
+  return fake;
+};
+
+// The persona's pull request, moved onto main after #2, the layer below of an
+// epic's stack, squash-merged there as `squash1`: its head, `below0000000`, is
+// in the pull request's history, and `squash1` isn't.
+const belowSquashed = () => {
+  const fake = conflicting();
+  stackOn(fake, "auto/issue-2", "merged");
+  fake.stack.base = "main";
+  fake.closed.push({
+    number: 2,
+    merged_at: "2026-10-31T17:09:00Z",
+    merge_commit_sha: "squash1",
+    head: { sha: "below0000000" },
+  });
+  fake.git.refuses.add("merge-base --is-ancestor squash1 HEAD");
+  fake.git.says.set("rev-list --parents -n 1 squash1", "squash1 main0001\n");
+
+  return fake;
+};
+
+const MERGED = "Merged `main` into this branch to resolve its conflicts.";
+
+export const RESOLVE_CONFLICTS_SCENARIOS = scenarios((scenario) => {
+  const toPerson = (recipe: Observed) => {
+    expect(recipe.pullLabels).toContain(DEFAULT_LABELS.needsHuman);
+    expect(recipe.steps).toContain(`needs-human-pr-${PULL}`);
+    expect(recipe.steps).not.toContain("ask-approver-again");
+  };
+
+  scenario(
+    "when it was approved, so its reviewer is asked again",
+    () => {
+      const fake = conflicting();
+      fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toBe(
+        `#${PULL}: merged main, resolved its conflicts and asked data-quail to review again`,
+      );
+      expect(recipe.steps).toContain("resolve");
+      expect(recipe.steps).toContain("push-resolved");
+      expect(recipe.steps).toContain("ask-approver-again");
+      expect(recipe.pushes).toBe(1);
+      expect(recipe.requested).toBe(1);
+      expect(recipe.comments.some((comment) => comment.startsWith(MERGED))).toBe(true);
+      expect(recipe.sessions).toHaveLength(1);
+    },
+  );
+
+  scenario(
+    "when it has no review, so no one is asked",
+    conflicting,
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toBe(`#${PULL}: merged main and resolved its conflicts`);
+      expect(recipe.requested).toBe(0);
+    },
+  );
+
+  scenario(
+    "when its latest decisive review asks for changes, so no one is asked",
+    () => {
+      const fake = conflicting();
+      fake.submitted.push(
+        { author: "data-quail", state: "APPROVED", commitSha: HEAD },
+        { author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD },
+      );
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toBe(`#${PULL}: merged main and resolved its conflicts`);
+      expect(recipe.requested).toBe(0);
+    },
+  );
+
+  scenario(
+    "when only a person can settle the conflict",
+    () => {
+      const fake = conflicting();
+      fake.author.resolve = "needs-human";
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.summary).toContain("the merge conflict needs a person");
+      expect(recipe.pushes).toBe(0);
+    },
+  );
+
+  scenario(
+    "when the remote rejects the push",
+    () => {
+      const fake = conflicting();
+      fake.git.rejects = Option.some(
+        new PushRejected({ branch: `auto/issue-${ISSUE}`, reason: "! [remote rejected]" }),
+      );
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.comments.some((comment) => comment.startsWith(MERGED))).toBe(false);
+    },
+  );
+
+  scenario(
+    "when the merge touches humanOnlyPaths",
+    () => {
+      const fake = conflicting();
+      fake.merge.files = ["src/a.ts", ".github/workflows/ci.yml"];
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.pushes).toBe(0);
+    },
+  );
+
+  scenario(
+    "when CI is red and stays red",
+    () => {
+      const fake = conflicting();
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.comments.some((comment) => comment.startsWith(MERGED))).toBe(true);
+    },
+  );
+
+  scenario(
+    "when the agent fails",
+    () => {
+      const fake = conflicting();
+
+      return {
+        ...fake,
+        services: Layer.merge(
+          fake.services,
+          Layer.succeed(
+            Agent,
+            Agent.of({
+              adapters: [],
+              run: () => Effect.fail(new AgentError({ message: "claude: it broke" })),
+            }),
+          ),
+        ),
+      };
+    },
+    "needs-human",
+    void 0,
+    {},
+    toPerson,
+  );
+
+  scenario(
+    "when another run owns the pull request",
+    () => {
+      const fake = conflicting();
+      fake.refs.set(Claims.refFor(Claims.pullRequest(PULL)), "held0000");
+
+      return fake;
+    },
+    "skipped",
+  );
+
+  // A layer of an epic's stack whose layer below squash-merged into main, and
+  // which GitHub moved onto main when the branch below was deleted.
+  scenario(
+    "when recording a squash-merged layer below leaves nothing else in conflict",
+    belowSquashed,
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("merged-below");
+      expect(recipe.steps).toContain("update-from-base#resolve");
+      expect(recipe.steps).not.toContain("resolve");
+      expect(recipe.sessions).toEqual([]);
+      expect(
+        recipe.comments.some((comment) =>
+          comment.includes("Recorded #2, the layer below as `main` merged it"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  scenario(
+    "when recording a squash-merged layer below leaves a merge in progress",
+    () => {
+      const fake = belowSquashed();
+      fake.git.refuses.add("merge --no-edit origin/main");
+      fake.git.says.set("diff --name-only --diff-filter=U", "a.txt\n");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("resolve");
+      expect(recipe.steps).not.toContain("resolve-2");
+      expect(recipe.sessions).toHaveLength(1);
+    },
+  );
+
+  scenario(
+    "when a conflict in the base stops the record of the layer below short",
+    () => {
+      const fake = belowSquashed();
+      fake.git.refuses.add("merge --no-edit squash1~1");
+      fake.git.says.set("diff --name-only --diff-filter=U", "a.txt\n");
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.steps).toContain("update-from-base#resolve-2");
+      expect(recipe.steps).toContain("resolve-2");
+      expect(recipe.sessions).toHaveLength(2);
+    },
+  );
+
+  scenario(
+    "when only a person can settle what the record of the layer below left",
+    () => {
+      const fake = belowSquashed();
+      fake.git.refuses.add("merge --no-edit squash1~1");
+      fake.git.says.set("diff --name-only --diff-filter=U", "a.txt\n");
+      fake.author.resolve = "needs-human";
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      toPerson(recipe);
+      expect(recipe.steps).not.toContain("resolve-2");
+    },
+  );
+});
+
+// A layer of an epic's stack, still on the layer below: it merges that
+// branch, and its push and CI are checked against it.
+export const RESOLVE_CONFLICTS_LAYER_SCENARIOS = scenarios((scenario) => {
+  scenario(
+    "when a layer of a stack conflicts with the layer below",
+    () => {
+      const fake = conflicting();
+      stackOn(fake, "auto/issue-2");
+      fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
+
+      return fake;
+    },
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toBe(
+        `#${PULL}: merged auto/issue-2, resolved its conflicts and asked data-quail to review again`,
+      );
+      expect(recipe.checkedAgainst).toEqual(["auto/issue-2", "auto/issue-2"]);
+    },
+  );
+});
+
 const EPIC = 40;
 
 export const EPIC_WORK_ITEM = item(`issue-${EPIC}`, { issue: EPIC });
