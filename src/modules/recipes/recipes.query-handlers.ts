@@ -4,6 +4,8 @@ import * as Layer from "effect/Layer";
 
 import { diffRecipesHandler } from "./queries/diff-recipes.handler.ts";
 import { DiffRecipesQuery } from "./queries/diff-recipes.query.ts";
+import { listFlowBlocksHandler } from "./queries/list-flow-blocks.handler.ts";
+import { ListFlowBlocksQuery } from "./queries/list-flow-blocks.query.ts";
 import { listRecipesHandler } from "./queries/list-recipes.handler.ts";
 import { ListRecipesQuery } from "./queries/list-recipes.query.ts";
 import { readTeamConfigHandler } from "./queries/read-team-config.handler.ts";
@@ -11,12 +13,14 @@ import { ReadTeamConfigQuery } from "./queries/read-team-config.query.ts";
 
 export const recipesQueryGroup = Query.group(
   DiffRecipesQuery,
+  ListFlowBlocksQuery,
   ListRecipesQuery,
   ReadTeamConfigQuery,
 );
 
 const RecipesQueryHandlersLive = Query.handlersOf(recipesQueryGroup, {
   DiffRecipesQuery: (payload) => diffRecipesHandler(payload),
+  ListFlowBlocksQuery: (payload) => listFlowBlocksHandler(payload),
   ListRecipesQuery: (payload) => listRecipesHandler(payload),
   ReadTeamConfigQuery: (payload) => readTeamConfigHandler(payload),
 });

@@ -44,6 +44,16 @@ steps:
 - `end` finishes the run or lane, as `done` or `needs-human`.
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
 
+## What a document can use
+
+```sh
+chernabog recipes blocks              # everything: subjects, sources, loop states, blocks
+chernabog recipes blocks gate.local   # one block
+chernabog recipes blocks --json       # the same, for an agent
+```
+
+Each block says what it does, what each input takes, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with.
+
 ## Compiling
 
 ```sh
@@ -71,6 +81,14 @@ Checking each wire's type takes TypeScript, in `.chernabog/node_modules` or the 
 
 `if` runs a step only when a boolean output is true. The step's output is then optional, and `first` joins it with what stands in for it. `first: [landed, carried]` is the first of those that ran.
 
+## Order
+
+Blocks declare the order they need, and the check walks every way through a document, down every branch:
+
+- `runs before`: on a way with both, this block must come first. The local gate, if you use it, runs before the push.
+- `needs first`: this block must come after another. A round of an epic needs the epic claimed.
+- `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off. A way that ends `needs-human` is excused.
+
 ## What the checks don't catch
 
-The checks make sure a flow is wired correctly, not that it does what your team wants. Removing the local gate or CI is allowed, because those are a team's choices. Moving a step to a worse place may also pass if its inputs are still available. [Rehearse](/chernabog/flows/rehearsing/) a flow before you rely on it.
+The checks make sure a flow is wired and ordered correctly, not that it does what your team wants. Removing the local gate or CI is allowed, because those are a team's choices. So is a branch that does nothing useful. For example, a review's `approve` that never lands still passes. [Rehearse](/chernabog/flows/rehearsing/) a flow before you rely on it.

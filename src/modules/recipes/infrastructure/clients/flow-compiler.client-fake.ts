@@ -17,6 +17,15 @@ export const FlowCompilerClientFake = (
   Layer.succeed(
     FlowCompilerClient,
     FlowCompilerClient.of({
+      catalogue: () =>
+        Effect.succeed({
+          format: "",
+          subjects: [],
+          sources: [],
+          loopStates: [],
+          laneScopes: [],
+          blocks: [],
+        }),
       documents: () => Effect.succeed(Object.keys(compiled).toSorted()),
       compile: (_, flow) =>
         Effect.succeed(

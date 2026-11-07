@@ -188,8 +188,42 @@ const dispositionsOf = Schema.decodeUnknownSync(DispositionTable);
 
 const inputNeedsOf = Schema.decodeUnknownSync(InputNeeds);
 
+const Kinds = Schema.Record(Schema.String, Schema.String);
+
+const kindsOf = Schema.decodeUnknownSync(Kinds);
+
+const outputKindsOf = Schema.decodeUnknownSync(Schema.Union([Schema.String, Kinds]));
+
+const opensOf = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Array(Schema.String)));
+
+// What a block gives, as a listing says it: a word for a value, or a word for
+// each field. It must name every field the block's output has, and no others.
+type OutputKinds<Output> = [Output] extends [string | number | boolean | void]
+  ? string
+  : { readonly [Field in keyof Output]-?: string };
+
 type BlockSpec<Input, Output, E, R, Outcomes> = {
   readonly name: string;
+  // What it does, for someone choosing blocks.
+  readonly about: string;
+  // What each input takes, each output gives and each outcome binds, for the
+  // same. The compiler makes these name exactly what the block has.
+  readonly inputKinds: { readonly [Name in keyof Input]-?: string };
+  readonly outputKinds: OutputKinds<NoInfer<Output>>;
+  readonly outcomeKinds: { readonly [Name in keyof NoInfer<Outcomes>]: string };
+  // The inputs a document gives as a fixed value, under `with`, rather than
+  // wiring them to an earlier step's output, under `in`.
+  readonly fixed?: ReadonlyArray<keyof Input & string>;
+  // The blocks that, on a path with both, must run after this one.
+  readonly before?: ReadonlyArray<string>;
+  // The blocks that must already have run on any path to this one.
+  readonly needs?: ReadonlyArray<string>;
+  // What this leaves to be done on any path that goes on to finish well, and
+  // what it does of that. A path that ends with a person is excused.
+  readonly opens?: ReadonlyArray<string>;
+  readonly closes?: ReadonlyArray<string>;
+  // What taking an outcome leaves to be done, the same way.
+  readonly opensOn?: { readonly [Name in keyof NoInfer<Outcomes>]?: ReadonlyArray<string> };
   // Each input and whether a document must wire it. An input it needn't wire
   // has a default.
   readonly inputs: { readonly [Name in keyof Input]-?: "required" | "optional" };
@@ -231,6 +265,17 @@ export const defineBlock = <
 
   return {
     name: spec.name,
+    failures: table,
+    about: spec.about,
+    inputKinds: kindsOf(spec.inputKinds),
+    outputKinds: outputKindsOf(spec.outputKinds),
+    outcomeKinds: kindsOf(spec.outcomeKinds),
+    fixed: (spec.fixed ?? []).map(String),
+    before: spec.before ?? [],
+    needs: spec.needs ?? [],
+    opens: spec.opens ?? [],
+    closes: spec.closes ?? [],
+    opensOn: opensOf(spec.opensOn ?? {}),
     inputs: inputNeedsOf(spec.inputs),
     outcomes: spec.outcomes,
     mustRoute: spec.mustRoute,

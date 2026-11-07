@@ -645,6 +645,10 @@ export type TaskStart = {
   readonly lane: LaneId;
 };
 
+// The tasks' state as a round leaves it once it has started some, which can't
+// go on to the next round: epic.recordEndings says how each lane ended first.
+export type TasksStarted = { readonly started: TaskState };
+
 // What a loop starts with, by the name a document uses it by.
 export const loopStates = {
   "epic.tasks": (): TaskState => ({
@@ -765,6 +769,10 @@ const publish = (input: {
 export const epicBlocks = {
   "epic.claim": defineBlock({
     name: "epic.claim",
+    about: "Claims the epic, so only this run works through it.",
+    inputKinds: { epic: "EpicNumber" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
     inputs: { epic: "required" },
     run: (input: { readonly epic: EpicNumber }) => Epic.claim(input.epic),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
@@ -776,6 +784,10 @@ export const epicBlocks = {
   // Whether this run's layers ship, read once, so a replay decides the same.
   "epic.ships": defineBlock({
     name: "epic.ships",
+    about: "Reads the ship setting once: whether the epic's layers are on the automated path.",
+    inputKinds: {},
+    outputKinds: { value: "boolean, for `if` or stack.publish" },
+    outcomeKinds: {},
     inputs: {},
     run: (_: Record<never, never>) =>
       activity(
@@ -792,6 +804,10 @@ export const epicBlocks = {
   // How many tasks the run implements at once, at least one, read once.
   "epic.atOnce": defineBlock({
     name: "epic.atOnce",
+    about: "Reads the atOnce setting once: how many tasks run at once, at least one.",
+    inputKinds: {},
+    outputKinds: { value: "number, for forEach atOnce" },
+    outcomeKinds: {},
     inputs: {},
     run: (_: Record<never, never>) =>
       activity(
@@ -807,6 +823,14 @@ export const epicBlocks = {
 
   "epic.progress": defineBlock({
     name: "epic.progress",
+    about: "Reads where the epic stands this round.",
+    inputKinds: { epic: "EpicNumber", round: "the round" },
+    outputKinds: {
+      layers: "every sub-issue, with its state",
+      fingerprint: "what the status comment compares",
+    },
+    outcomeKinds: {},
+    needs: ["epic.claim"],
     inputs: { epic: "required", round: "required" },
     run: (input: { readonly epic: EpicNumber; readonly round: number }) =>
       Epic.progress(input.epic, input.round),
@@ -818,6 +842,11 @@ export const epicBlocks = {
 
   "epic.postStatus": defineBlock({
     name: "epic.postStatus",
+    about: "Keeps one status comment on the epic up to date.",
+    inputKinds: { epic: "EpicNumber", round: "the round", progress: "from epic.progress" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    before: ["epic.finished"],
     inputs: { epic: "required", round: "required", progress: "required" },
     run: (input: {
       readonly epic: EpicNumber;
@@ -834,6 +863,10 @@ export const epicBlocks = {
   // waits on, and the one a stacked one is stacked on.
   "epic.noteWaits": defineBlock({
     name: "epic.noteWaits",
+    about: "Notes what each task waits on this round, for the run's lanes.",
+    inputKinds: { progress: "from epic.progress", tasks: "the epic.tasks state" },
+    outputKinds: { tasks: "the epic.tasks state, updated" },
+    outcomeKinds: {},
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.sync(() => {
@@ -861,6 +894,10 @@ export const epicBlocks = {
   // Whether every task is closed, which ends the run.
   "epic.finished": defineBlock({
     name: "epic.finished",
+    about: "Whether every task is closed.",
+    inputKinds: { epic: "EpicNumber", progress: "from epic.progress" },
+    outputKinds: { finished: "boolean", summary: "a summary, for `end`'s summary" },
+    outcomeKinds: { finished: "a summary, for `end`'s summary" },
     inputs: { epic: "required", progress: "required" },
     run: (input: { readonly epic: EpicNumber; readonly progress: Epic.Progress }) =>
       Effect.succeed({
@@ -878,6 +915,19 @@ export const epicBlocks = {
 
   "stack.carryUp": defineBlock({
     name: "stack.carryUp",
+    about:
+      "Carries a moved layer's change up its stack, bottom to top. A layer that needs a person holds the ones above it.",
+    inputKinds: {
+      round: "the round",
+      progress: "from epic.progress",
+      stack: "the stack.upkeep state",
+    },
+    outputKinds: {
+      moved: "boolean: whether it pushed anything",
+      stack: "the stack.upkeep state, updated",
+    },
+    outcomeKinds: { moved: "the stack.upkeep state, updated" },
+    before: ["stack.land", "epic.startable"],
     inputs: { round: "required", progress: "required", stack: "required" },
     run: (input: {
       readonly round: number;
@@ -896,6 +946,18 @@ export const epicBlocks = {
 
   "stack.land": defineBlock({
     name: "stack.land",
+    about: "Lands the layers that may, each once those below it have merged.",
+    inputKinds: {
+      round: "the round",
+      progress: "from epic.progress",
+      stack: "the stack.upkeep state",
+    },
+    outputKinds: {
+      moved: "boolean: whether anything moved",
+      stack: "the stack.upkeep state, updated",
+    },
+    outcomeKinds: { moved: "the stack.upkeep state, updated" },
+    before: ["epic.startable"],
     inputs: { round: "required", progress: "required", stack: "required" },
     run: (input: {
       readonly round: number;
@@ -914,6 +976,15 @@ export const epicBlocks = {
 
   "epic.startable": defineBlock({
     name: "epic.startable",
+    about:
+      "Decides which tasks to start this round: those ready that haven't been attempted, or that a person handed back.",
+    inputKinds: { progress: "from epic.progress", tasks: "the epic.tasks state" },
+    outputKinds: {
+      tasks: "the epic.tasks state, updated, for a round that starts nothing",
+      started: "the tasks as they were started, for epic.recordEndings",
+      starts: "the tasks to start, for forEach: issue, base, lane",
+    },
+    outcomeKinds: { none: "the epic.tasks state, updated" },
     inputs: { progress: "required", tasks: "required" },
     run: (input: { readonly progress: Epic.Progress; readonly tasks: TaskState }) =>
       Effect.gen(function* () {
@@ -936,11 +1007,11 @@ export const epicBlocks = {
           ]);
         }
 
-        return { tasks, starts };
+        return { tasks, started: { started: tasks }, starts };
       }),
     failures: {},
     outcomes: {
-      none: (planned: { readonly tasks: TaskState; readonly starts: ReadonlyArray<unknown> }) =>
+      none: (planned: { readonly tasks: TaskState; readonly starts: ReadonlyArray<TaskStart> }) =>
         Option.liftPredicate(planned.tasks, () => planned.starts.length === 0),
     },
     mustRoute: ["none"],
@@ -951,6 +1022,11 @@ export const epicBlocks = {
   // person's task closed, say.
   "epic.park": defineBlock({
     name: "epic.park",
+    fixed: ["lookAgainAfter"],
+    about: "Parks the run until a layer changes, or `lookAgainAfter` passes.",
+    inputKinds: { round: "the round", lookAgainAfter: 'how long: "1 day"' },
+    outputKinds: "which came first",
+    outcomeKinds: {},
     inputs: { round: "required", lookAgainAfter: "required" },
     run: (input: { readonly round: number; readonly lookAgainAfter: "1 day" }) =>
       awaitSignal([Epic.LAYER_CHANGED], {
@@ -966,13 +1042,20 @@ export const epicBlocks = {
 
   "epic.recordEndings": defineBlock({
     name: "epic.recordEndings",
+    about: "Records how each lane ended, for the next round to read.",
+    inputKinds: {
+      tasks: "the started output of epic.startable",
+      endings: "the output of forEach",
+    },
+    outputKinds: { tasks: "the epic.tasks state, updated" },
+    outcomeKinds: {},
     inputs: { tasks: "required", endings: "required" },
-    run: (input: { readonly tasks: TaskState; readonly endings: ReadonlyArray<LaneEnding> }) =>
+    run: (input: { readonly tasks: TasksStarted; readonly endings: ReadonlyArray<LaneEnding> }) =>
       Effect.succeed({
         tasks: {
-          ...input.tasks,
+          ...input.tasks.started,
           withPerson: new Set([
-            ...input.tasks.withPerson,
+            ...input.tasks.started.withPerson,
             ...input.endings.filter((ending) => ending.withPerson).map((ending) => ending.issue),
           ]),
         },
@@ -985,6 +1068,25 @@ export const epicBlocks = {
 
   "stack.publish": defineBlock({
     name: "stack.publish",
+    about:
+      "Pushes a task's branch and opens its pull request, on the base it settles: the branch of the layer below, or what that one merged into.",
+    inputKinds: {
+      issue: "IssueNumber",
+      epic: "EpicNumber",
+      worktree: "WorktreePath",
+      branch: "BranchName",
+      base: "Option<BaseBranch>",
+      outcome: "what the agent said",
+      ship: "boolean: from epic.ships",
+      lane: "LaneId",
+      committed: "Committed: from agent.implement",
+    },
+    outputKinds: {
+      pr: "a pull request: number, url",
+      base: "Option<BaseBranch>: the base it opened on",
+    },
+    outcomeKinds: {},
+    opens: ["hand-off"],
     inputs: {
       issue: "required",
       epic: "required",
@@ -1024,6 +1126,11 @@ export const epicBlocks = {
   // the attempt's own, so a later attempt lets it go again.
   "issue.releaseClaim": defineBlock({
     name: "issue.releaseClaim",
+    about: "Lets a task's claim go, as a step of its lane.",
+    inputKinds: { issue: "IssueNumber", lane: "LaneId" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    closes: ["release-claim"],
     inputs: { issue: "required", lane: "required" },
     run: (input: { readonly issue: IssueNumber; readonly lane: LaneId }) =>
       releaseTask(input.issue, input.lane),
