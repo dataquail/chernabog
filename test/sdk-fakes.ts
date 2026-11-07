@@ -206,6 +206,9 @@ const Unassigning = Schema.Struct({ assignees: Schema.Array(Schema.String) });
 // The body of a request that edits a comment.
 const Editing = Schema.Struct({ body: Schema.String });
 
+// The body of a request that moves a pull request onto another base.
+const Retargeting = Schema.Struct({ base: Schema.String });
+
 // One issue and its pull request, and what the steps did to them. Reviews
 // answer `verdicts` in turn, the last one repeating.
 export const makeFake = (
@@ -264,6 +267,9 @@ export const makeFake = (
     ran: new Array<string>(),
     says: new Map<string, string>(),
     refuses: new Set<string>(),
+    // Commands whose next run makes a commit, as a merge that brings
+    // something in does, by the same spelling.
+    makes: new Set<string>(),
   };
 
   // The worktree's head: the pushed one, or a commit of the agent's on top.
@@ -279,13 +285,16 @@ export const makeFake = (
   // merge conflict, and whether the person closes a session with them before it answers.
   // `asks` are worktrees whose next implement session answers with questions.
   // `leaves` is what an implement session leaves in the worktree, as `git status
-  // --porcelain` lists it, instead of committing it.
+  // --porcelain` lists it, instead of committing it. `meanwhile` is what
+  // happens elsewhere while the next implement session in a worktree runs, by
+  // worktree, as a person or GitHub acting while an epic's lane works.
   const author = {
     consider: "address",
     resolve: "resolved",
     closes: false,
     asks: new Array<string>(),
     leaves: new Array<string>(),
+    meanwhile: new Map<string, () => void>(),
   };
 
   // Whether the agent works on and on, as one an hour into a step does, until interrupted.
@@ -403,7 +412,19 @@ export const makeFake = (
     return queue[Math.min(reviewed, queue.length) - 1] ?? "approve";
   };
 
-  // An edit of a comment, by its id, or of the pull request's body.
+  // Another branch's pull request, by its number.
+  const branchPullNumbered = (number: number) =>
+    Arr.findFirst([...branchPulls.values()], (found) => found.number === number);
+
+  // Another branch's pull request, by its REST path.
+  const branchPullAt = (path: string) =>
+    Option.flatMap(
+      Option.fromNullishOr(path.match(/^\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)$/)),
+      (matched) => branchPullNumbered(Number(matched[1])),
+    );
+
+  // An edit of a comment, by its id, of the pull request's body, or of
+  // another branch's pull request's base.
   const edit = (path: string, body: Option.Option<Json>): Json => {
     const editing = Option.flatMap(body, Schema.decodeUnknownOption(Editing));
     const commentId = path.match(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/(\d+)$/);
@@ -418,6 +439,13 @@ export const makeFake = (
       if (path === `/repos/${settings.slug}/pulls/${PULL}`) {
         pullText.body = edited.body;
       }
+    }
+
+    // Another branch's pull request moved onto another base, as an epic's layer is.
+    const retargeting = Option.flatMap(body, Schema.decodeUnknownOption(Retargeting));
+
+    for (const [found, moved] of Option.toArray(Option.all([branchPullAt(path), retargeting]))) {
+      branchPulls.set(found.headRef, { ...found, baseRef: moved.base });
     }
 
     return {};
@@ -456,6 +484,13 @@ export const makeFake = (
     }
 
     if (schema.includes("needs-clarification")) {
+      for (const happening of Option.toArray(
+        Option.fromUndefinedOr(author.meanwhile.get(request.cwd)),
+      )) {
+        author.meanwhile.delete(request.cwd);
+        happening();
+      }
+
       const asking = author.asks.indexOf(request.cwd);
 
       if (asking >= 0) {
@@ -718,11 +753,15 @@ export const makeFake = (
           ];
         }),
       closedPullRequestsLabelled: () => Effect.succeed([]),
+      // Another branch's pull request carries its labels as they are now, as GitHub's does.
       pullRequest: (number) =>
         Effect.sync(() =>
           Option.getOrElse(
-            Option.fromUndefinedOr(
-              [...branchPulls.values()].find((found) => found.number === number),
+            Option.map(
+              Option.fromUndefinedOr(
+                [...branchPulls.values()].find((found) => found.number === number),
+              ),
+              (found) => ({ ...found, labels: labelsOf(found.number) }),
             ),
             pull,
           ),
@@ -757,7 +796,23 @@ export const makeFake = (
           merge.requests.push(request);
 
           return Option.match(merge.refusal, {
-            onNone: () => Effect.succeed({ sha: "merged9876" }),
+            onNone: () => {
+              // Another branch's pull request merges, and closes the issue its branch is for.
+              for (const found of Option.toArray(branchPullNumbered(pullRequest))) {
+                branchPulls.set(found.headRef, { ...found, state: "merged" });
+
+                for (const closes of Option.toArray(
+                  Option.flatMap(
+                    Option.fromNullishOr(found.headRef.match(/issue-(\d+)$/)),
+                    (matched) => Option.fromUndefinedOr(graph.made.get(Number(matched[1]))),
+                  ),
+                )) {
+                  graph.made.set(closes.number, { ...closes, state: "closed" });
+                }
+              }
+
+              return Effect.succeed({ sha: "merged9876" });
+            },
             onSome: (reason) => Effect.fail(new MergeRefused({ pullRequest, reason })),
           });
         }),
@@ -885,6 +940,10 @@ export const makeFake = (
         Effect.suspend(() => {
           const command = args.join(" ");
           git.ran.push(command);
+
+          if (git.makes.delete(command)) {
+            git.commits += 1;
+          }
 
           if (git.refuses.has(command)) {
             return Effect.fail(new GitError({ message: `git ${command} failed` }));

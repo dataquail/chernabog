@@ -48,12 +48,13 @@ const runsAsTheRecipe = <E, R>(
 ) =>
   Effect.gen(function* () {
     const composed = yield* loading;
-    const { ends, settings, setup, wake } = scenario;
+    const { did, ends, settings, setup, wake } = scenario;
     const fromRecipe = yield* observe(recipe, name, setup, work, wake, settings);
     const fromDocument = yield* observe(composed, name, setup, work, wake, settings);
 
     expect(fromRecipe.status).toBe(ends);
     expect(fromDocument).toEqual(fromRecipe);
+    did(fromRecipe);
   });
 
 describe("the implement document runs as the recipe does", () => {
