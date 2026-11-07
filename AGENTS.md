@@ -484,7 +484,8 @@ transitive reach), the coverage floors and the baseline.
   once a second at most, when another process changed machine config,
   `paused.json` or `trust.json` (a file `updateFile` wrote in this process
   is its own) or committed to `state.db` (`ReadStateVersionQuery`, SQLite's
-  `data_version`).
+  `data_version`). It also looks every 5 seconds without being told, because
+  file events can stop coming on macOS under load.
 - **The machine module** owns this machine's setup: `MachineSetupRoot`
   (`github:` personas and `accounts:`, edited in place in machine config),
   gh's logins, the account directories in the home, and the daemon as a

@@ -57,41 +57,55 @@ const commitElsewhere = (path: string) =>
 // A scratch home with machine config, paused.json, trust.json and a state.db
 // in it; the batches the watch on it says, in a queue; and the connection the
 // watch reads state.db's version on, as the daemon's.
-const watching = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-state-changes-" });
-  yield* fs.writeFileString(`${dir}/config.yaml`, "repos: []\n");
-  yield* fs.writeFileString(`${dir}/paused.json`, "{}\n");
-  yield* fs.writeFileString(`${dir}/trust.json`, "{}\n");
+const watchingWith = (hearing: (fs: FileSystem.FileSystem) => FileSystem.FileSystem) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-state-changes-" });
+    yield* fs.writeFileString(`${dir}/config.yaml`, "repos: []\n");
+    yield* fs.writeFileString(`${dir}/paused.json`, "{}\n");
+    yield* fs.writeFileString(`${dir}/trust.json`, "{}\n");
 
-  const own = yield* Layer.build(sqliteAt(`${dir}/state.db`));
-  const ownSql = Effect.provideContext(own);
-  yield* ownSql(SqlClient.SqlClient.use((sql) => sql`CREATE TABLE om_test (n INTEGER)`));
+    const own = yield* Layer.build(sqliteAt(`${dir}/state.db`));
+    const ownSql = Effect.provideContext(own);
+    yield* ownSql(SqlClient.SqlClient.use((sql) => sql`CREATE TABLE om_test (n INTEGER)`));
 
-  const said = yield* Queue.unbounded<ReadonlyArray<string>>();
+    const said = yield* Queue.unbounded<ReadonlyArray<string>>();
 
-  yield* Effect.forkScoped(
-    Stream.runForEach(
-      watchStateChanges({
-        dir,
-        files: ["config.yaml", "paused.json", "trust.json"],
-        database: { name: "state.db", version: ownSql(dataVersion) },
-        window: "300 millis",
-      }),
-      (changed) => Queue.offer(said, changed),
-    ),
-  );
+    yield* Effect.forkScoped(
+      Stream.runForEach(
+        watchStateChanges({
+          dir,
+          files: ["config.yaml", "paused.json", "trust.json"],
+          database: { name: "state.db", version: ownSql(dataVersion) },
+          window: "300 millis",
+          look: "1 second",
+        }),
+        (changed) => Queue.offer(said, changed),
+      ).pipe(Effect.updateService(FileSystem.FileSystem, hearing)),
+    );
 
-  // Armed once a change to trust.json, tried until one is, has been said.
-  yield* editElsewhere(dir, "trust.json").pipe(
-    Effect.andThen(Queue.take(said).pipe(Effect.timeoutOption("500 millis"))),
-    Effect.repeat({ until: Option.isSome, times: 20 }),
-  );
+    // Armed once a change to trust.json, tried until one is, has been said.
+    yield* editElsewhere(dir, "trust.json").pipe(
+      Effect.andThen(Queue.take(said).pipe(Effect.timeoutOption("500 millis"))),
+      Effect.repeat({ until: Option.isSome, times: 20 }),
+    );
 
-  // The next batch said.
-  const next = Queue.take(said);
+    // The next batch said. A slow watch can still say the edits that armed it, and
+    // nothing edits trust.json from here on, so those aren't part of it.
+    const next = Queue.take(said).pipe(
+      Effect.map((changed) => changed.filter((name) => name !== "trust.json")),
+      Effect.repeat({ until: (changed) => changed.length > 0 }),
+    );
 
-  return { dir, ownSql, next };
+    return { dir, ownSql, next };
+  });
+
+const watching = watchingWith((fs) => fs);
+
+// A file system whose watch never says anything, as one can go on macOS under load.
+const silently = (fs: FileSystem.FileSystem): FileSystem.FileSystem => ({
+  ...fs,
+  watch: () => Stream.never,
 });
 
 describe("watchStateChanges", () => {
@@ -105,6 +119,22 @@ describe("watchStateChanges", () => {
       expect(yield* next).toEqual(["config.yaml"]);
 
       // Nothing more of it: the next batch is the next change.
+      yield* editElsewhere(dir, "paused.json");
+      expect(yield* next).toEqual(["paused.json"]);
+    }).pipe(Effect.provide(Exec.layer)),
+  );
+
+  effect("says a change the watch never heard of, once, and not one this process made", () =>
+    Effect.gen(function* () {
+      const { dir, next } = yield* watchingWith(silently);
+      const fs = yield* FileSystem.FileSystem;
+
+      yield* updateFile(fs, `${dir}/paused.json`, "test", () =>
+        Effect.succeed([true, Option.some('{"acme/widgets": true}\n')] as const),
+      );
+      yield* editElsewhere(dir, "config.yaml");
+      expect(yield* next).toEqual(["config.yaml"]);
+
       yield* editElsewhere(dir, "paused.json");
       expect(yield* next).toEqual(["paused.json"]);
     }).pipe(Effect.provide(Exec.layer)),

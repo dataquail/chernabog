@@ -2,7 +2,9 @@
 // The daemon hears its own changes on its event bus; a person editing machine
 // config, paused.json or trust.json by hand, or another chernabog process
 // writing them, says nothing there. A watch on the home tells it something
-// changed, and the file's identity tells it whether this process wrote it.
+// changed, and the file's identity tells it whether this process wrote it. A
+// look every few seconds catches what the watch misses: on macOS under load,
+// its file events can stop coming, for longer than a person would wait.
 
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -89,14 +91,20 @@ const makeForeignChanges = (paths: ReadonlyArray<string>) =>
 // (a save, a run's steps) is said once.
 export const STATE_CHANGE_WINDOW = Duration.seconds(1);
 
-// The names, of `names`, of the files in `dir` that change, gathered over
-// `window` from the first change: at most one batch a window. A watch that
-// fails (the directory gone a moment, say) starts again a few seconds later,
-// for a minute, then fails for its caller to say so.
+// How often it looks at the files whether or not the watch said anything, which
+// is the longest a change the watch missed goes unsaid, less the window.
+export const STATE_CHANGE_LOOK = Duration.seconds(5);
+
+// The names, of `names`, of the files in `dir` that may have changed, gathered
+// over `window` from the first: at most one batch a window. They're the ones the
+// watch says changed, and all of them at each `look`. A watch that fails (the
+// directory gone a moment, say) starts again a few seconds later, for a minute,
+// then fails for its caller to say so.
 const watchFiles = (
   dir: string,
   names: ReadonlyArray<string>,
   window: Duration.Input = STATE_CHANGE_WINDOW,
+  look: Duration.Input = STATE_CHANGE_LOOK,
 ) =>
   Stream.unwrap(
     FileSystem.FileSystem.use((fs) =>
@@ -109,6 +117,12 @@ const watchFiles = (
     ),
   ).pipe(
     Stream.retry(Schedule.max([Schedule.spaced("5 seconds"), Schedule.recurs(12)])),
+    Stream.merge(
+      Stream.tick(look).pipe(
+        Stream.map(() => names),
+        Stream.flattenIterable,
+      ),
+    ),
     Stream.groupedWithin(Number.MAX_SAFE_INTEGER, window),
     Stream.map((changed): ReadonlyArray<string> => [...new Set(changed)]),
   );
@@ -117,7 +131,8 @@ const watchFiles = (
 // names of `files`, which it tells by their identity, and of `database`, a
 // SQLite file, whose `version` (its data_version on this process's
 // connection) moves only for another connection's commits. Each change is
-// looked at once its window is up, so the file is as that process left it.
+// looked at once its window is up, so the file is as that process left it. It
+// goes on at each `look` when the watch itself has stopped.
 export const watchStateChanges = <E, R>(options: {
   readonly dir: string;
   readonly files: ReadonlyArray<string>;
@@ -126,6 +141,7 @@ export const watchStateChanges = <E, R>(options: {
     readonly version: Effect.Effect<number, E, R>;
   };
   readonly window?: Duration.Input;
+  readonly look?: Duration.Input;
 }) =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -159,7 +175,7 @@ export const watchStateChanges = <E, R>(options: {
           return changed;
         });
 
-      return watchFiles(dir, [...files, ...journals], options.window).pipe(
+      return watchFiles(dir, [...files, ...journals], options.window, options.look).pipe(
         Stream.mapEffect(elsewhere),
         Stream.filter((changed) => changed.length > 0),
       );
