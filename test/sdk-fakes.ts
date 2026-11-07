@@ -268,6 +268,9 @@ export const makeFake = (
     commits: 0,
     rejects: Option.none<PushRejected>(),
     uncommitted: new Array<string>(),
+    // Whether the branch has nothing past its base, whatever was committed, as
+    // when a person reset their commits away before open-pr.
+    nothingAhead: false,
     // Every git command run, its arguments joined by spaces; what a test has
     // git say to one, and the ones git refuses, by the same spelling.
     ran: new Array<string>(),
@@ -970,7 +973,7 @@ export const makeFake = (
           based.checkedAgainst.push(base);
 
           // Nothing, once the author left its work in the worktree on a branch it never pushed.
-          if (git.pushes + git.commits === 0 && git.uncommitted.length > 0) {
+          if (git.nothingAhead || (git.pushes + git.commits === 0 && git.uncommitted.length > 0)) {
             return 0;
           }
 

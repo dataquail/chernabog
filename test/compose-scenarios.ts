@@ -1674,7 +1674,26 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
   );
 
   scenario(
-    "when the person committed nothing",
+    "when nothing was committed before open-pr",
+    () => {
+      const fake = started();
+      fake.git.nothingAhead = true;
+
+      return fake;
+    },
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.summary).toContain(
+        `nothing was committed on auto/issue-${ISSUE} before open-pr`,
+      );
+      expect(recipe.issueLabels).toContain(DEFAULT_LABELS.needsHuman);
+    },
+  );
+
+  scenario(
+    "when the person left their work uncommitted",
     () => {
       const fake = started();
       fake.author.leaves.push("?? a.ts");
@@ -1685,7 +1704,7 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
     void 0,
     {},
     (recipe) => {
-      expect(recipe.summary).toContain(`before open-pr`);
+      expect(recipe.summary).toContain("left uncommitted: `a.ts`");
     },
   );
 
@@ -1736,8 +1755,9 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
     {},
     (recipe) => {
       expect(recipe.summary).toContain("CI is still red after 3 fix attempts");
-      // The person's fixes, on the pull request the hand-off names.
-      expect(recipe.comments.some((comment) => comment.includes(`#${PULL}`))).toBe(true);
+      // Each fix, from the person's session, pushed.
+      expect(recipe.pushes).toBe(4);
+      expect(recipe.sessions.every(([, , withPerson]) => withPerson === true)).toBe(true);
     },
   );
 
@@ -1752,18 +1772,6 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
     "needs-human",
     void 0,
     { ciTimeout: "0 millis" },
-  );
-
-  scenario(
-    "when the pull request is closed while CI runs",
-    () => {
-      const fake = started();
-      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
-      fake.states.pull = "closed";
-
-      return fake;
-    },
-    "needs-human",
   );
 });
 

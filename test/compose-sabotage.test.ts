@@ -705,6 +705,13 @@ describe("the comparison sees a human-initiated flow that", () => {
   );
 
   sabotaged(
+    "stops, rather than telling a person, when nothing was committed",
+    target,
+    "when nothing was committed before open-pr",
+    overriding("hybrid.push", '{ NeedsHuman: "told" }'),
+  );
+
+  sabotaged(
     "stops, rather than telling a person, when the push is rejected",
     target,
     "when the remote rejects the push",

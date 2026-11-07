@@ -51,6 +51,8 @@ export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand:
   subjects: Schema.Array(
     Schema.Struct({
       name: Schema.String,
+      // Whether a person can start a flow on it, with start: true; none from an SDK from before.
+      start: Schema.optionalKey(Schema.Boolean),
       trigger: Schema.Array(Schema.String),
       failureContext: Schema.Array(Schema.String),
     }),

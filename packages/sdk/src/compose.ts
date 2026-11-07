@@ -5,8 +5,8 @@
 // to, and there are no expressions.
 //
 // Experimental: this and the blocks cover implement, review, re-review,
-// address-review, resolve-conflicts, post-merge and epic, and their shape may
-// change until they cover more of the recipes.
+// address-review, resolve-conflicts, post-merge, human-initiated and epic, and
+// their shape may change until they cover more of the recipes.
 //
 // `read` takes a document's shape, `check` what can be said of it without a
 // compiler, with where in the document it is. Whether each wire's type fits is
@@ -14,6 +14,7 @@
 
 import { printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
+import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -29,6 +30,7 @@ import {
   loopStates,
   sourceDescriptions,
   sources,
+  startOf,
   subjects,
 } from "./blocks.ts";
 
@@ -158,12 +160,15 @@ export const FlowDocument = Schema.Struct({
   subject: Schema.String,
   gate: Schema.optionalKey(Schema.Literal("usage")),
   concurrency: Schema.optionalKey(Schema.Int),
+  // A flow a person starts, with `chernabog start <issue>`, says so here and
+  // has no trigger, which reads as none.
+  start: Schema.optionalKey(Schema.Literal(true)),
   trigger: Schema.Array(
     Schema.Struct({
       use: Schema.String,
       with: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     }),
-  ),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   // What each scope keeps for a failure to tell a person, and the outputs that set it.
   failureContext: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.String))),
   steps: Schema.Array(Step),
@@ -177,6 +182,9 @@ const isObject = (value: Schema.Json): value is JsonObject =>
   Predicate.isObject(value) && !Array.isArray(value);
 
 const FORMAT_HINT = "chernabog recipes blocks shows the format.";
+
+const TRIGGER_OR_START =
+  "name where the flow's work comes from, or say start: true for a flow a person starts with chernabog start <issue>";
 
 const STEP_KINDS =
   "use (a block, with an id), stage (a step of the repo's own, with an id), end, next, first, repeat or forEach";
@@ -255,9 +263,14 @@ const documentProblems = (value: Schema.Json): ReadonlyArray<Problem> => {
     return [{ path: "", message: `must be a flow document. ${FORMAT_HINT}` }];
   }
 
+  // A flow a person starts has no trigger.
   const missing = ["flow", "subject", "trigger", "steps"].flatMap((key): ReadonlyArray<Problem> => {
-    if (key in value) {
+    if (key in value || (key === "trigger" && "start" in value)) {
       return [];
+    }
+
+    if (key === "trigger") {
+      return [{ path: key, message: `is missing: ${TRIGGER_OR_START}. ${FORMAT_HINT}` }];
     }
 
     return [{ path: key, message: `is missing. ${FORMAT_HINT}` }];
@@ -1466,7 +1479,82 @@ const checkOrder = (checking: Checking, document: FlowDocument) => {
   );
 };
 
+// Each step that uses a block, with where in the document it is, down every
+// branch, round and lane.
+const usesIn = (
+  steps: ReadonlyArray<Step>,
+  path: string,
+): ReadonlyArray<readonly [UseStep, string]> =>
+  steps.flatMap((step, index): ReadonlyArray<readonly [UseStep, string]> => {
+    const at = `${path}[${index}]`;
+
+    if (isRepeat(step)) {
+      return usesIn(step.repeat.steps, `${at}.repeat.steps`);
+    }
+
+    if (isForEach(step)) {
+      return usesIn(step.steps, `${at}.steps`);
+    }
+
+    if (!isCall(step)) {
+      return [];
+    }
+
+    const branches = branchesOf(step).flatMap(([outcome, branch]) =>
+      usesIn(branch.steps, `${at}.on.${outcome}.steps`),
+    );
+
+    if (isUse(step)) {
+      return [[step, at], ...branches];
+    }
+
+    return branches;
+  });
+
+// The subjects a person can start a flow on.
+const startable = Object.keys(subjects).filter((subject) => Option.isSome(startOf(subject)));
+
+// A flow a person starts: on a subject they can name, with no trigger, and so
+// with no block that parks until a trigger wakes it, since none would.
+const checkStart = (checking: Checking, document: FlowDocument) => {
+  if (Option.isNone(startOf(document.subject))) {
+    say(
+      checking,
+      "start",
+      `a person starts only a flow on ${listed(startable, "nothing")}, with chernabog start <issue>, and this is a flow on ${document.subject}`,
+    );
+  }
+
+  if (document.trigger.length > 0) {
+    say(
+      checking,
+      "start",
+      "a flow a person starts has no trigger: say start: true or name a trigger, not both",
+    );
+  }
+
+  for (const [step, at] of usesIn(document.steps, "steps")) {
+    const woken = Option.flatMap(Record.get(blocksByName, step.use), (block) =>
+      Option.fromUndefinedOr(block.contributes.wakes),
+    );
+
+    if (Option.isSome(woken)) {
+      say(
+        checking,
+        `${at}.use`,
+        `${step.use} waits for the flow's trigger to wake it, and a flow a person starts has no trigger`,
+      );
+    }
+  }
+};
+
 const checkTrigger = (checking: Checking, document: FlowDocument) => {
+  if (document.start === true) {
+    checkStart(checking, document);
+
+    return;
+  }
+
   if (document.trigger.length === 0) {
     say(checking, "trigger", "must name where the flow's work comes from");
   }
@@ -1534,6 +1622,7 @@ concurrency: 1                   # optional
 trigger:                         # the sources below: where its work comes from
   - use: issues.queued
     with: { labels: [eligible] }
+# start: true                    # in place of trigger: a person starts each run, with chernabog start <issue>
 failureContext:                  # optional, when the subject keeps one: what a failure can tell a person
   pr: [opened.number]            # the outputs that set it
 steps:
@@ -1564,6 +1653,8 @@ A reference under in, summary or reason is a step's id, for its whole output, or
 A block's failures are handled as it lists them: person tells a person and stops, told stops because a person already knows, skip ends with nothing to do, fail ends failed. Add failure: { <error>: <one of those> } to a step only to change one.
 
 A compiled flow runs once the flow file is on the default branch and a persona's flows in machine config list it.
+
+A flow a person starts says start: true and has no trigger: nothing finds its work on a schedule, and it runs only when a person names an issue, with chernabog start <issue>, whatever its labels. Only a subject whose listing says start can be started. Each run is the person's, and a block that waits for a trigger to wake it can't be used.
 
 Add if: <step.field>, a boolean output, to run a step only sometimes. Its output is then optional, and { id: x, first: [maybeRan, standIn] } gives the first that ran.
 
@@ -1665,6 +1756,8 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
   format: FORMAT,
   subjects: Object.entries(subjects).map(([name, subject]) => ({
     name,
+    // Whether a person can start a flow on it, with start: true.
+    start: Option.isSome(startOf(name)),
     trigger: [...subject.fields],
     failureContext: [...subject.failureContext],
   })),
@@ -1954,6 +2047,26 @@ const emitSource = (source: FlowDocument["trigger"][number]) => {
   return `sources[${printJson(source.use)}].find(${input})`;
 };
 
+// The blocks that claim the subject's issue, which its scope lets go however the run ends.
+const CLAIMING = ["issue.claim", "hybrid.claim"];
+
+// Where the flow's work comes from: its sources, or, for a flow a person
+// starts, none, and the item lookup its subject gives.
+const emitTrigger = (document: FlowDocument) => {
+  if (document.start === true) {
+    return ["  start: true,"];
+  }
+
+  return [
+    "  sources: [",
+    ...document.trigger.flatMap((source, index) => [
+      `    // trigger[${index}]`,
+      `    ${emitSource(source)},`,
+    ]),
+    "  ],",
+  ];
+};
+
 const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>) => {
   const blocks = [...new Set(usedIn(document.steps))];
   const staged = [...new Set(stagesIn(document.steps))];
@@ -1989,19 +2102,14 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
     ...Option.toArray(Option.fromUndefinedOr(document.concurrency)).map(
       (concurrency) => `  concurrency: ${concurrency},`,
     ),
-    "  sources: [",
-    ...document.trigger.flatMap((source, index) => [
-      `    // trigger[${index}]`,
-      `    ${emitSource(source)},`,
-    ]),
-    "  ],",
+    ...emitTrigger(document),
     "  // steps",
     `  blocks: ${printJson(blocks)},`,
     "  workflow: (item) =>",
     "    Effect.gen(function* () {",
     `      const trigger = yield* ${subject}.read(item);`,
     "",
-    `      return yield* ${subject}.scope(trigger, { claims: ${blocks.includes("issue.claim")} }, (failureContext) =>`,
+    `      return yield* ${subject}.scope(trigger, { claims: ${blocks.some((block) => CLAIMING.includes(block))} }, (failureContext) =>`,
     "        Effect.gen(function* () {",
     ...emitSteps(document.failureContext ?? {}, document.steps, "steps", "          "),
     "        }),",

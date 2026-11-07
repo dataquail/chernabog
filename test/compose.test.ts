@@ -237,7 +237,7 @@ describe("Compose.read", () => {
 
     expect(
       problemsOf({ flow: "x", subject: "issue", start: false, steps: [{ end: "done" }] }),
-    ).toEqual([{ path: "start", message: "Expected true, got false" }]);
+    ).toEqual([{ path: "start", message: "Expected true" }]);
   });
 
   test("says a document with neither a trigger nor start is missing its trigger", () => {
@@ -839,6 +839,12 @@ describe("Compose.check", () => {
         message:
           "a person starts only a flow on issue, with chernabog start <issue>, and this is a flow on pull-request",
       },
+      // Merging waits out red CI on the base, which only a trigger tells it has turned green.
+      {
+        path: "steps[0].on.approve.steps[0].use",
+        message:
+          "pr.land waits for the flow's trigger to wake it, and a flow a person starts has no trigger",
+      },
     ]);
   });
 
@@ -914,7 +920,7 @@ describe("tsc on a document's flow file", () => {
   rejected(
     "a hand-off without what open-pr recorded",
     humanInitiatedWith("finished: session.finished }", "finished: session.committed }"),
-    "finished",
+    "title, body, summary",
   );
 
   rejected(

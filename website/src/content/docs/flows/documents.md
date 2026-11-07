@@ -5,7 +5,7 @@ description: Write a flow as YAML from the SDK's blocks, and compile it to an or
 
 A flow document is a flow written as data. Each step names a block, every value it takes names the step that value came from, and it branches only on outcomes the block declares. There are no expressions. It compiles to an ordinary flow file, so the engine, `chernabog rehearse` and your editor treat the result like any other flow.
 
-Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review`, `resolve-conflicts`, `post-merge` and `epic` recipes.
+Flow documents are **experimental**. The format and its blocks may change. So far, blocks cover the `implement`, `review`, `re-review`, `address-review`, `resolve-conflicts`, `post-merge`, `human-initiated` and `epic` recipes.
 
 ## A document
 
@@ -57,7 +57,7 @@ steps:
 
 A flow's `subject` is what each run works on. It decides what `trigger` gives the steps, and what happens around them however the run ends. `chernabog recipes blocks` lists each subject with the fields its trigger gives.
 
-- `issue`: `trigger.issue` and `trigger.queued`. A failure going to a person comments on the issue, and a claim on it goes when the run ends.
+- `issue`: `trigger.issue` and `trigger.queued`. A failure going to a person comments on the issue, and a claim on it goes when the run ends. A person can [start](#a-flow-a-person-starts) a flow on it.
 - `pull-request`: `trigger.pr`. A failure going to a person labels the pull request `auto:needs-human` and comments why.
 - `changes-asked`: a review that asks for changes on a pull request this persona wrote, found by the `review.changesRequested` source. `trigger.pr`, `trigger.branch` and `trigger.base` are the pull request's, `trigger.reviewer` is who asked for the changes, and `trigger.reviewedSha` is the commit they reviewed. The run owns the pull request from its first step to its end, so `resolve-conflicts` doesn't merge into the branch under it, and a pull request another run owns is skipped. A failure going to a person labels it `auto:needs-human` and comments why, as on `pull-request`.
 - `conflict`: a pull request this persona wrote that GitHub says conflicts with its base, found by the `pr.conflicting` source. `trigger.pr`, `trigger.branch` and `trigger.base` are the pull request's; on a layer of a stack, `trigger.base` is the layer below's branch. The run owns the pull request from its first step to its end, as on `changes-asked`, and a failure going to a person labels it `auto:needs-human` and comments why.
@@ -154,6 +154,57 @@ On `merged`, `merged.markWatched` leaves the marker `pr.mergedRecently` looks fo
             fixed: closes.fixed
         - end: done
           summary: linked
+```
+
+## A flow a person starts
+
+A flow that a person starts by naming an issue, with `chernabog start <issue>` (or `chernabog run <flow> --item issue-<n>`), says `start: true` in place of `trigger`. Nothing finds its work on a schedule, so it has no sources, and the daemon never ticks it: it's a [manual flow](/chernabog/flows/flows/#manual-flows). It takes the issue the person names whatever its labels, and each run is that person's, so it finds no work for several personas to share. It's the flow `chernabog start` runs, so a repo should have only one; `chernabog start` names them when it has several.
+
+- Only a flow on `issue` can be started. `chernabog recipes blocks` says which subjects can.
+- A document with both `start: true` and a trigger is refused, and so is one with neither.
+- A block that parks until the flow's trigger wakes it, such as `pr.awaitReady` or `pr.land`, is refused, because nothing would wake it.
+
+The `hybrid.*` blocks are the [hybrid path](/chernabog/work/flows/#the-hybrid-path), which the `human-initiated` recipe composes. `hybrid.claim` claims the issue for a person's run, and `hybrid.workWithPerson` opens the session with them that `chernabog open-pr` ends. A failure up to then fails the run, or ends it as it is, rather than going to a person, as the recipe's does. Override `worktree.prepare`'s `StepFailed` to `fail` for the same reason. A session the person closes fails the run and keeps the issue in progress for their next start. After the session, `hybrid.localGate` and `hybrid.waitForCi` send their fixes back to the person's session. `hybrid.push` pushes a change to `humanOnlyPaths` too, because the person watched it written. `hybrid.openPullRequest` labels the pull request `hybrid`, so a person merges it:
+
+```yaml
+flow: human-initiated
+subject: issue
+start: true
+failureContext:
+  pr: [opened.number]
+steps:
+  - id: claim
+    use: hybrid.claim
+    in: { issue: trigger.issue }
+  - id: worktree
+    use: worktree.prepare
+    in: { branch: claim.branch, base: claim.base }
+    failure: { StepFailed: fail }
+  - id: session
+    use: hybrid.workWithPerson
+    in: { issue: trigger.issue, worktree: worktree, base: claim.base }
+  - id: gate
+    use: hybrid.localGate
+    in: { issue: trigger.issue, worktree: worktree }
+  - id: push
+    use: hybrid.push
+    in: { worktree: worktree, branch: claim.branch, base: claim.base, committed: session.committed }
+  - id: opened
+    use: hybrid.openPullRequest
+    in: { issue: trigger.issue, finished: session.finished, base: claim.base, pushed: push.pushed }
+  - id: ci
+    use: hybrid.waitForCi
+    in:
+      issue: trigger.issue
+      pr: opened.number
+      worktree: worktree
+      branch: claim.branch
+      base: claim.base
+  - id: handed
+    use: hybrid.handOff
+    in: { issue: trigger.issue, pr: opened, finished: session.finished }
+  - end: done
+    summary: handed
 ```
 
 ## Your own steps

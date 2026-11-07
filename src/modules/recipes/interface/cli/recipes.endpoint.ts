@@ -436,11 +436,22 @@ const describeSource = (source: FlowCatalogue["sources"][number]) => [
   ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
 ];
 
+// A subject, with how a run on it starts: from a trigger, and by a person too when they can.
+const describeSubject = (subject: FlowCatalogue["subjects"][number]) => {
+  const said = `  ${subject.name}: trigger gives ${subject.trigger.join(", ")}`;
+
+  if (subject.start === true) {
+    return `${said}; or start: true, and a person starts each run with chernabog start <issue>`;
+  }
+
+  return said;
+};
+
 const describeCatalogue = (catalogue: FlowCatalogue) => [
   catalogue.format,
   "",
   "Subjects:",
-  ...catalogue.subjects.map((each) => `  ${each.name}: trigger gives ${each.trigger.join(", ")}`),
+  ...catalogue.subjects.map(describeSubject),
   "Sources:",
   ...catalogue.sources.flatMap(describeSource).map((line) => `  ${line}`),
   `Loop states: ${catalogue.loopStates.join(", ")}`,
