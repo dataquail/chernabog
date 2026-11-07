@@ -17,6 +17,7 @@ import {
   StepFailed,
 } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -1330,6 +1331,108 @@ describe("the order a document's blocks run in", () => {
       "a way through issue.claim finishes here with hand-off not done",
     ]);
   });
+
+  // The implement document with the pull request opened in a loop's round: a
+  // round that isn't approved opens one and goes on, and an approved round ends.
+  const looped = (approved: ReadonlyArray<Step>): Doc => ({
+    ...implement,
+    steps: [
+      ...implement.steps.filter(
+        (step) =>
+          Compose.isUse(step) && ["claim", "worktree", "agent", "gate", "push"].includes(step.id),
+      ),
+      {
+        id: "rounds",
+        repeat: {
+          state: {},
+          steps: [
+            {
+              id: "review",
+              use: "review.round",
+              in: { pr: "trigger.issue", round: "round" },
+              with: { role: "reviewer" },
+              on: { approve: { as: "verdict", steps: approved } },
+            },
+            {
+              id: "opened",
+              use: "pr.open",
+              in: {
+                issue: "trigger.issue",
+                outcome: "agent.outcome",
+                queued: "trigger.queued",
+                base: "claim.base",
+                pushed: "push.pushed",
+              },
+            },
+            { next: {} },
+          ],
+        },
+      },
+    ],
+  });
+
+  test("carries what a round left to do into the next round", () => {
+    expect(Compose.check(looped([{ end: "done" }]))).toContainEqual({
+      path: "steps[5].repeat.steps[0].on.approve.steps[0]",
+      message: "a way through pr.open finishes here with hand-off not done",
+    });
+  });
+
+  test("lets a later round do what an earlier one left", () => {
+    const handedOff = looped([
+      {
+        id: "done",
+        use: "issue.handOff",
+        in: { issue: "trigger.issue", pr: "opened", outcome: "agent.outcome" },
+      },
+      { end: "done" },
+    ]);
+
+    expect(messages(handedOff).filter((message) => message.includes("not done"))).toEqual([]);
+  });
+
+  test("goes round a loop with nothing new only once", () => {
+    const spinning = looped([{ end: "done" }]);
+
+    const once = {
+      ...spinning,
+      steps: spinning.steps.map((step) => {
+        if (Compose.isRepeat(step)) {
+          return { ...step, repeat: { ...step.repeat, steps: [{ next: {} }] } };
+        }
+
+        return step;
+      }),
+    };
+
+    expect(messages(once)).toContain("no round ends this loop");
+  });
+
+  // Each step may run or not, so 2^40 ways, but few states: walked once each, it
+  // takes milliseconds, well inside a second.
+  effect("walks a long chain of steps that may not run in time", () =>
+    Effect.gen(function* () {
+      const chain: ReadonlyArray<Step> = Array.from({ length: 40 }, (_, index) => ({
+        id: `noted${index}`,
+        use: "epic.noteWaits",
+        in: { progress: "progress", tasks: "state.tasks" },
+        if: "ships.value",
+      }));
+
+      const at = (steps: ReadonlyArray<Step>) => steps.findIndex((step) => named(step, "closed"));
+
+      const chained = round((steps) => [
+        ...steps.slice(0, at(steps)),
+        ...chain,
+        ...steps.slice(at(steps)),
+      ]);
+
+      const started = yield* Clock.currentTimeMillis;
+
+      expect(Compose.check(chained)).toEqual([]);
+      expect((yield* Clock.currentTimeMillis) - started).toBeLessThan(1000);
+    }),
+  );
 
   // A team's to choose, and no order breaks them.
   test("leaves a team's choices alone", () => {
