@@ -75,9 +75,10 @@ deny:
       - "@/modules/recipes/infrastructure/clients/flow-compiler.client-live.ts"
     message: >-
       The yaml package is how machine config is stored, not what it means. Only a repository
-      adapter (infrastructure/repositories/) writes a YAML document, and only it and a query,
-      which reads its storage directly (docs/adr/0011-queries-read-their-storage.md), read one;
-      the domain and the commands see aggregates, never a Document.
+      adapter (infrastructure/repositories/) writes a YAML document, and only it, a query, which
+      reads its storage directly (docs/adr/0011-queries-read-their-storage.md), and the flow
+      compiler, which reports a flow document's problems by where they are in it, read one; the
+      domain and the commands see aggregates, never a Document.
   - match: "**/node_modules/@effect/sql*/**"
     except:
       - "@/modules/runs/infrastructure/**"
