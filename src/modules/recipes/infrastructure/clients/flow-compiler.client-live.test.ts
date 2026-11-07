@@ -265,15 +265,43 @@ describe("FlowCompilerClientLive", () => {
   );
 
   atHome(
-    "reports YAML that doesn't parse, and a document of the wrong form, without compiling",
+    "reports YAML that doesn't parse at the line it broke on, in a line of its own",
     () =>
       Effect.gen(function* () {
-        const broken = yield* compiling({ broken: "flow: [unclosed\n" }, "broken");
-        expect(broken.problems.length).toBeGreaterThan(0);
+        const text =
+          "flow: broken\nsubject: pull-request\ntrigger: []\nsteps:\n  - id: a\n    use: b\n    with: { c: [1, 2\n    in: {}\n";
 
-        const formless = yield* compiling({ formless: "flow: x\n" }, "formless");
+        const { problems, source } = yield* compiling({ broken: text }, "broken");
 
-        expect(formless.problems.length).toBe(1);
+        expect(Option.isNone(source)).toBe(true);
+        expect(problems.length).toBeGreaterThan(0);
+        expect(problems[0]?.line).toBeGreaterThanOrEqual(7);
+        expect(problems[0]?.path).toBe("");
+        expect(problems[0]?.message).not.toContain("\n");
+        expect(problems[0]?.message).not.toContain("at line");
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "reports a document of the wrong form at the key, in a line of its own",
+    () =>
+      Effect.gen(function* () {
+        const wrongUse = REVIEW_DOCUMENT.replace("use: pr.land", "use: 5");
+        const wrong = yield* compiling({ review: wrongUse }, "review");
+
+        const line = wrongUse.split("\n").findIndex((each) => each.includes("use: 5"));
+
+        expect(wrong.problems.map((each) => [each.line, each.path])).toEqual([
+          [line + 1, "steps[0].on.approve.steps[0].use"],
+        ]);
+        expect(wrong.problems[0]?.message).toBe("Expected string");
+
+        const lacking = yield* compiling({ lacking: "flow: lacking\n" }, "lacking");
+
+        expect(lacking.problems.map((each) => [each.line, each.path, each.message])).toEqual([
+          [1, "subject", "is missing"],
+        ]);
       }),
     TIMEOUT,
   );

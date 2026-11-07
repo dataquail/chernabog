@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import ts from "typescript";
 import YAML from "yaml";
 
@@ -236,7 +237,8 @@ steps:
         - next: { tasks: recorded.tasks, stack: latest.stack }
 `;
 
-export const documentOf = (source: string) => Result.getOrThrow(Compose.read(YAML.parse(source)));
+export const documentOf = (source: string) =>
+  Result.getOrThrow(Compose.read(Schema.decodeUnknownSync(Schema.Json)(YAML.parse(source))));
 
 // A generated flow's file, under node_modules, so it resolves the SDK and effect
 // as a repo's does and nothing that checks the source tree sees it. It goes

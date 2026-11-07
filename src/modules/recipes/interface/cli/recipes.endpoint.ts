@@ -292,9 +292,13 @@ const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
   ...unknown.map((name) => `no document named ${name} in .chernabog/documents/`),
   ...flows.flatMap(({ flow, outcome, problems }) => {
     if (outcome === "problems") {
-      return problems.map(
-        (problem) =>
-          `${problem.file}:${problem.line}:${problem.column}: ${problem.path}: ${problem.message}`,
+      return problems.map((problem) =>
+        [
+          `${problem.file}:${problem.line}:${problem.column}`,
+          // A problem of the document as a whole has no path to say.
+          ...Option.toArray(Option.liftPredicate(problem.path, (path) => path !== "")),
+          problem.message,
+        ].join(": "),
       );
     }
 

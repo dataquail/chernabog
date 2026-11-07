@@ -249,10 +249,24 @@ export const FlowCompilerClientLive = Layer.effect(
           typeChecked: false,
         });
 
-        const parsed = YAML.parseDocument(text);
+        // Its positions are ours to say, so without them and a code frame in its messages.
+        const lines = new YAML.LineCounter();
+        const parsed = YAML.parseDocument(text, { lineCounter: lines, prettyErrors: false });
 
         if (parsed.errors.length > 0) {
-          return onlyProblems(parsed.errors.map((error) => problemAt("", error.message)));
+          return onlyProblems(
+            parsed.errors.map((error) => {
+              const { col, line } = lines.linePos(error.pos[0]);
+
+              return new DocumentProblem({
+                file: shown,
+                line,
+                column: col,
+                path: "",
+                message: error.message,
+              });
+            }),
+          );
         }
 
         const contents = Schema.decodeUnknownOption(Schema.Json)(parsed.toJS());
@@ -265,7 +279,7 @@ export const FlowCompilerClientLive = Layer.effect(
         const read = compose.read(contents.value);
 
         if (Result.isFailure(read)) {
-          return onlyProblems([problemAt("", read.failure.message)]);
+          return onlyProblems(read.failure.map((each) => problemAt(each.path, each.message)));
         }
 
         const generated = compose.generate(read.success);

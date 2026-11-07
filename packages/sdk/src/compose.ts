@@ -12,10 +12,13 @@
 // left to `tsc` on what `generate` writes.
 
 import { printJson } from "@chernabog/core";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type * as SchemaIssue from "effect/SchemaIssue";
 
 import { catalogue, laneScopes, loopStates, sources, subjects } from "./blocks.ts";
 
@@ -134,8 +137,98 @@ export const FlowDocument = Schema.Struct({
 
 export type FlowDocument = typeof FlowDocument.Type;
 
-// A document's shape: whatever a parser made of its text, or why it isn't one.
-export const read = Schema.decodeUnknownResult(FlowDocument);
+const pathTo = (keys: ReadonlyArray<PropertyKey>) =>
+  keys.reduce<string>((path, key) => {
+    if (Predicate.isNumber(key)) {
+      return `${path}[${key}]`;
+    }
+
+    if (path === "") {
+      return String(key);
+    }
+
+    return `${path}.${String(key)}`;
+  }, "");
+
+// One thing a document's form got wrong, with how far into the document it got.
+type Mismatch = {
+  readonly keys: ReadonlyArray<PropertyKey>;
+  readonly message: string;
+  readonly missing: boolean;
+};
+
+const saysMoreThan = (each: Mismatch, other: Mismatch) =>
+  each.keys.length > other.keys.length ||
+  (each.keys.length === other.keys.length && other.missing && !each.missing);
+
+// The one that says the most: the one furthest in, and of those, a value that's
+// wrong rather than a key that isn't there.
+const furthest = (mismatches: ReadonlyArray<Mismatch>) =>
+  mismatches.reduce<Option.Option<Mismatch>>(
+    (best, each) =>
+      Option.some(
+        Option.match(best, {
+          onNone: () => each,
+          onSome: (other) => {
+            if (saysMoreThan(each, other)) {
+              return each;
+            }
+
+            return other;
+          },
+        }),
+      ),
+    Option.none(),
+  );
+
+// A step can take several forms, so a mismatch has one account for each. The
+// form it got furthest into is the one it was meant to be. When it got no further
+// than lacking a key of each, it's none of them, and saying which key would
+// send its author after the first form that happened to be listed.
+const mismatchOf = (
+  issue: SchemaIssue.Issue,
+  keys: ReadonlyArray<PropertyKey>,
+): Option.Option<Mismatch> => {
+  const furthestOf = (issues: ReadonlyArray<SchemaIssue.Issue>) =>
+    furthest(issues.flatMap((each) => Option.toArray(mismatchOf(each, keys))));
+
+  return Match.value(issue).pipe(
+    Match.tag("Pointer", (pointer) => mismatchOf(pointer.issue, [...keys, ...pointer.path])),
+    Match.tag("Composite", (composite) => furthestOf(composite.issues)),
+    Match.tag("AnyOf", (anyOf) => {
+      const none = { keys, message: "isn't any of the forms this can take", missing: false };
+
+      return Option.some(
+        Option.match(furthestOf(anyOf.issues), {
+          onNone: () => none,
+          onSome: (best) => {
+            if (best.missing && best.keys.length <= keys.length + 1) {
+              return none;
+            }
+
+            return best;
+          },
+        }),
+      );
+    }),
+    Match.tag("MissingKey", () => Option.some({ keys, message: "is missing", missing: true })),
+    Match.orElse((other) =>
+      Option.some({ keys, message: new Schema.SchemaError(other).message, missing: false }),
+    ),
+  );
+};
+
+const decodeDocument = Schema.decodeUnknownResult(FlowDocument);
+
+// A document's shape: whatever a parser made of its text, or what is wrong with
+// its form and where.
+export const read = (value: Schema.Json): Result.Result<FlowDocument, ReadonlyArray<Problem>> =>
+  Result.mapError(decodeDocument(value), (error) =>
+    Option.toArray(mismatchOf(error.issue, [])).map(({ keys, message }) => ({
+      path: pathTo(keys),
+      message,
+    })),
+  );
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
