@@ -64,6 +64,10 @@ browser bundle of it failed on `bun:sqlite`.
   which serves the page and the socket's routes under `/api/`.
 - A schema the dashboard needs and the protocol doesn't carry yet is added to
   the protocol, and its module's `<module>.contracts.ts`, not to the package.
+- What every client must read the same way, such as a run's history put on
+  its plan (`RunOnPlan`) and how lanes lay out (`LaneLayouts`), is a pure
+  domain service the contracts re-export beside the value objects, so the
+  dashboard and the TUI never work it out for themselves.
 - The bundle is built unminified, as the rest of the binary is.
 
 ## What the epic changed

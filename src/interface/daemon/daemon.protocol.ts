@@ -17,6 +17,7 @@ import {
   CancelTarget,
   FoundPlan,
   HoldView,
+  LaneLayouts,
   PullRequestOpened,
   RunEnteredNode,
   RunEnteredStep,
@@ -27,6 +28,7 @@ import {
   RunMarkersReleased,
   RunMarkerView,
   RunNeedsAttention,
+  RunOnPlan,
   RunReachedEnd,
   RunStarted,
   RunTookBranch,
@@ -209,6 +211,25 @@ export {
   RunReachedEnd,
   RunTookBranch,
 };
+
+// A run's history put on its plan, each node's state, rounds and lanes, and
+// how lanes lay out beside one another: worked out once, in the runs
+// module's domain, so the dashboard and the TUI draw a run the same way.
+export { LaneLayouts, RunOnPlan };
+
+export type {
+  BranchOnPlan,
+  LaidOutLane,
+  LaneEdge,
+  LaneLayout,
+  LaneNeeds,
+  LaneOnPlan,
+  NodeOnPlan,
+  NodeState,
+  OffPlan,
+  RoundOnPlan,
+  RunOnPlanFacts,
+} from "../../modules/runs/runs.contracts.ts";
 
 // GET /plans/:hash: the plan runs started with, by the hash a run's history
 // names; none when no run started with it.
