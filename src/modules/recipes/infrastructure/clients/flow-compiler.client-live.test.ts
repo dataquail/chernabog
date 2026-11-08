@@ -249,6 +249,32 @@ describe("FlowCompilerClientLive", () => {
     TIMEOUT,
   );
 
+  // An epic's block on a pull request's flow would fail tsc, a pull request's
+  // number where an epic's goes; check says why first, and tsc isn't asked.
+  atHome(
+    "refuses a block its subject doesn't suit in place of tsc's type error",
+    () =>
+      Effect.gen(function* () {
+        const text = REVIEW_DOCUMENT.replace(
+          "steps:\n",
+          "steps:\n  - id: claimed\n    use: epic.claim\n    in: { epic: trigger.pr }\n",
+        );
+
+        const compiled = yield* compiling({ review: text }, "review");
+
+        expect(Option.isNone(compiled.source)).toBe(true);
+        expect(compiled.problems.map((each) => [each.line, each.path, each.message])).toEqual([
+          [
+            7,
+            "steps[0].use",
+            "epic.claim suits a flow on epic, and this is a flow on pull-request",
+          ],
+        ]);
+        expect(compiled.typeChecked).toBe(false);
+      }),
+    TIMEOUT,
+  );
+
   atHome(
     "traces a type error from the generated flow back to the wire in the document",
     () =>

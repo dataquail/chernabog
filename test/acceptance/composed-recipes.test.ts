@@ -256,6 +256,46 @@ describe("chernabog recipes blocks", () => {
     expect(named.output).not.toContain('"name":"agent.implement"');
   });
 
+  test("says which subjects each block suits, and lists only those for a subject", async () => {
+    const named = await sandbox.runCli(["recipes", "blocks", "epic.claim", "author.worktree"]);
+
+    expect(named.code).toBe(0);
+    expect(named.output).toContain("  suits: epic\n");
+    expect(named.output).toContain("  suits: changes-asked, conflict\n");
+
+    const json = await sandbox.runCli(["recipes", "blocks", "epic.claim", "--json"]);
+
+    expect(json.code).toBe(0);
+    expect(json.output).toContain('"subjects":["epic"]');
+
+    const forReview = await sandbox.runCli(["recipes", "blocks", "--subject", "pull-request"]);
+
+    expect(forReview.code).toBe(0);
+    expect(forReview.output).toContain("pr.land: ");
+    expect(forReview.output).toContain("review.requested: ");
+    expect(forReview.output).not.toContain("agent.implement: ");
+    expect(forReview.output).not.toContain("issues.queued: ");
+    expect(forReview.output).not.toContain("epic.claim: ");
+
+    const forReviewJson = await sandbox.runCli([
+      "recipes",
+      "blocks",
+      "--subject",
+      "pull-request",
+      "--json",
+    ]);
+
+    expect(forReviewJson.code).toBe(0);
+    expect(forReviewJson.output).toContain('"name":"pr.land"');
+    expect(forReviewJson.output).not.toContain('"name":"agent.implement"');
+    expect(forReviewJson.output).not.toContain('"name":"issues.queued"');
+
+    const unknown = await sandbox.runCli(["recipes", "blocks", "--subject", "release"]);
+
+    expect(unknown.code).not.toBe(0);
+    expect(unknown.output).toContain("no subject named release; there are");
+  });
+
   test("--json gives an agent the catalogue to read", async () => {
     const { code, output } = await sandbox.runCli(["recipes", "blocks", "--json"]);
 
