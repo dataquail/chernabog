@@ -5,15 +5,20 @@
 // Bun's runtime; runs.platform.ts, which publishes the engine, would.
 
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
-export { FlowPlan, PlanNode } from "./domain/plan/flow-plan.value-object.ts";
+export { FlowPlan, FoundPlan, PlanNode } from "./domain/plan/flow-plan.value-object.ts";
+export { NodeRef } from "./domain/plan/node-ref.value-object.ts";
 export { CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
 export {
   PullRequestOpened,
+  RunEnteredNode,
   RunEnteredStep,
   RunFinished,
+  RunFinishedNode,
   RunFinishedStep,
   RunNeedsAttention,
+  RunReachedEnd,
   RunStarted,
+  RunTookBranch,
 } from "./domain/run/run.events.ts";
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";

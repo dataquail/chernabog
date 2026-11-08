@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { NodeRef } from "../plan/node-ref.value-object.ts";
 import { StepOutcome } from "./step-outcome.value-object.ts";
 
 // A step a run entered, and when: the path a run took, which its current
@@ -14,6 +15,9 @@ export class RunStepEntity extends Schema.Class<RunStepEntity, { readonly brand:
 )({
   runId: RunId,
   step: Schema.String,
+  // Where in its plan the run entered the step; none for a flow with no plan,
+  // and for a step entered before steps kept their nodes.
+  node: Schema.Option(NodeRef),
   // ISO timestamp.
   enteredAt: Schema.String,
   // ISO timestamp.

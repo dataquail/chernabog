@@ -94,4 +94,54 @@ describe("run log lines", () => {
       next: old.length,
     });
   });
+
+  describe("tagged with the plan node they were written in", () => {
+    const node = '{"id":"agent","round":2,"lane":"task-1"}';
+
+    // A run of a flow with a plan: the main line outside any node, a task's
+    // steps in theirs, and a line written in a node but no step.
+    const withNodes = [
+      RunLogLines.entry(T, Option.none(), "claimed #12"),
+      RunLogLines.entry(
+        T,
+        Option.some("implement#task-1"),
+        "step: implement#task-1",
+        Option.some(node),
+      ),
+      RunLogLines.entry(T, Option.some("implement#task-1"), "a\tb", Option.some(node)),
+      RunLogLines.entry(T, Option.none(), "between steps", Option.some('{"id":"ready"}')),
+    ]
+      .map((line) => `${line}\n`)
+      .join("");
+
+    test("a line carries its node after its step, and a person reads it without either", () => {
+      expect(withNodes.split("\n")[1]).toBe(
+        `${T}\timplement#task-1\t@${node}\tstep: implement#task-1`,
+      );
+      expect(RunLogLines.untagged(withNodes).split("\n").slice(0, 4)).toEqual([
+        `${T} claimed #12`,
+        `${T} step: implement#task-1`,
+        `${T} a\tb`,
+        `${T} between steps`,
+      ]);
+    });
+
+    test("a line's node is its tag's; none for a line with no node, and for an old line", () => {
+      expect(withNodes.split("\n").slice(0, 4).map(RunLogLines.nodeOf)).toEqual([
+        Option.none(),
+        Option.some(node),
+        Option.some(node),
+        Option.some('{"id":"ready"}'),
+      ]);
+      expect(RunLogLines.nodeOf(`${T}\timplement\tstep: implement`)).toEqual(Option.none());
+      expect(RunLogLines.nodeOf(`${T} step: implement`)).toEqual(Option.none());
+    });
+
+    test("a step's lines are found by its tag, whatever node they carry", () => {
+      expect(RunLogLines.linesOfStep(withNodes, "implement#task-1", "tagged", 0).text).toEqual(
+        Option.some(`${T} step: implement#task-1\n${T} a\tb`),
+      );
+      expect(RunLogLines.stepLogsOf(Option.some(withNodes), true)).toBe("tagged");
+    });
+  });
 });

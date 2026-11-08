@@ -15,16 +15,21 @@ import {
 import {
   ActiveRun,
   CancelTarget,
+  FoundPlan,
   HoldView,
   PullRequestOpened,
+  RunEnteredNode,
   RunEnteredStep,
   RunFinished,
+  RunFinishedNode,
   RunFinishedStep,
   RunHistory,
   RunMarkersReleased,
   RunMarkerView,
   RunNeedsAttention,
+  RunReachedEnd,
   RunStarted,
+  RunTookBranch,
   RunView,
   SkipView,
 } from "../../modules/runs/runs.contracts.ts";
@@ -190,9 +195,24 @@ export type AttachOpened = typeof AttachOpened.Type;
 
 export const RunReply = Schema.OptionFromNullOr(RunView);
 
-// GET /runs/:id/history: the steps a run entered and the signals it waits on.
+// GET /runs/:id/history: the steps a run entered and the signals it waits on,
+// and for a run with a plan, its plan's hash and where in it the run went.
 // And the events about one run that the dashboard's page of it listens for.
-export { RunEnteredStep, RunFinished, RunFinishedStep, RunHistory, RunNeedsAttention };
+export {
+  RunEnteredNode,
+  RunEnteredStep,
+  RunFinished,
+  RunFinishedNode,
+  RunFinishedStep,
+  RunHistory,
+  RunNeedsAttention,
+  RunReachedEnd,
+  RunTookBranch,
+};
+
+// GET /plans/:hash: the plan runs started with, by the hash a run's history
+// names; none when no run started with it.
+export { FoundPlan };
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
 // on; without one, the last one asked for, else 4848.
@@ -274,6 +294,10 @@ export const DaemonEvent = Schema.Union([
   RunStarted.schema,
   RunEnteredStep.schema,
   RunFinishedStep.schema,
+  RunEnteredNode.schema,
+  RunFinishedNode.schema,
+  RunTookBranch.schema,
+  RunReachedEnd.schema,
   RunNeedsAttention.schema,
   RunFinished.schema,
   PullRequestOpened.schema,
@@ -296,6 +320,10 @@ const sent = {
   RunStarted: true,
   RunEnteredStep: true,
   RunFinishedStep: true,
+  RunEnteredNode: true,
+  RunFinishedNode: true,
+  RunTookBranch: true,
+  RunReachedEnd: true,
   RunNeedsAttention: true,
   RunFinished: true,
   PullRequestOpened: true,

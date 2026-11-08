@@ -2118,12 +2118,20 @@ const emitRemembered = (remembered: Remembered, name: string, indent: string) =>
       .map((reference) => `${indent}failureContext.${field} = Option.some(${reference});`),
   );
 
-const emitEnd = (step: EndStep, indent: string) => {
+// The plan node a step runs at, in the round of the repeat it is in: what a
+// generated flow hands PlanNodes, so a run records where in its plan it went.
+// `round` is the code for the round, `Option.none()` outside any repeat.
+const atNode = (id: string, round: string) => `PlanNodes.at(${printJson(id)}, ${round})`;
+
+// An end records itself at its node, its path, which the plan names it by.
+const emitEnd = (step: EndStep, path: string, round: string, indent: string) => {
+  const reached = `${indent}yield* PlanNodes.ended(${printJson(path)}, ${round});`;
+
   if (step.end === "needs-human") {
-    return `${indent}return yield* new NeedsHuman({ reason: ${step.reason} });`;
+    return [reached, `${indent}return yield* new NeedsHuman({ reason: ${step.reason} });`];
   }
 
-  return `${indent}return ${step.summary ?? "void 0"};`;
+  return [reached, `${indent}return ${step.summary ?? "void 0"};`];
 };
 
 const emitBranch = (
@@ -2131,6 +2139,7 @@ const emitBranch = (
   step: UseStep,
   outcome: string,
   branch: Branch,
+  round: string,
   indent: string,
   body: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
@@ -2150,14 +2159,21 @@ const emitBranch = (
   return [
     `${indent}const ${taken} = ${reading};`,
     `${indent}if (Option.isSome(${taken})) {`,
+    `${indent}  yield* PlanNodes.branched(${printJson(step.id)}, ${round}, ${printJson(outcome)});`,
     ...bound,
     ...body,
     `${indent}}`,
   ];
 };
 
-const emitCall = (step: UseStep, input: string, overrides: string, indent: string) => {
-  const call = `yield* catalogue[${printJson(step.use)}].run(${input}${overrides})`;
+const emitCall = (
+  step: UseStep,
+  input: string,
+  overrides: string,
+  round: string,
+  indent: string,
+) => {
+  const call = `yield* catalogue[${printJson(step.use)}].run(${input}${overrides}).pipe(${atNode(step.id, round)})`;
 
   return Option.match(Option.fromUndefinedOr(step.if), {
     onNone: () => [`${indent}const ${step.id} = ${call};`],
@@ -2170,6 +2186,7 @@ const emitCall = (step: UseStep, input: string, overrides: string, indent: strin
 const emitUse = (
   remembered: Remembered,
   step: UseStep,
+  round: string,
   indent: string,
   bodyOf: (outcome: string, branch: Branch) => ReadonlyArray<string>,
 ) => {
@@ -2191,10 +2208,10 @@ const emitUse = (
   });
 
   return [
-    ...emitCall(step, input, overrides, indent),
+    ...emitCall(step, input, overrides, round, indent),
     ...emitRemembered(remembered, step.id, indent),
     ...branchesOf(step).flatMap(([outcome, branch]) =>
-      emitBranch(remembered, step, outcome, branch, indent, bodyOf(outcome, branch)),
+      emitBranch(remembered, step, outcome, branch, round, indent, bodyOf(outcome, branch)),
     ),
   ];
 };
@@ -2217,7 +2234,7 @@ const wiresOf = (step: StageStep) =>
     ),
   );
 
-const emitStage = (remembered: Remembered, step: StageStep, indent: string) => {
+const emitStage = (remembered: Remembered, step: StageStep, round: string, indent: string) => {
   const wires = wiresOf(step);
 
   const input = emitObject([
@@ -2232,7 +2249,7 @@ const emitStage = (remembered: Remembered, step: StageStep, indent: string) => {
     () => "{}",
   );
 
-  const call = `yield* runStage(${printJson(step.stage)}, ${stageImport(step.stage)}, ${input}, ${printJson(step.failure ?? {})}, ${key})`;
+  const call = `yield* runStage(${printJson(step.stage)}, ${stageImport(step.stage)}, ${input}, ${printJson(step.failure ?? {})}, ${key}).pipe(${atNode(step.id, round)})`;
 
   const ran = Option.match(Option.fromUndefinedOr(step.if), {
     onNone: () => `${indent}const ${step.id} = ${call};`,
@@ -2276,32 +2293,42 @@ const emitNext = (step: NextStep, indent: string) => [
   `${indent}continue;`,
 ];
 
-const emitForEach = (step: ForEachStep, indent: string, body: ReadonlyArray<string>) => [
+const emitForEach = (
+  step: ForEachStep,
+  round: string,
+  indent: string,
+  body: ReadonlyArray<string>,
+) => [
   `${indent}const ${step.id} = yield* Effect.forEach(${step.forEach}, (${step.as}) =>`,
   `${indent}  lanes[${printJson(step.scope)}](${step.as}, (failureContext) =>`,
   `${indent}    Effect.gen(function* () {`,
   ...body,
   `${indent}    }),`,
   `${indent}  ),`,
-  `${indent}{ concurrency: ${step.atOnce} });`,
+  `${indent}{ concurrency: ${step.atOnce} }).pipe(${atNode(step.id, round)});`,
 ];
 
 type EmitSteps = (
   remembered: Remembered,
   steps: ReadonlyArray<Step>,
   path: string,
+  round: string,
   indent: string,
 ) => ReadonlyArray<string>;
+
+// A repeat's steps run in its rounds: the generated loop's `round`.
+const IN_ROUND = "Option.some(round)";
 
 const emitStep = (
   emitSteps: EmitSteps,
   remembered: Remembered,
   step: Step,
   path: string,
+  round: string,
   indent: string,
 ): ReadonlyArray<string> => {
   if (isEnd(step)) {
-    return [emitEnd(step, indent)];
+    return emitEnd(step, path, round, indent);
   }
 
   if (isNext(step)) {
@@ -2316,33 +2343,34 @@ const emitStep = (
     return emitRepeat(
       step,
       indent,
-      emitSteps(remembered, step.repeat.steps, `${path}.repeat.steps`, `${indent}  `),
+      emitSteps(remembered, step.repeat.steps, `${path}.repeat.steps`, IN_ROUND, `${indent}  `),
     );
   }
 
   if (isForEach(step)) {
     return emitForEach(
       step,
+      round,
       indent,
-      emitSteps(step.failureContext ?? {}, step.steps, `${path}.steps`, `${indent}      `),
+      emitSteps(step.failureContext ?? {}, step.steps, `${path}.steps`, round, `${indent}      `),
     );
   }
 
   if (isStage(step)) {
-    return emitStage(remembered, step, indent);
+    return emitStage(remembered, step, round, indent);
   }
 
-  return emitUse(remembered, step, indent, (outcome, branch) =>
-    emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, `${indent}  `),
+  return emitUse(remembered, step, round, indent, (outcome, branch) =>
+    emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, round, `${indent}  `),
   );
 };
 
 // Each step under a comment naming where in the document it came from, which
 // is how `tsc`'s word on this file finds its way back there.
-const emitSteps: EmitSteps = (remembered, steps, path, indent) =>
+const emitSteps: EmitSteps = (remembered, steps, path, round, indent) =>
   steps.flatMap((step, index) => [
     `${indent}// ${path}[${index}]`,
-    ...emitStep(emitSteps, remembered, step, `${path}[${index}]`, indent),
+    ...emitStep(emitSteps, remembered, step, `${path}[${index}]`, round, indent),
   ]);
 
 const emitSource = (source: FlowDocument["trigger"][number]) => {
@@ -2565,7 +2593,7 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
 
   return [
     `// Generated from the flow document ${document.flow}; change the document, not this file.`,
-    `import { Blocks, type Compose, NeedsHuman } from ${printJson(sdk)};`,
+    `import { Blocks, type Compose, NeedsHuman, PlanNodes } from ${printJson(sdk)};`,
     `import * as Effect from "effect/Effect";`,
     `import * as Option from "effect/Option";`,
     ...stageImports,
@@ -2592,7 +2620,13 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
     "",
     `      return yield* ${subject}.scope(trigger, { claims: ${blocks.some((block) => CLAIMING.includes(block))} }, (failureContext) =>`,
     "        Effect.gen(function* () {",
-    ...emitSteps(document.failureContext ?? {}, document.steps, "steps", "          "),
+    ...emitSteps(
+      document.failureContext ?? {},
+      document.steps,
+      "steps",
+      "Option.none()",
+      "          ",
+    ),
     "        }),",
     "      );",
     "    }),",

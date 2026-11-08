@@ -326,6 +326,23 @@ export const CurrentActivity = Context.Reference<Option.Option<string>>(
   },
 );
 
+// Where in its flow's plan a fiber is: the plan node it runs in, by its id
+// (a flow document's step id, or the document path of a step with none), the
+// round of the `repeat` it runs in, and the lane of the `forEach`. A flow
+// compiled from a document provides it around each block, stage and lane; a
+// flow written in TypeScript has no plan, so its fibers are in none.
+export type NodeAt = {
+  readonly id: string;
+  readonly round: Option.Option<number>;
+  readonly lane: Option.Option<string>;
+};
+
+// The plan node a fiber is in, as an activity's run log and its step's record
+// carry it. None outside any, and in a flow with no plan.
+export const CurrentNode = Context.Reference<Option.Option<NodeAt>>("@chernabog/sdk/CurrentNode", {
+  defaultValue: () => Option.none(),
+});
+
 // How an activity's execute ended, for the run log: none when it was
 // interrupted, as a run stopping or a sibling failing interrupts it, since it
 // runs again when the run resumes.

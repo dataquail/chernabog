@@ -71,6 +71,8 @@ import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/reposito
 import { RunCreatedIssuesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-created-issues.repository-live.ts";
 import { RunLanesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-live.ts";
 import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
+import { RunNodesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-nodes.repository-live.ts";
+import { RunPlansRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-plans.repository-live.ts";
 import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/runs.repository-live.ts";
@@ -1155,6 +1157,8 @@ export const StateAt = (home: string) =>
     RunCreatedIssuesRepositoryLive,
     RunLanesRepositoryLive,
     RunMarkersRepositoryLive,
+    RunNodesRepositoryLive,
+    RunPlansRepositoryLive,
     RunStepsRepositoryLive,
     RunWaitsRepositoryLive,
     SkipsRepositoryLive,

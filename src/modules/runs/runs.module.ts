@@ -14,6 +14,8 @@ import { HoldsRepositoryLive } from "./infrastructure/repositories/holds.reposit
 import { RunCreatedIssuesRepositoryLive } from "./infrastructure/repositories/run-created-issues.repository-live.ts";
 import { RunLanesRepositoryLive } from "./infrastructure/repositories/run-lanes.repository-live.ts";
 import { RunMarkersRepositoryLive } from "./infrastructure/repositories/run-markers.repository-live.ts";
+import { RunNodesRepositoryLive } from "./infrastructure/repositories/run-nodes.repository-live.ts";
+import { RunPlansRepositoryLive } from "./infrastructure/repositories/run-plans.repository-live.ts";
 import { RunStepsRepositoryLive } from "./infrastructure/repositories/run-steps.repository-live.ts";
 import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.repository-live.ts";
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
@@ -51,6 +53,8 @@ const RunsStoresLive = Layer.mergeAll(
   RunCreatedIssuesRepositoryLive,
   RunLanesRepositoryLive,
   RunMarkersRepositoryLive,
+  RunNodesRepositoryLive,
+  RunPlansRepositoryLive,
   RunStepsRepositoryLive,
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,

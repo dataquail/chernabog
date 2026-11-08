@@ -11,7 +11,7 @@ import { type Specification } from "../../../../kernel/specification.ts";
 import { type RunStepEntity } from "../../domain/run/run-step.entity.ts";
 import { RunStepsRepository } from "../../domain/run/run-steps.repository.ts";
 import { criteriaToWhere } from "./criteria-to-sql.ts";
-import { StepColumns, stepColumns, toEntity } from "./run-step.mapper.ts";
+import { nodeColumns, StepColumns, stepColumns, toEntity } from "./run-step.mapper.ts";
 
 const ColumnName = Schema.Struct({ name: Schema.String });
 
@@ -37,6 +37,13 @@ export const RunStepsRepositoryLive = Layer.effect(
       yield* sql`ALTER TABLE om_steps ADD COLUMN outcome TEXT`;
     }
 
+    // And one from before steps kept their nodes; its steps have none.
+    if (!columns.some((column) => column.name === "node")) {
+      yield* sql`ALTER TABLE om_steps ADD COLUMN node TEXT`;
+      yield* sql`ALTER TABLE om_steps ADD COLUMN node_round INTEGER`;
+      yield* sql`ALTER TABLE om_steps ADD COLUMN node_lane TEXT`;
+    }
+
     // Queries this adapter wrote against its own table: a failure is a bug, not a condition.
     // Rows are added in the order a run enters them, so rowid breaks a tie in time.
     const findMany = (spec: Specification<RunStepEntity>) =>
@@ -49,11 +56,14 @@ export const RunStepsRepositoryLive = Layer.effect(
         Effect.orDie,
       );
 
-    const insertOne = (step: RunStepEntity) =>
-      sql`INSERT INTO om_steps (run_id, step, entered_at, finished_at, outcome) VALUES (${step.runId}, ${step.step}, ${step.enteredAt}, ${Option.getOrNull(step.finishedAt)}, ${Option.getOrNull(step.outcome)})`.pipe(
+    const insertOne = (step: RunStepEntity) => {
+      const { lane, node, round } = nodeColumns(step);
+
+      return sql`INSERT INTO om_steps (run_id, step, entered_at, finished_at, outcome, node, node_round, node_lane) VALUES (${step.runId}, ${step.step}, ${step.enteredAt}, ${Option.getOrNull(step.finishedAt)}, ${Option.getOrNull(step.outcome)}, ${node}, ${round}, ${lane})`.pipe(
         Effect.asVoid,
         Effect.orDie,
       );
+    };
 
     // A step is the run's entry into it at its time.
     const updateOne = (step: RunStepEntity) =>

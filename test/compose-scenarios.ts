@@ -22,6 +22,7 @@ import {
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
+import type { BunServices } from "@effect/platform-bun";
 import { expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -43,6 +44,7 @@ import {
   PULL,
   repo,
   repoFake,
+  type RuntimeServices,
   runUntil,
   stackOn,
 } from "./sdk-fakes.ts";
@@ -118,6 +120,12 @@ const inRepo = (shared: FlowInput) => ({
   personas: Arr.map(repo.personas, (persona) => ({ ...persona, shared })),
 });
 
+// What a test reads of a run as it stops being followed, beside what observe
+// compares: its history and its log, say. Nothing, unless a test asks.
+export type Inspect = (
+  run: EngineRun,
+) => Effect.Effect<void, never, RuntimeServices | BunServices.BunServices>;
+
 export const observe = (
   flow: Flow,
   name: string,
@@ -125,6 +133,7 @@ export const observe = (
   work: WorkItem,
   wake?: Wake | Parks,
   settings: FlowInput = {},
+  inspect: Inspect = () => Effect.void,
 ) =>
   Effect.gen(function* () {
     const fake = setup();
@@ -155,6 +164,7 @@ export const observe = (
             steps = [...new Set(history.steps.map((step) => stepNamed(step.step)))];
             lanes = (history.lanes ?? []).map((lane) => [lane.lane, lane.needs] as const);
           }),
+          Effect.andThen(inspect(run)),
         );
 
         if (run.status !== "running") {

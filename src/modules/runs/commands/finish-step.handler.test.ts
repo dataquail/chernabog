@@ -18,6 +18,7 @@ const entered = (step: string, enteredAt: string, ended: Option.Option<string> =
   RunStepEntity.make({
     runId: a,
     step,
+    node: Option.none(),
     enteredAt,
     finishedAt: ended,
     outcome: Option.as(ended, "ok"),

@@ -395,6 +395,8 @@ Compile with the `@chernabog/sdk` your repo pins, from `.chernabog/node_modules`
 
 The flow file also exports the document's **plan**: its steps as data, each with its id (or, for a step without one, such as an `end`, its path in the document), the block or stage it runs, its wiring and its outcome branches, and a hash of all of it, which stays the same however often the document compiles. Chernabog draws a run on its plan. A flow written in TypeScript has none.
 
+A run keeps the plan of the flow it started with, so editing the document never redraws an old run. It records where in the plan each of its steps ran: the step's node, and the round of the `repeat` and the lane of the `forEach` it ran in. It records too each node it entered and left, a block that runs no step of its own included, each outcome branch it took and each `end` it reached, once each, however often a resumed run passes them. `GET /runs/<id>/history` answers them with the plan's hash, and `GET /plans/<hash>` answers the plan. A flow compiled before this records none of it; compile it again to have its runs record it.
+
 A problem is reported at its line in the document, and a document with problems leaves its flow file as it was. Its wires' types are checked only once it has no other problems, so fixing those can show more, and the command says so:
 
 ```

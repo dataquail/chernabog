@@ -10,6 +10,7 @@ const step = (runId: string, name: string) =>
   RunStepEntity.make({
     runId: RunId.make(runId),
     step: name,
+    node: Option.none(),
     enteredAt: "2026-10-20T00:00:00Z",
     finishedAt: Option.none(),
     outcome: Option.none(),
