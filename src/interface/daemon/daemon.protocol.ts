@@ -15,6 +15,7 @@ import {
 import {
   ActiveRun,
   CancelTarget,
+  FlowPlan,
   FoundPlan,
   HoldView,
   LaneLayouts,
@@ -72,6 +73,9 @@ export const FlowStatus = Schema.Struct({
   // For a flow imported from a recipe package, the package and its version,
   // as `@acme/recipes@2.1.0`; absent for a flow in the repo.
   source: Schema.optionalKey(Schema.String),
+  // The plan of a flow compiled from a flow document, which the dashboard's
+  // flows page draws; absent for a flow written in TypeScript.
+  plan: Schema.optionalKey(FlowPlan),
 });
 
 // The accounts a persona spends in a repo: the one its runs use, and its own
@@ -232,10 +236,11 @@ export type {
 } from "../../modules/runs/runs.contracts.ts";
 
 // GET /plans/:hash: the plan runs started with, by the hash a run's history
-// names, and its nodes; none when no run started with it.
-export { FoundPlan };
+// names, and its nodes; none when no run started with it. A flow's own plan,
+// on its status.
+export { FlowPlan, FoundPlan };
 
-export type { PlanNode } from "../../modules/runs/runs.contracts.ts";
+export type { PlanBranch, PlanNode } from "../../modules/runs/runs.contracts.ts";
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
 // on; without one, the last one asked for, else 4848.

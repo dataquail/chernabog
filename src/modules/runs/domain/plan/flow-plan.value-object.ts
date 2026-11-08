@@ -7,8 +7,9 @@ import * as Schema from "effect/Schema";
 // Each node has its step's id, or for a step with none (an end, a next, an
 // if) its path in the document, which it also carries
 // (`steps[2].on.approve.steps[0]`), and says what it is: the block or stage
-// a step runs and its wiring, with its outcome branches by outcome; how an
-// end ends; a repeat's state and body; what a next carries to the next round;
+// a step runs and its wiring, and what a block does, with its outcome
+// branches by outcome; how an end ends; a repeat's state and body; what a
+// next carries to the next round;
 // a forEach's items, what it names each, its scope and its lane's steps; an
 // if's condition, over the step it runs; and what a first chooses between.
 
@@ -33,7 +34,7 @@ type NodeOf<Kind extends string, Fields> = {
 } & Fields;
 
 export type PlanNode =
-  | NodeOf<"use", { readonly block: string } & Branched>
+  | NodeOf<"use", { readonly block: string; readonly about?: string } & Branched>
   | NodeOf<"stage", { readonly stage: string } & Branched>
   | NodeOf<"end", { readonly end: "done"; readonly summary?: string }>
   | NodeOf<"end", { readonly end: "needs-human"; readonly reason: string }>
@@ -71,7 +72,14 @@ const node = <Kind extends string>(kind: Kind) => ({
 const branched = { in: Wiring, with: Wiring, branches: Schema.Array(PlanBranch) };
 
 export const PlanNode: Schema.Codec<PlanNode> = Schema.Union([
-  Schema.Struct({ ...node("use"), block: Schema.String, ...branched }),
+  Schema.Struct({
+    ...node("use"),
+    block: Schema.String,
+    // What the block does, for a person reading the plan; absent from a plan
+    // compiled before plans carried it.
+    about: Schema.optionalKey(Schema.String),
+    ...branched,
+  }),
   Schema.Struct({ ...node("stage"), stage: Schema.String, ...branched }),
   Schema.Struct({
     ...node("end"),

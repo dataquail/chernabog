@@ -11,10 +11,12 @@
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
+import { useState } from "react";
 
 import type { DaemonStatus, RepoStatus } from "#daemon/protocol";
 
 import { flowSwitch, type ScheduleControl, scheduleField } from "./controls.ts";
+import { PlanView } from "./plan-canvas.tsx";
 import type { Attempt } from "./settings.ts";
 import { either, present } from "./show.tsx";
 import { When } from "./time.tsx";
@@ -92,6 +94,10 @@ export const flowEntries = (status: DaemonStatus): ReadonlyArray<FlowEntry> =>
     ]),
   );
 
+// A flow entry's key: its repo, its name and the persona it runs as.
+const keyOf = (entry: FlowEntry) =>
+  `${entry.repo.name}/${entry.flow.name}@${Option.getOrElse(optional(entry.flow.persona), () => "")}`;
+
 // The persona's own schedule: enter sends what the field holds.
 const ScheduleField = ({
   act,
@@ -160,14 +166,22 @@ const LastSkip = ({ now, skip }: { readonly now: number; readonly skip: Option.O
     </div>
   ));
 
+// Which flow's plan the page shows, and how a row shows its own.
+type PlanChoice = {
+  readonly shown: Option.Option<string>;
+  readonly show: (key: string) => void;
+};
+
 const FlowRow = ({
   act,
   entry,
   now,
+  plan,
 }: {
   readonly act: Act;
   readonly entry: FlowEntry;
   readonly now: number;
+  readonly plan: PlanChoice;
 }) => {
   const { flow, repo, skip } = entry;
   const control = flowSwitch(repo, flow);
@@ -184,7 +198,18 @@ const FlowRow = ({
             act(control.send(event.currentTarget.checked));
           }}
         />{" "}
-        <strong>{flow.name}</strong>
+        <strong>{flow.name}</strong>{" "}
+        <button
+          type="button"
+          className="show-plan"
+          aria-pressed={Option.contains(plan.shown, keyOf(entry))}
+          aria-label={`show the plan of ${flow.name}`}
+          onClick={() => {
+            plan.show(keyOf(entry));
+          }}
+        >
+          plan
+        </button>
         {present(optional(flow.source), (source) => (
           <div className="muted">{source}</div>
         ))}
@@ -221,10 +246,12 @@ const FlowTable = ({
   act,
   entries,
   now,
+  plan,
 }: {
   readonly act: Act;
   readonly entries: ReadonlyArray<FlowEntry>;
   readonly now: number;
+  readonly plan: PlanChoice;
 }) => (
   <div className="scroll">
     <table className="flows">
@@ -241,16 +268,36 @@ const FlowTable = ({
       </thead>
       <tbody>
         {entries.map((entry) => (
-          <FlowRow
-            key={`${entry.repo.name}/${entry.flow.name}@${Option.getOrElse(optional(entry.flow.persona), () => "")}`}
-            act={act}
-            entry={entry}
-            now={now}
-          />
+          <FlowRow key={keyOf(entry)} act={act} entry={entry} now={now} plan={plan} />
         ))}
       </tbody>
     </table>
   </div>
+);
+
+// A flow's plan, drawn on the canvas, with the detail of the node clicked; a
+// flow written in TypeScript has none to draw.
+export const FlowPlanSection = ({
+  flow,
+  repo,
+}: {
+  readonly flow: FlowStatus;
+  readonly repo: string;
+}) => (
+  <section className="flow-plan" aria-label={`plan of ${flow.name}`}>
+    <h2>
+      {flow.name} <span className="muted">in {repo}</span>
+    </h2>
+    {Option.match(optional(flow.plan), {
+      onNone: () => (
+        <p className="muted">
+          {flow.name} was written in TypeScript, so it has no plan to draw. A flow compiled from a
+          flow document has one.
+        </p>
+      ),
+      onSome: (plan) => <PlanView plan={plan} states={Option.none()} />,
+    })}
+  </section>
 );
 
 export const Flows = ({
@@ -266,6 +313,18 @@ export const Flows = ({
   const entries = flowEntries(status);
   const on = entries.filter((entry) => entry.flow.enabled);
   const off = entries.filter((entry) => !entry.flow.enabled);
+  const [shown, setShown] = useState<Option.Option<string>>(Option.none());
+
+  const plan: PlanChoice = {
+    shown,
+    show: (key) => {
+      setShown(Option.some(key));
+    },
+  };
+
+  const showing = Option.flatMap(shown, (key) =>
+    Arr.findFirst(entries, (entry) => keyOf(entry) === key),
+  );
 
   return (
     <section aria-label="Flows">
@@ -282,7 +341,7 @@ export const Flows = ({
                 <p className="muted">Every flow is off.</p>
               ),
               () => (
-                <FlowTable act={act} entries={on} now={now} />
+                <FlowTable act={act} entries={on} now={now} plan={plan} />
               ),
             )}
             {either(
@@ -301,10 +360,13 @@ export const Flows = ({
                     )}{" "}
                     off
                   </summary>
-                  <FlowTable act={act} entries={off} now={now} />
+                  <FlowTable act={act} entries={off} now={now} plan={plan} />
                 </details>
               ),
             )}
+            {present(showing, (entry) => (
+              <FlowPlanSection flow={entry.flow} repo={entry.repo.name} />
+            ))}
           </>
         ),
       )}
