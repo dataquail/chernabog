@@ -16,7 +16,7 @@
   ],
   "peerDependencies": {
     "@chernabog/core": "^1.1.0",
-    "@chernabog/sdk": "^0.10.0"
+    "@chernabog/sdk": ">=0.10.0 <0.12.0"
   },
   "chernabog": {
     "recipes": {
