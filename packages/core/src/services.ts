@@ -532,6 +532,7 @@ export const GitHubCapability = Capabilities.declare(
         doing: "creating an issue",
         done: "issue created",
         item: (created: Issue) => Option.some(created.number),
+        creates: "issue",
       }),
     ),
     addSubIssue: guard(github.addSubIssue, (parent, child) =>

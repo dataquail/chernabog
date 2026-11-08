@@ -399,6 +399,26 @@ export const reportingChanges = <R>(
     Effect.tap(call, (result) => changed(write.done, write.item(result))),
   );
 
+// The run's capabilities, which tell `created` the number of each issue a
+// write they declare as creating one (Capabilities.Write's `creates`) made,
+// once made: what the run's journal keeps of the issues it created. An issue
+// a .chernabog/stages/ step, the agent, or a GitHub.request POST opens isn't
+// seen here.
+export const recordingCreatedIssues = <R>(
+  context: Context.Context<R>,
+  created: (issue: number) => Effect.Effect<void>,
+  capabilities: ReadonlyArray<Capabilities.Guarded> = CAPABILITIES,
+): Context.Context<R> =>
+  Capabilities.guardingAll(context, capabilities, (write, call) => {
+    if (write.creates !== "issue") {
+      return call;
+    }
+
+    return Effect.tap(call, (result) =>
+      Effect.forEach(Option.toArray(write.item(result)), created, { discard: true }),
+    );
+  });
+
 // The run's capabilities, which check before each write they declare, each
 // one another person or run sees, that `fence` lets it through: that every
 // claim the run holds still names it. A run that lost one never gets past
@@ -613,6 +633,11 @@ export const flowLayer = <R>(
         RunsCommands.use((runs) => runs.FinishStepCommand({ runId, step, outcome })),
       );
 
+      // Each issue a write of the run created, kept in its journal.
+      const recordCreatedIssue = yield* capturing((issue: number) =>
+        RunsCommands.use((runs) => runs.RecordCreatedIssueCommand({ runId, issue })),
+      );
+
       const declareLane = yield* capturing((lane: string, needs: ReadonlyArray<string>) =>
         RunsCommands.use((runs) => runs.DeclareLaneCommand({ runId, lane, needs })),
       );
@@ -661,8 +686,11 @@ export const flowLayer = <R>(
         Effect.provideContext(
           stoppingWith(
             fencing(
-              reportingChanges(context, (what, item) =>
-                hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+              recordingCreatedIssues(
+                reportingChanges(context, (what, item) =>
+                  hooks.onChange(handle.repo.settings.name, localCause(what, item)),
+                ),
+                recordCreatedIssue,
               ),
               fence,
             ),

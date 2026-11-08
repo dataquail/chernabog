@@ -13,6 +13,7 @@ import { RunWaitRoot } from "../src/modules/runs/domain/run-wait/run-wait.root.t
 import { SkipRoot } from "../src/modules/runs/domain/skip/skip.root.ts";
 import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
 import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/holds.repository-fake.ts";
+import { RunCreatedIssuesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-created-issues.repository-fake.ts";
 import { RunLanesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
@@ -57,6 +58,7 @@ const stores = Layer.mergeAll(
     RunMarkerRootOps.hold({ runId: ended.id, name: "label", args: 2, keepOn: [] }, AT),
   ]),
   RunLogsClientFake({}),
+  RunCreatedIssuesRepositoryFake([]),
   RunLanesRepositoryFake([]),
   RunStepsRepositoryFake([
     RunStepEntity.make({

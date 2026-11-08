@@ -32,6 +32,8 @@ import { readRunHistoryHandler } from "./queries/read-run-history.handler.ts";
 import { ReadRunHistoryQuery } from "./queries/read-run-history.query.ts";
 import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
 import { ReadRunLogQuery } from "./queries/read-run-log.query.ts";
+import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
+import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
@@ -58,6 +60,7 @@ export const runsQueryGroup = Query.group(
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
   ReadRunHistoryQuery,
+  ReadRunMadeQuery,
   ReadStateVersionQuery,
 );
 
@@ -73,11 +76,12 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
+  ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),
 });
 
 // The runs module's slice of the read side over state.db, which the daemon, a
-// foreground run and the engine ask.
+// foreground run, a rehearsal and the engine ask.
 export class RunsQueries extends Context.Service<
   RunsQueries,
   Query.Dispatcher<typeof runsQueryGroup>
