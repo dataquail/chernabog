@@ -1,6 +1,7 @@
 // Codex, headless: `codex exec --json` with automatic approval review inside a
 // workspace sandbox, --output-schema for the answer, and its own thread ids,
-// which are recorded the moment Codex reports them.
+// which are recorded the moment Codex reports them. What a thread spent is
+// read from its session file (codex-token-usage.ts).
 
 import { AgentError, printJson } from "@chernabog/core";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import { codexHomeOf } from "../../../../../platform/agent-accounts.ts";
 import { Exec } from "../../../../../platform/exec.ts";
 import { Home } from "../../../../../platform/home.ts";
 import { type Adapter, agentEnvironment, answerFrom, promptFor } from "./adapter.ts";
+import { readCodexTokenUsage } from "./codex-token-usage.ts";
 import { clip, runAgentProcess } from "./process.ts";
 import { knownSession, rememberSession } from "./sessions.ts";
 
@@ -112,6 +114,7 @@ const gitCommonDir = (cwd: string) =>
 
 export const codexAdapter: Adapter = {
   name: "codex",
+  usage: readCodexTokenUsage,
   run: (request, context) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
