@@ -20,16 +20,14 @@ import {
   type NodeState,
   type OffPlan,
   type PersonaStatus,
+  type PlanNode,
   type RepoStatus,
   RunOnPlan,
 } from "../daemon/daemon.protocol.ts";
+import type { Line, Segment, Style } from "./line.ts";
+import { runStrip } from "./strip.ts";
 
-export type Style =
-  "plain" | "bold" | "dim" | "green" | "red" | "yellow" | "cyan" | "magenta" | "selected";
-
-export type Segment = { readonly text: string; readonly style: Style };
-
-export type Line = ReadonlyArray<Segment>;
+export type { Line, Segment, Style } from "./line.ts";
 
 export type UsageRow = {
   readonly account: string;
@@ -48,6 +46,15 @@ export type FlowRow = {
 };
 
 export type RunEntry = ActiveRun;
+
+// A run of a flow with a plan: the plan it started with, and where in it the
+// run has been, which its row draws as a strip, as the daemon said when the
+// run's status was `readAt`.
+export type PlannedRun = {
+  readonly steps: ReadonlyArray<PlanNode>;
+  readonly history: RunHistory;
+  readonly readAt: RunStatus;
+};
 
 type RunStatus = ActiveRun["status"];
 
@@ -109,6 +116,8 @@ export type Model = {
   readonly unfolded: ReadonlyArray<string>;
   readonly rounds: Readonly<Record<string, number>>;
   readonly worktree: Option.Option<string>;
+  // The runs listed with a plan, by run id.
+  readonly plans: Readonly<Record<string, PlannedRun>>;
   readonly logRun: Option.Option<string>;
   // The node of the plan whose log the log view shows, by its name and the
   // steps it ran; none for the whole log.
@@ -625,6 +634,8 @@ type RunColumns = {
   readonly repo: number;
   readonly persona: number;
   readonly title: number;
+  // What the row leaves for its detail, or its strip.
+  readonly detail: number;
 };
 
 const STATUS_WIDTH = 12;
@@ -689,7 +700,7 @@ const runColumns = (rows: ReadonlyArray<RunRow>, width: number, shown: Shown): R
   const detail = Math.min(MIN_DETAIL, Math.floor(room * 0.4));
   const title = Math.max(MIN_TITLE, Math.min(longest, room - detail));
 
-  return { item, flow, repo, persona, title };
+  return { item, flow, repo, persona, title, detail: Math.max(0, room - title) };
 };
 
 const column = (text: string, width: number) => {
@@ -718,7 +729,25 @@ const markOf = (row: RunRow) => {
   return "  ▸ ";
 };
 
-const runLine = (row: RunRow, columns: RunColumns, now: DateTime.Utc): Line => {
+// A run's detail: its path through its plan, as a strip, when it has a plan
+// and the strip fits; else what it is doing, or how it ended.
+const detailOf = (run: RunEntry, columns: RunColumns, plans: Model["plans"]): Line =>
+  Option.getOrElse(
+    Option.flatMap(Record.get(plans, run.id), (planned) =>
+      runStrip(
+        RunOnPlan.draw({ steps: planned.steps }, planned.history, { status: run.status }),
+        columns.detail,
+      ),
+    ),
+    (): Line => [segment(firstLine(runDetail(run)), detailStyle(run.status))],
+  );
+
+const runLine = (
+  row: RunRow,
+  columns: RunColumns,
+  now: DateTime.Utc,
+  plans: Model["plans"],
+): Line => {
   const { run } = row;
   const ref = itemRef(run.itemKey);
 
@@ -736,7 +765,7 @@ const runLine = (row: RunRow, columns: RunColumns, now: DateTime.Utc): Line => {
     segment(column(personaText(run.persona), columns.persona), "dim"),
     segment(column(titleOf(run), columns.title)),
     segment(` ${pad(when, WHEN_WIDTH)} `, "dim"),
-    segment(firstLine(runDetail(run)), detailStyle(run.status)),
+    ...detailOf(run, columns, plans),
   ];
 };
 
@@ -929,7 +958,10 @@ const statusView = (model: Model, status: DaemonStatus): Array<Line> => {
 
   runs.forEach((row, runIndex) => {
     lines.push(
-      select(runLine(row, columns, now), model.focus === "runs" && model.runIndex === runIndex),
+      select(
+        runLine(row, columns, now, model.plans),
+        model.focus === "runs" && model.runIndex === runIndex,
+      ),
     );
   });
 

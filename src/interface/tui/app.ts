@@ -49,7 +49,7 @@ import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
 import {
   daemonCancel,
   daemonEvents,
-  daemonPlan,
+  daemonFlowPlan,
   daemonRunHistory,
   daemonStatus,
   daemonTick,
@@ -70,7 +70,10 @@ import {
   type Line,
   type Model,
   nodeLogOnly,
+  type PlannedRun,
   reselected,
+  type RunEntry,
+  runRows,
   type Style,
   type UsageRow,
   view,
@@ -173,7 +176,7 @@ const planOf = (history: Option.Option<RunHistory>, known: Option.Option<FlowPla
     }
 
     return Option.flatMap(
-      Result.getSuccess(yield* Effect.result(daemonPlan(hash.value))),
+      Result.getSuccess(yield* Effect.result(daemonFlowPlan(hash.value))),
       (found) => found.plan,
     );
   });
@@ -191,6 +194,81 @@ const readDetail = (runId: string, known: Option.Option<FlowPlan> = Option.none(
       failure: Option.map(Result.getFailure(history), (failure) => failure.message),
       worktree: yield* worktreeOf(runId),
     };
+  });
+
+// The plans of the runs the main view lists, and where in them each run has
+// been, for its row's strip. A run with no plan, or one the daemon doesn't
+// say, has none, and its row shows its detail. A plan never changes, so each
+// is asked for once; nor does a finished run's history, once it was read
+// after the run finished.
+const entry = (runId: string, planned: PlannedRun): readonly [string, PlannedRun] => [
+  runId,
+  planned,
+];
+
+// What a run's row has of it that needs no asking again: a history read once
+// the run had ended, with its status unchanged since. One read while it ran
+// misses where it went after, so it is asked for again.
+export const reusablePlan = (
+  known: Option.Option<PlannedRun>,
+  status: RunEntry["status"],
+): Option.Option<PlannedRun> =>
+  Option.filter(known, (planned) => planned.readAt !== "running" && planned.readAt === status);
+
+const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
+  Effect.gen(function* () {
+    const planByHash = (hash: string) =>
+      Effect.gen(function* () {
+        const known = Option.fromUndefinedOr(plans.get(hash));
+
+        if (Option.isSome(known)) {
+          return known.value;
+        }
+
+        const found = yield* daemonFlowPlan(hash).pipe(
+          Effect.map((reply) => reply.plan),
+          Effect.orElseSucceed(() => Option.none<FlowPlan>()),
+        );
+
+        plans.set(hash, found);
+
+        return found;
+      });
+
+    const read = (run: RunEntry) =>
+      Effect.gen(function* () {
+        const known = reusablePlan(Option.fromUndefinedOr(model.plans[run.id]), run.status);
+
+        if (Option.isSome(known)) {
+          return Option.some(entry(run.id, known.value));
+        }
+
+        const history = yield* Effect.option(daemonRunHistory(run.id));
+
+        if (Option.isNone(history)) {
+          return Option.none();
+        }
+
+        const hash = Option.fromUndefinedOr(history.value.plan);
+
+        if (Option.isNone(hash)) {
+          return Option.none();
+        }
+
+        const plan = yield* planByHash(hash.value);
+
+        return Option.map(plan, (found) =>
+          entry(run.id, { steps: found.steps, history: history.value, readAt: run.status }),
+        );
+      });
+
+    const found = yield* Effect.forEach(
+      runRows(model).map((row) => row.run),
+      read,
+      { concurrency: 4 },
+    );
+
+    return Object.fromEntries(found.flatMap(Option.toArray));
   });
 
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
@@ -217,6 +295,7 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   unfolded: [],
   rounds: {},
   worktree: Option.none(),
+  plans: {},
   logRun: Option.none(),
   logOf: Option.none(),
   logLines: [],
@@ -348,6 +427,9 @@ export const runTui = Effect.gen(function* () {
     model = { ...model, thresholds: machine.value.usageGate };
   }
 
+  // Plans by hash, as the daemon gave them; none for one it didn't have.
+  const plans = new Map<string, Option.Option<FlowPlan>>();
+
   const render = Effect.gen(function* () {
     model = {
       ...model,
@@ -385,6 +467,10 @@ export const runTui = Effect.gen(function* () {
   });
 
   const refreshOpen = Effect.gen(function* () {
+    if (model.view === "main") {
+      model = { ...model, plans: yield* readPlans(model, plans) };
+    }
+
     yield* refreshLog;
 
     if (model.view === "run") {

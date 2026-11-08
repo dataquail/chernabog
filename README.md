@@ -109,7 +109,7 @@ For work that needs a person through planning and implementation, a repo bakes t
 
 ## The live view
 
-`chernabog` with no arguments opens a live view of the daemon: each repo and its flows with their next tick and what the last tick found queued, account usage against the usage gate's thresholds, runs (one row per piece of work: an issue, the pull request opened for it and that pull request's reviews) with what each is about and its current step, and why recent ticks were skipped. With several repos or personas, project tabs and a persona filter narrow it.
+`chernabog` with no arguments opens a live view of the daemon: each repo and its flows with their next tick and what the last tick found queued, account usage against the usage gate's thresholds, runs (one row per piece of work: an issue, the pull request opened for it and that pull request's reviews) with what each is about and its current step (for a run of a flow document, its path through the document's plan, such as `claim ✓ → agent ● → gate · → pr ·`), and why recent ticks were skipped. With several repos or personas, project tabs and a persona filter narrow it.
 
 | Key                 | Does                                                                                                                                                                                                                                                                                        |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

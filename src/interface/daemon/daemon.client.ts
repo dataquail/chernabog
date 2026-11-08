@@ -149,7 +149,7 @@ export const daemonRunHistory = (runId: string) =>
   );
 
 // The plan runs started with, by the hash a run's history names.
-export const daemonPlan = (hash: string) =>
+export const daemonFlowPlan = (hash: string) =>
   send(HttpClientRequest.get(`/plans/${encodeURIComponent(hash)}`)).pipe(
     Effect.flatMap(reply(FoundPlan)),
   );

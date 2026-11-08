@@ -236,7 +236,8 @@ export type {
 } from "../../modules/runs/runs.contracts.ts";
 
 // GET /plans/:hash: the plan runs started with, by the hash a run's history
-// names; none when no run started with it. A flow's own plan, on its status.
+// names, and its nodes; none when no run started with it. A flow's own plan,
+// on its status.
 export { FlowPlan, FoundPlan };
 
 export type { PlanBranch, PlanNode } from "../../modules/runs/runs.contracts.ts";
