@@ -1,0 +1,3 @@
+{"type":"step_start","timestamp":1762600000000,"sessionID":"ses_old","part":{"id":"prt_d1","sessionID":"ses_old","messageID":"msg_d","type":"step-start"}}
+{"type":"text","timestamp":1762600001000,"sessionID":"ses_old","part":{"id":"prt_d2","sessionID":"ses_old","messageID":"msg_d","type":"text","text":"done"}}
+{"type":"step_finish","timestamp":1762600001100,"sessionID":"ses_old","part":{"id":"prt_d3","sessionID":"ses_old","messageID":"msg_d","type":"step-finish","reason":"stop"}}
