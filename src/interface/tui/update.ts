@@ -6,7 +6,7 @@ import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
-import { cronProblem } from "../../modules/runs/runs.platform.ts";
+import { cronProblem, type LoggedAt } from "../../modules/runs/runs.platform.ts";
 import {
   allRuns,
   flowEnabled,
@@ -35,6 +35,8 @@ export type Action =
   | { readonly kind: "refresh" }
   | { readonly kind: "open-log"; readonly run: string }
   | { readonly kind: "open-run"; readonly run: string }
+  // The log of a node of a run's plan: only the steps it ran there.
+  | { readonly kind: "open-node-log"; readonly run: string; readonly only: ReadonlyArray<LoggedAt> }
   | { readonly kind: "attach"; readonly run: string }
   | { readonly kind: "cancel"; readonly run: string; readonly label: string }
   | {
@@ -487,7 +489,7 @@ const openRun = (model: Model, run: string): Updated => ({
     detailRun: Option.some(run),
     history: Option.none(),
     worktree: Option.none(),
-    threadIndex: 0,
+    detailIndex: 0,
   },
   action: { kind: "open-run", run },
 });
@@ -663,18 +665,18 @@ const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
     case "up":
     case "k":
       return {
-        model: { ...cleared, threadIndex: clamp(model.threadIndex - 1, thread.length) },
+        model: { ...cleared, detailIndex: clamp(model.detailIndex - 1, thread.length) },
         action: none,
       };
     case "down":
     case "j":
       return {
-        model: { ...cleared, threadIndex: clamp(model.threadIndex + 1, thread.length) },
+        model: { ...cleared, detailIndex: clamp(model.detailIndex + 1, thread.length) },
         action: none,
       };
     case "return":
     case "enter":
-      return Option.match(Arr.get(thread, model.threadIndex), {
+      return Option.match(Arr.get(thread, model.detailIndex), {
         onNone: () => ({ model, action: none }),
         onSome: (other) => openRun(cleared, other.id),
       });

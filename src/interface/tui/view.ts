@@ -8,7 +8,12 @@ import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/enrollment.platform.ts";
-import { ActiveRun, type RunHistory } from "../../modules/runs/runs.platform.ts";
+import {
+  ActiveRun,
+  type FlowPlan,
+  type LoggedAt,
+  type RunHistory,
+} from "../../modules/runs/runs.platform.ts";
 import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
 
 export type Style =
@@ -80,16 +85,26 @@ export type Model = {
   readonly runIndex: number;
   // The threads opened in the runs list to show all their runs, by threadOf.
   readonly expanded: ReadonlyArray<string>;
-  // The selected run among the detail view's thread.
-  readonly threadIndex: number;
+  // The selected line of the detail view: a node of the run's plan, then a
+  // run of its thread.
+  readonly detailIndex: number;
   readonly view: "main" | "log" | "settings" | "run";
   readonly settings: Option.Option<Settings>;
   // The run the detail view shows, where it has been, once the daemon has
   // said, and the worktree its latest agent session ran in.
   readonly detailRun: Option.Option<string>;
   readonly history: Option.Option<RunHistory>;
+  // The plan the run started with, for a run of a flow that has one.
+  readonly plan: Option.Option<FlowPlan>;
+  // The lanes of a forEach opened to show their steps, and the round each
+  // repeat shows when not its latest, by the node's key (detailTargets).
+  readonly unfolded: ReadonlyArray<string>;
+  readonly rounds: Readonly<Record<string, number>>;
   readonly worktree: Option.Option<string>;
   readonly logRun: Option.Option<string>;
+  // The node of the plan whose log the log view shows, by its name and the
+  // steps it ran; none for the whole log.
+  readonly logOf: Option.Option<NodeLog>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.
   readonly logScroll: number;
@@ -102,6 +117,20 @@ export type Model = {
   readonly height: number;
   readonly now: DateTime.Utc;
 };
+
+export type NodeLog = { readonly name: string; readonly only: ReadonlyArray<LoggedAt> };
+
+// A line of the plan's tree a person can select: its name, the steps whose
+// log enter opens, the lanes space opens or closes, and for a repeat its key
+// and how many rounds it has.
+export type DetailTarget = {
+  readonly label: string;
+  readonly only: ReadonlyArray<LoggedAt>;
+  readonly lanes: ReadonlyArray<string>;
+  readonly repeat: Option.Option<{ readonly key: string; readonly rounds: number }>;
+};
+
+export const detailTargets = (_model: Model): ReadonlyArray<DetailTarget> => [];
 
 const segment = (text: string, style: Style = "plain"): Segment => ({ text, style });
 
@@ -1333,7 +1362,7 @@ const threadLines = (model: Model, run: RunEntry): ReadonlyArray<Line> => {
           ),
           segment(`  ${firstLine(runDetail(other))}`, detailStyle(other.status)),
         ],
-        index === model.threadIndex,
+        index === model.detailIndex,
       );
     }),
   ]);
