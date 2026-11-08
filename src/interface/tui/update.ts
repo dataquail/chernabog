@@ -9,6 +9,7 @@ import { runLabel } from "../../kernel/run-id.id.ts";
 import { cronProblem, type LoggedAt } from "../../modules/runs/runs.platform.ts";
 import {
   allRuns,
+  detailTargets,
   flowEnabled,
   type FlowRow,
   flowRows,
@@ -128,6 +129,7 @@ const updateLog = (model: Model, cleared: Model, key: Key): Updated => {
           ...cleared,
           view: Option.match(model.detailRun, { onNone: () => "main", onSome: () => "run" }),
           logRun: Option.none(),
+          logOf: Option.none(),
           logLines: [],
           logScroll: 0,
         },
@@ -488,6 +490,9 @@ const openRun = (model: Model, run: string): Updated => ({
     view: "run",
     detailRun: Option.some(run),
     history: Option.none(),
+    plan: Option.none(),
+    unfolded: [],
+    rounds: {},
     worktree: Option.none(),
     detailIndex: 0,
   },
@@ -650,7 +655,35 @@ const filterKey = (model: Model, key: Key): Option.Option<Model> => {
   return Option.none();
 };
 
-// The detail view: l its log, a attach, x cancel, esc back to the list.
+// space on a node of the plan opens its lanes' steps, or closes them once all are open.
+const toggleLanes = (model: Model, lanes: ReadonlyArray<string>): Model => {
+  if (lanes.every((lane) => model.unfolded.includes(lane))) {
+    return { ...model, unfolded: model.unfolded.filter((lane) => !lanes.includes(lane)) };
+  }
+
+  return { ...model, unfolded: Arr.union(model.unfolded, lanes) };
+};
+
+// [ and ] on a repeat show its round before or after the one it shows.
+const stepRound = (
+  model: Model,
+  repeat: { readonly key: string; readonly rounds: number },
+  step: number,
+): Model => {
+  const shown = Option.getOrElse(Record.get(model.rounds, repeat.key), () => repeat.rounds);
+
+  return {
+    ...model,
+    rounds: { ...model.rounds, [repeat.key]: Math.max(1, Math.min(repeat.rounds, shown + step)) },
+  };
+};
+
+const ROUND_STEP: Readonly<Record<string, number>> = { "[": -1, "]": 1 };
+
+// The detail view: ↑↓ select a node of the run's plan or a run of its
+// thread, enter open the node's log or the run, space open a forEach's
+// lanes, [ ] step through a repeat's rounds, l its log, a attach, x cancel,
+// esc back to the list.
 const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
   const run = Arr.findFirst(allRuns(model.status), (candidate) =>
     Option.contains(model.detailRun, candidate.id),
@@ -661,31 +694,78 @@ const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
     onSome: (id) => threadRuns(model, id),
   });
 
+  const targets = detailTargets(model);
+  const selected = Arr.get(targets, model.detailIndex);
+  const lines = targets.length + thread.length;
+
+  const roundStep = Option.firstSomeOf([
+    Record.get(ROUND_STEP, key.name),
+    Option.flatMap(Option.fromUndefinedOr(key.sequence), (text) => Record.get(ROUND_STEP, text)),
+  ]);
+
+  if (Option.isSome(roundStep)) {
+    return Option.match(
+      Option.flatMap(selected, (found) => found.repeat),
+      {
+        onNone: () => ({ model, action: none }),
+        onSome: (repeat) => ({ model: stepRound(cleared, repeat, roundStep.value), action: none }),
+      },
+    );
+  }
+
   switch (key.name) {
     case "up":
     case "k":
       return {
-        model: { ...cleared, detailIndex: clamp(model.detailIndex - 1, thread.length) },
+        model: { ...cleared, detailIndex: clamp(model.detailIndex - 1, lines) },
         action: none,
       };
     case "down":
     case "j":
       return {
-        model: { ...cleared, detailIndex: clamp(model.detailIndex + 1, thread.length) },
+        model: { ...cleared, detailIndex: clamp(model.detailIndex + 1, lines) },
         action: none,
       };
+    case "space":
+      return Option.match(
+        Option.filter(selected, (found) => found.lanes.length > 0),
+        {
+          onNone: () => ({ model, action: none }),
+          onSome: (found) => ({ model: toggleLanes(cleared, found.lanes), action: none }),
+        },
+      );
     case "return":
     case "enter":
-      return Option.match(Arr.get(thread, model.detailIndex), {
-        onNone: () => ({ model, action: none }),
-        onSome: (other) => openRun(cleared, other.id),
+      return Option.match(Option.all([selected, model.detailRun]), {
+        onSome: ([node, id]) => ({
+          model: {
+            ...cleared,
+            view: "log",
+            logRun: Option.some(id),
+            logOf: Option.some({ name: node.label, only: node.only }),
+            logLines: [],
+            logScroll: 0,
+          },
+          action: { kind: "open-node-log", run: id, only: node.only },
+        }),
+        onNone: () =>
+          Option.match(Arr.get(thread, model.detailIndex - targets.length), {
+            onNone: () => ({ model, action: none }),
+            onSome: (other) => openRun(cleared, other.id),
+          }),
       });
     case "escape":
     case "backspace":
     case "h":
     case "left":
       return {
-        model: { ...cleared, view: "main", detailRun: Option.none(), history: Option.none() },
+        model: {
+          ...cleared,
+          view: "main",
+          detailRun: Option.none(),
+          history: Option.none(),
+          plan: Option.none(),
+        },
         action: none,
       };
     case "l":
@@ -693,7 +773,14 @@ const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
       return Option.match(model.detailRun, {
         onNone: () => ({ model, action: none }),
         onSome: (id) => ({
-          model: { ...cleared, view: "log", logRun: Option.some(id), logLines: [], logScroll: 0 },
+          model: {
+            ...cleared,
+            view: "log",
+            logRun: Option.some(id),
+            logOf: Option.none(),
+            logLines: [],
+            logScroll: 0,
+          },
           action: { kind: "open-log", run: id },
         }),
       });

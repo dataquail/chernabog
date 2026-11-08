@@ -1347,11 +1347,11 @@ describe("a run on its plan", () => {
     });
 
   // The screen's lines, each without the tree's indent and with the gap
-  // before its time closed up, so a test reads the tree's shape.
+  // before its time closed up to two spaces, so a test reads the tree's shape.
   const treeOf = (from: Model) =>
     plain(view(from))
       .split("\n")
-      .map((line) => line.replace(/^ {2}/, "").replaceAll(/(\S) {2,}/g, "$1  "));
+      .map((line) => line.replace(/^ {2}/, "").replace(/(\S) {2,}(?=\d+[smh]$)/, "$1  "));
 
   const SHIP = [
     use("claim"),
@@ -1365,7 +1365,7 @@ describe("a run on its plan", () => {
     ]),
   ];
 
-  const setUp = step("read-trigger", { from: -20, to: -20, outcome: "ok" });
+  const setUp = step("read-trigger", { from: -21, to: -20, outcome: "ok" });
 
   const runningShip = historyOf(
     [
@@ -1397,7 +1397,7 @@ describe("a run on its plan", () => {
     const top = tree.findIndex((line) => line.startsWith("✓ set up"));
 
     expect(tree.slice(top, top + 12)).toEqual([
-      "✓ set up  0s",
+      "✓ set up  1m",
       "✓ claim  2m",
       "✓ worktree  6m",
       "● agent  12m",
@@ -1418,7 +1418,7 @@ describe("a run on its plan", () => {
     const top = tree.findIndex((line) => line.startsWith("✓ set up"));
 
     expect(tree.slice(top, top + 11)).toEqual([
-      "✓ set up  0s",
+      "✓ set up  1m",
       "✓ claim  2m",
       "✓ worktree  6m",
       "✓ agent  4m",
