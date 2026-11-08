@@ -318,13 +318,13 @@ describe("Compose.check", () => {
   });
 
   test("says where each input of a block goes when one it doesn't take is given", () => {
-    const drafted = changing(implement, "opened", (step) => ({ ...step, with: { draft: true } }));
+    const merging = changing(implement, "opened", (step) => ({ ...step, with: { merge: true } }));
 
-    expect(messages(drafted)).toEqual([
-      "pr.open has no input draft; it takes issue, outcome, queued, base, pushed under in",
+    expect(messages(merging)).toEqual([
+      "pr.open has no input merge; it takes issue, outcome, queued, base, pushed under in; draft under with",
     ]);
-    expect(paths(drafted)).toEqual([
-      `steps[${implement.steps.findIndex((step) => named(step, "opened"))}].with.draft`,
+    expect(paths(merging)).toEqual([
+      `steps[${implement.steps.findIndex((step) => named(step, "opened"))}].with.merge`,
     ]);
 
     const coloured = changing(review, "review", (step) => ({
