@@ -1,5 +1,6 @@
 import { HEADLESS, printJson } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,10 +25,25 @@ import {
 } from "../src/interface/tui/live.ts";
 import { describeStatus } from "../src/interface/tui/status.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
-import { type Model, plain, view } from "../src/interface/tui/view.ts";
+import {
+  detailTargets,
+  type Model,
+  nodeLogOnly,
+  plain,
+  reselected,
+  view,
+} from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { HoldView } from "../src/modules/runs/domain/holds/hold-view.value-object.ts";
-import { RunHistory, RunStep } from "../src/modules/runs/domain/run/run-history.value-object.ts";
+import { FlowPlan, type PlanNode } from "../src/modules/runs/domain/plan/flow-plan.value-object.ts";
+import { NodeRef } from "../src/modules/runs/domain/plan/node-ref.value-object.ts";
+import {
+  RunBranch,
+  RunEnd,
+  RunHistory,
+  RunNodeVisit,
+  RunStep,
+} from "../src/modules/runs/domain/run/run-history.value-object.ts";
 import { ActiveRun, RunView } from "../src/modules/runs/domain/run/run-view.value-object.ts";
 import { RunWait } from "../src/modules/runs/domain/run-wait/run-wait-view.value-object.ts";
 import { SkipView } from "../src/modules/runs/domain/skip/skip-view.value-object.ts";
@@ -688,7 +704,7 @@ describe("work threads", () => {
 
     const second = update(update(detail, { name: "down" }).model, { name: "return" });
     expect(second.action).toEqual({ kind: "open-run", run: "t2" });
-    expect(second.model.threadIndex).toBe(0);
+    expect(second.model.detailIndex).toBe(0);
   });
 
   const leads = (from: DaemonStatus) =>
@@ -1213,5 +1229,428 @@ describe("the live view's updates from /events", () => {
     expect(
       [0, 1, 2, 3, 4, 10].map((attempt) => Duration.toSeconds(reconnectDelay(attempt))),
     ).toEqual([1, 2, 4, 5, 5, 5]);
+  });
+});
+
+describe("a run on its plan", () => {
+  type Where = { readonly round?: number; readonly lane?: string };
+
+  const at = (id: string, where: Where = {}) => NodeRef.make({ id, ...where });
+
+  const use = (
+    id: string,
+    branches: ReadonlyArray<{
+      readonly outcome: string;
+      readonly steps: ReadonlyArray<PlanNode>;
+    }> = [],
+  ): PlanNode => ({ id, path: id, kind: "use", block: `demo.${id}`, in: {}, with: {}, branches });
+
+  const done = (path: string): PlanNode => ({ id: path, path, kind: "end", end: "done" });
+
+  const needsHuman = (path: string): PlanNode => ({
+    id: path,
+    path,
+    kind: "end",
+    end: "needs-human",
+    reason: "the agent is stuck",
+  });
+
+  const next = (path: string): PlanNode => ({ id: path, path, kind: "next", next: {} });
+
+  const repeat = (id: string, steps: ReadonlyArray<PlanNode>): PlanNode => ({
+    id,
+    path: id,
+    kind: "repeat",
+    state: {},
+    steps,
+  });
+
+  const forEach = (id: string, steps: ReadonlyArray<PlanNode>): PlanNode => ({
+    id,
+    path: id,
+    kind: "forEach",
+    forEach: "tasks.tasks",
+    as: "task",
+    scope: "epic.task",
+    atOnce: "3",
+    steps,
+  });
+
+  type Span = { readonly from: number; readonly to?: number; readonly outcome?: "ok" | "failed" };
+
+  const ended = ({ outcome, to }: Span) => ({
+    ...Option.match(Option.fromUndefinedOr(to), {
+      onNone: () => ({}),
+      onSome: (offset) => ({ finishedAt: minutes(offset) }),
+    }),
+    ...Option.match(Option.fromUndefinedOr(outcome), {
+      onNone: () => ({}),
+      onSome: (how) => ({ outcome: how }),
+    }),
+  });
+
+  const visit = (node: NodeRef, span: Span) =>
+    RunNodeVisit.make({ node, enteredAt: minutes(span.from), ...ended(span) });
+
+  const step = (name: string, span: Span, node: Option.Option<NodeRef> = Option.none()) =>
+    RunStep.make({
+      step: name,
+      ...Option.match(node, { onNone: () => ({}), onSome: (found) => ({ node: found }) }),
+      enteredAt: minutes(span.from),
+      ...ended(span),
+    });
+
+  // A node and its one engine step, of the same name, over the same span.
+  const ran = (node: NodeRef, span: Span) => ({
+    visit: visit(node, span),
+    step: step(node.id, span, Option.some(node)),
+  });
+
+  const historyOf = (
+    ranAt: ReadonlyArray<{ readonly visit: RunNodeVisit; readonly step: RunStep }>,
+    more: {
+      readonly steps?: ReadonlyArray<RunStep>;
+      readonly visits?: ReadonlyArray<RunNodeVisit>;
+      readonly branches?: ReadonlyArray<RunBranch>;
+      readonly ends?: ReadonlyArray<RunEnd>;
+    } = {},
+  ) =>
+    RunHistory.make({
+      steps: [...ranAt.map((entry) => entry.step), ...(more.steps ?? [])],
+      waits: [],
+      lanes: [],
+      plan: "hash",
+      nodes: [...ranAt.map((entry) => entry.visit), ...(more.visits ?? [])],
+      branches: more.branches ?? [],
+      ends: more.ends ?? [],
+    });
+
+  const took = (node: NodeRef, outcome: string, offset: number) =>
+    RunBranch.make({ node, outcome, takenAt: minutes(offset) });
+
+  const reached = (node: NodeRef, offset: number) =>
+    RunEnd.make({ node, reachedAt: minutes(offset) });
+
+  const planOf = (steps: ReadonlyArray<PlanNode>) =>
+    FlowPlan.make({ flow: "ship", subject: "issue", hash: "hash", steps });
+
+  const shipping = (how: RunStatus) =>
+    ActiveRun.make({ ...run("s", how), flow: "ship", parked: false });
+
+  const onPlan = (
+    how: RunStatus,
+    steps: ReadonlyArray<PlanNode>,
+    found: RunHistory,
+    overrides: Partial<Model> = {},
+  ) =>
+    model({
+      status: Option.some({ ...status, active: [shipping(how)], recent: [] }),
+      view: "run",
+      detailRun: Option.some("s"),
+      history: Option.some(found),
+      plan: Option.some(planOf(steps)),
+      height: 60,
+      ...overrides,
+    });
+
+  // The screen's lines, each without the tree's indent and with the gap
+  // before its time closed up to two spaces, so a test reads the tree's shape.
+  const treeOf = (from: Model) =>
+    plain(view(from))
+      .split("\n")
+      .map((line) => line.replace(/^ {2}/, "").replace(/(\S) {2,}(?=\d+[smh]$)/, "$1  "));
+
+  const SHIP = [
+    use("claim"),
+    use("worktree"),
+    use("agent", [
+      {
+        outcome: "ok",
+        steps: [use("local-gate"), use("push"), use("open-pr"), done("agent.ok.end")],
+      },
+      { outcome: "blocked", steps: [needsHuman("agent.blocked.end")] },
+    ]),
+  ];
+
+  const setUp = step("read-trigger", { from: -21, to: -20, outcome: "ok" });
+
+  const runningShip = historyOf(
+    [
+      ran(at("claim"), { from: -20, to: -18, outcome: "ok" }),
+      ran(at("worktree"), { from: -18, to: -12, outcome: "ok" }),
+      ran(at("agent"), { from: -12 }),
+    ],
+    { steps: [setUp] },
+  );
+
+  const finishedShip = historyOf(
+    [
+      ran(at("claim"), { from: -20, to: -18, outcome: "ok" }),
+      ran(at("worktree"), { from: -18, to: -12, outcome: "ok" }),
+      ran(at("agent"), { from: -12, to: -8, outcome: "ok" }),
+      ran(at("local-gate"), { from: -8, to: -7, outcome: "ok" }),
+      ran(at("push"), { from: -7, to: -6, outcome: "ok" }),
+      ran(at("open-pr"), { from: -6, to: -5, outcome: "ok" }),
+    ],
+    {
+      steps: [setUp, step("release-claim", { from: -5, to: -5, outcome: "ok" })],
+      branches: [took(at("agent"), "ok", -8)],
+      ends: [reached(at("agent.ok.end"), -5)],
+    },
+  );
+
+  test("a running run is a tree: what ran, what runs, and where it's going, between set up and wrap up", () => {
+    const tree = treeOf(onPlan("running", SHIP, runningShip));
+    const top = tree.findIndex((line) => line.startsWith("✓ set up"));
+
+    expect(tree.slice(top, top + 12)).toEqual([
+      "✓ set up  1m",
+      "✓ claim  2m",
+      "✓ worktree  6m",
+      "● agent  12m",
+      "├─ ok",
+      "│  ○ local-gate",
+      "│  ○ push",
+      "│  ○ open-pr",
+      "│  ◇ done",
+      "└─ blocked",
+      "   ◇ needs-human",
+      "○ wrap up",
+    ]);
+  });
+
+  test("a finished run folds the branch it didn't take to one dim line", () => {
+    const shown = onPlan("done", SHIP, finishedShip);
+    const tree = treeOf(shown);
+    const top = tree.findIndex((line) => line.startsWith("✓ set up"));
+
+    expect(tree.slice(top, top + 11)).toEqual([
+      "✓ set up  1m",
+      "✓ claim  2m",
+      "✓ worktree  6m",
+      "✓ agent  4m",
+      "├─ ok",
+      "│  ✓ local-gate  1m",
+      "│  ✓ push  1m",
+      "│  ✓ open-pr  1m",
+      "│  ◇ done",
+      "└─ blocked  ·  needs-human  (not taken)",
+      "✓ wrap up  0s",
+    ]);
+
+    const folded = Option.getOrThrow(
+      Arr.findFirst(view(shown), (line) => plain([line]).includes("blocked")),
+    );
+
+    expect(
+      folded.filter((part) => part.text.trim().length > 0).every((part) => part.style === "dim"),
+    ).toBe(true);
+  });
+
+  test("fits 80 columns, with each node's time in one column", () => {
+    const tree = plain(view(onPlan("running", SHIP, runningShip, { width: 80 }))).split("\n");
+
+    expect(tree.every((line) => line.length <= 80)).toBe(true);
+
+    const worktree = Option.getOrThrow(
+      Arr.findFirst(tree, (line) => /✓ worktree\s+6m$/.test(line)),
+    );
+
+    const agent = Option.getOrThrow(Arr.findFirst(tree, (line) => /● agent\s+12m$/.test(line)));
+
+    expect(worktree.length).toBe(agent.length);
+  });
+
+  const LOOP = [
+    use("claim"),
+    repeat("rounds", [
+      use("implement"),
+      use("ci", [
+        { outcome: "pass", steps: [done("rounds.ci.pass.end")] },
+        { outcome: "fail", steps: [use("fix"), next("rounds.ci.fail.next")] },
+      ]),
+    ]),
+  ];
+
+  const secondRound = historyOf(
+    [
+      ran(at("claim"), { from: -30, to: -29, outcome: "ok" }),
+      ran(at("implement", { round: 1 }), { from: -29, to: -20, outcome: "ok" }),
+      ran(at("ci", { round: 1 }), { from: -20, to: -15, outcome: "ok" }),
+      ran(at("fix", { round: 1 }), { from: -15, to: -10, outcome: "ok" }),
+      ran(at("implement", { round: 2 }), { from: -10 }),
+    ],
+    { branches: [took(at("ci", { round: 1 }), "fail", -15)] },
+  );
+
+  // Selects the node of the tree with this name, as ↓ would.
+  const selecting = (from: Model, name: string): Model => ({
+    ...from,
+    detailIndex: detailTargets(from).findIndex((target) => target.label === name),
+  });
+
+  const press = (from: Model, ...keys: ReadonlyArray<string>) =>
+    keys.reduce((current, name) => update(current, { name, sequence: name }).model, from);
+
+  test("a repeat is an indented block in its latest round, and [ ] step through its rounds", () => {
+    const shown = selecting(onPlan("running", LOOP, secondRound), "rounds");
+    const second = treeOf(shown);
+
+    const top = second.findIndex((line) => line.startsWith("● rounds"));
+
+    expect(second.slice(top, top + 9)).toEqual([
+      "● rounds  round 2 of 2  29m",
+      "│  ● implement  10m",
+      "│  ○ ci",
+      "│  ├─ pass",
+      "│  │  ◇ done",
+      "│  └─ fail",
+      "│     ○ fix",
+      "│     ○ next round",
+      "○ wrap up",
+    ]);
+
+    const first = treeOf(press(shown, "["));
+
+    expect(first.slice(top, top + 7)).toEqual([
+      "● rounds  round 1 of 2  29m",
+      "│  ✓ implement  9m",
+      "│  ✓ ci  5m",
+      "│  ├─ pass  ·  done  (not taken)",
+      "│  └─ fail",
+      "│     ✓ fix  5m",
+      "│     ✓ next round",
+    ]);
+
+    expect(treeOf(press(shown, "[", "]"))).toEqual(second);
+    expect(treeOf(press(shown, "]"))).toEqual(second);
+  });
+
+  const EPIC = [use("plan"), forEach("tasks", [use("implement"), use("ci")]), use("close")];
+
+  const lanes = historyOf(
+    [
+      ran(at("plan"), { from: -30, to: -25, outcome: "ok" }),
+      ran(at("implement", { lane: "task-1" }), { from: -25, to: -10, outcome: "ok" }),
+      ran(at("ci", { lane: "task-1" }), { from: -10 }),
+      ran(at("implement", { lane: "task-2" }), { from: -20 }),
+    ],
+    { visits: [visit(at("tasks"), { from: -25 })] },
+  );
+
+  test("a forEach has a line per lane, folded, and space unfolds each lane's tree", () => {
+    const shown = selecting(onPlan("running", EPIC, lanes), "tasks");
+    const folded = treeOf(shown);
+    const top = folded.findIndex((line) => line.startsWith("● tasks"));
+
+    expect(folded.slice(top, top + 4)).toEqual([
+      "● tasks  2 lanes  25m",
+      "├─ ● task-1  25m",
+      "└─ ● task-2  20m",
+      "○ close",
+    ]);
+
+    const unfolded = treeOf(press(shown, "space"));
+
+    expect(unfolded.slice(top, top + 8)).toEqual([
+      "● tasks  2 lanes  25m",
+      "├─ ● task-1  25m",
+      "│  ✓ implement  15m",
+      "│  ● ci  10m",
+      "└─ ● task-2  20m",
+      "   ● implement  20m",
+      "   ○ ci",
+      "○ close",
+    ]);
+
+    expect(treeOf(press(shown, "space", "space"))).toEqual(folded);
+  });
+
+  test("enter on a node opens the log of its own steps alone, and esc comes back", () => {
+    const shown = selecting(onPlan("done", SHIP, finishedShip), "push");
+    const opened = update(shown, { name: "return" });
+
+    expect(opened.action).toEqual({
+      kind: "open-node-log",
+      run: "s",
+      only: [{ step: "push", node: at("push") }],
+    });
+    expect(opened.model.view).toBe("log");
+    expect(plain(view(opened.model))).toContain("log of push");
+
+    const back = update(opened.model, { name: "escape" }).model;
+    expect(back.view).toBe("run");
+    expect(update(back, { name: "l" }).action).toEqual({ kind: "open-log", run: "s" });
+
+    const setUpLog = update(selecting(shown, "set up"), { name: "return" }).action;
+    expect(setUpLog).toEqual({
+      kind: "open-node-log",
+      run: "s",
+      only: [{ step: "read-trigger" }],
+    });
+  });
+
+  test("a node's log follows its steps as the run enters them, for a node not yet reached", () => {
+    const opened = update(selecting(onPlan("running", SHIP, runningShip), "push"), {
+      name: "return",
+    }).model;
+
+    expect(nodeLogOnly(opened)).toEqual(Option.some([]));
+
+    const later = { ...opened, history: Option.some(finishedShip) };
+
+    expect(nodeLogOnly(later)).toEqual(Option.some([{ step: "push", node: at("push") }]));
+    expect(plain(view(later))).toContain("log of push");
+  });
+
+  test("a repeat's log takes in a round that starts after it was opened", () => {
+    const opened = update(selecting(onPlan("running", LOOP, secondRound), "rounds"), {
+      name: "return",
+    }).model;
+
+    const third = ran(at("implement", { round: 3 }), { from: -2 });
+
+    const later = {
+      ...opened,
+      history: Option.some(
+        RunHistory.make({
+          ...secondRound,
+          steps: [...secondRound.steps, third.step],
+          nodes: [...(secondRound.nodes ?? []), third.visit],
+        }),
+      ),
+    };
+
+    expect(Option.getOrThrow(nodeLogOnly(later))).toContainEqual({
+      step: "implement",
+      node: at("implement", { round: 3 }),
+    });
+  });
+
+  test("the selected node stays selected as lanes start and move the rows under it", () => {
+    const before = selecting(onPlan("running", EPIC, lanes), "close");
+    const third = ran(at("implement", { lane: "task-3" }), { from: -1 });
+
+    const after = reselected(before, {
+      ...before,
+      history: Option.some(
+        RunHistory.make({
+          ...lanes,
+          steps: [...lanes.steps, third.step],
+          nodes: [...(lanes.nodes ?? []), third.visit],
+        }),
+      ),
+    });
+
+    expect(
+      Arr.get(detailTargets(after), after.detailIndex).pipe(Option.map((found) => found.label)),
+    ).toEqual(Option.some("close"));
+  });
+
+  test("a run with no plan keeps its path", () => {
+    const screen = plain(view(onPlan("running", SHIP, runningShip, { plan: Option.none() })));
+
+    expect(screen).toContain("Path");
+    expect(screen).not.toContain("set up");
   });
 });

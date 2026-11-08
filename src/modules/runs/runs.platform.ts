@@ -48,7 +48,7 @@ export {
   validityDue,
 } from "./domain/schedule/validity.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
-export { RunLog } from "./queries/read-run-log.query.ts";
+export { LoggedAt, RunLog } from "./queries/read-run-log.query.ts";
 export { RunFlowsCommands, RunsCommands } from "./runs.command-handlers.ts";
 export { RunsModule } from "./runs.module.ts";
 export {

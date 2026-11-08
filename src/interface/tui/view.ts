@@ -8,9 +8,17 @@ import * as Record from "effect/Record";
 
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/enrollment.platform.ts";
-import { ActiveRun, type RunHistory } from "../../modules/runs/runs.platform.ts";
+import {
+  ActiveRun,
+  type FlowPlan,
+  type LoggedAt,
+  type RunHistory,
+} from "../../modules/runs/runs.platform.ts";
 import {
   type DaemonStatus,
+  type NodeOnPlan,
+  type NodeState,
+  type OffPlan,
   type PersonaStatus,
   type PlanNode,
   type RepoStatus,
@@ -92,18 +100,28 @@ export type Model = {
   readonly runIndex: number;
   // The threads opened in the runs list to show all their runs, by threadOf.
   readonly expanded: ReadonlyArray<string>;
-  // The selected run among the detail view's thread.
-  readonly threadIndex: number;
+  // The selected line of the detail view: a node of the run's plan, then a
+  // run of its thread.
+  readonly detailIndex: number;
   readonly view: "main" | "log" | "settings" | "run";
   readonly settings: Option.Option<Settings>;
   // The run the detail view shows, where it has been, once the daemon has
   // said, and the worktree its latest agent session ran in.
   readonly detailRun: Option.Option<string>;
   readonly history: Option.Option<RunHistory>;
+  // The plan the run started with, for a run of a flow that has one.
+  readonly plan: Option.Option<FlowPlan>;
+  // The lanes of a forEach opened to show their steps, and the round each
+  // repeat shows when not its latest, by the node's key (detailTargets).
+  readonly unfolded: ReadonlyArray<string>;
+  readonly rounds: Readonly<Record<string, number>>;
   readonly worktree: Option.Option<string>;
   // The runs listed with a plan, by run id.
   readonly plans: Readonly<Record<string, PlannedRun>>;
   readonly logRun: Option.Option<string>;
+  // The node of the plan whose log the log view shows, by its name and the
+  // steps it ran; none for the whole log.
+  readonly logOf: Option.Option<NodeLog>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.
   readonly logScroll: number;
@@ -115,6 +133,27 @@ export type Model = {
   readonly width: number;
   readonly height: number;
   readonly now: DateTime.Utc;
+};
+
+// The node of the plan whose log the log view shows: by its key, so its
+// steps are worked out again from the run's history as the run enters them,
+// its name, and the steps it had when opened, for when it is no longer drawn.
+export type NodeLog = {
+  readonly key: string;
+  readonly name: string;
+  readonly only: ReadonlyArray<LoggedAt>;
+};
+
+// A line of the plan's tree a person can select: its key, which stays the
+// same as the run goes on, its name, the steps whose log enter opens, the
+// lanes space opens or closes, and for a repeat its key and how many rounds
+// it has.
+export type DetailTarget = {
+  readonly key: string;
+  readonly label: string;
+  readonly only: ReadonlyArray<LoggedAt>;
+  readonly lanes: ReadonlyArray<string>;
+  readonly repeat: Option.Option<{ readonly key: string; readonly rounds: number }>;
 };
 
 const segment = (text: string, style: Style = "plain"): Segment => ({ text, style });
@@ -297,7 +336,7 @@ export const KEYS_MAIN =
 export const KEYS_LOG = "↑↓ scroll · end follow · a attach · esc back · q quit";
 
 export const KEYS_RUN =
-  "↑↓ select in thread · enter open it · l log · a attach · x cancel run · esc back · q quit";
+  "↑↓ select · enter its log or run · space lanes · [ ] rounds · l log · a attach · x cancel run · esc back · q quit";
 
 export const KEYS_SETTINGS =
   "↑↓ select · e flow on/off · s schedule · enter choose account · c clear override · esc back · q quit";
@@ -1160,6 +1199,9 @@ const logView = (model: Model): ReadonlyArray<Line> => {
           ),
         ),
       ),
+      ...Option.toArray(
+        Option.map(model.logOf, (node) => segment(`  log of ${node.name}`, "bold")),
+      ),
     ],
     [],
   ];
@@ -1346,9 +1388,469 @@ const historyLines = (run: RunEntry, model: Model): ReadonlyArray<Line> =>
     },
   });
 
+// --- A run on its plan, as a vertical tree ---------------------------------
+//
+// A run of a flow with a plan is drawn on it (RunOnPlan), one node a line,
+// set up first and wrap up last: each node's state and the time in it, an
+// outcome branch under its node, a branch the run didn't take folded to one
+// dim line, a repeat as an indented block of one round at a time, and a
+// forEach as a line per lane, each lane's steps folded under it until
+// unfolded. A terminal keeps the tree's width and scrolls it.
+
+type RunStepOnPlan = NodeOnPlan["steps"][number];
+
+// A line of the tree: the guides before it, its state's mark, its name and
+// how long it took; and what selecting it gives, for a line a person can select.
+type TreeRow = {
+  readonly guide: string;
+  readonly mark: Option.Option<Segment>;
+  readonly name: string;
+  readonly style: Style;
+  readonly time: string;
+  readonly target: Option.Option<DetailTarget>;
+};
+
+// What the tree shows of the run: the lanes unfolded, the round each repeat
+// shows, the time now, and how a node is drawn, for what is drawn under it.
+type TreeOptions = {
+  readonly unfolded: ReadonlyArray<string>;
+  readonly rounds: Readonly<Record<string, number>>;
+  readonly now: DateTime.Utc;
+  readonly nodeRows: (
+    node: NodeOnPlan,
+    guide: string,
+    options: TreeOptions,
+  ) => ReadonlyArray<TreeRow>;
+};
+
+// What a node shows after its name, and the rows under it.
+type Inside = { readonly after: string; readonly rows: ReadonlyArray<TreeRow> };
+
+const STATE_MARK: Readonly<Record<NodeState, Segment>> = {
+  ok: segment("✓", "green"),
+  failed: segment("✗", "red"),
+  running: segment("●", "cyan"),
+  waiting: segment("◐", "yellow"),
+  "not-taken": segment("○", "dim"),
+  "not-reached": segment("○", "dim"),
+};
+
+const UNRUN_STATES: ReadonlyArray<NodeState> = ["not-taken", "not-reached"];
+
+const LIVE_STATES: ReadonlyArray<NodeState> = ["running", "waiting"];
+
+// A node in its round and lane, as one key, as a run's history keys it: `ci@2#task-10`.
+const keyOfNode = (node: NodeOnPlan) =>
+  [
+    node.node.id,
+    ...Option.toArray(Option.map(node.round, (round) => `@${round}`)),
+    ...Option.toArray(Option.map(node.lane, (lane) => `#${lane}`)),
+  ].join("");
+
+// How long a node took, or has taken so far: none for one the run never entered.
+const timeIn = (
+  span: {
+    readonly startedAt: Option.Option<string>;
+    readonly endedAt: Option.Option<string>;
+    readonly state: NodeState;
+  },
+  now: DateTime.Utc,
+) =>
+  Option.match(Option.flatMap(span.startedAt, epochSeconds), {
+    onNone: () => "",
+    onSome: (start) => {
+      const end = Option.getOrElse(
+        Option.flatMap(
+          Option.filter(span.endedAt, () => !LIVE_STATES.includes(span.state)),
+          epochSeconds,
+        ),
+        () => DateTime.toEpochMillis(now) / 1000,
+      );
+
+      return durationText(Math.max(0, end - start));
+    },
+  });
+
+const loggedAt = (step: RunStepOnPlan): LoggedAt => ({
+  step: step.step,
+  ...Option.match(Option.fromUndefinedOr(step.node), {
+    onNone: () => ({}),
+    onSome: (node) => ({ node }),
+  }),
+});
+
+// Every engine step the run ran at a node or under it, in every round and lane.
+const stepsUnder = (node: NodeOnPlan): ReadonlyArray<RunStepOnPlan> => {
+  const inside = Arr.match(node.rounds, {
+    onEmpty: () => node.body,
+    onNonEmpty: (rounds) => rounds.flatMap((round) => round.steps),
+  });
+
+  return [
+    ...node.steps,
+    ...node.branches.flatMap((branch) => branch.steps.flatMap(stepsUnder)),
+    ...inside.flatMap(stepsUnder),
+    ...node.lanes.flatMap((lane) => [...lane.steps, ...lane.body.flatMap(stepsUnder)]),
+  ];
+};
+
+const nameOf = (node: NodeOnPlan) => {
+  switch (node.node.kind) {
+    case "end":
+      return node.node.end;
+    case "next":
+      return "next round";
+    case "first":
+      return `first of ${node.node.first.join(", ")}`;
+    case "if":
+      return `if ${node.node.condition}`;
+    default:
+      return node.node.id;
+  }
+};
+
+const markOfNode = (node: NodeOnPlan): Segment => {
+  if (node.node.kind === "end" && node.state === "ok") {
+    return segment("◇", "green");
+  }
+
+  if (node.node.kind === "end") {
+    return segment("◇", "dim");
+  }
+
+  return STATE_MARK[node.state];
+};
+
+const nameStyle = (state: NodeState): Style => {
+  if (UNRUN_STATES.includes(state)) {
+    return "dim";
+  }
+
+  return "plain";
+};
+
+const connector = (last: boolean) => {
+  if (last) {
+    return "└─ ";
+  }
+
+  return "├─ ";
+};
+
+const continuation = (last: boolean) => {
+  if (last) {
+    return "   ";
+  }
+
+  return "│  ";
+};
+
+const target = (
+  key: string,
+  label: string,
+  steps: ReadonlyArray<RunStepOnPlan>,
+  more: Partial<Pick<DetailTarget, "lanes" | "repeat">> = {},
+): Option.Option<DetailTarget> =>
+  Option.some({
+    key,
+    label,
+    only: steps.map(loggedAt),
+    lanes: more.lanes ?? [],
+    repeat: more.repeat ?? Option.none(),
+  });
+
+const textRow = (guide: string, name: string, style: Style): TreeRow => ({
+  guide,
+  mark: Option.none(),
+  name,
+  style,
+  time: "",
+  target: Option.none(),
+});
+
+const lanesText = (count: number) => `${count} lane${plural(count)}`;
+
+// The rows of a sequence of nodes, each under `guide`.
+const sequenceRows = (
+  nodes: ReadonlyArray<NodeOnPlan>,
+  guide: string,
+  options: TreeOptions,
+): ReadonlyArray<TreeRow> => nodes.flatMap((node) => options.nodeRows(node, guide, options));
+
+// A block's or a stage's outcome branches: each under its node, the one it
+// went down open, and one it didn't take folded to one dim line.
+const branchRows = (
+  node: NodeOnPlan,
+  guide: string,
+  options: TreeOptions,
+): ReadonlyArray<TreeRow> =>
+  node.branches.flatMap((branch, index) => {
+    const last = index === node.branches.length - 1;
+    const left = !branch.taken && ["ok", "failed", "not-taken"].includes(node.state);
+
+    if (left) {
+      return [
+        textRow(
+          `${guide}${connector(last)}`,
+          `${[branch.outcome, ...branch.steps.map(nameOf)].join("  ·  ")}  (not taken)`,
+          "dim",
+        ),
+      ];
+    }
+
+    return [
+      textRow(`${guide}${connector(last)}`, branch.outcome, nameStyle(node.state)),
+      ...sequenceRows(branch.steps, `${guide}${continuation(last)}`, options),
+    ];
+  });
+
+// The round of a repeat it shows: the one a person chose, else its latest.
+const roundShown = (node: NodeOnPlan, options: TreeOptions) =>
+  Math.min(
+    node.rounds.length,
+    Math.max(
+      1,
+      Option.getOrElse(Record.get(options.rounds, keyOfNode(node)), () => node.rounds.length),
+    ),
+  );
+
+// A forEach's lanes, each a line with its steps under it once unfolded.
+const laneRows = (node: NodeOnPlan, guide: string, options: TreeOptions): ReadonlyArray<TreeRow> =>
+  node.lanes.flatMap((lane, index) => {
+    const last = index === node.lanes.length - 1;
+    const key = `${keyOfNode(node)}#${lane.lane}`;
+
+    return [
+      {
+        guide: `${guide}${connector(last)}`,
+        mark: Option.some(STATE_MARK[lane.state]),
+        name: lane.lane,
+        style: nameStyle(lane.state),
+        time: timeIn(lane, options.now),
+        target: target(key, lane.lane, [...lane.steps, ...lane.body.flatMap(stepsUnder)], {
+          lanes: [key],
+        }),
+      },
+      ...onlyIf(
+        options.unfolded.includes(key),
+        sequenceRows(lane.body, `${guide}${continuation(last)}`, options),
+      ),
+    ];
+  });
+
+const laneKeys = (node: NodeOnPlan) => node.lanes.map((lane) => `${keyOfNode(node)}#${lane.lane}`);
+
+const inside = (node: NodeOnPlan, guide: string, options: TreeOptions): Inside => {
+  const block = `${guide}│  `;
+
+  switch (node.node.kind) {
+    case "use":
+    case "stage":
+      return { after: "", rows: branchRows(node, guide, options) };
+    case "if":
+      return { after: "", rows: sequenceRows(node.body, block, options) };
+    case "repeat":
+      return Arr.match(node.rounds, {
+        onEmpty: () => ({ after: "", rows: sequenceRows(node.body, block, options) }),
+        onNonEmpty: (rounds) => {
+          const shown = roundShown(node, options);
+
+          return {
+            after: `  round ${shown} of ${rounds.length}`,
+            rows: sequenceRows(
+              Option.match(Arr.get(rounds, shown - 1), {
+                onNone: () => node.body,
+                onSome: (round) => round.steps,
+              }),
+              block,
+              options,
+            ),
+          };
+        },
+      });
+    case "forEach":
+      return Arr.match(node.lanes, {
+        onEmpty: () => ({ after: "", rows: sequenceRows(node.body, block, options) }),
+        onNonEmpty: (lanes) => ({
+          after: `  ${lanesText(lanes.length)}`,
+          rows: laneRows(node, guide, options),
+        }),
+      });
+    default:
+      return { after: "", rows: [] };
+  }
+};
+
+// A node's row, with the ones under it.
+const nodeRows = (
+  node: NodeOnPlan,
+  guide: string,
+  options: TreeOptions,
+): ReadonlyArray<TreeRow> => {
+  const under = inside(node, guide, options);
+  const name = nameOf(node);
+
+  const left = onlyIf(node.left, ["  ← the run left its plan here"]).join("");
+
+  const time = Option.getOrElse(
+    Option.as(
+      Option.liftPredicate(node, (found) => found.node.kind === "end"),
+      "",
+    ),
+    () => timeIn(node, options.now),
+  );
+
+  return [
+    {
+      guide,
+      mark: Option.some(markOfNode(node)),
+      name: `${name}${under.after}${left}`,
+      style: nameStyle(node.state),
+      time,
+      target: target(keyOfNode(node), name, stepsUnder(node), {
+        lanes: laneKeys(node),
+        repeat: Option.map(
+          Option.liftPredicate(node, (found) => found.rounds.length > 1),
+          (found) => ({ key: keyOfNode(found), rounds: found.rounds.length }),
+        ),
+      }),
+    },
+    ...under.rows,
+  ];
+};
+
+const offPlanRow = (name: string, off: OffPlan, now: DateTime.Utc): TreeRow => ({
+  guide: "",
+  mark: Option.some(STATE_MARK[off.state]),
+  name,
+  style: nameStyle(off.state),
+  time: timeIn(off, now),
+  // Set up and wrap up by a key no node of a plan has: a node's id never starts with a colon.
+  target: target(`:${name}`, name, off.steps),
+});
+
+// The run in the detail view on its plan, as the tree's rows: none for a run
+// with no plan, or one whose plan hasn't come yet.
+const planRows = (model: Model): Option.Option<ReadonlyArray<TreeRow>> =>
+  Option.gen(function* () {
+    const run = yield* Arr.findFirst(allRuns(model.status), (candidate) =>
+      Option.contains(model.detailRun, candidate.id),
+    );
+
+    const history = yield* model.history;
+    const plan = yield* Option.filter(model.plan, (found) => history.plan === found.hash);
+    const drawn = RunOnPlan.draw(plan, history, { status: run.status });
+
+    const options: TreeOptions = {
+      unfolded: model.unfolded,
+      rounds: model.rounds,
+      now: model.now,
+      nodeRows,
+    };
+
+    return [
+      offPlanRow("set up", drawn.setUp, model.now),
+      ...sequenceRows(drawn.steps, "", options),
+      offPlanRow("wrap up", drawn.wrapUp, model.now),
+    ];
+  });
+
+// The lines of the tree a person can select, in order.
+export const detailTargets = (model: Model): ReadonlyArray<DetailTarget> =>
+  Option.match(planRows(model), {
+    onNone: () => [],
+    onSome: (rows) => rows.flatMap((row) => Option.toArray(row.target)),
+  });
+
+// The steps whose lines the log view shows, for the node of the plan it is
+// the log of: those the run's history now has for it, so the log follows the
+// node as the run enters its steps, rounds and lanes.
+export const nodeLogOnly = (model: Model): Option.Option<ReadonlyArray<LoggedAt>> =>
+  Option.map(model.logOf, (node) =>
+    Option.match(
+      Arr.findFirst(detailTargets(model), (found) => found.key === node.key),
+      { onNone: () => node.only, onSome: (found) => found.only },
+    ),
+  );
+
+// The model after a refresh, with the same line of the detail view
+// selected: the same node of the plan, wherever new rounds and lanes moved
+// it, or the same run of the thread, after however many nodes come first now.
+export const reselected = (before: Model, after: Model): Model => {
+  const was = detailTargets(before);
+  const now = detailTargets(after);
+
+  const index = Option.match(Arr.get(was, before.detailIndex), {
+    onNone: () => before.detailIndex - was.length + now.length,
+    onSome: (selected) =>
+      Option.getOrElse(
+        Arr.findFirstIndex(now, (found) => found.key === selected.key),
+        () => after.detailIndex,
+      ),
+  });
+
+  return { ...after, detailIndex: Math.max(0, index) };
+};
+
+const TREE_INDENT = 2;
+
+// A name cut to `width`, with an ellipsis when it was longer, and padded to it.
+const fitted = (text: string, width: number) => {
+  if (text.length > width) {
+    return `${text.slice(0, Math.max(0, width - 1))}…`;
+  }
+
+  return text.padEnd(width);
+};
+
+const markWidth = (row: TreeRow) =>
+  Option.match(row.mark, { onNone: () => 0, onSome: (mark) => mark.text.length + 1 });
+
+// The tree's rows as lines, every time right-aligned in one column, within
+// `width`; the `selected`th selectable row highlighted.
+const treeLines = (
+  rows: ReadonlyArray<TreeRow>,
+  width: number,
+  selected: number,
+): ReadonlyArray<Line> => {
+  const timeWidth = Math.max(0, ...rows.map((row) => row.time.length));
+
+  const longest = Math.max(
+    0,
+    ...rows.map((row) => row.guide.length + markWidth(row) + row.name.length),
+  );
+
+  const nameWidth = Math.max(1, Math.min(longest, width - TREE_INDENT - 2 - timeWidth));
+  let selectable = -1;
+
+  return rows.map((row) => {
+    const lead = row.guide.length + markWidth(row);
+
+    const line: Line = [
+      segment(" ".repeat(TREE_INDENT)),
+      segment(row.guide, "dim"),
+      ...Option.match(row.mark, {
+        onNone: () => [],
+        onSome: (mark) => [mark, segment(" ")],
+      }),
+      segment(fitted(row.name, Math.max(1, nameWidth - lead)), row.style),
+      ...onlyIf(row.time.length > 0, [segment(`  ${row.time.padStart(timeWidth)}`, "dim")]),
+    ];
+
+    if (Option.isNone(row.target)) {
+      return line;
+    }
+
+    selectable += 1;
+
+    return select(line, selectable === selected);
+  });
+};
+
 // The other runs of the run's piece of work, each of which opens its own detail.
 const threadLines = (model: Model, run: RunEntry): ReadonlyArray<Line> => {
   const others = threadRuns(model, run.id);
+  const before = detailTargets(model).length;
 
   return onlyIf(others.length > 0, [
     [],
@@ -1370,11 +1872,25 @@ const threadLines = (model: Model, run: RunEntry): ReadonlyArray<Line> => {
           ),
           segment(`  ${firstLine(runDetail(other))}`, detailStyle(other.status)),
         ],
-        index === model.threadIndex,
+        before + index === model.detailIndex,
       );
     }),
   ]);
 };
+
+// Where the run has been: on its plan, as a tree, for a run with one; else its path.
+const whereLines = (run: RunEntry, model: Model): ReadonlyArray<Line> =>
+  Option.match(planRows(model), {
+    onNone: () => [heading("Path"), ...historyLines(run, model)],
+    onSome: (rows) => [
+      heading("Plan"),
+      ...treeLines(rows, model.width, model.detailIndex),
+      ...Option.match(model.history, {
+        onNone: () => [],
+        onSome: (history) => waitLines(run, history, model.now),
+      }),
+    ],
+  });
 
 // One run: what it's about and as whom, where it works, the steps it has
 // taken, and the other runs of its piece of work.
@@ -1414,11 +1930,21 @@ const runView = (model: Model): ReadonlyArray<Line> => {
         segment(Option.getOrElse(model.worktree, () => "none yet: no agent session has started")),
       ],
       [],
-      heading("Path"),
-      ...historyLines(run, model),
+      ...whereLines(run, model),
       ...threadLines(model, run),
     ],
   });
+};
+
+// The footer's two lines.
+const FOOTER = 2;
+
+// A view's lines from where the selected one shows, for a view longer than the terminal.
+const scrolledTo = (lines: ReadonlyArray<Line>, height: number): ReadonlyArray<Line> => {
+  const selected = lines.findIndex((line) => line.some((part) => part.style === "selected"));
+  const room = Math.max(1, height - FOOTER);
+
+  return lines.slice(Math.max(0, selected - room + 2));
 };
 
 const clipLine = (line: Line, width: number): Line => {
@@ -1444,7 +1970,7 @@ const bodyOf = (model: Model) => {
   }
 
   if (model.view === "run") {
-    return runView(model);
+    return scrolledTo(runView(model), model.height);
   }
 
   return Option.match(

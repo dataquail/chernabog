@@ -37,7 +37,9 @@ import {
   type CancelledRun,
   CancelTarget,
   type FlowPlan,
+  type LoggedAt,
   readUsageLogLine,
+  type RunHistory,
   RunLogsQueries,
   runSessions,
 } from "../../modules/runs/runs.platform.ts";
@@ -67,7 +69,9 @@ import {
   flowKey,
   type Line,
   type Model,
+  nodeLogOnly,
   type PlannedRun,
+  reselected,
   type RunEntry,
   runRows,
   type Style,
@@ -139,8 +143,14 @@ export const readUsage = Effect.gen(function* () {
 
 const LOG_LINES = 2000;
 
-const readLog = (runId: string) =>
-  RunLogsQueries.use((logs) => logs.ReadRunLogQuery({ runId: RunId.make(runId) })).pipe(
+// A run's log, or with `only`, the lines of a node of its plan.
+const readLog = (runId: string, only: Option.Option<ReadonlyArray<LoggedAt>> = Option.none()) =>
+  RunLogsQueries.use((logs) =>
+    logs.ReadRunLogQuery({
+      runId: RunId.make(runId),
+      ...Option.match(only, { onNone: () => ({}), onSome: (steps) => ({ only: steps }) }),
+    }),
+  ).pipe(
     Effect.map((log) => log.text.trimEnd().split("\n").slice(-LOG_LINES)),
     Effect.orElseSucceed((): ReadonlyArray<string> => []),
   );
@@ -151,15 +161,36 @@ const worktreeOf = (runId: string) =>
     Effect.map((sessions) => Option.map(Arr.last(sessions), (last) => last.cwd)),
   );
 
+// The plan a run started with, by the hash its history names: the one the
+// view has when it is that one, since a run keeps its plan, else the daemon's.
+const planOf = (history: Option.Option<RunHistory>, known: Option.Option<FlowPlan>) =>
+  Effect.gen(function* () {
+    const hash = Option.flatMap(history, (found) => Option.fromUndefinedOr(found.plan));
+
+    if (Option.isNone(hash)) {
+      return Option.none<FlowPlan>();
+    }
+
+    if (Option.exists(known, (plan) => plan.hash === hash.value)) {
+      return known;
+    }
+
+    return Option.flatMap(
+      Result.getSuccess(yield* Effect.result(daemonFlowPlan(hash.value))),
+      (found) => found.plan,
+    );
+  });
+
 // What the detail view shows of a run beyond its row: its steps and waits,
-// which the daemon keeps, and its worktree.
+// which the daemon keeps, the plan it started with, and its worktree.
 // A daemon from before runs kept their steps doesn't answer for them.
-const readDetail = (runId: string) =>
+const readDetail = (runId: string, known: Option.Option<FlowPlan> = Option.none()) =>
   Effect.gen(function* () {
     const history = yield* Effect.result(daemonRunHistory(runId));
 
     return {
       history: Result.getSuccess(history),
+      plan: yield* planOf(Result.getSuccess(history), known),
       failure: Option.map(Result.getFailure(history), (failure) => failure.message),
       worktree: yield* worktreeOf(runId),
     };
@@ -186,7 +217,7 @@ export const reusablePlan = (
 
 const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
   Effect.gen(function* () {
-    const planOf = (hash: string) =>
+    const planByHash = (hash: string) =>
       Effect.gen(function* () {
         const known = Option.fromUndefinedOr(plans.get(hash));
 
@@ -224,7 +255,7 @@ const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
           return Option.none();
         }
 
-        const plan = yield* planOf(hash.value);
+        const plan = yield* planByHash(hash.value);
 
         return Option.map(plan, (found) =>
           entry(run.id, { steps: found.steps, history: history.value, readAt: run.status }),
@@ -255,14 +286,18 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   flowIndex: 0,
   runIndex: 0,
   expanded: [],
-  threadIndex: 0,
+  detailIndex: 0,
   view: "main",
   settings: Option.none(),
   detailRun: Option.none(),
   history: Option.none(),
+  plan: Option.none(),
+  unfolded: [],
+  rounds: {},
   worktree: Option.none(),
   plans: {},
   logRun: Option.none(),
+  logOf: Option.none(),
   logLines: [],
   logScroll: 0,
   message: Option.none(),
@@ -407,18 +442,39 @@ export const runTui = Effect.gen(function* () {
 
   // What the open view shows beyond the status: the run log it follows, and
   // the steps of the run it details.
+  // The run the detail view shows, where it has been now, keeping the same
+  // line selected.
+  const refreshDetail = Effect.gen(function* () {
+    if (Option.isSome(model.detailRun)) {
+      const { history, plan, worktree } = yield* readDetail(model.detailRun.value, model.plan);
+      model = reselected(model, { ...model, history, plan, worktree });
+    }
+  });
+
+  // The log the log view follows: for a node of a run's plan, the lines of
+  // the steps the run's history has for it now, so it takes in the steps,
+  // rounds and lanes the run enters after it was opened.
+  const refreshLog = Effect.gen(function* () {
+    if (model.view !== "log" || Option.isNone(model.logRun)) {
+      return;
+    }
+
+    if (Option.isSome(model.logOf)) {
+      yield* refreshDetail;
+    }
+
+    model = { ...model, logLines: yield* readLog(model.logRun.value, nodeLogOnly(model)) };
+  });
+
   const refreshOpen = Effect.gen(function* () {
     if (model.view === "main") {
       model = { ...model, plans: yield* readPlans(model, plans) };
     }
 
-    if (model.view === "log" && Option.isSome(model.logRun)) {
-      model = { ...model, logLines: yield* readLog(model.logRun.value) };
-    }
+    yield* refreshLog;
 
-    if (model.view === "run" && Option.isSome(model.detailRun)) {
-      const { history, worktree } = yield* readDetail(model.detailRun.value);
-      model = { ...model, history, worktree };
+    if (model.view === "run") {
+      yield* refreshDetail;
     }
   });
 
@@ -549,13 +605,18 @@ export const runTui = Effect.gen(function* () {
           model = { ...model, logLines: yield* readLog(action.run) };
 
           return yield* render;
+        case "open-node-log":
+          model = { ...model, logLines: yield* readLog(action.run, Option.some(action.only)) };
+
+          return yield* render;
         case "open-run": {
           yield* render;
-          const { failure, history, worktree } = yield* readDetail(action.run);
+          const { failure, history, plan, worktree } = yield* readDetail(action.run);
 
           model = {
             ...model,
             history,
+            plan,
             worktree,
             message: Option.map(
               failure,
@@ -680,10 +741,7 @@ export const runTui = Effect.gen(function* () {
     const event = yield* Queue.take(events);
 
     if (event.kind === "tick") {
-      if (model.view === "log" && Option.isSome(model.logRun)) {
-        model = { ...model, logLines: yield* readLog(model.logRun.value) };
-      }
-
+      yield* refreshLog;
       yield* render;
       continue;
     }

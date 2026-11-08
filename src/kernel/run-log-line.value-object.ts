@@ -123,6 +123,29 @@ const linesOfStep = (raw: string, step: string, logs: StepLogs, from: number) =>
   return { text: Option.liftPredicate(kept.join("\n"), (text) => text.length > 0), next: end };
 };
 
+// The lines of a tagged log written where `keep` says, as a person reads
+// them: `keep` is asked of each entry's step (empty outside any) and node
+// tag (none outside any node), and a line with no tag goes with the entry
+// above it.
+const linesWhere = (raw: string, keep: (step: string, node: Option.Option<string>) => boolean) => {
+  const kept: Array<string> = [];
+  let keeping = false;
+
+  for (const line of raw.split("\n")) {
+    const tagged = Option.fromNullishOr(TAGGED.exec(line));
+
+    if (Option.isSome(tagged)) {
+      keeping = keep(tagged.value[2], Option.fromNullishOr(tagged.value[3]));
+    }
+
+    if (keeping && line.length > 0) {
+      kept.push(untagged(line));
+    }
+  }
+
+  return kept.join("\n");
+};
+
 export const RunLogLines = {
   entry,
   nodeOf,
@@ -130,4 +153,5 @@ export const RunLogLines = {
   carriesTags,
   stepLogsOf,
   linesOfStep,
+  linesWhere,
 } as const;
