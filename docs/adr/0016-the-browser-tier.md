@@ -68,6 +68,13 @@ browser bundle of it failed on `bun:sqlite`.
   its plan (`RunOnPlan`) and how lanes lay out (`LaneLayouts`), is a pure
   domain service the contracts re-export beside the value objects, so the
   dashboard and the TUI never work it out for themselves.
+- A flow's plan is drawn on one canvas (`plan-canvas.tsx`), laid out by
+  walking the plan's tree rather than by a graph-layout library: the flows
+  page draws a flow's plan from its status (`FlowStatus.plan`), and a run's
+  page will draw the run on the plan it started with, giving the canvas the
+  node states `RunOnPlan` works out. The dashboard's tests can't compile a
+  document, so they read `document-plans.ts`, which
+  `test/dashboard-plans.test.ts` holds to what `Compose.plan` compiles.
 - The bundle is built unminified, as the rest of the binary is.
 
 ## What the epic changed
