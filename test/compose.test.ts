@@ -2488,14 +2488,16 @@ describe("a document that runs a stage", () => {
     expect(checked(changingStage(staged, (step) => ({ ...step, stage: "find-work" })))).toEqual([
       {
         path: "steps[0].stage",
-        message: "no stage named find-work in .chernabog/stages/",
+        message:
+          "no stage named find-work in .chernabog/stages/; chernabog recipes blocks lists them all",
       },
     ]);
 
     expect(checked(changingStage(staged, (step) => ({ ...step, stage: "which-p" })))).toEqual([
       {
         path: "steps[0].stage",
-        message: "no stage named which-p in .chernabog/stages/; did you mean which-pr?",
+        message:
+          "no stage named which-p in .chernabog/stages/; did you mean which-pr? chernabog recipes blocks lists them all",
       },
     ]);
   });

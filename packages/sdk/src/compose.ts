@@ -1179,10 +1179,7 @@ const stagesNear = (stages: ReadonlyArray<string>, name: string) => {
     return "; there are none";
   }
 
-  return Option.getOrElse(
-    Option.map(suggesting(name, stages), (suggestion) => `; ${suggestion}`),
-    () => "",
-  );
+  return `; ${pointing(name, stages, "chernabog recipes blocks lists them all")}`;
 };
 
 // Whether the stage is there, and one a document can type: an executable's
