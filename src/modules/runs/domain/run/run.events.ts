@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
+import { NodeRef, NodeRefs } from "../plan/node-ref.value-object.ts";
 import { RunStatus } from "./run-status.value-object.ts";
 import { StepOutcome } from "./step-outcome.value-object.ts";
 import { itemTarget } from "./work-item.value-object.ts";
@@ -31,11 +32,13 @@ export const RunStarted = Event.make("RunStarted", {
 export type RunStarted = typeof RunStarted.Type;
 
 // A run entering a step, the first time it does: a resumed run that enters a
-// step again tells no one.
+// step again tells no one. `node` is where in its plan the step ran; absent
+// for a flow with no plan, and in an event from before steps carried one.
 export const RunEnteredStep = Event.make("RunEnteredStep", {
   eventId: Schema.String,
   runId: RunId,
   step: Schema.String,
+  node: Schema.optionalKey(NodeRef),
   enteredAt: Schema.String,
 });
 
@@ -47,11 +50,58 @@ export const RunFinishedStep = Event.make("RunFinishedStep", {
   eventId: Schema.String,
   runId: RunId,
   step: Schema.String,
+  node: Schema.optionalKey(NodeRef),
   outcome: StepOutcome,
   finishedAt: Schema.String,
 });
 
 export type RunFinishedStep = typeof RunFinishedStep.Type;
+
+// A run entering a node of its plan, in a round and a lane, the first time
+// it does, whether or not the node runs a step: a block that runs none is
+// entered and left all the same. A resumed run that passes it again tells no one.
+export const RunEnteredNode = Event.make("RunEnteredNode", {
+  eventId: Schema.String,
+  runId: RunId,
+  node: NodeRef,
+  enteredAt: Schema.String,
+});
+
+export type RunEnteredNode = typeof RunEnteredNode.Type;
+
+// A run leaving a node of its plan it entered, once, with how: never for one
+// interrupted.
+export const RunFinishedNode = Event.make("RunFinishedNode", {
+  eventId: Schema.String,
+  runId: RunId,
+  node: NodeRef,
+  outcome: StepOutcome,
+  finishedAt: Schema.String,
+});
+
+export type RunFinishedNode = typeof RunFinishedNode.Type;
+
+// A run taking the branch of a node's block for `outcome`, once: a resumed
+// run that takes it again tells no one.
+export const RunTookBranch = Event.make("RunTookBranch", {
+  eventId: Schema.String,
+  runId: RunId,
+  node: NodeRef,
+  outcome: Schema.String,
+  takenAt: Schema.String,
+});
+
+export type RunTookBranch = typeof RunTookBranch.Type;
+
+// A run, or a lane of it, reaching the `end` at a node of its plan, once.
+export const RunReachedEnd = Event.make("RunReachedEnd", {
+  eventId: Schema.String,
+  runId: RunId,
+  node: NodeRef,
+  reachedAt: Schema.String,
+});
+
+export type RunReachedEnd = typeof RunReachedEnd.Type;
 
 // A run parked on a signal, such as a push to a review's pull request: it
 // waits on someone, and holds no slot until it wakes.
@@ -104,16 +154,73 @@ const started = (run: {
     startedAt: run.startedAt,
   });
 
-const enteredStep = (runId: RunId, step: string, enteredAt: string) =>
-  RunEnteredStep.make({ eventId: runEventId(runId, `step:${step}`), runId, step, enteredAt });
+// A step's node, as its event carries it: absent when it has none.
+const nodeField = (node: Option.Option<NodeRef>) =>
+  Option.match(node, { onNone: () => ({}), onSome: (found) => ({ node: found }) });
+
+const enteredStep = (
+  runId: RunId,
+  step: string,
+  enteredAt: string,
+  node: Option.Option<NodeRef> = Option.none(),
+) =>
+  RunEnteredStep.make({
+    eventId: runEventId(runId, `step:${step}`),
+    runId,
+    step,
+    ...nodeField(node),
+    enteredAt,
+  });
 
 const finishedStep = (step: {
   readonly runId: RunId;
   readonly step: string;
+  readonly node: Option.Option<NodeRef>;
   readonly outcome: StepOutcome;
   readonly finishedAt: string;
 }) =>
-  RunFinishedStep.make({ eventId: runEventId(step.runId, `step-finished:${step.step}`), ...step });
+  RunFinishedStep.make({
+    eventId: runEventId(step.runId, `step-finished:${step.step}`),
+    runId: step.runId,
+    step: step.step,
+    ...nodeField(step.node),
+    outcome: step.outcome,
+    finishedAt: step.finishedAt,
+  });
+
+const enteredNode = (runId: RunId, node: NodeRef, enteredAt: string) =>
+  RunEnteredNode.make({
+    eventId: runEventId(runId, `node:${NodeRefs.keyOf(node)}`),
+    runId,
+    node,
+    enteredAt,
+  });
+
+const finishedNode = (runId: RunId, node: NodeRef, outcome: StepOutcome, finishedAt: string) =>
+  RunFinishedNode.make({
+    eventId: runEventId(runId, `node-finished:${NodeRefs.keyOf(node)}`),
+    runId,
+    node,
+    outcome,
+    finishedAt,
+  });
+
+const tookBranch = (runId: RunId, node: NodeRef, outcome: string, takenAt: string) =>
+  RunTookBranch.make({
+    eventId: runEventId(runId, `branch:${NodeRefs.keyOf(node)}`),
+    runId,
+    node,
+    outcome,
+    takenAt,
+  });
+
+const reachedEnd = (runId: RunId, node: NodeRef, reachedAt: string) =>
+  RunReachedEnd.make({
+    eventId: runEventId(runId, `end:${NodeRefs.keyOf(node)}`),
+    runId,
+    node,
+    reachedAt,
+  });
 
 const needsAttention = (wait: {
   readonly runId: RunId;
@@ -154,10 +261,17 @@ const pullRequestOpened = (run: { readonly id: RunId; readonly repo: string }, s
       }),
   );
 
+// The events about where in its plan a run went.
+export type NodeEvent = RunEnteredNode | RunFinishedNode | RunTookBranch | RunReachedEnd;
+
 export const RunEvents = {
   started,
   enteredStep,
   finishedStep,
+  enteredNode,
+  finishedNode,
+  tookBranch,
+  reachedEnd,
   needsAttention,
   finished,
   pullRequestOpened,

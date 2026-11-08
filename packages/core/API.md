@@ -374,6 +374,12 @@ export declare const triggerOf: (flow: Flow) => TriggeredFlow["trigger"];
 export declare const describeError: <E>(error: E) => string;
 export declare const reportAs: (step: string) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, StepFailed | Exclude<E, Extract<E, ReportedError>>, R>;
 export declare const CurrentActivity: Context.Reference<Option.Option<string>>;
+export type NodeAt = {
+    readonly id: string;
+    readonly round: Option.Option<number>;
+    readonly lane: Option.Option<string>;
+};
+export declare const CurrentNode: Context.Reference<Option.Option<NodeAt>>;
 export declare const activity: <S extends Schema.Constraint = typeof Schema.Void, E = never, R = never>(name: string, execute: Effect.Effect<S["Type"], E, R>, success?: S) => Effect.Effect<S["Type"], Extract<E, import("./errors.ts").CiTimedOut | import("./errors.ts").MergeRefused | import("./errors.ts").NotFound | import("./errors.ts").NothingCommitted | import("./errors.ts").PullRequestClosed | import("./errors.ts").PushRejected> | FlowError, WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance | S["DecodingServices"] | Exclude<Exclude<R, never>, Scope.Scope | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>>;
 export declare const step: <A>(name: string, input: Json, output: Schema.Codec<A, Json>, id?: Option.Option<string>) => Effect.Effect<A, FlowError, StepRunner | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>;
 export declare const sleep: (name: string, duration: Duration.Input) => Effect.Effect<void, never, WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>;
@@ -422,6 +428,7 @@ export * as Lanes from "./lanes.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";
 export * from "./paths.ts";
+export * as PlanNodes from "./plan-nodes.ts";
 export * from "./roles.ts";
 export * from "./services.ts";
 export * from "./stage.ts";
@@ -615,6 +622,29 @@ export declare const latestMarker: <A>(read: (body: string) => Option.Option<A>,
 ```ts
 export declare const globToRegExp: (glob: string) => RegExp;
 export declare const pathsMatching: (paths: ReadonlyArray<string>, globs: ReadonlyArray<string>) => string[];
+```
+
+## plan-nodes.ts
+
+```ts
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { type NodeAt } from "./flow.ts";
+import { type StepOutcome } from "./services.ts";
+declare const RunNodes_base: Context.ServiceClass<RunNodes, "@chernabog/sdk/RunNodes", {
+    entered(at: NodeAt): Effect.Effect<void>;
+    finished(at: NodeAt, outcome: StepOutcome): Effect.Effect<void>;
+    branched(at: NodeAt, outcome: string): Effect.Effect<void>;
+    ended(at: NodeAt): Effect.Effect<void>;
+}>;
+export declare class RunNodes extends RunNodes_base {
+}
+export declare const at: (id: string, round: Option.Option<number>) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+export declare const inLane: (lane: string) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+export declare const branched: (id: string, round: Option.Option<number>, outcome: string) => Effect.Effect<void, never, never>;
+export declare const ended: (id: string, round: Option.Option<number>) => Effect.Effect<void, never, never>;
+export {};
 ```
 
 ## roles.ts

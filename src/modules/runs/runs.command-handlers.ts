@@ -40,6 +40,8 @@ import { PruneRunLogsCommand } from "./commands/prune-run-logs.command.ts";
 import { pruneRunLogsHandler } from "./commands/prune-run-logs.handler.ts";
 import { RecordCreatedIssueCommand } from "./commands/record-created-issue.command.ts";
 import { recordCreatedIssueHandler } from "./commands/record-created-issue.handler.ts";
+import { RecordNodeCommand } from "./commands/record-node.command.ts";
+import { recordNodeHandler } from "./commands/record-node.handler.ts";
 import { RecordSkipCommand } from "./commands/record-skip.command.ts";
 import { recordSkipHandler } from "./commands/record-skip.handler.ts";
 import { RecordTokenUsageCommand } from "./commands/record-token-usage.command.ts";
@@ -52,6 +54,8 @@ import { ReleaseRunWaitCommand } from "./commands/release-run-wait.command.ts";
 import { releaseRunWaitHandler } from "./commands/release-run-wait.handler.ts";
 import { ResumeRunCommand } from "./commands/resume-run.command.ts";
 import { resumeRunHandler } from "./commands/resume-run.handler.ts";
+import { SaveRunPlanCommand } from "./commands/save-run-plan.command.ts";
+import { saveRunPlanHandler } from "./commands/save-run-plan.handler.ts";
 import { StartFlowRunCommand } from "./commands/start-flow-run.command.ts";
 import { startFlowRunHandler } from "./commands/start-flow-run.handler.ts";
 import { StartRunCommand } from "./commands/start-run.command.ts";
@@ -65,7 +69,9 @@ import {
 // client the workflow engine journals to, which the composition root that holds
 // state.db provides, as it does for the runs' queries. The commands say what
 // happened to a run (RunStarted, RunEnteredStep, RunFinishedStep,
-// RunNeedsAttention, RunFinished, PullRequestOpened, TokenUsageRecorded) on the EventBus the root provides.
+// RunNeedsAttention, RunFinished, PullRequestOpened, TokenUsageRecorded, and
+// where in its plan a run went: RunEnteredNode, RunFinishedNode,
+// RunTookBranch, RunReachedEnd) on the EventBus the root provides.
 export const runsCommandGroup = Command.group(
   AdoptImplicitRunsCommand,
   AttachExecutionCommand,
@@ -79,9 +85,11 @@ export const runsCommandGroup = Command.group(
   ParkRunCommand,
   PruneRunLogsCommand,
   RecordCreatedIssueCommand,
+  RecordNodeCommand,
   RecordSkipCommand,
   RecordTokenUsageCommand,
   ReleaseRunWaitCommand,
+  SaveRunPlanCommand,
   StartRunCommand,
 );
 
@@ -98,9 +106,11 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   ParkRunCommand: (payload) => parkRunHandler(payload),
   PruneRunLogsCommand: () => pruneRunLogsHandler(),
   RecordCreatedIssueCommand: (payload) => recordCreatedIssueHandler(payload),
+  RecordNodeCommand: (payload) => recordNodeHandler(payload),
   RecordSkipCommand: (payload) => recordSkipHandler(payload),
   RecordTokenUsageCommand: (payload) => recordTokenUsageHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
+  SaveRunPlanCommand: (payload) => saveRunPlanHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
 });
 

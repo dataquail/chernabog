@@ -36,7 +36,7 @@ export const finishStepHandler = Effect.fn("finishStepHandler")(
     );
 
     yield* (yield* EventBus).dispatch([
-      RunEvents.finishedStep({ runId, step, outcome, finishedAt }),
+      RunEvents.finishedStep({ runId, step, node: open.value.node, outcome, finishedAt }),
     ]);
   },
   withUnitOfWork,

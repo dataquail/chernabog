@@ -54,8 +54,11 @@ Look before you guess. Everything below is under the chernabog home,
   catches them, which is mostly a crash. Emptied past 10 MB.
 - **`runs/<run>.log`**: one run's steps and agent output, a line an entry,
   `<ISO>\t<step>\t<text>`: the innermost activity the writing fiber was in
-  (`CurrentActivity`), empty outside any; a log from before tags is
-  `<ISO> <text>`. `chernabog logs <run>` prints it without the tags
+  (`CurrentActivity`), empty outside any. A run of a flow compiled from a
+  document also tags a line with the plan node it was written in, its round
+  and lane (`CurrentNode`), after the step:
+  `<ISO>\t<step>\t@{"id":"ci","round":2,"lane":"task-10"}\t<text>`. A log
+  from before tags is `<ISO> <text>`. `chernabog logs <run>` prints it without the tags
   (`src/kernel/run-log-line.value-object.ts`). Kept 30 days from when its run finished
   (a run still running keeps its log; a log state.db has no run for, 30 days
   from its last write), pruned by the daemon's daily sweep.

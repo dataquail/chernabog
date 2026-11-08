@@ -28,6 +28,8 @@ import { listUnsupportedRunsHandler } from "./queries/list-unsupported-runs.hand
 import { ListUnsupportedRunsQuery } from "./queries/list-unsupported-runs.query.ts";
 import { pollNotificationsHandler } from "./queries/poll-notifications.handler.ts";
 import { PollNotificationsQuery } from "./queries/poll-notifications.query.ts";
+import { readFlowPlanHandler } from "./queries/read-flow-plan.handler.ts";
+import { ReadFlowPlanQuery } from "./queries/read-flow-plan.query.ts";
 import { readRunHistoryHandler } from "./queries/read-run-history.handler.ts";
 import { ReadRunHistoryQuery } from "./queries/read-run-history.query.ts";
 import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
@@ -61,6 +63,7 @@ export const runsQueryGroup = Query.group(
   ListRunWaitsQuery,
   ListUnreleasedMarkersQuery,
   ListUnsupportedRunsQuery,
+  ReadFlowPlanQuery,
   ReadRunHistoryQuery,
   ReadRunMadeQuery,
   ReadStateVersionQuery,
@@ -78,6 +81,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ListRunWaitsQuery: (payload) => listRunWaitsHandler(payload),
   ListUnreleasedMarkersQuery: () => listUnreleasedMarkersHandler(),
   ListUnsupportedRunsQuery: () => listUnsupportedRunsHandler(),
+  ReadFlowPlanQuery: (payload) => readFlowPlanHandler(payload),
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
   ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),

@@ -10,6 +10,8 @@ import { HoldsRepositoryFake } from "../src/modules/runs/infrastructure/reposito
 import { RunCreatedIssuesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-created-issues.repository-fake.ts";
 import { RunLanesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-fake.ts";
 import { RunMarkersRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-fake.ts";
+import { RunNodesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-nodes.repository-fake.ts";
+import { RunPlansRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-plans.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/runs.repository-fake.ts";
@@ -33,6 +35,8 @@ const stores = Layer.mergeAll(
   RunMarkersRepositoryFake([]),
   RunCreatedIssuesRepositoryFake([]),
   RunLanesRepositoryFake([]),
+  RunNodesRepositoryFake([]),
+  RunPlansRepositoryFake([]),
   RunStepsRepositoryFake([]),
   RunWaitsRepositoryFake([]),
   SkipsRepositoryFake([]),

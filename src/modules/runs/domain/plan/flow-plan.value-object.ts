@@ -101,3 +101,10 @@ export class FlowPlan extends Schema.Class<FlowPlan, { readonly brand: "FlowPlan
   hash: Schema.String,
   steps: Nodes,
 }) {}
+
+// A plan by its hash, if a run started with it.
+export class FoundPlan extends Schema.Class<FoundPlan, { readonly brand: "FoundPlan" }>(
+  "FoundPlan",
+)({
+  plan: Schema.Option(FlowPlan),
+}) {}

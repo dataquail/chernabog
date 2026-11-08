@@ -20,6 +20,7 @@ describe("the run step mapper", () => {
       RunStepEntity.make({
         runId: RunId.make("run-1"),
         step: "ci",
+        node: Option.none(),
         enteredAt: "2026-10-20T00:01:00.000Z",
         finishedAt: Option.some("2026-10-20T00:02:00.000Z"),
         outcome: Option.some("failed"),

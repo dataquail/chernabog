@@ -2,9 +2,14 @@
 // when what it logs has newlines in it:
 //
 //   <ISO time>\t<step>\t<text>
+//   <ISO time>\t<step>\t@<node>\t<text>
 //
 // `<step>` is the activity the entry was written in, the innermost when one
-// runs inside another, and empty for one written outside any. Logs from
+// runs inside another, and empty for one written outside any. `<node>` is the
+// plan node the entry was written in, with its round and lane (core's
+// CurrentNode), as a JSON object on one line, such as
+// `@{"id":"ci","round":2,"lane":"task-10"}`; an entry written outside any
+// node, as every entry of a flow with no plan is, has none. Logs from
 // before steps were tagged have `<ISO time> <text>` lines, which a reader
 // tells apart by the tab after the time. A person never sees the tag: every
 // reader shows a tagged line as `<ISO time> <text>`, as it was before.
@@ -19,7 +24,7 @@ export const StepLogs = Schema.Literals(["tagged", "inferred", "unavailable"]);
 
 export type StepLogs = typeof StepLogs.Type;
 
-const TAGGED = /^(\d{4}-\d\d-\d\dT[^\s]*?)\t([^\t\n]*)\t/;
+const TAGGED = /^(\d{4}-\d\d-\d\dT[^\s]*?)\t([^\t\n]*)\t(?:@(\{[^\t\n]*\})\t)?/;
 
 const TAGGED_LINES = new RegExp(TAGGED.source, "gm");
 
@@ -28,9 +33,26 @@ const STEP_LINE = /^\S+ step: (.*)$/;
 // A step name as a tag: one line, no tabs.
 const asTag = (step: string) => step.replaceAll(/[\t\r\n]/g, " ");
 
-// An entry as the log keeps it, without its trailing newline.
-const entry = (at: string, step: Option.Option<string>, text: string) =>
-  `${at}\t${asTag(Option.getOrElse(step, () => ""))}\t${text}`;
+// A node as a tag: `@` and the node, one line, no tabs, then the tab before the text.
+const nodeTag = (node: Option.Option<string>) =>
+  Option.match(node, { onNone: () => "", onSome: (found) => `@${asTag(found)}\t` });
+
+// An entry as the log keeps it, without its trailing newline. `node` is the
+// node it was written in, as a JSON object on one line; none outside any.
+const entry = (
+  at: string,
+  step: Option.Option<string>,
+  text: string,
+  node: Option.Option<string> = Option.none(),
+) => `${at}\t${asTag(Option.getOrElse(step, () => ""))}\t${nodeTag(node)}${text}`;
+
+// The node a line was written in, as its tag has it: none for a line with no
+// node tag, as a line of a flow with no plan, or of a log from before nodes,
+// and for a line that continues the entry above it.
+const nodeOf = (line: string): Option.Option<string> =>
+  Option.flatMap(Option.fromNullishOr(TAGGED.exec(line)), (match) =>
+    Option.fromNullishOr(match[3]),
+  );
 
 // `text` as a person reads it: each tagged line without its tag.
 const untagged = (text: string) => text.replaceAll(TAGGED_LINES, "$1 ");
@@ -103,6 +125,7 @@ const linesOfStep = (raw: string, step: string, logs: StepLogs, from: number) =>
 
 export const RunLogLines = {
   entry,
+  nodeOf,
   untagged,
   carriesTags,
   stepLogsOf,

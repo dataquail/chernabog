@@ -16,7 +16,7 @@ import { RunsRepository } from "../domain/run/runs.repository.ts";
 import { type EnterStepPayload } from "./enter-step.command.ts";
 
 export const enterStepHandler = Effect.fn("enterStepHandler")(
-  function* ({ runId, step }: EnterStepPayload) {
+  function* ({ node, runId, step }: EnterStepPayload) {
     const runs = yield* RunsRepository;
     const found = yield* runs.findOne(RunSpecifications.withId(runId));
 
@@ -36,6 +36,7 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(
     const entered = RunStepEntity.make({
       runId,
       step,
+      node: Option.fromUndefinedOr(node),
       enteredAt: DateTime.formatIso(yield* DateTime.now),
       finishedAt: Option.none(),
       outcome: Option.none(),
@@ -45,7 +46,9 @@ export const enterStepHandler = Effect.fn("enterStepHandler")(
     yield* steps.insertOne(entered);
 
     if (!again) {
-      yield* (yield* EventBus).dispatch([RunEvents.enteredStep(runId, step, entered.enteredAt)]);
+      yield* (yield* EventBus).dispatch([
+        RunEvents.enteredStep(runId, step, entered.enteredAt, entered.node),
+      ]);
     }
 
     return RunView.make({ ...changed });

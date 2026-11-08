@@ -10,6 +10,8 @@ import { RunRoot } from "../domain/run/run.root.ts";
 import { RunStepEntity } from "../domain/run/run-step.entity.ts";
 import { RunLogsClientFake } from "../infrastructure/clients/run-logs.client-fake.ts";
 import { RunLanesRepositoryFake } from "../infrastructure/repositories/run-lanes.repository-fake.ts";
+import { RunNodesRepositoryFake } from "../infrastructure/repositories/run-nodes.repository-fake.ts";
+import { RunPlansRepositoryFake } from "../infrastructure/repositories/run-plans.repository-fake.ts";
 import { RunStepsRepositoryFake } from "../infrastructure/repositories/run-steps.repository-fake.ts";
 import { RunWaitsRepositoryFake } from "../infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../infrastructure/repositories/runs.repository-fake.ts";
@@ -48,6 +50,8 @@ const steps = (runs: ReadonlyArray<RunRoot>, recorded: ReadonlyArray<RunStepEnti
     RecordedEvents,
     RunsRepositoryFake(runs),
     RunStepsRepositoryFake(recorded),
+    RunNodesRepositoryFake([]),
+    RunPlansRepositoryFake([]),
     RunLanesRepositoryFake([]),
     RunLogsClientFake({}),
     RunWaitsRepositoryFake([]),
@@ -107,6 +111,7 @@ describe("enterStepHandler", () => {
             RunStepEntity.make({
               runId: RunId.make("a"),
               step: "claim",
+              node: Option.none(),
               enteredAt: "2026-10-20T00:00:01.000Z",
               finishedAt: Option.none(),
               outcome: Option.none(),

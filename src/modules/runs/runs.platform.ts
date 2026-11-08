@@ -5,14 +5,19 @@
 
 export { Routing } from "./domain/domain-services/routing.domain-service.ts";
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
+export { FlowPlan, FoundPlan } from "./domain/plan/flow-plan.value-object.ts";
 export { CancelledRun, CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
 export {
   PullRequestOpened,
+  RunEnteredNode,
   RunEnteredStep,
   RunFinished,
+  RunFinishedNode,
   RunFinishedStep,
   RunNeedsAttention,
+  RunReachedEnd,
   RunStarted,
+  RunTookBranch,
 } from "./domain/run/run.events.ts";
 export { RunHistory } from "./domain/run/run-history.value-object.ts";
 export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
