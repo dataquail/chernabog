@@ -2427,7 +2427,7 @@ type Branched = {
 };
 
 export type PlanNode =
-  | NodeOf<"use", { readonly block: string } & Branched>
+  | NodeOf<"use", { readonly block: string; readonly about: string } & Branched>
   | NodeOf<"stage", { readonly stage: string } & Branched>
   | NodeOf<"end", { readonly end: "done" }>
   | NodeOf<"end", { readonly end: "done"; readonly summary: string }>
@@ -2484,7 +2484,7 @@ const callNode = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode 
     return { id: step.id, path, kind: "stage", stage: step.stage, ...branched };
   }
 
-  return { id: step.id, path, kind: "use", block: step.use, ...branched };
+  return { id: step.id, path, kind: "use", block: step.use, about: "", ...branched };
 };
 
 const planCall = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode => {

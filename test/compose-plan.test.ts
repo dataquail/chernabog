@@ -73,6 +73,19 @@ const nodeAt = (plan: FlowPlan, path: string) =>
     Option.fromUndefinedOr(everyNode(plan.steps).find((node) => node.path === path)),
   );
 
+// What a block does, as the SDK describes it to a person composing a document.
+const aboutOf = (block: string) => {
+  const described = Schema.decodeUnknownSync(
+    Schema.Struct({
+      blocks: Schema.Array(Schema.Struct({ name: Schema.String, about: Schema.String })),
+    }),
+  )(Compose.describe());
+
+  return Option.getOrThrow(
+    Option.fromUndefinedOr(described.blocks.find((each) => each.name === block)),
+  ).about;
+};
+
 describe("a flow document's plan", () => {
   for (const [name, source] of Object.entries(DOCUMENTS)) {
     test(`decodes for the ${name} document, every node with an id of its own`, () => {
@@ -93,6 +106,7 @@ describe("a flow document's plan", () => {
       path: "steps[0]",
       kind: "use",
       block: "issue.claim",
+      about: aboutOf("issue.claim"),
       in: { issue: "trigger.issue", queued: "trigger.queued" },
       with: { adopt: true },
       branches: [
@@ -131,6 +145,17 @@ describe("a flow document's plan", () => {
       kind: "end",
       end: "done",
     });
+  });
+
+  test("gives each block step what its block does, for a person reading the plan", () => {
+    for (const source of Object.values(DOCUMENTS)) {
+      for (const node of everyNode(planFor(source).steps)) {
+        if (node.kind === "use") {
+          expect(node.about).toBe(aboutOf(node.block));
+          expect(node.about).not.toBe("");
+        }
+      }
+    }
   });
 
   test("gives a repeat its state and its body, and a next what it carries", () => {
@@ -209,6 +234,7 @@ describe("a flow document's plan", () => {
           path: "steps[3].repeat.steps[5]",
           kind: "use",
           block: "stack.land",
+          about: aboutOf("stack.land"),
           in: { round: "round", progress: "progress", stack: "carried.stack" },
           with: {},
           branches: [

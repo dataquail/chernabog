@@ -311,3 +311,7 @@ export const Flows = ({
     </section>
   );
 };
+
+export const FlowPlanSection = (_props: { readonly flow: FlowStatus; readonly repo: string }) => (
+  <section />
+);
