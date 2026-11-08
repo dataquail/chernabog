@@ -789,6 +789,14 @@ export const postMergeSources = {
 // comments why.
 export const mergedSubject = {
   fields: ["pr", "url", "title", "sha", "base", "issue"],
+  kinds: {
+    pr: "PullRequestNumber",
+    url: "its URL",
+    title: "its title",
+    sha: "CommitSha",
+    base: "BaseBranch",
+    issue: "Option<IssueNumber>",
+  },
   failureContext: [],
   read: (item: WorkItem) =>
     Schema.decodeUnknownEffect(MergedItem)(item.data).pipe(

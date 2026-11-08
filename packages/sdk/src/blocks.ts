@@ -79,6 +79,7 @@ import {
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
+import { suited } from "./suits.ts";
 
 const summaryOf = (pullRequest: PullRequestNumber, round: number) =>
   `#${pullRequest}: review ${round} requested changes`;
@@ -128,6 +129,9 @@ const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
 export const catalogue = elsewhere.and("blocks.ts", {
   "issue.claim": defineBlock({
     name: "issue.claim",
+    // Only these let its claim go: an issue's and a spec's scopes, and the
+    // engine for an epic's tasks.
+    suits: ["epic", "issue", "spec"],
     fixed: ["adopt"],
     about:
       "Claims the issue, so only this run works on it, and settles its branch and base. With adopt, takes on an open pull request that already closes the issue instead.",
@@ -191,7 +195,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       "Waits, parked, for the author of an adopted draft to mark it ready, up to `within`; goes to a person if they don't. Doesn't wait for one that isn't a draft.",
     inputKinds: {
       issue: "IssueNumber",
-      adopted: "the adopted pull request",
+      adopted: "the adopted pull request, from issue.claim's adopted",
       within: 'how long, as "14 days"',
     },
     outputKinds: "nothing",
@@ -355,7 +359,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       "Posts the agent's questions as a comment on the issue, where its author sees them. Its output is the reason to end with. On a run's main path, end: needs-human and the run lets the claim go; in a lane, which goes on, follow it with issue.releaseClaim.",
     inputKinds: {
       issue: "IssueNumber",
-      outcome: "what the agent said",
+      outcome: "what the agent said, from agent.implement's needs-clarification",
       queued: "how the issue was queued",
       lane: "LaneId",
     },
@@ -858,6 +862,7 @@ export const subjects = {
 
   issue: {
     fields: ["issue", "queued"],
+    kinds: { issue: "IssueNumber", queued: "how the issue was queued" },
     failureContext: ["pr"],
     read: (item: WorkItem) =>
       Effect.gen(function* () {
@@ -900,6 +905,7 @@ export const subjects = {
 
   "pull-request": {
     fields: ["pr"],
+    kinds: { pr: "PullRequestNumber" },
     failureContext: [],
     read: (item: WorkItem) =>
       Review.pullRequestOf(item).pipe(
@@ -921,6 +927,12 @@ export const subjects = {
 };
 
 export type SubjectName = keyof typeof subjects;
+
+// The subjects each block suits, by what it needs: see suits.ts.
+export const blockSubjects = suited(
+  Object.values(catalogue),
+  Object.fromEntries(Object.entries(subjects).map(([name, subject]) => [name, subject.kinds])),
+);
 
 // How a person names the work of a flow they start, rather than a trigger
 // finding it, by the subject it's on: `chernabog start <issue>` names an issue,

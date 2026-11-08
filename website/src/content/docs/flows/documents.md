@@ -128,6 +128,8 @@ A flow's `subject` is what each run works on. It decides what `trigger` gives th
 - `epic`: `trigger.epic`, an issue labelled `auto:epic`.
 - `spec`: an issue to plan, found by the `plan.queued` source: `trigger.issue` and `trigger.queued`, as on `issue`. A failure going to a person removes the plan's checkout, labels the spec `auto:needs-human` and comments why, and its claim goes when the run ends; a run parked waiting on its plan keeps it.
 
+Each block suits only some subjects, and `chernabog recipes blocks` lists them after `suits:`. A flow may use only the blocks that suit its subject: compile refuses any other, naming the subjects it does suit, as in `epic.claim suits a flow on epic, and this is a flow on pull-request`. What a block suits comes from what it needs. A block that needs an epic's number suits only `epic`, whose trigger gives one, and one that needs `trigger.reviewer` suits only `changes-asked`. A block that needs a pull request's number suits `issue` too, since `pr.open` gives one there. A few blocks lean on what only one subject's scope does, such as the `plan.*` blocks on `spec`'s, and say so themselves.
+
 On `changes-asked`, the `author.*` blocks answer the review in the session that wrote the code. `author.session` finds it from the session marker the run that opened the pull request left: on a layer of an epic's stack, that is the task's own session, and on one a person worked on with the agent, theirs, reopened in front of them. `review.askAgain` asks `trigger.reviewer` to review again, not a reviewer from the pool:
 
 ```yaml
@@ -373,9 +375,10 @@ export default defineStage({
 chernabog recipes blocks              # everything: subjects, sources, loop states, blocks
 chernabog recipes blocks gate.local   # one block, or one of your stages
 chernabog recipes blocks --json       # the same, for an agent
+chernabog recipes blocks --subject pull-request   # only the blocks and sources for a flow on it
 ```
 
-Each block says what it does, what each input takes, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
+Each block says what it does, the subjects it suits, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
 
 ## Compiling
 

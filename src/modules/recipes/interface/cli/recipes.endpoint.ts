@@ -397,6 +397,7 @@ const describeGives = (gives: FlowCatalogue["blocks"][number]["gives"]) => {
 
 const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   `${block.name}: ${block.about}`,
+  ...listedAfter("suits", block.subjects ?? []),
   ...block.inputs.map(
     (input) =>
       `  ${input.under} ${input.name}${Option.getOrElse(
@@ -447,6 +448,7 @@ const stagesOf = (catalogue: FlowCatalogue) => catalogue.stages ?? [];
 
 const describeSource = (source: FlowCatalogue["sources"][number]) => [
   `${source.name}: ${source.about}`,
+  ...listedAfter("finds work on", Option.toArray(Option.fromUndefinedOr(source.subject))),
   ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
 ];
 
@@ -498,12 +500,27 @@ const recipesBlocks = Command.make(
       ),
       Argument.variadic(),
     ),
+    subject: Flag.String("subject").pipe(
+      Flag.withDescription(
+        "Only the blocks and sources for a flow on this subject, such as pull-request",
+      ),
+      Flag.optional,
+    ),
     json: jsonFlag,
   },
-  ({ json, names }) =>
+  ({ json, names, subject }) =>
     Effect.gen(function* () {
       const root = yield* rootOf(Option.none());
       const catalogue = yield* (yield* RecipesQueries).ListFlowBlocksQuery({ root });
+      const subjectNames = catalogue.subjects.map((each) => each.name);
+
+      for (const asked of Option.toArray(subject)) {
+        if (!subjectNames.includes(asked)) {
+          return yield* new FlowDocumentsRefused({
+            message: `no subject named ${asked}; there are ${subjectNames.join(", ")}`,
+          });
+        }
+      }
 
       const known = [
         ...catalogue.blocks.map((block) => block.name),
@@ -522,10 +539,29 @@ const recipesBlocks = Command.make(
       // Only the blocks and sources named, when any are.
       const named = (name: string) => names.length === 0 || names.includes(name);
 
+      // Only what suits the subject, when one is asked for. An SDK from before
+      // says nothing of it, and keeps everything.
+      const onSubject = (said: Option.Option<ReadonlyArray<string>>) =>
+        Option.match(subject, {
+          onNone: () => true,
+          onSome: (asked) =>
+            Option.match(said, {
+              onNone: () => true,
+              onSome: (subjects) => subjects.includes(asked),
+            }),
+        });
+
       const shown = new FlowCatalogue({
         ...catalogue,
-        blocks: catalogue.blocks.filter((block) => named(block.name)),
-        sources: catalogue.sources.filter((source) => named(source.name)),
+        subjects: catalogue.subjects.filter((each) => onSubject(Option.some([each.name]))),
+        blocks: catalogue.blocks.filter(
+          (block) => named(block.name) && onSubject(Option.fromUndefinedOr(block.subjects)),
+        ),
+        sources: catalogue.sources.filter(
+          (source) =>
+            named(source.name) &&
+            onSubject(Option.map(Option.fromUndefinedOr(source.subject), (one) => [one])),
+        ),
         stages: stagesOf(catalogue).filter((stage) => named(stage.name)),
       });
 
@@ -536,7 +572,7 @@ const recipesBlocks = Command.make(
       }
 
       if (names.length === 0) {
-        yield* printLines(describeCatalogue(catalogue));
+        yield* printLines(describeCatalogue(shown));
 
         return;
       }

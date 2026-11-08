@@ -25,6 +25,7 @@ import * as SchemaAST from "effect/SchemaAST";
 import type * as SchemaIssue from "effect/SchemaIssue";
 
 import {
+  blockSubjects,
   catalogue,
   laneScopes,
   loopStates,
@@ -420,6 +421,12 @@ const listed = (names: ReadonlyArray<string>, nothing: string) =>
     Option.liftPredicate(names.join(", "), () => names.length > 0),
     () => nothing,
   );
+
+// A list as a sentence gives a choice of it: "a, b or c".
+const oneOf = (names: ReadonlyArray<string>) =>
+  [names.slice(0, -1).join(", "), ...names.slice(-1)]
+    .filter((part) => part.length > 0)
+    .join(" or ");
 
 export const isEnd = (step: Step): step is EndStep => "end" in step;
 
@@ -1228,6 +1235,21 @@ const checkUse = (
 
   const block = found.value;
 
+  // A block on a subject it doesn't suit would fail on its types, if at all,
+  // where the document can't see why.
+  const suits = Option.getOrElse(
+    Record.get(blockSubjects, step.use),
+    (): ReadonlyArray<string> => [],
+  );
+
+  if (!suits.includes(checking.subject)) {
+    say(
+      checking,
+      `${at}.use`,
+      `${step.use} suits a flow on ${oneOf(suits)}, and this is a flow on ${checking.subject}`,
+    );
+  }
+
   checkIdentity(checking, step, block, names, used, at);
 
   for (const name of block.stepNames) {
@@ -1816,6 +1838,8 @@ steps:
 
 A reference under in, summary or reason is a step's id, for its whole output, or step.field for one field of it, or trigger.<field>. A step's output is available to the steps after it, and an outcome's steps can use what the steps before them gave. After a branch's steps, a run goes on to the next step unless they end.
 
+A block suits only the subjects its listing says, after suits; a document may use only those that suit its subject, and chernabog recipes blocks --subject <subject> lists only them and the sources for it.
+
 A block's failures are handled as it lists them: person tells a person and stops, told stops because a person already knows, skip ends with nothing to do, fail ends failed. Add failure: { <error>: <one of those> } to a step only to change one.
 
 A compiled flow runs once the flow file is on the default branch and a persona's flows in machine config list it.
@@ -1931,12 +1955,19 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
     name,
     about: source.about,
     with: source.with,
+    // The subject of the work it finds.
+    ...Option.match(Record.get(sourcesByName, name), {
+      onNone: () => ({}),
+      onSome: (found) => ({ subject: found.subject }),
+    }),
   })),
   loopStates: Object.keys(loopStates),
   laneScopes: Object.keys(laneScopes),
   blocks: Object.values(blocksByName).map((block) => ({
     name: block.name,
     about: block.about,
+    // The subjects a flow using it can be on.
+    subjects: [...Option.getOrElse(Record.get(blockSubjects, block.name), () => [])],
     inputs: Object.entries(block.inputs).map(([name, need]) => ({
       name,
       required: need === "required",

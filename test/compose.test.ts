@@ -2248,15 +2248,10 @@ describe("Compose.describe", () => {
   // Each subject says what each field of its trigger is, which is what a
   // block's suiting it is found from.
   test("says what each field of a subject's trigger is", () => {
-    const Said = Schema.Struct({
-      fields: Schema.Array(Schema.String),
-      kinds: Schema.Record(Schema.String, Schema.String),
-    });
-
     for (const [name, subject] of Object.entries(Blocks.subjects)) {
-      const { fields, kinds } = Schema.decodeUnknownSync(Said)(subject);
-
-      expect(`${name}: ${Object.keys(kinds).join(", ")}`).toBe(`${name}: ${fields.join(", ")}`);
+      expect(`${name}: ${Object.keys(subject.kinds).join(", ")}`).toBe(
+        `${name}: ${subject.fields.join(", ")}`,
+      );
     }
   });
 
@@ -3063,6 +3058,7 @@ describe("the plan document", () => {
     );
 
     expect(messages(epic)).toEqual([
+      "plan.doneDrafting suits a flow on spec, and this is a flow on epic",
       "plan.doneDrafting names its steps the same in every lane, so it can't run beside others",
     ]);
   });

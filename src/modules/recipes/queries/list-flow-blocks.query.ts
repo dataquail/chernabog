@@ -19,6 +19,8 @@ const BlockOutcome = Schema.Struct({
 const CatalogueBlock = Schema.Struct({
   name: Schema.String,
   about: Schema.String,
+  // The subjects a flow using it can be on; none from an SDK from before.
+  subjects: Schema.optionalKey(Schema.Array(Schema.String)),
   inputs: Schema.Array(BlockInput),
   // A word for a single value, or a word for each field.
   gives: Schema.Union([Schema.String, Kinds]),
@@ -59,7 +61,15 @@ export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand:
       failureContext: Schema.Array(Schema.String),
     }),
   ),
-  sources: Schema.Array(Schema.Struct({ name: Schema.String, about: Schema.String, with: Kinds })),
+  sources: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      about: Schema.String,
+      with: Kinds,
+      // The subject of the work it finds; none from an SDK from before.
+      subject: Schema.optionalKey(Schema.String),
+    }),
+  ),
   loopStates: Schema.Array(Schema.String),
   laneScopes: Schema.Array(Schema.String),
   blocks: Schema.Array(CatalogueBlock),

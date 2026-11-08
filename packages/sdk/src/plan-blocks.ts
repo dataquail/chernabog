@@ -50,6 +50,7 @@ type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;
 // and its claim goes however the run ends; a run parked on its plan keeps it.
 export const specSubject = {
   fields: ["issue", "queued"],
+  kinds: { issue: "IssueNumber", queued: "how the issue was queued" },
   failureContext: [],
   read: (item: WorkItem) =>
     Effect.gen(function* () {
@@ -99,9 +100,14 @@ export const planSources = {
   })),
 };
 
+// What every plan block suits: each reads or writes the spec's plan, whose
+// checkout only a spec's scope removes when a person must take over.
+const ON_SPEC = ["spec"];
+
 export const planBlocks = {
   "plan.draft": defineBlock({
     name: "plan.draft",
+    suits: ON_SPEC,
     about:
       "Has the agent read the spec and the code, in a read-only checkout of the base branch, and propose the tasks it splits into: each a title, a body, a kind (auto for an agent, hybrid for a person with an agent, human for a person) and the tasks that block it. The plan is checked in code: at least one task and at most planNodes, keys that are lowercase letters, digits and dashes, no key twice and none named verify, a known kind, a title, blockers that are tasks, and no cycle. A plan that fails goes back to the agent with what's wrong, up to planRounds times, and then to a person. The agent may answer with questions instead. Given what a person asked to change, it drafts the plan again with that.",
     inputKinds: {
@@ -134,6 +140,7 @@ export const planBlocks = {
 
   "plan.propose": defineBlock({
     name: "plan.propose",
+    suits: ON_SPEC,
     about:
       "Posts the plan on the spec as a comment: its summary, a Mermaid graph of which task blocks which, each task folded, and how to answer it. It adds a verify task last, for a person, blocked by every other, that checks the work against the spec's acceptance criteria. It labels the spec auto:plan-proposed, waiting on a person.",
     inputKinds: {
@@ -159,6 +166,7 @@ export const planBlocks = {
 
   "plan.awaitAnswer": defineBlock({
     name: "plan.awaitAnswer",
+    suits: ON_SPEC,
     fixed: ["within"],
     about:
       "Parks the run until a person answers the posted plan: approved when the spec carries auto:plan-approved, or changes when a member of the repo comments on it. Nobody answering within `within` goes to a person.",
@@ -195,6 +203,7 @@ export const planBlocks = {
 
   "plan.changesAsked": defineBlock({
     name: "plan.changesAsked",
+    suits: ON_SPEC,
     about:
       "Reads what a person asked to change of the plan, from the comments of the repo's members since it was posted, and takes auto:plan-proposed off the spec. Its changes go to the next round, with next: { changes: <this step>.changes }.",
     inputKinds: { issue: "IssueNumber: the spec", round: "the round" },
@@ -213,6 +222,7 @@ export const planBlocks = {
 
   "plan.create": defineBlock({
     name: "plan.create",
+    suits: ON_SPEC,
     about:
       "Makes each task of the approved plan an issue and a sub-issue of the spec, links each to the tasks that block it, and only then labels them by kind (auto:eligible for auto, auto:needs-human for human, none for hybrid), so no flow picks one up before its blockers are linked. A task's issue made before a crash is found by its marker, not made twice. It runs only on the run's way out.",
     inputKinds: {
@@ -238,6 +248,7 @@ export const planBlocks = {
 
   "plan.becomeEpic": defineBlock({
     name: "plan.becomeEpic",
+    suits: ON_SPEC,
     about:
       "Labels the spec auto:epic, which the epic flow picks up, takes the plan's labels and auto:in-progress off it, deletes its branch, and says which issue each task became. It runs only on the run's way out.",
     inputKinds: {
@@ -262,6 +273,7 @@ export const planBlocks = {
 
   "plan.doneDrafting": defineBlock({
     name: "plan.doneDrafting",
+    suits: ON_SPEC,
     about:
       "Removes the read-only checkout the agent drafted the plan in, before the run ends: as an epic, or with the agent's questions. A failure going to a person removes it too. It runs only on the run's way out, and a failure of its own fails the run.",
     inputKinds: { issue: "IssueNumber: the spec" },
@@ -279,6 +291,7 @@ export const planBlocks = {
 
   "plan.askClarification": defineBlock({
     name: "plan.askClarification",
+    suits: ON_SPEC,
     about:
       "Posts the agent's questions on the spec, labels it auto:needs-clarification, and says to answer them and apply auto:plan again. Its output is the reason to end with: end: needs-human, and the run lets the claim go. It runs only on the run's way out, and a failure of its own fails the run.",
     inputKinds: {
