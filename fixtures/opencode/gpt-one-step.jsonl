@@ -1,0 +1,4 @@
+{"type":"step_start","timestamp":1762600000000,"sessionID":"ses_gpt","part":{"id":"prt_c1","sessionID":"ses_gpt","messageID":"msg_c","type":"step-start"}}
+{"type":"reasoning","timestamp":1762600000800,"sessionID":"ses_gpt","part":{"id":"prt_c2","sessionID":"ses_gpt","messageID":"msg_c","type":"reasoning","text":"Checking the tree.","time":{"start":1762600000100,"end":1762600000800}}}
+{"type":"text","timestamp":1762600001000,"sessionID":"ses_gpt","part":{"id":"prt_c3","sessionID":"ses_gpt","messageID":"msg_c","type":"text","text":"{\"status\":\"done\"}","time":{"start":1762600000900,"end":1762600001000}}}
+{"type":"step_finish","timestamp":1762600001100,"sessionID":"ses_gpt","part":{"id":"prt_c4","sessionID":"ses_gpt","messageID":"msg_c","type":"step-finish","reason":"stop","cost":0,"tokens":{"input":5000,"output":200,"reasoning":700,"cache":{"read":3000,"write":0}}}}
