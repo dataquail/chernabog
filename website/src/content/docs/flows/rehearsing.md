@@ -95,7 +95,16 @@ On an enrolled repo, chernabog pauses the scenario's repo on this machine for th
 
 ## Cleanup
 
-Afterwards, chernabog removes what the rehearsal made: the seeded issues (deleted, or closed where your persona can't delete them), the seeded pull requests and their branches, and the pull requests and branches the flow opened for the seeded issues. `--keep` leaves all of it, and the rehearsal's clone and journal, for a look.
+Afterwards, chernabog removes what the rehearsal made: the seeded issues (deleted, or closed where your persona can't delete them), the seeded pull requests and their branches, and the pull requests and branches the flow opened for the seeded issues.
+
+It also removes what the rehearsal's run made, as the run recorded it in its own journal:
+
+- **The issues the run created**, such as plan's sub-issues or post-merge's follow-up when CI is red. They're removed the way the seeded issues are, along with the pull requests and branches the flow opened for them.
+- **Every claim ref the run took**, including the ones it still held when the rehearsal stopped: an epic still parked when the rehearsal stops following it, or a run that failed partway. A claim ref is deleted only while it still names the rehearsal's run.
+
+Chernabog doesn't search the repo for anything that looks related, so a rehearsal on an enrolled repo leaves real work alone. It only sees an issue the run created through the flow's GitHub service, though. An issue opened by a custom step, by the agent, or by a raw `GitHub.request` call isn't recorded, so cleanup leaves it.
+
+`--keep` leaves all of it, and the rehearsal's clone and journal, for a look.
 
 ## Replaying a run
 

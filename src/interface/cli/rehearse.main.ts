@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Record from "effect/Record";
+import * as Ref from "effect/Ref";
 
 import { asSuffix, type Persona } from "../../kernel/persona.value-object.ts";
 import { runLabel } from "../../kernel/run-id.id.ts";
@@ -50,6 +51,7 @@ import {
   RunFlowsCommands,
   runLogFile,
   RunLogsQueries,
+  RunsQueries,
   runUnanswered,
   type RunView,
   servicesFrom,
@@ -84,6 +86,11 @@ type LoadedScenario = Effect.Success<ReturnType<RehearsalsQueries["Service"]["Lo
 
 // What seeding made, as its command answers.
 type Seeded = Effect.Success<ReturnType<RehearsalsCommands["Service"]["SeedScenarioCommand"]>>;
+
+// What the rehearsal's run recorded in its journal that it made, as cleanup takes it.
+type Made = Parameters<RehearsalsCommands["Service"]["CleanUpScenarioCommand"]>[0]["run"];
+
+const MADE_NOTHING: Made = { createdIssues: [], claims: [] };
 
 // The stand-ins a rehearsal runs with, as planning answers them.
 type StandIns = Effect.Success<
@@ -434,7 +441,9 @@ const replayedAnswers = (replay: Option.Option<string>) =>
       }),
   });
 
-// The rehearsal's own engine and journal, and the run it starts there.
+// The rehearsal's own engine and journal, and the run it starts there. Once
+// the rehearsal stops following the run, however it stops, `made` holds what
+// the run's journal says it made, for cleanup: read while the journal is open.
 const runRehearsal = (
   handle: FlowHandle,
   persona: Persona,
@@ -442,6 +451,7 @@ const runRehearsal = (
   scratch: Scratch,
   machine: MachineConfig,
   options: RehearseOptions,
+  made: Ref.Ref<Made>,
 ) =>
   Effect.gen(function* () {
     const contexts = yield* buildPersonaContexts(handle.repo, machine);
@@ -483,7 +493,16 @@ const runRehearsal = (
         `started ${run.value.id} (${runLabel(run.value)}) for ${item.value.key}, log: ${yield* runLogFile(run.value.id)}`,
       );
 
-      return Option.some(yield* follow(handle, persona, run.value, context, options.timeout));
+      const journaled = Effect.gen(function* () {
+        const found = yield* (yield* RunsQueries).ReadRunMadeQuery({ runId: run.value.id });
+        yield* Ref.set(made, { createdIssues: found.createdIssues, claims: found.claims });
+      });
+
+      return Option.some(
+        yield* follow(handle, persona, run.value, context, options.timeout).pipe(
+          Effect.ensuring(journaled),
+        ),
+      );
     });
 
     return yield* Effect.provideContext(program, engine);
@@ -578,15 +597,18 @@ const report = (
     );
   });
 
-const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona) =>
+const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, made: Made, seedAs: Persona) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
 
     const cleaned = yield* (yield* RehearsalsCommands).CleanUpScenarioCommand({
       repo: slug,
       seeded,
-      branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
-      run: { createdIssues: [], claims: [] },
+      // The branches the flow made for the issues seeded, and for those it created.
+      branches: [...seeded.issues.map((issue) => issue.number), ...made.createdIssues].map(
+        Claims.branchFor,
+      ),
+      run: made,
       as: seedAs,
     });
 
@@ -725,7 +747,7 @@ export const rehearse = (options: RehearseOptions) =>
           "SeedingFailed",
           (error) =>
             Effect.andThen(
-              cleanUp(scratch, loaded.scenario.repo, error.seeded, seedAs),
+              cleanUp(scratch, loaded.scenario.repo, error.seeded, MADE_NOTHING, seedAs),
               Effect.fail(
                 new ConfigError({ message: `seeding ${loaded.scenario.repo}: ${error.message}` }),
               ),
@@ -733,6 +755,8 @@ export const rehearse = (options: RehearseOptions) =>
         );
 
         yield* Console.log(`seeded ${describeSeeded(seeded)} on ${loaded.scenario.repo}`);
+
+        const made = yield* Ref.make(MADE_NOTHING);
 
         const ran = Effect.gen(function* () {
           const handle = flowHandle(scratchRepo, loaded.flow, flow.value);
@@ -744,6 +768,7 @@ export const rehearse = (options: RehearseOptions) =>
             scratch,
             scratchMachine,
             options,
+            made,
           );
 
           return yield* Option.match(ended, {
@@ -761,7 +786,9 @@ export const rehearse = (options: RehearseOptions) =>
                 );
               }
 
-              return cleanUp(scratch, loaded.scenario.repo, seeded, seedAs);
+              return Effect.flatMap(Ref.get(made), (journaled) =>
+                cleanUp(scratch, loaded.scenario.repo, seeded, journaled, seedAs),
+              );
             }),
           ),
         );
