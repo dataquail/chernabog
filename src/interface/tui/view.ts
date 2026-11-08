@@ -40,10 +40,12 @@ export type FlowRow = {
 export type RunEntry = ActiveRun;
 
 // A run of a flow with a plan: the plan it started with, and where in it the
-// run has been, which its row draws as a strip.
+// run has been, which its row draws as a strip, as the daemon said when the
+// run's status was `readAt`.
 export type PlannedRun = {
   readonly steps: ReadonlyArray<PlanNode>;
   readonly history: RunHistory;
+  readonly readAt: RunStatus;
 };
 
 type RunStatus = ActiveRun["status"];

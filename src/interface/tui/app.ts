@@ -168,11 +168,21 @@ const readDetail = (runId: string) =>
 // The plans of the runs the main view lists, and where in them each run has
 // been, for its row's strip. A run with no plan, or one the daemon doesn't
 // say, has none, and its row shows its detail. A plan never changes, so each
-// is asked for once; nor does a finished run's history, once it is known.
+// is asked for once; nor does a finished run's history, once it was read
+// after the run finished.
 const entry = (runId: string, planned: PlannedRun): readonly [string, PlannedRun] => [
   runId,
   planned,
 ];
+
+// What a run's row has of it that needs no asking again: a history read once
+// the run had ended, with its status unchanged since. One read while it ran
+// misses where it went after, so it is asked for again.
+export const reusablePlan = (
+  known: Option.Option<PlannedRun>,
+  status: RunEntry["status"],
+): Option.Option<PlannedRun> =>
+  Option.filter(known, (planned) => planned.readAt !== "running" && planned.readAt === status);
 
 const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
   Effect.gen(function* () {
@@ -196,9 +206,9 @@ const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
 
     const read = (run: RunEntry) =>
       Effect.gen(function* () {
-        const known = Option.fromUndefinedOr(model.plans[run.id]);
+        const known = reusablePlan(Option.fromUndefinedOr(model.plans[run.id]), run.status);
 
-        if (Option.isSome(known) && run.status !== "running") {
+        if (Option.isSome(known)) {
           return Option.some(entry(run.id, known.value));
         }
 
@@ -217,7 +227,7 @@ const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
         const plan = yield* planOf(hash.value);
 
         return Option.map(plan, (found) =>
-          entry(run.id, { steps: found.steps, history: history.value }),
+          entry(run.id, { steps: found.steps, history: history.value, readAt: run.status }),
         );
       });
 

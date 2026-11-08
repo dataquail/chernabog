@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { type DaemonStatus, RunOnPlan } from "../src/interface/daemon/daemon.protocol.ts";
-import { initialModel } from "../src/interface/tui/app.ts";
+import { initialModel, reusablePlan } from "../src/interface/tui/app.ts";
 import { runStrip } from "../src/interface/tui/strip.ts";
 import { type Model, plain, view } from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
@@ -303,10 +303,11 @@ const model = (overrides: Partial<Model> = {}): Model => ({
   status: Option.some(status),
   now,
   plans: {
-    "run-planned": { steps: IMPLEMENT, history: AT_AGENT },
+    "run-planned": { steps: IMPLEMENT, history: AT_AGENT, readAt: "running" },
     "run-finished": {
       steps: IMPLEMENT,
       history: history({ nodes: [ok("claim", 1), ok("agent", 3), ok("gate", 5), ok("pr", 7)] }),
+      readAt: "done",
     },
   },
   ...overrides,
@@ -331,5 +332,27 @@ describe("the main view's run rows", () => {
     expect(narrow).not.toContain("agent ●");
     // A shorter strip still fits: the finished run keeps its last node.
     expect(narrow).toMatch(/done\s+#9 .* 60m ago\s+… → pr ✓$/m);
+  });
+});
+
+describe("asking the daemon for a run's history again", () => {
+  const read = (readAt: RunStatus) => Option.some({ steps: IMPLEMENT, history: AT_AGENT, readAt });
+
+  test("a history read while the run ran is asked for again once it has finished", () => {
+    expect(Option.isNone(reusablePlan(read("running"), "done"))).toBe(true);
+    expect(Option.isNone(reusablePlan(read("running"), "failed"))).toBe(true);
+  });
+
+  test("a running run's history is always asked for again", () => {
+    expect(Option.isNone(reusablePlan(read("running"), "running"))).toBe(true);
+  });
+
+  test("a history read after the run finished is kept, while its status stays", () => {
+    expect(Option.isSome(reusablePlan(read("done"), "done"))).toBe(true);
+    expect(Option.isNone(reusablePlan(read("done"), "failed"))).toBe(true);
+  });
+
+  test("a run with none yet is asked for", () => {
+    expect(Option.isNone(reusablePlan(Option.none(), "done"))).toBe(true);
   });
 });
