@@ -30,6 +30,7 @@ import review from "../packages/recipes/flows/review.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
+  DRAFT_DOCUMENT,
   EPIC_DOCUMENT,
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
@@ -276,6 +277,69 @@ describe("the epic document runs as the recipe does", () => {
       60_000,
     );
   }
+});
+
+// No recipe opens a draft, so the draft document's run is the implement
+// recipe's, but for what a draft changes: the pull request opens as a draft,
+// nobody in the pool is asked to review it, and the issue says a person marks
+// it ready. The step names are the recipe's but for the review request, so a
+// run in flight resumes by them.
+describe("a document that opens its pull request as a draft", () => {
+  const composedDraft = loadFlow(documentOf(DRAFT_DOCUMENT));
+
+  effect(
+    "opens it as a draft, hands it off, and asks nobody to review it",
+    () =>
+      Effect.gen(function* () {
+        const made: Array<Fake> = [];
+
+        const setup = () => {
+          const fake = queued();
+          made.push(fake);
+
+          return fake;
+        };
+
+        const fromRecipe = yield* observe(implement, "implement", setup, IMPLEMENT_WORK_ITEM);
+
+        const fromDocument = yield* observe(
+          yield* composedDraft,
+          "implement",
+          setup,
+          IMPLEMENT_WORK_ITEM,
+        );
+
+        const [recipeFake, documentFake] = made;
+
+        expect(fromDocument.status).toBe("done");
+        // The recipe's steps, but for the review it asks for.
+        expect(fromRecipe.steps).toContain(`request-review-${PULL}`);
+        expect(fromDocument.steps).toEqual(
+          fromRecipe.steps.filter((step) => step !== `request-review-${PULL}`),
+        );
+        expect(fromDocument.steps).toContain("open-pull-request");
+        expect(fromDocument.steps).toContain("hand-off");
+        expect(fromDocument.opened).toBe(true);
+        expect(fromDocument.subjects).toEqual(fromRecipe.subjects);
+        expect(fromDocument.pushes).toEqual(fromRecipe.pushes);
+
+        expect(recipeFake.authored.draft).toBe(false);
+        expect(documentFake.authored.draft).toBe(true);
+        expect(fromRecipe.requested).toBe(1);
+        expect(fromDocument.requested).toBe(0);
+        expect(fromDocument.pullLabels).toEqual([]);
+
+        expect(documentFake.pullText.body).toContain("Opened by Chernabog as a draft");
+        expect(fromDocument.summary).toBe(
+          `#${ISSUE}: https://github.com/dataquail/demo/pull/${PULL} is a draft, for a person to mark ready`,
+        );
+        expect(fromDocument.comments.at(-1)).toContain(
+          `Draft pull request opened: https://github.com/dataquail/demo/pull/${PULL}`,
+        );
+        expect(fromRecipe.comments.at(-1)).toContain("Pull request ready for review");
+      }),
+    60_000,
+  );
 });
 
 const composedWithStage = loadFlow(documentOf(REVIEW_WITH_STAGE_DOCUMENT));

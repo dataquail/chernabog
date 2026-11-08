@@ -204,6 +204,14 @@ const checksOf = (ci: CiState, headSha: string): CiChecks => {
 export type ItemStates = { issue: "open" | "closed"; pull: PullRequest["state"] };
 
 // The body of a request that unassigns people from an issue.
+// A pull request opened through the REST API, as a draft is.
+const Opening = Schema.Struct({
+  head: Schema.String,
+  base: Schema.String,
+  body: Schema.String,
+  draft: Schema.Boolean,
+});
+
 const Unassigning = Schema.Struct({ assignees: Schema.Array(Schema.String) });
 
 // The body of a request that edits a comment.
@@ -432,6 +440,33 @@ export const makeFake = (
       Option.fromNullishOr(path.match(/^\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)$/)),
       (matched) => branchPullNumbered(Number(matched[1])),
     );
+
+  // A POST: the pull requests closing the issue, as GraphQL answers, or the
+  // queued issue's pull request, opened through the REST API, as a draft is.
+  const post = (path: string, body: Option.Option<Json>): Json => {
+    if (path === "/graphql") {
+      return {
+        data: {
+          repository: { issue: { closedByPullRequestsReferences: { nodes: [...closing] } } },
+        },
+      };
+    }
+
+    if (path !== `/repos/${settings.slug}/pulls`) {
+      return {};
+    }
+
+    for (const opening of Option.toArray(
+      Option.flatMap(body, (sent) => Schema.decodeUnknownOption(Opening)(sent)),
+    )) {
+      based.targets.push(opening.base);
+      git.opened = opening.head === `auto/issue-${ISSUE}`;
+      authored.draft = opening.draft;
+      pullText.body = opening.body;
+    }
+
+    return { number: PULL, html_url: `https://github.com/dataquail/demo/pull/${PULL}` };
+  };
 
   // An edit of a comment, by its id, of the pull request's body, or of
   // another branch's pull request's base.
@@ -902,12 +937,8 @@ export const makeFake = (
             return { sha: merged.sha, parents: [{ sha: merged.parent }] };
           }
 
-          if (method === "POST" && path === "/graphql") {
-            return {
-              data: {
-                repository: { issue: { closedByPullRequestsReferences: { nodes: [...closing] } } },
-              },
-            };
+          if (method === "POST") {
+            return post(path, body);
           }
 
           // The issues this login opened, newest first.

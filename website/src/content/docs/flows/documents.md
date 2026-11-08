@@ -55,6 +55,20 @@ steps:
 
   A way that ends `needs-human` owes nothing a block [leaves to do](#order). So a flow that gives every pull request to a person, rather than to a reviewer, follows `pr.open` with `pr.handToPerson` and `end: needs-human` in place of `issue.handOff`. Each of its runs then ends needing a person, by design.
 
+- `pr.open` takes `with: { draft: true }` to open the pull request as a draft. It is still handed off, so `issue.handOff` follows it as for any pull request, and the run ends `done`. Handing off a draft asks nobody in the reviewer pool for a review. It tells the issue that a draft is open and that a person marks it ready for review. Once a person marks it ready, they request the review themselves, which starts the `review` flow as any request does. On the automated path it still gets `auto:ship`, and GitHub merges no draft, so it merges only once a person marks it ready and a review approves it. A pull request already open for the branch is kept as it is.
+
+  ```yaml
+  - id: opened
+    use: pr.open
+    in: { issue: trigger.issue, outcome: agent.outcome, queued: trigger.queued, base: claim.base, pushed: push.pushed }
+    with: { draft: true }
+  - id: done
+    use: issue.handOff
+    in: { issue: trigger.issue, pr: opened, outcome: agent.outcome }
+  - end: done
+    summary: done
+  ```
+
 - Using a block adds what it needs to the flow: its settings, labels, doctor checks, and the trigger entries that wake runs parked in it.
 - `failureContext` says what a failure going to a person can point them at, when the subject keeps something for it: on `issue`, the pull request a run opened, as `pr: [opened.number]`, the outputs that set it. `chernabog recipes blocks` lists what each subject keeps, after `failureContext keeps`.
 
@@ -378,13 +392,12 @@ Blocks declare the order they need, and the check walks every way through a docu
 
 - `runs before`: on a way with both, this block must come first. The local gate, if you use it, runs before the push.
 - `needs first`: this block must come after another. A round of an epic needs the epic claimed.
-- `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off. A way that ends `needs-human` is excused.
+- `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off, a draft too. A way that ends `needs-human` is excused.
 
 In a `repeat`, the check follows each `next` into the round after it, so these rules hold across rounds. What a round leaves to do is carried into the next one: a round that opens a pull request and goes on with `next` still needs a later round to hand it off before it ends `done`. `needs first` holds across the whole run, so a block that needs another is satisfied by an earlier round. `runs before` holds within a round, since each round starts over.
 
 ## What the blocks can't do yet
 
-- Open a pull request as a draft. `pr.open` opens it ready for review; a document can't ask for a draft.
 - Give a pull request to a person as a success. `pr.handToPerson` labels it `auto:needs-human` and the run ends `needs-human`, even when what the person is asked to do is merge an approved pull request.
 
 Work no block covers can run as [your own step](#your-own-steps).

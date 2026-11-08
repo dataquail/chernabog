@@ -81,6 +81,19 @@ steps:
     summary: done
 `;
 
+// The implement document, with its pull request opened as a draft: no
+// recipe does this, so its run is checked against the implement recipe's
+// for what a draft changes, and only that.
+const OPENS = `
+      base: claim.base
+      pushed: push.pushed
+  - id: ci`;
+
+export const DRAFT_DOCUMENT = IMPLEMENT_DOCUMENT.replace(
+  OPENS,
+  OPENS.replace("pushed: push.pushed", "pushed: push.pushed\n    with: { draft: true }"),
+);
+
 export const REVIEW_DOCUMENT = `
 flow: review
 subject: pull-request
