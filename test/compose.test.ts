@@ -33,9 +33,11 @@ import {
   generated,
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
+  IMPLEMENT_READY_DOCUMENT,
   PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
+  READY_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
@@ -51,6 +53,8 @@ type UseStep = Compose.UseStep;
 
 const implement = documentOf(IMPLEMENT_DOCUMENT);
 const draft = documentOf(DRAFT_DOCUMENT);
+const givenToPerson = documentOf(READY_DOCUMENT);
+const implementReady = documentOf(IMPLEMENT_READY_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
 const reReview = documentOf(RE_REVIEW_DOCUMENT);
 const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
@@ -552,6 +556,18 @@ describe("Compose.check", () => {
     expect(paths(wired)).toEqual(["steps[5].in.draft"]);
   });
 
+  // pr.readyForPerson's message is a fixed value, which the document says under with.
+  test("takes the message for a person under with, not in", () => {
+    const wired = changing(implementReady, "done", (step) => ({
+      ...step,
+      in: { ...step.in, message: "agent.outcome" },
+      with: {},
+    }));
+
+    expect(messages(wired)).toEqual(["message is a fixed value: put it under with, not in"]);
+    expect(paths(wired)).toEqual(["steps[7].in.message"]);
+  });
+
   test("says which of in and with an input goes under", () => {
     expect(
       messages(
@@ -985,6 +1001,22 @@ describe("tsc on a document's flow file", () => {
         expect(yield* compileErrors(draft)).toEqual([]);
       }),
     TIMEOUT,
+  );
+
+  effect(
+    "compiles a document that gives its pull request to a person",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* compileErrors(givenToPerson)).toEqual([]);
+        expect(yield* compileErrors(implementReady)).toEqual([]);
+      }),
+    TIMEOUT,
+  );
+
+  rejected(
+    "a message for a person that isn't text",
+    changing(implementReady, "done", (step) => ({ ...step, with: { message: 3 } })),
+    "string",
   );
 
   rejected(
@@ -1774,6 +1806,21 @@ describe("the order a document's blocks run in", () => {
     );
   });
 
+  // pr.readyForPerson gives the pull request to a person as the run's
+  // success, so a way through pr.open may end done after it.
+  test("takes a pull request given to a person to take on as handed off", () => {
+    expect(implementReady).not.toEqual(implement);
+    expect(Compose.check(implementReady)).toEqual([]);
+    expect(Compose.check(givenToPerson)).toEqual([]);
+  });
+
+  test("still refuses a way past pr.readyForPerson's place that skips it", () => {
+    const maybe = changing(implementReady, "done", (step) => ({ ...step, if: "agent.committed" }));
+
+    expect(messages(maybe)).toEqual(["a way through pr.open finishes here with hand-off not done"]);
+    expect(paths(maybe)).toEqual(["steps[8]"]);
+  });
+
   test("excuses a way that ends with a person", () => {
     const toPerson = withSteps(implement, [
       ...implement.steps.filter((step) => Compose.isUse(step) && !named(step, "done")),
@@ -2129,6 +2176,34 @@ describe("Compose.describe", () => {
         );
       }
     }
+  });
+
+  // Each of the two blocks that give a pull request to a person says when
+  // to use it rather than the other.
+  test("tells pr.readyForPerson and pr.handToPerson apart", () => {
+    const listed = Schema.decodeUnknownSync(
+      Schema.Struct({
+        blocks: Schema.Array(
+          Schema.Struct({
+            name: Schema.String,
+            about: Schema.String,
+            closes: Schema.Array(Schema.String),
+            inputs: Schema.Array(Schema.Struct({ name: Schema.String, under: Schema.String })),
+          }),
+        ),
+      }),
+    )(Compose.describe()).blocks;
+
+    const [toTakeOn] = listed.filter((block) => block.name === "pr.readyForPerson");
+    const [takenOver] = listed.filter((block) => block.name === "pr.handToPerson");
+
+    expect(toTakeOn.closes).toEqual(["hand-off"]);
+    expect(toTakeOn.inputs.filter((input) => input.name === "message")).toEqual([
+      { name: "message", under: "with" },
+    ]);
+    expect(toTakeOn.about).toContain("pr.handToPerson");
+    expect(toTakeOn.about).toContain("end: done");
+    expect(takenOver.about).toContain("pr.readyForPerson");
   });
 
   test("says pr.open can open a draft", () => {
