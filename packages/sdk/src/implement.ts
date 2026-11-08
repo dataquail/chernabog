@@ -1241,7 +1241,11 @@ export const PullRequestRef = Schema.Struct({ number: Schema.Finite, url: Schema
 
 export type PullRequestRef = typeof PullRequestRef.Type;
 
-const footer = (shipping: boolean) => {
+const footer = (shipping: boolean, draft: boolean) => {
+  if (draft) {
+    return "Opened by Chernabog as a draft for an unattended run. A person marks it ready for review, and a person merges.";
+  }
+
   if (shipping) {
     return "Opened by Chernabog for an unattended run, on the automated path: it merges once its review approves.";
   }
@@ -1258,15 +1262,42 @@ const closes = (issue: number, options: PartOfOptions) =>
     onSome: (epic) => `Closes #${issue}\nPart of #${epic}`,
   });
 
+// draft: open the pull request as a draft, which hand-off asks nobody to
+// review: a person marks it ready. False unless given.
+export type DraftOptions = { readonly draft?: boolean };
+
+// What GitHub's REST API answers to a pull request it opened.
+const RestOpened = Schema.Struct({ number: Schema.Finite, html_url: Schema.String });
+
+// Opens a draft through the REST API, which core's openPullRequest has no
+// draft for, so an SDK that opens one runs on any core it already does.
+const openDraft = (opening: {
+  readonly head: string;
+  readonly base: string;
+  readonly title: string;
+  readonly body: string;
+}) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const repo = yield* Repo;
+
+    const opened = yield* github
+      .request("POST", `/repos/${repo.slug}/pulls`, Option.some({ ...opening, draft: true }))
+      .pipe(Effect.flatMap((json: Json) => Schema.decodeUnknownEffect(RestOpened)(json)));
+
+    return { number: opened.number, url: opened.html_url };
+  });
+
 // Opens the pull request for the branch, or finds the one already open. An
 // issue queued by ship (auto:ship) gives its pull request the label too, the
 // automated path, which merges once approved. It targets `base`, the repo's
 // base branch unless given. A task of an epic says so under its Closes line.
-// The run names the pull request as a subject.
+// The run names the pull request as a subject. With draft, it opens as a
+// draft; one already open is kept as it is.
 export const openPullRequest = (
   issue: number,
   outcome: ImplementOutcome,
-  options: QueueOptions & BaseOptions & RepeatOptions & PartOfOptions = {},
+  options: QueueOptions & BaseOptions & RepeatOptions & PartOfOptions & DraftOptions = {},
 ) =>
   activity(
     named(options, "open-pull-request"),
@@ -1282,15 +1313,26 @@ export const openPullRequest = (
         (pull) => pull.state === "open",
       );
 
+      const draft = options.draft === true;
+
+      const opening = {
+        head: branch,
+        base,
+        title: outcome.title,
+        body: `${closes(issue, options)}\n\n${outcome.body}\n\n---\n${footer(shipping, draft)}`,
+      };
+
+      const open = Effect.suspend(() => {
+        if (draft) {
+          return openDraft(opening);
+        }
+
+        return github.openPullRequest(opening);
+      });
+
       const opened = yield* Option.match(existing, {
         onSome: Effect.succeed,
-        onNone: () =>
-          github.openPullRequest({
-            head: branch,
-            base,
-            title: outcome.title,
-            body: `${closes(issue, options)}\n\n${outcome.body}\n\n---\n${footer(shipping)}`,
-          }),
+        onNone: () => open,
       });
 
       yield* Subjects.name(Claims.pullRequest(opened.number));
@@ -1443,8 +1485,11 @@ const askForReview = (pullRequest: number, options: HandOffOptions) => {
 // reviews the pull request itself says false. adoptedBranch: the pull request
 // is one claim adopted, on this branch, which no session of this run wrote.
 // `id` as RepeatOptions.
+// draft: the pull request is a draft, which the issue is told a person marks
+// ready; the flow says needsReview false for it.
 export type HandOffOptions = {
   readonly needsReview: boolean;
+  readonly draft?: boolean;
   readonly adoptedBranch?: string;
 } & RepeatOptions;
 
@@ -1487,6 +1532,16 @@ export const handOff = (
       }
 
       yield* dropInProgress(issue);
+
+      if (options.draft === true) {
+        yield* github.comment(
+          issue,
+          `Draft pull request opened: ${pullRequest.url}. A person marks it ready for review.\n\n${outcome.summary}`,
+        );
+
+        return `#${issue}: ${pullRequest.url} is a draft, for a person to mark ready`;
+      }
+
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${outcome.summary}`,

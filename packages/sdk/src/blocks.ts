@@ -437,16 +437,22 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "pr.open": defineBlock({
     name: "pr.open",
+    fixed: ["draft"],
     about:
-      "Opens the pull request for the pushed branch, ready for review, never as a draft. It leaves the hand-off to do: issue.handOff, or pr.handToPerson and end: needs-human.",
+      "Opens the pull request for the pushed branch, ready for review, or with draft: true as a draft. It leaves the hand-off to do: issue.handOff, which asks nobody to review a draft and tells the issue a person marks it ready, or pr.handToPerson and end: needs-human.",
     inputKinds: {
       issue: "IssueNumber",
       outcome: "what the agent said",
       queued: "how the issue was queued",
       base: "Option<BaseBranch>",
       pushed: "Pushed: from branch.push",
+      draft: "boolean: open it as a draft; false unless given",
     },
-    outputKinds: { number: "PullRequestNumber", url: "its URL" },
+    outputKinds: {
+      number: "PullRequestNumber",
+      url: "its URL",
+      draft: "boolean: whether it opened as a draft, for issue.handOff",
+    },
     outcomeKinds: {},
     opens: ["hand-off"],
     stepNames: [OPEN_STEPS],
@@ -456,6 +462,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       queued: "required",
       base: "required",
       pushed: "required",
+      draft: "optional",
     },
     run: (input: {
       readonly issue: IssueNumber;
@@ -463,11 +470,13 @@ export const catalogue = elsewhere.and("blocks.ts", {
       readonly queued: Implement.QueueOptions;
       readonly base: Option.Option<BaseBranch>;
       readonly pushed: Pushed;
+      readonly draft?: boolean;
     }) =>
       Implement.openPullRequest(input.issue, input.outcome, {
         ...input.queued,
         ...onBase(input.base),
-      }).pipe(Effect.map(pullRequestRef)),
+        draft: input.draft === true,
+      }).pipe(Effect.map((opened) => ({ ...pullRequestRef(opened), draft: input.draft === true }))),
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
@@ -528,7 +537,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "issue.handOff": defineBlock({
     name: "issue.handOff",
-    about: "Asks a reviewer from the pool for a review, and tells the issue.",
+    about:
+      "Asks a reviewer from the pool for a review, and tells the issue. A draft from pr.open asks nobody: the issue is told a person marks it ready for review.",
     inputKinds: {
       issue: "IssueNumber",
       pr: "a pull request, from pr.open or stack.publish",
@@ -542,14 +552,25 @@ export const catalogue = elsewhere.and("blocks.ts", {
     inputs: { issue: "required", pr: "required", outcome: "required", lane: "optional" },
     run: (input: {
       readonly issue: IssueNumber;
-      readonly pr: { readonly number: PullRequestNumber; readonly url: string };
+      readonly pr: {
+        readonly number: PullRequestNumber;
+        readonly url: string;
+        readonly draft?: boolean;
+      };
       readonly outcome: Implement.ImplementOutcome;
       readonly lane?: LaneId;
     }) =>
-      Implement.handOff(input.issue, input.pr, input.outcome, {
-        needsReview: true,
-        ...inLane(input.lane),
-      }),
+      Implement.handOff(
+        input.issue,
+        { number: input.pr.number, url: input.pr.url },
+        input.outcome,
+        {
+          // A draft is a person's to mark ready, and to ask for its review.
+          needsReview: input.pr.draft !== true,
+          draft: input.pr.draft === true,
+          ...inLane(input.lane),
+        },
+      ),
     failures: {
       NeedsHuman: "person",
       NotFound: "skip",
