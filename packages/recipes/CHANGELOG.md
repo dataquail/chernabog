@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/dataquail/chernabog/compare/recipes-v0.4.0...recipes-v0.4.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **recipes:** support @chernabog/sdk 0.11 ([#438](https://github.com/dataquail/chernabog/issues/438)) ([d2e58f1](https://github.com/dataquail/chernabog/commit/d2e58f129bdf1f9a4a649944b358905fdc6bdd50))
+
 ## [0.4.0](https://github.com/dataquail/chernabog/compare/recipes-v0.3.0...recipes-v0.4.0) (2026-11-04)
 
 

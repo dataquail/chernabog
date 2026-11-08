@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.14.0](https://github.com/dataquail/chernabog/compare/v0.13.0...v0.14.0) (2026-11-08)
+
+
+### Features
+
+* **dashboard:** draw a flow's plan on the flows page ([#435](https://github.com/dataquail/chernabog/issues/435)) ([2ee978c](https://github.com/dataquail/chernabog/commit/2ee978c96eb3cf30b6ab9af14d4a9b896a526d9b))
+* **dashboard:** draw a run on its plan, replacing the history graph, with a page per node ([#437](https://github.com/dataquail/chernabog/issues/437)) ([0f70298](https://github.com/dataquail/chernabog/commit/0f70298a094a6b9a909f355c2dbd307b6a811ea4))
+* **doctor:** warn when a flow file is out of date with its document ([#386](https://github.com/dataquail/chernabog/issues/386)) ([4180389](https://github.com/dataquail/chernabog/commit/4180389c48245b68ef4a75c473afd116a7b182fc))
+* **recipes:** compile flow documents with `chernabog recipes compile` ([#368](https://github.com/dataquail/chernabog/issues/368)) ([ba59ac1](https://github.com/dataquail/chernabog/commit/ba59ac135dc48c612f3b8b500e2929f210054ff3))
+* **recipes:** flow documents run a team's own stage from .chernabog/stages/ ([#389](https://github.com/dataquail/chernabog/issues/389)) ([93d557c](https://github.com/dataquail/chernabog/commit/93d557ca8ee572b67e057be9e6f6d00ef4168f01))
+* **recipes:** order rules for flow documents, and `chernabog recipes blocks` ([#369](https://github.com/dataquail/chernabog/issues/369)) ([81e3915](https://github.com/dataquail/chernabog/commit/81e39155d0c40031982fd8c13eb9757fa8bdf28b))
+* **runs:** put a run's history on its plan, in one model the dashboard and TUI share ([#433](https://github.com/dataquail/chernabog/issues/433)) ([1f6eb6a](https://github.com/dataquail/chernabog/commit/1f6eb6a533e9aced184437463ff8521c55759030))
+* **runs:** read what a Claude session spent from its transcripts, deduped, subagents included ([#421](https://github.com/dataquail/chernabog/issues/421)) ([b8823d9](https://github.com/dataquail/chernabog/commit/b8823d902364b66723c5c6160d8838feb526a95b))
+* **runs:** record each agent call's token usage per model, behind an optional adapter method ([#418](https://github.com/dataquail/chernabog/issues/418)) ([66ee18a](https://github.com/dataquail/chernabog/commit/66ee18a427454d2104ecf4b1bc5eddccfa54ee08))
+* **runs:** record where in its plan each step of a run ran, its branches and its ends ([#432](https://github.com/dataquail/chernabog/issues/432)) ([15a60fa](https://github.com/dataquail/chernabog/commit/15a60fa642c1a23bf6826734265545466375a263))
+* **runs:** report what each Codex call spends, from its thread's session file ([#419](https://github.com/dataquail/chernabog/issues/419)) ([cc33844](https://github.com/dataquail/chernabog/commit/cc33844525cac6a974e8136cc55b7f402b63508a))
+* **runs:** the OpenCode adapter reports the tokens each call spends ([#420](https://github.com/dataquail/chernabog/issues/420)) ([6d7a5b2](https://github.com/dataquail/chernabog/commit/6d7a5b2e8132b5df608a62bcba163624c4217f07))
+* **sdk:** add pr.readyForPerson, which gives a pull request to a person as a success ([#416](https://github.com/dataquail/chernabog/issues/416)) ([567ab40](https://github.com/dataquail/chernabog/commit/567ab40002f4e08469f55c3e183efab43ec9461e))
+* **sdk:** compile a flow document's plan, and carry it on the flow ([#431](https://github.com/dataquail/chernabog/issues/431)) ([75c1b54](https://github.com/dataquail/chernabog/commit/75c1b54a8b9a6f1ea7ff3f3bc859fb2543cd99f3)), closes [#423](https://github.com/dataquail/chernabog/issues/423)
+* **sdk:** compile flow documents to flows, for implement and review ([#366](https://github.com/dataquail/chernabog/issues/366)) ([d632909](https://github.com/dataquail/chernabog/commit/d632909dd33957ffe59f3bdc9be43da99fe3f07b))
+* **sdk:** compile the epic as a flow document ([#367](https://github.com/dataquail/chernabog/issues/367)) ([93b90aa](https://github.com/dataquail/chernabog/commit/93b90aadcdfe2e144974d255588ccd833e66038d))
+* **sdk:** let pr.open open a draft pull request ([#415](https://github.com/dataquail/chernabog/issues/415)) ([ce77ebc](https://github.com/dataquail/chernabog/commit/ce77ebc044db0a82bad5191653b3db7d258f4bc1))
+* **sdk:** say which subjects each block suits, in recipes blocks and in check ([#417](https://github.com/dataquail/chernabog/issues/417)) ([75e7290](https://github.com/dataquail/chernabog/commit/75e729043b9e6a55524f696e1a3ab80dd4200e0a))
+* **sdk:** suggest the nearest block, source, outcome or stage a document misnames ([#413](https://github.com/dataquail/chernabog/issues/413)) ([4c554d0](https://github.com/dataquail/chernabog/commit/4c554d0b210a4c986a142ee1b15ae488cfc8baa7))
+* **sdk:** write the address-review recipe as a flow document ([#391](https://github.com/dataquail/chernabog/issues/391)) ([16a8030](https://github.com/dataquail/chernabog/commit/16a803049dad23a8c1e9dd7ab8928438a21c2fbd))
+* **sdk:** write the human-initiated recipe as a flow document ([#394](https://github.com/dataquail/chernabog/issues/394)) ([432bda5](https://github.com/dataquail/chernabog/commit/432bda5c1878bd0fab35f4562a5e0b52ffa92e36))
+* **sdk:** write the plan recipe as a flow document ([#395](https://github.com/dataquail/chernabog/issues/395)) ([bba394d](https://github.com/dataquail/chernabog/commit/bba394d59e345fd8fe3c0216544278a4131df0a4))
+* **sdk:** write the post-merge recipe as a flow document ([#393](https://github.com/dataquail/chernabog/issues/393)) ([f938cc5](https://github.com/dataquail/chernabog/commit/f938cc5fe73e95adde696b5f37be3a950e2fd6ad))
+* **sdk:** write the re-review recipe as a flow document ([#390](https://github.com/dataquail/chernabog/issues/390)) ([af50c71](https://github.com/dataquail/chernabog/commit/af50c71446f43fef393e46a86815996bb61da8dc))
+* **sdk:** write the resolve-conflicts recipe as a flow document ([#392](https://github.com/dataquail/chernabog/issues/392)) ([a6e348d](https://github.com/dataquail/chernabog/commit/a6e348d9e514044368830ac0967e5ba698d2bdd9))
+* **tui:** draw a run on its plan as a vertical tree, with each node's log ([#436](https://github.com/dataquail/chernabog/issues/436)) ([a58c036](https://github.com/dataquail/chernabog/commit/a58c036c316149832a1cb83809e32b05a6bee692))
+* **tui:** show each run's path through its plan as a strip on its row ([#434](https://github.com/dataquail/chernabog/issues/434)) ([6156dfc](https://github.com/dataquail/chernabog/commit/6156dfc6fa2e0ddfd8cfc29c10c844405c9c970a))
+
+
+### Bug Fixes
+
+* **daemon:** look at state files without waiting for a file event ([#372](https://github.com/dataquail/chernabog/issues/372)) ([55d27e3](https://github.com/dataquail/chernabog/commit/55d27e37f8937831970d40b64243e1a6287f3502))
+* **recipes:** support @chernabog/sdk 0.11 ([#438](https://github.com/dataquail/chernabog/issues/438)) ([d2e58f1](https://github.com/dataquail/chernabog/commit/d2e58f129bdf1f9a4a649944b358905fdc6bdd50))
+* **rehearsals:** clean up the issues and claim refs a rehearsal's run made ([#414](https://github.com/dataquail/chernabog/issues/414)) ([747276a](https://github.com/dataquail/chernabog/commit/747276a1c7e1838625865b8c2ee6cf52eccb4334))
+* **rehearsals:** let rehearse run post-merge on the pull request it seeded ([#397](https://github.com/dataquail/chernabog/issues/397)) ([646dd0c](https://github.com/dataquail/chernabog/commit/646dd0cb4f05af22adc006fe51945222ab4b5d2e))
+* **sdk:** order check carries open work across rounds, and walks each state once ([#388](https://github.com/dataquail/chernabog/issues/388)) ([58c5e17](https://github.com/dataquail/chernabog/commit/58c5e17f89fa2e0a04828e3d98670e6b78ab2400))
+* **sdk:** refuse a block or source name defined twice in the catalogue ([#387](https://github.com/dataquail/chernabog/issues/387)) ([bb490a5](https://github.com/dataquail/chernabog/commit/bb490a5b731768b958968291f9340adcfc9159fb)), closes [#374](https://github.com/dataquail/chernabog/issues/374)
+* **sdk:** say what fresh agents couldn't act on when writing a flow document ([#396](https://github.com/dataquail/chernabog/issues/396)) ([02c71a6](https://github.com/dataquail/chernabog/commit/02c71a68aaf16a40e2c9c1d479d0d6955d5841bc))
+
 ## [0.13.0](https://github.com/dataquail/chernabog/compare/v0.12.0...v0.13.0) (2026-11-04)
 
 
