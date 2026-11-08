@@ -248,6 +248,7 @@ export const scratchRepoClientWith = (apiFor: (persona: Persona) => Layer.Layer<
         Effect.asVoid,
         as(persona, `closing pull request #${number} in ${repo}`),
       ),
+    releaseClaimRef: () => Effect.succeedNone,
     deleteBranch: (repo, branch, persona) =>
       deleteBranch(repo, branch).pipe(as(persona, `deleting ${branch} in ${repo}`)),
   });

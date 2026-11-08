@@ -586,6 +586,7 @@ const cleanUp = (scratch: Scratch, slug: string, seeded: Seeded, seedAs: Persona
       repo: slug,
       seeded,
       branches: seeded.issues.map((issue) => Claims.branchFor(issue.number)),
+      run: { createdIssues: [], claims: [] },
       as: seedAs,
     });
 

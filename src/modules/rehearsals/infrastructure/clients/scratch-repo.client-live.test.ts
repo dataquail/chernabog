@@ -130,4 +130,57 @@ describe("ScratchRepoClientLive", () => {
       expect(failure.message).toContain("HTTP 403");
     }),
   );
+
+  const claimCommit = (runId: string) =>
+    ["chernabog claim", "", `Run: ${runId}`, "Persona: alice", "Flow: epic"].join("\n");
+
+  effect("a claim ref is deleted while it names the run, as the persona", () =>
+    Effect.gen(function* () {
+      const { client, requests } = github([
+        [`GET /repos/${REPO}/git/ref/chernabog/claims/epic-12`, 200, { object: { sha: "claim1" } }],
+        [`GET /repos/${REPO}/git/commits/claim1`, 200, { message: claimCommit("run-1") }],
+        [`DELETE /repos/${REPO}/git/refs/chernabog/claims/epic-12`, 204, {}],
+      ]);
+
+      const released = yield* client.releaseClaimRef(
+        REPO,
+        { item: "epic-12", runId: "run-1" },
+        Option.some("alice"),
+      );
+
+      expect(released).toEqual(Option.some("refs/chernabog/claims/epic-12"));
+      expect(requests.map((request) => request.request)).toContain(
+        `DELETE /repos/${REPO}/git/refs/chernabog/claims/epic-12`,
+      );
+      expect(requests.every((request) => request.as === "alice")).toBe(true);
+    }),
+  );
+
+  effect("a claim ref another run holds, or none, is left alone", () =>
+    Effect.gen(function* () {
+      const taken = github([
+        [`GET /repos/${REPO}/git/ref/chernabog/claims/issue-5`, 200, { object: { sha: "c2" } }],
+        [`GET /repos/${REPO}/git/commits/c2`, 200, { message: claimCommit("real-run") }],
+      ]);
+
+      expect(
+        yield* taken.client.releaseClaimRef(
+          REPO,
+          { item: "issue-5", runId: "run-1" },
+          Option.none(),
+        ),
+      ).toEqual(Option.none());
+      expect(taken.requests.some((request) => request.request.startsWith("DELETE"))).toBe(false);
+
+      const gone = github([[`GET /repos/${REPO}/git/ref/chernabog/claims/issue-5`, 404, {}]]);
+
+      expect(
+        yield* gone.client.releaseClaimRef(
+          REPO,
+          { item: "issue-5", runId: "run-1" },
+          Option.none(),
+        ),
+      ).toEqual(Option.none());
+    }),
+  );
 });
