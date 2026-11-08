@@ -1718,6 +1718,13 @@ export const detailTargets = (model: Model): ReadonlyArray<DetailTarget> =>
     onSome: (rows) => rows.flatMap((row) => Option.toArray(row.target)),
   });
 
+// The steps whose lines the log view shows, for the node of the plan it is the log of.
+export const nodeLogOnly = (model: Model): Option.Option<ReadonlyArray<LoggedAt>> =>
+  Option.map(model.logOf, (node) => node.only);
+
+// The model after a refresh, with the same line of the detail view selected.
+export const reselected = (_before: Model, after: Model): Model => after;
+
 const TREE_INDENT = 2;
 
 // A name cut to `width`, with an ellipsis when it was longer, and padded to it.

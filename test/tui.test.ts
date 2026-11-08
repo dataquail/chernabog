@@ -25,7 +25,14 @@ import {
 } from "../src/interface/tui/live.ts";
 import { describeStatus } from "../src/interface/tui/status.ts";
 import { type Key, update, type Updated } from "../src/interface/tui/update.ts";
-import { detailTargets, type Model, plain, view } from "../src/interface/tui/view.ts";
+import {
+  detailTargets,
+  type Model,
+  nodeLogOnly,
+  plain,
+  reselected,
+  view,
+} from "../src/interface/tui/view.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { HoldView } from "../src/modules/runs/domain/holds/hold-view.value-object.ts";
 import { FlowPlan, type PlanNode } from "../src/modules/runs/domain/plan/flow-plan.value-object.ts";
@@ -1581,6 +1588,63 @@ describe("a run on its plan", () => {
       run: "s",
       only: [{ step: "read-trigger" }],
     });
+  });
+
+  test("a node's log follows its steps as the run enters them, for a node not yet reached", () => {
+    const opened = update(selecting(onPlan("running", SHIP, runningShip), "push"), {
+      name: "return",
+    }).model;
+
+    expect(nodeLogOnly(opened)).toEqual(Option.some([]));
+
+    const later = { ...opened, history: Option.some(finishedShip) };
+
+    expect(nodeLogOnly(later)).toEqual(Option.some([{ step: "push", node: at("push") }]));
+    expect(plain(view(later))).toContain("log of push");
+  });
+
+  test("a repeat's log takes in a round that starts after it was opened", () => {
+    const opened = update(selecting(onPlan("running", LOOP, secondRound), "rounds"), {
+      name: "return",
+    }).model;
+
+    const third = ran(at("implement", { round: 3 }), { from: -2 });
+
+    const later = {
+      ...opened,
+      history: Option.some(
+        RunHistory.make({
+          ...secondRound,
+          steps: [...secondRound.steps, third.step],
+          nodes: [...(secondRound.nodes ?? []), third.visit],
+        }),
+      ),
+    };
+
+    expect(Option.getOrThrow(nodeLogOnly(later))).toContainEqual({
+      step: "implement",
+      node: at("implement", { round: 3 }),
+    });
+  });
+
+  test("the selected node stays selected as lanes start and move the rows under it", () => {
+    const before = selecting(onPlan("running", EPIC, lanes), "close");
+    const third = ran(at("implement", { lane: "task-3" }), { from: -1 });
+
+    const after = reselected(before, {
+      ...before,
+      history: Option.some(
+        RunHistory.make({
+          ...lanes,
+          steps: [...lanes.steps, third.step],
+          nodes: [...(lanes.nodes ?? []), third.visit],
+        }),
+      ),
+    });
+
+    expect(
+      Arr.get(detailTargets(after), after.detailIndex).pipe(Option.map((found) => found.label)),
+    ).toEqual(Option.some("close"));
   });
 
   test("a run with no plan keeps its path", () => {
