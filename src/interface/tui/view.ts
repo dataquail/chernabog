@@ -126,12 +126,21 @@ export type Model = {
   readonly now: DateTime.Utc;
 };
 
-export type NodeLog = { readonly name: string; readonly only: ReadonlyArray<LoggedAt> };
+// The node of the plan whose log the log view shows: by its key, so its
+// steps are worked out again from the run's history as the run enters them,
+// its name, and the steps it had when opened, for when it is no longer drawn.
+export type NodeLog = {
+  readonly key: string;
+  readonly name: string;
+  readonly only: ReadonlyArray<LoggedAt>;
+};
 
-// A line of the plan's tree a person can select: its name, the steps whose
-// log enter opens, the lanes space opens or closes, and for a repeat its key
-// and how many rounds it has.
+// A line of the plan's tree a person can select: its key, which stays the
+// same as the run goes on, its name, the steps whose log enter opens, the
+// lanes space opens or closes, and for a repeat its key and how many rounds
+// it has.
 export type DetailTarget = {
+  readonly key: string;
   readonly label: string;
   readonly only: ReadonlyArray<LoggedAt>;
   readonly lanes: ReadonlyArray<string>;
@@ -1505,11 +1514,13 @@ const continuation = (last: boolean) => {
 };
 
 const target = (
+  key: string,
   label: string,
   steps: ReadonlyArray<RunStepOnPlan>,
   more: Partial<Pick<DetailTarget, "lanes" | "repeat">> = {},
 ): Option.Option<DetailTarget> =>
   Option.some({
+    key,
     label,
     only: steps.map(loggedAt),
     lanes: more.lanes ?? [],
@@ -1584,7 +1595,7 @@ const laneRows = (node: NodeOnPlan, guide: string, options: TreeOptions): Readon
         name: lane.lane,
         style: nameStyle(lane.state),
         time: timeIn(lane, options.now),
-        target: target(lane.lane, [...lane.steps, ...lane.body.flatMap(stepsUnder)], {
+        target: target(key, lane.lane, [...lane.steps, ...lane.body.flatMap(stepsUnder)], {
           lanes: [key],
         }),
       },
@@ -1664,7 +1675,7 @@ const nodeRows = (
       name: `${name}${under.after}${left}`,
       style: nameStyle(node.state),
       time,
-      target: target(name, stepsUnder(node), {
+      target: target(keyOfNode(node), name, stepsUnder(node), {
         lanes: laneKeys(node),
         repeat: Option.map(
           Option.liftPredicate(node, (found) => found.rounds.length > 1),
@@ -1682,7 +1693,8 @@ const offPlanRow = (name: string, off: OffPlan, now: DateTime.Utc): TreeRow => (
   name,
   style: nameStyle(off.state),
   time: timeIn(off, now),
-  target: target(name, off.steps),
+  // Set up and wrap up by a key no node of a plan has: a node's id never starts with a colon.
+  target: target(`:${name}`, name, off.steps),
 });
 
 // The run in the detail view on its plan, as the tree's rows: none for a run
@@ -1718,12 +1730,35 @@ export const detailTargets = (model: Model): ReadonlyArray<DetailTarget> =>
     onSome: (rows) => rows.flatMap((row) => Option.toArray(row.target)),
   });
 
-// The steps whose lines the log view shows, for the node of the plan it is the log of.
+// The steps whose lines the log view shows, for the node of the plan it is
+// the log of: those the run's history now has for it, so the log follows the
+// node as the run enters its steps, rounds and lanes.
 export const nodeLogOnly = (model: Model): Option.Option<ReadonlyArray<LoggedAt>> =>
-  Option.map(model.logOf, (node) => node.only);
+  Option.map(model.logOf, (node) =>
+    Option.match(
+      Arr.findFirst(detailTargets(model), (found) => found.key === node.key),
+      { onNone: () => node.only, onSome: (found) => found.only },
+    ),
+  );
 
-// The model after a refresh, with the same line of the detail view selected.
-export const reselected = (_before: Model, after: Model): Model => after;
+// The model after a refresh, with the same line of the detail view
+// selected: the same node of the plan, wherever new rounds and lanes moved
+// it, or the same run of the thread, after however many nodes come first now.
+export const reselected = (before: Model, after: Model): Model => {
+  const was = detailTargets(before);
+  const now = detailTargets(after);
+
+  const index = Option.match(Arr.get(was, before.detailIndex), {
+    onNone: () => before.detailIndex - was.length + now.length,
+    onSome: (selected) =>
+      Option.getOrElse(
+        Arr.findFirstIndex(now, (found) => found.key === selected.key),
+        () => after.detailIndex,
+      ),
+  });
+
+  return { ...after, detailIndex: Math.max(0, index) };
+};
 
 const TREE_INDENT = 2;
 

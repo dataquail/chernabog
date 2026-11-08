@@ -742,7 +742,7 @@ const updateRun = (model: Model, cleared: Model, key: Key): Updated => {
             ...cleared,
             view: "log",
             logRun: Option.some(id),
-            logOf: Option.some({ name: node.label, only: node.only }),
+            logOf: Option.some({ key: node.key, name: node.label, only: node.only }),
             logLines: [],
             logScroll: 0,
           },

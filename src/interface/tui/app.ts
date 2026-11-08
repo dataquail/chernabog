@@ -65,7 +65,16 @@ import {
 } from "./live.ts";
 import { applySetting } from "./settings.ts";
 import { type Action, type Key, update } from "./update.ts";
-import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
+import {
+  flowKey,
+  type Line,
+  type Model,
+  nodeLogOnly,
+  reselected,
+  type Style,
+  type UsageRow,
+  view,
+} from "./view.ts";
 
 const plainChunk = (text: string): TextChunk => ({ __isChunk: true, text });
 
@@ -183,9 +192,6 @@ const readDetail = (runId: string, known: Option.Option<FlowPlan> = Option.none(
       worktree: yield* worktreeOf(runId),
     };
   });
-
-// The node of its plan the log view shows the lines of, if any.
-const onlyOf = (model: Model) => Option.map(model.logOf, (node) => node.only);
 
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
   status: Option.none(),
@@ -354,14 +360,35 @@ export const runTui = Effect.gen(function* () {
 
   // What the open view shows beyond the status: the run log it follows, and
   // the steps of the run it details.
-  const refreshOpen = Effect.gen(function* () {
-    if (model.view === "log" && Option.isSome(model.logRun)) {
-      model = { ...model, logLines: yield* readLog(model.logRun.value, onlyOf(model)) };
+  // The run the detail view shows, where it has been now, keeping the same
+  // line selected.
+  const refreshDetail = Effect.gen(function* () {
+    if (Option.isSome(model.detailRun)) {
+      const { history, plan, worktree } = yield* readDetail(model.detailRun.value, model.plan);
+      model = reselected(model, { ...model, history, plan, worktree });
+    }
+  });
+
+  // The log the log view follows: for a node of a run's plan, the lines of
+  // the steps the run's history has for it now, so it takes in the steps,
+  // rounds and lanes the run enters after it was opened.
+  const refreshLog = Effect.gen(function* () {
+    if (model.view !== "log" || Option.isNone(model.logRun)) {
+      return;
     }
 
-    if (model.view === "run" && Option.isSome(model.detailRun)) {
-      const { history, plan, worktree } = yield* readDetail(model.detailRun.value, model.plan);
-      model = { ...model, history, plan, worktree };
+    if (Option.isSome(model.logOf)) {
+      yield* refreshDetail;
+    }
+
+    model = { ...model, logLines: yield* readLog(model.logRun.value, nodeLogOnly(model)) };
+  });
+
+  const refreshOpen = Effect.gen(function* () {
+    yield* refreshLog;
+
+    if (model.view === "run") {
+      yield* refreshDetail;
     }
   });
 
@@ -628,10 +655,7 @@ export const runTui = Effect.gen(function* () {
     const event = yield* Queue.take(events);
 
     if (event.kind === "tick") {
-      if (model.view === "log" && Option.isSome(model.logRun)) {
-        model = { ...model, logLines: yield* readLog(model.logRun.value, onlyOf(model)) };
-      }
-
+      yield* refreshLog;
       yield* render;
       continue;
     }
