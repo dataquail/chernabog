@@ -5,6 +5,7 @@ import { RunId } from "../../kernel/run-id.id.ts";
 import { RunEvents } from "./domain/run/run.events.ts";
 import { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 import { MarkerReleases } from "./domain/run-marker/run-marker-view.value-object.ts";
+import { TokenUsageRecorded } from "./domain/token-usage/token-usage.events.ts";
 import { runFlowsCommandGroup, runsCommandGroup } from "./runs.command-handlers.ts";
 import {
   runEventSpanAttributes,
@@ -90,6 +91,27 @@ describe("the runs' span attributes", () => {
           eventId: `${runId}:markers`,
           runId,
           releases: MarkerReleases.make({ released: [], kept: [], failed: [], unreleasable: [] }),
+        }),
+      ),
+    ).toEqual({ "run.id": runId });
+  });
+
+  test("recording what a run's agent call spent names the run alone, never what it spent", () => {
+    const call = {
+      runId,
+      step: Option.some("implement"),
+      adapter: "claude",
+      sessionId: "session-1",
+    };
+
+    expect(runsCommandSpanAttributes.RecordTokenUsageCommand(call)).toEqual({ "run.id": runId });
+    expect(
+      runEventSpanAttributes.TokenUsageRecorded(
+        TokenUsageRecorded.make({
+          eventId: `${runId}:usage`,
+          ...call,
+          reported: true,
+          recordedAt: "2026-11-08T00:00:00.000Z",
         }),
       ),
     ).toEqual({ "run.id": runId });

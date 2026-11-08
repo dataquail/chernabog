@@ -14,6 +14,8 @@ import { RunStepsRepositoryFake } from "../src/modules/runs/infrastructure/repos
 import { RunWaitsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/run-waits.repository-fake.ts";
 import { RunsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/runs.repository-fake.ts";
 import { SkipsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/skips.repository-fake.ts";
+import { TokenUsageCursorsRepositoryFake } from "../src/modules/runs/infrastructure/repositories/token-usage-cursors.repository-fake.ts";
+import { TokenUsagesRepositoryFake } from "../src/modules/runs/infrastructure/repositories/token-usages.repository-fake.ts";
 import { RunsCommands, RunsCommandsLive } from "../src/modules/runs/runs.command-handlers.ts";
 import { RunsQueries, RunsQueriesLive } from "../src/modules/runs/runs.query-handlers.ts";
 import { effect } from "./effect-test.ts";
@@ -35,6 +37,8 @@ const stores = Layer.mergeAll(
   RunWaitsRepositoryFake([]),
   SkipsRepositoryFake([]),
   HoldsRepositoryFake([]),
+  TokenUsagesRepositoryFake([]),
+  TokenUsageCursorsRepositoryFake([]),
 );
 
 describe("RunsCommands", () => {
