@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../test/effect-test.ts";
 import { RunId } from "../../../kernel/run-id.id.ts";
+import { RunLogLines } from "../../../kernel/run-log-line.value-object.ts";
 import { Home, homePaths } from "../../../platform/home.ts";
 import { RunLogsClientLive } from "../infrastructure/clients/run-logs.client-live.ts";
 import { followRunLogHandler } from "./follow-run-log.handler.ts";
@@ -56,6 +57,38 @@ describe("followRunLogHandler", () => {
         text: Option.none(),
         next: 2,
       });
+    }).pipe(Effect.provide(RunLogsClientLive)),
+  );
+
+  effectAtHome("with a step and its node, reads that step's lines at that node alone", () =>
+    Effect.gen(function* () {
+      const T = "2026-11-08T10:00:00.000Z";
+
+      yield* writeLog(
+        [
+          RunLogLines.entry(
+            T,
+            Option.some("ci"),
+            "round one",
+            Option.some('{"id":"ci","round":1}'),
+          ),
+          RunLogLines.entry(
+            T,
+            Option.some("ci"),
+            "round two",
+            Option.some('{"id":"ci","round":2}'),
+          ),
+          "",
+        ].join("\n"),
+      );
+
+      const read = yield* followRunLogHandler({
+        runId: a,
+        from: 0,
+        step: { name: "ci", logs: "tagged", node: { id: "ci", round: 2 } },
+      });
+
+      expect(read.text).toEqual(Option.some(`${T} round two`));
     }).pipe(Effect.provide(RunLogsClientLive)),
   );
 });

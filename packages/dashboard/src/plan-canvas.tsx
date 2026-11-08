@@ -10,7 +10,8 @@
 //
 // It is view-only: clicking a node chooses it, for the page to show its
 // detail. A run's node states (RunOnPlan, by nodeStates) mark the nodes when
-// given, so a run's page draws the run on its plan with this same canvas.
+// given. A run's page draws a run on its plan with run-canvas.tsx, which
+// shares these boxes' looks and this canvas's arrows (useArrows, Arrows).
 
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -29,7 +30,7 @@ import {
 } from "./plan-graph.ts";
 import { either, present, shownIf } from "./show.tsx";
 
-const MARK = {
+export const MARK = {
   ok: "✓",
   failed: "✗",
   running: "●",
@@ -38,7 +39,7 @@ const MARK = {
   "not-reached": "○",
 } satisfies { readonly [S in NodeState]: string };
 
-const SAID = {
+export const SAID = {
   ok: "succeeded",
   failed: "failed",
   running: "running",
@@ -127,7 +128,7 @@ const FrameHeader = ({
   </header>
 );
 
-const Named = ({ id, what }: { readonly id: string; readonly what: string }) => (
+export const Named = ({ id, what }: { readonly id: string; readonly what: string }) => (
   <>
     <strong>{id}</strong> <span className="muted">{what}</span>
   </>
@@ -146,10 +147,10 @@ const chainOf =
     </div>
   );
 
-type CallNode = Extract<PlanNode, { readonly kind: "use" | "stage" }>;
+export type CallNode = Extract<PlanNode, { readonly kind: "use" | "stage" }>;
 
 // The block a step uses, or the stage it runs.
-const whatCalls = (node: CallNode) => {
+export const whatCalls = (node: CallNode) => {
   if (node.kind === "use") {
     return node.block;
   }
@@ -319,20 +320,10 @@ const drawn = (canvas: HTMLElement, edges: ReadonlyArray<PlanEdge>): ReadonlyArr
     ),
   );
 
-export const PlanCanvas = ({
-  chosen,
-  onChoose,
-  plan,
-  states,
-}: {
-  readonly plan: FlowPlan;
-  // A run's node states; none draws the plan alone.
-  readonly states: Option.Option<NodeStates>;
-  readonly chosen: Option.Option<string>;
-  readonly onChoose: (id: string) => void;
-}) => {
-  const id = useId();
-  const edges = useMemo(() => planEdges(plan.steps), [plan]);
+// The arrows of a canvas, by the element's id: drawn once its boxes are laid
+// out, from where each box sits (by its data-node), and again whenever one
+// changes size.
+export const useArrows = (id: string, edges: ReadonlyArray<PlanEdge>) => {
   const [lines, setLines] = useState<ReadonlyArray<Drawn>>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
 
@@ -363,32 +354,60 @@ export const PlanCanvas = ({
     };
   }, [id, edges]);
 
+  return { lines, size };
+};
+
+// The arrows drawn over a canvas's boxes.
+export const Arrows = ({ arrows }: { readonly arrows: ReturnType<typeof useArrows> }) => {
+  const { lines, size } = arrows;
+
+  return (
+    <svg
+      className="edges"
+      width={size.width}
+      height={size.height}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <defs>
+        <marker
+          id="plan-arrow"
+          viewBox="0 0 8 8"
+          refX="7"
+          refY="4"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto"
+        >
+          <path d="M 0 0 L 8 4 L 0 8 z" />
+        </marker>
+      </defs>
+      {lines.map((line) => (
+        <path key={line.key} className={line.kind} d={line.path} markerEnd="url(#plan-arrow)" />
+      ))}
+    </svg>
+  );
+};
+
+export const PlanCanvas = ({
+  chosen,
+  onChoose,
+  plan,
+  states,
+}: {
+  readonly plan: FlowPlan;
+  // A run's node states; none draws the plan alone.
+  readonly states: Option.Option<NodeStates>;
+  readonly chosen: Option.Option<string>;
+  readonly onChoose: (id: string) => void;
+}) => {
+  const id = useId();
+  const edges = useMemo(() => planEdges(plan.steps), [plan]);
+  const arrows = useArrows(id, edges);
+
   return (
     <div className="plan-canvas" id={id}>
-      <svg
-        className="edges"
-        width={size.width}
-        height={size.height}
-        aria-hidden="true"
-        focusable="false"
-      >
-        <defs>
-          <marker
-            id="plan-arrow"
-            viewBox="0 0 8 8"
-            refX="7"
-            refY="4"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto"
-          >
-            <path d="M 0 0 L 8 4 L 0 8 z" />
-          </marker>
-        </defs>
-        {lines.map((line) => (
-          <path key={line.key} className={line.kind} d={line.path} markerEnd="url(#plan-arrow)" />
-        ))}
-      </svg>
+      <Arrows arrows={arrows} />
       <Steps canvas={{ states, chosen, onChoose }} steps={plan.steps} />
     </div>
   );

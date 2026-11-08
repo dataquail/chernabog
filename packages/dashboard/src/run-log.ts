@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Sse from "effect/encoding/Sse";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { FeedFailed } from "./feed.ts";
@@ -73,26 +74,61 @@ const heardOf = (frame: Sse.Event): LogHeard => {
 const failed = (reason: FeedFailed["reason"], message: string) =>
   new FeedFailed({ reason, message });
 
-// Where a run's log is, or one step's of it.
-export const logUrl = (origin: string, runId: string, step: Option.Option<string>) => {
+// A plan node, in its round and lane, as a run's history names it.
+export type LogNode = { readonly id: string; readonly round?: number; readonly lane?: string };
+
+const NodeJson = Schema.fromJsonString(
+  Schema.Struct({
+    id: Schema.String,
+    round: Schema.optionalKey(Schema.Int),
+    lane: Schema.optionalKey(Schema.String),
+  }),
+);
+
+// Where a run's log is, or one step's of it, or one step's at one plan node.
+export const logUrl = (
+  origin: string,
+  runId: string,
+  step: Option.Option<string>,
+  node: Option.Option<LogNode> = Option.none(),
+) => {
   const url = new URL(`/api/runs/${encodeURIComponent(runId)}/log`, origin);
 
   for (const name of Option.toArray(step)) {
     url.searchParams.set("step", name);
+
+    for (const at of Option.toArray(node)) {
+      url.searchParams.set(
+        "node",
+        Schema.encodeSync(NodeJson)({
+          id: at.id,
+          ...Option.match(Option.fromUndefinedOr(at.round), {
+            onNone: () => ({}),
+            onSome: (round) => ({ round }),
+          }),
+          ...Option.match(Option.fromUndefinedOr(at.lane), {
+            onNone: () => ({}),
+            onSome: (lane) => ({ lane }),
+          }),
+        }),
+      );
+    }
   }
 
   return url;
 };
 
 // `origin` is where the page came from (`location.origin` in a browser);
-// `step`, the step whose lines alone it follows, for a daemon that keeps them.
+// `step`, the step whose lines alone it follows, for a daemon that keeps
+// them, and `node`, the plan node whose lines of that step alone it follows.
 export const runLogFeed = (
   origin: string,
   runId: string,
   step: Option.Option<string> = Option.none(),
+  node: Option.Option<LogNode> = Option.none(),
 ): Stream.Stream<LogHeard, FeedFailed, HttpClient.HttpClient> =>
   Stream.unwrap(
-    HttpClient.get(logUrl(origin, runId, step)).pipe(
+    HttpClient.get(logUrl(origin, runId, step, node)).pipe(
       Effect.mapError((error) => failed("unreachable", error.message)),
       Effect.filterOrFail(
         (response) => response.status >= 200 && response.status < 300,

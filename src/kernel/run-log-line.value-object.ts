@@ -46,6 +46,26 @@ const entry = (
   node: Option.Option<string> = Option.none(),
 ) => `${at}\t${asTag(Option.getOrElse(step, () => ""))}\t${nodeTag(node)}${text}`;
 
+// A plan node a line was written in, with its round and lane, each absent
+// outside one: what a node tag holds, and what a reader asks for one node's
+// lines by.
+export const LogNode = Schema.Struct({
+  id: Schema.String,
+  round: Schema.optionalKey(Schema.Int),
+  lane: Schema.optionalKey(Schema.String),
+});
+
+export type LogNode = typeof LogNode.Type;
+
+const NodeTag = Schema.fromJsonString(LogNode);
+
+// Whether a tag names `node`, in its round and lane.
+const tagNames = (tag: string, node: LogNode) =>
+  Option.exists(
+    Schema.decodeOption(NodeTag)(tag),
+    (found) => found.id === node.id && found.round === node.round && found.lane === node.lane,
+  );
+
 // The node a line was written in, as its tag has it: none for a line with no
 // node tag, as a line of a flow with no plan, or of a log from before nodes,
 // and for a line that continues the entry above it.
@@ -97,24 +117,49 @@ const stepOfLine = (
   });
 };
 
+// The node tag a line carries, given the one the line before it did: a line
+// that continues the entry above it carries that entry's.
+const nodeOfLine = (line: string, before: Option.Option<string>): Option.Option<string> => {
+  if (TAGGED.test(line)) {
+    return nodeOf(line);
+  }
+
+  return before;
+};
+
 // What `step` wrote to a log from offset `from` on, as a person reads it, and
 // the offset to read from next. Only whole lines are read, so a line being
 // written is read once it is whole. `raw` is the log from its start, since
-// which step a line belongs to may depend on the lines before it.
-const linesOfStep = (raw: string, step: string, logs: StepLogs, from: number) => {
+// which step a line belongs to may depend on the lines before it. With
+// `node`, only the lines its tags put at that node, in its round and lane,
+// as a step run in several rounds or lanes under one name writes them.
+const linesOfStep = (
+  raw: string,
+  step: string,
+  logs: StepLogs,
+  from: number,
+  node: Option.Option<LogNode> = Option.none(),
+) => {
   const end = Math.max(from, raw.lastIndexOf("\n") + 1);
   const kept: Array<string> = [];
 
   if (logs !== "unavailable") {
     let offset = 0;
     let current = Option.none<string>();
+    let at = Option.none<string>();
 
     for (const line of raw.slice(0, end).split("\n").slice(0, -1)) {
       const start = offset;
       offset += line.length + 1;
       current = stepOfLine(line, current, logs);
+      at = nodeOfLine(line, at);
 
-      if (start >= from && Option.contains(current, step)) {
+      const atNode = Option.match(node, {
+        onNone: () => true,
+        onSome: (wanted) => Option.exists(at, (tag) => tagNames(tag, wanted)),
+      });
+
+      if (start >= from && Option.contains(current, step) && atNode) {
         kept.push(untagged(line));
       }
     }

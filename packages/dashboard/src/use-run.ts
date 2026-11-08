@@ -16,7 +16,14 @@ import { useEffect, useState } from "react";
 import { daemonFeed } from "./feed.ts";
 import { REFETCH_AT_MOST_EVERY } from "./live.ts";
 import { type Detail, loadDetail, refetchesFor } from "./run.ts";
-import { hearLog, initialLog, type LogHeard, type LogState, runLogFeed } from "./run-log.ts";
+import {
+  hearLog,
+  initialLog,
+  type LogHeard,
+  type LogNode,
+  type LogState,
+  runLogFeed,
+} from "./run-log.ts";
 
 // How long the page waits to connect again to a stream that dropped.
 const RECONNECT_AFTER = Duration.seconds(2);
@@ -69,6 +76,7 @@ export const followRunLog = (
   runId: string,
   onHeard: (heard: LogHeard) => void,
   step: Option.Option<string> = Option.none(),
+  node: Option.Option<LogNode> = Option.none(),
 ): Effect.Effect<void, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const ended = yield* Ref.make(false);
@@ -81,7 +89,7 @@ export const followRunLog = (
         }),
       );
 
-    const connection = Stream.runForEach(runLogFeed(origin, runId, step), told).pipe(
+    const connection = Stream.runForEach(runLogFeed(origin, runId, step, node), told).pipe(
       Effect.ignore,
       Effect.andThen(Ref.get(ended)),
       Effect.tap((done) => Effect.when(told({ kind: "dropped" }), Effect.succeed(!done))),
@@ -120,12 +128,18 @@ export const useRunLog = (
   origin: string,
   runId: string,
   step: Option.Option<string> = Option.none(),
+  // Whether the page shows other logs in its place, and follows none.
+  idle = false,
 ): LogState => {
   const [log, setLog] = useState<LogState>(initialLog);
   const stepName = Option.getOrElse(step, () => "");
 
   useEffect(() => {
     setLog(initialLog);
+
+    if (idle) {
+      return;
+    }
 
     return runUntilGone(
       followRunLog(
@@ -137,7 +151,72 @@ export const useRunLog = (
         Option.liftPredicate(stepName, (name) => name !== ""),
       ),
     );
-  }, [origin, runId, stepName]);
+  }, [origin, runId, stepName, idle]);
+
+  return log;
+};
+
+// One engine step's log, at the plan node it ran at, as a node's page shows
+// it; a step that ran at no node, as set up's and wrap up's do, by its name alone.
+export const useStepLog = (
+  origin: string,
+  runId: string,
+  step: string,
+  node: Option.Option<LogNode>,
+): LogState => {
+  const [log, setLog] = useState<LogState>(initialLog);
+
+  const id = Option.getOrElse(
+    Option.map(node, (at) => at.id),
+    () => "",
+  );
+
+  const round = Option.getOrElse(
+    Option.flatMap(node, (at) => Option.fromUndefinedOr(at.round)),
+    () => -1,
+  );
+
+  const lane = Option.getOrElse(
+    Option.flatMap(node, (at) => Option.fromUndefinedOr(at.lane)),
+    () => "",
+  );
+
+  useEffect(() => {
+    setLog(initialLog);
+
+    const at = Option.map(
+      Option.liftPredicate(id, (kept) => kept !== ""),
+      (kept): LogNode => ({
+        id: kept,
+        ...Option.match(
+          Option.liftPredicate(round, (held) => held >= 0),
+          {
+            onNone: () => ({}),
+            onSome: (held) => ({ round: held }),
+          },
+        ),
+        ...Option.match(
+          Option.liftPredicate(lane, (held) => held !== ""),
+          {
+            onNone: () => ({}),
+            onSome: (held) => ({ lane: held }),
+          },
+        ),
+      }),
+    );
+
+    return runUntilGone(
+      followRunLog(
+        origin,
+        runId,
+        (heard) => {
+          setLog((held) => hearLog(held, heard));
+        },
+        Option.some(step),
+        at,
+      ),
+    );
+  }, [origin, runId, step, id, round, lane]);
 
   return log;
 };

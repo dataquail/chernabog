@@ -111,6 +111,18 @@ export const App = () => {
     return <RunDetail runId={route.runId} step={route.step} now={now} status={live.status} />;
   }
 
+  if (route.kind === "node") {
+    return (
+      <RunDetail
+        runId={route.runId}
+        step={Option.none()}
+        node={Option.some(route.place)}
+        now={now}
+        status={live.status}
+      />
+    );
+  }
+
   return (
     <Overview
       act={settings.act}

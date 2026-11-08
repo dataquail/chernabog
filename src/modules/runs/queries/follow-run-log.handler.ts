@@ -19,7 +19,15 @@ export const followRunLogHandler = Effect.fn("followRunLogHandler")(function* ({
   if (Option.isSome(only)) {
     const raw = Option.getOrElse(yield* logs.readFrom(runId, 0), () => "");
 
-    return RunLogGained.make(RunLogLines.linesOfStep(raw, only.value.name, only.value.logs, from));
+    return RunLogGained.make(
+      RunLogLines.linesOfStep(
+        raw,
+        only.value.name,
+        only.value.logs,
+        from,
+        Option.fromUndefinedOr(only.value.node),
+      ),
+    );
   }
 
   const gained = Option.getOrElse(yield* logs.readFrom(runId, from), () => "");

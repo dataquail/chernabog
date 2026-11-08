@@ -218,6 +218,24 @@ describe("GET /runs/:id/log", () => {
     }).pipe(Effect.provide(daemonInScratch)),
   );
 
+  effect("with ?step= and &node=, streams that step's lines at that plan node alone", () =>
+    Effect.gen(function* () {
+      logs[RUN] = [
+        `${T}\tci\t@{"id":"ci","round":1}\tround one`,
+        `${T}\tci\t@{"id":"ci","round":2}\tround two`,
+        "",
+      ].join("\n");
+      yield* start(RUN);
+      yield* finish(RUN);
+      const get = yield* serving;
+      const node = encodeURIComponent('{"id":"ci","round":2}');
+
+      expect(
+        yield* get(`/runs/${RUN}/log?step=ci&node=${node}`).pipe(Effect.flatMap(readText)),
+      ).toBe([`data: ${T} round two`, "", "event: end", "data: ", "", ""].join("\n"));
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+
   effect("ends at once for a run the daemon has none of", () =>
     Effect.gen(function* () {
       const get = yield* serving;

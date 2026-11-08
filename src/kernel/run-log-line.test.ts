@@ -143,5 +143,56 @@ describe("run log lines", () => {
       );
       expect(RunLogLines.stepLogsOf(Option.some(withNodes), true)).toBe("tagged");
     });
+
+    // One step name run at a node in two rounds, and in another lane: a node's
+    // page asks for the step's lines at its own node alone.
+    const rounds = [
+      RunLogLines.entry(T, Option.some("ci"), "step: ci", Option.some('{"id":"ci","round":1}')),
+      RunLogLines.entry(
+        T,
+        Option.some("ci"),
+        "red\n  in round 1",
+        Option.some('{"id":"ci","round":1}'),
+      ),
+      RunLogLines.entry(T, Option.some("ci"), "step: ci", Option.some('{"id":"ci","round":2}')),
+      RunLogLines.entry(T, Option.some("ci"), "green", Option.some('{"round":2,"id":"ci"}')),
+      RunLogLines.entry(
+        T,
+        Option.some("ci"),
+        "other lane",
+        Option.some('{"id":"ci","round":2,"lane":"task-1"}'),
+      ),
+      RunLogLines.entry(T, Option.some("ci"), "no node"),
+    ]
+      .map((line) => `${line}\n`)
+      .join("");
+
+    test("a step's lines at one node are those its tags put in that node's round and lane", () => {
+      const at = (wanted: {
+        readonly id: string;
+        readonly round?: number;
+        readonly lane?: string;
+      }) => RunLogLines.linesOfStep(rounds, "ci", "tagged", 0, Option.some(wanted)).text;
+
+      expect(at({ id: "ci", round: 1 })).toEqual(
+        Option.some(`${T} step: ci\n${T} red\n  in round 1`),
+      );
+      expect(at({ id: "ci", round: 2 })).toEqual(Option.some(`${T} step: ci\n${T} green`));
+      expect(at({ id: "ci", round: 2, lane: "task-1" })).toEqual(Option.some(`${T} other lane`));
+      expect(at({ id: "ci", round: 3 })).toEqual(Option.none());
+      expect(RunLogLines.linesOfStep(rounds, "ci", "tagged", 0).text).toEqual(
+        Option.some(
+          [
+            `${T} step: ci`,
+            `${T} red`,
+            "  in round 1",
+            `${T} step: ci`,
+            `${T} green`,
+            `${T} other lane`,
+            `${T} no node`,
+          ].join("\n"),
+        ),
+      );
+    });
   });
 });
