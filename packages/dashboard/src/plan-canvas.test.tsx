@@ -94,8 +94,8 @@ describe("the canvas draws a document's plan", () => {
     expect(tagOf(markup, "steps[2].on.needs-clarification.steps[1]")).toContain(
       'data-end="needs-human"',
     );
-    expect(nodes.slice(-6)).toEqual(["gate", "push", "opened", "ci", "done", "steps[7]"]);
-    expect(tagOf(markup, "steps[7]")).toContain('data-end="done"');
+    expect(nodes.slice(-6)).toEqual(["gate", "push", "opened", "ci", "done", "steps[8]"]);
+    expect(tagOf(markup, "steps[8]")).toContain('data-end="done"');
   });
 
   test("the epic document: a repeat's frame with its arrow back, an if's frame, and a forEach's frame with a template lane", () => {
@@ -161,9 +161,9 @@ describe("the arrows, worked out by walking the plan", () => {
     expect(edges).toContainEqual(edge("claim", "worktree", "next"));
     expect(edges).toContainEqual(edge("agent", "gate", "next"));
     expect(edges).toContainEqual(edge("ci", "done", "next"));
-    expect(edges).toContainEqual(edge("done", "steps[7]", "next"));
+    expect(edges).toContainEqual(edge("done", "steps[8]", "next"));
     expect(edges.filter((each) => each.from === "steps[0].on.adopted.steps[3]")).toEqual([]);
-    expect(edges.filter((each) => each.from === "steps[7]")).toEqual([]);
+    expect(edges.filter((each) => each.from === "steps[8]")).toEqual([]);
   });
 
   test("a branch that doesn't end rejoins the chain after its fork", () => {
@@ -275,7 +275,7 @@ describe("a node's detail", () => {
 
     expect(markup).toContain("pr.land");
     expect(land.about).toBeString();
-    expect(markup).toContain(Option.getOrThrow(Option.fromUndefinedOr(land.about)));
+    expect(unescaped(markup)).toContain(Option.getOrThrow(Option.fromUndefinedOr(land.about)));
     expect(markup).toMatch(/<th>pr<\/th><td>in<\/td><td><code>trigger.pr<\/code><\/td>/);
     expect(markup).toMatch(
       /<th>approved<\/th><td>in<\/td><td><code>verdict.approved<\/code><\/td>/,

@@ -2404,7 +2404,8 @@ const emitTrigger = (document: FlowDocument) => {
 
 // A flow's plan: its document's tree as data, which a run is drawn on. Each
 // node has its step's id, or for a step with none (an end, a next, an if) its
-// path in the document, the path itself, and what it is. A conditional step
+// path in the document, the path itself, and what it is; a block step also
+// what its block does, for a person reading the plan. A conditional step
 // sits under an `if` node, at the path of its `if`. The runs module decodes
 // it with a schema of its own (FlowPlan, in its domain), as the daemon and
 // the browser read it, so its shape is theirs as much as this file's.
@@ -2484,7 +2485,13 @@ const callNode = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode 
     return { id: step.id, path, kind: "stage", stage: step.stage, ...branched };
   }
 
-  return { id: step.id, path, kind: "use", block: step.use, about: "", ...branched };
+  // What the block does, which a document `check` passed names one of.
+  const about = Option.match(Record.get(blocksByName, step.use), {
+    onNone: () => "",
+    onSome: (block) => block.about,
+  });
+
+  return { id: step.id, path, kind: "use", block: step.use, about, ...branched };
 };
 
 const planCall = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode => {
