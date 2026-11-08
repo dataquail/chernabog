@@ -24,7 +24,12 @@ export {
   type RunFacts as RunOnPlanFacts,
 } from "./domain/domain-services/run-on-plan.domain-service.ts";
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
-export { FlowPlan, FoundPlan, PlanNode } from "./domain/plan/flow-plan.value-object.ts";
+export {
+  FlowPlan,
+  FoundPlan,
+  type PlanBranch,
+  PlanNode,
+} from "./domain/plan/flow-plan.value-object.ts";
 export { NodeRef } from "./domain/plan/node-ref.value-object.ts";
 export { CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
 export {

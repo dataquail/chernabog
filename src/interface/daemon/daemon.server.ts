@@ -52,6 +52,7 @@ import {
   flowHandle,
   flowLayer,
   flowOrigins,
+  FlowPlan,
   type FlowRegistry,
   leaseTtlFor,
   localCause,
@@ -81,7 +82,7 @@ import { TrustCommands, TrustQueries } from "../../modules/trust/trust.platform.
 import { IncompatibleConfig } from "../../platform/config-error.ts";
 import { configTree, snapshotConfig } from "../../platform/config-snapshot.ts";
 import { dailyLogWriting } from "../../platform/daily-log.ts";
-import { describeSource, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
+import { describeSource, flowPlanOf, flowSourceOf, loadFlows } from "../../platform/flow-loader.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import {
@@ -1729,6 +1730,12 @@ export const runDaemon = Effect.gen(function* () {
               onNone: () => ({}),
               onSome: (source) => ({ source: describeSource(source) }),
             }),
+            // A flow compiled from a document carries its plan, which the
+            // dashboard's flows page draws; one this binary can't read has none.
+            ...Option.match(
+              Option.flatMap(flowPlanOf(flow.handle.flow), Schema.decodeUnknownOption(FlowPlan)),
+              { onNone: () => ({}), onSome: (plan) => ({ plan }) },
+            ),
             enabled: Option.isNone(offReason(flow)),
             ...Option.match(offReason(flow), {
               onNone: () => ({}),
