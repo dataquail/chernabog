@@ -2,7 +2,7 @@
 // of these breaks a generated flow in one way a person or a bug could, and the
 // comparison must see it. A comparison that passes everything says nothing.
 
-import { type Flow } from "@chernabog/sdk";
+import { DEFAULT_LABELS, type Flow, labelsOf, Settings } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -27,6 +27,7 @@ import {
   PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
+  READY_DOCUMENT,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
@@ -38,6 +39,7 @@ import {
   ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
+  type FlowInput,
   HUMAN_INITIATED_SCENARIOS,
   HUMAN_INITIATED_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
@@ -56,12 +58,14 @@ import {
   RESOLVE_CONFLICTS_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
+  reviewAsked,
   type Scenario,
   stageElsewhere,
   stageSkipping,
   throughStage,
 } from "./compose-scenarios.ts";
 import { effect } from "./effect-test.ts";
+import { makeFake } from "./sdk-fakes.ts";
 
 type Target = {
   readonly name: string;
@@ -860,5 +864,95 @@ describe("the draft test sees a draft flow that", () => {
 
   sabotagedDraft("asks the pool to review its draft", (flow) =>
     flow.replace('"pr": opened, "outcome"', '"pr": { ...opened, draft: false }, "outcome"'),
+  );
+});
+
+// No recipe gives an approved pull request to a person as a success, so a
+// flow that does is compared with the ready document's own: what it labelled,
+// commented, merged and ended as, and the labels it declares.
+describe("the hand-over test sees a review flow that", () => {
+  const source = generated(documentOf(READY_DOCUMENT));
+  const GIVE = 'catalogue["pr.readyForPerson"].run({ "pr": trigger.pr, "message": ';
+
+  const NONE: FlowInput = {};
+  const RENAMED: FlowInput = { labels: { readyForPerson: "ready-to-merge" } };
+
+  const setups = [
+    { settings: NONE, setup: () => reviewAsked("approve") },
+    { settings: NONE, setup: () => reviewAsked("approve", [DEFAULT_LABELS.ship]) },
+    { settings: RENAMED, setup: () => reviewAsked("approve") },
+  ];
+
+  const declaring = (flow: Flow) =>
+    labelsOf(flow).pipe(
+      Effect.provideService(Settings.FlowSettings, { input: NONE }),
+      Effect.provide(makeFake("approve").services),
+    );
+
+  const run = (flow: Flow) =>
+    Effect.gen(function* () {
+      const observed = yield* Effect.forEach(setups, ({ settings, setup }) =>
+        observe(flow, "review", setup, REVIEW_WORK_ITEM, void 0, settings).pipe(
+          Effect.map(({ comments, merges, pullLabels, status, steps, summary }) => ({
+            comments,
+            merges,
+            pullLabels,
+            status,
+            steps,
+            summary,
+          })),
+        ),
+      );
+
+      const declared = yield* declaring(flow);
+
+      return { observed, declared: declared.map((label) => label.name) };
+    });
+
+  const sabotagedHandOver = (title: string, sabotage: (source: string) => string) => {
+    effect(
+      title,
+      () =>
+        Effect.gen(function* () {
+          const broken = sabotage(source);
+
+          // A sabotage whose text no longer matches would pass by doing nothing.
+          expect(broken).not.toBe(source);
+
+          const fromDocument = yield* run(yield* loadSource(source));
+          const fromFlow = yield* run(yield* loadSource(broken));
+
+          expect(fromDocument.observed.map((each) => each.status)).toEqual([
+            "done",
+            "done",
+            "done",
+          ]);
+          expect(fromFlow).not.toEqual(fromDocument);
+        }),
+      60_000,
+    );
+  };
+
+  sabotagedHandOver("gives nobody the pull request", (flow) =>
+    flow.replace(/catalogue\["pr\.readyForPerson"\]\.run\(\{[^}]*\}\)/, 'Effect.succeed("")'),
+  );
+
+  sabotagedHandOver("tells the person something else", (flow) =>
+    flow.replace("this is ready for a person to merge.", "nothing."),
+  );
+
+  sabotagedHandOver("hands it to a person as needs-human", (flow) =>
+    flow.replace(GIVE, 'catalogue["pr.handToPerson"].run({ "pr": trigger.pr, "reason": '),
+  );
+
+  sabotagedHandOver("merges it when it ships", (flow) =>
+    flow.replace(
+      /catalogue\["pr\.readyForPerson"\]\.run\(\{[^}]*\}\)/,
+      'catalogue["pr.land"].run({ "pr": trigger.pr, "approved": review_approve.value.approved, "method": "squash" })',
+    ),
+  );
+
+  sabotagedHandOver("doesn't declare the label it gives", (flow) =>
+    flow.replace('blocks: ["review.round","pr.readyForPerson"]', 'blocks: ["review.round"]'),
   );
 });

@@ -10,6 +10,7 @@ import {
   type Json,
   NeedsHuman,
   NothingCommitted,
+  type Repo,
   Skip,
   StepFailed,
   StepRunner,
@@ -22,6 +23,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import * as Implement from "./implement.ts";
+import type { FlowSettings } from "./settings.ts";
 
 // What a scope's failures can tell a person beyond why: what the run got to.
 export type FailureContext = { pr: Option.Option<PullRequestNumber> };
@@ -174,6 +176,8 @@ export type SettingsFields = {
 export type Contribution = {
   readonly settings?: SettingsFields;
   readonly labels?: ReadonlyArray<FlowLabel>;
+  // Labels named by the flow's settings, as a repo may rename them.
+  readonly namedLabels?: ReadonlyArray<Effect.Effect<FlowLabel, never, FlowSettings | Repo>>;
   readonly doctor?: ReadonlyArray<DoctorCheck>;
   // Finds runs of this flow parked in the block, to wake them.
   readonly wakes?: TriggeredFlow["trigger"];

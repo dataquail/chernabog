@@ -52,6 +52,7 @@ Labels are the public record people see, and some flows trigger on them. Rename 
 | `auto:needs-human`         | `needsHuman`         | any flow           | A loop cap or rule stopped it; no flow picks it up again |
 | `auto:needs-clarification` | `needsClarification` | `implement`        | Questions are on the issue; answer and requeue          |
 | `hybrid`                   | `hybrid`             | `Hybrid.openPullRequest` | On a pull request: a person worked on it with an agent; a person merges. No flow reads it |
+| `auto:ready-for-person`    | `readyForPerson`     | `pr.readyForPerson`, in a flow document | A person takes the next step, such as merging; the run ended done. Only a flow that uses the block creates it |
 | `auto:approved`            | `approved`           | no default flow    | Kept in the label set for flows of your own             |
 | `auto:stale`               | `stale`              | no default flow    | Kept in the label set for flows of your own             |
 | `auto:changes-requested`   | `changesRequested`   | no default flow    | Kept in the label set for flows of your own             |
