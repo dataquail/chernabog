@@ -10,6 +10,7 @@ import {
   GitHub,
   Lanes,
   NeedsHuman,
+  PlanNodes,
   Repo,
   reportAs,
   Run,
@@ -1162,7 +1163,9 @@ export const laneScopes = {
   "epic.task": <A, E, R>(task: TaskStart, body: Scoped<A, E | ToPerson | Skip, R>) => {
     const context: FailureContext = { pr: Option.none() };
 
+    // Each task's steps run in its lane of the forEach's node.
     return Effect.suspend(() => body(context)).pipe(
+      PlanNodes.inLane(task.lane),
       Effect.as<LaneEnding>({ issue: task.issue, withPerson: false }),
       Effect.catchIf(
         (failure): failure is Skip => failure instanceof Skip,

@@ -18,6 +18,8 @@ import {
   Lanes,
   Markers,
   NeedsHuman,
+  type NodeAt,
+  PlanNodes,
   type RepoSettings,
   Run,
   RunLog,
@@ -52,13 +54,22 @@ import {
 } from "../../../../kernel/core-support.value-object.ts";
 import { IMPLICIT, type Persona } from "../../../../kernel/persona.value-object.ts";
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { flowSourceOf } from "../../../../platform/flow-loader.ts";
+import { flowPlanOf, flowSourceOf } from "../../../../platform/flow-loader.ts";
 import { GitHubApi } from "../../../../platform/github-api.ts";
 import { checkPersona } from "../../../../platform/github-auth.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
 import { VERSION } from "../../../../platform/version.ts";
 import { type EffectiveRepo, flowSettingsInput, personaOf } from "../../../../repo-config.ts";
+import { FlowPlan } from "../../domain/plan/flow-plan.value-object.ts";
+import { NodeRefs } from "../../domain/plan/node-ref.value-object.ts";
 import { type WorkflowOutcome } from "../../domain/ports/clients/workflows.client.ts";
+import {
+  BranchTaken,
+  EndReached,
+  type NodeDid,
+  NodeEntered,
+  NodeFinished,
+} from "../../domain/run/node-did.value-object.ts";
 import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
@@ -603,8 +614,17 @@ export const flowLayer = <R>(
       );
 
       // A step reported after its run ended changes nothing.
-      const enterStep = yield* capturing((step: string) =>
-        RunsCommands.use((runs) => runs.EnterStepCommand({ runId, step })).pipe(
+      const enterStep = yield* capturing((step: string, node: Option.Option<NodeAt>) =>
+        RunsCommands.use((runs) =>
+          runs.EnterStepCommand({
+            runId,
+            step,
+            ...Option.match(node, {
+              onNone: () => ({}),
+              onSome: (at) => ({ node: NodeRefs.of(at) }),
+            }),
+          }),
+        ).pipe(
           Effect.catchTags({
             RunAlreadyFinished: () => Effect.void,
             RunNotFound: () => Effect.void,
@@ -643,6 +663,25 @@ export const flowLayer = <R>(
         RunsCommands.use((runs) => runs.DeclareLaneCommand({ runId, lane, needs })),
       );
 
+      // Where in its plan the run went, each recorded once however often the
+      // workflow body passes it, as a resumed run's does.
+      const recordNode = yield* capturing((node: NodeAt, did: NodeDid) =>
+        RunsCommands.use((runs) => runs.RecordNodeCommand({ runId, node: NodeRefs.of(node), did })),
+      );
+
+      const runNodes = PlanNodes.RunNodes.of({
+        entered: (node) => recordNode(node, NodeEntered.make({})),
+        finished: (node, outcome) => recordNode(node, NodeFinished.make({ outcome })),
+        branched: (node, outcome) => recordNode(node, BranchTaken.make({ outcome })),
+        ended: (node) => recordNode(node, EndReached.make({})),
+      });
+
+      // The plan of the flow it runs, kept as it starts: a run resumed from
+      // the tree it started from has the same one, and keeps the first.
+      const savePlan = yield* capturing((plan: FlowPlan) =>
+        RunsCommands.use((runs) => runs.SaveRunPlanCommand({ runId, plan })),
+      );
+
       // What each agent call of the run spent, recorded when it ends.
       const tokenUsage = TokenUsageRecorder.of({
         cursor: yield* capturing((adapter: string, sessionId: string) =>
@@ -656,7 +695,8 @@ export const flowLayer = <R>(
       });
 
       const runLog = yield* runLogFor(payload.runId, {
-        onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
+        onStep: (step, node) =>
+          enterStep(step, node).pipe(Effect.andThen(hooks.onStep(step, node))),
         onStepDone: hooks.onStepDone,
         onStepFinished: (step, outcome) =>
           finishStep(step, outcome).pipe(Effect.andThen(hooks.onStepFinished(step, outcome))),
@@ -672,6 +712,12 @@ export const flowLayer = <R>(
         handle,
         Option.flatMap(row, (found) => found.configTree),
       );
+
+      for (const plan of Option.toArray(
+        Option.flatMap(flowPlanOf(flow), Schema.decodeUnknownOption(FlowPlan)),
+      )) {
+        yield* savePlan(plan);
+      }
 
       const holds = yield* markerHolds(runId, flow);
       const lost = yield* Deferred.make<string>();
@@ -695,6 +741,7 @@ export const flowLayer = <R>(
         Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
         Effect.provideService(Lanes.RunLanes, Lanes.RunLanes.of({ declare: declareLane })),
+        Effect.provideService(PlanNodes.RunNodes, runNodes),
         Effect.provideService(TokenUsageRecorder, tokenUsage),
         Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
         Effect.provideContext(
