@@ -19,6 +19,8 @@ import { RunWaitsRepositoryLive } from "./infrastructure/repositories/run-waits.
 import { RunsRepositoryLive } from "./infrastructure/repositories/runs.repository-live.ts";
 import { SkipsRepositoryLive } from "./infrastructure/repositories/skips.repository-live.ts";
 import { StateDbTransactionDriverLive } from "./infrastructure/repositories/state-db.transaction-driver-live.ts";
+import { TokenUsageCursorsRepositoryLive } from "./infrastructure/repositories/token-usage-cursors.repository-live.ts";
+import { TokenUsagesRepositoryLive } from "./infrastructure/repositories/token-usages.repository-live.ts";
 import { type FlowRegistry } from "./infrastructure/runtime/flow-registry.ts";
 import {
   runFlowsCommandGroup,
@@ -53,6 +55,8 @@ const RunsStoresLive = Layer.mergeAll(
   RunWaitsRepositoryLive,
   SkipsRepositoryLive,
   HoldsRepositoryLive,
+  TokenUsagesRepositoryLive,
+  TokenUsageCursorsRepositoryLive,
 );
 
 // The unit of work each of the runs' commands declares, over state.db: what a

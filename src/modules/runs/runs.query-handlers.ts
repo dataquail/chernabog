@@ -36,6 +36,8 @@ import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
 import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
+import { readTokenUsageCursorHandler } from "./queries/read-token-usage-cursor.handler.ts";
+import { ReadTokenUsageCursorQuery } from "./queries/read-token-usage-cursor.query.ts";
 import { resolveRunIdHandler } from "./queries/resolve-run-id.handler.ts";
 import { ResolveRunIdQuery } from "./queries/resolve-run-id.query.ts";
 import {
@@ -62,6 +64,7 @@ export const runsQueryGroup = Query.group(
   ReadRunHistoryQuery,
   ReadRunMadeQuery,
   ReadStateVersionQuery,
+  ReadTokenUsageCursorQuery,
 );
 
 const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
@@ -78,6 +81,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
   ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),
+  ReadTokenUsageCursorQuery: (payload) => readTokenUsageCursorHandler(payload),
 });
 
 // The runs module's slice of the read side over state.db, which the daemon, a

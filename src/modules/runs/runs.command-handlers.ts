@@ -42,6 +42,8 @@ import { RecordCreatedIssueCommand } from "./commands/record-created-issue.comma
 import { recordCreatedIssueHandler } from "./commands/record-created-issue.handler.ts";
 import { RecordSkipCommand } from "./commands/record-skip.command.ts";
 import { recordSkipHandler } from "./commands/record-skip.handler.ts";
+import { RecordTokenUsageCommand } from "./commands/record-token-usage.command.ts";
+import { recordTokenUsageHandler } from "./commands/record-token-usage.handler.ts";
 import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
 import { recoverRunsHandler } from "./commands/recover-runs.handler.ts";
 import { ReleaseMarkersCommand } from "./commands/release-markers.command.ts";
@@ -63,7 +65,7 @@ import {
 // client the workflow engine journals to, which the composition root that holds
 // state.db provides, as it does for the runs' queries. The commands say what
 // happened to a run (RunStarted, RunEnteredStep, RunFinishedStep,
-// RunNeedsAttention, RunFinished, PullRequestOpened) on the EventBus the root provides.
+// RunNeedsAttention, RunFinished, PullRequestOpened, TokenUsageRecorded) on the EventBus the root provides.
 export const runsCommandGroup = Command.group(
   AdoptImplicitRunsCommand,
   AttachExecutionCommand,
@@ -78,6 +80,7 @@ export const runsCommandGroup = Command.group(
   PruneRunLogsCommand,
   RecordCreatedIssueCommand,
   RecordSkipCommand,
+  RecordTokenUsageCommand,
   ReleaseRunWaitCommand,
   StartRunCommand,
 );
@@ -96,6 +99,7 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   PruneRunLogsCommand: () => pruneRunLogsHandler(),
   RecordCreatedIssueCommand: (payload) => recordCreatedIssueHandler(payload),
   RecordSkipCommand: (payload) => recordSkipHandler(payload),
+  RecordTokenUsageCommand: (payload) => recordTokenUsageHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
 });

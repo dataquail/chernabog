@@ -63,6 +63,7 @@ import { localCause } from "../../domain/schedule/event-tick.value-object.ts";
 import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
+import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
   GitHubLive,
@@ -642,6 +643,18 @@ export const flowLayer = <R>(
         RunsCommands.use((runs) => runs.DeclareLaneCommand({ runId, lane, needs })),
       );
 
+      // What each agent call of the run spent, recorded when it ends.
+      const tokenUsage = TokenUsageRecorder.of({
+        cursor: yield* capturing((adapter: string, sessionId: string) =>
+          RunsQueries.use((runs) => runs.ReadTokenUsageCursorQuery({ adapter, sessionId })).pipe(
+            Effect.map((found) => found.cursor),
+          ),
+        ),
+        record: yield* capturing((call: TokenUsageCall) =>
+          RunsCommands.use((runs) => runs.RecordTokenUsageCommand(call)),
+        ),
+      });
+
       const runLog = yield* runLogFor(payload.runId, {
         onStep: (step) => enterStep(step).pipe(Effect.andThen(hooks.onStep(step))),
         onStepDone: hooks.onStepDone,
@@ -682,6 +695,7 @@ export const flowLayer = <R>(
         Effect.provideService(Markers.MarkerHolds, holds),
         Effect.provideService(Subjects.RunSubjects, Subjects.RunSubjects.of({ name: nameSubject })),
         Effect.provideService(Lanes.RunLanes, Lanes.RunLanes.of({ declare: declareLane })),
+        Effect.provideService(TokenUsageRecorder, tokenUsage),
         Effect.provideService(Settings.FlowSettings, flowSettingsFor(handle, persona)),
         Effect.provideContext(
           stoppingWith(

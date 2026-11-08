@@ -42,6 +42,7 @@ import {
   runSessions,
   type SessionRecord,
 } from "./agents/sessions.ts";
+import { recordingTokenUsage } from "./agents/token-usage.ts";
 import { isInteractive, launcherFor } from "./launchers.ts";
 
 export type AgentsConfig = Readonly<
@@ -195,16 +196,18 @@ export const AgentLive = (
             });
 
             const before = yield* headOf(request.cwd);
+            const log = yield* logOf;
 
             const result = yield* found.value
-              .run(asked, {
-                account,
-                host: host.variables,
-                env,
-                launcher: settings.launcher,
-                log: yield* logOf,
-              })
+              .run(asked, { account, host: host.variables, env, launcher: settings.launcher, log })
               .pipe(
+                // What the call spent, however it ends, in a run.
+                recordingTokenUsage(
+                  found.value,
+                  { sessionId: request.sessionId, cwd: request.cwd, account },
+                  step,
+                  log,
+                ),
                 // A rehearsal fails on a step it couldn't answer, whatever the flow does about it.
                 Effect.tapError((error) =>
                   Option.match(

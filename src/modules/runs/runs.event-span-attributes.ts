@@ -17,6 +17,7 @@ import {
   type RunStarted,
 } from "./domain/run/run.events.ts";
 import { type RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
+import { type TokenUsageRecorded } from "./domain/token-usage/token-usage.events.ts";
 
 // A message or event about one run.
 const ofRun = (message: { readonly runId: RunId }) => ({ "run.id": message.runId });
@@ -44,6 +45,8 @@ export const runsCommandSpanAttributes = {
   ParkRunCommand: ofRun,
   RecordCreatedIssueCommand: ofRun,
   RecordSkipCommand: ofFlow,
+  // The run alone: never what was spent, nor on what.
+  RecordTokenUsageCommand: ofRun,
   ReleaseRunWaitCommand: (payload: { readonly wait: { readonly runId: RunId } }) =>
     ofRun(payload.wait),
   StartRunCommand: (payload: {
@@ -86,6 +89,7 @@ export const runEventSpanAttributes = Event.spanAttributes({
   RunFinished: (event: RunFinished) => ofRun(event),
   RunFinishedStep: (event: RunFinishedStep) => ofRun(event),
   RunMarkersReleased: (event: RunMarkersReleased) => ofRun(event),
+  TokenUsageRecorded: (event: TokenUsageRecorded) => ofRun(event),
   PullRequestOpened: (event: PullRequestOpened) => ({
     "run.id": event.runId,
     "run.repo": event.repo,

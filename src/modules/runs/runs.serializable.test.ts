@@ -11,6 +11,7 @@ import {
   RunNeedsAttention,
   RunStarted,
 } from "./domain/run/run.events.ts";
+import { TokenUsageRecorded } from "./domain/token-usage/token-usage.events.ts";
 import { runFlowsCommandGroup, runsCommandGroup } from "./runs.command-handlers.ts";
 import {
   notificationsQueryGroup,
@@ -41,6 +42,7 @@ describe("the runs module's messages and events", () => {
             RunFinishedStep,
             RunNeedsAttention,
             RunStarted,
+            TokenUsageRecorded,
           },
         ),
       ).toEqual([]);

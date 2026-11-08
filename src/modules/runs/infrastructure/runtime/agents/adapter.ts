@@ -19,6 +19,7 @@ import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { type Environment, withVariables } from "../../../../../platform/environment.ts";
 import type { Exec } from "../../../../../platform/exec.ts";
 import type { Home } from "../../../../../platform/home.ts";
+import { type TokenUsageReading } from "../../../domain/token-usage/model-usage.value-object.ts";
 
 export type AdapterServices =
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Home | Exec;
@@ -33,6 +34,14 @@ export type AdapterContext = {
   readonly log: (line: string) => Effect.Effect<void>;
 };
 
+// What an adapter needs to find a session's own records: our id for it, the
+// worktree it ran in, and the account it ran under.
+export type AgentSession = {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly account: Account;
+};
+
 export type Adapter = {
   readonly name: string;
   // Answers every call, whatever adapter it asks for: a rehearsal's.
@@ -41,6 +50,14 @@ export type Adapter = {
     request: AgentRequest,
     context: AdapterContext,
   ): Effect.Effect<AgentResult, AgentError, AdapterServices>;
+  // What a session spent since `cursor` (none for a session never read), per
+  // model, read from the agent's own records, and the cursor to read on from.
+  // The cursor's form is the adapter's own. An adapter without it records
+  // each call as not reported.
+  readonly usage?: (
+    session: AgentSession,
+    cursor: Option.Option<string>,
+  ) => Effect.Effect<TokenUsageReading, AgentError, AdapterServices>;
 };
 
 // API keys would bill per token; Chernabog only spends subscription capacity.
