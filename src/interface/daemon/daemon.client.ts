@@ -15,7 +15,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { CancelledRun, RunHistory } from "../../modules/runs/runs.platform.ts";
+import { CancelledRun, FoundPlan, RunHistory } from "../../modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import {
   CancelRequest,
@@ -146,6 +146,12 @@ export const daemonRunRow = (runId: string) =>
 export const daemonRunHistory = (runId: string) =>
   send(HttpClientRequest.get(`/runs/${encodeURIComponent(runId)}/history`)).pipe(
     Effect.flatMap(reply(RunHistory)),
+  );
+
+// The plan runs started with, by the hash a run's history names.
+export const daemonFlowPlan = (hash: string) =>
+  send(HttpClientRequest.get(`/plans/${encodeURIComponent(hash)}`)).pipe(
+    Effect.flatMap(reply(FoundPlan)),
   );
 
 export const daemonCancel = (request: CancelRequest) =>

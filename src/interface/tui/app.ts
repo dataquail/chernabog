@@ -36,6 +36,7 @@ import {
   attachCommand,
   type CancelledRun,
   CancelTarget,
+  type FlowPlan,
   readUsageLogLine,
   RunLogsQueries,
   runSessions,
@@ -46,6 +47,7 @@ import { DEFAULT_GATE, loadMachineConfig } from "../../repo-config.ts";
 import {
   daemonCancel,
   daemonEvents,
+  daemonFlowPlan,
   daemonRunHistory,
   daemonStatus,
   daemonTick,
@@ -61,7 +63,17 @@ import {
 } from "./live.ts";
 import { applySetting } from "./settings.ts";
 import { type Action, type Key, update } from "./update.ts";
-import { flowKey, type Line, type Model, type Style, type UsageRow, view } from "./view.ts";
+import {
+  flowKey,
+  type Line,
+  type Model,
+  type PlannedRun,
+  type RunEntry,
+  runRows,
+  type Style,
+  type UsageRow,
+  view,
+} from "./view.ts";
 
 const plainChunk = (text: string): TextChunk => ({ __isChunk: true, text });
 
@@ -151,6 +163,71 @@ const readDetail = (runId: string) =>
       failure: Option.map(Result.getFailure(history), (failure) => failure.message),
       worktree: yield* worktreeOf(runId),
     };
+  });
+
+// The plans of the runs the main view lists, and where in them each run has
+// been, for its row's strip. A run with no plan, or one the daemon doesn't
+// say, has none, and its row shows its detail. A plan never changes, so each
+// is asked for once; nor does a finished run's history, once it is known.
+const entry = (runId: string, planned: PlannedRun): readonly [string, PlannedRun] => [
+  runId,
+  planned,
+];
+
+const readPlans = (model: Model, plans: Map<string, Option.Option<FlowPlan>>) =>
+  Effect.gen(function* () {
+    const planOf = (hash: string) =>
+      Effect.gen(function* () {
+        const known = Option.fromUndefinedOr(plans.get(hash));
+
+        if (Option.isSome(known)) {
+          return known.value;
+        }
+
+        const found = yield* daemonFlowPlan(hash).pipe(
+          Effect.map((reply) => reply.plan),
+          Effect.orElseSucceed(() => Option.none<FlowPlan>()),
+        );
+
+        plans.set(hash, found);
+
+        return found;
+      });
+
+    const read = (run: RunEntry) =>
+      Effect.gen(function* () {
+        const known = Option.fromUndefinedOr(model.plans[run.id]);
+
+        if (Option.isSome(known) && run.status !== "running") {
+          return Option.some(entry(run.id, known.value));
+        }
+
+        const history = yield* Effect.option(daemonRunHistory(run.id));
+
+        if (Option.isNone(history)) {
+          return Option.none();
+        }
+
+        const hash = Option.fromUndefinedOr(history.value.plan);
+
+        if (Option.isNone(hash)) {
+          return Option.none();
+        }
+
+        const plan = yield* planOf(hash.value);
+
+        return Option.map(plan, (found) =>
+          entry(run.id, { steps: found.steps, history: history.value }),
+        );
+      });
+
+    const found = yield* Effect.forEach(
+      runRows(model).map((row) => row.run),
+      read,
+      { concurrency: 4 },
+    );
+
+    return Object.fromEntries(found.flatMap(Option.toArray));
   });
 
 export const initialModel = (width: number, height: number, now: DateTime.Utc): Model => ({
@@ -305,6 +382,9 @@ export const runTui = Effect.gen(function* () {
     model = { ...model, thresholds: machine.value.usageGate };
   }
 
+  // Plans by hash, as the daemon gave them; none for one it didn't have.
+  const plans = new Map<string, Option.Option<FlowPlan>>();
+
   const render = Effect.gen(function* () {
     model = {
       ...model,
@@ -318,6 +398,10 @@ export const runTui = Effect.gen(function* () {
   // What the open view shows beyond the status: the run log it follows, and
   // the steps of the run it details.
   const refreshOpen = Effect.gen(function* () {
+    if (model.view === "main") {
+      model = { ...model, plans: yield* readPlans(model, plans) };
+    }
+
     if (model.view === "log" && Option.isSome(model.logRun)) {
       model = { ...model, logLines: yield* readLog(model.logRun.value) };
     }

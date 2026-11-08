@@ -325,9 +325,11 @@ describe("the main view's run rows", () => {
   });
 
   test("a row too narrow for the strip falls back to today's detail", () => {
-    const narrow = plain(view(model({ width: 70 })));
+    const narrow = plain(view(model({ width: 64 })));
 
-    expect(narrow).not.toContain("→");
-    expect(narrow).toMatch(/running\s+#7 .* run-agent/);
+    expect(narrow).toMatch(/running\s+#7 .* 1h ago\s+run-agent$/m);
+    expect(narrow).not.toContain("agent ●");
+    // A shorter strip still fits: the finished run keeps its last node.
+    expect(narrow).toMatch(/done\s+#9 .* 60m ago\s+… → pr ✓$/m);
   });
 });
