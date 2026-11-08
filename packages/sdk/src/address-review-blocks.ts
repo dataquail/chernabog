@@ -476,6 +476,13 @@ export const addressReviewSources = {
 // to a person labels the pull request auto:needs-human and comments why.
 export const changesAskedSubject = {
   fields: ["pr", "branch", "base", "reviewer", "reviewedSha"],
+  kinds: {
+    pr: "PullRequestNumber",
+    branch: "BranchName",
+    base: "Option<BaseBranch>",
+    reviewer: "the reviewer's login",
+    reviewedSha: "the commit the review is on",
+  },
   failureContext: [],
   read: (item: WorkItem) =>
     Review.addressItemOf(item).pipe(

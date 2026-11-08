@@ -51,6 +51,8 @@ const committedNothing = <A, E, R>(effect: Effect.Effect<A, E | NothingCommitted
 export const humanInitiatedBlocks = {
   "hybrid.claim": defineBlock({
     name: "hybrid.claim",
+    // Only these subjects' scopes let its claim go when the run ends.
+    suits: ["issue", "spec"],
     about:
       "Claims the issue a person started with chernabog start, so only this run works on it, and makes its branch, auto/issue-<n>, or takes up the one an earlier start left. It labels the issue auto:in-progress, takes it out of the unattended queues (auto:eligible and auto:ship), and settles its base. An issue another run holds skips the run, naming how to let it go; one an unattended run left a branch for is left to it. The claim goes when the run ends, however it ends, and a session the person closes keeps the issue in progress for their next start.",
     inputKinds: { issue: "IssueNumber" },

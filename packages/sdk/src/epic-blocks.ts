@@ -784,6 +784,8 @@ export const epicBlocks = {
   // Whether this run's layers ship, read once, so a replay decides the same.
   "epic.ships": defineBlock({
     name: "epic.ships",
+    // It reads the epic's settings, which no input shows.
+    suits: ["epic"],
     about: "Reads the ship setting once: whether the epic's layers are on the automated path.",
     inputKinds: {},
     outputKinds: { value: "boolean, for `if` or stack.publish" },
@@ -804,6 +806,8 @@ export const epicBlocks = {
   // How many tasks the run implements at once, at least one, read once.
   "epic.atOnce": defineBlock({
     name: "epic.atOnce",
+    // It reads the epic's settings, which no input shows.
+    suits: ["epic"],
     about: "Reads the atOnce setting once: how many tasks run at once, at least one.",
     inputKinds: {},
     outputKinds: { value: "number, for forEach atOnce" },
@@ -984,7 +988,8 @@ export const epicBlocks = {
     outputKinds: {
       tasks: "the epic.tasks state, updated, for a round that starts nothing",
       started: "the tasks as they were started, for epic.recordEndings",
-      starts: "the tasks to start, for forEach: issue, base, lane",
+      starts:
+        "the tasks to start, for forEach: issue (IssueNumber), base (Option<BaseBranch>), lane (LaneId)",
     },
     outcomeKinds: { none: "the epic.tasks state, updated" },
     stepNames: [],
@@ -1189,6 +1194,7 @@ export const epicSources = {
 // tasks' claims go too; a run parked between rounds keeps them.
 export const epicSubject = {
   fields: ["epic"],
+  kinds: { epic: "EpicNumber" },
   failureContext: [],
   read: (item: WorkItem) =>
     Implement.issueOf(item).pipe(Effect.map((epic) => ({ epic: EpicNumber(epic) }))),

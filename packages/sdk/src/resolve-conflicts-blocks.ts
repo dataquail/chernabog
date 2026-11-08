@@ -540,6 +540,7 @@ export const resolveConflictsSources = {
 // a person labels the pull request auto:needs-human and comments why.
 export const conflictSubject = {
   fields: ["pr", "branch", "base"],
+  kinds: { pr: "PullRequestNumber", branch: "BranchName", base: "BaseBranch" },
   failureContext: [],
   read: (item: WorkItem) =>
     Schema.decodeUnknownEffect(ConflictItem)(item.data).pipe(

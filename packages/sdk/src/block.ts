@@ -264,6 +264,11 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // the work, so no path takes a group twice, and a block that runs steps in a
   // loop's rounds or beside others must carry the round or the lane in them.
   readonly stepNames?: ReadonlyArray<string>;
+  // The subjects it suits, for a block whose inputs can't show them: one that
+  // reads its run's work item itself, or leans on what only a subject's scope
+  // does, such as letting its claim go. It suits none of the others, even
+  // where what it takes could be wired; see suits.ts.
+  readonly suits?: ReadonlyArray<string>;
   readonly contributes: Contribution;
 };
 
@@ -380,6 +385,7 @@ export const defineBlock = <
     progressOn: spec.progressOn ?? [],
     progressUnless: Option.fromUndefinedOr(spec.progressUnless),
     stepNames: spec.stepNames ?? [spec.name],
+    suits: Option.fromUndefinedOr(spec.suits),
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);

@@ -719,6 +719,58 @@ describe("Compose.check", () => {
     ]);
   });
 
+  // A document declares one subject, and a block that only makes sense on
+  // another is refused by name, rather than by a type error in its flow file.
+  test("refuses a block its subject doesn't suit, naming the subjects it does", () => {
+    const epicInReview = withSteps(review, [
+      { id: "claimed", use: "epic.claim", in: { epic: "trigger.pr" } },
+      ...review.steps,
+    ]);
+
+    expect(Compose.check(epicInReview)).toEqual([
+      {
+        path: "steps[0].use",
+        message: "epic.claim suits a flow on epic, and this is a flow on pull-request",
+      },
+    ]);
+
+    const authorInReview = withSteps(review, [
+      { id: "authors", use: "author.worktree", in: { branch: "trigger.pr" } },
+      ...review.steps,
+    ]);
+
+    expect(Compose.check(authorInReview)).toEqual([
+      {
+        path: "steps[0].use",
+        message:
+          "author.worktree suits a flow on changes-asked or conflict, and this is a flow on pull-request",
+      },
+    ]);
+  });
+
+  // Deep in a branch, the refusal is at the step.
+  test("refuses a block its subject doesn't suit inside a branch", () => {
+    const planned = changing(implement, "agent", (step) => ({
+      ...step,
+      on: {
+        "needs-clarification": {
+          as: "questions",
+          steps: [
+            { id: "drafted", use: "plan.doneDrafting", in: { issue: "trigger.issue" } },
+            { end: "needs-human", reason: "drafted" },
+          ],
+        },
+      },
+    }));
+
+    expect(Compose.check(planned)).toEqual([
+      {
+        path: "steps[2].on.needs-clarification.steps[0].use",
+        message: "plan.doneDrafting suits a flow on spec, and this is a flow on issue",
+      },
+    ]);
+  });
+
   test("checks what keeps the failure context", () => {
     expect(messages({ ...implement, failureContext: { branch: ["claim.branch"] } })[0]).toBe(
       "a flow on issue keeps pr for its failures",
@@ -2215,6 +2267,61 @@ describe("Compose.describe", () => {
     }
   });
 
+  // Which subjects each block suits, from what it needs: an epic's number
+  // only an epic's trigger gives, a pull request's an issue's flow gets by
+  // opening one, and a value from the trigger only that trigger gives.
+  test("says which subjects each block suits", () => {
+    const { blocks } = Schema.decodeUnknownSync(
+      Schema.Struct({
+        blocks: Schema.Array(
+          Schema.Struct({ name: Schema.String, subjects: Schema.Array(Schema.String) }),
+        ),
+      }),
+    )(Compose.describe());
+
+    const suits = Object.fromEntries(blocks.map((block) => [block.name, block.subjects]));
+    const subjects = Object.keys(Blocks.subjects);
+
+    expect(suits["epic.claim"]).toEqual(["epic"]);
+    expect(suits["epic.ships"]).toEqual(["epic"]);
+    expect(suits["stack.publish"]).toEqual(["epic"]);
+    expect(suits["review.changesAsked"]).toEqual(["changes-asked"]);
+    expect(suits["author.worktree"]).toEqual(["changes-asked", "conflict"]);
+    expect(suits["conflict.push"]).toEqual(["conflict"]);
+    expect(suits["merged.closesFollowUp"]).toEqual(["merged"]);
+    expect(suits["plan.awaitAnswer"]).toEqual(["spec"]);
+    expect(suits["issue.claim"]).toEqual(["epic", "issue", "spec"]);
+
+    for (const subject of ["epic", "issue", "spec"]) {
+      expect(suits["agent.implement"]).toContain(subject);
+      expect(suits["ci.waitAndFix"]).toContain(subject);
+    }
+
+    expect(suits["agent.implement"]).not.toContain("pull-request");
+    expect(suits["pr.land"]).toContain("issue");
+    expect(suits["pr.land"]).toContain("pull-request");
+    expect(suits["ci.waitAndFix"]).not.toContain("pull-request");
+
+    // Every block suits some subject, and only subjects there are.
+    for (const block of blocks) {
+      expect(`${block.name}: ${block.subjects.length}`).not.toBe(`${block.name}: 0`);
+
+      for (const subject of block.subjects) {
+        expect(subjects).toContain(subject);
+      }
+    }
+  });
+
+  // Each subject says what each field of its trigger is, which is what a
+  // block's suiting it is found from.
+  test("says what each field of a subject's trigger is", () => {
+    for (const [name, subject] of Object.entries(Blocks.subjects)) {
+      expect(`${name}: ${Object.keys(subject.kinds).join(", ")}`).toBe(
+        `${name}: ${subject.fields.join(", ")}`,
+      );
+    }
+  });
+
   test("says which subjects a person can start a flow on", () => {
     const { subjects } = Schema.decodeUnknownSync(
       Schema.Struct({
@@ -3027,6 +3134,7 @@ describe("the plan document", () => {
     );
 
     expect(messages(epic)).toEqual([
+      "plan.doneDrafting suits a flow on spec, and this is a flow on epic",
       "plan.doneDrafting names its steps the same in every lane, so it can't run beside others",
     ]);
   });
