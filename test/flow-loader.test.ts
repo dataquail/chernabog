@@ -6,7 +6,13 @@ import * as Option from "effect/Option";
 import { defineFlow, isManual } from "../packages/core/src/flow.ts";
 import { printJson } from "../packages/core/src/json.ts";
 import { BUNDLED_CORE, checkInstalled, RELEASED_SDK } from "../src/platform/flow-deps.ts";
-import { describeSource, flowNames, flowSourceOf, loadFlows } from "../src/platform/flow-loader.ts";
+import {
+  describeSource,
+  flowNames,
+  flowPlanOf,
+  flowSourceOf,
+  loadFlows,
+} from "../src/platform/flow-loader.ts";
 import { effect } from "./effect-test.ts";
 import { installWorkspaceSdk } from "./workspace-sdk.ts";
 
@@ -28,7 +34,7 @@ const load = (name: string, source: string) =>
   );
 
 describe("loading flows", () => {
-  effect("a flow with an item lookup and no trigger loads as manual", () =>
+  effect("a flow with an item lookup and no trigger loads as manual, and with no plan", () =>
     Effect.gen(function* () {
       const flow = yield* load(
         "by-hand",
@@ -40,6 +46,7 @@ export default defineFlow({ item: () => Effect.succeedNone, workflow: () => Effe
       );
 
       expect(Option.map(flow, isManual)).toEqual(Option.some(true));
+      expect(Option.flatMap(flow, flowPlanOf)).toEqual(Option.none());
     }),
   );
 
@@ -153,6 +160,32 @@ describe("importing flows from a recipe package", () => {
         expect(yield* flowNames(configDir)).toEqual(["ship"]);
         yield* checkInstalled(configDir);
       }),
+  );
+
+  effect("keeps the plan an imported flow carries, which isn't one of its keys", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const configDir = yield* withPackage('flows:\n  ship:\n    from: "@acme/recipes/deploy"\n');
+
+      yield* fs.writeFileString(
+        `${configDir}/node_modules/@acme/recipes/flows/deploy.ts`,
+        DEPLOY.replace(
+          "export default defineFlow({ item: () => Effect.succeedNone, workflow: () => Effect.void });",
+          `export default Object.defineProperty(
+  defineFlow({ item: () => Effect.succeedNone, workflow: () => Effect.void }),
+  "plan",
+  { value: { flow: "deploy" } },
+);`,
+        ),
+      );
+
+      const ship = Option.fromUndefinedOr((yield* loadFlows(configDir)).get("ship"));
+
+      expect(Option.flatMap(ship, flowPlanOf)).toEqual(Option.some({ flow: "deploy" }));
+      expect(Option.map(Option.flatMap(ship, flowSourceOf), describeSource)).toEqual(
+        Option.some("@acme/recipes@1.2.0"),
+      );
+    }),
   );
 
   effect("refuses a name that has both a from and a file in flows/", () =>

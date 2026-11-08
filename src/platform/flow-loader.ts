@@ -406,6 +406,25 @@ const sources = new WeakMap<Core.Flow, FlowSource>();
 // flow in the repo.
 export const flowSourceOf = (flow: Core.Flow) => Option.fromUndefinedOr(sources.get(flow));
 
+// The plan a flow compiled from a flow document carries, as its SDK's
+// `assemble` gives it: the document's tree as data, which the runs module
+// decodes. None for a flow written in TypeScript.
+export const flowPlanOf = (flow: Core.Flow): Option.Option<Core.Json> => {
+  if (!Predicate.hasProperty(flow, "plan")) {
+    return Option.none();
+  }
+
+  return Schema.decodeUnknownOption(Schema.Json)(flow.plan);
+};
+
+// A copy of a flow, with the plan it carries, which isn't enumerable, so a
+// spread alone would leave it behind.
+const copyOf = (flow: Core.Flow): Core.Flow =>
+  Option.match(flowPlanOf(flow), {
+    onNone: () => ({ ...flow }),
+    onSome: (plan) => Object.defineProperty({ ...flow }, "plan", { value: plan }),
+  });
+
 // The names of the flows in <configDir>/flows/, without importing them, so
 // listing an untrusted .chernabog/ runs none of its code.
 // An imported flow is named without its package, which needn't be installed:
@@ -432,7 +451,7 @@ export const loadFlows = (configDir: string, overrides: PackageOverrides = NO_OV
       const flow = Option.match(file.source, {
         onNone: () => loaded,
         onSome: (source) => {
-          const imported: Core.Flow = { ...loaded };
+          const imported = copyOf(loaded);
           sources.set(imported, source);
 
           return imported;

@@ -393,6 +393,8 @@ chernabog recipes compile --json       # the same result, for an agent or a scri
 
 Compile with the `@chernabog/sdk` your repo pins, from `.chernabog/node_modules`. Change the document, not the generated file, and commit both. A document's `flow:` must match its filename, and a flow can have only one document, `.yaml` or `.yml`. With no documents, the command says so and exits 0, including with `--check`.
 
+The flow file also exports the document's **plan**: its steps as data, each with its id (or, for a step without one, such as an `end`, its path in the document), the block or stage it runs, its wiring and its outcome branches, and a hash of all of it, which stays the same however often the document compiles. Chernabog draws a run on its plan. A flow written in TypeScript has none.
+
 A problem is reported at its line in the document, and a document with problems leaves its flow file as it was. Its wires' types are checked only once it has no other problems, so fixing those can show more, and the command says so:
 
 ```

@@ -787,6 +787,16 @@ export const loadSource = (source: string) =>
     return module.default;
   });
 
+// A flow file's module as the engine would import it: its default and the plan beside it.
+export const loadModule = (source: string) =>
+  Effect.gen(function* () {
+    const file = yield* writeFlow(source);
+
+    return yield* Effect.promise(
+      (): Promise<{ readonly default: Flow; readonly plan: Compose.FlowPlan }> => import(file),
+    );
+  });
+
 // A document as the engine would load it.
 export const loadFlow = (document: Compose.FlowDocument) => loadSource(generated(document));
 

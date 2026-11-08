@@ -12,6 +12,8 @@
 // compiler, with where in the document it is. Whether each wire's type fits is
 // left to `tsc` on what `generate` writes.
 
+import { createHash } from "node:crypto";
+
 import { printJson } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -2372,6 +2374,177 @@ const emitTrigger = (document: FlowDocument) => {
   ];
 };
 
+// A flow's plan: its document's tree as data, which a run is drawn on. Each
+// node has its step's id, or for a step with none (an end, a next, an if) its
+// path in the document, the path itself, and what it is. A conditional step
+// sits under an `if` node, at the path of its `if`. The runs module decodes
+// it with a schema of its own (FlowPlan, in its domain), as the daemon and
+// the browser read it, so its shape is theirs as much as this file's.
+type Wiring = { readonly [input: string]: Schema.Json };
+
+type NodeOf<Kind extends string, Fields> = {
+  readonly id: string;
+  readonly path: string;
+  readonly kind: Kind;
+} & Fields;
+
+export type PlanBranch =
+  | { readonly outcome: string; readonly steps: ReadonlyArray<PlanNode> }
+  | { readonly outcome: string; readonly as: string; readonly steps: ReadonlyArray<PlanNode> };
+
+type Branched = {
+  readonly in: Wiring;
+  readonly with: Wiring;
+  readonly branches: ReadonlyArray<PlanBranch>;
+};
+
+export type PlanNode =
+  | NodeOf<"use", { readonly block: string } & Branched>
+  | NodeOf<"stage", { readonly stage: string } & Branched>
+  | NodeOf<"end", { readonly end: "done" }>
+  | NodeOf<"end", { readonly end: "done"; readonly summary: string }>
+  | NodeOf<"end", { readonly end: "needs-human"; readonly reason: string }>
+  | NodeOf<"repeat", { readonly state: Wiring; readonly steps: ReadonlyArray<PlanNode> }>
+  | NodeOf<"next", { readonly next: Wiring }>
+  | NodeOf<
+      "forEach",
+      {
+        readonly forEach: string;
+        readonly as: string;
+        readonly scope: string;
+        readonly atOnce: string;
+        readonly steps: ReadonlyArray<PlanNode>;
+      }
+    >
+  | NodeOf<"if", { readonly condition: string; readonly steps: ReadonlyArray<PlanNode> }>
+  | NodeOf<"first", { readonly first: ReadonlyArray<string> }>;
+
+export type FlowPlan = {
+  readonly flow: string;
+  readonly subject: string;
+  // Of the rest, so two compiles of one document give the same one.
+  readonly hash: string;
+  readonly steps: ReadonlyArray<PlanNode>;
+};
+
+const planBranch = (
+  planSteps: PlanSteps,
+  outcome: string,
+  branch: Branch,
+  path: string,
+): PlanBranch => {
+  const steps = planSteps(branch.steps, `${path}.on.${outcome}.steps`);
+
+  return Option.match(Option.fromUndefinedOr(branch.as), {
+    onNone: () => ({ outcome, steps }),
+    onSome: (as) => ({ outcome, as, steps }),
+  });
+};
+
+const branchedOf = (planSteps: PlanSteps, step: CallStep, path: string): Branched => ({
+  in: step.in ?? {},
+  with: step.with ?? {},
+  branches: Object.entries(step.on ?? {}).map(([outcome, branch]) =>
+    planBranch(planSteps, outcome, branch, path),
+  ),
+});
+
+const callNode = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode => {
+  const branched = branchedOf(planSteps, step, path);
+
+  if (isStage(step)) {
+    return { id: step.id, path, kind: "stage", stage: step.stage, ...branched };
+  }
+
+  return { id: step.id, path, kind: "use", block: step.use, ...branched };
+};
+
+const planCall = (planSteps: PlanSteps, step: CallStep, path: string): PlanNode => {
+  const node = callNode(planSteps, step, path);
+
+  return Option.match(Option.fromUndefinedOr(step.if), {
+    onNone: () => node,
+    onSome: (condition): PlanNode => ({
+      id: `${path}.if`,
+      path: `${path}.if`,
+      kind: "if",
+      condition,
+      steps: [node],
+    }),
+  });
+};
+
+const planEnd = (step: EndStep, path: string): PlanNode => {
+  if (step.end === "needs-human") {
+    return { id: path, path, kind: "end", end: "needs-human", reason: step.reason };
+  }
+
+  return Option.match(Option.fromUndefinedOr(step.summary), {
+    onNone: () => ({ id: path, path, kind: "end", end: "done" }),
+    onSome: (summary) => ({ id: path, path, kind: "end", end: "done", summary }),
+  });
+};
+
+type PlanSteps = (steps: ReadonlyArray<Step>, path: string) => ReadonlyArray<PlanNode>;
+
+const planStep = (planSteps: PlanSteps, step: Step, path: string): PlanNode => {
+  if (isEnd(step)) {
+    return planEnd(step, path);
+  }
+
+  if (isNext(step)) {
+    return { id: path, path, kind: "next", next: step.next };
+  }
+
+  if (isFirst(step)) {
+    return { id: step.id, path, kind: "first", first: step.first };
+  }
+
+  if (isRepeat(step)) {
+    return {
+      id: step.id,
+      path,
+      kind: "repeat",
+      state: step.repeat.state,
+      steps: planSteps(step.repeat.steps, `${path}.repeat.steps`),
+    };
+  }
+
+  if (isForEach(step)) {
+    return {
+      id: step.id,
+      path,
+      kind: "forEach",
+      forEach: step.forEach,
+      as: step.as,
+      scope: step.scope,
+      atOnce: step.atOnce,
+      steps: planSteps(step.steps, `${path}.steps`),
+    };
+  }
+
+  return planCall(planSteps, step, path);
+};
+
+const planSteps: PlanSteps = (steps, path) =>
+  steps.map((step, index) => planStep(planSteps, step, `${path}[${index}]`));
+
+// The plan of a document `check` finds nothing wrong with.
+export const plan = (document: FlowDocument): FlowPlan => {
+  const content = {
+    flow: document.flow,
+    subject: document.subject,
+    steps: planSteps(document.steps, "steps"),
+  };
+
+  return {
+    flow: content.flow,
+    subject: content.subject,
+    hash: createHash("sha256").update(printJson(content)).digest("hex"),
+    steps: content.steps,
+  };
+};
+
 const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>) => {
   const blocks = [...new Set(usedIn(document.steps))];
   const staged = [...new Set(stagesIn(document.steps))];
@@ -2392,12 +2565,14 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
 
   return [
     `// Generated from the flow document ${document.flow}; change the document, not this file.`,
-    `import { Blocks, NeedsHuman } from ${printJson(sdk)};`,
+    `import { Blocks, type Compose, NeedsHuman } from ${printJson(sdk)};`,
     `import * as Effect from "effect/Effect";`,
     `import * as Option from "effect/Option";`,
     ...stageImports,
     "",
     `const { assemble, catalogue, laneScopes: lanes, loopStates,${runStage} sources, subjects } = Blocks;`,
+    "",
+    "export const plan = documentPlan();",
     "",
     "export default assemble({",
     `  subject: ${printJson(document.subject)},`,
@@ -2410,6 +2585,7 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
     ...emitTrigger(document),
     "  // steps",
     `  blocks: ${printJson(blocks)},`,
+    "  plan,",
     "  workflow: (item) =>",
     "    Effect.gen(function* () {",
     `      const trigger = yield* ${subject}.read(item);`,
@@ -2421,6 +2597,12 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
     "      );",
     "    }),",
     "});",
+    "",
+    // Last, so the flow reads first; a function declaration is there from the start.
+    "// The document's tree as data, which a run is drawn on.",
+    "function documentPlan(): Compose.FlowPlan {",
+    `  return ${printJson(plan(document))};`,
+    "}",
     "",
   ].join("\n");
 };

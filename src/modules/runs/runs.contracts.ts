@@ -5,6 +5,7 @@
 // Bun's runtime; runs.platform.ts, which publishes the engine, would.
 
 export { HoldView } from "./domain/holds/hold-view.value-object.ts";
+export { FlowPlan, PlanNode } from "./domain/plan/flow-plan.value-object.ts";
 export { CancelTarget } from "./domain/run/cancelled-run.value-object.ts";
 export {
   PullRequestOpened,

@@ -3,13 +3,16 @@
 // a flow's handle in it, and the services a trigger runs with. Kept apart from
 // the clients' live adapters so that only the module's wiring names those.
 
-import { Runs, type SetupError, type TriggerServices } from "@chernabog/core";
+import { type Flow, Runs, type SetupError, type TriggerServices } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import type * as Option from "effect/Option";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
+import { flowPlanOf } from "../../../../platform/flow-loader.ts";
+import { FlowPlan } from "../../domain/plan/flow-plan.value-object.ts";
 import { type FlowRef } from "../../domain/run/work-item.value-object.ts";
 import { capturing, type FlowHandle, surfaceSetup } from "./engine.ts";
 
@@ -30,6 +33,11 @@ export const handleOf = (handles: ReadonlyArray<FlowHandle>, flow: FlowRef) =>
     handles,
     (handle) => handle.repo.settings.name === flow.repo && handle.name === flow.flow,
   );
+
+// The plan of a flow the registry loaded, as the runs module reads it: none
+// for a flow written in TypeScript, or one whose plan this binary can't read.
+export const planOf = (flow: Flow): Option.Option<FlowPlan> =>
+  Option.flatMap(flowPlanOf(flow), Schema.decodeUnknownOption(FlowPlan));
 
 // Whether a run is still running, none for a run this machine doesn't know.
 // Runs a flow's trigger (or gate) with the repo's services, and Runs: what
