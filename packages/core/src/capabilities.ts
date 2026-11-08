@@ -16,6 +16,10 @@ export type Write<A> = {
   readonly done: string;
   // The issue or pull request it changed, if one, from what it returned.
   readonly item: (result: A) => Option.Option<number>;
+  // What it creates, if it makes something new: "issue" for one that opens
+  // an issue, `item` its number. The engine records in the run's journal each
+  // issue a run creates, for what cleans up after the run, such as a rehearsal.
+  readonly creates?: "issue";
 };
 
 // A write that changes `item`, or nothing numbered.

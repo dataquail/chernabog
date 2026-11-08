@@ -26,6 +26,7 @@ import resolveConflicts from "../packages/recipes/flows/resolve-conflicts.ts";
 import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { readRunMadeHandler } from "../src/modules/runs/queries/read-run-made.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type Fake,
@@ -278,6 +279,29 @@ describe("owning a pull request", () => {
       const done = makeFake("approve");
       expect((yield* runToEnd(owning, done, item("owning"))).status).toBe("done");
       expect(done.refs.has(PULL_REF)).toBe(false);
+    }),
+  );
+
+  effect("keeps the claim ref a parked run took in its journal, for what cleans up after it", () =>
+    Effect.gen(function* () {
+      const waiting = makeFake("approve");
+      const made: Array<ReadonlyArray<{ readonly item: string; readonly runId: string }>> = [];
+
+      const parked = yield* runUntil(owning, waiting, item("owning-waits"), (run) =>
+        Effect.gen(function* () {
+          const { waits } = yield* listRunWaitsHandler({ runId: run.id, signal: "pushed" });
+
+          if (waits.length === 0) {
+            return false;
+          }
+
+          made.push((yield* readRunMadeHandler({ runId: run.id })).claims);
+
+          return true;
+        }),
+      );
+
+      expect(made).toEqual([[{ item: Claims.pullRequest(PULL), runId: parked.id }]]);
     }),
   );
 

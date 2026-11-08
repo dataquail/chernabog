@@ -12,13 +12,15 @@ import { ScratchRepoFailed } from "../../domain/scenario/scenario.errors.ts";
 
 // A repo in memory: what was opened, closed and deleted, in order, as
 // `log`. Numbers count up from 100; `failOn` fails the first call whose log
-// line starts with it; `admin` deletes issues rather than closing them.
+// line starts with it; `admin` deletes issues rather than closing them;
+// `claimRefs` names the run each item's claim ref names.
 export const scratchRepoFake = (
   options: {
     readonly failOn?: string;
     readonly admin?: boolean;
     readonly states?: Readonly<Record<string, ItemState>>;
     readonly pullsFrom?: Readonly<Record<string, ReadonlyArray<number>>>;
+    readonly claimRefs?: Readonly<Record<string, string>>;
   } = {},
 ) => {
   const log: Array<string> = [];
@@ -79,6 +81,19 @@ export const scratchRepoFake = (
       },
       closePullRequest: (_repo, number) =>
         Effect.asVoid(record(`close pull request #${number}`, () => number)),
+      releaseClaimRef: (_repo, claim) => {
+        const holder = Option.flatMap(Option.fromUndefinedOr(options.claimRefs), (refs) =>
+          Record.get(refs, claim.item),
+        );
+
+        if (!Option.contains(holder, claim.runId)) {
+          return Effect.succeed(Option.none<string>());
+        }
+
+        const ref = `refs/chernabog/claims/${claim.item}`;
+
+        return record(`delete claim ref ${ref}`, () => Option.some(ref));
+      },
       deleteBranch: (_repo, branch) =>
         Effect.asVoid(record(`delete branch ${branch}`, () => branch)),
     }),

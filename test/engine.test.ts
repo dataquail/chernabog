@@ -52,6 +52,7 @@ import { findRunHandler } from "../src/modules/runs/queries/find-run.handler.ts"
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { readRunHistoryHandler } from "../src/modules/runs/queries/read-run-history.handler.ts";
 import { readRunLogHandler } from "../src/modules/runs/queries/read-run-log.handler.ts";
+import { readRunMadeHandler } from "../src/modules/runs/queries/read-run-made.handler.ts";
 import { BUNDLED_CORE } from "../src/platform/flow-deps.ts";
 import { homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo } from "../src/repo-config.ts";
@@ -188,6 +189,18 @@ const flow = defineFlow({
         yield* Lanes.declare("b", ["a"]);
       }
 
+      // Files two issues, as a plan does its sub-issues.
+      if (key === "plan") {
+        yield* activity(
+          "create-issues",
+          GitHub.use((github) =>
+            Effect.forEach(["one task", "another"], (title) =>
+              github.createIssue({ title, body: "", labels: [] }),
+            ),
+          ),
+        );
+      }
+
       if (key === "seat") {
         return `reviews as ${yield* Review.reviewerLogin}`;
       }
@@ -202,7 +215,18 @@ const handle = flowHandle(repo, "demo", flow);
 const servicesWith = (own: RepoSettings) =>
   Layer.mergeAll(
     Layer.succeed(Repo, own),
-    Layer.mock(GitHub)({}),
+    Layer.mock(GitHub)({
+      createIssue: (issue) =>
+        Effect.succeed({
+          number: 12 + issue.title.length,
+          title: issue.title,
+          body: issue.body,
+          url: "",
+          createdAt: "",
+          labels: [],
+          assignees: [],
+        }),
+    }),
     Layer.mock(Git)({}),
     Layer.mock(Worktree)({ pathFor: (branch) => `/tmp/demo-worktrees/${branch}` }),
     Layer.mock(Usage)({}),
@@ -312,6 +336,21 @@ describe("the engine", () => {
       const log = yield* fs.readFileString(homePaths(home).runLog(finished.id));
       expect(log).toContain("hello from one");
       expect(log).toContain("step: who-am-i");
+    }),
+  );
+
+  effect("keeps in the run's journal each issue the run created", () =>
+    Effect.gen(function* () {
+      const { value: finished } = yield* withEngine(
+        Effect.gen(function* () {
+          const run = yield* runToEnd(item("plan"));
+
+          return { run, made: yield* readRunMadeHandler({ runId: run.id }) };
+        }),
+      );
+
+      expect(finished.run.status).toBe("done");
+      expect(finished.made.createdIssues).toEqual([12 + "one task".length, 12 + "another".length]);
     }),
   );
 

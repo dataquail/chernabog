@@ -3,7 +3,7 @@
 // (a tree and a commit each, on the base branch's head), so seeding needs no
 // checkout.
 
-import { type GitHubError, type Json } from "@chernabog/core";
+import { Claims, type GitHubError, type Json } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { type Persona } from "../../../../kernel/persona.value-object.ts";
 import { type IssueSeed, type PullRequestSeed } from "../../../../kernel/scenario.value-object.ts";
 import {
+  decodeBody,
   GitHubApi,
   githubGraphql,
   githubJson,
@@ -22,7 +23,10 @@ import {
   githubSend,
 } from "../../../../platform/github-api.ts";
 import type { GitHubTokens } from "../../../../platform/github-auth.ts";
-import { ScratchRepoClient } from "../../domain/ports/clients/scratch-repo.client.ts";
+import {
+  type RunClaim,
+  ScratchRepoClient,
+} from "../../domain/ports/clients/scratch-repo.client.ts";
 import { ScratchRepoFailed } from "../../domain/scenario/scenario.errors.ts";
 
 const Numbered = Schema.Struct({ number: Schema.Finite });
@@ -199,6 +203,47 @@ const deleteBranch = (repo: string, branch: string) =>
     }),
   );
 
+const ClaimCommit = Schema.Struct({ message: Schema.String });
+
+// The claim ref on the claim's item, deleted while its commit names the
+// claim's run (Claims.holderOf reads it as a run does): a ref GitHub doesn't
+// have, or one naming another run, stays as it is.
+const releaseClaimRef = (repo: string, claim: RunClaim) =>
+  Effect.gen(function* () {
+    const ref = Claims.refFor(claim.item);
+
+    const found = yield* githubRequest(
+      "GET",
+      `/repos/${repo}/git/ref/chernabog/claims/${claim.item}`,
+    );
+
+    if (found.status === 404) {
+      return Option.none<string>();
+    }
+
+    if (found.status >= 300) {
+      return yield* new ScratchRepoFailed({
+        message: `reading ${ref} in ${repo} returned HTTP ${found.status}`,
+      });
+    }
+
+    const head = yield* decodeBody(Ref, `reading ${ref}`)(found.body);
+
+    const commit = yield* githubJson(
+      "GET",
+      `/repos/${repo}/git/commits/${head.object.sha}`,
+      ClaimCommit,
+    );
+
+    if (!Option.exists(Claims.holderOf(commit.message), (holder) => holder.runId === claim.runId)) {
+      return Option.none<string>();
+    }
+
+    yield* githubSend("DELETE", `/repos/${repo}/git/${ref}`);
+
+    return Option.some(ref);
+  });
+
 const ownerOf = (repo: string) => repo.slice(0, repo.indexOf("/"));
 
 // The client over GitHub as `apiFor` reaches it for each persona.
@@ -247,6 +292,10 @@ export const scratchRepoClientWith = (apiFor: (persona: Persona) => Layer.Layer<
       githubSend("PATCH", `/repos/${repo}/pulls/${number}`, Option.some({ state: "closed" })).pipe(
         Effect.asVoid,
         as(persona, `closing pull request #${number} in ${repo}`),
+      ),
+    releaseClaimRef: (repo, claim, persona) =>
+      releaseClaimRef(repo, claim).pipe(
+        as(persona, `deleting the claim ref on ${claim.item} in ${repo}`),
       ),
     deleteBranch: (repo, branch, persona) =>
       deleteBranch(repo, branch).pipe(as(persona, `deleting ${branch} in ${repo}`)),

@@ -42,6 +42,7 @@ export const runsCommandSpanAttributes = {
   HoldMarkerCommand: ofRun,
   NameSubjectCommand: ofRun,
   ParkRunCommand: ofRun,
+  RecordCreatedIssueCommand: ofRun,
   RecordSkipCommand: ofFlow,
   ReleaseRunWaitCommand: (payload: { readonly wait: { readonly runId: RunId } }) =>
     ofRun(payload.wait),
@@ -68,6 +69,7 @@ export const runsQuerySpanAttributes = {
   ListRunMarkersQuery: ofRun,
   ListRunWaitsQuery: ofRun,
   ReadRunHistoryQuery: ofRun,
+  ReadRunMadeQuery: ofRun,
 } as const;
 
 export const runFlowsQuerySpanAttributes = { CheckRunValidityQuery: ofRun } as const;

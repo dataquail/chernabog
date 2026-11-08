@@ -68,6 +68,7 @@ import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.
 import { DEFAULT_VALIDITY_EVERY } from "../src/modules/runs/domain/schedule/validity.value-object.ts";
 import { RunLogsClientLive } from "../src/modules/runs/infrastructure/clients/run-logs.client-live.ts";
 import { HoldsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/holds.repository-live.ts";
+import { RunCreatedIssuesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-created-issues.repository-live.ts";
 import { RunLanesRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-lanes.repository-live.ts";
 import { RunMarkersRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-markers.repository-live.ts";
 import { RunStepsRepositoryLive } from "../src/modules/runs/infrastructure/repositories/run-steps.repository-live.ts";
@@ -1151,6 +1152,7 @@ export type EngineRun = RunView | ActiveRun;
 export const StateAt = (home: string) =>
   Layer.mergeAll(
     RunsRepositoryLive,
+    RunCreatedIssuesRepositoryLive,
     RunLanesRepositoryLive,
     RunMarkersRepositoryLive,
     RunStepsRepositoryLive,
