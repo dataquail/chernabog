@@ -594,14 +594,69 @@ describe("Compose.check", () => {
     ]);
   });
 
-  test("names the blocks there are when one isn't", () => {
-    const unknown = changing(implement, "gate", (step) => ({ ...step, use: "gate.lint" }));
-    expect(messages(unknown)[0]).toContain("no block named gate.lint; there are");
+  const using = (use: string) =>
+    Compose.check(changing(implement, "gate", (step) => ({ ...step, use }))).filter((problem) =>
+      problem.path.endsWith(".use"),
+    );
+
+  test("suggests the nearest block to a misspelled one", () => {
+    expect(using("gate.locl")).toEqual([
+      {
+        path: "steps[3].use",
+        message:
+          "no block named gate.locl; did you mean gate.local? chernabog recipes blocks lists them all",
+      },
+    ]);
+  });
+
+  test("suggests the block under another prefix with the same last segment", () => {
+    expect(using("review.localGate")).toEqual([
+      {
+        path: "steps[3].use",
+        message:
+          "no block named review.localGate; did you mean author.localGate, conflict.localGate or hybrid.localGate? chernabog recipes blocks lists them all",
+      },
+    ]);
+
+    expect(using("ci.local")).toEqual([
+      {
+        path: "steps[3].use",
+        message:
+          "no block named ci.local; did you mean gate.local? chernabog recipes blocks lists them all",
+      },
+    ]);
+  });
+
+  test("suggests the block of the same prefix when its prefix has a block or two", () => {
+    expect(using("gate.lint")).toEqual([
+      {
+        path: "steps[3].use",
+        message:
+          "no block named gate.lint; did you mean gate.local? chernabog recipes blocks lists them all",
+      },
+    ]);
+  });
+
+  test("suggests nothing for a block with no near name, and points to the list", () => {
+    expect(using("deploy.everything")).toEqual([
+      {
+        path: "steps[3].use",
+        message: "no block named deploy.everything; chernabog recipes blocks lists them all",
+      },
+    ]);
+  });
+
+  test("suggests the nearest source, and nothing for one with no near name", () => {
+    expect(messages({ ...implement, trigger: [{ use: "issue.queued" }] })).toEqual([
+      "no source named issue.queued; did you mean issues.queued? chernabog recipes blocks lists them all",
+    ]);
+
+    expect(messages({ ...implement, trigger: [{ use: "cron" }] })).toEqual([
+      "no source named cron; chernabog recipes blocks lists them all",
+    ]);
   });
 
   test("knows the sources and subjects there are", () => {
-    expect(messages({ ...implement, trigger: [{ use: "cron" }] })[0]).toContain("issues.queued");
-
     expect(messages({ ...implement, trigger: [] })).toEqual([
       "must name where the flow's work comes from",
     ]);
@@ -759,7 +814,7 @@ describe("Compose.check", () => {
 
     expect(messages(resumeOnly)).toEqual([
       "review.latestOwn can come to none, and this doesn't say what then",
-      "review.latestOwn comes to found, none",
+      "review.latestOwn has no outcome named nothing; chernabog recipes blocks lists what each block comes to",
     ]);
   });
 
@@ -795,7 +850,19 @@ describe("Compose.check", () => {
 
     expect(messages(unasked)).toEqual([
       "author.address can come to needs-clarification, and this doesn't say what then",
-      "author.address comes to needs-clarification",
+      "author.address has no outcome named questions; chernabog recipes blocks lists what each block comes to",
+    ]);
+  });
+
+  test("suggests the nearest outcome to a misspelled one", () => {
+    const misspelled = addressReviewWith(
+      "      needs-clarification:\n",
+      "      needs-clarifcation:\n",
+    );
+
+    expect(messages(misspelled)).toEqual([
+      "author.address can come to needs-clarification, and this doesn't say what then",
+      "author.address has no outcome named needs-clarifcation; did you mean needs-clarification? chernabog recipes blocks lists what each block comes to",
     ]);
   });
 
@@ -2640,7 +2707,16 @@ describe("a document that runs a stage", () => {
     expect(checked(changingStage(staged, (step) => ({ ...step, stage: "find-work" })))).toEqual([
       {
         path: "steps[0].stage",
-        message: "no stage named find-work in .chernabog/stages/; there are count-words, which-pr",
+        message:
+          "no stage named find-work in .chernabog/stages/; chernabog recipes blocks lists them all",
+      },
+    ]);
+
+    expect(checked(changingStage(staged, (step) => ({ ...step, stage: "which-p" })))).toEqual([
+      {
+        path: "steps[0].stage",
+        message:
+          "no stage named which-p in .chernabog/stages/; did you mean which-pr? chernabog recipes blocks lists them all",
       },
     ]);
   });

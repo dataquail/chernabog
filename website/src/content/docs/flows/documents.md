@@ -380,6 +380,8 @@ chernabog recipes blocks --subject pull-request   # only the blocks and sources 
 
 Each block says what it does, the subjects it suits, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
 
+A document that names a block, source, outcome or stage that isn't there is refused with the nearest names, at most three: a few edits away, such as `gate.local` for `gate.locl`, the same name under another prefix, such as `gate.local` for `ci.local`, or, when its prefix has no more than three names, those, such as `gate.local` for `gate.lint`. `chernabog recipes blocks` lists them all.
+
 ## Compiling
 
 ```sh
