@@ -9,7 +9,12 @@ import * as Record from "effect/Record";
 import { type Persona, samePersona } from "../../kernel/persona.value-object.ts";
 import { FLOW_TURNED_OFF } from "../../modules/enrollment/enrollment.platform.ts";
 import { ActiveRun, type RunHistory } from "../../modules/runs/runs.platform.ts";
-import type { DaemonStatus, PersonaStatus, RepoStatus } from "../daemon/daemon.protocol.ts";
+import type {
+  DaemonStatus,
+  PersonaStatus,
+  PlanNode,
+  RepoStatus,
+} from "../daemon/daemon.protocol.ts";
 
 export type Style =
   "plain" | "bold" | "dim" | "green" | "red" | "yellow" | "cyan" | "magenta" | "selected";
@@ -35,6 +40,13 @@ export type FlowRow = {
 };
 
 export type RunEntry = ActiveRun;
+
+// A run of a flow with a plan: the plan it started with, and where in it the
+// run has been, which its row draws as a strip.
+export type PlannedRun = {
+  readonly steps: ReadonlyArray<PlanNode>;
+  readonly history: RunHistory;
+};
 
 type RunStatus = ActiveRun["status"];
 
@@ -89,6 +101,8 @@ export type Model = {
   readonly detailRun: Option.Option<string>;
   readonly history: Option.Option<RunHistory>;
   readonly worktree: Option.Option<string>;
+  // The runs listed with a plan, by run id.
+  readonly plans: Readonly<Record<string, PlannedRun>>;
   readonly logRun: Option.Option<string>;
   readonly logLines: ReadonlyArray<string>;
   // Lines up from the bottom of the log; 0 follows it as it grows.

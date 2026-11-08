@@ -232,8 +232,10 @@ export type {
 } from "../../modules/runs/runs.contracts.ts";
 
 // GET /plans/:hash: the plan runs started with, by the hash a run's history
-// names; none when no run started with it.
+// names, and its nodes; none when no run started with it.
 export { FoundPlan };
+
+export type { PlanNode } from "../../modules/runs/runs.contracts.ts";
 
 // POST /dashboard/start: the port to open the dashboard's 127.0.0.1 listener
 // on; without one, the last one asked for, else 4848.

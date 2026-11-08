@@ -174,6 +174,7 @@ export const initialModel = (width: number, height: number, now: DateTime.Utc): 
   detailRun: Option.none(),
   history: Option.none(),
   worktree: Option.none(),
+  plans: {},
   logRun: Option.none(),
   logLines: [],
   logScroll: 0,
