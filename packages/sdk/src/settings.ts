@@ -115,6 +115,8 @@ export const Labels = Schema.Struct({
       stale: name,
       ship: name,
       hybrid: name,
+      // Only pr.readyForPerson's: not one of the label set every flow declares.
+      readyForPerson: name,
     }).annotate({ description: "The label names the SDK's blocks use, by what each means." }),
   ),
 });
@@ -122,10 +124,28 @@ export const Labels = Schema.Struct({
 // The label names, each one the flow's settings give over the repo's.
 export const labels = Effect.gen(function* () {
   const repo = yield* Repo;
-  const own = yield* read(Labels);
+  const { readyForPerson: _, ...own } = (yield* read(Labels)).labels ?? {};
 
-  return { ...DEFAULT_LABEL_NAMES, ...repo.labels, ...own.labels } satisfies LabelNames;
+  return { ...DEFAULT_LABEL_NAMES, ...repo.labels, ...own } satisfies LabelNames;
 });
+
+// The label pr.readyForPerson gives a pull request a person takes on next,
+// as what the run was for: auto:ready-for-person, unless the flow's settings
+// name another (labels.readyForPerson). Unlike auto:needs-human, it stops no
+// flow from picking the pull request up.
+export const READY_FOR_PERSON = "auto:ready-for-person";
+
+export const readyForPerson = Effect.map(
+  read(Labels),
+  (own) => own.labels?.readyForPerson ?? READY_FOR_PERSON,
+);
+
+// For the flow's labels, so `chernabog labels` creates it, by its name.
+export const readyForPersonLabel = Effect.map(readyForPerson, (label): FlowLabel => ({
+  name: label,
+  color: "0e8a16",
+  description: "Chernabog did its part; a person takes the next step, such as merging",
+}));
 
 const LOOK = {
   eligible: { color: "0e8a16", description: "Queued for an unattended run; removed on claim" },

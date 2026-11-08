@@ -122,6 +122,51 @@ steps:
             summary: review.changesAsked
 `;
 
+// A review that never merges: an approved pull request goes to a person to
+// merge, as the run's success, and one that needs changes ends as the review
+// recipe's does. No recipe does this, so its run is checked against the review
+// recipe's for what the hand-over changes, and only that.
+export const READY_MESSAGE = "Approved: this is ready for a person to merge.";
+
+export const READY_DOCUMENT = `
+flow: review
+subject: pull-request
+concurrency: 1
+trigger:
+  - use: review.requested
+  - use: review.waitingElsewhere
+steps:
+  - id: review
+    use: review.round
+    in: { pr: trigger.pr }
+    with: { round: 1, role: reviewer }
+    on:
+      approve:
+        steps:
+          - id: ready
+            use: pr.readyForPerson
+            in: { pr: trigger.pr }
+            with: { message: "${READY_MESSAGE}" }
+          - end: done
+            summary: ready
+      changes:
+        steps:
+          - end: done
+            summary: review.changesAsked
+`;
+
+// The implement document, with its pull request given to a person to take
+// on rather than handed off for review: pr.readyForPerson is a hand-off too.
+export const IMPLEMENT_READY_DOCUMENT = IMPLEMENT_DOCUMENT.replace(
+  `  - id: done
+    use: issue.handOff
+    in: { issue: trigger.issue, pr: opened, outcome: agent.outcome }`,
+  `  - id: done
+    use: pr.readyForPerson
+    in: { pr: opened.number }
+    with: { message: "Opened: a person takes it from here." }`,
+);
+
 export const RE_REVIEW_DOCUMENT = `
 flow: re-review
 subject: pull-request

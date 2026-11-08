@@ -465,15 +465,22 @@ const REVIEW_WORK = item(`pr-${PULL}`, {
 
 export const REVIEW_WORK_ITEM = REVIEW_WORK;
 
-export const REVIEW_SCENARIOS = scenarios((scenario) => {
-  const asked = (verdict: "approve" | "request-changes", labels: ReadonlyArray<string> = []) => {
-    const fake = repoFake(verdict);
-    fake.people.me = "data-quail";
-    fake.people.requested = ["data-quail"];
-    fake.setLabels(PULL, [...labels]);
+// A pull request that asks data-quail, the persona the run acts as, for a
+// review, which answers `verdict`.
+export const reviewAsked = (
+  verdict: "approve" | "request-changes",
+  labels: ReadonlyArray<string> = [],
+) => {
+  const fake = repoFake(verdict);
+  fake.people.me = "data-quail";
+  fake.people.requested = ["data-quail"];
+  fake.setLabels(PULL, [...labels]);
 
-    return fake;
-  };
+  return fake;
+};
+
+export const REVIEW_SCENARIOS = scenarios((scenario) => {
+  const asked = reviewAsked;
 
   scenario("when it approves, and a person merges", () => asked("approve"), "done");
 

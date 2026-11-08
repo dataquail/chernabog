@@ -34,10 +34,13 @@ import {
   EPIC_DOCUMENT,
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
+  IMPLEMENT_READY_DOCUMENT,
   loadFlow,
   PLAN_DOCUMENT,
   POST_MERGE_DOCUMENT,
   RE_REVIEW_DOCUMENT,
+  READY_DOCUMENT,
+  READY_MESSAGE,
   RESOLVE_CONFLICTS_DOCUMENT,
   REVIEW_DOCUMENT,
   REVIEW_WITH_STAGE_DOCUMENT,
@@ -49,6 +52,7 @@ import {
   ADDRESS_REVIEW_WORK_ITEM,
   EPIC_SCENARIOS,
   EPIC_WORK_ITEM,
+  type FlowInput,
   HUMAN_INITIATED_SCENARIOS,
   HUMAN_INITIATED_WORK_ITEM,
   IMPLEMENT_SCENARIOS,
@@ -67,6 +71,7 @@ import {
   RESOLVE_CONFLICTS_WORK_ITEM,
   REVIEW_SCENARIOS,
   REVIEW_WORK_ITEM,
+  reviewAsked,
   type Scenario,
   stageElsewhere,
   stageSkipping,
@@ -337,6 +342,160 @@ describe("a document that opens its pull request as a draft", () => {
           `Draft pull request opened: https://github.com/dataquail/demo/pull/${PULL}`,
         );
         expect(fromRecipe.comments.at(-1)).toContain("Pull request ready for review");
+      }),
+    60_000,
+  );
+});
+
+// No recipe gives an approved pull request to a person as a success, so the
+// document's run is the review recipe's, but for what that changes: where the
+// recipe's pr.land leaves an approved pull request for a person to merge, the
+// document labels it for a person, says what they do next, and ends done. It
+// never merges, even one on the automated path.
+describe("a review document that gives the approved pull request to a person", () => {
+  const composedReady = loadFlow(documentOf(READY_DOCUMENT));
+  const READY = "auto:ready-for-person";
+  const SHIPS = `ships-pr-${PULL}`;
+  const GIVEN = `ready-for-person-pr-${PULL}`;
+
+  const bothRun = (setup: () => Fake, settings: FlowInput = {}) =>
+    Effect.gen(function* () {
+      const fromRecipe = yield* observe(
+        review,
+        "review",
+        setup,
+        REVIEW_WORK_ITEM,
+        void 0,
+        settings,
+      );
+
+      const fromDocument = yield* observe(
+        yield* composedReady,
+        "review",
+        setup,
+        REVIEW_WORK_ITEM,
+        void 0,
+        settings,
+      );
+
+      return { fromDocument, fromRecipe };
+    });
+
+  effect(
+    "labels it, tells the person what to do, and ends done",
+    () =>
+      Effect.gen(function* () {
+        const { fromDocument, fromRecipe } = yield* bothRun(() => reviewAsked("approve"));
+
+        expect(fromRecipe.status).toBe("done");
+        expect(fromDocument.status).toBe("done");
+        // The recipe's steps, but for its merge's, and the hand-over's in their place.
+        expect(fromRecipe.steps).toContain(SHIPS);
+        expect(fromDocument.steps).toContain(GIVEN);
+        expect(fromDocument.steps.filter((step) => step !== GIVEN)).toEqual(
+          fromRecipe.steps.filter((step) => step !== SHIPS),
+        );
+        expect(fromDocument.reviews).toEqual(fromRecipe.reviews);
+        expect(fromDocument.submitted).toEqual(fromRecipe.submitted);
+
+        expect(fromRecipe.pullLabels).not.toContain(READY);
+        expect(fromDocument.pullLabels).toEqual([...fromRecipe.pullLabels, READY]);
+        expect(fromDocument.pullLabels).not.toContain(DEFAULT_LABELS.needsHuman);
+
+        expect(fromDocument.comments).toEqual([...fromRecipe.comments, READY_MESSAGE]);
+        expect(fromDocument.merges).toEqual([]);
+        expect(fromDocument.summary).toBe(`#${PULL}: labelled ${READY}; ${READY_MESSAGE}`);
+      }),
+    60_000,
+  );
+
+  effect(
+    "never merges, even a pull request on the automated path",
+    () =>
+      Effect.gen(function* () {
+        const { fromDocument, fromRecipe } = yield* bothRun(() =>
+          reviewAsked("approve", [DEFAULT_LABELS.ship]),
+        );
+
+        expect(fromRecipe.merges).not.toEqual([]);
+        expect(fromDocument.merges).toEqual([]);
+        expect(fromDocument.status).toBe("done");
+        expect(fromDocument.pullLabels).toEqual([DEFAULT_LABELS.ship, READY]);
+      }),
+    60_000,
+  );
+
+  effect(
+    "labels it by the name the flow's settings give",
+    () =>
+      Effect.gen(function* () {
+        const { fromDocument } = yield* bothRun(() => reviewAsked("approve"), {
+          labels: { readyForPerson: "ready-to-merge" },
+        });
+
+        expect(fromDocument.status).toBe("done");
+        expect(fromDocument.pullLabels).toEqual(["ready-to-merge"]);
+      }),
+    60_000,
+  );
+
+  effect(
+    "runs as the recipe does when the review asks for changes",
+    () =>
+      Effect.gen(function* () {
+        const { fromDocument, fromRecipe } = yield* bothRun(() => reviewAsked("request-changes"));
+
+        expect(fromRecipe.status).toBe("done");
+        expect(fromDocument).toEqual(fromRecipe);
+      }),
+    60_000,
+  );
+
+  // `chernabog labels` creates what the flow declares.
+  const declaring = (flow: Flow, settings: FlowInput) =>
+    labelsOf(flow).pipe(
+      Effect.provideService(Settings.FlowSettings, { input: settings }),
+      Effect.provide(makeFake("approve").services),
+    );
+
+  effect("declares its label, so chernabog labels creates it", () =>
+    Effect.gen(function* () {
+      const recipe = yield* declaring(review, {});
+      const declared = yield* declaring(yield* composedReady, {});
+      expect(declared.slice(0, recipe.length)).toEqual([...recipe]);
+      expect(declared.slice(recipe.length).map((label) => label.name)).toEqual([READY]);
+
+      const renamed = yield* declaring(yield* composedReady, {
+        labels: { readyForPerson: "ready-to-merge" },
+      });
+
+      expect(renamed.map((label) => label.name)).toContain("ready-to-merge");
+      expect(renamed.map((label) => label.name)).not.toContain(READY);
+    }),
+  );
+});
+
+// pr.readyForPerson is a hand-off: an implement document may give the pull
+// request it opens to a person to take on, and end done.
+describe("an implement document that gives its pull request to a person", () => {
+  const composedImplementReady = loadFlow(documentOf(IMPLEMENT_READY_DOCUMENT));
+
+  effect(
+    "opens it, labels it for a person, asks nobody to review it, and ends done",
+    () =>
+      Effect.gen(function* () {
+        const fromDocument = yield* observe(
+          yield* composedImplementReady,
+          "implement",
+          () => queued(),
+          IMPLEMENT_WORK_ITEM,
+        );
+
+        expect(fromDocument.status).toBe("done");
+        expect(fromDocument.opened).toBe(true);
+        expect(fromDocument.requested).toBe(0);
+        expect(fromDocument.pullLabels).toEqual(["auto:ready-for-person"]);
+        expect(fromDocument.comments).toContain("Opened: a person takes it from here.");
       }),
     60_000,
   );

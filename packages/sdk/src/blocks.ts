@@ -439,7 +439,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     name: "pr.open",
     fixed: ["draft"],
     about:
-      "Opens the pull request for the pushed branch, ready for review, or with draft: true as a draft. It leaves the hand-off to do: issue.handOff, which asks nobody to review a draft and tells the issue a person marks it ready, or pr.handToPerson and end: needs-human.",
+      "Opens the pull request for the pushed branch, ready for review, or with draft: true as a draft. It leaves the hand-off to do: issue.handOff, which asks nobody to review a draft and tells the issue a person marks it ready; pr.readyForPerson, which gives it to a person as the run's success; or pr.handToPerson and end: needs-human.",
     inputKinds: {
       issue: "IssueNumber",
       outcome: "what the agent said",
@@ -957,6 +957,7 @@ export const assemble = (flow: {
   ];
 
   const labels = unique(contributions.flatMap((each) => each.labels ?? []));
+  const namedLabels = unique(contributions.flatMap((each) => each.namedLabels ?? []));
 
   const fields = {
     ...Settings.Labels.fields,
@@ -976,7 +977,10 @@ export const assemble = (flow: {
       onNone: () => ({}),
       onSome: (concurrency) => ({ concurrency }),
     }),
-    labels: Effect.map(Settings.declaredLabels, (set) => [...set, ...labels]),
+    labels: Effect.map(
+      Effect.all([Settings.declaredLabels, Effect.all(namedLabels)]),
+      ([set, named]) => [...set, ...labels, ...named],
+    ),
     settings: Schema.Struct(fields),
     // None, as a recipe with no checks declares it, when nothing contributes one.
     ...Option.match(

@@ -780,6 +780,23 @@ export const handToPerson = (pullRequest: number, reason: string) =>
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));
 
+// Gives the pull request to a person as the next ordinary step, such as
+// merging it: labels it by the flow's ready-for-person label and comments
+// `message`. Unlike handToPerson, the run goes on, and can end done.
+export const readyForPerson = (pullRequest: number, message: string) =>
+  activity(
+    `ready-for-person-pr-${pullRequest}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const label = yield* Settings.readyForPerson;
+      yield* github.addLabel(pullRequest, label);
+      yield* github.comment(pullRequest, message);
+
+      return `#${pullRequest}: labelled ${label}; ${message}`;
+    }),
+    Schema.String,
+  );
+
 // Whether chernabog may merge the pull request, as `ships` decides it,
 // read once in an activity so a replay decides the same.
 export const shipping = (pullRequest: number) =>
