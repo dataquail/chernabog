@@ -179,3 +179,6 @@ export const opencodeAdapter = (extraArgs: ReadonlyArray<string>): Adapter => ({
       };
     }),
 });
+
+// The model a call runs on, as its args name it.
+export const opencodeModel = (_args: ReadonlyArray<string>) => "unknown";
