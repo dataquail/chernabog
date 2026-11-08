@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 
 import { type Persona } from "../../../../../kernel/persona.value-object.ts";
 import {
@@ -14,6 +15,10 @@ export type ItemState = {
   // The logins a pull request still asks to review it; none for an issue.
   readonly reviewRequests: ReadonlyArray<string>;
 };
+
+// A claim ref a rehearsal's run took, as the run's journal recorded it: the
+// item it claims (`issue-12`, `epic-3`) and the run its claim names.
+export type RunClaim = { readonly item: string; readonly runId: string };
 
 // How an issue went away: GitHub deletes one only for an admin, so otherwise it is closed.
 export type IssueRemoval = "deleted" | "closed";
@@ -56,6 +61,14 @@ export type ScratchRepoClientService = {
     number: number,
     as: Persona,
   ) => Effect.Effect<void, ScratchRepoFailed>;
+  // Deletes the claim ref on the claim's item while it still names the
+  // claim's run, and says which ref it deleted; none when another run holds
+  // the item, or nobody does, which it leaves alone.
+  readonly releaseClaimRef: (
+    repo: string,
+    claim: RunClaim,
+    as: Persona,
+  ) => Effect.Effect<Option.Option<string>, ScratchRepoFailed>;
   // Deleting a branch that is already gone succeeds.
   readonly deleteBranch: (
     repo: string,

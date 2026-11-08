@@ -12,6 +12,7 @@ export type Write<A> = {
     readonly doing: string;
     readonly done: string;
     readonly item: (result: A) => Option.Option<number>;
+    readonly creates?: "issue";
 };
 export declare const write: <A>(doing: string, done: string, item?: Option.Option<number>) => Option.Option<Write<A>>;
 export type Other = "read" | "local" | "claim" | "delegated";

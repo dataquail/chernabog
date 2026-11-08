@@ -947,7 +947,10 @@ Decisions that cut across them:
   (`Capabilities.declare` beside each port in core's `services.ts`, listed in
   `CAPABILITIES`; the claim refs' own writes are declared `claim` and never
   fenced), and a lost claim ends the workflow as `lost`. `reportingChanges`
-  reports the same writes. The engine names no port method: a new write, or a
+  reports the same writes, and `recordingCreatedIssues` records in the run's
+  journal (`om_created_issues`) each issue made by a write declared with
+  `creates: "issue"`, which `ReadRunMadeQuery` reads back with the run's claim
+  refs for `rehearse`'s cleanup. The engine names no port method: a new write, or a
   new port, is fenced and reported by declaring it. A lost run's markers are all kept: they
   are the taker's.
 - **Migration, to drop a release later:** a branch whose latest claim marker

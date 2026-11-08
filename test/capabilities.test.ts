@@ -9,7 +9,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { fencing, reportingChanges } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import {
+  fencing,
+  recordingCreatedIssues,
+  reportingChanges,
+} from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { effect } from "./effect-test.ts";
 import { makeFake, onFake } from "./sdk-fakes.ts";
 
@@ -80,6 +84,35 @@ describe("reportingChanges", () => {
         { what: "no longer blocked by #4", item: Option.some(created.number) },
       ]);
     }),
+  );
+});
+
+describe("recordingCreatedIssues", () => {
+  effect(
+    "records the number of each issue a write declared as creating one made, and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const recorded: Array<number> = [];
+
+        const context = recordingCreatedIssues(yield* fakeContext, (issue) =>
+          Effect.sync(() => {
+            recorded.push(issue);
+          }),
+        );
+
+        const created = yield* Effect.gen(function* () {
+          const github = yield* GitHub;
+          const first = yield* github.createIssue({ title: "a task", body: "", labels: [] });
+          const second = yield* github.createIssue({ title: "another", body: "", labels: [] });
+          yield* github.addSubIssue(3, first.number);
+          yield* github.comment(3, "planned");
+          yield* github.request("POST", "/repos/dataquail/demo/issues", Option.none());
+
+          return [first.number, second.number];
+        }).pipe(Effect.provideContext(context));
+
+        expect(recorded).toEqual(created);
+      }),
   );
 });
 

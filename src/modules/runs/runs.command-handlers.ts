@@ -38,6 +38,8 @@ import { PollRunCommand } from "./commands/poll-run.command.ts";
 import { pollRunHandler } from "./commands/poll-run.handler.ts";
 import { PruneRunLogsCommand } from "./commands/prune-run-logs.command.ts";
 import { pruneRunLogsHandler } from "./commands/prune-run-logs.handler.ts";
+import { RecordCreatedIssueCommand } from "./commands/record-created-issue.command.ts";
+import { recordCreatedIssueHandler } from "./commands/record-created-issue.handler.ts";
 import { RecordSkipCommand } from "./commands/record-skip.command.ts";
 import { recordSkipHandler } from "./commands/record-skip.handler.ts";
 import { RecoverRunsCommand } from "./commands/recover-runs.command.ts";
@@ -74,6 +76,7 @@ export const runsCommandGroup = Command.group(
   NameSubjectCommand,
   ParkRunCommand,
   PruneRunLogsCommand,
+  RecordCreatedIssueCommand,
   RecordSkipCommand,
   ReleaseRunWaitCommand,
   StartRunCommand,
@@ -91,6 +94,7 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
   NameSubjectCommand: (payload) => nameSubjectHandler(payload),
   ParkRunCommand: (payload) => parkRunHandler(payload),
   PruneRunLogsCommand: () => pruneRunLogsHandler(),
+  RecordCreatedIssueCommand: (payload) => recordCreatedIssueHandler(payload),
   RecordSkipCommand: (payload) => recordSkipHandler(payload),
   ReleaseRunWaitCommand: (payload) => releaseRunWaitHandler(payload),
   StartRunCommand: (payload) => startRunHandler(payload),
@@ -98,7 +102,7 @@ const RunsCommandHandlersLive = Command.handlersOf(runsCommandGroup, {
 
 // The runs module's slice of the write side over state.db, which the engine
 // dispatches as a run takes its steps, parks on a signal, holds and forgets
-// its markers and names its subjects, and the daemon and `run` to adopt a
+// its markers, names its subjects and records the issues it created, and the daemon and `run` to adopt a
 // repo's runs from before its personas and to forget a wait its signal woke,
 // and the daemon to record why a tick started nothing and to prune the run
 // logs past their retention, once a day.
