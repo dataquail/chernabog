@@ -6,7 +6,8 @@
 // `implement#task-284`); a step with no `#` is on the run's own line, MAIN.
 // A lane's column is how deep it sits: the run's line first, then the lanes
 // that waited on nothing, then those that waited on them, and so on. Every
-// lane that waited on no other lane hangs off the run's line.
+// lane that waited on no other lane hangs off the run's line. The runs
+// module lays lanes out (LaneLayouts), as it does a forEach's on a plan.
 //
 // A step's end is its own record of it when the daemon kept one; for a run
 // from before it did, a step ended when the next one in its lane started; a
@@ -20,6 +21,8 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 
+import { type LaneEdge, LaneLayouts, type LaneNeeds } from "#daemon/protocol";
+
 export const MAIN = "";
 
 export type StepOutcome = "ok" | "failed";
@@ -32,8 +35,7 @@ export type StepRecord = {
   readonly outcome: Option.Option<StepOutcome>;
 };
 
-// That `lane` waited on `needs` before it started.
-export type LaneNeeds = { readonly lane: string; readonly needs: ReadonlyArray<string> };
+export type { LaneNeeds };
 
 // What a step or a lane came to: an outcome the daemon recorded, that it's
 // still going, or that it ended with no outcome kept.
@@ -61,7 +63,7 @@ export type Lane = {
   readonly state: NodeState;
 };
 
-export type Edge = { readonly from: string; readonly to: string };
+export type Edge = LaneEdge;
 
 export type RunGraph = {
   readonly lanes: ReadonlyArray<Lane>;
@@ -162,35 +164,6 @@ const byStart = Order.mapInput(
   (step: { readonly startedAt: number }) => step.startedAt,
 );
 
-// How deep each lane sits: the run's line at 0, a lane that waited on nothing
-// at 1, one that waited on others one past the deepest of them. A cycle,
-// which a flow should never declare, is cut where it closes.
-const depths = (needs: ReadonlyMap<string, ReadonlyArray<string>>) => {
-  const found = new Map<string, number>([[MAIN, 0]]);
-
-  const depth = (lane: string, seen: ReadonlySet<string>): number => {
-    const known = Option.fromUndefinedOr(found.get(lane));
-
-    if (Option.isSome(known)) {
-      return known.value;
-    }
-
-    const upstream = (needs.get(lane) ?? []).filter((other) => !seen.has(other));
-    const next = new Set([...seen, lane]);
-    const deepest = Math.max(0, ...upstream.map((other) => depth(other, next)));
-
-    found.set(lane, deepest + 1);
-
-    return deepest + 1;
-  };
-
-  for (const lane of needs.keys()) {
-    depth(lane, new Set());
-  }
-
-  return found;
-};
-
 export const runGraph = (
   records: ReadonlyArray<StepRecord>,
   declared: ReadonlyArray<LaneNeeds>,
@@ -222,24 +195,16 @@ export const runGraph = (
   const grouped = Arr.groupBy(once, (record) => splitStep(record.step).lane);
 
   const lanesWithSteps = Object.keys(grouped);
-  const known = new Set(lanesWithSteps);
+  const hasMain = lanesWithSteps.includes(MAIN);
 
-  // Only what the lanes it names are, and never the run's own line.
-  const needs = new Map<string, ReadonlyArray<string>>(
-    lanesWithSteps
-      .filter((lane) => lane !== MAIN)
-      .map((lane) => [
-        lane,
-        Arr.dedupe(
-          declared
-            .filter((entry) => entry.lane === lane)
-            .flatMap((entry) => entry.needs)
-            .filter((other) => other !== lane && other !== MAIN && known.has(other)),
-        ),
-      ]),
+  const layout = LaneLayouts.layOut(
+    lanesWithSteps,
+    declared,
+    Option.liftPredicate(MAIN, () => hasMain),
   );
 
-  const depth = depths(needs);
+  const laidOut = (id: string) =>
+    Option.fromUndefinedOr(layout.lanes.find((entry) => entry.lane === id));
 
   const lanes = Arr.sort(
     lanesWithSteps.map((id): Lane => {
@@ -249,12 +214,14 @@ export const runGraph = (
         node(record, Option.fromUndefinedOr(ofLane[index + 1]), run),
       );
 
+      const laid = laidOut(id);
+
       return {
         id,
         label: laneLabel(id),
         steps,
-        needs: needs.get(id) ?? [],
-        column: depth.get(id) ?? 1,
+        needs: Option.match(laid, { onNone: () => [], onSome: (entry) => entry.needs }),
+        column: Option.match(laid, { onNone: () => 0, onSome: (entry) => entry.column }),
         startedAt: Math.min(...steps.map((step) => step.startedAt)),
         endedAt: latest(steps),
         state: laneState(steps),
@@ -269,19 +236,8 @@ export const runGraph = (
     lanes.filter((lane) => lane.column === column),
   ).filter((column) => column.length > 0);
 
-  const hasMain = known.has(MAIN);
-
-  const edges = lanes.flatMap((lane): ReadonlyArray<Edge> => {
-    if (lane.id === MAIN) {
-      return [];
-    }
-
-    if (lane.needs.length === 0 && hasMain) {
-      return [{ from: MAIN, to: lane.id }];
-    }
-
-    return lane.needs.map((from) => ({ from, to: lane.id }));
-  });
+  // Each lane's arrows in, in the order the lanes started.
+  const edges = lanes.flatMap((lane) => layout.edges.filter((edge) => edge.to === lane.id));
 
   return { lanes, columns, edges, parallel: lanes.length > 1 };
 };
