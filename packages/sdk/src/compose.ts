@@ -17,6 +17,7 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
@@ -421,6 +422,92 @@ const listed = (names: ReadonlyArray<string>, nothing: string) =>
     () => nothing,
   );
 
+// How many single-character edits turn one name into the other.
+const editDistance = (from: string, to: string) => {
+  const first: ReadonlyArray<number> = Arr.range(0, to.length);
+
+  const last = Arr.reduce(Array.from(from), first, (above, char, row) =>
+    Arr.reduce(Array.from(to), [row + 1], (left: ReadonlyArray<number>, other, column) => [
+      ...left,
+      Math.min(
+        (above[column + 1] ?? 0) + 1,
+        (left[column] ?? 0) + 1,
+        (above[column] ?? 0) + Number(char !== other),
+      ),
+    ]),
+  );
+
+  return last[to.length] ?? 0;
+};
+
+// A dotted name's prefix and last segment: gate and local of gate.local.
+const segmentsOf = (name: string) => {
+  const dot = name.lastIndexOf(".");
+
+  return { prefix: name.slice(0, Math.max(dot, 0)), last: name.slice(dot + 1) };
+};
+
+type Near = { readonly name: string; readonly distance: number };
+
+const byNearness = Order.combine(
+  Order.mapInput(Order.Number, (near: Near) => near.distance),
+  Order.mapInput(Order.String, (near: Near) => near.name),
+);
+
+// At most three of the names nearest to one that isn't among them, a long
+// list burying the answer: those a few edits away; failing those, the same
+// last segment under another prefix (author.localGate for review.localGate);
+// failing those, the names of its prefix when there are no more than three
+// (gate.local for gate.lint).
+const nearest = (name: string, names: ReadonlyArray<string>) => {
+  const wanted = segmentsOf(name);
+  const within = Math.max(2, Math.floor(name.length / 4));
+  const dotted = (each: string) => wanted.prefix !== "" && segmentsOf(each).prefix !== "";
+
+  const close = Arr.sort(
+    names.flatMap((each) =>
+      Option.toArray(
+        Option.liftPredicate(
+          { name: each, distance: editDistance(name, each) },
+          (near) => near.distance <= within,
+        ),
+      ),
+    ),
+    byNearness,
+  ).map((near) => near.name);
+
+  const relabelled = Arr.sort(
+    names.filter((each) => dotted(each) && segmentsOf(each).last === wanted.last),
+    Order.String,
+  );
+
+  const samePrefix = Arr.sort(
+    names.filter((each) => dotted(each) && segmentsOf(each).prefix === wanted.prefix),
+    Order.String,
+  );
+
+  const tiers = [close, relabelled, Arr.filter([samePrefix], (all) => all.length <= 3).flat()];
+
+  return Option.getOrElse(
+    Arr.findFirst(tiers, (tier) => tier.length > 0),
+    () => [],
+  ).slice(0, 3);
+};
+
+// "did you mean a, b or c?" for the nearest names, when there are any.
+const suggesting = (name: string, names: ReadonlyArray<string>) =>
+  Option.liftPredicate(nearest(name, names), (near) => near.length > 0).pipe(
+    Option.map((near) => {
+      const tail = near.at(-1) ?? "";
+
+      return `did you mean ${[near.slice(0, -1).join(", "), tail].filter((part) => part !== "").join(" or ")}?`;
+    }),
+  );
+
+// The nearest names, then where to find them all.
+const pointing = (name: string, names: ReadonlyArray<string>, all: string) =>
+  [...Option.toArray(suggesting(name, names)), all].join(" ");
+
 export const isEnd = (step: Step): step is EndStep => "end" in step;
 
 export const isUse = (step: Step): step is UseStep => "use" in step;
@@ -734,7 +821,13 @@ const checkRouting = (checking: Checking, step: UseStep, block: Block, at: strin
       say(
         checking,
         `${at}.on.${outcome}`,
-        `${step.use} comes to ${listed(outcomes, "nothing to route")}`,
+        Option.getOrElse(
+          Option.liftPredicate(
+            `${step.use} has no outcome named ${outcome}; ${pointing(outcome, outcomes, "chernabog recipes blocks lists what each block comes to")}`,
+            () => outcomes.length > 0,
+          ),
+          () => `${step.use} comes to nothing to route`,
+        ),
       );
     }
   }
@@ -1080,6 +1173,18 @@ const DISPOSITIONS = ["person", "told", "skip", "fail"];
 
 const DISPOSITIONS_SAID = "person, told, skip or fail";
 
+// The stages nearest to one a document names, or that there are none.
+const stagesNear = (stages: ReadonlyArray<string>, name: string) => {
+  if (stages.length === 0) {
+    return "; there are none";
+  }
+
+  return Option.getOrElse(
+    Option.map(suggesting(name, stages), (suggestion) => `; ${suggestion}`),
+    () => "",
+  );
+};
+
 // Whether the stage is there, and one a document can type: an executable's
 // output has no types to check its wires by.
 const checkStageFile = (checking: Checking, step: StageStep, at: string) => {
@@ -1105,7 +1210,7 @@ const checkStageFile = (checking: Checking, step: StageStep, at: string) => {
     say(
       checking,
       `${at}.stage`,
-      `no stage named ${step.stage} in .chernabog/stages/; there are ${listed(effectStages(checking.stages), "none")}`,
+      `no stage named ${step.stage} in .chernabog/stages/${stagesNear(effectStages(checking.stages), step.stage)}`,
     );
   }
 
@@ -1220,7 +1325,7 @@ const checkUse = (
     say(
       checking,
       `${at}.use`,
-      `no block named ${step.use}; there are ${Object.keys(catalogue).join(", ")}`,
+      `no block named ${step.use}; ${pointing(step.use, Object.keys(catalogue), "chernabog recipes blocks lists them all")}`,
     );
 
     return { ends: false, leaving: Option.none<string>() };
@@ -1724,7 +1829,11 @@ const checkTrigger = (checking: Checking, document: FlowDocument) => {
     const found = Record.get(sourcesByName, source.use);
 
     if (Option.isNone(found)) {
-      say(checking, at, `must be one of ${Object.keys(sources).join(", ")}`);
+      say(
+        checking,
+        at,
+        `no source named ${source.use}; ${pointing(source.use, Object.keys(sources), "chernabog recipes blocks lists them all")}`,
+      );
 
       continue;
     }
