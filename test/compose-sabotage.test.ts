@@ -18,6 +18,7 @@ import review from "../packages/recipes/flows/review.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
+  DRAFT_DOCUMENT,
   EPIC_DOCUMENT,
   generated,
   HUMAN_INITIATED_DOCUMENT,
@@ -46,6 +47,7 @@ import {
   PLAN_WORK_ITEM,
   POST_MERGE_SCENARIOS,
   POST_MERGE_WORK_ITEM,
+  queued,
   RE_REVIEW_SCENARIOS,
   RE_REVIEW_WORK_ITEM,
   RESOLVE_CONFLICTS_LAYER_SCENARIOS,
@@ -817,5 +819,46 @@ describe("the comparison sees a plan flow that", () => {
     target,
     "when another run holds the claim",
     (source) => source.replace('{"StepFailed":"fail"}', '{"StepFailed":"fail","Skip":"fail"}'),
+  );
+});
+
+// No recipe opens a draft, so a draft flow is compared with the draft
+// document's own: what it opened, and what its hand-off asked.
+describe("the draft test sees a draft flow that", () => {
+  const source = generated(documentOf(DRAFT_DOCUMENT));
+
+  const run = (flow: Flow) =>
+    Effect.gen(function* () {
+      const fake = queued();
+      const observed = yield* observe(flow, "implement", () => fake, IMPLEMENT_WORK_ITEM);
+
+      return { observed, draft: fake.authored.draft };
+    });
+
+  const sabotagedDraft = (title: string, sabotage: (source: string) => string) => {
+    effect(
+      title,
+      () =>
+        Effect.gen(function* () {
+          const broken = sabotage(source);
+
+          // A sabotage whose text no longer matches would pass by doing nothing.
+          expect(broken).not.toBe(source);
+
+          const fromDocument = yield* run(yield* loadSource(source));
+          const fromFlow = yield* run(yield* loadSource(broken));
+
+          expect(fromDocument.draft).toBe(true);
+          expect(fromDocument.observed.requested).toBe(0);
+          expect(fromFlow).not.toEqual(fromDocument);
+        }),
+      60_000,
+    );
+  };
+
+  sabotagedDraft("opens it ready for review", (flow) => flow.replace(', "draft": true', ""));
+
+  sabotagedDraft("asks the pool to review its draft", (flow) =>
+    flow.replace('"pr": opened, "outcome"', '"pr": { ...opened, draft: false }, "outcome"'),
   );
 });

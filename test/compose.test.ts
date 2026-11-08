@@ -28,6 +28,7 @@ import {
   ADDRESS_REVIEW_DOCUMENT,
   compileErrors,
   documentOf,
+  DRAFT_DOCUMENT,
   EPIC_DOCUMENT,
   generated,
   HUMAN_INITIATED_DOCUMENT,
@@ -49,6 +50,7 @@ type Step = Compose.Step;
 type UseStep = Compose.UseStep;
 
 const implement = documentOf(IMPLEMENT_DOCUMENT);
+const draft = documentOf(DRAFT_DOCUMENT);
 const review = documentOf(REVIEW_DOCUMENT);
 const reReview = documentOf(RE_REVIEW_DOCUMENT);
 const addressReview = documentOf(ADDRESS_REVIEW_DOCUMENT);
@@ -536,6 +538,20 @@ describe("Compose.check", () => {
     ]);
   });
 
+  // pr.open's draft is a fixed value, which the document says under with.
+  test("takes a draft pull request under with, not in", () => {
+    expect(draft).not.toEqual(implement);
+    expect(Compose.check(draft)).toEqual([]);
+
+    const wired = changing(implement, "opened", (step) => ({
+      ...step,
+      in: { ...step.in, draft: "claim.adopted" },
+    }));
+
+    expect(messages(wired)).toEqual(["draft is a fixed value: put it under with, not in"]);
+    expect(paths(wired)).toEqual(["steps[5].in.draft"]);
+  });
+
   test("says which of in and with an input goes under", () => {
     expect(
       messages(
@@ -960,6 +976,21 @@ describe("tsc on a document's flow file", () => {
         expect(yield* compileErrors(humanInitiated)).toEqual([]);
       }),
     TIMEOUT,
+  );
+
+  effect(
+    "compiles a document that opens its pull request as a draft",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* compileErrors(draft)).toEqual([]);
+      }),
+    TIMEOUT,
+  );
+
+  rejected(
+    "a draft that isn't true or false",
+    changing(draft, "opened", (step) => ({ ...step, with: { draft: "yes" } })),
+    "boolean",
   );
 
   rejected(
@@ -2098,6 +2129,12 @@ describe("Compose.describe", () => {
         );
       }
     }
+  });
+
+  test("says pr.open can open a draft", () => {
+    const [opens] = said.blocks.filter((block) => block.name === "pr.open");
+    expect(opens.about).toContain("draft: true");
+    expect(opens.inputs.map((input) => input.name)).toContain("draft");
   });
 
   // Keeps a block's listing to what it has: `bun run check` runs this file.
