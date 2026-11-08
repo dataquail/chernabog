@@ -6,7 +6,8 @@
 // through the dashboard's listener.
 //
 // With `?step=<full step name>` (`implement#task-12`), only that step's lines,
-// in the same events, ending the same way. How the log splits by step is the
+// in the same events, ending the same way; and with `&node=` the plan node as
+// the log's tags carry it (`{"id":"ci","round":2}`), only those at that node. How the log splits by step is the
 // run's history's stepLogs: by the steps its lines are tagged with; for a log
 // from before tags, the lines from `step: <name>` to the next `step:` line,
 // unless the run declared lanes, when nothing but `end` is sent.
@@ -22,7 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { RunId } from "../../../../kernel/run-id.id.ts";
-import { type StepLogs } from "../../../../kernel/run-log-line.value-object.ts";
+import { LogNode, type StepLogs } from "../../../../kernel/run-log-line.value-object.ts";
 import { type FoundRun } from "../../domain/run/run-view.value-object.ts";
 import { type LogOfStep } from "../../queries/follow-run-log.query.ts";
 import { type RunLogsQueries, RunsQueries } from "../../runs.query-handlers.ts";
@@ -30,7 +31,11 @@ import { followLog } from "../cli/run-log.output.ts";
 
 const RunPath = Schema.Struct({ id: RunId });
 
-const StepQuery = Schema.Struct({ step: Schema.optionalKey(Schema.String) });
+// `node` is the plan node, as the log's tags carry it: `{"id":"ci","round":2}`.
+const StepQuery = Schema.Struct({
+  step: Schema.optionalKey(Schema.String),
+  node: Schema.optionalKey(Schema.fromJsonString(LogNode)),
+});
 
 // How often the daemon looks again at whether the run has finished.
 const FINISHED_EVERY = "1 second";
@@ -53,7 +58,7 @@ const isRunning = (found: FoundRun) => Option.exists(found.run, (run) => run.sta
 
 export const followRunLogEndpoint = Effect.gen(function* () {
   const { id } = yield* HttpRouter.schemaPathParams(RunPath);
-  const { step } = yield* HttpServerRequest.schemaSearchParams(StepQuery);
+  const { node, step } = yield* HttpServerRequest.schemaSearchParams(StepQuery);
   const runs = yield* RunsQueries;
 
   // One step's lines, split as the run's history says its log splits.
@@ -68,6 +73,10 @@ export const followRunLogEndpoint = Effect.gen(function* () {
               Option.fromUndefinedOr(history.stepLogs),
               (): StepLogs => "unavailable",
             ),
+            ...Option.match(Option.fromUndefinedOr(node), {
+              onNone: () => ({}),
+              onSome: (at) => ({ node: at }),
+            }),
           }),
         ),
       ),

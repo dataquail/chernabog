@@ -1,25 +1,32 @@
 // One run's page (#/runs/<id>, a unique prefix of the id will do): its row,
 // the item it's on and the subjects it named, its summary, what it waits on,
-// its steps as a graph (run-graph.ts), and its log as it grows, followed at its
-// tail unless the person scrolls up. A step's page (#/runs/<id>/steps/<step>)
-// is the run's, with that step marked in the graph, what's known of it, and
-// that step's log alone in place of the run's.
+// the run drawn on the plan it started with (run-canvas.tsx), or for a run
+// with none, its steps as a graph (run-graph.ts), and its log as it grows,
+// followed at its tail unless the person scrolls up. A step's page
+// (#/runs/<id>/steps/<step>) is the run's, with that step marked in the graph,
+// what's known of it, and that step's log alone in place of the run's. A
+// node's page (#/runs/<id>/nodes/<node>…, routes.ts) is the run's, with that
+// node marked on the plan, what it is and what it reached, and each of its
+// engine steps with that step's log at that node, in place of the run's.
 
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef } from "react";
 
-import type { DaemonStatus, RunHistory } from "#daemon/protocol";
+import type { DaemonStatus, RunHistory, RunOnPlan } from "#daemon/protocol";
 
-import { runHref } from "./routes.ts";
+import { PlanNodeDetail } from "./plan-canvas.tsx";
+import { type NodePlace, runHref } from "./routes.ts";
 import { type Detail } from "./run.ts";
+import { RunCanvas } from "./run-canvas.tsx";
 import { laneLabel, type LaneNeeds, runGraph, type StepRecord, took } from "./run-graph.ts";
 import { RunGraphView } from "./run-graph-view.tsx";
 import { atBottom, initialLog, linesOfStep, type LogConnection, type LogState } from "./run-log.ts";
+import { locate, type Located, outcomeOf, parkedSince, runOnPlan, timeOf } from "./run-plan.ts";
 import { either, present, shownIf } from "./show.tsx";
 import { span, When } from "./time.tsx";
-import { useRunDetail, useRunLog } from "./use-run.ts";
+import { useRunDetail, useRunLog, useStepLog } from "./use-run.ts";
 
 type Found = Extract<Detail, { readonly kind: "found" }>;
 
@@ -177,26 +184,42 @@ export const graphOf = ({ history, run }: Found) =>
     finishedAt: run.finishedAt,
   });
 
+type OnPlan = Option.Option<RunOnPlan>;
+
 const Steps = ({
   chosen,
   found,
+  node,
   now,
+  onPlan,
 }: {
   readonly chosen: Option.Option<string>;
   readonly found: Found;
+  readonly node: Option.Option<NodePlace>;
   readonly now: number;
+  readonly onPlan: OnPlan;
 }) => (
   <section aria-label="Steps">
     <h2>Steps</h2>
-    {either(
-      found.history.steps.length === 0,
-      () => (
-        <p className="muted">No steps were kept for this run.</p>
+    {Option.match(onPlan, {
+      onSome: (run) => (
+        <RunCanvas
+          run={run}
+          runId={found.run.id}
+          now={now}
+          parked={parkedSince(found.history)}
+          at={node}
+        />
       ),
-      () => (
-        <RunGraphView chosen={chosen} graph={graphOf(found)} now={now} runId={found.run.id} />
-      ),
-    )}
+      onNone: () =>
+        either(
+          found.history.steps.length === 0,
+          () => <p className="muted">No steps were kept for this run.</p>,
+          () => (
+            <RunGraphView chosen={chosen} graph={graphOf(found)} now={now} runId={found.run.id} />
+          ),
+        ),
+    })}
   </section>
 );
 
@@ -306,27 +329,30 @@ export const stepLogMode = (found: Found): StepLogMode =>
 
 // The log, kept at its tail as it grows while the person hasn't scrolled up.
 export const LogView = ({
+  id = LOG_ID,
   log,
   title = "Log",
 }: {
+  // The log element's id; a page with several logs gives each its own.
+  readonly id?: string;
   readonly log: LogState;
   readonly title?: string;
 }) => {
   const following = useRef(true);
 
   useEffect(() => {
-    for (const box of Option.toArray(Option.fromNullishOr(document.getElementById(LOG_ID)))) {
+    for (const box of Option.toArray(Option.fromNullishOr(document.getElementById(id)))) {
       if (following.current) {
         box.scrollTop = box.scrollHeight;
       }
     }
-  }, [log.lines]);
+  }, [id, log.lines]);
 
   return (
     <section aria-label="Log">
       <h2>{title}</h2>
       <pre
-        id={LOG_ID}
+        id={id}
         className="log"
         onScroll={(event) => {
           following.current = atBottom(event.currentTarget);
@@ -368,10 +394,356 @@ const Log = ({
     },
   });
 
+type RunStep = RunHistory["steps"][number];
+
+// How one engine step's log is shown on a node's page: followed live, or as
+// a test gives it.
+export type StepLogView = (props: { readonly runId: string; readonly step: RunStep }) => ReactNode;
+
+// One engine step's log at the node it ran at, followed live.
+const LiveStepLog: StepLogView = ({ runId, step }) => {
+  const id = useId();
+  const log = useStepLog(location.origin, runId, step.step, Option.fromUndefinedOr(step.node));
+
+  return <LogView id={id} log={log} title={`Log of ${step.step}`} />;
+};
+
+// How an engine step stands: how it ended, else running in a running run.
+const stepState = (step: RunStep, running: boolean) =>
+  Option.getOrElse(
+    Option.orElse(Option.fromUndefinedOr(step.outcome), () =>
+      Option.map(Option.fromUndefinedOr(step.finishedAt), () => "ended"),
+    ),
+    () =>
+      either(
+        running,
+        () => "running",
+        () => "ended",
+      ),
+  );
+
+const stepTook = (step: RunStep, now: number) =>
+  span(
+    Option.getOrElse(Option.map(Option.fromUndefinedOr(step.finishedAt), Date.parse), () => now) -
+      Date.parse(step.enteredAt),
+  );
+
+const EngineSteps = ({
+  StepLog,
+  found,
+  now,
+  steps,
+}: {
+  readonly found: Found;
+  readonly now: number;
+  readonly StepLog: StepLogView;
+  readonly steps: ReadonlyArray<RunStep>;
+}) => (
+  <section aria-label="Engine steps">
+    <h3>Engine steps</h3>
+    {either(
+      steps.length === 0,
+      () => (
+        <p className="muted">This node ran no engine step.</p>
+      ),
+      () =>
+        either(
+          stepLogMode(found) === "server",
+          () => (
+            <>
+              {steps.map((step) => (
+                <article className="engine-step" key={`${step.step}\t${step.enteredAt}`}>
+                  <h4>
+                    {step.step}{" "}
+                    <span className={`badge ${stepState(step, found.run.status === "running")}`}>
+                      {stepState(step, found.run.status === "running")}
+                    </span>{" "}
+                    <span className="took">{stepTook(step, now)}</span>
+                  </h4>
+                  <StepLog runId={found.run.id} step={step} />
+                </article>
+              ))}
+            </>
+          ),
+          () => (
+            <>
+              <ul>
+                {steps.map((step) => (
+                  <li key={`${step.step}\t${step.enteredAt}`}>{step.step}</li>
+                ))}
+              </ul>
+              <p className="muted">
+                This run's log doesn't say which step wrote each line, so it can't be split by step.{" "}
+                <a href={runHref(found.run.id)}>See the whole log</a>.
+              </p>
+            </>
+          ),
+        ),
+    )}
+  </section>
+);
+
+type Timed = Parameters<typeof timeOf>[0];
+
+// How long a place took, has run or has been parked, by its state.
+const timeLabel = (timed: Timed) => {
+  switch (timed.state) {
+    case "running":
+      return "Running for";
+    case "waiting":
+      return "Waiting";
+    case "ok":
+    case "failed":
+    case "not-taken":
+    case "not-reached":
+      return "Took";
+  }
+};
+
+const PlaceFacts = ({
+  found,
+  lane,
+  now,
+  outcome,
+  round,
+  timed,
+}: {
+  readonly found: Found;
+  readonly lane: Option.Option<string>;
+  readonly now: number;
+  readonly outcome: Option.Option<string>;
+  readonly round: Option.Option<number>;
+  readonly timed: Timed;
+}) => (
+  <dl className="facts">
+    {present(round, (shown) => (
+      <>
+        <dt>Round</dt>
+        <dd>{shown}</dd>
+      </>
+    ))}
+    {present(lane, (shown) => (
+      <>
+        <dt>Lane</dt>
+        <dd>{shown}</dd>
+      </>
+    ))}
+    {present(outcome, (shown) => (
+      <>
+        <dt>Outcome</dt>
+        <dd>{shown}</dd>
+      </>
+    ))}
+    {present(timed.startedAt, (iso) => (
+      <>
+        <dt>Started</dt>
+        <dd>
+          <When iso={iso} now={now} />
+        </dd>
+      </>
+    ))}
+    {present(timed.endedAt, (iso) => (
+      <>
+        <dt>Ended</dt>
+        <dd>
+          <When iso={iso} now={now} />
+        </dd>
+      </>
+    ))}
+    {present(timeOf(timed, now, parkedSince(found.history)), (said) => (
+      <>
+        <dt>{timeLabel(timed)}</dt>
+        <dd>{said}</dd>
+      </>
+    ))}
+  </dl>
+);
+
+// What a place is, for its heading.
+const titleOf = (located: Located) => {
+  switch (located.kind) {
+    case "node":
+      return located.node.node.id;
+    case "lane":
+      return `${located.forEach.node.id}: lane ${located.lane.lane}`;
+    case "off":
+      return located.name;
+  }
+};
+
+const Said = ({ located }: { readonly located: Located }) => {
+  switch (located.kind) {
+    case "node":
+      return <PlanNodeDetail node={located.node.node} />;
+    case "lane":
+      return (
+        <p>
+          A lane of <code>{located.forEach.node.id}</code>: what its scope ran outside the lane's
+          steps.
+        </p>
+      );
+    case "off":
+      return (
+        <p>
+          {either(
+            located.name === "Set up",
+            () => "What the run did before it entered its plan.",
+            () => "What the run did after it left its plan.",
+          )}
+        </p>
+      );
+  }
+};
+
+const placed = (located: Located) => {
+  switch (located.kind) {
+    case "node":
+      return {
+        timed: located.node,
+        round: located.node.round,
+        lane: located.node.lane,
+        outcome: outcomeOf(located.node),
+        steps: located.node.steps,
+      };
+    case "lane":
+      return {
+        timed: located.lane,
+        round: located.forEach.round,
+        lane: Option.some(located.lane.lane),
+        outcome: outcomeOf(located.lane),
+        steps: located.lane.steps,
+      };
+    case "off":
+      return {
+        timed: located.off,
+        round: Option.none<number>(),
+        lane: Option.none<string>(),
+        outcome: outcomeOf(located.off),
+        steps: located.off.steps,
+      };
+  }
+};
+
+const placeName = (place: NodePlace) => {
+  switch (place.kind) {
+    case "set-up":
+      return "set up";
+    case "wrap-up":
+      return "wrap up";
+    case "node":
+      return place.id;
+  }
+};
+
+// What's known of the node whose page this is, and its engine steps' logs.
+const NodeFacts = ({
+  StepLog,
+  found,
+  now,
+  onPlan,
+  place,
+}: {
+  readonly found: Found;
+  readonly now: number;
+  readonly onPlan: OnPlan;
+  readonly place: NodePlace;
+  readonly StepLog: StepLogView;
+}) => {
+  const located = Option.flatMap(onPlan, (run) => locate(run, place));
+
+  return (
+    <section aria-label="Node">
+      {Option.match(located, {
+        onNone: () => (
+          <>
+            <h2>{placeName(place)}</h2>
+            <p className="muted">This run's plan has no node {placeName(place)}.</p>
+          </>
+        ),
+        onSome: (here) => {
+          const { lane, outcome, round, steps, timed } = placed(here);
+
+          return (
+            <>
+              <h2>
+                {titleOf(here)} <span className={`badge ${timed.state}`}>{timed.state}</span>
+              </h2>
+              <PlaceFacts
+                found={found}
+                lane={lane}
+                now={now}
+                outcome={outcome}
+                round={round}
+                timed={timed}
+              />
+              <Said located={here} />
+              <EngineSteps found={found} now={now} StepLog={StepLog} steps={steps} />
+            </>
+          );
+        },
+      })}
+      <p>
+        <a href={runHref(found.run.id)}>Back to the whole run</a>
+      </p>
+    </section>
+  );
+};
+
+const FoundBody = ({
+  StepLog,
+  found,
+  log,
+  node,
+  now,
+  slug,
+  step,
+}: {
+  readonly found: Found;
+  readonly log: LogState;
+  readonly node: Option.Option<NodePlace>;
+  readonly now: number;
+  readonly slug: Option.Option<string>;
+  readonly step: Option.Option<string>;
+  readonly StepLog: StepLogView;
+}) => {
+  const onPlan = useMemo(
+    () => runOnPlan(Option.fromUndefinedOr(found.plan), found.history, found.run),
+    [found],
+  );
+
+  return (
+    <>
+      <section aria-label="Run">
+        <h2>
+          {label(found.run)}
+          <span className={`badge ${state(found)}`}>{state(found)}</span>
+        </h2>
+        {present(found.run.itemTitle, (title) => (
+          <p className="muted">{title}</p>
+        ))}
+        <Facts found={found} now={now} slug={slug} />
+      </section>
+      <Waits found={found} now={now} />
+      <Steps chosen={step} found={found} node={node} now={now} onPlan={onPlan} />
+      {present(step, (name) => (
+        <StepFacts found={found} now={now} step={name} />
+      ))}
+      {Option.match(node, {
+        onNone: () => <Log found={found} log={log} step={step} />,
+        onSome: (place) => (
+          <NodeFacts found={found} now={now} onPlan={onPlan} place={place} StepLog={StepLog} />
+        ),
+      })}
+    </>
+  );
+};
+
 const Body = ({
+  StepLog,
   asked,
   detail,
   log,
+  node,
   now,
   slug,
   step,
@@ -379,9 +751,11 @@ const Body = ({
   readonly asked: string;
   readonly detail: Detail;
   readonly log: LogState;
+  readonly node: Option.Option<NodePlace>;
   readonly now: number;
   readonly slug: Option.Option<string>;
   readonly step: Option.Option<string>;
+  readonly StepLog: StepLogView;
 }) => {
   switch (detail.kind) {
     case "loading":
@@ -396,31 +770,25 @@ const Body = ({
       );
     case "found":
       return (
-        <>
-          <section aria-label="Run">
-            <h2>
-              {label(detail.run)}
-              <span className={`badge ${state(detail)}`}>{state(detail)}</span>
-            </h2>
-            {present(detail.run.itemTitle, (title) => (
-              <p className="muted">{title}</p>
-            ))}
-            <Facts found={detail} now={now} slug={slug} />
-          </section>
-          <Waits found={detail} now={now} />
-          <Steps chosen={step} found={detail} now={now} />
-          {present(step, (name) => (
-            <StepFacts found={detail} now={now} step={name} />
-          ))}
-          <Log found={detail} log={log} step={step} />
-        </>
+        <FoundBody
+          found={detail}
+          log={log}
+          node={node}
+          now={now}
+          slug={slug}
+          step={step}
+          StepLog={StepLog}
+        />
       );
   }
 };
 
 // The page, given what it holds: rendered as it is, for the tests. On a
-// step's page, `log` is that step's lines alone.
+// step's page, `log` is that step's lines alone; on a node's, each of its
+// engine steps' logs is `StepLog`'s.
 export const RunDetailView = ({
+  StepLog = LiveStepLog,
+  node = Option.none(),
   step = Option.none(),
   ...props
 }: {
@@ -430,6 +798,8 @@ export const RunDetailView = ({
   readonly now: number;
   readonly slug: Option.Option<string>;
   readonly step?: Option.Option<string>;
+  readonly node?: Option.Option<NodePlace>;
+  readonly StepLog?: StepLogView;
 }) => (
   <div className="page">
     <header>
@@ -437,7 +807,7 @@ export const RunDetailView = ({
       <a href="#/">Back to the overview</a>
     </header>
     <main>
-      <Body {...props} step={step} />
+      <Body {...props} node={node} step={step} StepLog={StepLog} />
     </main>
   </div>
 );
@@ -454,12 +824,14 @@ const slugOf = (status: Option.Option<DaemonStatus>, repo: string) =>
 const FoundRun = ({
   asked,
   found,
+  node,
   now,
   status,
   step,
 }: {
   readonly asked: string;
   readonly found: Found;
+  readonly node: Option.Option<NodePlace>;
   readonly now: number;
   readonly status: Option.Option<DaemonStatus>;
   readonly step: Option.Option<string>;
@@ -467,8 +839,9 @@ const FoundRun = ({
   const mode = Option.map(step, () => stepLogMode(found));
 
   // Only a daemon that keeps each line's step is asked for one step's lines.
+  // A node's page follows its steps' logs, not the run's.
   const followed = Option.filter(step, () => Option.contains(mode, "server"));
-  const log = useRunLog(location.origin, found.run.id, followed);
+  const log = useRunLog(location.origin, found.run.id, followed, Option.isSome(node));
 
   const shown = Option.match(
     Option.filter(step, () => Option.contains(mode, "page")),
@@ -486,11 +859,13 @@ const FoundRun = ({
       now={now}
       slug={slugOf(status, found.run.repo)}
       step={step}
+      node={node}
     />
   );
 };
 
 export const RunDetail = ({
+  node = Option.none(),
   now,
   runId,
   status,
@@ -500,11 +875,14 @@ export const RunDetail = ({
   readonly now: number;
   readonly status: Option.Option<DaemonStatus>;
   readonly step: Option.Option<string>;
+  readonly node?: Option.Option<NodePlace>;
 }) => {
   const detail = useRunDetail(location.origin, runId);
 
   if (detail.kind === "found") {
-    return <FoundRun asked={runId} found={detail} now={now} status={status} step={step} />;
+    return (
+      <FoundRun asked={runId} found={detail} node={node} now={now} status={status} step={step} />
+    );
   }
 
   return (
@@ -515,6 +893,7 @@ export const RunDetail = ({
       now={now}
       slug={Option.none()}
       step={step}
+      node={node}
     />
   );
 };
