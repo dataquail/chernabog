@@ -959,6 +959,9 @@ export const assemble = (flow: {
   readonly start?: boolean;
   readonly sources?: ReadonlyArray<Source>;
   readonly blocks: ReadonlyArray<BlockName>;
+  // The document's tree as data (Compose.plan), which a run is drawn on. The
+  // flow carries it, so the loader finds it on a flow compiled from a document.
+  readonly plan?: Schema.Json;
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 }) => {
   const flowSources = flow.sources ?? [];
@@ -1033,9 +1036,16 @@ export const assemble = (flow: {
     startOf,
   );
 
-  return Option.match(started, {
+  const defined = Option.match(started, {
     onNone: () =>
       defineFlow({ ...common, trigger: Effect.map(Effect.all(triggers), (found) => found.flat()) }),
     onSome: (item) => defineFlow({ ...common, item, start: true }),
+  });
+
+  // Not enumerable, so the flow's keys stay those of a recipe written in
+  // TypeScript, which declares none.
+  return Option.match(Option.fromUndefinedOr(flow.plan), {
+    onNone: () => defined,
+    onSome: (plan) => Object.defineProperty({ ...defined }, "plan", { value: plan }),
   });
 };

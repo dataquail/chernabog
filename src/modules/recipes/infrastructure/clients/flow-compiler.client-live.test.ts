@@ -167,7 +167,12 @@ describe("FlowCompilerClientLive", () => {
 
         expect(compiled.problems).toEqual([]);
         expect(compiled.typeChecked).toBe(true);
-        expect(Option.getOrElse(compiled.source, () => "")).toContain("// steps[0]");
+        const source = Option.getOrElse(compiled.source, () => "");
+        expect(source).toContain("// steps[0]");
+        // It exports the document's plan, which the flow carries.
+        expect(source).toContain("export const plan = documentPlan();");
+        expect(source).toContain("  plan,\n");
+        expect(source).toContain('  return {"flow":"review","subject":"pull-request","hash":"');
       }),
     TIMEOUT,
   );
