@@ -108,7 +108,10 @@ export const claudeEnvironment = (context: AdapterContext) => ({
 });
 
 // Claude names a project's directory after the real path it runs in, symlinks resolved.
-export const transcriptFile = (request: AgentRequest, configDir: string) =>
+export const transcriptFile = (
+  request: Pick<AgentRequest, "cwd" | "sessionId">,
+  configDir: string,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const real = yield* fs.realPath(request.cwd).pipe(Effect.orElseSucceed(() => request.cwd));
