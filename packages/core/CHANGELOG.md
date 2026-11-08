@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/dataquail/chernabog/compare/core-v1.1.0...core-v1.2.0) (2026-11-08)
+
+
+### Features
+
+* **runs:** record where in its plan each step of a run ran, its branches and its ends ([#432](https://github.com/dataquail/chernabog/issues/432)) ([15a60fa](https://github.com/dataquail/chernabog/commit/15a60fa642c1a23bf6826734265545466375a263))
+
+
+### Bug Fixes
+
+* **rehearsals:** clean up the issues and claim refs a rehearsal's run made ([#414](https://github.com/dataquail/chernabog/issues/414)) ([747276a](https://github.com/dataquail/chernabog/commit/747276a1c7e1838625865b8c2ee6cf52eccb4334))
+
 ## [1.1.0](https://github.com/dataquail/chernabog/compare/core-v1.0.0...core-v1.1.0) (2026-11-04)
 
 
