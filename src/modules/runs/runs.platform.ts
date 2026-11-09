@@ -130,6 +130,12 @@ export {
 export { runLogWriting } from "./infrastructure/runtime/runlog.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";
 export {
+  checkThreadsSetup,
+  personalRepo,
+  setupFix,
+  type ThreadsSetup,
+} from "./infrastructure/runtime/threads-setup.ts";
+export {
   checkAccount,
   loggedInEmail,
   readUsageLogLine,
