@@ -25,6 +25,7 @@ import {
   GitError,
   GitHubError,
   NeedsHuman,
+  ProgressError,
   type ReportedError,
   Skip,
   StepFailed,
@@ -277,12 +278,14 @@ const toActivityError =
     return new StepFailed({ step: name, message: describeError(error) });
   };
 
-const isReportedError = Schema.is(Schema.Union([GitHubError, GitError, AgentError, UsageError]));
+const isReportedError = Schema.is(
+  Schema.Union([GitHubError, GitError, AgentError, UsageError, ProgressError]),
+);
 
 const isReported = <E>(error: E): error is Extract<E, ReportedError> => isReportedError(error);
 
 // Turns the errors a flow can only report (GitHubError, GitError, AgentError,
-// UsageError) into StepFailed, named for `step`, and keeps every other error
+// UsageError, ProgressError) into StepFailed, named for `step`, and keeps every other error
 // for the flow to handle. For a trigger, or work outside an activity, which
 // does the same for its own.
 export const reportAs =

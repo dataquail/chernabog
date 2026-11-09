@@ -169,7 +169,14 @@ declare const UsageError_base: Schema.Class<UsageError, Schema.TaggedStruct<"Usa
 }>;
 export declare class UsageError extends UsageError_base {
 }
-export type ReportedError = GitHubError | GitError | AgentError | UsageError;
+declare const ProgressError_base: Schema.Class<ProgressError, Schema.TaggedStruct<"ProgressError", {
+    readonly message: Schema.String;
+}>, import("effect/Cause").YieldableError & {
+    readonly brand: "ProgressError";
+}>;
+export declare class ProgressError extends ProgressError_base {
+}
+export type ReportedError = GitHubError | GitError | AgentError | UsageError | ProgressError;
 declare const NotFound_base: Schema.Class<NotFound, Schema.TaggedStruct<"NotFound", {
     readonly what: Schema.String;
 }>, import("effect/Cause").YieldableError & {
@@ -223,7 +230,17 @@ declare const CiTimedOut_base: Schema.Class<CiTimedOut, Schema.TaggedStruct<"CiT
 export declare class CiTimedOut extends CiTimedOut_base {
     get message(): string;
 }
-export declare const WorkError: Schema.Union<readonly [typeof NotFound, typeof PullRequestClosed, typeof MergeRefused, typeof PushRejected, typeof NothingCommitted, typeof CiTimedOut]>;
+declare const PhaseMoved_base: Schema.Class<PhaseMoved, Schema.TaggedStruct<"PhaseMoved", {
+    readonly item: Schema.String;
+    readonly expected: Schema.OptionFromOptionalKey<Schema.brand<Schema.String, "Phase">>;
+    readonly found: Schema.OptionFromOptionalKey<Schema.brand<Schema.String, "Phase">>;
+}>, import("effect/Cause").YieldableError & {
+    readonly brand: "PhaseMoved";
+}>;
+export declare class PhaseMoved extends PhaseMoved_base {
+    get message(): string;
+}
+export declare const WorkError: Schema.Union<readonly [typeof NotFound, typeof PullRequestClosed, typeof MergeRefused, typeof PushRejected, typeof NothingCommitted, typeof CiTimedOut, typeof PhaseMoved]>;
 export type WorkError = typeof WorkError.Type;
 declare const PersonaUnavailable_base: Schema.Class<PersonaUnavailable, Schema.TaggedStruct<"PersonaUnavailable", {
     readonly login: Schema.String;
@@ -380,7 +397,7 @@ export type NodeAt = {
     readonly lane: Option.Option<string>;
 };
 export declare const CurrentNode: Context.Reference<Option.Option<NodeAt>>;
-export declare const activity: <S extends Schema.Constraint = typeof Schema.Void, E = never, R = never>(name: string, execute: Effect.Effect<S["Type"], E, R>, success?: S) => Effect.Effect<S["Type"], Extract<E, import("./errors.ts").CiTimedOut | import("./errors.ts").MergeRefused | import("./errors.ts").NotFound | import("./errors.ts").NothingCommitted | import("./errors.ts").PullRequestClosed | import("./errors.ts").PushRejected> | FlowError, WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance | S["DecodingServices"] | Exclude<Exclude<R, never>, Scope.Scope | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>>;
+export declare const activity: <S extends Schema.Constraint = typeof Schema.Void, E = never, R = never>(name: string, execute: Effect.Effect<S["Type"], E, R>, success?: S) => Effect.Effect<S["Type"], Extract<E, import("./errors.ts").CiTimedOut | import("./errors.ts").MergeRefused | import("./errors.ts").NotFound | import("./errors.ts").NothingCommitted | import("./errors.ts").PhaseMoved | import("./errors.ts").PullRequestClosed | import("./errors.ts").PushRejected> | FlowError, WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance | S["DecodingServices"] | Exclude<Exclude<R, never>, Scope.Scope | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>>;
 export declare const step: <A>(name: string, input: Json, output: Schema.Codec<A, Json>, id?: Option.Option<string>) => Effect.Effect<A, FlowError, StepRunner | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>;
 export declare const sleep: (name: string, duration: Duration.Input) => Effect.Effect<void, never, WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance>;
 export declare const signalDeferred: (name: string) => DurableDeferred.DurableDeferred<Schema.Literal<true>, Schema.Never>;
@@ -428,6 +445,7 @@ export * as Lanes from "./lanes.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";
 export * from "./paths.ts";
+export * from "./phase.ts";
 export * as PlanNodes from "./plan-nodes.ts";
 export * from "./roles.ts";
 export * from "./services.ts";
@@ -624,6 +642,18 @@ export declare const globToRegExp: (glob: string) => RegExp;
 export declare const pathsMatching: (paths: ReadonlyArray<string>, globs: ReadonlyArray<string>) => string[];
 ```
 
+## phase.ts
+
+```ts
+import * as Schema from "effect/Schema";
+export declare const Phase: Schema.brand<Schema.String, "Phase">;
+export type Phase = typeof Phase.Type;
+export declare const isPhase: <I>(input: I) => input is I & string & import("effect/Brand").Brand<"Phase">;
+export declare const PhaseWriter: Schema.brand<Schema.String, "PhaseWriter">;
+export type PhaseWriter = typeof PhaseWriter.Type;
+export declare const isPhaseWriter: <I>(input: I) => input is I & string & import("effect/Brand").Brand<"PhaseWriter">;
+```
+
 ## plan-nodes.ts
 
 ```ts
@@ -737,8 +767,9 @@ import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Capabilities from "./capabilities.ts";
-import type { AgentError, GitError, GitHubError, MergeRefused, NotFound, PullRequestClosed, PushRejected, UsageError } from "./errors.ts";
+import type { AgentError, GitError, GitHubError, MergeRefused, NotFound, PhaseMoved, ProgressError, PullRequestClosed, PushRejected, UsageError } from "./errors.ts";
 import type { Json } from "./json.ts";
+import type { Phase, PhaseWriter } from "./phase.ts";
 export declare const Labels: Schema.Struct<{
     readonly eligible: Schema.String;
     readonly inProgress: Schema.String;
@@ -1354,6 +1385,31 @@ export declare class ReviewerSeat extends ReviewerSeat_base {
 export declare const ReviewerSeatCapability: Capabilities.Capability<{
     readonly login: Effect.Effect<string>;
 }, {}>;
+export type PhaseRecord = {
+    readonly phase: Phase;
+    readonly from: Option.Option<Phase>;
+    readonly by: PhaseWriter;
+    readonly version: string;
+};
+export type PhaseTransition = {
+    readonly from: Option.Option<Phase>;
+    readonly to: Phase;
+    readonly by: PhaseWriter;
+};
+declare const Progress_base: Context.ServiceClass<Progress, "@chernabog/sdk/Progress", {
+    read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
+    readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
+    advance(item: string, transition: PhaseTransition): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+}>;
+export declare class Progress extends Progress_base {
+}
+export declare const ProgressCapability: Capabilities.Capability<{
+    read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
+    readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
+    advance(item: string, transition: PhaseTransition): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+}, {
+    advance: (item: string, transition: PhaseTransition) => Effect.Effect<PhaseRecord, PhaseMoved | ProgressError, never>;
+}>;
 export declare const CAPABILITIES: ReadonlyArray<Capabilities.Guarded>;
 declare const Runs_base: Context.ServiceClass<Runs, "@chernabog/sdk/Runs", {
     isActive(runId: string): Effect.Effect<Option.Option<boolean>>;
