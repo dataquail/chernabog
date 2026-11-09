@@ -636,7 +636,7 @@ Errors split by who acts on them (`packages/core/src/errors.ts`).
   (`FlowError`), in `trigger`, `gate`, `item` and `workflow` alike. Anything
   else must be handled first, and the compiler says so.
 - **Work errors** (`NotFound`, `PullRequestClosed`, `MergeRefused`,
-  `PushRejected`, `NothingCommitted`, `CiTimedOut`) are typed on the service
+  `PushRejected`, `NothingCommitted`, `CiTimedOut`, `PhaseMoved`) are typed on the service
   method or block that raises them, survive `activity` (they're journaled), and
   the recipes decide what each means. Add one only for something a flow can
   decide on; a failure it can only report stays `GitHubError` and the like,
@@ -781,6 +781,45 @@ computed for. docs/adr/0018-token-usage-and-compute-time.md has the why.
   records in a finalizer, and an adapter without `usage`, or whose reader
   fails, records the call as not reported. Flows, core and the SDK never see
   any of it.
+
+## Run progress (#360)
+
+An explicit record of the phase each item has reached, so a source stops
+working an item's progress out from labels and review counts.
+docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
+#361's storage test and #362's map of every recipe's handoffs.
+
+- **The port is core's `Progress`** (`packages/core/src/services.ts`):
+  `read(item)`, `readAll` and `advance(item, { from, to, by })`, a
+  compare-and-set that writes `to` only if the phase is still `from` (none:
+  no record yet). A record is `{ phase, from, by, version }`; the version is
+  opaque and changes with every record.
+- **Core knows no phase.** It stores one and compares it for equality: no
+  list, no order, no terminal phase (ADR 5). The SDK's phase names and a
+  team's own are its callers'. Items are opaque names (`Claims.pullRequest(n)`
+  and the like), which only an adapter maps to its storage.
+- **No git in the contract.** No SHA, ref or branch in its types, and no
+  `GitHubError`: a lost race is `PhaseMoved` (a work error), anything else
+  `ProgressError` (reported), so a hosted adapter fits the same calls.
+- **The format is core's** (`packages/core/src/phase.ts`): a `Phase` is
+  lowercase words joined by single hyphens, at most 64 characters; a
+  `PhaseWriter` (a run id, a login, an observer's name) is one line of at most
+  128 characters, no spaces. The port takes only the branded types; make one
+  with `Schema.decodeSync(Phase)`.
+- **A retry finds its own write.** `advance` first checks whether the record
+  the item holds is this very transition by this writer, and returns it
+  without writing; only then does it compare phases. Pass the run's id as
+  `by` from a run, so a resumed run doesn't read its own write as a lost
+  race. The same move by another writer is `PhaseMoved`.
+- **`advance` is fenced and reported** in a run by `ProgressCapability`, in
+  `CAPABILITIES`. Outside a run (a source reconciling a fact a person caused,
+  #362) nothing fences it but the compare-and-set.
+- **Every adapter passes `test/progress-contract.ts`**:
+  `progressContract("<adapter>", makeAdapter)`, where `makeAdapter` is an
+  Effect that makes a fresh one holding no records. `test/progress-fake.ts`
+  is the in-memory adapter tests use, and passes it in `test/progress.test.ts`.
+  Add a behaviour every adapter must have to the suite, not to one adapter's
+  tests.
 
 ## Versions (#123, #163)
 
