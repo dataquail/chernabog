@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.15.0](https://github.com/dataquail/chernabog/compare/v0.14.0...v0.15.0) (2026-11-09)
+
+
+### Features
+
+* **dashboard:** show a run's token usage and compute time ([#443](https://github.com/dataquail/chernabog/issues/443)) ([e4dfaec](https://github.com/dataquail/chernabog/commit/e4dfaecc535541472a0db75e9bcb259f8e4dea4d))
+* **runs:** read a run's token usage and its compute time, the union of its steps ([#442](https://github.com/dataquail/chernabog/issues/442)) ([4a896bb](https://github.com/dataquail/chernabog/commit/4a896bb352f1caf3f23edc2b20451e67e2e12f1d))
+
+
+### Bug Fixes
+
+* **sdk:** claim a task on what its layer below merged into, once that one has ([#440](https://github.com/dataquail/chernabog/issues/440)) ([9bbaf27](https://github.com/dataquail/chernabog/commit/9bbaf278b0731dba96962a1538ad099cc6df3bc2))
+
 ## [0.14.0](https://github.com/dataquail/chernabog/compare/v0.13.0...v0.14.0) (2026-11-08)
 
 
