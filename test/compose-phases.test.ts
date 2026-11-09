@@ -90,12 +90,10 @@ describe("the catalogue's phases", () => {
   test("lists what each block records, and on which outcome", () => {
     expect(blockNamed("review.round")?.records).toEqual([
       { item: "pull-request", phase: "changes-asked", on: "changes" },
+      { item: "pull-request", phase: "approved", on: "approve" },
     ]);
 
-    expect(blockNamed("pr.land")?.records).toEqual([
-      { item: "pull-request", phase: "approved" },
-      { item: "pull-request", phase: "merge-held" },
-    ]);
+    expect(blockNamed("pr.land")?.records).toEqual([{ item: "pull-request", phase: "merge-held" }]);
 
     expect(blockNamed("issue.handOff")?.records).toEqual([
       { item: "pull-request", phase: "review-asked" },
@@ -112,16 +110,27 @@ describe("the catalogue's phases", () => {
 
   test("lists what each source reads and reconciles", () => {
     expect(sourceNamed("review.requested")?.reads).toEqual([
-      { item: "pull-request", phases: ["review-asked", "none"] },
+      { item: "pull-request", phases: ["review-asked", "draft", "ready-for-person", "none"] },
     ]);
 
     expect(sourceNamed("review.changesRequested")).toMatchObject({
-      reads: [{ item: "pull-request", phases: ["changes-asked"] }],
+      reads: [{ item: "pull-request", phases: ["changes-asked", "none"] }],
       reconciles: [
         {
           item: "pull-request",
-          from: ["review-asked", "review-asked-again", "approved"],
+          from: ["review-asked", "review-asked-again", "approved", "draft", "ready-for-person"],
           to: "changes-asked",
+        },
+      ],
+    });
+
+    expect(sourceNamed("review.requestedAgain")).toMatchObject({
+      reads: [{ item: "pull-request", phases: ["review-asked-again", "none"] }],
+      reconciles: [
+        {
+          item: "pull-request",
+          from: ["changes-asked", "approved", "draft", "ready-for-person"],
+          to: "review-asked-again",
         },
       ],
     });
@@ -214,6 +223,14 @@ describe("Compose.phaseGaps", () => {
 
   test("warns when a phase is recorded but no flow has the source that reads it", () => {
     expect(Compose.phaseGaps([implement])).toEqual([
+      {
+        gap: "unread",
+        item: "pull-request",
+        phase: "draft",
+        certain: true,
+        message:
+          "issue.handOff in implement records the pull-request phase draft, but no flow reads it: review.requested reads it",
+      },
       {
         gap: "unread",
         item: "pull-request",

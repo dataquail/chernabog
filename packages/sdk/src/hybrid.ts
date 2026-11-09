@@ -47,6 +47,7 @@ import {
   legacyClaim,
   markClaimed,
   PullRequestRef,
+  recordHandOff,
   sessionIdFor,
 } from "./implement.ts";
 import { renderPromptOr } from "./prompt.ts";
@@ -312,6 +313,7 @@ export const handOff = (issue: number, pullRequest: PullRequestRef, finished: Fi
         `Worked on by a person with ${repo.agent} for #${issue}. ${sessionMarker.write(session)}`,
       );
       yield* dropInProgress(issue);
+      yield* recordHandOff(issue, pullRequest.number, {});
       yield* github.comment(
         issue,
         `Pull request ready for review: ${pullRequest.url}\n\n${finished.summary}`,

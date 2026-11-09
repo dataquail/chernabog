@@ -49,7 +49,6 @@ import {
   StepFailed,
   type WorkItem,
 } from "@chernabog/sdk";
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -190,28 +189,6 @@ const resolve = (
     Resolution,
   );
 
-// When the pull request's latest approval or request for changes is an
-// approval, asks its reviewer to review again.
-const askApproverAgain = (pullRequest: number) =>
-  activity(
-    "ask-approver-again",
-    Effect.gen(function* () {
-      const approval = Option.filter(
-        Arr.last(yield* Review.decisiveReviews(pullRequest)),
-        (review) => review.state === "APPROVED",
-      );
-
-      if (Option.isNone(approval)) {
-        return Option.none<string>();
-      }
-
-      yield* (yield* GitHub).requestReviewers(pullRequest, [approval.value.author]);
-
-      return Option.some(approval.value.author);
-    }),
-    Schema.Option(Schema.String),
-  );
-
 // Resolves the conflict, after recording a squash- or rebase-merged layer
 // below as already here when there is one. That record is a merge the flow
 // makes (Stack.syncBase), and the agent resolves what it leaves in progress.
@@ -319,7 +296,7 @@ const unstick = (conflict: ConflictItem) =>
 
     // An approval was of the code before the merge: its reviewer looks again,
     // and re-review merges an auto:ship pull request it approves.
-    const approver = yield* askApproverAgain(conflict.pullRequest);
+    const approver = yield* Review.askApproverAgain(conflict.pullRequest);
 
     return Option.match(approver, {
       onNone: () =>

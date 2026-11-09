@@ -235,7 +235,8 @@ describe("an issue an open pull request already closes", () => {
         handed.people.requested = [];
         wantedChanged(handed);
         expect(yield* pushersFind(handed)).toEqual([
-          `pr-${PULL}-changes-1`,
+          // The hand-off recorded its phases, which the person's review then moved on.
+          `pr-${PULL}-changes-asked-v3`,
           `pr-${PULL}-${HEAD.slice(0, 7)}`,
         ]);
       }),

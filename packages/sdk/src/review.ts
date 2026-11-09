@@ -18,6 +18,7 @@ import {
   latestMarker,
   Machine,
   NeedsHuman,
+  type PhaseRecord,
   type PullRequest,
   Repo,
   ReviewerSeat,
@@ -34,12 +35,14 @@ import {
   type WorkItem,
   Worktree,
 } from "@chernabog/core";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
 import { ADOPTED_LABEL, sessionIdFor } from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
 import * as Routing from "./routing.ts";
@@ -115,13 +118,23 @@ const sameLogin = (left: string, right: string) => left.toLowerCase() === right.
 // flow that uses it, or any block that reviews, requires ReviewerSeat.
 export const reviewerLogin = ReviewerSeat.use((seat) => seat.login);
 
+// An open pull request that asks this persona for a review: how many reviews
+// it has submitted on it so far, and the pull request's record, none for one
+// with no phase recorded yet.
+export type ReviewRequest = {
+  readonly pull: PullRequest;
+  readonly reviewed: number;
+  readonly record: Option.Option<PhaseRecord>;
+};
+
 // Open pull requests that ask this persona for a review, each with how many
-// reviews it has submitted on it so far. One a run of another flow owns is
-// left out. It requires the persona's seat in the reviewer pool.
+// reviews it has submitted on it so far and its record. One a run of another
+// flow owns is left out. It requires the persona's seat in the reviewer pool.
 export const reviewRequests = Effect.gen(function* () {
   const github = yield* GitHub;
   const me = yield* reviewerLogin;
-  const found: Array<{ readonly pull: PullRequest; readonly reviewed: number }> = [];
+  const all = yield* Phases.records;
+  const found: Array<ReviewRequest> = [];
 
   for (const pull of yield* github.openPullRequests) {
     if (!pull.requestedReviewers.some((login) => sameLogin(login, me))) {
@@ -137,10 +150,169 @@ export const reviewRequests = Effect.gen(function* () {
       reviewed: (yield* github.reviews(pull.number)).filter((review) =>
         sameLogin(review.author, me),
       ).length,
+      record: Phases.recordOf(all, Phases.pullRequestItem(pull.number)),
     });
   }
 
   return found;
+});
+
+// What a review request asks of this persona, by the pull request's phase:
+// its first review (review's), a review again (re-review's), one whose
+// record moves on to review-asked-again first, or a record GitHub disagrees
+// with, which status shows rather than starting either.
+type Asked =
+  | { readonly kind: "first" }
+  | { readonly kind: "again"; readonly record: Option.Option<PhaseRecord> }
+  | { readonly kind: "reconcile"; readonly record: PhaseRecord }
+  | { readonly kind: "disagrees"; readonly reason: string };
+
+const P = Phases.PHASES.pullRequest;
+
+const times = (count: number) => {
+  if (count === 1) {
+    return "once";
+  }
+
+  return `${count} times`;
+};
+
+// Today's inference, for a pull request with no record: see askedOf.
+const legacyAsked = (request: ReviewRequest): Asked => {
+  if (request.reviewed === 0) {
+    return { kind: "first" };
+  }
+
+  return { kind: "again", record: Option.none() };
+};
+
+// A pull request with a record is read by its phase, not by how many times
+// this persona reviewed it. Migration: one with no record, such as one
+// handed off before phases were recorded, or one a person opened, falls back
+// to the review count (legacyAsked). Drop the count a release after phases
+// became the record, keeping "first" for an item with none.
+const askedOf = (request: ReviewRequest, me: string): Asked =>
+  Option.match(request.record, {
+    onNone: () => legacyAsked(request),
+    onSome: (found): Asked => {
+      if (found.phase === P.reviewAsked) {
+        if (request.reviewed === 0) {
+          return { kind: "first" };
+        }
+
+        return {
+          kind: "disagrees",
+          reason: `its record says it waits for its first review, but ${me} has reviewed it ${times(request.reviewed)}`,
+        };
+      }
+
+      if (found.phase === P.reviewAskedAgain) {
+        return { kind: "again", record: Option.some(found) };
+      }
+
+      // A person's turn, then a review asked of this persona: the first, or again.
+      if (Phases.holds(found, [P.draft, P.readyForPerson]) && request.reviewed === 0) {
+        return { kind: "first" };
+      }
+
+      if (Phases.holds(found, [P.changesAsked, P.approved, P.draft, P.readyForPerson])) {
+        return { kind: "reconcile", record: found };
+      }
+
+      return {
+        kind: "disagrees",
+        reason: `its record says ${found.phase}, but GitHub asks ${me} for a review`,
+      };
+    },
+  });
+
+// review.requested's items: open pull requests that ask this persona for its
+// first review, routed by their assignees and reviewers, as `pr-7`. One whose
+// record GitHub disagrees with is held, with why, for status to show.
+export const requestedFirst = Effect.gen(function* () {
+  const me = yield* reviewerLogin;
+  const items: Array<WorkItem> = [];
+
+  for (const request of yield* reviewRequests) {
+    const asked = askedOf(request, me);
+    const item = reviewItem(request.pull, `pr-${request.pull.number}`);
+
+    if (asked.kind === "first") {
+      items.push(yield* routed(request.pull, item));
+    }
+
+    if (asked.kind === "disagrees") {
+      items.push({ ...item, held: `#${request.pull.number}: ${asked.reason}` });
+    }
+  }
+
+  return items;
+});
+
+// Who moves a record from what a source reads on GitHub, outside any run.
+const observer = (source: string) => `observer:${source}`;
+
+// The key a request to review again runs under: the record it reads, or the
+// one reconciling moves it to; the review count for a pull request with no
+// record (askedOf). None for a request that isn't to review again, or whose
+// record another writer moved elsewhere first.
+const againKey = (request: ReviewRequest, asked: Asked) => {
+  const item = Phases.pullRequestItem(request.pull.number);
+
+  if (asked.kind === "again") {
+    return Effect.succeedSome(
+      Option.match(asked.record, {
+        onNone: () => `pr-${request.pull.number}-review-${request.reviewed + 1}`,
+        onSome: (found) => Phases.keyFor(item, found),
+      }),
+    );
+  }
+
+  if (asked.kind !== "reconcile") {
+    return Effect.succeedNone;
+  }
+
+  return Phases.reconcile(
+    item,
+    Option.some(asked.record),
+    P.reviewAskedAgain,
+    observer("review.requestedAgain"),
+  ).pipe(
+    Effect.map((found) =>
+      Option.map(
+        Option.filter(found, (record) => record.phase === P.reviewAskedAgain),
+        (record) => Phases.keyFor(item, record),
+      ),
+    ),
+  );
+};
+
+// review.requestedAgain's items: open pull requests that ask this persona to
+// review again, unless a person has them (auto:needs-human), routed by their
+// assignees and reviewers. Each item's key carries the record it reads,
+// `pr-7-review-asked-again-1a2b3c4`, so each request is a run of its own. A
+// review asked again of a pull request whose record says changes asked or
+// approved, such as a person asking after a fix of their own, moves the record
+// to review-asked-again first. One with no record keys by the review count,
+// `pr-7-review-2`, as before phases.
+export const requestedAgain = Effect.gen(function* () {
+  const labelNames = yield* Settings.labels;
+  const me = yield* reviewerLogin;
+  const items: Array<WorkItem> = [];
+
+  for (const request of yield* reviewRequests) {
+    if (request.pull.labels.includes(labelNames.needsHuman)) {
+      continue;
+    }
+
+    const key = yield* againKey(request, askedOf(request, me));
+
+    for (const found of Option.toArray(key)) {
+      items.push(yield* routed(request.pull, reviewItem(request.pull, found)));
+    }
+  }
+
+  return items;
 });
 
 // Whether this machine acts as the login, among the logins it acts as.
@@ -425,6 +597,15 @@ const headingFor = (verdict: Verdict["verdict"], reviewer: string) => {
   return `Changes requested by ${reviewer}`;
 };
 
+// The phase a review leaves its pull request in.
+const phaseAfter = (verdict: Verdict["verdict"]): Phases.Phase => {
+  if (verdict === "approve") {
+    return Phases.PHASES.pullRequest.approved;
+  }
+
+  return Phases.PHASES.pullRequest.changesAsked;
+};
+
 const eventOf = (verdict: Verdict["verdict"]): ReviewEvent => {
   if (verdict === "approve") {
     return "APPROVE";
@@ -448,6 +629,7 @@ const postReview = (pull: PullRequest, review: ReviewMarker, verdict: Verdict, h
       event,
     });
     yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
+    yield* Phases.record(Phases.pullRequestItem(pull.number), phaseAfter(verdict.verdict));
   });
 
 const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>
@@ -729,6 +911,149 @@ export type AddressItem = typeof AddressItem.Type;
 
 export const addressItemOf = itemData(AddressItem);
 
+// The latest approval or request for changes, when it asks for changes on
+// the pull request's head: nothing was pushed since.
+const changesOnHead = (pull: PullRequest, decisive: ReadonlyArray<SubmittedReview>) =>
+  Option.filter(
+    Arr.last(decisive),
+    (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
+  );
+
+// Today's inference, for a pull request with no record: the latest decisive
+// review asks for changes on the head, keyed by the count of decisive
+// reviews. Migration: drop it a release after phases became the record.
+const legacyChanges = (pull: PullRequest) =>
+  Effect.gen(function* () {
+    const decisive = yield* decisiveReviews(pull.number);
+    const latest = changesOnHead(pull, decisive);
+
+    if (Option.isNone(latest) || (yield* ownedByARun(pull))) {
+      return Option.none<WorkItem>();
+    }
+
+    return Option.some(addressItem(pull, latest.value, decisive.length));
+  });
+
+// The phases a review that asks for changes on the head moves a pull request
+// on from: a person's review, which no run was there to record.
+const CHANGES_FROM = [P.reviewAsked, P.reviewAskedAgain, P.approved, P.draft, P.readyForPerson];
+
+const shortSha = (sha: string) => sha.slice(0, 7);
+
+// Why a pull request whose record says changes asked isn't one to address,
+// by its latest approval or request for changes.
+const changesDisagree = (pull: PullRequest, latest: Option.Option<SubmittedReview>) =>
+  Option.match(
+    Option.filter(latest, (review) => review.state === "CHANGES_REQUESTED"),
+    {
+      onNone: () =>
+        `#${pull.number}: its record says changes asked, but its latest review asks for none`,
+      onSome: (review) =>
+        `#${pull.number}: changes were asked at ${shortSha(review.commitSha)}, but its head has moved to ${shortSha(pull.headSha)} since; ask ${review.author} to review again`,
+    },
+  );
+
+// The record a pull request with changes asked on its head holds: its own
+// when it says so, or else the one reconciling it moves it to.
+const changesAskedRecord = (item: string, found: PhaseRecord) => {
+  if (found.phase === P.changesAsked) {
+    return Effect.succeedSome(found);
+  }
+
+  return Phases.reconcile(
+    item,
+    Option.some(found),
+    P.changesAsked,
+    observer("review.changesRequested"),
+  );
+};
+
+// One pull request with a record, for changesToAddress: an item to address
+// when its record says changes asked and the review it names is on the head;
+// held, with why, when GitHub disagrees; moved to changes-asked first when a
+// review asks for changes on the head of one in a phase before it.
+const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
+  Effect.gen(function* () {
+    const item = Phases.pullRequestItem(pull.number);
+    const asks = found.phase === P.changesAsked;
+
+    if (!asks && !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])) {
+      return Option.none<WorkItem>();
+    }
+
+    const decisive = yield* decisiveReviews(pull.number);
+    const latest = changesOnHead(pull, decisive);
+
+    if ((!asks && Option.isNone(latest)) || (yield* ownedByARun(pull))) {
+      return Option.none<WorkItem>();
+    }
+
+    if (Option.isNone(latest)) {
+      return Option.some<WorkItem>({
+        ...reviewItem(pull, Phases.keyFor(item, found)),
+        held: changesDisagree(pull, Arr.last(decisive)),
+      });
+    }
+
+    if (found.phase === P.mergeHeld) {
+      return Option.some<WorkItem>({
+        ...reviewItem(pull, Phases.keyFor(item, found)),
+        held: `#${pull.number}: its merge is held for a green base, but ${latest.value.author} has asked for changes since`,
+      });
+    }
+
+    const now = Option.filter(
+      yield* changesAskedRecord(item, found),
+      (record) => record.phase === P.changesAsked,
+    );
+
+    return Option.map(now, (record) => ({
+      ...addressItem(pull, latest.value, decisive.length),
+      key: Phases.keyFor(item, record),
+    }));
+  });
+
+// A held item stays here, for status to show why; any other is routed.
+const routedUnlessHeld = (pull: PullRequest, item: WorkItem) => {
+  if (Option.isSome(Option.fromUndefinedOr(item.held))) {
+    return Effect.succeed(item);
+  }
+
+  return routed(pull, item);
+};
+
+// review.changesRequested's items: pull requests this persona wrote whose
+// record says changes asked, by the review that asks them, on the current
+// head, so nothing was pushed since. Each item's key carries the record,
+// `pr-7-changes-asked-1a2b3c4`. A person's review that asks for changes on
+// the head of one whose record is before it moves the record on first. One a
+// person has (auto:needs-human), or a run of another flow owns, is left
+// alone; one whose record GitHub disagrees with is held, with why, for status
+// to show. One with no record is read from its reviews (legacyChanges). Each
+// is routed by its assignees and reviewers.
+export const changesToAddress = Effect.gen(function* () {
+  const labelNames = yield* Settings.labels;
+  const all = yield* Phases.records;
+  const items: Array<WorkItem> = [];
+
+  for (const pull of yield* authoredByMe) {
+    if (pull.labels.includes(labelNames.needsHuman)) {
+      continue;
+    }
+
+    const found = yield* Option.match(Phases.recordOf(all, Phases.pullRequestItem(pull.number)), {
+      onNone: () => legacyChanges(pull),
+      onSome: (record) => changesByRecord(pull, record),
+    });
+
+    for (const item of Option.toArray(found)) {
+      items.push(yield* routedUnlessHeld(pull, item));
+    }
+  }
+
+  return items;
+});
+
 // The author's session, from the marker the implement run left; a fresh one
 // for `purpose` if there is none. Outside an activity, for a block that reads
 // it under a name of its own.
@@ -850,6 +1175,10 @@ export const requestAgain = (pullRequest: number, reviewer: string, said: string
     const github = yield* GitHub;
     yield* github.comment(pullRequest, said);
     yield* github.requestReviewers(pullRequest, [reviewer]);
+    yield* Phases.record(
+      Phases.pullRequestItem(pullRequest),
+      Phases.PHASES.pullRequest.reviewAskedAgain,
+    );
   });
 
 // Asks the reviewer who requested the changes to review again, which starts
@@ -858,4 +1187,29 @@ export const askAgain = (pullRequest: number, round: number, reviewer: string, s
   activity(
     `ask-again-${round}`,
     requestAgain(pullRequest, reviewer, `Addressed review ${round}: ${summary}`),
+  );
+
+// After resolve-conflicts merged the base in: when the pull request's latest
+// approval or request for changes is an approval, asks its reviewer to review
+// again, since they approved the code before the merge, and records
+// review-asked-again. The approver, or none, with no approval to ask again.
+export const askApproverAgain = (pullRequest: number) =>
+  activity(
+    "ask-approver-again",
+    Effect.gen(function* () {
+      const approval = Option.filter(
+        Arr.last(yield* decisiveReviews(pullRequest)),
+        (review) => review.state === "APPROVED",
+      );
+
+      if (Option.isNone(approval)) {
+        return Option.none<string>();
+      }
+
+      yield* (yield* GitHub).requestReviewers(pullRequest, [approval.value.author]);
+      yield* Phases.record(Phases.pullRequestItem(pullRequest), P.reviewAskedAgain);
+
+      return Option.some(approval.value.author);
+    }),
+    Schema.Option(Schema.String),
   );

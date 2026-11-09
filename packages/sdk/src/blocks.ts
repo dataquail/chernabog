@@ -650,7 +650,10 @@ export const catalogue = elsewhere.and("blocks.ts", {
     },
     mustRoute: ["approve", "changes"],
     exhaustive: true,
-    records: [{ item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" }],
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" },
+      { item: "pull-request", phase: PHASES.pullRequest.approved, on: "approve" },
+    ],
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
@@ -707,10 +710,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "fail",
     },
-    records: [
-      { item: "pull-request", phase: PHASES.pullRequest.approved },
-      { item: "pull-request", phase: PHASES.pullRequest.mergeHeld },
-    ],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.mergeHeld }],
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
@@ -802,27 +802,33 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
     }),
   ),
 
-  // Pull requests that ask this persona for a review it hasn't given yet,
-  // routed by their assignees and reviewers.
+  // Pull requests that ask this persona for their first review, by their
+  // record (Review.requestedFirst), routed by their assignees and reviewers.
+  // One whose record GitHub disagrees with is held, for status to show why.
   "review.requested": defineSource(
     "review.requested",
     "pull-request",
     () => ({
-      trigger: Effect.gen(function* () {
-        const found = yield* Review.reviewRequests;
-
-        return yield* Effect.forEach(
-          found.filter(({ reviewed }) => reviewed === 0),
-          ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
-        );
-      }).pipe(reportAs("trigger")),
+      trigger: Review.requestedFirst.pipe(reportAs("trigger")),
       contributes: {
         settings: Routing.Settings.fields,
         doctor: [Review.reviewerCheck],
         ownWork: true,
       },
     }),
-    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }] },
+    {
+      reads: [
+        {
+          item: "pull-request",
+          phases: [
+            PHASES.pullRequest.reviewAsked,
+            PHASES.pullRequest.draft,
+            PHASES.pullRequest.readyForPerson,
+            NO_RECORD,
+          ],
+        },
+      ],
+    },
   ),
 
   // Those waiting on a reviewer no persona on this machine acts as, which

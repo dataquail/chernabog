@@ -222,7 +222,8 @@ describe("re-review", () => {
     () =>
       Effect.gen(function* () {
         const fake = yield* reviewedOnce(["approve"]);
-        expect(yield* keys(fake, reReview)).toEqual([`pr-${PULL}-review-2`]);
+        // The review recorded changes asked; asking again moves the record on, and keys the work.
+        expect(yield* keys(fake, reReview)).toEqual([`pr-${PULL}-review-asked-again-v2`]);
         expect(yield* keys(fake, review)).toEqual([]);
 
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
