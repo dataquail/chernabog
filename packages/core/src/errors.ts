@@ -246,7 +246,31 @@ export class NotInReviewerPool extends Schema.TaggedError<
   }
 }
 
-export const SetupError = Schema.Union([PersonaUnavailable, NotAuthenticated, NotInReviewerPool]);
+// The Progress port's storage refuses the persona's writes, as a repo set up
+// to protect its records does for a login it doesn't let write them. Named
+// for no backend: the adapter says why and what to fix. Raised when a flow
+// first writes, so a persona whose flows never record progress is unaffected.
+export class ProgressUnwritable extends Schema.TaggedError<
+  ProgressUnwritable,
+  { readonly brand: "ProgressUnwritable" }
+>()("ProgressUnwritable", {
+  login: Schema.optionalKey(Schema.String),
+  reason: Schema.String,
+  fix: Schema.String,
+}) {
+  override get message() {
+    const who = Option.getOrElse(Option.fromUndefinedOr(this.login), () => "the implicit account");
+
+    return `${who} can't record progress: ${this.reason}. Fix: ${this.fix}`;
+  }
+}
+
+export const SetupError = Schema.Union([
+  PersonaUnavailable,
+  NotAuthenticated,
+  NotInReviewerPool,
+  ProgressUnwritable,
+]);
 
 export type SetupError = typeof SetupError.Type;
 

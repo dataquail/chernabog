@@ -1,4 +1,5 @@
-// `chernabog doctor`: checks logins, gh scopes, labels, trust and the daemon,
+// `chernabog doctor`: checks logins, gh scopes, labels, trust, the rulesets
+// that protect progress records, and the daemon,
 // and says how to fix what is wrong.
 
 import { type Account, type ResolvedLauncher } from "@chernabog/core";
@@ -6,6 +7,7 @@ import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Record from "effect/Record";
@@ -20,13 +22,17 @@ import { RecipesCommands } from "../../modules/recipes/recipes.platform.ts";
 import {
   checkAccount,
   checkCodexAccount,
+  checkThreadsSetup,
   declaredLabels,
   describeLauncher,
   flowWarnings,
   Label,
   launcherFor,
   loggedInEmail,
+  personalRepo,
   planLabelSync,
+  setupFix,
+  type ThreadsSetup,
 } from "../../modules/runs/runs.platform.ts";
 import { TrustQueries } from "../../modules/trust/trust.platform.ts";
 import { type Backup, listBackups } from "../../platform/backups.ts";
@@ -48,7 +54,12 @@ import {
   flowSources,
   loadFlows,
 } from "../../platform/flow-loader.ts";
-import { canMerge, githubGetAllPages, viewerLoginAs } from "../../platform/github-api.ts";
+import {
+  canMerge,
+  GitHubApi,
+  githubGetAllPages,
+  viewerLoginAs,
+} from "../../platform/github-api.ts";
 import { Home } from "../../platform/home.ts";
 import {
   type EffectiveRepo,
@@ -430,6 +441,80 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // What one persona found of the threads. Whether the repo has the rulesets
+  // is the same for every persona, so it is said once.
+  const reportThreads = (name: string, who: string, found: ThreadsSetup, fix: string) => {
+    const once = (label: string, fixed: string) => {
+      if (!checks.some((said) => said.label === label)) {
+        warn(label, fixed);
+      }
+    };
+
+    if (found.status === "unavailable") {
+      once(
+        `${name}: progress records on chernabog/threads/* can't be protected: ${found.reason}; they are written unprotected`,
+        "a private repo needs GitHub Team (an organization's) or Pro (a person's) for rulesets, or make it public",
+      );
+
+      return;
+    }
+
+    if (found.status === "unprotected") {
+      once(
+        `${name}: progress records on chernabog/threads/* are unprotected (no ruleset holds ${found.missing.join(", ")})`,
+        fix,
+      );
+
+      return;
+    }
+
+    if (Option.isNone(found.writes)) {
+      warn(`${name}${who}: GitHub won't say whether it may write progress records`, fix);
+
+      return;
+    }
+
+    check(
+      found.writes.value,
+      `${name}${who}: rulesets protect progress records on chernabog/threads/*, and it may write them`,
+      fix,
+    );
+  };
+
+  // Whether rulesets protect the threads that record each item's progress
+  // (chernabog/threads/*), and whether each persona may still write there. The
+  // record is the binary's, so the binary checks it, whatever the flows do.
+  // Missing rulesets are a warning: writes still work, unprotected. A persona
+  // the rulesets refuse fails, since its progress writes would.
+  const checkThreads = (repo: EffectiveRepo, name: string, slug: string) =>
+    Effect.gen(function* () {
+      for (const { persona } of repo.personas) {
+        const asPersona = <A, E>(effect: Effect.Effect<A, E, GitHubApi>) =>
+          Effect.scoped(
+            Effect.flatMap(Layer.build(GitHubApi.layerFor(persona)), (api) =>
+              Effect.provideContext(effect, api),
+            ),
+          );
+
+        const found = yield* Effect.result(asPersona(checkThreadsSetup(slug)));
+        const who = asSuffix(persona);
+
+        if (Result.isFailure(found)) {
+          warn(
+            `${name}${who}: progress records' rulesets couldn't be read (${found.failure.message})`,
+            "chernabog doctor again once GitHub answers",
+          );
+          continue;
+        }
+
+        const personal = yield* asPersona(personalRepo(slug)).pipe(
+          Effect.orElseSucceed(() => false),
+        );
+
+        reportThreads(name, who, found.success, setupFix(slug, personal));
+      }
+    });
+
   // What the repo's flows check of this machine, each warning with its fix.
   // A warning passes, since another person's machine may serve what this one
   // doesn't. The implicit persona is whoever gh says. A repo whose flows
@@ -504,6 +589,7 @@ export const doctor = Effect.gen(function* () {
       yield* checkReviewers(repo, name, loaded.success.settings.reviewers ?? []);
       yield* checkFlowDiagnostics(loaded.success, name, loaded.success.settings.configDir);
       yield* checkFlowDocuments(name, loaded.success.settings.configDir);
+      yield* checkThreads(loaded.success, name, repo.repo);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
@@ -776,4 +862,4 @@ export const doctorCommand = Command.make("doctor", { json: jsonFlag }, ({ json 
       process.exitCode = 1;
     }
   }),
-).pipe(Command.withDescription("Check logins, gh scopes, labels, trust and the daemon"));
+).pipe(Command.withDescription("Check logins, gh scopes, labels, trust, rulesets and the daemon"));

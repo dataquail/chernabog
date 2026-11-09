@@ -39,6 +39,7 @@ import {
   type Agent,
   type Git,
   type GitHub,
+  type Progress,
   type Repo,
   type ReviewerSeat,
   type Run,
@@ -73,6 +74,7 @@ export type TriggerServices =
   | Usage
   | Agent
   | ReviewerSeat
+  | Progress
   | RunLog
   | FileSystem.FileSystem
   | ChildProcessSpawner.ChildProcessSpawner;
