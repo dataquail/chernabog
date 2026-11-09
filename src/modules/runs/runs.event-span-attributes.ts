@@ -80,6 +80,7 @@ export const runsQuerySpanAttributes = {
   ListRunWaitsQuery: ofRun,
   ReadRunHistoryQuery: ofRun,
   ReadRunMadeQuery: ofRun,
+  ReadRunUsageQuery: ofRun,
 } as const;
 
 export const runFlowsQuerySpanAttributes = { CheckRunValidityQuery: ofRun } as const;
