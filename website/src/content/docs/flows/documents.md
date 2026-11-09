@@ -461,7 +461,7 @@ steps:
 
 A phase is lower-case words joined by hyphens. One that's a slip away from one of the SDK's is refused with the nearest, as `wached is a pull-request phase so close to one of the SDK's that it reads as a slip: did you mean watched?`. Your own phases need names of their own.
 
-Phases aren't stored yet. The blocks record nothing when they run, and the sources still decide by what GitHub says. What's in place is the declarations, and the check below that goes by them.
+The review loop's blocks record their phases as they run (the issue's and pull request's phases of `implement`, `review`, `re-review`, `address-review` and `resolve-conflicts`, and `progress.advance`'s), and its sources (`review.requested`, `review.requestedAgain`, `review.changesRequested`) find their work by them, so a stray label or review count doesn't move it. A source that finds the record and GitHub disagreeing holds the item, and `chernabog status` says why. [Run progress](/chernabog/operate/progress/#the-review-loops-phases) has where each phase is recorded and read, and what happens to a pull request from before phases. The other recipes' blocks (`post-merge`'s, `plan`'s and `epic`'s) don't record theirs yet, and their sources still decide by what GitHub says: what they declare is what the check below goes by.
 
 ### The check across flows
 

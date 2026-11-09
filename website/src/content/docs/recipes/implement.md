@@ -23,6 +23,6 @@ Each line is one SDK block, in the order the recipe calls them.
 4. `localGate` — runs each `localGate` command; on failure sends the agent back, up to `localGateRounds`.
 5. `push` — a change touching `humanOnlyPaths` stops here, at `auto:needs-human`, and so does a branch with no commits; when the agent left its changes staged or unstaged instead, the reason names the files.
 6. `openPullRequest`, then `waitForCi` — an `auto:ship` issue's pull request is labelled `auto:ship`. Waits up to `ciTimeout`, fixing red up to `ciRounds`.
-7. `handOff` — asks one reviewer from the pool for a review.
+7. `handOff` — records the pull request's [phase](/chernabog/operate/progress/) as `review-asked` (`draft` for a draft) and the issue's as `handed-off`, then asks one reviewer from the pool for a review.
 
 However the run ends, `Claims.releasing` lets the claim go; the branch and any pull request stay. Anything that stops it once the issue is claimed hands the issue, and its pull request if one is open, to a person with `auto:needs-human`.
