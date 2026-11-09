@@ -16,6 +16,7 @@ import implement from "../packages/recipes/flows/implement.ts";
 import reReview from "../packages/recipes/flows/re-review.ts";
 import review from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
+import { documentOf, loadFlow, REVIEW_DOCUMENT } from "./compose-harness.ts";
 import {
   IMPLEMENT_WORK_ITEM,
   observe,
@@ -335,4 +336,46 @@ describe("a closed or merged pull request ends its record", () => {
       }),
     );
   }
+});
+
+describe("a document's progress.advance", () => {
+  // The review document, with a team's own phase recorded after changes are asked.
+  const CHANGES_END = `      changes:
+        steps:
+          - end: done`;
+
+  const triaging = () => {
+    expect(REVIEW_DOCUMENT).toContain(CHANGES_END);
+
+    return loadFlow(
+      documentOf(
+        REVIEW_DOCUMENT.replace(
+          CHANGES_END,
+          `      changes:
+        steps:
+          - id: triaged
+            use: progress.advance
+            with: { phase: triaged }
+          - end: done`,
+        ),
+      ),
+    );
+  };
+
+  effect("records the team's phase on the run's pull request, after the review's own", () =>
+    Effect.gen(function* () {
+      const flow = yield* triaging();
+
+      const observed = yield* observe(
+        flow,
+        "review",
+        () => reviewAsked("request-changes"),
+        REVIEW_WORK_ITEM,
+      );
+
+      expect(observed.status).toBe("done");
+      expect(observed.steps).toContain("progress-triaged");
+      expect(observed.phases).toEqual({ [ITEM]: "triaged" });
+    }),
+  );
 });

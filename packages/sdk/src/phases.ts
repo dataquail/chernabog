@@ -8,14 +8,20 @@
 // A team's own phases are strings it chooses, recorded with progress.advance.
 
 import {
+  activity,
   Claims,
+  CurrentNode,
+  type NodeAt,
   Phase as CorePhase,
   type PhaseRecord,
   PhaseWriter,
   Progress,
   ProgressError,
   Run,
+  type WorkItem,
 } from "@chernabog/core";
+import * as Arr from "effect/Array";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -127,7 +133,7 @@ const RECORD_TRIES = 3;
 // handoff happens whatever the item held before it, so a lost race reads
 // again and moves on from what it finds. Call it inside the activity that
 // makes the handoff, so a replay of a finished one doesn't write again.
-export const record = (item: string, to: Phase) =>
+export const record = (item: string, to: string) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
     const run = yield* Run;
@@ -195,3 +201,64 @@ export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: P
 // A new record is new work, as a new head is to pr.conflicting.
 export const keyFor = (item: string, found: PhaseRecord) =>
   `${item}-${found.phase}-${found.version.slice(0, 7)}`;
+
+const PullRequestWork = Schema.Struct({ pullRequest: Schema.Finite });
+const IssueWork = Schema.Struct({ issue: Schema.Finite });
+
+// The item a run on `subject` works on, from its work item: the pull request
+// its data names, or the issue, or the epic, whose claim is `epic-N` though
+// its work item is the issue's. None for one that names neither.
+export const itemOfWork = (subject: string, work: WorkItem): Option.Option<string> =>
+  Option.flatMap(
+    Option.map(
+      Arr.findFirst(Object.entries(SUBJECT_ITEMS), ([name]) => name === subject),
+      ([, kind]): ItemKind => kind,
+    ),
+    (kind) => {
+      if (kind === "pull-request") {
+        return Option.map(Schema.decodeUnknownOption(PullRequestWork)(work.data), (found) =>
+          pullRequestItem(found.pullRequest),
+        );
+      }
+
+      return Option.map(Schema.decodeUnknownOption(IssueWork)(work.data), (found) => {
+        if (kind === "epic") {
+          return Claims.epic(found.issue);
+        }
+
+        return issueItem(found.issue);
+      });
+    },
+  );
+
+// The item a document's run records a team's own phase on (progress.advance):
+// its work item's, as its subject sees it, which Blocks.assemble provides.
+// None outside a document's run.
+export const RecordedOn = Context.Reference<Option.Option<string>>("@chernabog/sdk/RecordedOn", {
+  defaultValue: () => Option.none(),
+});
+
+// The step a progress.advance records in: named by its node in the plan,
+// with its round and lane, so each step records once and a replay finds it
+// recorded, rather than moving the item back.
+const advanceStep = (phase: string, node: Option.Option<NodeAt>) =>
+  Option.match(node, {
+    onNone: () => `progress-${phase}`,
+    onSome: (at) =>
+      [
+        `progress-${at.id}`,
+        ...Option.toArray(Option.map(at.round, (round) => `${round}`)),
+        ...Option.toArray(at.lane),
+      ].join("-"),
+  });
+
+// Records `phase` on the item the document's run works on (RecordedOn), as
+// the run, in a step of its own; nothing outside a document's run.
+export const advanceRun = (phase: string) =>
+  Effect.gen(function* () {
+    const step = advanceStep(phase, yield* CurrentNode);
+
+    for (const item of Option.toArray(yield* RecordedOn)) {
+      yield* activity(step, record(item, phase));
+    }
+  });

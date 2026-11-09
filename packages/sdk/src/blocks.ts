@@ -67,6 +67,7 @@ import {
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import { planBlocks, planLoopStates, planSources, specSubject } from "./plan-blocks.ts";
 import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
@@ -722,14 +723,12 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   // A team's own phase, recorded on the run's item where a document's own
   // stage stands in for the block that would record one, or a phase no block
-  // has. Phases aren't stored yet (#363 and #364 add the record), so it
-  // records nothing when it runs: what it declares is what the check across
-  // the repo's flows reads.
+  // has. What it declares is what the check across the repo's flows reads.
   "progress.advance": defineBlock({
     name: "progress.advance",
     fixed: ["phase"],
     about:
-      "Records that the run's item has reached phase (declared for the check across flows; not stored yet, so nothing reads it at run time): an issue's on an issue or spec, a pull request's on a flow about one, an epic's on an epic. Use it for a team's own phase, or where a stage of the repo's own does what a block that records a phase would, so the flow that reads that phase still finds the item. chernabog recipes compile warns when a phase is read that no flow records.",
+      "Records that the run's item has reached phase: an issue's on an issue or spec, a pull request's on a flow about one, an epic's on an epic. Use it for a team's own phase, or where a stage of the repo's own does what a block that records a phase would, so the flow that reads that phase still finds the item. chernabog recipes compile warns when a phase is read that no flow records.",
     inputKinds: {
       phase:
         "a phase's name, lower-case words joined by hyphens: one of the SDK's, which the listing's records and reads name, or the team's own",
@@ -737,8 +736,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
     outputKinds: "nothing",
     outcomeKinds: {},
     inputs: { phase: "required" },
-    run: (_input: { readonly phase: string }) => Effect.void,
-    failures: {},
+    run: (input: { readonly phase: string }) => Phases.advanceRun(input.phase),
+    failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},
     mustRoute: [],
     stepNames: [],
@@ -1082,7 +1081,11 @@ export const assemble = (flow: {
       onNone: () => ({}),
       onSome: (stillValid) => ({ stillValid }),
     }),
-    workflow: flow.workflow,
+    // A team's own phase is recorded on the run's item, as the subject sees it.
+    workflow: (item: WorkItem) =>
+      flow
+        .workflow(item)
+        .pipe(Effect.provideService(Phases.RecordedOn, Phases.itemOfWork(flow.subject, item))),
     ...Option.match(
       Option.liftPredicate(Implement.gate, () => flow.gate === "usage"),
       {
