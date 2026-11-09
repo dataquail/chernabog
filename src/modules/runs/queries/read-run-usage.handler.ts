@@ -48,26 +48,30 @@ const countsOf = (rows: ReadonlyArray<TokenUsageRow>) => {
 const groupedBy = <K>(rows: ReadonlyArray<TokenUsageRow>, key: (row: TokenUsageRow) => K) =>
   Arr.dedupe(rows.map(key)).map((each) => [each, rows.filter((row) => key(row) === each)] as const);
 
+// What the reported rows spent on each model; an unreported row names none.
+const byModelOf = (rows: ReadonlyArray<TokenUsageRow>) =>
+  groupedBy(
+    rows.filter((row) => row.reported !== 0),
+    (row) => row.model,
+  ).flatMap(([model, some]) =>
+    Option.toArray(
+      Option.map(Option.fromNullOr(model), (named) =>
+        ModelTokens.make({ model: named, tokens: countsOf(some) }),
+      ),
+    ),
+  );
+
 const tokensOf = (rows: Arr.NonEmptyReadonlyArray<TokenUsageRow>) => {
   const unreported = (some: ReadonlyArray<TokenUsageRow>) => some.some((row) => row.reported === 0);
 
   return RunTokens.make({
     tokens: countsOf(rows),
-    byModel: groupedBy(
-      rows.filter((row) => row.reported !== 0),
-      (row) => row.model,
-    ).flatMap(([model, some]) =>
-      Option.toArray(
-        Option.map(Option.fromNullOr(model), (named) =>
-          ModelTokens.make({ model: named, tokens: countsOf(some) }),
-        ),
-      ),
-    ),
+    byModel: byModelOf(rows),
     byStep: groupedBy(rows, (row) => row.step).map(([step, some]) =>
       StepTokens.make({
         step: Option.fromNullOr(step),
         tokens: countsOf(some),
-        byModel: [],
+        byModel: byModelOf(some),
         unreported: unreported(some),
       }),
     ),

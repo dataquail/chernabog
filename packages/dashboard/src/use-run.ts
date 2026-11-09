@@ -1,6 +1,7 @@
 // The hooks a run's page follows the daemon through: the run, loaded again
 // when the daemon says it entered a step, parked or finished (or when its
-// event stream connects again, having maybe missed one), and its log.
+// event stream connects again, having maybe missed one), its log, and what it
+// spent, loaded again when an agent call of it ends or a step starts or ends.
 
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -24,6 +25,7 @@ import {
   type LogState,
   runLogFeed,
 } from "./run-log.ts";
+import { loadUsage, refetchesUsageFor, type UsageState } from "./run-usage.ts";
 
 // How long the page waits to connect again to a stream that dropped.
 const RECONNECT_AFTER = Duration.seconds(2);
@@ -61,6 +63,36 @@ export const followRun = (
 
     const listen = daemonFeed(origin).pipe(
       Stream.filter((heard) => heard.kind === "snapshot" || refetchesFor(heard, runId)),
+      Stream.debounce(REFETCH_AT_MOST_EVERY),
+      Stream.runForEach(() => reload),
+      Effect.ignore,
+    );
+
+    return yield* Effect.forever(Effect.andThen(listen, Effect.sleep(RECONNECT_AFTER)));
+  });
+
+// Loads what the run spent, then again for each event that changes it,
+// telling `onUsage` each time. A load that fails after one that didn't keeps
+// what the page shows.
+export const followRunUsage = (
+  origin: string,
+  runId: string,
+  onUsage: (usage: UsageState) => void,
+): Effect.Effect<void, never, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const tell = (usage: UsageState) =>
+      Effect.sync(() => {
+        onUsage(usage);
+      });
+
+    yield* Effect.flatMap(loadUsage(origin, runId), tell);
+
+    const reload = Effect.flatMap(loadUsage(origin, runId), (usage) =>
+      Effect.when(tell(usage), Effect.succeed(usage.kind === "loaded")),
+    );
+
+    const listen = daemonFeed(origin).pipe(
+      Stream.filter((heard) => heard.kind === "snapshot" || refetchesUsageFor(heard, runId)),
       Stream.debounce(REFETCH_AT_MOST_EVERY),
       Stream.runForEach(() => reload),
       Effect.ignore,
@@ -121,6 +153,20 @@ export const useRunDetail = (origin: string, asked: string): Detail => {
   }, [origin, asked]);
 
   return detail;
+};
+
+// What the run spent, by its whole id, as the daemon that served the page
+// answers.
+export const useRunUsage = (origin: string, runId: string): UsageState => {
+  const [usage, setUsage] = useState<UsageState>({ kind: "loading" });
+
+  useEffect(() => {
+    setUsage({ kind: "loading" });
+
+    return runUntilGone(followRunUsage(origin, runId, setUsage));
+  }, [origin, runId]);
+
+  return usage;
 };
 
 // The run's log, or the one step's of it the daemon keeps, as the page holds it.

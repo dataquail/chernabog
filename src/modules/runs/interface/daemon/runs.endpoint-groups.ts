@@ -11,6 +11,7 @@ import { findRunEndpoint } from "./find-run.endpoint.ts";
 import { followRunLogEndpoint } from "./follow-run-log.endpoint.ts";
 import { readFlowPlanEndpoint } from "./read-flow-plan.endpoint.ts";
 import { readRunHistoryEndpoint } from "./read-run-history.endpoint.ts";
+import { readRunUsageEndpoint } from "./read-run-usage.endpoint.ts";
 
 // What the server makes of a route's handler: its failures answered as refusals,
 // leaving only what answering one can fail with.
@@ -23,5 +24,6 @@ export const runsRoutes = <X>(answer: Answer<X>) =>
     HttpRouter.add("GET", "/runs/:id", answer(findRunEndpoint)),
     HttpRouter.add("GET", "/runs/:id/history", answer(readRunHistoryEndpoint)),
     HttpRouter.add("GET", "/runs/:id/log", answer(followRunLogEndpoint)),
+    HttpRouter.add("GET", "/runs/:id/usage", answer(readRunUsageEndpoint)),
     HttpRouter.add("GET", "/plans/:hash", answer(readFlowPlanEndpoint)),
   );
