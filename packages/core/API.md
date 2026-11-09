@@ -268,9 +268,19 @@ declare const NotInReviewerPool_base: Schema.Class<NotInReviewerPool, Schema.Tag
 export declare class NotInReviewerPool extends NotInReviewerPool_base {
     get message(): string;
 }
-export declare const SetupError: Schema.Union<readonly [typeof PersonaUnavailable, typeof NotAuthenticated, typeof NotInReviewerPool]>;
+declare const ProgressUnwritable_base: Schema.Class<ProgressUnwritable, Schema.TaggedStruct<"ProgressUnwritable", {
+    readonly login: Schema.optionalKey<Schema.String>;
+    readonly reason: Schema.String;
+    readonly fix: Schema.String;
+}>, import("effect/Cause").YieldableError & {
+    readonly brand: "ProgressUnwritable";
+}>;
+export declare class ProgressUnwritable extends ProgressUnwritable_base {
+    get message(): string;
+}
+export declare const SetupError: Schema.Union<readonly [typeof PersonaUnavailable, typeof NotAuthenticated, typeof NotInReviewerPool, typeof ProgressUnwritable]>;
 export type SetupError = typeof SetupError.Type;
-export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticated | NotInReviewerPool | PersonaUnavailable);
+export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticated | NotInReviewerPool | PersonaUnavailable | ProgressUnwritable);
 export {};
 ```
 
