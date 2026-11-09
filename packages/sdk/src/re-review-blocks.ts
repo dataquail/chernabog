@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { Approved, defineBlock, defineSource, type PullRequestNumber } from "./block.ts";
-import { PHASES } from "./phases.ts";
+import { NO_RECORD, PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -162,7 +162,10 @@ export const reReviewBlocks = {
     },
     mustRoute: ["approve", "changes"],
     exhaustive: true,
-    records: [{ item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" }],
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" },
+      { item: "pull-request", phase: PHASES.pullRequest.approved, on: "approve" },
+    ],
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
@@ -212,28 +215,17 @@ export const reReviewBlocks = {
 };
 
 export const reReviewSources = {
-  // Pull requests that ask this persona again after it reviewed them, one item
-  // per request, unless a person has them (auto:needs-human): asking again
-  // during a dispute doesn't restart the loop. Each item's key carries the
-  // review it asks for, `pr-7-review-2`, so each request is a run of its own.
+  // Pull requests whose record says a review is asked again of this persona,
+  // one item per request, unless a person has them (auto:needs-human): asking
+  // again during a dispute doesn't restart the loop. Each item's key carries
+  // the record it reads, so each request is a run of its own. A request that
+  // finds the record at changes asked or approved, such as a person asking
+  // after a fix of their own, moves it on first (Review.requestedAgain).
   "review.requestedAgain": defineSource(
     "review.requestedAgain",
     "pull-request",
     () => ({
-      trigger: Effect.gen(function* () {
-        const labelNames = yield* Settings.labels;
-
-        return yield* Effect.forEach(
-          (yield* Review.reviewRequests).filter(
-            ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
-          ),
-          ({ pull, reviewed }) =>
-            Review.routed(
-              pull,
-              Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`),
-            ),
-        );
-      }).pipe(reportAs("trigger")),
+      trigger: Review.requestedAgain.pipe(reportAs("trigger")),
       contributes: {
         settings: Routing.Settings.fields,
         doctor: [Review.reviewerCheck],
@@ -241,11 +233,17 @@ export const reReviewSources = {
       },
     }),
     {
-      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAskedAgain] }],
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAskedAgain, NO_RECORD] }],
       reconciles: [
         {
           item: "pull-request",
-          from: [PHASES.pullRequest.changesAsked, PHASES.pullRequest.approved],
+          from: [
+            PHASES.pullRequest.reviewAsked,
+            PHASES.pullRequest.changesAsked,
+            PHASES.pullRequest.approved,
+            PHASES.pullRequest.draft,
+            PHASES.pullRequest.readyForPerson,
+          ],
           to: PHASES.pullRequest.reviewAskedAgain,
         },
       ],

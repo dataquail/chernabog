@@ -25,6 +25,8 @@ import {
   type LinkedIssue,
   MergeRefused,
   type MergeRequest,
+  Phase,
+  PhaseWriter,
   printJson,
   Progress,
   type PullRequest,
@@ -89,7 +91,7 @@ import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/fl
 import { RunsModule } from "../src/modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
-import { progressFake } from "./progress-fake.ts";
+import { progressStore } from "./progress-fake.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -250,6 +252,23 @@ export const makeFake = (
   };
 
   const submitted: Array<SubmittedReview> = [];
+  // Each item's phase, as the binary's adapter would keep it: one store for
+  // every trigger and run on this fake.
+  const progress = progressStore();
+
+  // The phase each item holds now, by item.
+  const phases = progress.phases;
+
+  // Records `to` on `item`, as a run before this test's would have: from
+  // whatever it holds now.
+  const recordPhase = (name: string, to: string) => {
+    progress.seed(
+      name,
+      Schema.decodeSync(Phase)(to),
+      Schema.decodeSync(PhaseWriter)("an-earlier-run"),
+    );
+  };
+
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
   // The activity each agent call came from, as the Agent service sees it.
@@ -795,7 +814,7 @@ export const makeFake = (
         }),
       pullRequestsLabelled: (label) =>
         Effect.sync(() => [pull()].filter((open) => open.labels.includes(label))),
-      openPullRequests: Effect.sync(() => [pull()]),
+      openPullRequests: Effect.sync(() => [pull()].filter((open) => open.state === "open")),
       login: Effect.sync(() => people.me),
       reviews: () => Effect.sync(() => [...submitted]),
       requestReviewers: (_, logins) =>
@@ -1093,7 +1112,7 @@ export const makeFake = (
       }),
     ),
     Layer.succeed(ReviewerSeat, ReviewerSeat.of({ login: Effect.sync(() => people.me) })),
-    Layer.effect(Progress, progressFake),
+    Layer.succeed(Progress, progress.service),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 
@@ -1123,6 +1142,8 @@ export const makeFake = (
     comment,
     people,
     submitted,
+    phases,
+    recordPhase,
     graph,
     branchPulls,
     closed,

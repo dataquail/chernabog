@@ -189,8 +189,21 @@ const GraphqlBody = Schema.Struct({
     search: Schema.optionalKey(Schema.String),
     id: Schema.optionalKey(Schema.String),
     number: Schema.optionalKey(Schema.Finite),
+    // The Progress adapter's reads of one thread and of every one, and its advance.
+    ref: Schema.optionalKey(Schema.String),
+    prefix: Schema.optionalKey(Schema.String),
+    input: Schema.optionalKey(Schema.Json),
   }),
 });
+
+const AdvanceInput = Schema.Struct({
+  branch: Schema.Struct({ branchName: Schema.String }),
+  expectedHeadOid: Schema.String,
+  message: Schema.Struct({ headline: Schema.String, body: Schema.optionalKey(Schema.String) }),
+});
+
+// GitHub's JSON null, for a field it leaves empty.
+const NULL = Schema.encodeSync(Schema.OptionFromNullOr(Schema.Json))(Option.none());
 
 const NewIssueBody = Schema.Struct({
   title: Schema.String,
@@ -463,8 +476,138 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json({ data: { search: { nodes } } });
   });
 
+  // A commit of `tree` on `parents`, as GitHub makes one through the API: its sha.
+  const commitTree = (body: {
+    readonly message: string;
+    readonly tree: string;
+    readonly parents: ReadonlyArray<string>;
+  }) => {
+    // The empty tree, which GitHub has in every repo.
+    execFileSync("git", ["--git-dir", options.bare, "hash-object", "-t", "tree", "-w", "--stdin"], {
+      input: "",
+    });
+
+    const sha = execFileSync(
+      "git",
+      [
+        "--git-dir",
+        options.bare,
+        "commit-tree",
+        body.tree,
+        ...body.parents.flatMap((parent) => ["-p", parent]),
+        "-m",
+        body.message,
+      ],
+      {
+        encoding: "utf8",
+        input: "",
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "GitHub",
+          GIT_AUTHOR_EMAIL: "noreply@github.com",
+          GIT_COMMITTER_NAME: "GitHub",
+          GIT_COMMITTER_EMAIL: "noreply@github.com",
+        },
+      },
+    ).trim();
+
+    return sha;
+  };
+
+  // A thread's tip as the Progress adapter reads it: its commit and message.
+  const threadTarget = (oid: string) => ({
+    oid,
+    message: git("log", "-1", "--format=%B", oid),
+  });
+
+  // The Progress adapter's GraphQL (#364): a thread's ref, every thread under
+  // a prefix, and createCommitOnBranch's compare-and-set, which answers a
+  // lost race with HTTP 200 and errors, as GitHub does. None for any other query.
+  const threads = (body: typeof GraphqlBody.Type) => {
+    const query = body.query ?? "";
+
+    if (query.includes("createCommitOnBranch")) {
+      const input = Schema.decodeUnknownSync(AdvanceInput)(body.variables.input);
+      const ref = `refs/heads/${input.branch.branchName}`;
+
+      if (!Option.contains(shaOf(ref), input.expectedHeadOid)) {
+        return Option.some(
+          json({
+            data: { createCommitOnBranch: NULL },
+            errors: [
+              {
+                type: "STALE_DATA",
+                message: `Expected branch to point to "${input.expectedHeadOid}" but it did not.  Pull and try again.`,
+              },
+            ],
+          }),
+        );
+      }
+
+      const oid = commitTree({
+        message: `${input.message.headline}\n\n${input.message.body ?? ""}`,
+        tree: git("rev-parse", `${input.expectedHeadOid}^{tree}`),
+        parents: [input.expectedHeadOid],
+      });
+
+      git("update-ref", ref, oid);
+
+      return Option.some(json({ data: { createCommitOnBranch: { commit: { oid } } } }));
+    }
+
+    if (query.includes("refs(refPrefix")) {
+      const prefix = body.variables.prefix ?? "";
+
+      const nodes = git(
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        prefix.replace(/\/$/, ""),
+      )
+        .split("\n")
+        .filter((line) => line.startsWith(prefix))
+        .map((line) => {
+          const [name = "", oid = ""] = line.split(" ");
+
+          return { name: name.slice(prefix.length), target: threadTarget(oid) };
+        });
+
+      return Option.some(
+        json({
+          data: {
+            repository: { refs: { nodes, pageInfo: { hasNextPage: false, endCursor: NULL } } },
+          },
+        }),
+      );
+    }
+
+    if (query.includes("ref(qualifiedName")) {
+      const tip = shaOf(body.variables.ref ?? "");
+
+      return Option.some(
+        json({
+          data: {
+            repository: {
+              ref: Option.getOrElse(
+                Option.map(tip, (oid): Json => ({ target: threadTarget(oid) })),
+                () => NULL,
+              ),
+            },
+          },
+        }),
+      );
+    }
+
+    return Option.none();
+  };
+
   // GraphQL's search, and deleteIssue, which only an admin of the repo may run.
   const graphql = withBody(GraphqlBody, (body, args) => {
+    const thread = threads(body);
+
+    if (Option.isSome(thread)) {
+      return thread.value;
+    }
+
     if (body.query?.includes("deleteIssue") === true) {
       if (!admins.has(args.login)) {
         return json({ errors: [{ message: `${args.login} must be an admin to delete an issue` }] });
@@ -564,44 +707,6 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
     return json({ ref: body.ref, object: { sha: body.sha } }, 201);
   });
-
-  // A commit of `tree` on `parents`, as GitHub makes one through the API: its sha.
-  const commitTree = (body: {
-    readonly message: string;
-    readonly tree: string;
-    readonly parents: ReadonlyArray<string>;
-  }) => {
-    // The empty tree, which GitHub has in every repo.
-    execFileSync("git", ["--git-dir", options.bare, "hash-object", "-t", "tree", "-w", "--stdin"], {
-      input: "",
-    });
-
-    const sha = execFileSync(
-      "git",
-      [
-        "--git-dir",
-        options.bare,
-        "commit-tree",
-        body.tree,
-        ...body.parents.flatMap((parent) => ["-p", parent]),
-        "-m",
-        body.message,
-      ],
-      {
-        encoding: "utf8",
-        input: "",
-        env: {
-          ...process.env,
-          GIT_AUTHOR_NAME: "GitHub",
-          GIT_AUTHOR_EMAIL: "noreply@github.com",
-          GIT_COMMITTER_NAME: "GitHub",
-          GIT_COMMITTER_EMAIL: "noreply@github.com",
-        },
-      },
-    ).trim();
-
-    return sha;
-  };
 
   const createCommit = withBody(CreateCommitBody, (body) =>
     json({ sha: commitTree(body), message: body.message }, 201),

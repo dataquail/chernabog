@@ -40,6 +40,7 @@ import * as DurableDeferred from "effect/workflow/DurableDeferred";
 
 import * as Ci from "./ci.ts";
 import { commentStep } from "./comment.ts";
+import * as Phases from "./phases.ts";
 import * as Settings from "./settings.ts";
 
 // Marks the pull request as this run's: its claim ref, and a comment for people to read.
@@ -631,6 +632,10 @@ export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
         pullRequest,
         `Holding the merge: CI is failing on \`${base}\`. It merges once CI there is green again. ${holdMarker.write({ runId: run.runId, key: run.item.key })}`,
       );
+      yield* activity(
+        `merge-held-pr-${pullRequest}-${named}`,
+        Phases.record(Phases.pullRequestItem(pullRequest), Phases.PHASES.pullRequest.mergeHeld),
+      );
 
       if ((yield* parkOnBase(pullRequest, named, base, left)) !== BASE_GREEN) {
         return yield* stayedRed;
@@ -791,6 +796,10 @@ export const readyForPerson = (pullRequest: number, message: string) =>
       const label = yield* Settings.readyForPerson;
       yield* github.addLabel(pullRequest, label);
       yield* github.comment(pullRequest, message);
+      yield* Phases.record(
+        Phases.pullRequestItem(pullRequest),
+        Phases.PHASES.pullRequest.readyForPerson,
+      );
 
       return `#${pullRequest}: labelled ${label}; ${message}`;
     }),

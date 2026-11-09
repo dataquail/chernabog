@@ -138,7 +138,7 @@ describe("a persona's GitHub notifications", () => {
 
     await waitFor(
       () =>
-        /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-1 as alice\)/.test(
+        /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-asked-[\da-f]{7} as alice\)/.test(
           sandbox.daemonLog(),
         ),
       "alice's address-review",

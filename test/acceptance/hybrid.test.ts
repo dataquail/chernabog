@@ -137,10 +137,10 @@ describe("the hybrid path", () => {
       /started [\da-f-]{36} \(demo\/human-initiated issue-1 as alice\)/,
     );
     expect(sandbox.daemonLog()).toMatch(
-      /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-1 as alice\)/,
+      /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-asked-[\da-f]{7} as alice\)/,
     );
     expect(sandbox.daemonLog()).toMatch(
-      /finished [\da-f-]{36} \(demo\/re-review pr-\d+-review-2 as bob\): done: #\d+ approved; a person merges/,
+      /finished [\da-f-]{36} \(demo\/re-review pr-\d+-review-asked-again-[\da-f]{7} as bob\): done: #\d+ approved; a person merges/,
     );
     expect(sandbox.github.issue(1).labels).not.toContain("auto:in-progress");
   }, 150_000);

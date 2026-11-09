@@ -67,6 +67,7 @@ import {
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import { planBlocks, planLoopStates, planSources, specSubject } from "./plan-blocks.ts";
 import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
@@ -650,7 +651,10 @@ export const catalogue = elsewhere.and("blocks.ts", {
     },
     mustRoute: ["approve", "changes"],
     exhaustive: true,
-    records: [{ item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" }],
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" },
+      { item: "pull-request", phase: PHASES.pullRequest.approved, on: "approve" },
+    ],
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
@@ -707,10 +711,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "fail",
     },
-    records: [
-      { item: "pull-request", phase: PHASES.pullRequest.approved },
-      { item: "pull-request", phase: PHASES.pullRequest.mergeHeld },
-    ],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.mergeHeld }],
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
@@ -722,14 +723,12 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   // A team's own phase, recorded on the run's item where a document's own
   // stage stands in for the block that would record one, or a phase no block
-  // has. Phases aren't stored yet (#363 and #364 add the record), so it
-  // records nothing when it runs: what it declares is what the check across
-  // the repo's flows reads.
+  // has. What it declares is what the check across the repo's flows reads.
   "progress.advance": defineBlock({
     name: "progress.advance",
     fixed: ["phase"],
     about:
-      "Records that the run's item has reached phase (declared for the check across flows; not stored yet, so nothing reads it at run time): an issue's on an issue or spec, a pull request's on a flow about one, an epic's on an epic. Use it for a team's own phase, or where a stage of the repo's own does what a block that records a phase would, so the flow that reads that phase still finds the item. chernabog recipes compile warns when a phase is read that no flow records.",
+      "Records that the run's item has reached phase: an issue's on an issue or spec, a pull request's on a flow about one, an epic's on an epic. Use it for a team's own phase, or where a stage of the repo's own does what a block that records a phase would, so the flow that reads that phase still finds the item. chernabog recipes compile warns when a phase is read that no flow records.",
     inputKinds: {
       phase:
         "a phase's name, lower-case words joined by hyphens: one of the SDK's, which the listing's records and reads name, or the team's own",
@@ -737,8 +736,8 @@ export const catalogue = elsewhere.and("blocks.ts", {
     outputKinds: "nothing",
     outcomeKinds: {},
     inputs: { phase: "required" },
-    run: (_input: { readonly phase: string }) => Effect.void,
-    failures: {},
+    run: (input: { readonly phase: string }) => Phases.advanceRun(input.phase),
+    failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},
     mustRoute: [],
     stepNames: [],
@@ -802,27 +801,33 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
     }),
   ),
 
-  // Pull requests that ask this persona for a review it hasn't given yet,
-  // routed by their assignees and reviewers.
+  // Pull requests that ask this persona for their first review, by their
+  // record (Review.requestedFirst), routed by their assignees and reviewers.
+  // One whose record GitHub disagrees with is held, for status to show why.
   "review.requested": defineSource(
     "review.requested",
     "pull-request",
     () => ({
-      trigger: Effect.gen(function* () {
-        const found = yield* Review.reviewRequests;
-
-        return yield* Effect.forEach(
-          found.filter(({ reviewed }) => reviewed === 0),
-          ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
-        );
-      }).pipe(reportAs("trigger")),
+      trigger: Review.requestedFirst.pipe(reportAs("trigger")),
       contributes: {
         settings: Routing.Settings.fields,
         doctor: [Review.reviewerCheck],
         ownWork: true,
       },
     }),
-    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }] },
+    {
+      reads: [
+        {
+          item: "pull-request",
+          phases: [
+            PHASES.pullRequest.reviewAsked,
+            PHASES.pullRequest.draft,
+            PHASES.pullRequest.readyForPerson,
+            NO_RECORD,
+          ],
+        },
+      ],
+    },
   ),
 
   // Those waiting on a reviewer no persona on this machine acts as, which
@@ -876,17 +881,18 @@ export const sourceDescriptions = {
     with: {},
   },
   "review.requested": {
-    about: "Pull requests that ask this persona for a review it hasn't given yet.",
+    about:
+      "Pull requests that ask this persona for their first review: recorded review-asked, or draft or ready-for-person and not reviewed by it yet. One with no record: a review it hasn't given yet.",
     with: {},
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote whose latest approval or request for changes asks for changes on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. Each run's key carries the review: pr-7-changes-2.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4. One with no record: its latest approval or request for changes, keyed pr-7-changes-2.",
     with: {},
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again after it reviewed them, one run per request, except those labelled auto:needs-human. Each run's key carries the review it asks for: pr-7-review-2.",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked when it has reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record: one it reviewed already, keyed pr-7-review-2.",
     with: {},
   },
   "review.waitingElsewhere": {
@@ -1076,7 +1082,11 @@ export const assemble = (flow: {
       onNone: () => ({}),
       onSome: (stillValid) => ({ stillValid }),
     }),
-    workflow: flow.workflow,
+    // A team's own phase is recorded on the run's item, as the subject sees it.
+    workflow: (item: WorkItem) =>
+      flow
+        .workflow(item)
+        .pipe(Effect.provideService(Phases.RecordedOn, Phases.itemOfWork(flow.subject, item))),
     ...Option.match(
       Option.liftPredicate(Implement.gate, () => flow.gate === "usage"),
       {

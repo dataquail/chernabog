@@ -28,21 +28,19 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Pull requests that ask this persona for a review, which it hasn't reviewed
-// yet, routed by their assignees and reviewers, those waiting on a reviewer
+// Pull requests whose record says they wait for their first review, asked of
+// this persona, routed by their assignees and reviewers (one whose record
+// GitHub disagrees with is held, for status to show why), those waiting on a reviewer
 // no persona on this machine acts as, which status lists, and the runs
 // holding a merge whose base branch is green again, to wake them. Reading
 // review requests needs the persona's seat in the reviewer pool, which
 // chernabog checks before the flow runs.
 const trigger = Effect.gen(function* () {
-  const found = yield* Review.reviewRequests;
-
-  const mine = yield* Effect.forEach(
-    found.filter(({ reviewed }) => reviewed === 0),
-    ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
-  );
-
-  return [...mine, ...(yield* Review.waitingElsewhere), ...(yield* PullRequest.baseTurnedGreen)];
+  return [
+    ...(yield* Review.requestedFirst),
+    ...(yield* Review.waitingElsewhere),
+    ...(yield* PullRequest.baseTurnedGreen),
+  ];
 }).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });

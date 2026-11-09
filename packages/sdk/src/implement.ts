@@ -51,6 +51,7 @@ import * as Stream from "effect/Stream";
 
 import * as Ci from "./ci.ts";
 import { ADDRESS, CONSIDER } from "./default-prompts.ts";
+import * as Phases from "./phases.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
@@ -1145,6 +1146,7 @@ export const askForClarification = (
         ].join("\n"),
       );
       yield* github.addLabel(issue, labels.needsClarification);
+      yield* Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.askedQuestions);
       yield* dropInProgress(issue);
       yield* github.deleteBranch(branchFor(issue));
       yield* (yield* Worktree).remove(branchFor(issue));
@@ -1525,6 +1527,29 @@ export type HandOffOptions = {
   readonly adoptedBranch?: string;
 } & RepeatOptions;
 
+const handedOffAs = (options: { readonly draft?: boolean }): Phases.Phase => {
+  if (options.draft === true) {
+    return Phases.PHASES.pullRequest.draft;
+  }
+
+  return Phases.PHASES.pullRequest.reviewAsked;
+};
+
+// The phases a hand-off records: the pull request's, waiting for its first
+// review or, as a draft, for a person to mark it ready, and then the issue's,
+// whose progress goes on as the pull request's. In that order, so a crash
+// between the two leaves the pull request findable, and a replay of the
+// hand-off writes the issue's.
+export const recordHandOff = (
+  issue: number,
+  pullRequest: number,
+  options: { readonly draft?: boolean },
+) =>
+  Effect.gen(function* () {
+    yield* Phases.record(Phases.pullRequestItem(pullRequest), handedOffAs(options));
+    yield* Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.handedOff);
+  });
+
 // Hands the green pull request to review: a review requested of one reviewer
 // from the pool (needs-review for a person without one) unless the options leave it off, and a closing comment
 // on the issue.
@@ -1564,6 +1589,7 @@ export const handOff = (
       }
 
       yield* dropInProgress(issue);
+      yield* recordHandOff(issue, pullRequest.number, options);
 
       if (options.draft === true) {
         yield* github.comment(
@@ -1596,7 +1622,11 @@ export const adoptedOutcome = (adopted: Adopted): ImplementOutcome => ({
 // review: `ready`, or `timeout` once `timeout` passes. Either way the issue's
 // awaiting-ready label comes off.
 export const awaitReady = (issue: number, pullRequest: number, timeout: Duration.Input) =>
-  awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout }).pipe(
+  activity(
+    `awaiting-ready-${pullRequest}`,
+    Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.awaitingReady),
+  ).pipe(
+    Effect.andThen(awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout })),
     Effect.tap(() =>
       activity(
         `ready-${pullRequest}`,

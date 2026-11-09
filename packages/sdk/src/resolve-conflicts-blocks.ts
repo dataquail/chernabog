@@ -18,7 +18,6 @@ import {
   StepFailed,
   type WorkItem,
 } from "@chernabog/core";
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -451,24 +450,7 @@ export const resolveConflictsBlocks = {
       readonly base: BaseBranch;
       readonly pushed: Pushed;
     }) =>
-      activity(
-        "ask-approver-again",
-        Effect.gen(function* () {
-          const approval = Option.filter(
-            Arr.last(yield* Review.decisiveReviews(input.pr)),
-            (review) => review.state === "APPROVED",
-          );
-
-          if (Option.isNone(approval)) {
-            return Option.none<string>();
-          }
-
-          yield* (yield* GitHub).requestReviewers(input.pr, [approval.value.author]);
-
-          return Option.some(approval.value.author);
-        }),
-        Schema.Option(Schema.String),
-      ).pipe(
+      Review.askApproverAgain(input.pr).pipe(
         Effect.map((approver) =>
           Option.match(approver, {
             onNone: () => `#${input.pr}: merged ${input.base} and resolved its conflicts`,

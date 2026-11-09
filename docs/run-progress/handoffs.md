@@ -637,6 +637,32 @@ recorded by review with no address-review in the repo. A flow without a
 document declares nothing, so with one in the repo a gap is reported as a
 note it may fill, not a warning. It runs in `chernabog recipes compile`.
 
+## As built for the review loop (#365)
+
+#365 moved implement, review, re-review, address-review and
+resolve-conflicts onto these phases. Where it departs from the answers above:
+
+- **`approved` is recorded by the review**, `review.round` and
+  `review.recheck` on `approve`, not by `pr.land`. A repo's own copy of
+  review or re-review calls `Review.round` but writes its merge inline, so a
+  record in `pr.land` alone would leave its approved pull requests at
+  `review-asked`. `pr.land` records only `merge-held`.
+- **`review.requested` reads `draft` and `ready-for-person` too**, when the
+  persona hasn't reviewed the pull request yet: a person who marks a draft
+  ready and asks for a review gets one, as before. `review.requestedAgain`
+  and `review.changesRequested` reconcile from those phases as well.
+- **A record GitHub disagrees with is held**, with why, rather than skipped:
+  `changes-asked` with the head pushed to since or a latest review that
+  approves. A `review-asked` pull request the persona has reviewed
+  already, such as one adopted after its review, is re-review's:
+  `review.requestedAgain` reconciles it to `review-asked-again`.
+- **Wakes keep their markers.** `PullRequest.baseTurnedGreen` must name the
+  parked run's work item, which no record holds, so it still reads the hold
+  markers; `merge-held` is recorded for status. `Implement.readied` still
+  finds its issues by `auto:awaiting-ready`; `awaiting-ready` is recorded.
+- **`conflict.askApproverAgain` reads the approval from GitHub**, the fact
+  it needs for the approver's login, and records `review-asked-again`.
+
 ## For the epic
 
 Two things here go beyond #360's decisions. A person should raise them there,

@@ -5,7 +5,6 @@
 // its subject, so resolve-conflicts doesn't merge into the branch under it.
 
 import { NeedsHuman, NothingCommitted, reportAs, type WorkItem } from "@chernabog/core";
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -23,7 +22,7 @@ import {
   WorktreePath,
 } from "./block.ts";
 import * as Implement from "./implement.ts";
-import { PHASES } from "./phases.ts";
+import { NO_RECORD, PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -431,52 +430,20 @@ export const addressReviewBlocks = {
 };
 
 export const addressReviewSources = {
-  // Pull requests this persona wrote whose latest approval or request for
-  // changes asks for changes on the current head, so nothing was pushed since.
-  // A person has one labelled auto:needs-human, and a run of another flow one
-  // it owns; both are left alone. Each is routed by its assignees and reviewers.
+  // Pull requests this persona wrote whose record says changes asked, by a
+  // review on the current head, so nothing was pushed since
+  // (Review.changesToAddress). A person has one labelled auto:needs-human, and
+  // a run of another flow one it owns; both are left alone. Each is routed by
+  // its assignees and reviewers.
   "review.changesRequested": defineSource(
     "review.changesRequested",
     "changes-asked",
     () => ({
-      trigger: Effect.gen(function* () {
-        const labelNames = yield* Settings.labels;
-        const items: Array<WorkItem> = [];
-
-        for (const pull of yield* Review.authoredByMe) {
-          if (pull.labels.includes(labelNames.needsHuman)) {
-            continue;
-          }
-
-          const decisive = yield* Review.decisiveReviews(pull.number);
-          const latest = Arr.last(decisive);
-
-          if (
-            !Option.exists(
-              latest,
-              (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
-            )
-          ) {
-            continue;
-          }
-
-          if (yield* Review.ownedByARun(pull)) {
-            continue;
-          }
-
-          for (const review of Option.toArray(latest)) {
-            items.push(
-              yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)),
-            );
-          }
-        }
-
-        return items;
-      }).pipe(reportAs("trigger")),
+      trigger: Review.changesToAddress.pipe(reportAs("trigger")),
       contributes: { settings: Routing.Settings.fields, ownWork: true },
     }),
     {
-      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.changesAsked] }],
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.changesAsked, NO_RECORD] }],
       reconciles: [
         {
           item: "pull-request",
@@ -484,6 +451,8 @@ export const addressReviewSources = {
             PHASES.pullRequest.reviewAsked,
             PHASES.pullRequest.reviewAskedAgain,
             PHASES.pullRequest.approved,
+            PHASES.pullRequest.draft,
+            PHASES.pullRequest.readyForPerson,
           ],
           to: PHASES.pullRequest.changesAsked,
         },

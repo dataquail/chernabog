@@ -23,47 +23,16 @@ import {
   Skip,
   type WorkItem,
 } from "@chernabog/sdk";
-import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Pull requests this persona wrote whose latest approval or request for
-// changes asks for changes on the current head, so nothing was pushed since.
+// Pull requests this persona wrote whose record says changes asked, by a
+// review on the current head, so nothing was pushed since. A review a person
+// left moves the record there first.
 // A person has one labelled auto:needs-human, and a run of another flow one it
 // owns; both are left alone. Each is routed by its assignees and reviewers.
-const trigger = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
-  const items: Array<WorkItem> = [];
-
-  for (const pull of yield* Review.authoredByMe) {
-    if (pull.labels.includes(labelNames.needsHuman)) {
-      continue;
-    }
-
-    const decisive = yield* Review.decisiveReviews(pull.number);
-    const latest = Arr.last(decisive);
-
-    if (
-      !Option.exists(
-        latest,
-        (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
-      )
-    ) {
-      continue;
-    }
-
-    if (yield* Review.ownedByARun(pull)) {
-      continue;
-    }
-
-    for (const review of Option.toArray(latest)) {
-      items.push(yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)));
-    }
-  }
-
-  return items;
-}).pipe(reportAs("trigger"));
+const trigger = Review.changesToAddress.pipe(reportAs("trigger"));
 
 const answerReview = (address: Review.AddressItem) =>
   Effect.gen(function* () {

@@ -7,12 +7,12 @@ import {
   PhaseMoved,
   type PhaseRecord,
   type PhaseTransition,
+  type PhaseWriter,
   type Progress,
 } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 
 type Store = { readonly records: ReadonlyMap<string, PhaseRecord>; readonly written: number };
@@ -59,14 +59,46 @@ const advancing =
     ];
   };
 
-// A fresh fake, holding no records, each time it runs.
-export const progressFake: Effect.Effect<Progress["Service"]> = Effect.map(
-  Ref.make<Store>({ records: new Map(), written: 0 }),
-  (store) => ({
-    read: (item) =>
-      Effect.map(Ref.get(store), ({ records }) => Option.fromUndefinedOr(records.get(item))),
-    readAll: Effect.map(Ref.get(store), ({ records }) => records),
+// A fake holding no records, and its store, which a test seeds and reads as
+// it likes: every trigger and run given the service shares the one store.
+export const progressStore = () => {
+  let store: Store = { records: new Map(), written: 0 };
+
+  const service: Progress["Service"] = {
+    read: (item) => Effect.sync(() => Option.fromUndefinedOr(store.records.get(item))),
+    readAll: Effect.sync(() => store.records),
     advance: (item, transition) =>
-      Effect.flatMap(Ref.modify(store, advancing(item, transition)), Effect.fromResult),
-  }),
+      Effect.suspend(() => {
+        const [result, next] = advancing(item, transition)(store);
+        store = next;
+
+        return Effect.fromResult(result);
+      }),
+  };
+
+  return {
+    service,
+    // The phase each item holds now, by item.
+    phases: (): Record<string, string> =>
+      Object.fromEntries([...store.records].map(([item, record]) => [item, record.phase])),
+    // Moves `item` to `phase` from whatever it holds, as a writer before the
+    // test would have: a state for the test to start from.
+    seed: (item: string, phase: Phase, by: PhaseWriter) => {
+      const written = store.written + 1;
+
+      const record: PhaseRecord = {
+        phase,
+        from: phaseOf(Option.fromUndefinedOr(store.records.get(item))),
+        by,
+        version: `v${written}`,
+      };
+
+      store = { records: new Map([...store.records, [item, record]]), written };
+    },
+  };
+};
+
+// A fresh fake, holding no records, each time it runs.
+export const progressFake: Effect.Effect<Progress["Service"]> = Effect.sync(
+  () => progressStore().service,
 );

@@ -91,10 +91,10 @@ describe("the review loop", () => {
 
     expect(sandbox.daemonLog()).toMatch(/started [\da-f-]{36} \(demo\/review pr-\d+ as bob\)/);
     expect(sandbox.daemonLog()).toMatch(
-      /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-1 as alice\)/,
+      /started [\da-f-]{36} \(demo\/address-review pr-\d+-changes-asked-[\da-f]{7} as alice\)/,
     );
     expect(sandbox.daemonLog()).toMatch(
-      /started [\da-f-]{36} \(demo\/re-review pr-\d+-review-2 as bob\)/,
+      /started [\da-f-]{36} \(demo\/re-review pr-\d+-review-asked-again-[\da-f]{7} as bob\)/,
     );
     expect(existsSync(join(sandbox.home, `worktrees/demo/review-pr-${pull().number}`))).toBe(false);
     expect(pull().labels).not.toContain("auto:changes-requested");

@@ -39,7 +39,7 @@ steps:
             summary: review.changesAsked
 ```
 
-- `review.requested` finds the pull requests that ask this persona for a review it hasn't given yet. `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
+- `review.requested` finds the pull requests that ask this persona for their first review, by their [phase](#phases). `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
 - `pr.land` merges only a pull request labelled `auto:ship`, and merges nothing otherwise. A flow that must never merge leaves `pr.land` out rather than relying on the label.
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
@@ -461,7 +461,7 @@ steps:
 
 A phase is lower-case words joined by hyphens. One that's a slip away from one of the SDK's is refused with the nearest, as `wached is a pull-request phase so close to one of the SDK's that it reads as a slip: did you mean watched?`. Your own phases need names of their own.
 
-Phases aren't stored yet. The blocks record nothing when they run, and the sources still decide by what GitHub says. What's in place is the declarations, and the check below that goes by them.
+The review loop's blocks record their phases as they run (the issue's and pull request's phases of `implement`, `review`, `re-review`, `address-review` and `resolve-conflicts`, and `progress.advance`'s), and its sources (`review.requested`, `review.requestedAgain`, `review.changesRequested`) find their work by them, so a stray label or review count doesn't move it. A source that finds the record and GitHub disagreeing holds the item, and `chernabog status` says why. [Run progress](/chernabog/operate/progress/#the-review-loops-phases) has where each phase is recorded and read, and what happens to a pull request from before phases. The other recipes' blocks (`post-merge`'s, `plan`'s and `epic`'s) don't record theirs yet, and their sources still decide by what GitHub says: what they declare is what the check below goes by.
 
 ### The check across flows
 

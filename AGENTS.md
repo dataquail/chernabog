@@ -842,6 +842,42 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   that doesn't bypass the write ruleset fails. The binary owns the check,
   not a flow: the adapter is the binary's, and no flow knows a branch.
   `website/src/content/docs/operate/progress.md` has the setup commands.
+- **The review loop runs on phases** (#365): implement, review, re-review,
+  address-review and resolve-conflicts. The SDK's `Phases` (`phases.ts`)
+  holds the names and the helpers: `record(item, to)` in a run, from
+  whatever the item holds and nothing when it's there already; `records` and
+  `recordOf` for a source; `reconcile` outside a run; `keyFor`.
+- **Record inside the SDK function both forms call**, inside the activity
+  that makes the handoff, never in a block wrapper or a recipe: a document
+  and a TypeScript recipe then record alike, and a replay of a finished
+  activity writes nothing. `Implement.handOff` / `Hybrid.handOff`
+  (`recordHandOff`: the pull request's `review-asked` or `draft`, then the
+  issue's `handed-off`), `Review.round` / `recheck` (`postReview`:
+  `changes-asked` or `approved`), `Review.requestAgain` and
+  `Review.askApproverAgain` (`review-asked-again`), `holdWhileBaseRed`
+  (`merge-held`), `PullRequest.readyForPerson`, and the issue's
+  `asked-questions` and `awaiting-ready`. A new recording step is a new
+  activity (`merge-held-pr-7-1`, `awaiting-ready-7`); never rename one.
+  `progress.advance` records on the item `Blocks.assemble` gives it
+  (`Phases.RecordedOn`), in `progress-<node>[-round][-lane]`.
+- **Sources read through one function** each, which the catalogue's source
+  and the recipe's trigger both call: `Review.requestedFirst`,
+  `Review.requestedAgain`, `Review.changesToAddress`. Facts (open, head,
+  requests, reviews) and intent (`auto:needs-human`) stay read from GitHub;
+  closed and merged pull requests aren't listed, which ends their record. A
+  record GitHub disagrees with is a `held` item with why; a fact no run
+  recorded (a person's review or request) is reconciled by the source that
+  picks the item up, as `observer:<source>`. Work is keyed by the record
+  (`Phases.keyFor`, `pr-7-changes-asked-1a2b3c4`).
+- **Migration**: an item with no record is read as before, by review counts,
+  with the old keys (`legacyAsked`, `legacyChanges` in `review.ts`). Drop
+  them a release after this one. Wakes still read their markers
+  (`baseTurnedGreen` needs the parked run's key, which no record holds), and
+  post-merge, plan and epic record and read nothing yet.
+- **Tests**: `test/sdk-fakes.ts` keeps one progress store per fake
+  (`fake.phases()`, `fake.recordPhase`); `observe` compares the phases a
+  document's run and its recipe's leave. The acceptance fake GitHub answers
+  the threads adapter's GraphQL over its bare repo.
 
 ## Versions (#123, #163)
 

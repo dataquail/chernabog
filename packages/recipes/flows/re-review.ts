@@ -27,22 +27,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Pull requests that ask this persona again after it reviewed them, one item
-// per request, unless a person has them (auto:needs-human): asking again
-// during a dispute doesn't restart the loop. Each is routed by its assignees and reviewers.
+// Pull requests whose record says a review is asked again of this persona,
+// one item per request, unless a person has them (auto:needs-human): asking
+// again during a dispute doesn't restart the loop. Each is routed by its
+// assignees and reviewers.
 // And the runs holding a merge whose base branch is green again, to wake them.
 const trigger = Effect.gen(function* () {
-  const labelNames = yield* Settings.labels;
-
-  const asked = yield* Effect.forEach(
-    (yield* Review.reviewRequests).filter(
-      ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
-    ),
-    ({ pull, reviewed }) =>
-      Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`)),
-  );
-
-  return [...asked, ...(yield* PullRequest.baseTurnedGreen)];
+  return [...(yield* Review.requestedAgain), ...(yield* PullRequest.baseTurnedGreen)];
 }).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
