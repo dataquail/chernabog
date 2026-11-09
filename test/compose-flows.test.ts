@@ -666,6 +666,90 @@ describe("a document's sources find what its recipe's trigger does", () => {
     );
   }
 
+  // By the pull request's record (#365): the phase it reads, one a person's
+  // review or request moves on first, and one GitHub disagrees with, held.
+  const recorded = (phase: string, change: (fake: Fake) => void) => () => {
+    const fake = makeFake("approve");
+    fake.recordPhase(`pr-${PULL}`, phase);
+    change(fake);
+
+    return fake;
+  };
+
+  const changesOnHead = (fake: Fake) => {
+    fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+  };
+
+  const askedOf = (fake: Fake) => {
+    fake.people.me = "data-quail";
+    fake.people.requested = ["data-quail"];
+  };
+
+  for (const [title, recipe, document, setup] of [
+    [
+      "address-review, on its record of changes asked",
+      addressReview,
+      composedAddressReview,
+      recorded("changes-asked", changesOnHead),
+    ],
+    [
+      "address-review, on a person's review that asks for changes",
+      addressReview,
+      composedAddressReview,
+      recorded("review-asked", changesOnHead),
+    ],
+    [
+      "address-review, on a record of changes asked the head has moved on from",
+      addressReview,
+      composedAddressReview,
+      recorded("changes-asked", (fake) => {
+        changesOnHead(fake);
+        fake.git.head = "fix20000000";
+      }),
+    ],
+    [
+      "review, on its record of a first review asked",
+      review,
+      composedReview,
+      recorded("review-asked", askedOf),
+    ],
+    [
+      "review, on a record of a first review this persona has given",
+      review,
+      composedReview,
+      recorded("review-asked", (fake) => {
+        askedOf(fake);
+        fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
+      }),
+    ],
+    [
+      "re-review, on its record of a review asked again",
+      reReview,
+      composedReReview,
+      recorded("review-asked-again", (fake) => {
+        askedOf(fake);
+        changesOnHead(fake);
+      }),
+    ],
+    [
+      "re-review, on a person asking again after changes asked",
+      reReview,
+      composedReReview,
+      recorded("changes-asked", (fake) => {
+        askedOf(fake);
+        changesOnHead(fake);
+      }),
+    ],
+  ] as const) {
+    effect(title, () =>
+      Effect.gen(function* () {
+        const fromRecipe = yield* found(recipe, setup);
+        expect(fromRecipe).toHaveLength(1);
+        expect(yield* found(yield* document, setup)).toEqual(fromRecipe);
+      }),
+    );
+  }
+
   // Its own pull request that conflicts with its base, unless a person has it,
   // a run owns it, or GitHub hasn't said yet; the key carries the head.
   for (const [title, change, items] of [

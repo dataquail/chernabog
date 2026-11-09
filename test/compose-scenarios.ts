@@ -255,6 +255,8 @@ export const observe = (
       // The issues the run filed, by title and body, and the commits it read CI on.
       filed: [...fake.graph.made.values()].map((made) => [unsaid(made.title), unsaid(made.body)]),
       ciReads: fake.ciReads,
+      // The phase each item was left in: a document's blocks record what the recipe does.
+      phases: fake.phases(),
     };
   });
 
