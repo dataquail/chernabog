@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/dataquail/chernabog/compare/sdk-v0.11.0...sdk-v0.11.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **sdk:** claim a task on what its layer below merged into, once that one has ([#440](https://github.com/dataquail/chernabog/issues/440)) ([9bbaf27](https://github.com/dataquail/chernabog/commit/9bbaf278b0731dba96962a1538ad099cc6df3bc2))
+
 ## [0.11.0](https://github.com/dataquail/chernabog/compare/sdk-v0.10.0...sdk-v0.11.0) (2026-11-08)
 
 
