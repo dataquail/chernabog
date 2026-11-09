@@ -12,6 +12,10 @@ import {
   NeedsHuman,
   NotInReviewerPool,
   PersonaUnavailable,
+  Phase,
+  PhaseWriter,
+  Progress,
+  ProgressUnwritable,
   Repo,
   reportAs,
   type RepoSettings,
@@ -205,6 +209,20 @@ const flow = defineFlow({
         return `reviews as ${yield* Review.reviewerLogin}`;
       }
 
+      // Records the item's first phase, which the persona may not write.
+      if (key === "phase") {
+        yield* activity(
+          "record-phase",
+          Progress.use((progress) =>
+            progress.advance("pr-73", {
+              from: Option.none(),
+              to: Schema.decodeSync(Phase)("review-asked"),
+              by: Schema.decodeSync(PhaseWriter)("run-1"),
+            }),
+          ),
+        ).pipe(Effect.catchTag("PhaseMoved", () => Effect.void));
+      }
+
       return `did ${key}`;
     }),
 });
@@ -236,6 +254,16 @@ const servicesWith = (own: RepoSettings) =>
       ReviewerSeat,
       ReviewerSeat.of({ login: Effect.die(new NotInReviewerPool({ reviewers: [] })) }),
     ),
+    // The rulesets refuse this persona's progress writes.
+    Layer.mock(Progress)({
+      advance: () =>
+        Effect.die(
+          new ProgressUnwritable({
+            reason: "GitHub refused a write to chernabog/threads/*",
+            fix: "add it to the personas team",
+          }),
+        ),
+    }),
   );
 
 const repoServices = servicesWith(settings);
@@ -863,6 +891,18 @@ describe("personas", () => {
         expect(failed.status).toBe("failed");
         expect(summaryOf(failed)).toContain(
           "runs as the implicit account, which has no seat in the reviewer pool",
+        );
+      }),
+  );
+
+  effect(
+    "a run whose progress write the rulesets refuse fails with ProgressUnwritable, naming its fix",
+    () =>
+      Effect.gen(function* () {
+        const { value: failed } = yield* withEngine(runAs(IMPLICIT, item("phase")));
+        expect(failed.status).toBe("failed");
+        expect(summaryOf(failed)).toContain(
+          "the implicit account can't record progress: GitHub refused a write to chernabog/threads/*. Fix: add it to the personas team",
         );
       }),
   );

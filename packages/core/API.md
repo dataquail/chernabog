@@ -322,7 +322,7 @@ import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
 import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
-import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
+import { type Agent, type Git, type GitHub, type Progress, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
 declare const StepRunner_base: Context.ServiceClass<StepRunner, "@chernabog/sdk/StepRunner", {
     run(name: string, input: Json): Effect.Effect<Json, Skip | StepFailed>;
 }>;
@@ -333,7 +333,7 @@ declare const Signals_base: Context.ServiceClass<Signals, "@chernabog/sdk/Signal
 }>;
 export declare class Signals extends Signals_base {
 }
-export type TriggerServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
+export type TriggerServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | Progress | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
 export type WorkflowServices = TriggerServices | Run | StepRunner | Signals | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance | Scope.Scope;
 export type FlowError = Skip | NeedsHuman | StepFailed;
 export type FlowLabel = {
