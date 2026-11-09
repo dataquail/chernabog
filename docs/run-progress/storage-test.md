@@ -250,9 +250,12 @@ wants to skip unchanged items keeps the last oid it saw for each and compares.
 6. **Blocking force pushes goes in the deletion ruleset.** A bypass list
    exempts its actors from every rule in the ruleset, so if "block force
    pushes" sits with creation and update, as "two rulesets" suggests, the
-   personas team can force-push. It belongs with deletion (admins only), or in
-   a third ruleset with no bypass at all. This follows from GitHub's
-   documented model; the script checks it.
+   personas team can force-push. It belongs with deletion, or in a third
+   ruleset with no bypass at all. The deletion ruleset's "admins only"
+   exemption covers deletion and force pushes, but `update` sits in the other
+   ruleset, so an admin who isn't on the personas list still can't rewind a
+   thread: only an actor on both bypass lists can force-push. This follows
+   from GitHub's documented model; the script checks it.
 
 ## The ruleset script, to run on a public repo
 
@@ -278,17 +281,6 @@ gh api -X DELETE orgs/dataquail/teams/phase-test-personas/memberships/$ADMIN --s
 for t in phase-test-personas phase-test-deleters; do
   gh api -X PUT orgs/dataquail/teams/$t/repos/$R -f permission=push --silent
 done
-
-ruleset() { # name, rules, bypass team id ("" for none)
-  jq -n --arg n "$1" --argjson rules "$2" --arg team "$3" '{name:$n,target:"branch",enforcement:"active",
-    conditions:{ref_name:{include:["refs/heads/chernabog/threads/**"],exclude:[]}},rules:$rules,
-    bypass_actors:(if $team=="" then [] else [{actor_id:($team|tonumber),actor_type:"Team",bypass_mode:"always"}] end)}' |
-    gh api -X POST repos/$R/rulesets --input - --jq .id
-}
-# A bypass covers every rule in its ruleset, so blocking force pushes sits with
-# deletion, where only admins bypass, not with creation and update.
-WRITE=$(ruleset threads-write '[{"type":"creation"},{"type":"update"}]' "")
-DELETE=$(ruleset threads-delete '[{"type":"deletion"},{"type":"non_fast_forward"}]' "")
 
 ROOT=$(gh api -X POST repos/$R/git/commits -f message=root -f tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904 --jq .sha)
 CHILD=$(gh api -X POST repos/$R/git/commits -f message=child -f tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904 -f "parents[]=$ROOT" --jq .sha)
@@ -339,9 +331,11 @@ gh repo delete $R --yes   # needs the delete_repo scope
 
 Expected if the design holds: with no bypass every write is refused, for the
 persona and for the admin. Layered, the persona's `POST`, fast-forward `PATCH`
-and advance succeed, and its forced rewind and its `DELETE` are refused; the
-admin's rewind and `DELETE` succeed while its other writes are refused. Record
-each status here when it runs.
+and advance succeed, and its forced rewind and its `DELETE` are refused. The
+admin's `DELETE` succeeds, and everything else it tries is refused, its forced
+rewind included: the admin bypasses `threads-delete`'s `non_fast_forward`, but
+a rewind is still an update, and `threads-write`'s `update` rule doesn't exempt
+it. Record each status here when it runs.
 
 ## Cleanup
 
