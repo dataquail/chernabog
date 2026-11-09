@@ -54,6 +54,23 @@ const SHIP = "auto:ship";
 const STACKED = "auto/issue-12";
 const STACKED_HEAD = "stacked1234";
 
+// The merged pull request from `head` into `base`, as the layer below a task
+// leaves once it lands.
+const mergedLayer = (head: string, base: string): Parameters<Fake["branchPulls"]["set"]>[1] => ({
+  number: 2,
+  title: "feat: the layer below",
+  body: "",
+  url: "https://github.com/dataquail/demo/pull/2",
+  state: "merged",
+  headRef: head,
+  headSha: "below0000000",
+  baseRef: base,
+  labels: [],
+  author: "chernabog-bot",
+  assignees: [],
+  requestedReviewers: [],
+});
+
 const outcome = {
   status: "done" as const,
   summary: "Did it.",
@@ -431,6 +448,54 @@ describe("a base branch per item", () => {
         expect(fake.based.createdFrom).toEqual([]);
         expect(fake.requests).toEqual([]);
       }),
+  );
+
+  effect(
+    "a base whose pull request merged before the claim, its branch deleted, builds on what it merged into",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        fake.remote.gone.add(STACKED);
+        fake.branchPulls.set(STACKED, mergedLayer(STACKED, "main"));
+        expect((yield* runToEnd(fake, "on-stacked-base")).status).toBe("done");
+        expect(fake.based).toEqual({
+          createdFrom: ["base1234"],
+          targets: ["main"],
+          checkedAgainst: ["main", "main"],
+          compared: [],
+        });
+        expect(fake.requests[0]?.prompt).toContain("cut from `main`");
+        expect(claimedOn(fake)).toEqual(["main"]);
+      }),
+  );
+
+  effect(
+    "so does one whose branch stayed, down every layer below that merged, to one still open",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake("approve");
+        const lowest = "auto/issue-11";
+        fake.remote.heads.set(STACKED, STACKED_HEAD);
+        fake.remote.heads.set(lowest, "lowest1234");
+        fake.branchPulls.set(STACKED, mergedLayer(STACKED, lowest));
+        fake.branchPulls.set(lowest, { ...mergedLayer(lowest, "main"), state: "open" });
+        expect((yield* runToEnd(fake, "on-stacked-base")).status).toBe("done");
+        expect(fake.based.createdFrom).toEqual(["lowest1234"]);
+        expect(fake.based.targets).toEqual([lowest]);
+        expect(claimedOn(fake)).toEqual([lowest]);
+      }),
+  );
+
+  effect("and the hybrid claim, for a person's start on a task whose layer below merged", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.remote.gone.add(STACKED);
+      fake.branchPulls.set(STACKED, mergedLayer(STACKED, "main"));
+      expect((yield* runToEnd(fake, "hybrid-on-stacked-base")).status).toBe("done");
+      expect(fake.based.createdFrom).toEqual(["base1234"]);
+      expect(fake.based.targets).toEqual(["main"]);
+      expect(claimedOn(fake)).toEqual(["main"]);
+    }),
   );
 
   effect("a resumed claim keeps the base the run claimed the issue on", () =>
