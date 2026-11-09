@@ -225,6 +225,20 @@ describe("Compose.phaseGaps", () => {
     ]);
   });
 
+  test("needs nothing recorded for a source that also finds items with no record", () => {
+    // review.requested takes a pull request a person opened, which has none.
+    expect(Compose.phaseGaps([review])).toEqual([
+      {
+        gap: "unread",
+        item: "pull-request",
+        phase: "changes-asked",
+        certain: true,
+        message:
+          "review.round in review records the pull-request phase changes-asked, but no flow reads it: review.changesRequested reads it",
+      },
+    ]);
+  });
+
   test("allows a phase recorded for status, which no source reads", () => {
     const gaps = Compose.phaseGaps(everyRecipe);
 

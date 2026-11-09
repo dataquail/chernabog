@@ -2909,12 +2909,29 @@ const catalogueReads = (item: ItemKind, phase: string) =>
       .map((block) => block.name),
   ]);
 
+// Whether what reads a phase also finds items with no record, as
+// review.requested takes a pull request a person opened: it needs nothing
+// recorded to find its work.
+const takesNone = (use: PhaseUse) =>
+  [
+    ...Option.toArray(Record.get(sourcesByName, use.by)).flatMap((source) => source.reads),
+    ...Option.toArray(Record.get(blocksByName, use.by)).flatMap(
+      (block) => block.contributes.wakeReads ?? [],
+    ),
+  ].some(
+    (reading) =>
+      reading.item === use.item &&
+      reading.phases.some((phase) => phase === use.phase) &&
+      reading.phases.some((phase) => phase === NO_RECORD),
+  );
+
 const groupedBy = (uses: ReadonlyArray<PhaseUse>) =>
   Arr.dedupe(uses.map(phaseKey)).map((key) => uses.filter((use) => phaseKey(use) === key));
 
 // Gaps between what a repo's flows read and record of phases: a phase a
 // flow's source or wake reads that no flow's block records nor source
-// reconciles, so the flow never finds the work; and one a flow records that no
+// reconciles, so the flow never finds the work, unless it also finds items
+// with no record; and one a flow records that no
 // flow reads, where the SDK has a source that would. A phase no source reads
 // is for status, and recorded freely. `undeclared` names the repo's flows
 // without a document, written in TypeScript, which declare nothing: with any,
@@ -2954,27 +2971,28 @@ export const phaseGaps = (
     );
   };
 
-  const unrecorded = groupedBy(reads.filter((use) => !recorded.has(phaseKey(use)))).flatMap(
-    (uses) =>
-      Option.toArray(Arr.head(uses)).map(({ item, phase }): PhaseGap => {
-        const recorders = catalogueRecords(item, phase);
+  const unrecorded = groupedBy(
+    reads.filter((use) => !recorded.has(phaseKey(use)) && !takesNone(use)),
+  ).flatMap((uses) =>
+    Option.toArray(Arr.head(uses)).map(({ item, phase }): PhaseGap => {
+      const recorders = catalogueRecords(item, phase);
 
-        const where = Option.getOrElse(
-          Option.liftPredicate(
-            `: ${allOf(recorders)} ${agreeing(recorders.length, "records", "record")} it`,
-            () => recorders.length > 0,
-          ),
-          () => "",
-        );
+      const where = Option.getOrElse(
+        Option.liftPredicate(
+          `: ${allOf(recorders)} ${agreeing(recorders.length, "records", "record")} it`,
+          () => recorders.length > 0,
+        ),
+        () => "",
+      );
 
-        return {
-          gap: "unrecorded",
-          item,
-          phase,
-          certain,
-          message: `${whoIn(uses)} ${agreeing(countOf(uses), "reads", "read")} the ${item} phase ${phase}, but no flow records it${where}${Option.getOrElse(near(item, phase), () => "")}${unsure}`,
-        };
-      }),
+      return {
+        gap: "unrecorded",
+        item,
+        phase,
+        certain,
+        message: `${whoIn(uses)} ${agreeing(countOf(uses), "reads", "read")} the ${item} phase ${phase}, but no flow records it${where}${Option.getOrElse(near(item, phase), () => "")}${unsure}`,
+      };
+    }),
   );
 
   const unread = groupedBy(records.filter((use) => !isRead.has(phaseKey(use)))).flatMap((uses) =>

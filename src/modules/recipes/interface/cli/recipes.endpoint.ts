@@ -290,7 +290,7 @@ const COMPILE_OUTCOME = {
     `.chernabog/flows/${flow}.ts: not what its document compiles to; chernabog recipes compile ${flow} writes it`,
 };
 
-const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
+const describeCompiled = ({ flows, phaseGaps, unknown }: FlowDocumentsCompiled) => [
   ...Option.toArray(
     Option.liftPredicate(
       "no flow documents in .chernabog/documents/",
@@ -312,6 +312,15 @@ const describeCompiled = ({ flows, unknown }: FlowDocumentsCompiled) => [
 
     return [COMPILE_OUTCOME[outcome](flow)];
   }),
+  // A gap across the flows is a warning, which fails nothing: one a flow
+  // without a document may fill is only a note.
+  ...(phaseGaps ?? []).map(
+    (gap) =>
+      `${Option.getOrElse(
+        Option.liftPredicate("warning", () => gap.certain),
+        () => "note",
+      )}: ${gap.message}`,
+  ),
   ...Option.toArray(
     Option.liftPredicate(
       "Types not checked: install typescript in .chernabog/ to have each wire's checked too.",
@@ -395,6 +404,20 @@ const describeGives = (gives: FlowCatalogue["blocks"][number]["gives"]) => {
     .join(", ");
 };
 
+type Reading = { readonly item: string; readonly phases: ReadonlyArray<string> };
+
+// "pull-request review-asked or none"
+const describeReading = (reading: Reading) =>
+  `${reading.item} ${[reading.phases.slice(0, -1).join(", "), ...reading.phases.slice(-1)].filter((part) => part !== "").join(" or ")}`;
+
+const describeRecorded = (
+  recorded: NonNullable<FlowCatalogue["blocks"][number]["records"]>[number],
+) =>
+  `${recorded.item} ${recorded.phase}${Option.getOrElse(
+    Option.map(Option.fromUndefinedOr(recorded.on), (outcome) => ` (on ${outcome})`),
+    () => "",
+  )}`;
+
 const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   `${block.name}: ${block.about}`,
   ...listedAfter("suits", block.subjects ?? []),
@@ -421,6 +444,13 @@ const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   ...listedAfter("needs first", block.needs),
   ...listedAfter("leaves to do", block.opens),
   ...listedAfter("does", block.closes),
+  ...listedAfter("records", [
+    ...(block.records ?? []).map(describeRecorded),
+    ...Option.toArray(Option.fromUndefinedOr(block.recordsInput)).map(
+      (input) => `the phase given as ${input} under with, on the run's item`,
+    ),
+  ]),
+  ...listedAfter("its wakes read", (block.wakeReads ?? []).map(describeReading)),
   ...Option.toArray(
     Option.liftPredicate(
       "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
@@ -450,6 +480,14 @@ const describeSource = (source: FlowCatalogue["sources"][number]) => [
   `${source.name}: ${source.about}`,
   ...listedAfter("finds work on", Option.toArray(Option.fromUndefinedOr(source.subject))),
   ...Object.entries(source.with).map(([input, kind]) => `  with ${input}: ${kind}`),
+  ...listedAfter("reads", (source.reads ?? []).map(describeReading)),
+  ...listedAfter(
+    "reconciles",
+    (source.reconciles ?? []).map(
+      (reconciled) =>
+        `${reconciled.item} ${reconciled.to} from ${describeReading({ item: reconciled.item, phases: reconciled.from }).slice(reconciled.item.length + 1)}`,
+    ),
+  ),
 ];
 
 // A subject, with how a run on it starts: from a trigger, and by a person too

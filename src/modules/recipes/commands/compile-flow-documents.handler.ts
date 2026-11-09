@@ -43,7 +43,18 @@ export const compileFlowDocumentsHandler = Effect.fn("compileFlowDocumentsHandle
       }),
     );
 
-    return new FlowDocumentsCompiled({ flows, unknown });
+    // Across every flow, whichever documents were named: a phase is written
+    // by one flow and read by another.
+    const gaps = yield* compiler.phaseGaps(root);
+
+    return new FlowDocumentsCompiled({
+      flows,
+      unknown,
+      ...Option.match(gaps, {
+        onNone: () => ({}),
+        onSome: (phaseGaps) => ({ phaseGaps }),
+      }),
+    });
   },
   withUnitOfWork,
   // Its stores are files on this machine: they have no outage to wait out.

@@ -16,12 +16,18 @@ import YAML from "yaml";
 
 import { HostEnvironment } from "../../../../platform/environment.ts";
 import { Exec } from "../../../../platform/exec.ts";
-import { loadRepoSdk, loadStage } from "../../../../platform/flow-loader.ts";
+import {
+  type DocumentCompiler,
+  flowNames,
+  loadRepoSdk,
+  loadStage,
+} from "../../../../platform/flow-loader.ts";
 import { bunExecutable } from "../../../../platform/self.ts";
 import {
   type CompiledDocument,
   DocumentProblem,
   FlowCompilerClient,
+  PhaseGap,
 } from "../../domain/ports/clients/flow-compiler.client.ts";
 import { RecipeFilesFailed } from "../../domain/recipe/recipe.errors.ts";
 
@@ -181,6 +187,8 @@ export const notCheckedBecause = (result: {
   );
 };
 
+const PhaseGaps = Schema.Array(PhaseGap);
+
 const failed = (error: { readonly message: string }) =>
   new RecipeFilesFailed({ message: error.message });
 
@@ -270,6 +278,81 @@ export const FlowCompilerClientLive = Layer.effect(
           };
         }),
       );
+
+    // Each document's flow name, in name order.
+    const documents = (root: string) =>
+      Effect.gen(function* () {
+        if (!(yield* fs.exists(documentsOf(root)))) {
+          return [];
+        }
+
+        const names = yield* fs.readDirectory(documentsOf(root));
+
+        return Arr.dedupe(
+          names.flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1]))),
+        ).toSorted();
+      }).pipe(Effect.mapError(failed));
+
+    // A document as the repo's SDK reads it; none when it can't, whose
+    // problems compiling it reports.
+    const readDocument = (root: string, flow: string, compose: DocumentCompiler) =>
+      Effect.gen(function* () {
+        const { file, twice } = yield* fileOf(root, flow);
+
+        if (twice) {
+          return Option.none<Schema.Json>();
+        }
+
+        const parsed = YAML.parseDocument(yield* fs.readFileString(file), { prettyErrors: false });
+
+        if (parsed.errors.length > 0) {
+          return Option.none<Schema.Json>();
+        }
+
+        return Option.flatMap(Schema.decodeUnknownOption(Schema.Json)(parsed.toJS()), (contents) =>
+          Result.getSuccess(compose.read(contents)),
+        );
+      });
+
+    // The phases read and recorded across the repo's flows, by its SDK: its
+    // documents, and the rest of its flows, in TypeScript or a document that
+    // doesn't read, as declaring nothing.
+    const phaseGaps = (root: string) =>
+      Effect.gen(function* () {
+        const compose = yield* loadRepoSdk(`${root}/.chernabog`);
+
+        const across = Option.fromUndefinedOr(compose.phaseGaps);
+
+        if (Option.isNone(across)) {
+          return Option.none<ReadonlyArray<PhaseGap>>();
+        }
+
+        const read = yield* Effect.forEach(yield* documents(root), (flow) =>
+          Effect.map(readDocument(root, flow, compose), (document) => ({ flow, document })),
+        );
+
+        const declared = read.flatMap(({ document, flow }) =>
+          Option.toArray(Option.map(document, (each) => ({ flow, document: each }))),
+        );
+
+        const names = new Set(declared.map(({ flow }) => flow));
+
+        const undeclared = Arr.dedupe([
+          ...(yield* flowNames(`${root}/.chernabog`).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+          )),
+          ...read.map(({ flow }) => flow),
+        ])
+          .filter((flow) => !names.has(flow))
+          .toSorted();
+
+        const gaps = across.value(
+          declared.map(({ document }) => document),
+          undeclared,
+        );
+
+        return Option.some(yield* Schema.decodeUnknownEffect(PhaseGaps)(gaps));
+      }).pipe(Effect.mapError(failed));
 
     const compile = (root: string, flow: string) =>
       Effect.gen(function* () {
@@ -384,18 +467,9 @@ export const FlowCompilerClientLive = Layer.effect(
           return compose.describe(yield* effectStages(root));
         }).pipe(Effect.mapError(failed)),
 
-      documents: (root) =>
-        Effect.gen(function* () {
-          if (!(yield* fs.exists(documentsOf(root)))) {
-            return [];
-          }
+      documents,
 
-          const names = yield* fs.readDirectory(documentsOf(root));
-
-          return Arr.dedupe(
-            names.flatMap((name) => Option.toArray(Option.fromNullishOr(DOCUMENT.exec(name)?.[1]))),
-          ).toSorted();
-        }).pipe(Effect.mapError(failed)),
+      phaseGaps,
 
       compile,
 

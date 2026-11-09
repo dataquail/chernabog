@@ -16,6 +16,10 @@ const BlockOutcome = Schema.Struct({
   binds: Schema.String,
 });
 
+// The phases a source or a block's wakes find their items by; "none" for an
+// item with no record yet.
+const Reading = Schema.Struct({ item: Schema.String, phases: Schema.Array(Schema.String) });
+
 const CatalogueBlock = Schema.Struct({
   name: Schema.String,
   about: Schema.String,
@@ -34,6 +38,21 @@ const CatalogueBlock = Schema.Struct({
   waits: Schema.Boolean,
   // Whether it runs only on a run's way out; none from an SDK from before.
   last: Schema.optionalKey(Schema.Boolean),
+  // The phases it may record, each on an outcome when only that one records
+  // it; the input naming the phase it records as its document says, for
+  // progress.advance; and the phases its wakes find parked runs by. None from
+  // an SDK from before phases.
+  records: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        item: Schema.String,
+        phase: Schema.String,
+        on: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  recordsInput: Schema.optionalKey(Schema.String),
+  wakeReads: Schema.optionalKey(Schema.Array(Reading)),
 });
 
 // One of the repo's own Effect stages, from .chernabog/stages/, which a
@@ -68,6 +87,18 @@ export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand:
       with: Kinds,
       // The subject of the work it finds; none from an SDK from before.
       subject: Schema.optionalKey(Schema.String),
+      // The phases whose items it finds, and those it moves an item to from
+      // what GitHub says; none from an SDK from before phases.
+      reads: Schema.optionalKey(Schema.Array(Reading)),
+      reconciles: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            item: Schema.String,
+            from: Schema.Array(Schema.String),
+            to: Schema.String,
+          }),
+        ),
+      ),
     }),
   ),
   loopStates: Schema.Array(Schema.String),

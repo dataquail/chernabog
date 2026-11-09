@@ -18,6 +18,18 @@ export class DocumentProblem extends Schema.Class<
   message: Schema.String,
 }) {}
 
+// A gap between what a repo's flows read and record of phases, as the repo's
+// SDK finds it across them: a phase read that no flow records, or recorded
+// that no flow reads though a source the SDK has would. Certain unless some
+// flow, one without a document, declares nothing.
+export class PhaseGap extends Schema.Class<PhaseGap, { readonly brand: "PhaseGap" }>("PhaseGap")({
+  gap: Schema.Literals(["unrecorded", "unread"]),
+  item: Schema.String,
+  phase: Schema.String,
+  certain: Schema.Boolean,
+  message: Schema.String,
+}) {}
+
 // What compiling one document came to: the flow file it compiles to, none when
 // it has problems, and whether its wires' types were checked, which takes
 // TypeScript installed beside the repo and a document with no other problems:
@@ -39,6 +51,11 @@ export type FlowCompilerClientService = {
     root: string,
     flow: string,
   ) => Effect.Effect<CompiledDocument, RecipeFilesFailed>;
+  // The gaps across the repo's flows in what they read and record of phases;
+  // none from an SDK from before phases, which can't say.
+  readonly phaseGaps: (
+    root: string,
+  ) => Effect.Effect<Option.Option<ReadonlyArray<PhaseGap>>, RecipeFilesFailed>;
   // The flow file as it stands; none when there is none.
   readonly written: (
     root: string,

@@ -158,6 +158,27 @@ const compiling = (
     return yield* compiler.compile(root, flow);
   }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive)));
 
+// What the repo's SDK finds across its flows of phases, with these documents
+// and these flow files in .chernabog/flows/.
+const gapsIn = (
+  documents: { readonly [flow: string]: string },
+  flowFiles: { readonly [file: string]: string } = {},
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* checkout(documents, { typescript: false });
+
+    yield* fs.makeDirectory(`${root}/.chernabog/flows`, { recursive: true });
+
+    for (const [file, text] of Object.entries(flowFiles)) {
+      yield* fs.writeFileString(`${root}/.chernabog/flows/${file}`, text);
+    }
+
+    const compiler = yield* FlowCompilerClient;
+
+    return yield* compiler.phaseGaps(root);
+  }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive)));
+
 describe("FlowCompilerClientLive", () => {
   atHome(
     "compiles a document by the repo's SDK, and checks its wires with the repo's TypeScript",
@@ -624,5 +645,44 @@ describe("finding a problem in the document", () => {
 
       expect(diagnosticsOf(said)).toEqual([{ line: 3, column: 5, message: "Type 'A' is wrong." }]);
     }),
+  );
+});
+
+describe("FlowCompilerClientLive's phases across the flows", () => {
+  const UNREAD =
+    "review.round in review records the pull-request phase changes-asked, but no flow reads it: review.changesRequested reads it";
+
+  atHome(
+    "finds a gap the repo's documents leave, by its SDK",
+    () =>
+      Effect.gen(function* () {
+        const gaps = yield* gapsIn({ review: REVIEW_DOCUMENT }, { "review.ts": "// compiled" });
+
+        expect(Option.map(gaps, (found) => found.map((gap) => [gap.certain, gap.message]))).toEqual(
+          Option.some([[true, UNREAD]]),
+        );
+      }),
+    TIMEOUT,
+  );
+
+  atHome(
+    "takes a flow with no document, or one that doesn't read, as declaring nothing",
+    () =>
+      Effect.gen(function* () {
+        const gaps = yield* gapsIn(
+          { review: REVIEW_DOCUMENT, broken: "flow: broken\nsteps: [" },
+          { "address-review.ts": "export default {};" },
+        );
+
+        expect(Option.map(gaps, (found) => found.map((gap) => [gap.certain, gap.message]))).toEqual(
+          Option.some([
+            [
+              false,
+              `${UNREAD}; address-review and broken have no document and declare nothing, so one of them may`,
+            ],
+          ]),
+        );
+      }),
+    TIMEOUT,
   );
 });

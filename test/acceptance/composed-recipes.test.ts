@@ -36,6 +36,19 @@ describe("chernabog recipes compile", () => {
     expect(readFileSync(flow(), "utf8")).toStartWith("// Generated from the flow document");
   });
 
+  test("notes a phase recorded that no flow reads, though the TypeScript flows may", async () => {
+    const { code, output } = await sandbox.runCli(["recipes", "compile"]);
+
+    // The sandbox's other flows are TypeScript, which declare nothing, so
+    // the gap is a note rather than a warning, and fails nothing.
+    expect(output).toContain(
+      "note: review.round in composed-review records the pull-request phase changes-asked, but no flow reads it: review.changesRequested reads it; ",
+    );
+    expect(output).toContain("have no document and declare nothing, so one of them may");
+    expect(output).not.toContain("warning:");
+    expect(code).toBe(0);
+  });
+
   test("--check passes on a flow file up to date, and fails on one that isn't", async () => {
     await sandbox.runCli(["recipes", "compile"]);
     const current = await sandbox.runCli(["recipes", "compile", "--check"]);
@@ -234,6 +247,28 @@ describe("chernabog recipes blocks", () => {
 
     expect(unknown.code).not.toBe(0);
     expect(unknown.output).toContain("no block, source or stage named gate.lint");
+  });
+
+  test("says what each block records and each source reads of phases", async () => {
+    const { code, output } = await sandbox.runCli([
+      "recipes",
+      "blocks",
+      "review.round",
+      "pr.awaitReady",
+      "progress.advance",
+      "review.changesRequested",
+    ]);
+
+    expect(code).toBe(0);
+    expect(output).toContain("  records: pull-request changes-asked (on changes)\n");
+    expect(output).toContain(
+      "  records: issue awaiting-ready\n  its wakes read: issue awaiting-ready\n",
+    );
+    expect(output).toContain("  records: the phase given as phase under with, on the run's item\n");
+    expect(output).toContain("  reads: pull-request changes-asked\n");
+    expect(output).toContain(
+      "  reconciles: pull-request changes-asked from review-asked, review-asked-again or approved",
+    );
   });
 
   test("lists the repo's Effect stages, with what each takes and gives", async () => {
