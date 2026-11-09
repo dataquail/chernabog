@@ -8,14 +8,18 @@ import {
   FlowCompilerClient,
   type PhaseGap,
 } from "../../domain/ports/clients/flow-compiler.client.ts";
+import { type RecipeFilesFailed } from "../../domain/recipe/recipe.errors.ts";
 
 // A checkout whose documents compile as `compiled` says, keeping what it
 // writes in `files`, by flow, and whose SDK finds these gaps across its flows,
-// or none from before phases.
+// none from before phases, or fails to.
 export const FlowCompilerClientFake = (
   compiled: { readonly [flow: string]: CompiledDocument },
   files = new Map<string, string>(),
-  gaps: Option.Option<ReadonlyArray<PhaseGap>> = Option.some([]),
+  gaps: Effect.Effect<
+    Option.Option<ReadonlyArray<PhaseGap>>,
+    RecipeFilesFailed
+  > = Effect.succeedSome([]),
 ) =>
   Layer.succeed(
     FlowCompilerClient,
@@ -38,7 +42,7 @@ export const FlowCompilerClientFake = (
             typeChecked: false,
           })),
         ),
-      phaseGaps: () => Effect.succeed(gaps),
+      phaseGaps: () => gaps,
       written: (_, flow) => Effect.succeed(Option.fromUndefinedOr(files.get(flow))),
       write: (_, flow, source) =>
         Effect.sync(() => {

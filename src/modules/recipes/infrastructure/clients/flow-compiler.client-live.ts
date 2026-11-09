@@ -316,18 +316,31 @@ export const FlowCompilerClientLive = Layer.effect(
 
     // The phases read and recorded across the repo's flows, by its SDK: its
     // documents, and the rest of its flows, in TypeScript or a document that
-    // doesn't read, as declaring nothing.
+    // doesn't read, as declaring nothing. A repo with no documents has nothing
+    // to check, and its SDK is never loaded, as compiling none doesn't load
+    // it; one whose SDK can't compile documents, or is from before phases,
+    // can't say.
     const phaseGaps = (root: string) =>
       Effect.gen(function* () {
-        const compose = yield* loadRepoSdk(`${root}/.chernabog`);
+        const flows = yield* documents(root);
 
-        const across = Option.fromUndefinedOr(compose.phaseGaps);
-
-        if (Option.isNone(across)) {
+        if (flows.length === 0) {
           return Option.none<ReadonlyArray<PhaseGap>>();
         }
 
-        const read = yield* Effect.forEach(yield* documents(root), (flow) =>
+        const loaded = yield* loadRepoSdk(`${root}/.chernabog`).pipe(Effect.option);
+
+        const across = Option.flatMap(loaded, (compose) =>
+          Option.fromUndefinedOr(compose.phaseGaps),
+        );
+
+        if (Option.isNone(loaded) || Option.isNone(across)) {
+          return Option.none<ReadonlyArray<PhaseGap>>();
+        }
+
+        const compose = loaded.value;
+
+        const read = yield* Effect.forEach(flows, (flow) =>
           Effect.map(readDocument(root, flow, compose), (document) => ({ flow, document })),
         );
 

@@ -685,4 +685,41 @@ describe("FlowCompilerClientLive's phases across the flows", () => {
       }),
     TIMEOUT,
   );
+
+  atHome(
+    "says nothing of phases in a repo with no documents, without loading its SDK",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* checkout({}, { typescript: false });
+
+        // An SDK that can't be loaded at all: no documents, so it never is.
+        yield* fs.remove(`${root}/.chernabog/node_modules`, { recursive: true });
+
+        const compiler = yield* FlowCompilerClient;
+
+        expect(yield* compiler.phaseGaps(root)).toEqual(Option.none());
+      }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+    TIMEOUT,
+  );
+
+  atHome(
+    "says nothing of phases when the repo's SDK can't compile documents",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* checkout({ review: REVIEW_DOCUMENT }, { typescript: false });
+        const sdk = `${root}/.chernabog/node_modules/@chernabog/sdk`;
+
+        // An SDK from before flow documents, with no Compose to compile them.
+        yield* fs.remove(sdk);
+        yield* fs.makeDirectory(sdk, { recursive: true });
+        yield* fs.writeFileString(`${sdk}/index.ts`, "export const Blocks = {};\n");
+
+        const compiler = yield* FlowCompilerClient;
+
+        expect(yield* compiler.phaseGaps(root)).toEqual(Option.none());
+      }).pipe(Effect.provide(Layer.fresh(FlowCompilerClientLive))),
+    TIMEOUT,
+  );
 });
