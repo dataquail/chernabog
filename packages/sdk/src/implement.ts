@@ -306,9 +306,40 @@ export const Claimed = Schema.Struct({
 // issue is taken on, rather than the issue implemented again (see claim).
 export type AdoptOptions = { readonly adopt?: boolean };
 
-// The head of the base to create the claim branch from. A base that is gone,
-// such as another task's branch merged and deleted, fails the claim: choosing
-// another is the flow's to do.
+// Where work given `base` builds: `base`, or, when it is the branch of a pull
+// request that merged, such as the task below an epic's task merged between
+// the round that read it ready and its claim, the branch that one merged
+// into, and on down as far as the layers below merged too. Stops at the
+// flow's integration base, and at a branch with no merged pull request.
+export const landedBase = (base: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const integration = yield* Settings.base;
+    const seen = new Set<string>();
+    let target = base;
+
+    while (target !== integration && !seen.has(target)) {
+      seen.add(target);
+
+      const below = Option.filter(
+        yield* github.pullRequestForBranch(target),
+        (pull) => pull.state === "merged",
+      );
+
+      if (Option.isNone(below)) {
+        break;
+      }
+
+      target = below.value.baseRef;
+    }
+
+    return target;
+  });
+
+// The head of the base to create the claim branch from. A base that is gone
+// with no merged pull request to follow (see landedBase), such as another
+// task's branch deleted unmerged, fails the claim: choosing another is the
+// flow's to do.
 export const baseHead = (base: string) =>
   Effect.gen(function* () {
     const sha = yield* (yield* GitHub).branchSha(base);
@@ -612,8 +643,9 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
 // queued the issue. What it puts on the issue, the claim ref and a branch it
 // created are markers, which the engine releases however the run ends; the
 // branch only while it holds no work, and not when a person takes over. The
-// branch starts from `base`'s head, the repo's base branch unless given, and
-// the claim marker records the base, which a run that resumes keeps. With
+// branch starts from the head of `base`, the repo's base branch unless given,
+// or of what it merged into once its pull request merged (landedBase), and
+// the claim marker records that base, which a run that resumes keeps. With
 // `adopt`, an open pull request that already closes the issue is adopted
 // instead (see adopt): no branch is made, and `adopted` names it.
 export const claim = (
@@ -628,7 +660,7 @@ export const claim = (
       const label = yield* queueLabel(options);
       const branch = branchFor(issue);
       const item = Claims.issue(issue);
-      const base = yield* baseOf(options);
+      const base = yield* landedBase(yield* baseOf(options));
       const baseSha = yield* baseHead(base);
       const claimed = yield* Claims.acquire(item);
 
