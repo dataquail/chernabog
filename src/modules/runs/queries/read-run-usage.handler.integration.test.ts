@@ -143,6 +143,22 @@ describe("readRunUsageHandler", () => {
           [Option.some("implement"), counts(11, 22, 303, 44), false],
           [Option.some("review"), counts(5, 6, 7, 8), true],
         ]);
+        expect(
+          tokens.byStep.map((each) => [
+            each.step,
+            each.byModel.map((model) => [model.model, model.tokens]),
+          ]),
+        ).toEqual([
+          [
+            Option.some("implement"),
+            [
+              ["opus", counts(10, 20, 300, 40)],
+              ["haiku", counts(1, 2, 3, 4)],
+            ],
+          ],
+          // The unreported call names no model, so it adds none.
+          [Option.some("review"), [["opus", counts(5, 6, 7, 8)]]],
+        ]);
       }).pipe(Effect.provide(stores)),
   );
 

@@ -24,9 +24,11 @@ import { laneLabel, type LaneNeeds, runGraph, type StepRecord, took } from "./ru
 import { RunGraphView } from "./run-graph-view.tsx";
 import { atBottom, initialLog, linesOfStep, type LogConnection, type LogState } from "./run-log.ts";
 import { locate, type Located, outcomeOf, parkedSince, runOnPlan, timeOf } from "./run-plan.ts";
+import { type UsageState } from "./run-usage.ts";
 import { either, present, shownIf } from "./show.tsx";
 import { span, When } from "./time.tsx";
-import { useRunDetail, useRunLog, useStepLog } from "./use-run.ts";
+import { RunUsageView, StepUsageView } from "./usage.tsx";
+import { useRunDetail, useRunLog, useRunUsage, useStepLog } from "./use-run.ts";
 
 type Found = Extract<Detail, { readonly kind: "found" }>;
 
@@ -230,10 +232,12 @@ const StepFacts = ({
   found,
   now,
   step,
+  usage,
 }: {
   readonly found: Found;
   readonly now: number;
   readonly step: string;
+  readonly usage: UsageState;
 }) => {
   const node = Option.fromUndefinedOr(
     graphOf(found)
@@ -276,6 +280,7 @@ const StepFacts = ({
           </dl>
         ),
       })}
+      <StepUsageView step={step} usage={usage} />
       <p>
         <a href={runHref(found.run.id)}>Back to the whole run</a>
       </p>
@@ -697,6 +702,7 @@ const FoundBody = ({
   now,
   slug,
   step,
+  usage,
 }: {
   readonly found: Found;
   readonly log: LogState;
@@ -705,6 +711,7 @@ const FoundBody = ({
   readonly slug: Option.Option<string>;
   readonly step: Option.Option<string>;
   readonly StepLog: StepLogView;
+  readonly usage: UsageState;
 }) => {
   const onPlan = useMemo(
     () => runOnPlan(Option.fromUndefinedOr(found.plan), found.history, found.run),
@@ -723,10 +730,11 @@ const FoundBody = ({
         ))}
         <Facts found={found} now={now} slug={slug} />
       </section>
+      <RunUsageView usage={usage} />
       <Waits found={found} now={now} />
       <Steps chosen={step} found={found} node={node} now={now} onPlan={onPlan} />
       {present(step, (name) => (
-        <StepFacts found={found} now={now} step={name} />
+        <StepFacts found={found} now={now} step={name} usage={usage} />
       ))}
       {Option.match(node, {
         onNone: () => <Log found={found} log={log} step={step} />,
@@ -747,6 +755,7 @@ const Body = ({
   now,
   slug,
   step,
+  usage,
 }: {
   readonly asked: string;
   readonly detail: Detail;
@@ -756,6 +765,7 @@ const Body = ({
   readonly slug: Option.Option<string>;
   readonly step: Option.Option<string>;
   readonly StepLog: StepLogView;
+  readonly usage: UsageState;
 }) => {
   switch (detail.kind) {
     case "loading":
@@ -778,10 +788,14 @@ const Body = ({
           slug={slug}
           step={step}
           StepLog={StepLog}
+          usage={usage}
         />
       );
   }
 };
+
+// What the run spent, before the daemon has said.
+const LOADING: UsageState = { kind: "loading" };
 
 // The page, given what it holds: rendered as it is, for the tests. On a
 // step's page, `log` is that step's lines alone; on a node's, each of its
@@ -790,6 +804,7 @@ export const RunDetailView = ({
   StepLog = LiveStepLog,
   node = Option.none(),
   step = Option.none(),
+  usage = LOADING,
   ...props
 }: {
   readonly asked: string;
@@ -800,6 +815,7 @@ export const RunDetailView = ({
   readonly step?: Option.Option<string>;
   readonly node?: Option.Option<NodePlace>;
   readonly StepLog?: StepLogView;
+  readonly usage?: UsageState;
 }) => (
   <div className="page">
     <header>
@@ -807,7 +823,7 @@ export const RunDetailView = ({
       <a href="#/">Back to the overview</a>
     </header>
     <main>
-      <Body {...props} node={node} step={step} StepLog={StepLog} />
+      <Body {...props} node={node} step={step} StepLog={StepLog} usage={usage} />
     </main>
   </div>
 );
@@ -842,6 +858,7 @@ const FoundRun = ({
   // A node's page follows its steps' logs, not the run's.
   const followed = Option.filter(step, () => Option.contains(mode, "server"));
   const log = useRunLog(location.origin, found.run.id, followed, Option.isSome(node));
+  const usage = useRunUsage(location.origin, found.run.id);
 
   const shown = Option.match(
     Option.filter(step, () => Option.contains(mode, "page")),
@@ -860,6 +877,7 @@ const FoundRun = ({
       slug={slugOf(status, found.run.repo)}
       step={step}
       node={node}
+      usage={usage}
     />
   );
 };

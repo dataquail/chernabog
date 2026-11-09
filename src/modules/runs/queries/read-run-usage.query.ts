@@ -21,11 +21,16 @@ export class ModelTokens extends Schema.Class<ModelTokens, { readonly brand: "Mo
   "ModelTokens",
 )({ model: Schema.String, tokens: TokenCounts }) {}
 
-// What a run's calls spent in one step, none for calls made outside any, and
-// whether any of them went unreported.
+// What a run's calls spent in one step, none for calls made outside any, by
+// model, and whether any of them went unreported.
 export class StepTokens extends Schema.Class<StepTokens, { readonly brand: "StepTokens" }>(
   "StepTokens",
-)({ step: Schema.Option(Schema.String), tokens: TokenCounts, unreported: Schema.Boolean }) {}
+)({
+  step: Schema.Option(Schema.String),
+  tokens: TokenCounts,
+  byModel: Schema.Array(ModelTokens),
+  unreported: Schema.Boolean,
+}) {}
 
 // What a run's agent calls spent, by model and by step, in the order each was
 // first recorded. `unreported` when any call's adapter couldn't say, so the

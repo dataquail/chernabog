@@ -1,5 +1,6 @@
 // The runs module's routes on the daemon's socket that the dashboard's page of
-// a run reads: the run by a prefix of its id, and its log as it grows.
+// a run reads: the run by a prefix of its id, its log as it grows, and what it
+// spent.
 
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -13,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { applicationModules } from "../src/interface/application-modules.ts";
-import { Refusal, RunReply } from "../src/interface/daemon/daemon.protocol.ts";
+import { Refusal, RunReply, RunUsage } from "../src/interface/daemon/daemon.protocol.ts";
 import { RunId } from "../src/kernel/run-id.id.ts";
 import { RunLogsClientFake } from "../src/modules/runs/infrastructure/clients/run-logs.client-fake.ts";
 import { runsRoutes } from "../src/modules/runs/interface/daemon/runs.endpoint-groups.ts";
@@ -111,6 +112,7 @@ const serving = Effect.gen(function* () {
 
 const decodeRun = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.toCodecJson(RunReply)));
 const decodeRefusal = Schema.decodeUnknownSync(Schema.fromJsonString(Refusal));
+const decodeUsage = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.toCodecJson(RunUsage)));
 
 const readText = (response: Response) => Effect.promise(() => response.text());
 
@@ -268,6 +270,81 @@ describe("GET /runs/:id", () => {
       expect(decodeRun(yield* get("/runs/nobody").pipe(Effect.flatMap(readText)))).toEqual(
         Option.none(),
       );
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+});
+
+describe("GET /runs/:id/usage", () => {
+  effect("answers what a run's agent calls spent, by model and by step, and its compute time", () =>
+    Effect.gen(function* () {
+      logs[RUN] = "started\n";
+      yield* start(RUN);
+
+      yield* RunsCommands.use((runs) =>
+        Effect.gen(function* () {
+          yield* runs.EnterStepCommand({ runId: RunId.make(RUN), step: "implement" });
+          yield* runs.RecordTokenUsageCommand({
+            runId: RunId.make(RUN),
+            step: Option.some("implement"),
+            adapter: "claude",
+            sessionId: "s",
+            reading: Option.some({
+              records: [
+                {
+                  model: "claude-opus-5-5",
+                  input: Option.some(10),
+                  output: Option.some(20),
+                  cacheRead: Option.some(300),
+                  cacheWrite: Option.some(40),
+                },
+              ],
+              cursor: "1",
+            }),
+          });
+          yield* runs.RecordTokenUsageCommand({
+            runId: RunId.make(RUN),
+            step: Option.some("implement"),
+            adapter: "custom",
+            sessionId: "t",
+            reading: Option.none(),
+          });
+          yield* runs.FinishStepCommand({
+            runId: RunId.make(RUN),
+            step: "implement",
+            outcome: "ok",
+          });
+        }),
+      );
+
+      yield* finish(RUN);
+      const get = yield* serving;
+
+      const response = yield* get(`/runs/${RUN}/usage`);
+      expect(response.status).toBe(200);
+
+      const usage = decodeUsage(yield* readText(response));
+      const tokens = Option.getOrThrow(usage.tokens);
+
+      expect(tokens.tokens.total).toBe(370);
+      expect(tokens.unreported).toBe(true);
+      expect(tokens.byModel.map((each) => [each.model, each.tokens.total])).toEqual([
+        ["claude-opus-5-5", 370],
+      ]);
+      expect(tokens.byStep.map((each) => [each.step, each.tokens.total, each.unreported])).toEqual([
+        [Option.some("implement"), 370, true],
+      ]);
+      expect(Option.isSome(usage.computeMs)).toBe(true);
+    }).pipe(Effect.provide(daemonInScratch)),
+  );
+
+  effect("answers none, not zero, for a run that kept neither", () =>
+    Effect.gen(function* () {
+      const get = yield* serving;
+
+      const usage = decodeUsage(yield* get("/runs/nobody/usage").pipe(Effect.flatMap(readText)));
+
+      expect(usage.tokens).toEqual(Option.none());
+      expect(usage.computeMs).toEqual(Option.none());
     }).pipe(Effect.provide(daemonInScratch)),
   );
 });
