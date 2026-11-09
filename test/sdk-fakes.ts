@@ -26,6 +26,7 @@ import {
   MergeRefused,
   type MergeRequest,
   printJson,
+  Progress,
   type PullRequest,
   type PushRejected,
   Repo,
@@ -88,6 +89,7 @@ import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/fl
 import { RunsModule } from "../src/modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
+import { progressFake } from "./progress-fake.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -1091,6 +1093,7 @@ export const makeFake = (
       }),
     ),
     Layer.succeed(ReviewerSeat, ReviewerSeat.of({ login: Effect.sync(() => people.me) })),
+    Layer.effect(Progress, progressFake),
     Layer.succeed(Runs, Runs.of({ isActive: () => Effect.sync(() => knownRun) })),
   );
 

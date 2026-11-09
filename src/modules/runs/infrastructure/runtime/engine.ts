@@ -75,6 +75,7 @@ import { RunsCommands } from "../../runs.command-handlers.ts";
 import { RunsQueries } from "../../runs.query-handlers.ts";
 import { adaptersFor, AgentLive, type AgentsConfig } from "./agents.ts";
 import { type TokenUsageCall, TokenUsageRecorder } from "./agents/token-usage.ts";
+import { ProgressLive } from "./progress.ts";
 import { noHooks, runLogWriting, type StepHooks } from "./runlog.ts";
 import {
   GitHubLive,
@@ -152,6 +153,7 @@ export const repoServices = (
     RepoLive(settings),
     ReviewerSeatLive(settings, persona),
     GitHubLive(settings).pipe(Layer.provide(GitHubApi.layerFor(persona))),
+    ProgressLive(settings, persona).pipe(Layer.provide(GitHubApi.layerFor(persona))),
     GitLive(persona),
     WorktreeLive(settings, persona),
     UsageLive(settings, gate),

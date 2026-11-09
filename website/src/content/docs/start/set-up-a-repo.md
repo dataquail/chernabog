@@ -10,7 +10,7 @@ chernabog init                      # scaffold .chernabog/, copy the recipes you
 git add .chernabog .gitignore && git commit -m "chore: set up chernabog" && git push
 chernabog trust my-app              # approve the default branch's .chernabog/
 chernabog labels my-app             # create the auto:* labels
-chernabog doctor                    # check logins, gh scopes, labels, trust and the daemon
+chernabog doctor                    # check logins, gh scopes, labels, trust, rulesets and the daemon
 ```
 
 | Step     | Writes                                                                                 |

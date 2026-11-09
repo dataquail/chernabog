@@ -268,9 +268,19 @@ declare const NotInReviewerPool_base: Schema.Class<NotInReviewerPool, Schema.Tag
 export declare class NotInReviewerPool extends NotInReviewerPool_base {
     get message(): string;
 }
-export declare const SetupError: Schema.Union<readonly [typeof PersonaUnavailable, typeof NotAuthenticated, typeof NotInReviewerPool]>;
+declare const ProgressUnwritable_base: Schema.Class<ProgressUnwritable, Schema.TaggedStruct<"ProgressUnwritable", {
+    readonly login: Schema.optionalKey<Schema.String>;
+    readonly reason: Schema.String;
+    readonly fix: Schema.String;
+}>, import("effect/Cause").YieldableError & {
+    readonly brand: "ProgressUnwritable";
+}>;
+export declare class ProgressUnwritable extends ProgressUnwritable_base {
+    get message(): string;
+}
+export declare const SetupError: Schema.Union<readonly [typeof PersonaUnavailable, typeof NotAuthenticated, typeof NotInReviewerPool, typeof ProgressUnwritable]>;
 export type SetupError = typeof SetupError.Type;
-export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticated | NotInReviewerPool | PersonaUnavailable);
+export declare const isSetupError: <I>(input: I) => input is I & (NotAuthenticated | NotInReviewerPool | PersonaUnavailable | ProgressUnwritable);
 export {};
 ```
 
@@ -312,7 +322,7 @@ import { NeedsHuman, type ReportedError, Skip, StepFailed } from "./errors.ts";
 import type { FlowSettings, SettingsSchema } from "./flow-settings.ts";
 import type { Json } from "./json.ts";
 import type { Marker } from "./run-markers.ts";
-import { type Agent, type Git, type GitHub, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
+import { type Agent, type Git, type GitHub, type Progress, type Repo, type ReviewerSeat, type Run, RunLog, type Usage, type WorkItem, type Worktree } from "./services.ts";
 declare const StepRunner_base: Context.ServiceClass<StepRunner, "@chernabog/sdk/StepRunner", {
     run(name: string, input: Json): Effect.Effect<Json, Skip | StepFailed>;
 }>;
@@ -323,7 +333,7 @@ declare const Signals_base: Context.ServiceClass<Signals, "@chernabog/sdk/Signal
 }>;
 export declare class Signals extends Signals_base {
 }
-export type TriggerServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
+export type TriggerServices = Repo | GitHub | Git | Worktree | Usage | Agent | ReviewerSeat | Progress | RunLog | FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner;
 export type WorkflowServices = TriggerServices | Run | StepRunner | Signals | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance | Scope.Scope;
 export type FlowError = Skip | NeedsHuman | StepFailed;
 export type FlowLabel = {

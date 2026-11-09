@@ -20,7 +20,7 @@ description: Every chernabog command and flag.
 | `pause <repo>`, `resume <repo>`   | Start no new runs in a repo; runs in flight continue                            |
 | `trust [repo]`                    | Show what changed in `.chernabog/` since last trusted, and trust it             |
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
-| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, and the daemon; and print the warnings the repo's flows contribute (`defineFlow({ doctor })`), such as the recipes' reviewer-pool checks |
+| `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, the [rulesets that protect progress records](/chernabog/operate/progress/#what-doctor-checks) and that each persona may write them, and the daemon; and print the warnings the repo's flows contribute (`defineFlow({ doctor })`), such as the recipes' reviewer-pool checks |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
 | `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, add `@chernabog/recipes` there, copy the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
 | `recipes list [path]`             | The recipes of each recipe package installed in `.chernabog/`, with their descriptions and docs pages: `✓` by the ones the repo copied, `→` by the ones it imports |
