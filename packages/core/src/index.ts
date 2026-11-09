@@ -14,6 +14,7 @@ export * as Lanes from "./lanes.ts";
 export * from "./markers.ts";
 export * as Markers from "./markers-api.ts";
 export * from "./paths.ts";
+export * from "./phase.ts";
 export * as PlanNodes from "./plan-nodes.ts";
 export * from "./roles.ts";
 export * from "./services.ts";

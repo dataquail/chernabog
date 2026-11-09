@@ -13,11 +13,14 @@ import type {
   GitHubError,
   MergeRefused,
   NotFound,
+  PhaseMoved,
+  ProgressError,
   PullRequestClosed,
   PushRejected,
   UsageError,
 } from "./errors.ts";
 import type { Json } from "./json.ts";
+import type { Phase, PhaseWriter } from "./phase.ts";
 
 // The labels of the SDK's issue-to-pull-request recipes. Deprecated: they are
 // those recipes' settings now (the SDK's Settings.labels), and core's next
@@ -767,6 +770,68 @@ export const ReviewerSeatCapability = Capabilities.declare(ReviewerSeat, () => (
   login: "read",
 });
 
+// An item's progress: the phase it has reached, kept apart from the facts
+// and labels on GitHub that anyone can change (ADR 0019). Core stores a phase
+// and compares it for equality; it lists none and gives none a meaning
+// (ADR 0005). An item is an opaque name, such as `Claims.pullRequest(73)`,
+// which an adapter maps to its storage as it likes. Nothing here is git: a
+// hosted backend fits the same calls.
+
+// What an item's record holds: its phase, the transition that wrote it
+// (`from` the phase before, `by` its writer), and a version that changes with
+// every record and never names another, so a reader can tell a record it has
+// already seen.
+export type PhaseRecord = {
+  readonly phase: Phase;
+  readonly from: Option.Option<Phase>;
+  readonly by: PhaseWriter;
+  readonly version: string;
+};
+
+// One move of an item's phase: `from` the phase it must still be in (none:
+// the item has no record yet), `to` the phase it moves to, `by` who moves it.
+export type PhaseTransition = {
+  readonly from: Option.Option<Phase>;
+  readonly to: Phase;
+  readonly by: PhaseWriter;
+};
+
+export class Progress extends Context.Service<
+  Progress,
+  {
+    // The item's record, or none for an item with none yet.
+    read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
+    // Every item's record, in one read, for a source that looks at every open item.
+    readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
+    // Moves the item to `to` only if its phase is still `from`, and returns the
+    // record it wrote. Safe to retry: when the item's record is already this
+    // transition, by this writer, it returns that record and writes nothing,
+    // so a run that resumes after a crash doesn't read its own write as a lost
+    // race. Otherwise, if the phase isn't `from`, it fails with PhaseMoved and
+    // writes nothing. Of two advances from the same phase, one wins.
+    advance(
+      item: string,
+      transition: PhaseTransition,
+    ): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+  }
+>()("@chernabog/sdk/Progress") {}
+
+export const ProgressCapability = Capabilities.declare(
+  Progress,
+  (progress, guard) => ({
+    advance: guard(progress.advance, (item, transition) =>
+      Capabilities.write(
+        `recording ${item} as ${transition.to}`,
+        `recorded ${item} as ${transition.to}`,
+      ),
+    ),
+  }),
+  {
+    read: "read",
+    readAll: "read",
+  },
+);
+
 // The capability ports Chernabog provides a run, each declaring its writes:
 // the engine fences and reports what these declare. A new port joins them.
 export const CAPABILITIES: ReadonlyArray<Capabilities.Guarded> = [
@@ -776,6 +841,7 @@ export const CAPABILITIES: ReadonlyArray<Capabilities.Guarded> = [
   UsageCapability,
   AgentCapability,
   ReviewerSeatCapability,
+  ProgressCapability,
 ];
 
 // What this machine knows of a run, by id: whether it is still going, or none
