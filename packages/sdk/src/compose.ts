@@ -37,6 +37,7 @@ import {
   startOf,
   subjects,
 } from "./blocks.ts";
+import { type ItemKind } from "./phases.ts";
 
 export type Problem = { readonly path: string; readonly message: string };
 
@@ -2664,3 +2665,39 @@ export const generate = (
 
   return Result.succeed(emit(document, sdk, stages));
 };
+
+// A phase a flow reads or records, and the source or block that does.
+export type PhaseUse = {
+  readonly flow: string;
+  readonly item: ItemKind;
+  readonly phase: string;
+  readonly by: string;
+};
+
+// What a document's sources and blocks read and record.
+export type FlowProgress = {
+  readonly reads: ReadonlyArray<PhaseUse>;
+  readonly records: ReadonlyArray<PhaseUse>;
+};
+
+// What a document's sources and blocks read and record, as the catalogue
+// declares them.
+export const progressOf = (_document: FlowDocument): FlowProgress => ({
+  reads: [],
+  records: [],
+});
+
+// A phase read that no flow records, or recorded that no flow reads though a
+// source the SDK has would. Certain unless some flow declares nothing.
+export type PhaseGap = {
+  readonly gap: "unrecorded" | "unread";
+  readonly item: ItemKind;
+  readonly phase: string;
+  readonly certain: boolean;
+  readonly message: string;
+};
+
+export const phaseGaps = (
+  _documents: ReadonlyArray<FlowDocument>,
+  _undeclared: ReadonlyArray<string> = [],
+): ReadonlyArray<PhaseGap> => [];
