@@ -2,7 +2,7 @@ import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { FlowCompilerClient } from "../domain/ports/clients/flow-compiler.client.ts";
+import { FlowCompilerClient, type PhaseGap } from "../domain/ports/clients/flow-compiler.client.ts";
 import {
   CompiledFlow,
   type CompileFlowDocumentsPayload,
@@ -43,7 +43,21 @@ export const compileFlowDocumentsHandler = Effect.fn("compileFlowDocumentsHandle
       }),
     );
 
-    return new FlowDocumentsCompiled({ flows, unknown });
+    // Across every flow, whichever documents were named: a phase is written
+    // by one flow and read by another. The check only advises, so a failure
+    // of it says nothing of phases rather than failing the compile.
+    const gaps = yield* compiler
+      .phaseGaps(root)
+      .pipe(Effect.orElseSucceed(() => Option.none<ReadonlyArray<PhaseGap>>()));
+
+    return new FlowDocumentsCompiled({
+      flows,
+      unknown,
+      ...Option.match(gaps, {
+        onNone: () => ({}),
+        onSome: (phaseGaps) => ({ phaseGaps }),
+      }),
+    });
   },
   withUnitOfWork,
   // Its stores are files on this machine: they have no outage to wait out.

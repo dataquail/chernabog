@@ -36,6 +36,7 @@ import {
   type WorktreePath,
 } from "./block.ts";
 import * as Implement from "./implement.ts";
+import { PHASES } from "./phases.ts";
 import { renderPrompt } from "./prompt.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
@@ -484,6 +485,7 @@ export const resolveConflictsBlocks = {
     },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.reviewAskedAgain }],
     contributes: {},
   }),
 };

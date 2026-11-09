@@ -1,7 +1,7 @@
 import { Command } from "@effect-server-utils/cqrs";
 import * as Schema from "effect/Schema";
 
-import { DocumentProblem } from "../domain/ports/clients/flow-compiler.client.ts";
+import { DocumentProblem, PhaseGap } from "../domain/ports/clients/flow-compiler.client.ts";
 import { RecipeFilesFailed } from "../domain/recipe/recipe.errors.ts";
 
 // What became of one document: its flow file written, already as it compiles,
@@ -22,13 +22,17 @@ export class FlowDocumentsCompiled extends Schema.Class<
   flows: Schema.Array(CompiledFlow),
   // A document named that the checkout doesn't have.
   unknown: Schema.Array(Schema.String),
+  // The gaps across the repo's flows in what they read and record of phases;
+  // left out when the repo's SDK is from before phases.
+  phaseGaps: Schema.optionalKey(Schema.Array(PhaseGap)),
 }) {}
 
 // Compiles the flow documents in .chernabog/documents/ of the checkout at
 // `root`, those named or else all, each to its flow file in .chernabog/flows/.
 // A document with problems leaves its flow file as it was. With `check`,
 // nothing is written: a flow file that isn't what its document compiles to is
-// reported as stale.
+// reported as stale. Either way, the phases all the repo's flows read and
+// record are checked against each other.
 export const CompileFlowDocumentsCommand = Command.make("CompileFlowDocumentsCommand", {
   payload: {
     root: Schema.String,

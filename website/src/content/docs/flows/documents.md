@@ -378,7 +378,7 @@ chernabog recipes blocks --json       # the same, for an agent
 chernabog recipes blocks --subject pull-request   # only the blocks and sources for a flow on it
 ```
 
-Each block says what it does, the subjects it suits, what it gives, the outcomes it can come to, and the order it runs in. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
+Each block says what it does, the subjects it suits, what it gives, the outcomes it can come to, the order it runs in, and the [phases](#phases) it records. Each source says the phases it reads. The list comes from the `@chernabog/sdk` your repo pins, so it matches what your flows run with. It ends with your repo's Effect stages, each with what it takes and gives by its schemas. A stage that can't be loaded isn't listed.
 
 A document that names a block, source, outcome or stage that isn't there is refused with the nearest names, at most three: a few edits away, such as `gate.local` for `gate.locl`, the same name under another prefix, such as `gate.local` for `ci.local`, or, when its prefix has no more than three names, those, such as `gate.local` for `gate.lint`. `chernabog recipes blocks` lists them all.
 
@@ -435,6 +435,48 @@ Blocks declare the order they need, and the check walks every way through a docu
 - `leaves to do` and `does`: what a block leaves must be done on any way that finishes `done`. A pull request that opens must be handed off, a draft too, by `issue.handOff` or `pr.readyForPerson`. A way that ends `needs-human` is excused.
 
 In a `repeat`, the check follows each `next` into the round after it, so these rules hold across rounds. What a round leaves to do is carried into the next one: a round that opens a pull request and goes on with `next` still needs a later round to hand it off before it ends `done`. `needs first` holds across the whole run, so a block that needs another is satisfied by an earlier round. `runs before` holds within a round, since each round starts over.
+
+## Phases
+
+A **phase** is how far an item has got between runs: a pull request that's had changes asked for is `changes-asked` until someone asks for a review again. One flow records it and another reads it, in a different document. Review records `changes-asked` when `review.round` asks for changes, and address-review's `review.changesRequested` finds the pull requests in that phase. Phases are kept per kind of item: an issue, a pull request or an epic. Every flow that works on a pull request shares its phases.
+
+The blocks and sources declare them, so `chernabog recipes blocks` lists them:
+
+- `records:` the phases a block may record on its way out, with the outcome it records one on, as in `records: pull-request changes-asked (on changes)`. A block whose wakes find runs parked in it lists what they read after `its wakes read:`.
+- `reads:` the phases whose items a source finds. `none` means an item with no record yet, so `review.requested` takes a pull request a person opened too.
+- `reconciles:` a phase a source moves an item to from what GitHub says, such as a person's review asking for changes.
+
+A block that is a handoff records its phase itself, so a document can't drop the record by leaving out a step. For a team's own phase, or where a stage of your own does the work of a block that records one, use `progress.advance`. It records the phase you give it on the run's item: the issue on an `issue` or `spec` flow, the pull request on a flow about one, the epic on an `epic` flow.
+
+```yaml
+steps:
+  - id: watching
+    stage: mark-watched # your own step, in place of merged.markWatched
+    in: { pr: trigger.pr }
+    failure: { Skip: skip, StepFailed: person }
+  - id: watched
+    use: progress.advance
+    with: { phase: watched }
+```
+
+A phase is lower-case words joined by hyphens. One that's a slip away from one of the SDK's is refused with the nearest, as `wached is a pull-request phase so close to one of the SDK's that it reads as a slip: did you mean watched?`. Your own phases need names of their own.
+
+Phases aren't stored yet. The blocks record nothing when they run, and the sources still decide by what GitHub says. What's in place is the declarations, and the check below that goes by them.
+
+### The check across flows
+
+No one document's check can see that a source reads a phase nothing records, so `chernabog recipes compile` checks every flow against the others, with or without `--check`, whichever documents you name. It warns about two gaps:
+
+- A phase is read, but no flow records it, so the flow that reads it never finds its work. This is what deleting the wrong step does, or putting a stage of your own where a recording block was without a `progress.advance` after it.
+- A phase is recorded, but no flow reads it, though a source the SDK has would. This usually means the flow that picks the item up isn't there, such as a review flow with no address-review.
+
+```
+warning: pr.mergedRecently in post-merge reads the pull-request phase watched, but no flow records it: merged.markWatched records it
+```
+
+A phase that no source reads, such as an issue's `handed-off` or a pull request's `draft`, is there for status, so recording it without reading it is fine. A read for a source that also takes items with no record, such as `review.requested`, needs nothing recorded.
+
+A flow written in TypeScript declares nothing, and nor does a document that can't be read. When the repo has one, the check can't tell whether it fills a gap, so each gap is a `note:` that names those flows rather than a `warning:`. Neither fails the command, and an SDK from before phases says nothing of them.
 
 ## What the blocks can't do yet
 

@@ -38,6 +38,7 @@ import {
   PullRequestNumber,
   ToPerson,
 } from "./block.ts";
+import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Settings from "./settings.ts";
 
@@ -513,6 +514,7 @@ export const postMergeBlocks = {
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.watched }],
     contributes: {},
   }),
 
@@ -724,63 +726,71 @@ export const postMergeBlocks = {
 export const postMergeSources = {
   // Pull requests this persona wrote that merged into the base branch in the
   // last day, among the 30 closed most lately, and that no run has watched yet.
-  "pr.mergedRecently": defineSource("pr.mergedRecently", "merged", () => ({
-    trigger: Effect.gen(function* () {
-      const github = yield* GitHub;
-      const repo = yield* Repo;
-      const base = yield* Settings.base;
-      const me = yield* github.login;
-      const now = yield* DateTime.now;
-      const items: Array<WorkItem> = [];
+  "pr.mergedRecently": defineSource(
+    "pr.mergedRecently",
+    "merged",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const github = yield* GitHub;
+        const repo = yield* Repo;
+        const base = yield* Settings.base;
+        const me = yield* github.login;
+        const now = yield* DateTime.now;
+        const items: Array<WorkItem> = [];
 
-      const closed = yield* github
-        .request(
-          "GET",
-          `/repos/${repo.slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30`,
-          Option.none(),
-        )
-        .pipe(Effect.flatMap(decodeIn(ClosedPulls, "trigger")));
+        const closed = yield* github
+          .request(
+            "GET",
+            `/repos/${repo.slug}/pulls?state=closed&sort=updated&direction=desc&per_page=30`,
+            Option.none(),
+          )
+          .pipe(Effect.flatMap(decodeIn(ClosedPulls, "trigger")));
 
-      for (const pull of closed) {
-        if (
-          !sameLogin(pull.user.login, me) ||
-          pull.base.ref !== base ||
-          Option.isNone(pull.merge_commit_sha) ||
-          !Option.exists(pull.merged_at, (at) => isRecent(at, now))
-        ) {
-          continue;
-        }
+        for (const pull of closed) {
+          if (
+            !sameLogin(pull.user.login, me) ||
+            pull.base.ref !== base ||
+            Option.isNone(pull.merge_commit_sha) ||
+            !Option.exists(pull.merged_at, (at) => isRecent(at, now))
+          ) {
+            continue;
+          }
 
-        const comments = yield* github.trustedComments(pull.number);
+          const comments = yield* github.trustedComments(pull.number);
 
-        if (comments.some((comment) => Option.isSome(watchedMarker.read(comment.body)))) {
-          continue;
-        }
+          if (comments.some((comment) => Option.isSome(watchedMarker.read(comment.body)))) {
+            continue;
+          }
 
-        const issue = closedIssue(
-          Option.getOrElse(pull.body, () => ""),
-          pull.head.ref,
-        );
+          const issue = closedIssue(
+            Option.getOrElse(pull.body, () => ""),
+            pull.head.ref,
+          );
 
-        items.push({
-          key: `merged-${pull.number}`,
-          title: pull.title,
-          url: pull.html_url,
-          data: {
-            pullRequest: pull.number,
-            url: pull.html_url,
+          items.push({
+            key: `merged-${pull.number}`,
             title: pull.title,
-            mergeSha: pull.merge_commit_sha.value,
-            baseRef: pull.base.ref,
-            ...Option.match(issue, { onNone: () => ({}), onSome: (number) => ({ issue: number }) }),
-          },
-        });
-      }
+            url: pull.html_url,
+            data: {
+              pullRequest: pull.number,
+              url: pull.html_url,
+              title: pull.title,
+              mergeSha: pull.merge_commit_sha.value,
+              baseRef: pull.base.ref,
+              ...Option.match(issue, {
+                onNone: () => ({}),
+                onSome: (number) => ({ issue: number }),
+              }),
+            },
+          });
+        }
 
-      return items;
-    }).pipe(reportAs("trigger")),
-    contributes: { settings: Settings.Base.fields, ownWork: true },
-  })),
+        return items;
+      }).pipe(reportAs("trigger")),
+      contributes: { settings: Settings.Base.fields, ownWork: true },
+    }),
+    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.watched] }] },
+  ),
 };
 
 // A pull request this persona wrote, merged into the base branch. A run only

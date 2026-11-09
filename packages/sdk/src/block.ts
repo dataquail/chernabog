@@ -23,6 +23,7 @@ import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import * as Implement from "./implement.ts";
+import { type Reading, type Recorded, type SourceProgress } from "./phases.ts";
 import type { FlowSettings } from "./settings.ts";
 
 // What a scope's failures can tell a person beyond why: what the run got to.
@@ -181,6 +182,9 @@ export type Contribution = {
   readonly doctor?: ReadonlyArray<DoctorCheck>;
   // Finds runs of this flow parked in the block, to wake them.
   readonly wakes?: TriggeredFlow["trigger"];
+  // The phases its wakes find parked runs by, as a source declares what it
+  // reads.
+  readonly wakeReads?: ReadonlyArray<Reading>;
   readonly ownWork?: boolean;
 };
 
@@ -269,6 +273,12 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // does, such as letting its claim go. It suits none of the others, even
   // where what it takes could be wired; see suits.ts.
   readonly suits?: ReadonlyArray<string>;
+  // The phases it may record on its way out, for the check across a repo's
+  // flows and for listings: see phases.ts.
+  readonly records?: ReadonlyArray<Recorded>;
+  // The fixed input naming a phase it records on the run's item, for a block
+  // that records the phase its document names: progress.advance.
+  readonly recordsInput?: keyof Input & string;
   readonly contributes: Contribution;
 };
 
@@ -278,13 +288,23 @@ export type Source = {
   readonly contributes: Contribution;
 };
 
-// A source, by the name a document uses it by, and the subject of the work
-// items it finds.
+const NO_PROGRESS: SourceProgress = { reads: [] };
+
+// A source, by the name a document uses it by, the subject of the work items
+// it finds, and the phases it reads of them: none, when it decides by what
+// GitHub says alone.
 export const defineSource = <Subject extends string, Input extends ReadonlyArray<unknown>>(
   name: string,
   subject: Subject,
   find: (...input: Input) => Source,
-) => ({ name, subject, find });
+  progress: SourceProgress = NO_PROGRESS,
+) => ({
+  name,
+  subject,
+  find,
+  reads: progress.reads,
+  reconciles: progress.reconciles ?? [],
+});
 
 type Named = { readonly [key: string]: { readonly name: string } };
 
@@ -386,6 +406,8 @@ export const defineBlock = <
     progressUnless: Option.fromUndefinedOr(spec.progressUnless),
     stepNames: spec.stepNames ?? [spec.name],
     suits: Option.fromUndefinedOr(spec.suits),
+    records: spec.records ?? [],
+    recordsInput: Option.fromUndefinedOr(spec.recordsInput),
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);

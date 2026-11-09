@@ -117,6 +117,13 @@ export type DocumentCompiler = {
     stages?: ReadonlyArray<string>,
   ) => Result.Result<string, ReadonlyArray<DocumentIssue>>;
   readonly describe: (stages?: ReadonlyArray<DescribedStage>) => Core.Json;
+  // The gaps across a repo's documents in what they read and record of
+  // phases, the flows without one named as declaring nothing; none in an SDK
+  // from before phases.
+  readonly phaseGaps?: (
+    documents: ReadonlyArray<Core.Json>,
+    undeclared: ReadonlyArray<string>,
+  ) => ReadonlyArray<Core.Json>;
 };
 
 const CompilingSdk = Schema.Struct({

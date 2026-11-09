@@ -30,6 +30,7 @@ import {
 } from "./block.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import { PHASES } from "./phases.ts";
 import * as Review from "./review.ts";
 import * as Settings from "./settings.ts";
 
@@ -269,6 +270,10 @@ export const humanInitiatedBlocks = {
     },
     outcomes: {},
     mustRoute: [],
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.reviewAsked },
+      { item: "issue", phase: PHASES.issue.handedOff },
+    ],
     contributes: { settings: Settings.Reviewers.fields, doctor: [Review.poolCheck] },
   }),
 };
