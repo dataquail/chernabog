@@ -35,6 +35,7 @@ import {
   RunTookBranch,
   RunView,
   SkipView,
+  TokenUsageRecorded,
 } from "../../modules/runs/runs.contracts.ts";
 import { RepoTrusted } from "../../modules/trust/trust.contracts.ts";
 
@@ -216,6 +217,62 @@ export {
   RunTookBranch,
 };
 
+// GET /runs/:id/usage: what a run's agent calls spent, and its compute time,
+// as the runs' ReadRunUsageQuery answers it. The query owns its read model
+// (docs/adr/0011-queries-read-their-storage.md), which a browser can't
+// reach, so its shape on the wire is declared here, and the route encodes
+// the query's answer with it.
+
+// Tokens summed over some of a run's calls: each category, and their total,
+// which sums all four.
+export const TokenCounts = Schema.Struct({
+  total: Schema.Finite,
+  input: Schema.Finite,
+  output: Schema.Finite,
+  cacheRead: Schema.Finite,
+  cacheWrite: Schema.Finite,
+});
+
+export type TokenCounts = typeof TokenCounts.Type;
+
+export const ModelTokens = Schema.Struct({ model: Schema.String, tokens: TokenCounts });
+
+export type ModelTokens = typeof ModelTokens.Type;
+
+// One step's, none for calls made outside any; `unreported` when one of its
+// calls' adapters couldn't say.
+export const StepTokens = Schema.Struct({
+  step: Schema.Option(Schema.String),
+  tokens: TokenCounts,
+  byModel: Schema.Array(ModelTokens),
+  unreported: Schema.Boolean,
+});
+
+export type StepTokens = typeof StepTokens.Type;
+
+// The run's, by model and by step; `unreported` makes the totals a floor.
+export const RunTokens = Schema.Struct({
+  tokens: TokenCounts,
+  byModel: Schema.Array(ModelTokens),
+  byStep: Schema.Array(StepTokens),
+  unreported: Schema.Boolean,
+});
+
+export type RunTokens = typeof RunTokens.Type;
+
+// Its tokens, none for a run from before they were kept, and its compute
+// time in milliseconds, none for a run from before steps were kept.
+export const RunUsage = Schema.Struct({
+  tokens: Schema.Option(RunTokens),
+  computeMs: Schema.Option(Schema.Finite),
+});
+
+export type RunUsage = typeof RunUsage.Type;
+
+// An agent call of a run recorded what it spent: the dashboard's page of the
+// run loads its usage again.
+export { TokenUsageRecorded };
+
 // A run's history put on its plan, each node's state, rounds and lanes, and
 // how lanes lay out beside one another: worked out once, in the runs
 // module's domain, so the dashboard and the TUI draw a run the same way.
@@ -329,6 +386,7 @@ export const DaemonEvent = Schema.Union([
   RunNeedsAttention.schema,
   RunFinished.schema,
   PullRequestOpened.schema,
+  TokenUsageRecorded.schema,
   RunMarkersReleased.schema,
   RepoEnrolled,
   RepoPaused,
@@ -355,6 +413,7 @@ const sent = {
   RunNeedsAttention: true,
   RunFinished: true,
   PullRequestOpened: true,
+  TokenUsageRecorded: true,
   RunMarkersReleased: true,
   RepoEnrolled: true,
   RepoPaused: true,

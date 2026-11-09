@@ -67,6 +67,7 @@ const tokensOf = (rows: Arr.NonEmptyReadonlyArray<TokenUsageRow>) => {
       StepTokens.make({
         step: Option.fromNullOr(step),
         tokens: countsOf(some),
+        byModel: [],
         unreported: unreported(some),
       }),
     ),

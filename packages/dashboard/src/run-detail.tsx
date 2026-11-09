@@ -24,6 +24,7 @@ import { laneLabel, type LaneNeeds, runGraph, type StepRecord, took } from "./ru
 import { RunGraphView } from "./run-graph-view.tsx";
 import { atBottom, initialLog, linesOfStep, type LogConnection, type LogState } from "./run-log.ts";
 import { locate, type Located, outcomeOf, parkedSince, runOnPlan, timeOf } from "./run-plan.ts";
+import { type UsageState } from "./run-usage.ts";
 import { either, present, shownIf } from "./show.tsx";
 import { span, When } from "./time.tsx";
 import { useRunDetail, useRunLog, useStepLog } from "./use-run.ts";
@@ -800,6 +801,7 @@ export const RunDetailView = ({
   readonly step?: Option.Option<string>;
   readonly node?: Option.Option<NodePlace>;
   readonly StepLog?: StepLogView;
+  readonly usage?: UsageState;
 }) => (
   <div className="page">
     <header>

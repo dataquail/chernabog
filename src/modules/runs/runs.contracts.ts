@@ -49,3 +49,4 @@ export { ActiveRun, RunView } from "./domain/run/run-view.value-object.ts";
 export { RunMarkersReleased } from "./domain/run-marker/run-marker.events.ts";
 export { RunMarkerView } from "./domain/run-marker/run-marker-view.value-object.ts";
 export { SkipView } from "./domain/skip/skip-view.value-object.ts";
+export { TokenUsageRecorded } from "./domain/token-usage/token-usage.events.ts";
