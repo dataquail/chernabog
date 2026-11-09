@@ -36,6 +36,8 @@ import { readRunLogHandler } from "./queries/read-run-log.handler.ts";
 import { ReadRunLogQuery } from "./queries/read-run-log.query.ts";
 import { readRunMadeHandler } from "./queries/read-run-made.handler.ts";
 import { ReadRunMadeQuery } from "./queries/read-run-made.query.ts";
+import { readRunUsageHandler } from "./queries/read-run-usage.handler.ts";
+import { ReadRunUsageQuery } from "./queries/read-run-usage.query.ts";
 import { readStateVersionHandler } from "./queries/read-state-version.handler.ts";
 import { ReadStateVersionQuery } from "./queries/read-state-version.query.ts";
 import { readTokenUsageCursorHandler } from "./queries/read-token-usage-cursor.handler.ts";
@@ -66,6 +68,7 @@ export const runsQueryGroup = Query.group(
   ReadFlowPlanQuery,
   ReadRunHistoryQuery,
   ReadRunMadeQuery,
+  ReadRunUsageQuery,
   ReadStateVersionQuery,
   ReadTokenUsageCursorQuery,
 );
@@ -84,6 +87,7 @@ const RunsQueryHandlersLive = Query.handlersOf(runsQueryGroup, {
   ReadFlowPlanQuery: (payload) => readFlowPlanHandler(payload),
   ReadRunHistoryQuery: (payload) => readRunHistoryHandler(payload),
   ReadRunMadeQuery: (payload) => readRunMadeHandler(payload),
+  ReadRunUsageQuery: (payload) => readRunUsageHandler(payload),
   ReadStateVersionQuery: () => readStateVersionHandler(),
   ReadTokenUsageCursorQuery: (payload) => readTokenUsageCursorHandler(payload),
 });
