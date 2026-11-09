@@ -8,6 +8,8 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { Phase } from "./phase.ts";
+
 // Ends a run cleanly: nothing to do, or a gate said not now. Never a failure.
 export class Skip extends Schema.TaggedError<Skip, { readonly brand: "Skip" }>()("Skip", {
   reason: Schema.String,
@@ -61,7 +63,17 @@ export class UsageError extends Schema.TaggedError<UsageError, { readonly brand:
   },
 ) {}
 
-export type ReportedError = GitHubError | GitError | AgentError | UsageError;
+// The Progress port's storage failed: unreachable, refused, or holding a
+// record it can't read. Named for no backend, so a hosted adapter fails with
+// it as the protected-branch one does.
+export class ProgressError extends Schema.TaggedError<
+  ProgressError,
+  { readonly brand: "ProgressError" }
+>()("ProgressError", {
+  message: Schema.String,
+}) {}
+
+export type ReportedError = GitHubError | GitError | AgentError | UsageError | ProgressError;
 
 // The work's errors: each one a flow can decide on.
 
@@ -149,6 +161,24 @@ export class CiTimedOut extends Schema.TaggedError<CiTimedOut, { readonly brand:
   }
 }
 
+// An advance that found the item's phase no longer `expected` (none: the item
+// had no record), and not its own transition either: another writer moved it
+// first. `found` is the phase it holds now.
+export class PhaseMoved extends Schema.TaggedError<PhaseMoved, { readonly brand: "PhaseMoved" }>()(
+  "PhaseMoved",
+  {
+    item: Schema.String,
+    expected: Schema.OptionFromOptionalKey(Phase),
+    found: Schema.OptionFromOptionalKey(Phase),
+  },
+) {
+  override get message() {
+    const phase = Option.getOrElse(() => "no phase");
+
+    return `${this.item} moved: expected ${phase(this.expected)}, found ${phase(this.found)}`;
+  }
+}
+
 export const WorkError = Schema.Union([
   NotFound,
   PullRequestClosed,
@@ -156,6 +186,7 @@ export const WorkError = Schema.Union([
   PushRejected,
   NothingCommitted,
   CiTimedOut,
+  PhaseMoved,
 ]);
 
 export type WorkError = typeof WorkError.Type;
