@@ -260,14 +260,16 @@ describe("chernabog recipes blocks", () => {
     ]);
 
     expect(code).toBe(0);
-    expect(output).toContain("  records: pull-request changes-asked (on changes)\n");
+    expect(output).toContain(
+      "  records: pull-request changes-asked (on changes), pull-request approved (on approve)\n",
+    );
     expect(output).toContain(
       "  records: issue awaiting-ready\n  its wakes read: issue awaiting-ready\n",
     );
     expect(output).toContain("  records: the phase given as phase under with, on the run's item\n");
-    expect(output).toContain("  reads: pull-request changes-asked\n");
+    expect(output).toContain("  reads: pull-request changes-asked or none\n");
     expect(output).toContain(
-      "  reconciles: pull-request changes-asked from review-asked, review-asked-again or approved",
+      "  reconciles: pull-request changes-asked from review-asked, review-asked-again, approved, draft or ready-for-person",
     );
   });
 

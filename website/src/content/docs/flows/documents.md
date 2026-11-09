@@ -39,7 +39,7 @@ steps:
             summary: review.changesAsked
 ```
 
-- `review.requested` finds the pull requests that ask this persona for a review it hasn't given yet. `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
+- `review.requested` finds the pull requests that ask this persona for their first review, by their [phase](#phases). `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
 - `pr.land` merges only a pull request labelled `auto:ship`, and merges nothing otherwise. A flow that must never merge leaves `pr.land` out rather than relying on the label.
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.

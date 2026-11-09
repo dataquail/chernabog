@@ -881,17 +881,18 @@ export const sourceDescriptions = {
     with: {},
   },
   "review.requested": {
-    about: "Pull requests that ask this persona for a review it hasn't given yet.",
+    about:
+      "Pull requests that ask this persona for their first review: recorded review-asked, or draft or ready-for-person and not reviewed by it yet. One the persona has reviewed though its record says review-asked is held, with why. One with no record: a review it hasn't given yet.",
     with: {},
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote whose latest approval or request for changes asks for changes on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. Each run's key carries the review: pr-7-changes-2.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4. One with no record: its latest approval or request for changes, keyed pr-7-changes-2.",
     with: {},
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again after it reviewed them, one run per request, except those labelled auto:needs-human. Each run's key carries the review it asks for: pr-7-review-2.",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record: one it reviewed already, keyed pr-7-review-2.",
     with: {},
   },
   "review.waitingElsewhere": {
