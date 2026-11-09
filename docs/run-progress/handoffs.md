@@ -41,8 +41,8 @@ to be replaced with #361's numbers.
 
 "Who" says who can cause the handoff: a run, a person, or either. A phase in
 _italics_ is recorded but no source reads it. It's for status and the
-dashboard, and #445's check allows it, since that check warns only about a
-phase that is read and never recorded.
+dashboard, and #445's check allows it: it warns about a phase recorded and
+never read only when some source in the catalogue would read it.
 
 ### `implement`
 
@@ -627,8 +627,15 @@ it.
 `reads` must be produced by a block's `records`, or by a source's
 `reconciles`, in some flow. Otherwise it warns. Two cases pass:
 
-- `"none"` is always satisfied;
+- `"none"` is always satisfied, and so is every phase of a reading that
+  includes it: `review.requested` takes a pull request a person opened;
 - a phase recorded and never read is allowed, as the italic phases above are.
+
+As built (#445), the check also warns about a phase recorded in some flow and
+read in none where a source in the catalogue would read it: `changes-asked`
+recorded by review with no address-review in the repo. A flow without a
+document declares nothing, so with one in the repo a gap is reported as a
+note it may fill, not a warning. It runs in `chernabog recipes compile`.
 
 ## For the epic
 
