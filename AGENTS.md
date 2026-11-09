@@ -820,6 +820,28 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   is the in-memory adapter tests use, and passes it in `test/progress.test.ts`.
   Add a behaviour every adapter must have to the suite, not to one adapter's
   tests.
+- **The binary's adapter is protected branches** (#364,
+  `src/modules/runs/infrastructure/runtime/progress.ts`, provided by
+  `repoServices` as the persona): `chernabog/threads/<item>`, one commit per
+  phase with `Phase`, `From` and `By` trailers and no file changes. The first
+  phase is a root commit with the empty tree whose ref only one writer can
+  create (`POST /git/refs`, 422 for the loser); later ones are
+  `createCommitOnBranch` with `expectedHeadOid`. A lost race comes back as
+  HTTP 200 with `STALE_DATA` or `FORBIDDEN`, so a miss reads the branch
+  again: moved is `PhaseMoved`, unmoved with `FORBIDDEN` is a ruleset's
+  refusal, raised as core's `ProgressUnwritable` setup error (a defect the
+  engine reports, as `ReviewerSeat` does). Items can't hold a slash: the
+  rulesets match `refs/heads/chernabog/threads/*` with fnmatch.
+  `src/modules/runs/infrastructure/runtime/progress.test.ts` runs the
+  contract over `test/github-threads-fake.ts`;
+  `test/acceptance/progress-live.test.ts` runs it, and two personas' races,
+  on a real scratch repo when `CHERNABOG_PROGRESS_LIVE_REPO` and
+  `CHERNABOG_PROGRESS_LIVE_PERSONAS` are set, and skips otherwise.
+- **`doctor` checks the rulesets** (`threads-setup.ts`): missing ones, or a
+  repo that can't have them, warn (writes still work, unprotected); a persona
+  that doesn't bypass the write ruleset fails. The binary owns the check,
+  not a flow: the adapter is the binary's, and no flow knows a branch.
+  `website/src/content/docs/operate/progress.md` has the setup commands.
 
 ## Versions (#123, #163)
 

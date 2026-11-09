@@ -862,4 +862,4 @@ export const doctorCommand = Command.make("doctor", { json: jsonFlag }, ({ json 
       process.exitCode = 1;
     }
   }),
-).pipe(Command.withDescription("Check logins, gh scopes, labels, trust and the daemon"));
+).pipe(Command.withDescription("Check logins, gh scopes, labels, trust, rulesets and the daemon"));
