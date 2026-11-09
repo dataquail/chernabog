@@ -42,6 +42,7 @@ import {
   claimedBase,
   dropInProgress,
   issueItem,
+  landedBase,
   latestClaim,
   legacyClaim,
   markClaimed,
@@ -118,7 +119,7 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
       const run = yield* Run;
       const branch = branchFor(issue);
       const item = Claims.issue(issue);
-      const base = yield* baseOf(options);
+      const base = yield* landedBase(yield* baseOf(options));
       const baseSha = yield* baseHead(base);
       const claimed = yield* Claims.acquire(item, { withPerson: true });
 
