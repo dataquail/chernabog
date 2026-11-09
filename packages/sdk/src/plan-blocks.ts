@@ -23,6 +23,7 @@ import {
   ToPerson,
 } from "./block.ts";
 import * as Implement from "./implement.ts";
+import { PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
@@ -198,7 +199,11 @@ export const planBlocks = {
     mustRoute: ["approved", "changes"],
     exhaustive: true,
     waits: true,
-    contributes: { wakes: Plan.answers.pipe(reportAs("trigger")) },
+    records: [{ item: "issue", phase: PHASES.issue.proposed }],
+    contributes: {
+      wakes: Plan.answers.pipe(reportAs("trigger")),
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.proposed] }],
+    },
   }),
 
   "plan.changesAsked": defineBlock({
@@ -268,6 +273,7 @@ export const planBlocks = {
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "issue", phase: PHASES.issue.becameEpic }],
     contributes: {},
   }),
 

@@ -39,6 +39,7 @@ import {
 } from "./block.ts";
 import * as Epic from "./epic.ts";
 import * as Implement from "./implement.ts";
+import { NO_RECORD, PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Routing from "./routing.ts";
@@ -917,6 +918,7 @@ export const epicBlocks = {
         Option.liftPredicate(read.summary, () => read.finished),
     },
     mustRoute: ["finished"],
+    records: [{ item: "epic", phase: PHASES.epic.finished }],
     contributes: {},
   }),
 
@@ -1048,6 +1050,7 @@ export const epicBlocks = {
     outcomes: {},
     mustRoute: [],
     waits: true,
+    records: [{ item: "epic", phase: PHASES.epic.waiting }],
     contributes: {},
   }),
 
@@ -1184,13 +1187,18 @@ export const laneScopes = {
 };
 
 export const epicSources = {
-  "epic.queued": defineSource("epic.queued", "epic", () => ({
-    trigger: Epic.queued.pipe(reportAs("trigger")),
-    contributes: {
-      settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
-      labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
-    },
-  })),
+  "epic.queued": defineSource(
+    "epic.queued",
+    "epic",
+    () => ({
+      trigger: Epic.queued.pipe(reportAs("trigger")),
+      contributes: {
+        settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
+        labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
+      },
+    }),
+    { reads: [{ item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] }] },
+  ),
 };
 
 // However the run ends, its claim on the epic goes, and the engine lets its

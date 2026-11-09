@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { Approved, defineBlock, defineSource, type PullRequestNumber } from "./block.ts";
+import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -161,6 +162,7 @@ export const reReviewBlocks = {
     },
     mustRoute: ["approve", "changes"],
     exhaustive: true,
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" }],
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
@@ -204,6 +206,7 @@ export const reReviewBlocks = {
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.readyForPerson }],
     contributes: { namedLabels: [Settings.readyForPersonLabel] },
   }),
 };
@@ -213,22 +216,39 @@ export const reReviewSources = {
   // per request, unless a person has them (auto:needs-human): asking again
   // during a dispute doesn't restart the loop. Each item's key carries the
   // review it asks for, `pr-7-review-2`, so each request is a run of its own.
-  "review.requestedAgain": defineSource("review.requestedAgain", "pull-request", () => ({
-    trigger: Effect.gen(function* () {
-      const labelNames = yield* Settings.labels;
+  "review.requestedAgain": defineSource(
+    "review.requestedAgain",
+    "pull-request",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const labelNames = yield* Settings.labels;
 
-      return yield* Effect.forEach(
-        (yield* Review.reviewRequests).filter(
-          ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
-        ),
-        ({ pull, reviewed }) =>
-          Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`)),
-      );
-    }).pipe(reportAs("trigger")),
-    contributes: {
-      settings: Routing.Settings.fields,
-      doctor: [Review.reviewerCheck],
-      ownWork: true,
+        return yield* Effect.forEach(
+          (yield* Review.reviewRequests).filter(
+            ({ pull, reviewed }) => reviewed > 0 && !pull.labels.includes(labelNames.needsHuman),
+          ),
+          ({ pull, reviewed }) =>
+            Review.routed(
+              pull,
+              Review.reviewItem(pull, `pr-${pull.number}-review-${reviewed + 1}`),
+            ),
+        );
+      }).pipe(reportAs("trigger")),
+      contributes: {
+        settings: Routing.Settings.fields,
+        doctor: [Review.reviewerCheck],
+        ownWork: true,
+      },
+    }),
+    {
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAskedAgain] }],
+      reconciles: [
+        {
+          item: "pull-request",
+          from: [PHASES.pullRequest.changesAsked, PHASES.pullRequest.approved],
+          to: PHASES.pullRequest.reviewAskedAgain,
+        },
+      ],
     },
-  })),
+  ),
 };

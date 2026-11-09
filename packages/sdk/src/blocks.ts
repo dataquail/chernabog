@@ -67,6 +67,7 @@ import {
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import { NO_RECORD, PHASES } from "./phases.ts";
 import { planBlocks, planLoopStates, planSources, specSubject } from "./plan-blocks.ts";
 import { mergedSubject, postMergeBlocks, postMergeSources } from "./post-merge-blocks.ts";
 import * as PullRequest from "./pull-request.ts";
@@ -220,9 +221,11 @@ export const catalogue = elsewhere.and("blocks.ts", {
         }
       }),
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
+    records: [{ item: "issue", phase: PHASES.issue.awaitingReady }],
     contributes: {
       labels: Implement.adoptionLabels,
       wakes: Implement.readied.pipe(reportAs("trigger")),
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingReady] }],
     },
     outcomes: {},
     mustRoute: [],
@@ -288,6 +291,10 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.reviewAsked },
+      { item: "issue", phase: PHASES.issue.handedOff },
+    ],
     contributes: { settings: Settings.Reviewers.fields, doctor: [Review.poolCheck] },
     outcomes: {},
     mustRoute: [],
@@ -381,6 +388,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "issue", phase: PHASES.issue.askedQuestions }],
     contributes: {},
   }),
 
@@ -582,6 +590,11 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.reviewAsked },
+      { item: "pull-request", phase: PHASES.pullRequest.draft },
+      { item: "issue", phase: PHASES.issue.handedOff },
+    ],
     contributes: { settings: Settings.Reviewers.fields, doctor: [Review.poolCheck] },
     outcomes: {},
     mustRoute: [],
@@ -637,6 +650,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     },
     mustRoute: ["approve", "changes"],
     exhaustive: true,
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.changesAsked, on: "changes" }],
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
@@ -693,12 +707,43 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "fail",
     },
+    records: [
+      { item: "pull-request", phase: PHASES.pullRequest.approved },
+      { item: "pull-request", phase: PHASES.pullRequest.mergeHeld },
+    ],
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
+      wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.mergeHeld] }],
     },
     outcomes: {},
     mustRoute: [],
+  }),
+
+  // A team's own phase, recorded on the run's item where a document's own
+  // stage stands in for the block that would record one, or a phase no block
+  // has. Phases aren't stored yet (#363 and #364 add the record), so it
+  // records nothing when it runs: what it declares is what the check across
+  // the repo's flows reads.
+  "progress.advance": defineBlock({
+    name: "progress.advance",
+    fixed: ["phase"],
+    about:
+      "Records that the run's item has reached phase: an issue's on an issue or spec, a pull request's on a flow about one, an epic's on an epic. Use it for a team's own phase, or where a stage of the repo's own does what a block that records a phase would, so the flow that reads that phase still finds the item. chernabog recipes compile warns when a phase is read that no flow records.",
+    inputKinds: {
+      phase:
+        "a phase's name, lower-case words joined by hyphens: one of the SDK's, which the listing's records and reads name, or the team's own",
+    },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    inputs: { phase: "required" },
+    run: (_input: { readonly phase: string }) => Effect.void,
+    failures: {},
+    outcomes: {},
+    mustRoute: [],
+    stepNames: [],
+    recordsInput: "phase",
+    contributes: {},
   }),
 }).entries;
 
@@ -759,28 +804,38 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
 
   // Pull requests that ask this persona for a review it hasn't given yet,
   // routed by their assignees and reviewers.
-  "review.requested": defineSource("review.requested", "pull-request", () => ({
-    trigger: Effect.gen(function* () {
-      const found = yield* Review.reviewRequests;
+  "review.requested": defineSource(
+    "review.requested",
+    "pull-request",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const found = yield* Review.reviewRequests;
 
-      return yield* Effect.forEach(
-        found.filter(({ reviewed }) => reviewed === 0),
-        ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
-      );
-    }).pipe(reportAs("trigger")),
-    contributes: {
-      settings: Routing.Settings.fields,
-      doctor: [Review.reviewerCheck],
-      ownWork: true,
-    },
-  })),
+        return yield* Effect.forEach(
+          found.filter(({ reviewed }) => reviewed === 0),
+          ({ pull }) => Review.routed(pull, Review.reviewItem(pull, `pr-${pull.number}`)),
+        );
+      }).pipe(reportAs("trigger")),
+      contributes: {
+        settings: Routing.Settings.fields,
+        doctor: [Review.reviewerCheck],
+        ownWork: true,
+      },
+    }),
+    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }] },
+  ),
 
   // Those waiting on a reviewer no persona on this machine acts as, which
   // status lists.
-  "review.waitingElsewhere": defineSource("review.waitingElsewhere", "pull-request", () => ({
-    trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
-    contributes: {},
-  })),
+  "review.waitingElsewhere": defineSource(
+    "review.waitingElsewhere",
+    "pull-request",
+    () => ({
+      trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
+      contributes: {},
+    }),
+    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }] },
+  ),
 } satisfies { readonly [name: string]: { readonly subject: SubjectName } }).entries;
 
 // What a loop's state can start from, by the name a document uses it by.

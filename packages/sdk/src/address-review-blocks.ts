@@ -23,6 +23,7 @@ import {
   WorktreePath,
 } from "./block.ts";
 import * as Implement from "./implement.ts";
+import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -424,6 +425,7 @@ export const addressReviewBlocks = {
     },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.reviewAskedAgain }],
     contributes: { settings: Settings.Reviewers.fields },
   }),
 };
@@ -433,41 +435,61 @@ export const addressReviewSources = {
   // changes asks for changes on the current head, so nothing was pushed since.
   // A person has one labelled auto:needs-human, and a run of another flow one
   // it owns; both are left alone. Each is routed by its assignees and reviewers.
-  "review.changesRequested": defineSource("review.changesRequested", "changes-asked", () => ({
-    trigger: Effect.gen(function* () {
-      const labelNames = yield* Settings.labels;
-      const items: Array<WorkItem> = [];
+  "review.changesRequested": defineSource(
+    "review.changesRequested",
+    "changes-asked",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const labelNames = yield* Settings.labels;
+        const items: Array<WorkItem> = [];
 
-      for (const pull of yield* Review.authoredByMe) {
-        if (pull.labels.includes(labelNames.needsHuman)) {
-          continue;
+        for (const pull of yield* Review.authoredByMe) {
+          if (pull.labels.includes(labelNames.needsHuman)) {
+            continue;
+          }
+
+          const decisive = yield* Review.decisiveReviews(pull.number);
+          const latest = Arr.last(decisive);
+
+          if (
+            !Option.exists(
+              latest,
+              (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
+            )
+          ) {
+            continue;
+          }
+
+          if (yield* Review.ownedByARun(pull)) {
+            continue;
+          }
+
+          for (const review of Option.toArray(latest)) {
+            items.push(
+              yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)),
+            );
+          }
         }
 
-        const decisive = yield* Review.decisiveReviews(pull.number);
-        const latest = Arr.last(decisive);
-
-        if (
-          !Option.exists(
-            latest,
-            (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
-          )
-        ) {
-          continue;
-        }
-
-        if (yield* Review.ownedByARun(pull)) {
-          continue;
-        }
-
-        for (const review of Option.toArray(latest)) {
-          items.push(yield* Review.routed(pull, Review.addressItem(pull, review, decisive.length)));
-        }
-      }
-
-      return items;
-    }).pipe(reportAs("trigger")),
-    contributes: { settings: Routing.Settings.fields, ownWork: true },
-  })),
+        return items;
+      }).pipe(reportAs("trigger")),
+      contributes: { settings: Routing.Settings.fields, ownWork: true },
+    }),
+    {
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.changesAsked] }],
+      reconciles: [
+        {
+          item: "pull-request",
+          from: [
+            PHASES.pullRequest.reviewAsked,
+            PHASES.pullRequest.reviewAskedAgain,
+            PHASES.pullRequest.approved,
+          ],
+          to: PHASES.pullRequest.changesAsked,
+        },
+      ],
+    },
+  ),
 };
 
 // A review that asks for changes on a pull request this persona wrote. A run

@@ -37,7 +37,15 @@ import {
   startOf,
   subjects,
 } from "./blocks.ts";
-import { type ItemKind } from "./phases.ts";
+import {
+  type ItemKind,
+  NO_RECORD,
+  PHASE_NAME,
+  phasesOf,
+  type Reading,
+  type Reconciling,
+  SUBJECT_ITEMS,
+} from "./phases.ts";
 
 export type Problem = { readonly path: string; readonly message: string };
 
@@ -623,7 +631,16 @@ const blocksByName: { readonly [name: string]: Block } = catalogue;
 
 const subjectsByName: { readonly [name: string]: Subject } = subjects;
 
-const sourcesByName: { readonly [name: string]: { readonly subject: string } } = sources;
+const sourcesByName: {
+  readonly [name: string]: {
+    readonly subject: string;
+    readonly reads: ReadonlyArray<Reading>;
+    readonly reconciles: ReadonlyArray<Reconciling>;
+  };
+} = sources;
+
+// The item a run on each subject works on, which a phase it names is of.
+const subjectItems: { readonly [subject: string]: ItemKind } = SUBJECT_ITEMS;
 
 const sourceInputs: {
   readonly [name: string]: {
@@ -751,6 +768,44 @@ const checkInputs = (
         `${at}.with.${input}`,
         `${input} comes from an earlier step: put it under in, as step or step.field`,
       );
+    }
+  }
+};
+
+// The phase a block such as progress.advance records, as its document names
+// it. A team's own phase may be any name of its own, but one a slip away from
+// one of the SDK's would pass for it nowhere, and leave the flow that reads
+// that one finding nothing.
+const checkRecordedPhase = (checking: Checking, step: UseStep, block: Block, at: string) => {
+  for (const input of Option.toArray(block.recordsInput)) {
+    for (const phase of Option.toArray(Record.get(step.with ?? {}, input))) {
+      const path = `${at}.with.${input}`;
+
+      if (!Predicate.isString(phase) || !PHASE_NAME.test(phase)) {
+        say(
+          checking,
+          path,
+          "must be a phase's name: lower-case words joined by hyphens, such as triaged",
+        );
+
+        continue;
+      }
+
+      for (const item of Option.toArray(Record.get(subjectItems, checking.subject))) {
+        const theSdks = phasesOf(item);
+
+        if (theSdks.includes(phase)) {
+          continue;
+        }
+
+        for (const hint of Option.toArray(suggesting(phase, theSdks))) {
+          say(
+            checking,
+            path,
+            `${phase} is a ${item} phase so close to one of the SDK's that it reads as a slip: ${hint} A team's own phase needs a name of its own`,
+          );
+        }
+      }
     }
   }
 };
@@ -1362,6 +1417,7 @@ const checkUse = (
   }
 
   checkInputs(checking, step, block, names, at);
+  checkRecordedPhase(checking, step, block, at);
   checkRouting(checking, step, block, at);
   checkStepKey(checking, step, block, place, at);
 
@@ -2065,9 +2121,19 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
     about: source.about,
     with: source.with,
     // The subject of the work it finds.
+    // And the phases whose items it finds, and those it moves an item to
+    // from what GitHub says.
     ...Option.match(Record.get(sourcesByName, name), {
       onNone: () => ({}),
-      onSome: (found) => ({ subject: found.subject }),
+      onSome: (found) => ({
+        subject: found.subject,
+        reads: found.reads.map((reading) => ({ item: reading.item, phases: [...reading.phases] })),
+        reconciles: found.reconciles.map((reconciled) => ({
+          item: reconciled.item,
+          from: [...reconciled.from],
+          to: reconciled.to,
+        })),
+      }),
     }),
   })),
   loopStates: Object.keys(loopStates),
@@ -2103,6 +2169,17 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
     waits: block.waits,
     // Whether it runs only on a run's way out, so in a repeat it takes no round.
     last: block.last,
+    // The phases it may record, and the input naming one it records as its
+    // document says; and the phases its wakes find parked runs by.
+    records: block.records.map((recorded) => ({ ...recorded })),
+    ...Option.match(block.recordsInput, {
+      onNone: () => ({}),
+      onSome: (input) => ({ recordsInput: input }),
+    }),
+    wakeReads: (block.contributes.wakeReads ?? []).map((reading) => ({
+      item: reading.item,
+      phases: [...reading.phases],
+    })),
   })),
   stages: stages.map(describeStage),
 });
@@ -2680,12 +2757,91 @@ export type FlowProgress = {
   readonly records: ReadonlyArray<PhaseUse>;
 };
 
+// The block steps of a document, deep in its branches, rounds and lanes too.
+const useStepsIn = (steps: ReadonlyArray<Step>): ReadonlyArray<UseStep> =>
+  steps.flatMap((step) => [...Arr.filter([step], isUse), ...useStepsIn(inside(step))]);
+
+const phaseKey = (use: { readonly item: ItemKind; readonly phase: string }) =>
+  `${use.item} ${use.phase}`;
+
+const useKey = (use: PhaseUse) => `${use.flow} ${use.by} ${phaseKey(use)}`;
+
+const byUse = Order.mapInput(Order.String, useKey);
+
+const distinctUses = (uses: ReadonlyArray<PhaseUse>) =>
+  Arr.sort(
+    Arr.dedupeWith(uses, (one, other) => useKey(one) === useKey(other)),
+    byUse,
+  );
+
+const readingsOf = (
+  flow: string,
+  by: string,
+  readings: ReadonlyArray<Reading>,
+): ReadonlyArray<PhaseUse> =>
+  readings.flatMap((reading) =>
+    reading.phases
+      .filter((phase) => phase !== NO_RECORD)
+      .map((phase) => ({ flow, item: reading.item, phase, by })),
+  );
+
+// The phase a step of a block such as progress.advance records, as its
+// document names it under with, on the item its subject is.
+const namedPhaseOf = (document: FlowDocument, step: UseStep, block: Block) =>
+  Option.toArray(block.recordsInput).flatMap((input) =>
+    Option.toArray(
+      Option.all({
+        item: Record.get(subjectItems, document.subject),
+        phase: Option.filter(Record.get(step.with ?? {}, input), Predicate.isString),
+      }),
+    ),
+  );
+
 // What a document's sources and blocks read and record, as the catalogue
-// declares them.
-export const progressOf = (_document: FlowDocument): FlowProgress => ({
-  reads: [],
-  records: [],
-});
+// declares them: a source's reads and what it reconciles, a block's records,
+// the phase a progress.advance step names, and what a block's wakes read.
+export const progressOf = (document: FlowDocument): FlowProgress => {
+  const flow = document.flow;
+
+  const found = document.trigger.flatMap((entry) =>
+    Option.toArray(Record.get(sourcesByName, entry.use)).map((source) => ({
+      name: entry.use,
+      source,
+    })),
+  );
+
+  const used = useStepsIn(document.steps).flatMap((step) =>
+    Option.toArray(Record.get(blocksByName, step.use)).map((block) => ({ step, block })),
+  );
+
+  return {
+    reads: distinctUses([
+      ...found.flatMap(({ name, source }) => readingsOf(flow, name, source.reads)),
+      ...used.flatMap(({ block }) =>
+        readingsOf(flow, block.name, block.contributes.wakeReads ?? []),
+      ),
+    ]),
+    records: distinctUses([
+      ...used.flatMap(({ block, step }) => [
+        ...block.records.map((recorded) => ({
+          flow,
+          item: recorded.item,
+          phase: recorded.phase,
+          by: block.name,
+        })),
+        ...namedPhaseOf(document, step, block).map((named) => ({ flow, by: block.name, ...named })),
+      ]),
+      ...found.flatMap(({ name, source }) =>
+        source.reconciles.map((reconciled) => ({
+          flow,
+          item: reconciled.item,
+          phase: reconciled.to,
+          by: name,
+        })),
+      ),
+    ]),
+  };
+};
 
 // A phase read that no flow records, or recorded that no flow reads though a
 // source the SDK has would. Certain unless some flow declares nothing.
@@ -2697,7 +2853,148 @@ export type PhaseGap = {
   readonly message: string;
 };
 
+// A list as a sentence gives all of it: "a, b and c".
+const allOf = (names: ReadonlyArray<string>) =>
+  [names.slice(0, -1).join(", "), ...names.slice(-1)]
+    .filter((part) => part.length > 0)
+    .join(" and ");
+
+const sorted = (names: ReadonlyArray<string>) => Arr.sort(Arr.dedupe(names), Order.String);
+
+// A verb for one or for several: "reads" or "read".
+const agreeing = (count: number, one: string, several: string) =>
+  Option.getOrElse(
+    Option.liftPredicate(one, () => count === 1),
+    () => several,
+  );
+
+// Who in which flows: "issue.handOff and issue.handOffAdopted in implement".
+const whoIn = (uses: ReadonlyArray<PhaseUse>) =>
+  allOf(
+    sorted(uses.map((use) => use.flow)).map(
+      (flow) =>
+        `${allOf(sorted(uses.flatMap((use) => Arr.filter([use.by], () => use.flow === flow))))} in ${flow}`,
+    ),
+  );
+
+const countOf = (uses: ReadonlyArray<PhaseUse>) =>
+  new Set(uses.map((use) => `${use.flow} ${use.by}`)).size;
+
+// The catalogue's sources and blocks that record and read each phase, whatever
+// the repo's flows use: where to look for one a flow is missing.
+const catalogueRecords = (item: ItemKind, phase: string) =>
+  sorted([
+    ...Object.values(blocksByName)
+      .filter((block) =>
+        block.records.some((recorded) => recorded.item === item && recorded.phase === phase),
+      )
+      .map((block) => block.name),
+    ...Object.entries(sourcesByName)
+      .filter(([, source]) =>
+        source.reconciles.some((reconciled) => reconciled.item === item && reconciled.to === phase),
+      )
+      .map(([name]) => name),
+  ]);
+
+const holds = (readings: ReadonlyArray<Reading>, item: ItemKind, phase: string) =>
+  readings.some((reading) => reading.item === item && reading.phases.some((one) => one === phase));
+
+const catalogueReads = (item: ItemKind, phase: string) =>
+  sorted([
+    ...Object.entries(sourcesByName)
+      .filter(([, source]) => holds(source.reads, item, phase))
+      .map(([name]) => name),
+    ...Object.values(blocksByName)
+      .filter((block) => holds(block.contributes.wakeReads ?? [], item, phase))
+      .map((block) => block.name),
+  ]);
+
+const groupedBy = (uses: ReadonlyArray<PhaseUse>) =>
+  Arr.dedupe(uses.map(phaseKey)).map((key) => uses.filter((use) => phaseKey(use) === key));
+
+// Gaps between what a repo's flows read and record of phases: a phase a
+// flow's source or wake reads that no flow's block records nor source
+// reconciles, so the flow never finds the work; and one a flow records that no
+// flow reads, where the SDK has a source that would. A phase no source reads
+// is for status, and recorded freely. `undeclared` names the repo's flows
+// without a document, written in TypeScript, which declare nothing: with any,
+// a gap is one they may fill, not certain.
 export const phaseGaps = (
-  _documents: ReadonlyArray<FlowDocument>,
-  _undeclared: ReadonlyArray<string> = [],
-): ReadonlyArray<PhaseGap> => [];
+  documents: ReadonlyArray<FlowDocument>,
+  undeclared: ReadonlyArray<string> = [],
+): ReadonlyArray<PhaseGap> => {
+  const progress = documents.map(progressOf);
+  const reads = progress.flatMap((each) => each.reads);
+  const records = progress.flatMap((each) => each.records);
+  const recorded = new Set(records.map(phaseKey));
+  const isRead = new Set(reads.map(phaseKey));
+  const certain = undeclared.length === 0;
+
+  const unsure = Option.getOrElse(
+    Option.liftPredicate(
+      `; ${allOf(sorted(undeclared))} ${agreeing(undeclared.length, "has no document and declares nothing, so it may", "have no document and declare nothing, so one of them may")}`,
+      () => !certain,
+    ),
+    () => "",
+  );
+
+  // The phases recorded of the item near one read, and the flows that record them.
+  const near = (item: ItemKind, phase: string) => {
+    const ofItem = records.filter((use) => use.item === item);
+    const names = nearest(phase, sorted(ofItem.map((use) => use.phase)));
+
+    const flows = sorted(
+      ofItem.flatMap((use) => Arr.filter([use.flow], () => names.includes(use.phase))),
+    );
+
+    return Option.map(
+      Option.liftPredicate(names, (found) => found.length > 0),
+      (found) =>
+        `; did you mean ${oneOf(found)}, which ${allOf(flows)} ${agreeing(flows.length, "records", "record")}?`,
+    );
+  };
+
+  const unrecorded = groupedBy(reads.filter((use) => !recorded.has(phaseKey(use)))).flatMap(
+    (uses) =>
+      Option.toArray(Arr.head(uses)).map(({ item, phase }): PhaseGap => {
+        const recorders = catalogueRecords(item, phase);
+
+        const where = Option.getOrElse(
+          Option.liftPredicate(
+            `: ${allOf(recorders)} ${agreeing(recorders.length, "records", "record")} it`,
+            () => recorders.length > 0,
+          ),
+          () => "",
+        );
+
+        return {
+          gap: "unrecorded",
+          item,
+          phase,
+          certain,
+          message: `${whoIn(uses)} ${agreeing(countOf(uses), "reads", "read")} the ${item} phase ${phase}, but no flow records it${where}${Option.getOrElse(near(item, phase), () => "")}${unsure}`,
+        };
+      }),
+  );
+
+  const unread = groupedBy(records.filter((use) => !isRead.has(phaseKey(use)))).flatMap((uses) =>
+    Option.toArray(Arr.head(uses)).flatMap(({ item, phase }) => {
+      const readers = catalogueReads(item, phase);
+
+      return Arr.filter(
+        [
+          {
+            gap: "unread" as const,
+            item,
+            phase,
+            certain,
+            message: `${whoIn(uses)} ${agreeing(countOf(uses), "records", "record")} the ${item} phase ${phase}, but no flow reads it: ${allOf(readers)} ${agreeing(readers.length, "reads", "read")} it${unsure}`,
+          },
+        ],
+        () => readers.length > 0,
+      );
+    }),
+  );
+
+  return [...unrecorded, ...unread];
+};
