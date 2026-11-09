@@ -302,19 +302,25 @@ describe("a record GitHub disagrees with is held, with why", () => {
       ]);
     }),
   );
+});
 
-  effect("waiting for a first review, but this persona has reviewed it", () =>
-    Effect.gen(function* () {
-      const fake = makeFake(["approve"]);
-      asReviewer(fake);
-      fake.people.requested = ["data-quail"];
-      fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
-      fake.recordPhase(ITEM, "review-asked");
-      expect(yield* helds(fake, review)).toEqual([
-        `#${PULL}: its record says it waits for its first review, but data-quail has reviewed it once`,
-      ]);
-      expect(yield* keys(fake, reReview)).toEqual([]);
-    }),
+describe("a pull request this persona reviewed before its hand-off", () => {
+  effect(
+    "an adopted one, asked of the persona that reviewed it before, goes to re-review rather than being held",
+    () =>
+      Effect.gen(function* () {
+        // A person's pull request data-quail reviewed, then adopted and handed
+        // off, which records review-asked, and the pool asks data-quail again.
+        const fake = makeFake(["approve"]);
+        asReviewer(fake);
+        fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+        fake.recordPhase(ITEM, "review-asked");
+        fake.people.requested = ["data-quail"];
+
+        expect(yield* triggered(fake, review)).toEqual([]);
+        expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-asked-again-v2`]);
+        expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
+      }),
   );
 });
 

@@ -129,7 +129,7 @@ describe("the catalogue's phases", () => {
       reconciles: [
         {
           item: "pull-request",
-          from: ["changes-asked", "approved", "draft", "ready-for-person"],
+          from: ["review-asked", "changes-asked", "approved", "draft", "ready-for-person"],
           to: "review-asked-again",
         },
       ],

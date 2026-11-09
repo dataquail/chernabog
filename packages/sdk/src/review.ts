@@ -169,14 +169,6 @@ type Asked =
 
 const P = Phases.PHASES.pullRequest;
 
-const times = (count: number) => {
-  if (count === 1) {
-    return "once";
-  }
-
-  return `${count} times`;
-};
-
 // Today's inference, for a pull request with no record: see askedOf.
 const legacyAsked = (request: ReviewRequest): Asked => {
   if (request.reviewed === 0) {
@@ -195,27 +187,23 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
   Option.match(request.record, {
     onNone: () => legacyAsked(request),
     onSome: (found): Asked => {
-      if (found.phase === P.reviewAsked) {
-        if (request.reviewed === 0) {
-          return { kind: "first" };
-        }
-
-        return {
-          kind: "disagrees",
-          reason: `its record says it waits for its first review, but ${me} has reviewed it ${times(request.reviewed)}`,
-        };
-      }
-
       if (found.phase === P.reviewAskedAgain) {
         return { kind: "again", record: Option.some(found) };
       }
 
-      // A person's turn, then a review asked of this persona: the first, or again.
-      if (Phases.holds(found, [P.draft, P.readyForPerson]) && request.reviewed === 0) {
+      // Waiting on a first review, or a person's turn, then a review asked of
+      // this persona: its first, or, when it has reviewed already, again. An
+      // adopted pull request it reviewed before the hand-off is one.
+      if (
+        Phases.holds(found, [P.reviewAsked, P.draft, P.readyForPerson]) &&
+        request.reviewed === 0
+      ) {
         return { kind: "first" };
       }
 
-      if (Phases.holds(found, [P.changesAsked, P.approved, P.draft, P.readyForPerson])) {
+      if (
+        Phases.holds(found, [P.reviewAsked, P.changesAsked, P.approved, P.draft, P.readyForPerson])
+      ) {
         return { kind: "reconcile", record: found };
       }
 

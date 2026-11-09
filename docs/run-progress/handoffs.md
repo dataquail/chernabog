@@ -653,7 +653,9 @@ resolve-conflicts onto these phases. Where it departs from the answers above:
   and `review.changesRequested` reconcile from those phases as well.
 - **A record GitHub disagrees with is held**, with why, rather than skipped:
   `changes-asked` with the head pushed to since or a latest review that
-  approves, and `review-asked` on a pull request the persona has reviewed.
+  approves. A `review-asked` pull request the persona has reviewed
+  already, such as one adopted after its review, is re-review's:
+  `review.requestedAgain` reconciles it to `review-asked-again`.
 - **Wakes keep their markers.** `PullRequest.baseTurnedGreen` must name the
   parked run's work item, which no record holds, so it still reads the hold
   markers; `merge-held` is recorded for status. `Implement.readied` still

@@ -238,6 +238,7 @@ export const reReviewSources = {
         {
           item: "pull-request",
           from: [
+            PHASES.pullRequest.reviewAsked,
             PHASES.pullRequest.changesAsked,
             PHASES.pullRequest.approved,
             PHASES.pullRequest.draft,

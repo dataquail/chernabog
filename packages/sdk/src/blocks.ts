@@ -882,7 +882,7 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about:
-      "Pull requests that ask this persona for their first review: recorded review-asked, or draft or ready-for-person and not reviewed by it yet. One the persona has reviewed though its record says review-asked is held, with why. One with no record: a review it hasn't given yet.",
+      "Pull requests that ask this persona for their first review: recorded review-asked, or draft or ready-for-person and not reviewed by it yet. One with no record: a review it hasn't given yet.",
     with: {},
   },
   "review.changesRequested": {
@@ -892,7 +892,7 @@ export const sourceDescriptions = {
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record: one it reviewed already, keyed pr-7-review-2.",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked when it has reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record: one it reviewed already, keyed pr-7-review-2.",
     with: {},
   },
   "review.waitingElsewhere": {

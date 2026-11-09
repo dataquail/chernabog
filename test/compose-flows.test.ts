@@ -714,9 +714,9 @@ describe("a document's sources find what its recipe's trigger does", () => {
       recorded("review-asked", askedOf),
     ],
     [
-      "review, on a record of a first review this persona has given",
-      review,
-      composedReview,
+      "re-review, on a record of a first review this persona has given, as an adopted one's",
+      reReview,
+      composedReReview,
       recorded("review-asked", (fake) => {
         askedOf(fake);
         fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
