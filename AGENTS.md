@@ -751,6 +751,37 @@ a seeded repo, with no agent session.
   the person passes `--on-enrolled`; then it is paused on this machine
   meanwhile, and cloned from its own origin.
 
+## Token usage and compute time (#405)
+
+What each agent call spent, in raw tokens per model, and how long a run
+computed for. docs/adr/0018-token-usage-and-compute-time.md has the why.
+
+- **`TokenUsage` is not `Usage`.** `Usage` is the quota gate (the core port,
+  `domain/usage/`, `decideLaunch`). Token usage lives in `domain/token-usage/`
+  and `domain/token-usage-cursor/`; never give it a name the gate uses.
+- **Where it's stored**, in state.db: `om_agent_usage`, one row per agent call
+  and model (run, step, adapter, session, model, input, output, cache read,
+  cache write, `reported`), and `om_usage_cursors`, how far each adapter has
+  read each session. `RecordTokenUsageCommand` writes both in one unit of
+  work. Totals and breakdowns are aggregated by `ReadRunUsageQuery`
+  (`GET /runs/:id/usage`), never stored. Compute time is the union of the
+  run's steps in `om_steps` (`domain-services/compute-time.domain-service.ts`),
+  not wall time minus waits.
+- **Adding `usage` to an adapter.** Implement the optional
+  `Adapter.usage(session, cursor)` (`agents/adapter.ts`): read the vendor's
+  own records of `session` (its id, worktree and account) since `cursor`
+  (none for a session never read), and return a `TokenUsageReading`: a
+  `ModelUsage` per model with the four counts (none for a count the vendor
+  doesn't report, never 0), and the cursor to read on from, in any form the
+  adapter alone parses. Charge each record to exactly one call, since
+  sessions cross runs. Only read; starting the agent is `run`'s. Test it
+  against fixture files, as `claude-usage.test.ts` and
+  `codex-token-usage.test.ts` do. Nothing else changes: `AgentLive.run` wraps
+  every call in `recordingTokenUsage` (`agents/token-usage.ts`), which
+  records in a finalizer, and an adapter without `usage`, or whose reader
+  fails, records the call as not reported. Flows, core and the SDK never see
+  any of it.
+
 ## Versions (#123, #163)
 
 One binary runs every enrolled repo, so compatibility is the binary's call.
