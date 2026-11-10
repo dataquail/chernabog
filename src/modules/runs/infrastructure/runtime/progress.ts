@@ -535,3 +535,7 @@ export const ProgressLive = (
   persona: Persona,
 ): Layer.Layer<Progress, never, GitHubApi> =>
   Layer.effect(Progress, makeThreadsProgress({ slug: settings.slug, persona }));
+
+// The repo's adapter, announcing each advance unless the repo turned that off.
+export const makeRepoProgress = (options: ThreadsOptions & { readonly announce: boolean }) =>
+  makeThreadsProgress(options);
