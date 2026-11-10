@@ -34,6 +34,7 @@ import {
   ToPerson,
   type WorktreePath,
 } from "./block.ts";
+import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
 import { PHASES } from "./phases.ts";
 import { renderPrompt } from "./prompt.ts";
@@ -484,38 +485,43 @@ export const resolveConflictsSources = {
   // person has one labelled auto:needs-human, and a run of another flow one it
   // owns; both are left alone. The key carries the head, so a conflict that
   // comes back after a later push is new work.
-  "pr.conflicting": defineSource("pr.conflicting", "conflict", () => ({
-    trigger: Effect.gen(function* () {
-      const github = yield* GitHub;
-      const repo = yield* Repo;
-      const labelNames = yield* Settings.labels;
-      const items: Array<WorkItem> = [];
+  "pr.conflicting": defineSource(
+    "pr.conflicting",
+    "conflict",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const github = yield* GitHub;
+        const repo = yield* Repo;
+        const labelNames = yield* Settings.labels;
+        const items: Array<WorkItem> = [];
 
-      for (const pull of yield* Review.authoredByMe) {
-        if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
-          continue;
+        for (const pull of yield* Review.authoredByMe) {
+          if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
+            continue;
+          }
+
+          const state = yield* github
+            .request("GET", `/repos/${repo.slug}/pulls/${pull.number}`, Option.none())
+            .pipe(Effect.flatMap(decodeIn(MergeState, "trigger")));
+
+          if (state.mergeable_state !== "dirty") {
+            continue;
+          }
+
+          items.push({
+            key: `pr-${pull.number}-${pull.headSha.slice(0, 7)}`,
+            title: pull.title,
+            url: pull.url,
+            data: { pullRequest: pull.number, headRef: pull.headRef, baseRef: pull.baseRef },
+          });
         }
 
-        const state = yield* github
-          .request("GET", `/repos/${repo.slug}/pulls/${pull.number}`, Option.none())
-          .pipe(Effect.flatMap(decodeIn(MergeState, "trigger")));
-
-        if (state.mergeable_state !== "dirty") {
-          continue;
-        }
-
-        items.push({
-          key: `pr-${pull.number}-${pull.headSha.slice(0, 7)}`,
-          title: pull.title,
-          url: pull.url,
-          data: { pullRequest: pull.number, headRef: pull.headRef, baseRef: pull.baseRef },
-        });
-      }
-
-      return items;
-    }).pipe(reportAs("trigger")),
-    contributes: { ownWork: true },
-  })),
+        return items;
+      }).pipe(reportAs("trigger")),
+      contributes: { ownWork: true },
+    }),
+    { events: [Events.baseMoved] },
+  ),
 };
 
 // A pull request this persona wrote that conflicts with its base. A run owns

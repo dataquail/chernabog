@@ -38,6 +38,7 @@ import {
   PullRequestNumber,
   ToPerson,
 } from "./block.ts";
+import * as Events from "./events.ts";
 import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Settings from "./settings.ts";
@@ -789,7 +790,10 @@ export const postMergeSources = {
       }).pipe(reportAs("trigger")),
       contributes: { settings: Settings.Base.fields, ownWork: true },
     }),
-    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.watched] }] },
+    {
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.watched] }],
+      events: [Events.pullRequestClosed],
+    },
   ),
 };
 

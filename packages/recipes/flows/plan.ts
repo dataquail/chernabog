@@ -15,6 +15,7 @@
 import {
   Claims,
   defineFlow,
+  Events,
   GitHub,
   Implement,
   NeedsHuman,
@@ -134,7 +135,7 @@ const settings = Schema.Struct({
   ...Settings.Plans.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
@@ -143,4 +144,11 @@ export default defineFlow({
   // A spec closed, or claimed by another run, ends the run as superseded.
   stillValid: Plan.stillValid,
   workflow,
+});
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: Specs labelled auto:plan, and a person's answer on one, which wakes its run.
+export default Events.declare(flow, {
+  events: [Events.issueLabelled, Events.commentCreated],
+  readsPhases: false,
 });

@@ -22,6 +22,7 @@ import {
   IssueNumber,
   ToPerson,
 } from "./block.ts";
+import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
 import { PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
@@ -86,19 +87,24 @@ export const specSubject = {
 };
 
 export const planSources = {
-  "plan.queued": defineSource("plan.queued", "spec", () => ({
-    trigger: Effect.gen(function* () {
-      const queued = yield* (yield* GitHub).queuedIssuesLabelled(Plan.LABELS.plan);
+  "plan.queued": defineSource(
+    "plan.queued",
+    "spec",
+    () => ({
+      trigger: Effect.gen(function* () {
+        const queued = yield* (yield* GitHub).queuedIssuesLabelled(Plan.LABELS.plan);
 
-      return yield* Effect.forEach(queued, (issue) =>
-        Implement.routed(issue, Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
-      );
-    }).pipe(reportAs("trigger")),
-    contributes: {
-      settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
-      labels: Plan.flowLabels,
-    },
-  })),
+        return yield* Effect.forEach(queued, (issue) =>
+          Implement.routed(issue, Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
+        );
+      }).pipe(reportAs("trigger")),
+      contributes: {
+        settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
+        labels: Plan.flowLabels,
+      },
+    }),
+    { events: [Events.issueLabelled] },
+  ),
 };
 
 // What every plan block suits: each reads or writes the spec's plan, whose
@@ -202,6 +208,7 @@ export const planBlocks = {
     records: [{ item: "issue", phase: PHASES.issue.proposed }],
     contributes: {
       wakes: Plan.answers.pipe(reportAs("trigger")),
+      wakeEvents: [Events.commentCreated],
       wakeReads: [{ item: "issue", phases: [PHASES.issue.proposed] }],
     },
   }),

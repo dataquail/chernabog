@@ -33,6 +33,7 @@ import {
   activity,
   Agent,
   defineFlow,
+  Events,
   GitHub,
   Implement,
   type Json,
@@ -340,7 +341,7 @@ const settings = Schema.Struct({
   ...Settings.Ci.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   labels: Settings.declaredLabels,
   settings,
   trigger,
@@ -352,3 +353,7 @@ export default defineFlow({
   stillValid: Review.stillValid,
   workflow,
 });
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: A pull request closing, which may move the base under every other one.
+export default Events.declare(flow, { events: [Events.baseMoved], readsPhases: false });

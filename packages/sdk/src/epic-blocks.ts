@@ -38,6 +38,7 @@ import {
   type WorktreePath,
 } from "./block.ts";
 import * as Epic from "./epic.ts";
+import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
@@ -1197,7 +1198,10 @@ export const epicSources = {
         labels: Plan.flowLabels.filter((label) => label.name === Plan.LABELS.epic),
       },
     }),
-    { reads: [{ item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] }] },
+    {
+      reads: [{ item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] }],
+      events: [Events.issueLabelled],
+    },
   ),
 };
 
