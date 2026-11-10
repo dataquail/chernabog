@@ -61,7 +61,13 @@ describe("the catalogue's events", () => {
     expect(
       Object.fromEntries(catalogue.sources.map((source) => [source.name, kinds(source.events)])),
     ).toEqual({
-      "epic.queued": ["issues: labeled"],
+      "epic.queued": [
+        "issues: labeled",
+        "issues: closed, labeled, unlabeled",
+        "pull_request: synchronize",
+        "pull_request_review: submitted",
+        "pull_request: closed",
+      ],
       "issues.queued": ["issues: labeled"],
       "plan.queued": ["issues: labeled"],
       "pr.conflicting": ["pull_request: closed"],
@@ -96,6 +102,15 @@ describe("the catalogue's events", () => {
         ownPersona: true,
       },
     ]);
+  });
+
+  test("an epic wakes on what moves its layers, for every item, since none names the epic", () => {
+    const layers = (sourceNamed("epic.queued")?.events ?? []).slice(1);
+
+    expect(layers.map((each) => each.item)).toEqual(layers.map(() => ({ kind: "repo" })));
+    // A task closed by the persona's own merge, and the merge itself, count.
+    expect(layers.map((each) => each.ownPersona)).toEqual([true, false, false, true]);
+    expect(layers[2]?.association).toBe("review.author_association");
   });
 
   test("a block whose wakes find parked runs names the events that settle the wait", () => {
@@ -206,7 +221,16 @@ describe("a flow's events", () => {
         events: ["pull_request_review: submitted"],
         readsPhases: true,
       }),
-      epic: Option.some({ events: ["issues: labeled"], readsPhases: false }),
+      epic: Option.some({
+        events: [
+          "issues: labeled",
+          "issues: closed, labeled, unlabeled",
+          "pull_request: synchronize",
+          "pull_request_review: submitted",
+          "pull_request: closed",
+        ],
+        readsPhases: false,
+      }),
       implement: Option.some({
         events: ["issues: labeled", "pull_request: ready_for_review"],
         readsPhases: false,

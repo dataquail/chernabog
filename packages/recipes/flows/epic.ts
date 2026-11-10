@@ -933,4 +933,7 @@ const flow = defineFlow({
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
 // rather than only on the schedule: Issues labelled auto:epic.
-export default Events.declare(flow, { events: [Events.issueLabelled], readsPhases: false });
+export default Events.declare(flow, {
+  events: [Events.issueLabelled, ...Events.layerChanged],
+  readsPhases: false,
+});
