@@ -272,6 +272,18 @@ export const viewerLogin = githubJson("GET", "/user", Schema.Struct({ login: Sch
   Effect.map((user) => user.login),
 );
 
+// The GitHub account a persona's token belongs to: its login and numeric id.
+export const viewerAs = (persona: Persona) =>
+  Layer.build(GitHubApi.layerFor(persona)).pipe(
+    Effect.flatMap((api) =>
+      Effect.provideContext(
+        githubJson("GET", "/user", Schema.Struct({ login: Schema.String, id: Schema.Int })),
+        api,
+      ),
+    ),
+    Effect.scoped,
+  );
+
 // The GitHub login a persona's token belongs to.
 export const viewerLoginAs = (persona: Persona) =>
   Layer.build(GitHubApi.layerFor(persona)).pipe(

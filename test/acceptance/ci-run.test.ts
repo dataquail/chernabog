@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 
+import { USER_ID } from "./fake-github.ts";
 import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
 // Claims an issue labelled ci:park and, in its first phase, has the agent
@@ -172,6 +173,56 @@ describe("chernabog ci run", () => {
     );
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
   }, 120_000);
+
+  test("on a runner, git answers github.com with the job's token and commits as its account", async () => {
+    const issue = sandbox.github.addIssue("On a runner", ["ci:park"]);
+    const user = join(sandbox.root, `runner-user-${issue}`);
+    mkdirSync(user, { recursive: true });
+
+    const job = await ciRun(issue, [], {
+      GITHUB_ACTIONS: "true",
+      HOME: user,
+      CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
+    });
+
+    expect(job.code).toBe(0);
+    expect(job.output).toContain("parked");
+
+    const global = (key: string) =>
+      execFileSync("git", ["config", "--file", join(user, ".gitconfig"), "--get", key], {
+        encoding: "utf8",
+      }).trim();
+
+    const login = global("user.name");
+
+    expect(login.length).toBeGreaterThan(0);
+    expect(global("user.email")).toBe(`${USER_ID}+${login}@users.noreply.github.com`);
+    expect(global("credential.https://github.com.helper")).toContain("$GH_TOKEN");
+    // The agent's commit reached GitHub, and claude was seeded beside it.
+    expect(
+      filesOn(sandbox.bare, `auto/issue-${issue}`).some((file) => file.startsWith("change-")),
+    ).toBe(true);
+    expect(readdirSync(user)).toContain(".claude.json");
+  }, 120_000);
+
+  test("on a runner, a job without GH_TOKEN is refused before it starts, naming it", async () => {
+    const issue = sandbox.github.addIssue("No GH_TOKEN", ["ci:park"]);
+    const user = join(sandbox.root, `runner-user-${issue}`);
+    mkdirSync(user, { recursive: true });
+    const before = sandbox.claudeCalls().length;
+
+    const job = await ciRun(issue, [], {
+      GITHUB_ACTIONS: "true",
+      HOME: user,
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "test-token",
+      CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
+    });
+
+    expect(job.code).not.toBe(0);
+    expect(job.output).toContain("GH_TOKEN isn't set");
+    expect(sandbox.claudeCalls()).toHaveLength(before);
+  }, 60_000);
 
   test("a killed job's claim runs out, and the next job repeats the phase from its start", async () => {
     const issue = sandbox.github.addIssue("Killed mid-phase", ["ci:park"]);

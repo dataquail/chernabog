@@ -267,8 +267,13 @@ export const openSandbox = (
   const agentTokenLog = join(root, "agent-tokens.log");
   const claudeLog = join(root, "claude.log");
 
+  // Not GitHub Actions' own: on chernabog's CI it's "true", and ci run and
+  // ci plan then set up the runner, its git and ~/.claude.json among it. A test
+  // that wants a runner says so, with a HOME of its own.
+  const { GITHUB_ACTIONS: _onActions, ...inherited } = process.env;
+
   const env = {
-    ...process.env,
+    ...inherited,
     CHERNABOG_HOME: home,
     CHERNABOG_GITHUB_API: github.url,
     GH_TOKEN: "test-token",

@@ -25,6 +25,11 @@ export const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ];
 
+// A git credential helper that answers github.com with $GH_TOKEN, and only
+// $GH_TOKEN: a process that has only GITHUB_TOKEN gets an empty password.
+export const GH_TOKEN_CREDENTIAL_HELPER =
+  '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f';
+
 // Git configuration, through the environment, that answers github.com's
 // credential requests with $GH_TOKEN. Set at command scope, it outranks the
 // user's own config: the empty helpers clear whatever helpers came before
@@ -36,8 +41,7 @@ export const gitCredentialEnv: Environment = {
   GIT_CONFIG_KEY_1: "credential.https://github.com.helper",
   GIT_CONFIG_VALUE_1: "",
   GIT_CONFIG_KEY_2: "credential.https://github.com.helper",
-  GIT_CONFIG_VALUE_2:
-    '!f() { test "$1" = get || exit 0; echo username=x-access-token; echo "password=$GH_TOKEN"; }; f',
+  GIT_CONFIG_VALUE_2: GH_TOKEN_CREDENTIAL_HELPER,
 };
 
 export class GitHubTokens extends Context.Service<
