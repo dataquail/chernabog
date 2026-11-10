@@ -91,13 +91,15 @@ export const refusalOf = (
 // The machine config a job's home starts from when the workflow gives it
 // none: the checkout, enrolled for the job's flows (a run job's one, the plan
 // job's every CI flow), as the implicit persona (the job's GH_TOKEN), with
-// claude on the subscription token and under tmux.
+// claude on the subscription token and under tmux. The account has no usage
+// gate: a setup-token token can't read usage, and the gate refuses to try, so
+// with one every plan would hold every flow back. checkAccount still runs.
 export const ciMachineConfig = (options: {
   readonly slug: string;
   readonly checkout: string;
   readonly flows: ReadonlyArray<string>;
 }) => ({
-  accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV } },
+  accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
   launcher: "tmux",
   repos: [
     {

@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import {
   ciMachineConfig,
@@ -12,6 +13,7 @@ import {
   refusalOf,
   transcriptDirName,
 } from "../src/interface/cli/ci-run.main.ts";
+import { MachineConfigFile, normalizeMachineConfig } from "../src/repo-config.ts";
 
 describe("refusalOf", () => {
   test("refuses ANTHROPIC_API_KEY, which bills per token over the subscription", () => {
@@ -30,7 +32,7 @@ describe("refusalOf", () => {
 });
 
 describe("ciMachineConfig", () => {
-  test("enrolls the checkout for the one flow, on the subscription token, under tmux", () => {
+  test("enrolls the checkout for the one flow, on the subscription token with no usage gate, which a token cannot read, under tmux", () => {
     expect(
       ciMachineConfig({
         slug: "dataquail/chernabog-rehearsal",
@@ -38,7 +40,7 @@ describe("ciMachineConfig", () => {
         flows: ["review"],
       }),
     ).toEqual({
-      accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV } },
+      accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
       launcher: "tmux",
       repos: [
         {
@@ -50,6 +52,30 @@ describe("ciMachineConfig", () => {
         },
       ],
     });
+  });
+});
+
+describe("ciMachineConfig, as machine config reads it", () => {
+  // A setup-token token can't read usage, and the gate refuses to read it from
+  // a token account: without usageGate none, every plan holds every flow back.
+  test("is one account, on the subscription token, that launches without the usage gate", () => {
+    const file = Schema.decodeUnknownSync(MachineConfigFile)(
+      ciMachineConfig({
+        slug: "dataquail/chernabog-rehearsal",
+        checkout: "/w",
+        flows: ["implement"],
+      }),
+    );
+
+    const accounts = normalizeMachineConfig(file, "/home/runner").accounts.map((account) => ({
+      name: account.name,
+      usageGate: account.usageGate,
+      oauthTokenEnv: account.oauthTokenEnv,
+    }));
+
+    expect(accounts).toEqual([
+      { name: "ci", usageGate: "none", oauthTokenEnv: Option.some(OAUTH_TOKEN_ENV) },
+    ]);
   });
 });
 
