@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/dataquail/chernabog/compare/v0.16.0...v0.16.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **ci:** the action installs claude for the plan step, whose usage gate runs claude auth status ([#471](https://github.com/dataquail/chernabog/issues/471)) ([6e2db73](https://github.com/dataquail/chernabog/commit/6e2db73a2bf34f77971ad367c7eb6944ac221972))
+
 ## [0.16.0](https://github.com/dataquail/chernabog/compare/v0.15.0...v0.16.0) (2026-11-10)
 
 
