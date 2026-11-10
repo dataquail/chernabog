@@ -573,5 +573,5 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: Pull requests closing, merged among them.
+// rather than only on the schedule: a pull request closing, merged among them.
 export default Events.declare(flow, { events: [Events.pullRequestClosed], readsPhases: false });

@@ -1200,7 +1200,7 @@ export const epicSources = {
     }),
     {
       reads: [{ item: "epic", phases: [PHASES.epic.waiting, NO_RECORD] }],
-      events: [Events.issueLabelled],
+      events: [Events.issueLabelled, ...Events.layerChanged],
     },
   ),
 };

@@ -150,6 +150,29 @@ export const pullRequestClosed = on("pull_request", ["closed"], pullRequestNumbe
 // one, so no one item: the plan job looks at them all.
 export const baseMoved = on("pull_request", ["closed"], { kind: "repo" }, { ownPersona: true });
 
+// What moves an epic's layers, which changes its fingerprint and wakes its
+// parked run (Epic.queued): a task closed or relabelled, a push to or a review
+// of a layer's pull request, or its merge (baseMoved). None names the epic, so
+// the plan job looks at every item. A task's close counts when the persona's
+// own merge closes it.
+export const taskChanged = on(
+  "issues",
+  ["closed", "labeled", "unlabeled"],
+  { kind: "repo" },
+  { ownPersona: true },
+);
+
+export const layerPushed = on("pull_request", ["synchronize"], { kind: "repo" });
+
+export const layerReviewed = on(
+  "pull_request_review",
+  ["submitted"],
+  { kind: "repo" },
+  { association: "review.author_association" },
+);
+
+export const layerChanged = [taskChanged, layerPushed, layerReviewed, baseMoved];
+
 // A CI run finished on a branch, the persona's own push's too. Filtered to the
 // repo's CI workflows when the workflow is built.
 export const ciCompleted = on(

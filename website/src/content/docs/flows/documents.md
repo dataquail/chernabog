@@ -490,7 +490,7 @@ review.changesRequested: …
 Each one says:
 
 - the event and its activity types, such as `issues: labeled` or `workflow_run: completed`;
-- where its payload names the work item, so the plan job looks at that one item rather than the whole repo. A pull request closing can move the base under every open one, so `pr.conflicting` wakes for every item;
+- where its payload names the work item, so the plan job looks at that one item rather than the whole repo. A pull request closing can move the base under every open one, so `pr.conflicting` wakes for every item. So does `epic.queued` on what moves an epic's layers (a task closed or relabelled, a push to, review of or merge of a layer's pull request), since none of those names the epic;
 - its guards, on unless it opts out: whoever caused it must be the repo's owner, a member or a collaborator, where the payload says (an event only someone with triage or write access can cause, such as a label, needs no check), and it mustn't be the flow's own persona, so a flow doesn't wake itself. A merge and a finished CI run count even when the persona caused them.
 
 A document's flow carries its sources' and blocks' events. A flow written in TypeScript declares its own with the SDK's same values, as the recipes do:

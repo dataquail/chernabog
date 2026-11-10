@@ -147,7 +147,8 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: Specs labelled auto:plan, and a person's answer on one, which wakes its run.
+// rather than only on the schedule: a spec labelled auto:plan, and a person's
+// answer on one, which wakes its run.
 export default Events.declare(flow, {
   events: [Events.issueLabelled, Events.commentCreated],
   readsPhases: false,

@@ -144,5 +144,6 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: Reviews submitted; its trigger reads each pull request's phase.
+// rather than only on the schedule: a review submitted. Its trigger reads each
+// pull request's phase, so a phase event wakes it too.
 export default Events.declare(flow, { events: [Events.reviewSubmitted], readsPhases: true });
