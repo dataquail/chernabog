@@ -103,8 +103,9 @@ what that test found.
   day, and a codespace's token covers only one repo.
 - **One central repo that starts work in every other repo.** Each repo's own
   workflow can do it. What's lost is coordination of Claude usage across
-  repos, which the usage gate, staggered cron minutes and a low
-  `max-parallel` cover.
+  repos, which staggered cron minutes and a low `max-parallel` cover. The
+  usage gate doesn't: a runner's `setup-token` token can't read usage, so CI
+  launches without it.
 - **Cron only.** Simpler, but a parked run would wait for the next tick
   instead of seconds.
 - **A job that waits through a park.** It would bill a runner for the time a
