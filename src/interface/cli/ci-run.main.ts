@@ -41,7 +41,9 @@ import {
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
-import { viewerLoginAs } from "../../platform/github-api.ts";
+import { execOk } from "../../platform/exec.ts";
+import { viewerAs, viewerLoginAs } from "../../platform/github-api.ts";
+import { GH_TOKEN_CREDENTIAL_HELPER } from "../../platform/github-auth.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { acquireLock } from "../../platform/lock.ts";
 import { engineRuntime } from "../application-runtime.ts";
@@ -112,6 +114,18 @@ export const ciMachineConfig = (options: {
   ],
 });
 
+// What a fresh runner's git needs, as global config: a credential helper that
+// answers github.com with the job's GH_TOKEN, since the checkout keeps no
+// credential (persist-credentials: false) and the implicit persona's git is
+// whatever the machine's is; and an identity, the persona's own, so the agent's
+// commits and the job's own are attributed to it on GitHub.
+export const runnerGitConfig = (viewer: { readonly login: string; readonly id: number }) =>
+  [
+    ["credential.https://github.com.helper", GH_TOKEN_CREDENTIAL_HELPER],
+    ["user.name", viewer.login],
+    ["user.email", `${viewer.id}+${viewer.login}@users.noreply.github.com`],
+  ] as const;
+
 // What a fresh runner's ~/.claude.json needs so an interactive claude starts
 // at its prompt: onboarding done, and the checkout and the worktrees trusted
 // (docs/ci/runner-test.md, question 1).
@@ -161,7 +175,8 @@ export const writeJson = (path: string, value: Schema.Json) =>
   });
 
 // The home's machine config, written from the job's environment when the
-// workflow left none, and ~/.claude.json, seeded on a runner that has none.
+// workflow left none; and on a runner, ~/.claude.json, seeded when it has
+// none, and git's credential and identity (runnerGitConfig).
 const prepareHome = (options: CiRunOptions) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -194,6 +209,20 @@ const prepareHome = (options: CiRunOptions) =>
     if (Record.get(variables, "GITHUB_ACTIONS").pipe(Option.contains("true"))) {
       if (!(yield* fs.exists(claudeJson))) {
         yield* writeJson(claudeJson, claudeSeed([checkout, `${home.root}/worktrees`]));
+      }
+
+      const viewer = yield* viewerAs(IMPLICIT).pipe(
+        Effect.mapError(
+          (error) => new ConfigError({ message: `who the job's token is: ${error.message}` }),
+        ),
+      );
+
+      for (const [key, value] of runnerGitConfig(viewer)) {
+        yield* execOk("git", ["config", "--global", key, value]).pipe(
+          Effect.mapError(
+            (error) => new ConfigError({ message: `setting git's ${key}: ${error.message}` }),
+          ),
+        );
       }
     }
   }).pipe(

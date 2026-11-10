@@ -11,6 +11,9 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
+// The numeric id GET /user gives every login, for a noreply address.
+export const USER_ID = 4242;
+
 export type FakeIssue = {
   number: number;
   title: string;
@@ -1333,7 +1336,11 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   };
 
   const routes: ReadonlyArray<Route> = [
-    { method: "GET", pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
+    {
+      method: "GET",
+      pattern: /^\/user$/,
+      handle: (args) => json({ login: args.login, id: USER_ID }),
+    },
     {
       method: "GET",
       pattern: new RegExp(`^${repo}/actions/secrets$`),
