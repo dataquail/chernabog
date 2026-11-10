@@ -18,8 +18,11 @@ import { closed, openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // Claims an issue labelled ci:park and, in its first phase, has the agent
 // commit a change and waits on `go`; once the issue is labelled go, its
 // trigger says so, and the run goes on to comment instead. The label stands
-// in for the phase a review loop reads.
-const PHASED = `import { awaitSignal, defineFlow, GitHub, Implement, Issue, reportAs } from "@chernabog/sdk";
+// in for the phase a review loop reads. Labelled ci:gone, the run deletes its
+// branch on GitHub before it parks, as a merge would; labelled ci:fail, it
+// fails after the agent's commit, before anything pushes it, so the engine
+// deletes the branch it made as the run ends.
+const PHASED = `import { awaitSignal, defineFlow, GitHub, Implement, Issue, reportAs, StepFailed } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 
 export default defineFlow({
@@ -30,7 +33,14 @@ export default defineFlow({
       const item = Implement.issueItem(issue);
       const go = issue.labels.includes("go");
 
-      return { ...item, data: { ...item.data, go }, signals: go ? ["go"] : [] };
+      const data = {
+        ...item.data,
+        go,
+        gone: issue.labels.includes("ci:gone"),
+        fail: issue.labels.includes("ci:fail"),
+      };
+
+      return { ...item, data, signals: go ? ["go"] : [] };
     });
   }).pipe(reportAs("trigger")),
   workflow: (item) =>
@@ -41,6 +51,15 @@ export default defineFlow({
 
       if (JSON.stringify(item.data).includes('"go":false')) {
         yield* Implement.implementWithAgent(issue, worktree, { base });
+
+        if (JSON.stringify(item.data).includes('"fail":true')) {
+          return yield* new StepFailed({ step: "phase", message: "failed on purpose" });
+        }
+
+        if (JSON.stringify(item.data).includes('"gone":true')) {
+          yield* (yield* GitHub).deleteRef(\`refs/heads/\${branch}\`);
+        }
+
         yield* awaitSignal(["go"], { id: "park", timeout: "1 day" });
       }
 
@@ -200,6 +219,24 @@ describe("chernabog ci run", () => {
     expect(output).toContain("stopped before the job's time limit");
     expect(code).toBe(1);
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+  }, 60_000);
+
+  test("a run that ended leaves the branch the engine deleted as it ended", async () => {
+    const issue = sandbox.github.addIssue("Failed early", ["ci:park", "ci:fail"]);
+    const { code, output } = await ciRun(issue);
+
+    expect(output).toContain("failed");
+    expect(code).toBe(1);
+    expect(sandbox.github.refSha(`refs/heads/auto/issue-${issue}`)).toEqual(Option.none());
+  }, 60_000);
+
+  test("a park pushes no branch that's gone from GitHub", async () => {
+    const issue = sandbox.github.addIssue("Merged away", ["ci:park", "ci:gone"]);
+    const { code, output } = await ciRun(issue);
+
+    expect(output).toContain("parked");
+    expect(code).toBe(0);
+    expect(sandbox.github.refSha(`refs/heads/auto/issue-${issue}`)).toEqual(Option.none());
   }, 60_000);
 
   test("a claim another run holds ends the job cleanly", async () => {
