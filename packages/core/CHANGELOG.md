@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/dataquail/chernabog/compare/core-v1.2.0...core-v1.3.0) (2026-11-10)
+
+
+### Features
+
+* **core:** a Progress port for an item's phase, with a fake and the contract every adapter passes ([#450](https://github.com/dataquail/chernabog/issues/450)) ([6dfbe96](https://github.com/dataquail/chernabog/commit/6dfbe9625b62a41853646918b3962eee19b1ac65))
+* **runs:** record an item's phase on protected branches, with doctor's ruleset check ([#453](https://github.com/dataquail/chernabog/issues/453)) ([ff56487](https://github.com/dataquail/chernabog/commit/ff564870e6ffef5ba0bb4b0ca2ef8795388d707b))
+
 ## [1.2.0](https://github.com/dataquail/chernabog/compare/core-v1.1.0...core-v1.2.0) (2026-11-08)
 
 
