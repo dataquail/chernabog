@@ -76,6 +76,8 @@ It exits 1 when the run failed or ran out of time, and 0 otherwise. `--repo` def
 
 Both jobs run the action published from this repo, `dataquail/chernabog/action`, at the tag of the chernabog that wrote the workflow, and it installs that release. On a runner, `ci plan` writes the home's machine config itself, enrolling the checkout for every CI flow as the job's `GH_TOKEN`, as `ci run` does for its one flow.
 
+[Run on GitHub Actions](/chernabog/operate/github-actions/) walks through setting it up: the secrets, the rulesets, cost and security.
+
 ## Through the daemon
 
 A command that changes state asks the daemon to do it when the daemon is running, so what it changes is said on the daemon's bus, where the [dashboard](/chernabog/operate/dashboard/) and the live view hear it at once:
