@@ -36,6 +36,8 @@ import { VERSION } from "../src/platform/version.ts";
 import {
   checkFlowSettings,
   checkManualSchedules,
+  ciConfigOf,
+  DEFAULT_CI_SCHEDULE,
   DEFAULT_LIMITS,
   EnrolledRepo,
   flowOff,
@@ -1204,4 +1206,55 @@ describe("path rules and prompts", () => {
       }),
     ).toBe("#7: Fix\n- a\n- b\n- none\n{{unknown}}");
   });
+});
+
+describe("the ci: section", () => {
+  const ciOf = (file: typeof RepoConfigFile.Encoded) =>
+    Effect.result(Effect.flatMap(Schema.decodeEffect(RepoConfigFile)(file), ciConfigOf));
+
+  effect(
+    "no flow runs in CI unless config names it, one run job at a time, swept every three hours",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* ciOf({})).toEqual(
+          Result.succeed({ flows: [], maxParallel: 1, schedule: DEFAULT_CI_SCHEDULE }),
+        );
+      }),
+  );
+
+  effect(
+    "the flows config names, in its order, the most run jobs at once and the sweep's schedule",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* ciOf({
+            ci: {
+              flows: ["review", "implement", "review"],
+              maxParallel: 3,
+              schedule: "41 */2 * * *",
+            },
+          }),
+        ).toEqual(
+          Result.succeed({
+            flows: ["review", "implement"],
+            maxParallel: 3,
+            schedule: "41 */2 * * *",
+          }),
+        );
+      }),
+  );
+
+  effect("a schedule that isn't a cron expression is refused", () =>
+    Effect.gen(function* () {
+      const refused = yield* ciOf({ ci: { flows: ["review"], schedule: "every few hours" } });
+
+      expect(Result.isFailure(refused) && refused.failure.message).toContain("ci.schedule:");
+    }),
+  );
+
+  effect("a maxParallel below one is refused", () =>
+    Effect.gen(function* () {
+      expect(Result.isFailure(yield* ciOf({ ci: { flows: [], maxParallel: 0 } }))).toBe(true);
+    }),
+  );
 });

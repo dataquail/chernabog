@@ -35,9 +35,19 @@ description: Every chernabog command and flag.
 | `install`, `uninstall`            | Run `setup`, then register the daemon with launchd or systemd and start it; or remove it |
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
+| `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
 | `ui`                              | Open the [dashboard](/chernabog/operate/dashboard/) in the browser, starting it on 127.0.0.1 if it's off |
 | `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
 | `ui status`                       | Whether the dashboard is running, and its URL                                     |
+
+## ci plan
+
+`chernabog ci plan` is the plan job of a repo's workflow on GitHub Actions. It runs the triggers of the flows its `.chernabog/config.yaml` names under [`ci.flows`](/chernabog/reference/configuration/#repo), for the personas machine config chooses them for, and prints the run jobs to start as a JSON matrix, `[{"flow", "persona", "item"}]`. It applies a daemon tick's rules: a trigger's order, held items, items waiting on someone or left for others, the flow's gate (the usage gate among them) and its `concurrency`. It reads no `state.db`: an item already has a run when it has a live [claim](/chernabog/operate/daemon/#leases), and each flow's live claims count against its concurrency.
+
+- **An event.** Given one (`GITHUB_EVENT_NAME` and `GITHUB_EVENT_PATH`, or `--event` and `--event-path`), it plans only for the flows the event [wakes](/chernabog/flows/documents/#the-github-events-that-wake-a-flow) and the item it concerns. An event a guard refuses, such as one the flow's own persona caused or a comment by someone the repo doesn't trust, wakes nothing: the plan prints `[]` before it runs any trigger.
+- **The sweep.** With no event, or `schedule` or `workflow_dispatch`, it plans across every item, its triggers reading every thread's phase from one query. Items whose phase and GitHub disagree are held by their trigger, and listed.
+
+It writes `items` (exactly `[]` when it starts nothing, which the run job's guard compares against) and `max-parallel` to `GITHUB_OUTPUT`, and why nothing else starts to `GITHUB_STEP_SUMMARY`, and prints the same reasons to stderr. `--repo` defaults to `GITHUB_REPOSITORY`; `--from-checkout` reads the working copy's `.chernabog/`.
 
 ## Through the daemon
 

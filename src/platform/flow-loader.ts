@@ -139,17 +139,21 @@ const CompilingSdk = Schema.Struct({
   ),
 });
 
-// The flow document compiler of the SDK a repo pins, from its node_modules.
-export const loadRepoSdk = (configDir: string) =>
+// The SDK a repo pins, from its node_modules: its root index, which a
+// compiled binary's resolver goes by (packages/sdk/index.ts).
+const importRepoSdk = (configDir: string) =>
   Effect.tryPromise({
-    // Its root index, which a compiled binary's resolver goes by (packages/sdk/index.ts).
     try: () => importRepoModule(`${configDir}/node_modules/@chernabog/sdk/index.ts`),
     catch: (error) =>
       new LoadError({
         path: configDir,
         message: `can't load @chernabog/sdk from ${configDir}, which bun install there installs: ${Core.describeError(error)}`,
       }),
-  }).pipe(
+  });
+
+// The flow document compiler of the SDK a repo pins, from its node_modules.
+export const loadRepoSdk = (configDir: string) =>
+  importRepoSdk(configDir).pipe(
     Effect.flatMap((module) =>
       Schema.decodeUnknownEffect(CompilingSdk)(module).pipe(
         Effect.mapError(
@@ -162,6 +166,51 @@ export const loadRepoSdk = (configDir: string) =>
       ),
     ),
     Effect.map((sdk) => sdk.Compose),
+  );
+
+// One of a repo's CI flows as its SDK's Events.workflowOn takes it: its name,
+// the logins it runs as, and what it declares (Events.of).
+export type CiFlowEvents = {
+  readonly flow: string;
+  readonly personas: ReadonlyArray<string>;
+  readonly declared: unknown;
+};
+
+// What the plan job takes of the SDK a repo pins: its Events (#457), which
+// say what a flow declares, the routes from each GitHub event to the CI flows
+// and items it concerns, and the flows an event's payload wakes, its guards
+// kept. Its values are the SDK's, which the caller decodes.
+export type EventRouting = {
+  readonly of: (flow: Core.Flow) => Option.Option<unknown>;
+  readonly workflowOn: (
+    flows: ReadonlyArray<CiFlowEvents>,
+    options: { readonly ciWorkflows: ReadonlyArray<string>; readonly own?: string },
+  ) => { readonly routes: ReadonlyArray<unknown>; readonly notes: ReadonlyArray<string> };
+  readonly wokenBy: (
+    routes: ReadonlyArray<unknown>,
+    event: string,
+    payload: Core.Json,
+  ) => ReadonlyArray<unknown>;
+};
+
+const RoutingSdk = Schema.Struct({
+  Events: Schema.declare(
+    (events): events is EventRouting =>
+      Predicate.hasProperty(events, "of") &&
+      Predicate.hasProperty(events, "workflowOn") &&
+      Predicate.hasProperty(events, "wokenBy") &&
+      Predicate.isFunction(events.of) &&
+      Predicate.isFunction(events.workflowOn) &&
+      Predicate.isFunction(events.wokenBy),
+    { title: "Events" },
+  ),
+});
+
+// The SDK's Events, from the repo's node_modules: none for an SDK from before
+// flows declared the events that wake them.
+export const loadRepoEvents = (configDir: string) =>
+  Effect.map(importRepoSdk(configDir), (module) =>
+    Option.map(Schema.decodeUnknownOption(RoutingSdk)(module), (sdk) => sdk.Events),
   );
 
 const MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
