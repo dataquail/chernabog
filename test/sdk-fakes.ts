@@ -141,6 +141,7 @@ export const asPersona = (repoSettings: RepoSettings, persona: Persona): Persona
   chosen: [],
   own: {},
   teamFlows: {},
+  announcePhases: false,
 });
 
 // A repo run as these personas: the implicit one, unless named.

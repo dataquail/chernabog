@@ -131,6 +131,14 @@ describe("config layers", () => {
     ).toThrow();
   });
 
+  effect("a repo announces each phase advance unless announcePhases is false", () =>
+    Effect.gen(function* () {
+      expect((yield* merge({}, {})).announcePhases).toBe(true);
+      expect((yield* merge({ announcePhases: false }, {})).announcePhases).toBe(false);
+      expect(() => Schema.decodeUnknownSync(RepoConfigFile)({ announcePhases: "no" })).toThrow();
+    }),
+  );
+
   effect("a flow's agents by role merge role by role, and reach the SDK as flowRoleAgents", () =>
     Effect.gen(function* () {
       const merged = yield* merge(

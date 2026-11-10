@@ -99,6 +99,34 @@ describe("the review loop", () => {
     expect(existsSync(join(sandbox.home, `worktrees/demo/review-pr-${pull().number}`))).toBe(false);
     expect(pull().labels).not.toContain("auto:changes-requested");
     expect(pull().labels).not.toContain("auto:needs-human");
+
+    // Each phase the pull request advanced to was announced, by whoever advanced it (#458).
+    const item = `pr-${pull().number}`;
+
+    expect(sandbox.github.dispatches.filter((sent) => sent.item === item)).toEqual([
+      { by: "alice", eventType: "chernabog-phase", item, from: Option.none(), to: "review-asked" },
+      {
+        by: "bob",
+        eventType: "chernabog-phase",
+        item,
+        from: Option.some("review-asked"),
+        to: "changes-asked",
+      },
+      {
+        by: "alice",
+        eventType: "chernabog-phase",
+        item,
+        from: Option.some("changes-asked"),
+        to: "review-asked-again",
+      },
+      {
+        by: "bob",
+        eventType: "chernabog-phase",
+        item,
+        from: Option.some("review-asked-again"),
+        to: "approved",
+      },
+    ]);
   }, 120_000);
 });
 

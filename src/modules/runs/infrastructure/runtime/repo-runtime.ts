@@ -162,7 +162,13 @@ export const buildRepoContext = (repo: PersonaRepo, machine: MachineConfig) =>
 
     const services = yield* Layer.build(
       Layer.mergeAll(
-        repoServices(repo.settings, machine.usageGate, machine.agents, repo.persona),
+        repoServices(
+          repo.settings,
+          machine.usageGate,
+          machine.agents,
+          repo.persona,
+          repo.announcePhases,
+        ),
         Layer.succeed(RunLog, consoleRunLog),
         Layer.succeed(Machine, Machine.of({ personas: machine.github })),
       ),

@@ -232,6 +232,16 @@ const CreateCommitBody = Schema.Struct({
   parents: Schema.Array(Schema.String),
 });
 
+// A phase advance's announcement: its item and move, `from` null for the first.
+const DispatchBody = Schema.Struct({
+  event_type: Schema.String,
+  client_payload: Schema.Struct({
+    item: Schema.String,
+    from: Schema.OptionFromNullOr(Schema.String),
+    to: Schema.String,
+  }),
+});
+
 const CommentBody = Schema.Struct({ body: Schema.String });
 const LabelsBody = Schema.Struct({ labels: Schema.Array(Schema.String) });
 const AssigneesBody = Schema.Struct({ assignees: Schema.Array(Schema.String) });
@@ -709,6 +719,22 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     createdRefs.push({ ref: body.ref, sha: body.sha });
 
     return json({ ref: body.ref, object: { sha: body.sha } }, 201);
+  });
+
+  // Every repository_dispatch, oldest first, by who sent it: the
+  // announcement of each phase advance (#458).
+  const dispatches: Array<{
+    readonly by: string;
+    readonly eventType: string;
+    readonly item: string;
+    readonly from: Option.Option<string>;
+    readonly to: string;
+  }> = [];
+
+  const dispatch = withBody(DispatchBody, (body, args) => {
+    dispatches.push({ by: args.login, eventType: body.event_type, ...body.client_payload });
+
+    return new Response("", { status: 204 });
   });
 
   const createCommit = withBody(CreateCommitBody, (body) =>
@@ -1374,6 +1400,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: deleteRef },
     { method: "PATCH", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: updateRef },
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
+    { method: "POST", pattern: new RegExp(`^${repo}/dispatches$`), handle: dispatch },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
     {
@@ -1611,6 +1638,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     // The sha a ref points at, such as a claim, named in full.
     refSha: shaOf,
     createdRefs,
+    dispatches,
     // Points a ref, named in full, at a commit, as a run that left it would have.
     setRef: (ref: string, sha: string) => {
       git("update-ref", ref, sha);

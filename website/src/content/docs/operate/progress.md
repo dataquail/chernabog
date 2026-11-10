@@ -60,6 +60,15 @@ The phases are recorded and read inside the SDK's functions, so a recipe you hav
 - **A flow of your own in TypeScript** that hands off, reviews or asks again through the SDK records phases already. One whose trigger reads `Review.reviewRequests` gets each pull request's record beside its review count; use the functions above to find work by phase.
 - **A document** needs no change. Where a stage of your own does what a recording block would, such as posting the review itself, follow it with `progress.advance` so the flow that reads that phase finds the item; a review your stage posts on GitHub is reconciled anyway.
 
+## Announcing each advance
+
+A thread's commits start no workflow, so after each phase an item advances to, the writer sends a [`repository_dispatch`](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event) to the repo: event type `chernabog-phase`, payload `{"item": "pr-73", "from": "review-asked", "to": "changes-asked"}` (`from` is `null` for an item's first phase). It starts the default branch's workflows that listen for it, so a repo running its flows in CI starts the item's next step on a runner, whoever advanced the phase, a laptop's daemon included.
+
+- **Only an advance that lands is announced.** A writer that loses the race sends nothing. A retried advance that finds its own write already there announces it again: an extra event costs one plan job, and a lost one leaves the item for the sweep.
+- **A failed announcement fails nothing.** The phase is recorded, the run's log says the announcement didn't go, and the CI sweep picks the item up.
+- **It is sent as the persona**, with its token, which needs write access to the repo (Contents: write on a fine-grained token), as writing the thread already does.
+- **`announcePhases: false`** in `.chernabog/config.yaml` turns it off, for a repo that doesn't run flows in CI.
+
 ## Protecting it
 
 Without rulesets, writes still work, but anyone who can push can rewrite or delete a record. Two branch rulesets on `refs/heads/chernabog/threads/*` stop that:

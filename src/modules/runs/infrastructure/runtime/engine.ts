@@ -145,6 +145,7 @@ export const repoServices = (
   gate: GateConfig,
   agents: AgentsConfig,
   persona: Persona,
+  announcePhases = true,
 ) => {
   const settings = personaSettings(repoSettings, persona);
 
@@ -153,7 +154,9 @@ export const repoServices = (
     RepoLive(settings),
     ReviewerSeatLive(settings, persona),
     GitHubLive(settings).pipe(Layer.provide(GitHubApi.layerFor(persona))),
-    ProgressLive(settings, persona).pipe(Layer.provide(GitHubApi.layerFor(persona))),
+    ProgressLive(settings, persona, announcePhases).pipe(
+      Layer.provide(GitHubApi.layerFor(persona)),
+    ),
     GitLive(persona),
     WorktreeLive(settings, persona),
     UsageLive(settings, gate),

@@ -242,6 +242,12 @@ export const RepoConfigFile = Schema.Struct({
   launchers: MachineOnly,
   limits: Schema.optionalKey(LimitsFile),
   runners: Schema.optionalKey(Runners),
+  announcePhases: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "Whether each phase an item advances to is announced with a repository_dispatch of chernabog-phase, which starts this repo's CI workflow for the item's next step. Every machine announces, a laptop's too. Default true; false sends none, and a CI sweep finds the item instead.",
+    }),
+  ),
   reviewers: Schema.optionalKey(
     Strings.annotate({
       description: `The reviewer pool, by GitHub login. ${deprecated("reviewers")}`,
@@ -438,6 +444,9 @@ export type PersonaRepo = {
   // entry's, and the team's flow settings before them: what overrides what.
   readonly own: PersonaEntry;
   readonly teamFlows: Readonly<Record<string, FlowSettings>>;
+  // The team's announcePhases: whether each phase advance sends a
+  // repository_dispatch, to start the repo's CI workflow (#458).
+  readonly announcePhases: boolean;
 };
 
 // One enrolled repo: its settings as each persona that runs it sees them.
@@ -1150,6 +1159,7 @@ const mergePersona = (
       ),
       own,
       teamFlows,
+      announcePhases: repo.announcePhases ?? true,
     } satisfies PersonaRepo;
   });
 
