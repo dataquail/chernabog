@@ -211,6 +211,17 @@ const prepareHome = (options: CiRunOptions) =>
         yield* writeJson(claudeJson, claudeSeed([checkout, `${home.root}/worktrees`]));
       }
 
+      // The helper answers with GH_TOKEN alone, which the workflow sets; a job
+      // with only GITHUB_TOKEN would get an identity but fail at its first push.
+      const ghToken = Record.get(variables, "GH_TOKEN");
+
+      if (!Option.exists(ghToken, (token) => token.length > 0)) {
+        return yield* new ConfigError({
+          message:
+            "GH_TOKEN isn't set: the run's git answers github.com with it (the workflow sets it from CHERNABOG_TOKEN)",
+        });
+      }
+
       const viewer = yield* viewerAs(IMPLICIT).pipe(
         Effect.mapError(
           (error) => new ConfigError({ message: `who the job's token is: ${error.message}` }),

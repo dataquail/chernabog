@@ -205,6 +205,25 @@ describe("chernabog ci run", () => {
     expect(readdirSync(user)).toContain(".claude.json");
   }, 120_000);
 
+  test("on a runner, a job without GH_TOKEN is refused before it starts, naming it", async () => {
+    const issue = sandbox.github.addIssue("No GH_TOKEN", ["ci:park"]);
+    const user = join(sandbox.root, `runner-user-${issue}`);
+    mkdirSync(user, { recursive: true });
+    const before = sandbox.claudeCalls().length;
+
+    const job = await ciRun(issue, [], {
+      GITHUB_ACTIONS: "true",
+      HOME: user,
+      GH_TOKEN: "",
+      GITHUB_TOKEN: "test-token",
+      CLAUDE_CODE_OAUTH_TOKEN: "fake-token",
+    });
+
+    expect(job.code).not.toBe(0);
+    expect(job.output).toContain("GH_TOKEN isn't set");
+    expect(sandbox.claudeCalls()).toHaveLength(before);
+  }, 60_000);
+
   test("a killed job's claim runs out, and the next job repeats the phase from its start", async () => {
     const issue = sandbox.github.addIssue("Killed mid-phase", ["ci:park"]);
     const before = sandbox.claudeCalls().length;
