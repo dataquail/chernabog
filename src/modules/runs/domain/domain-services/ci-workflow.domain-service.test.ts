@@ -63,6 +63,9 @@ describe("the workflow chernabog writes", () => {
     expect(action.map((step) => step.with?.step)).toEqual(["plan", "run"]);
   });
 
+  // Both steps that run chernabog take both: ci run's agent runs on Claude's
+  // token, and ci plan's usage gate reads the subscription's room this week
+  // with it (#459), through the oauthTokenEnv its runner's machine config names.
   test("passes the secrets to the steps that run chernabog, and to no other", () => {
     const { jobs } = built().document;
 
@@ -93,6 +96,40 @@ describe("the workflow chernabog writes", () => {
       "${{ github.event.repository.default_branch }}",
       "${{ github.event.repository.default_branch }}",
     ]);
+  });
+
+  test("pins the actions it runs from elsewhere by commit, as this repo's own workflows do", () => {
+    const { jobs } = built().document;
+
+    const uses = [...jobs.plan.steps, ...jobs.run.steps].flatMap((step) =>
+      Arr.filter([step.uses ?? ""], (named) => !named.startsWith("dataquail/chernabog/")),
+    );
+
+    expect(uses).toEqual([
+      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    ]);
+  });
+
+  test("says each pinned action's version beside its commit", () => {
+    expect(
+      CiWorkflow.withVersionComments(
+        [
+          "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+          "        uses: dataquail/chernabog/action@v0.16.0",
+          "",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+        "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+        "        uses: dataquail/chernabog/action@v0.16.0",
+        "",
+      ].join("\n"),
+    );
   });
 
   test("uploads the run log and the transcripts whatever became of the run", () => {
