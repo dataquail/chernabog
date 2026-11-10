@@ -229,7 +229,7 @@ describe("a flow's events", () => {
           "pull_request_review: submitted",
           "pull_request: closed",
         ],
-        readsPhases: false,
+        readsPhases: true,
       }),
       implement: Option.some({
         events: ["issues: labeled", "pull_request: ready_for_review"],

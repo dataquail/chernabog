@@ -935,5 +935,5 @@ const flow = defineFlow({
 // rather than only on the schedule: Issues labelled auto:epic.
 export default Events.declare(flow, {
   events: [Events.issueLabelled, ...Events.layerChanged],
-  readsPhases: false,
+  readsPhases: true,
 });
