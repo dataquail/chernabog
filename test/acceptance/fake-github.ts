@@ -342,6 +342,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   // Logins that can only read the repo; anyone else can write.
   const readOnly = new Set<string>();
+  // The names of the repo's Actions secrets, as GitHub lists them.
+  const actionsSecrets = new Set<string>();
   // Logins that administer the repo, and so may delete its issues.
   const admins = new Set<string>();
   // The repo's labels, as created through the API.
@@ -556,7 +558,8 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     }
 
     if (query.includes("refs(refPrefix")) {
-      const prefix = body.variables.prefix ?? "";
+      // A variable, or written into the query, as the claims' is.
+      const prefix = body.variables.prefix ?? /refPrefix: "([^"]*)"/.exec(query)?.[1] ?? "";
 
       const nodes = git(
         "for-each-ref",
@@ -564,7 +567,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         prefix.replace(/\/$/, ""),
       )
         .split("\n")
-        .filter((line) => line.startsWith(prefix))
+        .filter((line) => line.length > 0 && line.startsWith(prefix))
         .map((line) => {
           const [name = "", oid = ""] = line.split(" ");
 
@@ -1305,6 +1308,20 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   const routes: ReadonlyArray<Route> = [
     { method: "GET", pattern: /^\/user$/, handle: (args) => json({ login: args.login }) },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/actions/secrets$`),
+      handle: () =>
+        json({
+          total_count: actionsSecrets.size,
+          secrets: [...actionsSecrets].map((name) => ({ name })),
+        }),
+    },
+    {
+      method: "GET",
+      pattern: new RegExp(`^${repo}/actions/organization-secrets$`),
+      handle: () => json({ total_count: 0, secrets: [] }),
+    },
     { method: "GET", pattern: /^\/api\/oauth\/usage$/, handle: () => json(usage) },
     { method: "GET", pattern: /^\/notifications$/, handle: listNotifications },
     { method: "POST", pattern: /^\/graphql$/, handle: graphql },
@@ -1530,6 +1547,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     },
     merges,
     readOnly,
+    actionsSecrets,
     admins,
     repoLabels,
     openedBy,
