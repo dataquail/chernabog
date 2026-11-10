@@ -20,6 +20,19 @@ const BlockOutcome = Schema.Struct({
 // item with no record yet.
 const Reading = Schema.Struct({ item: Schema.String, phases: Schema.Array(Schema.String) });
 
+// A GitHub event that wakes a flow: its activity types, how its payload names
+// the work item, and the guards it keeps (the SDK's Events).
+const WakingEvent = Schema.Struct({
+  event: Schema.String,
+  types: Schema.Array(Schema.String),
+  item: Schema.Struct({ kind: Schema.String, path: Schema.optionalKey(Schema.String) }),
+  association: Schema.optionalKey(Schema.String),
+  trusted: Schema.Boolean,
+  ownPersona: Schema.Boolean,
+});
+
+export type CatalogueEvent = typeof WakingEvent.Type;
+
 const CatalogueBlock = Schema.Struct({
   name: Schema.String,
   about: Schema.String,
@@ -53,6 +66,9 @@ const CatalogueBlock = Schema.Struct({
   ),
   recordsInput: Schema.optionalKey(Schema.String),
   wakeReads: Schema.optionalKey(Schema.Array(Reading)),
+  // The GitHub events that settle the wait its wakes look for; none from an
+  // SDK from before events.
+  wakeEvents: Schema.optionalKey(Schema.Array(WakingEvent)),
 });
 
 // One of the repo's own Effect stages, from .chernabog/stages/, which a
@@ -99,6 +115,9 @@ export class FlowCatalogue extends Schema.Class<FlowCatalogue, { readonly brand:
           }),
         ),
       ),
+      // The GitHub events that can change what it finds; none from an SDK
+      // from before events.
+      events: Schema.optionalKey(Schema.Array(WakingEvent)),
     }),
   ),
   loopStates: Schema.Array(Schema.String),
