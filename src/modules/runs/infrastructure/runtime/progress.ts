@@ -37,6 +37,7 @@ import {
   githubJson,
   githubRequest,
 } from "../../../../platform/github-api.ts";
+import { announcing } from "./phase-announcer.ts";
 
 // Where every item's thread lives, under refs/heads/.
 export const THREADS = "chernabog/threads/";
@@ -529,13 +530,24 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
     });
   });
 
-// The repo's Progress, as the persona its runs act as.
+// The repo's adapter, announcing each advance with a repository_dispatch
+// unless the repo turned that off (phase-announcer.ts).
+export const makeRepoProgress = (options: ThreadsOptions & { readonly announce: boolean }) =>
+  Effect.gen(function* () {
+    const progress = yield* makeThreadsProgress(options);
+
+    if (!options.announce) {
+      return progress;
+    }
+
+    return yield* announcing(progress, options.slug);
+  });
+
+// The repo's Progress, as the persona its runs act as, announcing each
+// advance unless the repo's announcePhases is false.
 export const ProgressLive = (
   settings: RepoSettings,
   persona: Persona,
+  announce = true,
 ): Layer.Layer<Progress, never, GitHubApi> =>
-  Layer.effect(Progress, makeThreadsProgress({ slug: settings.slug, persona }));
-
-// The repo's adapter, announcing each advance unless the repo turned that off.
-export const makeRepoProgress = (options: ThreadsOptions & { readonly announce: boolean }) =>
-  makeThreadsProgress(options);
+  Layer.effect(Progress, makeRepoProgress({ slug: settings.slug, persona, announce }));
