@@ -35,7 +35,7 @@ describe("ciMachineConfig", () => {
       ciMachineConfig({
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/home/runner/work/r/r",
-        flow: "review",
+        flows: ["review"],
       }),
     ).toEqual({
       accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV } },
@@ -50,6 +50,18 @@ describe("ciMachineConfig", () => {
         },
       ],
     });
+  });
+});
+
+describe("ciMachineConfig for the plan job", () => {
+  test("enrolls the checkout for every CI flow", () => {
+    expect(
+      ciMachineConfig({
+        slug: "dataquail/chernabog-rehearsal",
+        checkout: "/w",
+        flows: ["implement", "review"],
+      }).repos[0]?.flows,
+    ).toEqual({ implement: {}, review: {} });
   });
 });
 

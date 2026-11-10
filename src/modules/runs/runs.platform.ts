@@ -72,6 +72,11 @@ export { runEventSpanAttributes } from "./runs.event-span-attributes.ts";
 // It is published here only until the runtime finishes moving into the module behind
 // its commands, queries and Layers; each line goes when its root stops naming it.
 export {
+  SECRETS as CI_SECRETS,
+  WORKFLOW_FILE as CI_WORKFLOW_FILE,
+  CiWorkflow,
+} from "./domain/domain-services/ci-workflow.domain-service.ts";
+export {
   type AttachCommand,
   attachCommand,
   liveAttach,
@@ -95,6 +100,11 @@ export {
 } from "./infrastructure/runtime/agents/session-files.ts";
 export { checkAnswer, stopHook } from "./infrastructure/runtime/agents/stop-hook.ts";
 export { type CiEvent, type CiPlanResult, planCi } from "./infrastructure/runtime/ci-plan.ts";
+export {
+  ciWorkflowFor,
+  type CiWorkflowText,
+  type WorkflowFiles,
+} from "./infrastructure/runtime/ci-workflow.ts";
 export { checkCodexAccount } from "./infrastructure/runtime/codex-usage.ts";
 export { flowWarnings } from "./infrastructure/runtime/diagnostics.ts";
 export {

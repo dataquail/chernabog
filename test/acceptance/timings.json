@@ -24,6 +24,7 @@
     "test/acceptance/review-coverage.test.ts": 15707,
     "test/acceptance/versions.test.ts": 15592,
     "test/acceptance/machine-config.test.ts": 9938,
+    "test/acceptance/ci-workflow.test.ts": 9000,
     "test/acceptance/telemetry.test.ts": 7579,
     "test/acceptance/daemon-commands.test.ts": 7185,
     "test/acceptance/attach.test.ts": 6044,

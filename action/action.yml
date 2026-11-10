@@ -1,0 +1,109 @@
+# The action a repo's chernabog workflow runs (#455, #461), which
+# `chernabog init` and `chernabog ci workflow --write` write. It is glue: it
+# installs the chernabog release it is pinned to and runs `chernabog ci plan`
+# or `chernabog ci run`, where the logic lives.
+#
+# Referenced as dataquail/chernabog/action@v<version>, at the tag each binary
+# release already has, with `version` the same version.
+name: chernabog
+description: Run a repo's chernabog flows on GitHub Actions, a plan job then a run job for each item it starts.
+author: dataquail
+branding:
+  icon: git-pull-request
+  color: purple
+
+inputs:
+  step:
+    description: "plan, the plan job: the run jobs to start, as the outputs items and max-parallel. run, a run job: one item, to the next phase boundary"
+    required: true
+  version:
+    description: The chernabog release to install, without its v, such as 0.16.0
+    required: true
+  flow:
+    description: "run: the flow, from the plan's matrix entry"
+    required: false
+    default: ""
+  persona:
+    description: "run: the GitHub login the run acts as, from the plan's matrix entry"
+    required: false
+    default: ""
+  item:
+    description: "run: the work item, such as issue-12, from the plan's matrix entry"
+    required: false
+    default: ""
+  claude-version:
+    description: "run: the @anthropic-ai/claude-code version to install"
+    required: false
+    default: latest
+
+outputs:
+  items:
+    description: "plan: the run jobs to start, as a JSON matrix [{flow, persona, item}]: exactly [] for none"
+    value: ${{ steps.plan.outputs.items }}
+  max-parallel:
+    description: "plan: the most run jobs at once, from the repo's ci.maxParallel"
+    value: ${{ steps.plan.outputs.max-parallel }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install chernabog ${{ inputs.version }}
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=linux-x64 ;;
+          Linux-ARM64) target=linux-arm64 ;;
+          macOS-X64) target=darwin-x64 ;;
+          macOS-ARM64) target=darwin-arm64 ;;
+          *) echo "::error::chernabog has no build for $RUNNER_OS on $RUNNER_ARCH"; exit 1 ;;
+        esac
+        tag="v$VERSION"
+        dir="$RUNNER_TEMP/chernabog-bin"
+        mkdir -p "$dir"
+        cd "$dir"
+        base="https://github.com/dataquail/chernabog/releases/download/$tag"
+        curl -fsSLO "$base/chernabog-$tag-$target.tar.gz"
+        curl -fsSLO "$base/chernabog-$tag-sha256.txt"
+        sha=sha256sum
+        command -v sha256sum >/dev/null || sha="shasum -a 256"
+        grep -- "-$target.tar.gz" "chernabog-$tag-sha256.txt" | $sha -c -
+        tar -xzf "chernabog-$tag-$target.tar.gz"
+        echo "$dir" >> "$GITHUB_PATH"
+
+    - name: Install claude
+      if: inputs.step == 'run'
+      shell: bash
+      env:
+        CLAUDE_VERSION: ${{ inputs.claude-version }}
+      run: npm install -g "@anthropic-ai/claude-code@$CLAUDE_VERSION"
+
+    - name: chernabog ci plan
+      id: plan
+      if: inputs.step == 'plan'
+      shell: bash
+      run: |
+        export CHERNABOG_HOME="$RUNNER_TEMP/chernabog"
+        chernabog ci plan
+
+    - name: chernabog ci run
+      if: inputs.step == 'run'
+      shell: bash
+      env:
+        FLOW: ${{ inputs.flow }}
+        PERSONA: ${{ inputs.persona }}
+        ITEM: ${{ inputs.item }}
+      run: |
+        export CHERNABOG_HOME="$RUNNER_TEMP/chernabog"
+        chernabog ci run --flow "$FLOW" --persona "$PERSONA" --item "$ITEM"
+
+    - name: Refuse any other step
+      if: inputs.step != 'plan' && inputs.step != 'run'
+      shell: bash
+      env:
+        STEP: ${{ inputs.step }}
+      run: |
+        echo "::error::step is plan or run, not $STEP"
+        exit 1

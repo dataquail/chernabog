@@ -185,7 +185,11 @@ export type EventRouting = {
   readonly workflowOn: (
     flows: ReadonlyArray<CiFlowEvents>,
     options: { readonly ciWorkflows: ReadonlyArray<string>; readonly own?: string },
-  ) => { readonly routes: ReadonlyArray<unknown>; readonly notes: ReadonlyArray<string> };
+  ) => {
+    readonly on: unknown;
+    readonly routes: ReadonlyArray<unknown>;
+    readonly notes: ReadonlyArray<string>;
+  };
   readonly wokenBy: (
     routes: ReadonlyArray<unknown>,
     event: string,

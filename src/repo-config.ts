@@ -24,6 +24,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import * as Record from "effect/Record";
@@ -1327,3 +1328,88 @@ export const entryFor = (repos: ReadonlyArray<EnrolledRepo>, repo: EnrolledRepo)
     Effect.map(Option.map((index) => ({ entry: repos[index], index }))),
     Effect.mapError((ambiguous) => new ConfigError({ message: ambiguous.message })),
   );
+
+// A repo's GitHub Actions workflows, as its checkout has them (#461): each
+// file, the name it runs under, and the events that start it. A file that
+// doesn't parse, or chernabog's own (`except`), names none.
+export type RepoWorkflowFile = {
+  readonly file: string;
+  readonly name: Option.Option<string>;
+  readonly events: ReadonlyArray<string>;
+};
+
+const WorkflowEventList = Schema.Array(Schema.String);
+
+const WorkflowOnField = Schema.Union([
+  Schema.String,
+  WorkflowEventList,
+  Schema.Record(Schema.String, Schema.Json),
+]);
+
+const RepoWorkflowHead = Schema.Struct({
+  name: Schema.optionalKey(Schema.String),
+  on: Schema.optionalKey(WorkflowOnField),
+});
+
+const eventsOfWorkflow = (on: Option.Option<typeof WorkflowOnField.Type>): ReadonlyArray<string> =>
+  Option.match(on, {
+    onNone: () => [],
+    onSome: (found) => {
+      if (Predicate.isString(found)) {
+        return [found];
+      }
+
+      if (Schema.is(WorkflowEventList)(found)) {
+        return found;
+      }
+
+      return Object.keys(found);
+    },
+  });
+
+export const readRepoWorkflows = (root: string, except: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = `${root}/.github/workflows`;
+
+    if (!(yield* fs.exists(directory))) {
+      return [];
+    }
+
+    const files = Arr.sort(yield* fs.readDirectory(directory), Order.String).filter(
+      (file) => (file.endsWith(".yml") || file.endsWith(".yaml")) && file !== except,
+    );
+
+    const read = yield* Effect.forEach(files, (file) =>
+      Effect.map(fs.readFileString(`${directory}/${file}`), (text) =>
+        Option.toArray(
+          Option.map(
+            Option.flatMap(
+              Option.liftPredicate(
+                YAML.parseDocument(text),
+                (document) => document.errors.length === 0,
+              ),
+              (document) => Schema.decodeUnknownOption(RepoWorkflowHead)(document.toJS()),
+            ),
+            (workflow): RepoWorkflowFile => ({
+              file,
+              name: Option.fromUndefinedOr(workflow.name),
+              events: eventsOfWorkflow(Option.fromUndefinedOr(workflow.on)),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    return read.flat();
+  }).pipe(
+    Effect.mapError(
+      (error) => new ConfigError({ message: `reading .github/workflows/: ${error.message}` }),
+    ),
+  );
+
+// A GitHub Actions workflow as YAML text, every line as long as it needs, and
+// each value written out where it is used rather than as an alias, so a
+// reader sees each step's env in full.
+export const workflowYaml = (document: Schema.Json) =>
+  YAML.stringify(document, { lineWidth: 0, aliasDuplicateObjects: false });

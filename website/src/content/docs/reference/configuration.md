@@ -32,7 +32,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
 | `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person |
 | `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight: their claim refs, and any [marker that is a lease](/chernabog/flows/sdk/#markers) |
-| `ci.flows`         | none                       | the flows that run on GitHub Actions: the plan job, [`chernabog ci plan`](/chernabog/work/commands/#ci-plan), runs their triggers and starts a run job for each item it would start. Flows not named keep running only on a daemon |
+| `ci.flows`         | none                       | the flows that run on GitHub Actions: the plan job, [`chernabog ci plan`](/chernabog/work/commands/#ci-plan), runs their triggers and starts a run job for each item it would start. Flows not named keep running only on a daemon. `chernabog init` and [`chernabog ci workflow --write`](/chernabog/work/commands/#ci-workflow) write the workflow from it |
 | `ci.maxParallel`   | `1`                        | the most run jobs at once, across every flow: the run job's `strategy.max-parallel` |
 | `ci.schedule`      | `17 */3 * * *`             | when the sweep runs, as cron in UTC: it plans across every item, for what a dropped event missed. Pick an odd minute: GitHub drops scheduled runs under load, most on the hour |
 

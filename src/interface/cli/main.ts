@@ -59,6 +59,8 @@ import {
   loadCiConfig,
   loadMachineConfig,
   loadRepo,
+  readRepoWorkflows,
+  workflowYaml,
 } from "../../repo-config.ts";
 import { ApplicationLive } from "../application-runtime.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
@@ -77,6 +79,12 @@ import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { runInForeground } from "./run.main.ts";
 import { openSession, startIssue } from "./start.main.ts";
 import { uiCommand } from "./ui.main.ts";
+
+// What writing a repo's CI workflow reads: its ci: section and its workflow files.
+const ciWorkflowAccess = {
+  ciOf: loadCiConfig,
+  workflowFiles: { read: readRepoWorkflows, text: workflowYaml },
+};
 
 const printLines = (lines: Iterable<string>) =>
   Effect.forEach(lines, (line) => Console.log(line), { discard: true });
@@ -454,11 +462,11 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
 
           return { machine, enrolled: yield* findEnrolled(machine, repo) };
         }),
-      ciOf: loadCiConfig,
+      ...ciWorkflowAccess,
     }),
     doctorCommand,
     machineEndpoints.setup,
-    initCommand,
+    initCommand(ciWorkflowAccess),
     recipesEndpoints.recipes,
     enrollmentEndpoints.enroll,
     enrollmentEndpoints.unenroll,
