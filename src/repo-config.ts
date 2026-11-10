@@ -48,7 +48,10 @@ import {
   DEFAULT_LEASE_LIMITS,
   type LeaseLimits,
 } from "./modules/runs/domain/schedule/lease.value-object.ts";
-import { chooseSchedule } from "./modules/runs/domain/schedule/schedule.value-object.ts";
+import {
+  chooseSchedule,
+  cronProblem,
+} from "./modules/runs/domain/schedule/schedule.value-object.ts";
 import { DEFAULT_VALIDITY_EVERY } from "./modules/runs/domain/schedule/validity.value-object.ts";
 import type { AgentsConfig } from "./modules/runs/infrastructure/runtime/agents.ts";
 import {
@@ -184,6 +187,30 @@ const SharedSettings = Schema.Record(Schema.String, Schema.Json).annotate({
     "Settings every flow shares, such as the reviewer pool (reviewers), the CI limits (ciRounds, ciTimeout) and the local gate (localGate, install), read by the flows whose settings declare them. flows.<name>.settings overrides them key by key.",
 });
 
+// Which flows run on GitHub Actions rather than only on a daemon (#455): the
+// plan job (chernabog ci plan) starts their work as a matrix of run jobs.
+const CiFile = Schema.Struct({
+  flows: Strings.annotate({
+    description:
+      "The flows that run on GitHub Actions: the plan job runs their triggers and starts a run job for each item it would start. Flows not named keep running only on a daemon.",
+  }),
+  maxParallel: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 256 })).annotate({
+      description:
+        "The most run jobs at once, across every flow: the run job's strategy.max-parallel. 1 when unset.",
+    }),
+  ),
+  schedule: Schema.optionalKey(
+    Schema.String.annotate({
+      description:
+        'When the sweep runs, as a cron expression in UTC: it plans across every item, for what a dropped event missed. "17 */3 * * *" when unset; schedule at an odd minute, since GitHub drops scheduled runs under load, most on the hour.',
+    }),
+  ),
+}).annotate({
+  description:
+    "Running flows on GitHub Actions: which flows, how many run jobs at once, and when the sweep runs.",
+});
+
 // .chernabog/config.yaml: what work gets done and how. Committed.
 export const RepoConfigFile = Schema.Struct({
   baseBranch: Schema.optionalKey(
@@ -220,9 +247,37 @@ export const RepoConfigFile = Schema.Struct({
     }),
   ),
   flows: Schema.optionalKey(Schema.Record(Schema.String, RepoFlowSettings)),
+  ci: Schema.optionalKey(CiFile),
 });
 
 export type RepoConfigFile = typeof RepoConfigFile.Type;
+
+// The sweep's schedule when config gives none: every three hours, at an odd minute.
+export const DEFAULT_CI_SCHEDULE = "17 */3 * * *";
+
+// A repo's ci: section, with its defaults: no flow runs in CI unless named.
+export type CiConfig = {
+  readonly flows: ReadonlyArray<string>;
+  readonly maxParallel: number;
+  readonly schedule: string;
+};
+
+// The ci: section of a repo's config, or why it can't be used.
+export const ciConfigOf = (file: RepoConfigFile) =>
+  Effect.gen(function* () {
+    const ci = file.ci ?? { flows: [] };
+    const schedule = ci.schedule ?? DEFAULT_CI_SCHEDULE;
+
+    for (const problem of Option.toArray(cronProblem(schedule))) {
+      return yield* new ConfigError({ message: `ci.schedule: ${problem}` });
+    }
+
+    return {
+      flows: Arr.dedupe(ci.flows),
+      maxParallel: ci.maxParallel ?? 1,
+      schedule,
+    } satisfies CiConfig;
+  });
 
 const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
@@ -1189,6 +1244,10 @@ export const loadRepo = (
       yield* knownDefaultBranch(enrolled.path),
     );
   });
+
+// The ci: section of the config.yaml in `configDir`.
+export const loadCiConfig = (configDir: string) =>
+  Effect.flatMap(readYaml(RepoConfigFile, `${configDir}/config.yaml`, true), ciConfigOf);
 
 // Edits machine config in place, keeping the file's comments. `edit` changes
 // the document, given the file as it decodes now, and says what it did. It
