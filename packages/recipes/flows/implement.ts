@@ -24,6 +24,7 @@ import {
   type CiTimedOut,
   Claims,
   defineFlow,
+  Events,
   GitHub,
   Implement,
   NeedsHuman,
@@ -81,7 +82,7 @@ const settings = Schema.Struct({
   ...Settings.Reviewers.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   trigger,
   gate: Implement.gate,
   concurrency: 1,
@@ -188,4 +189,12 @@ export default defineFlow({
       // An issue deleted or transferred under the run leaves nothing to do.
       Effect.catchTag("NotFound", (gone) => Effect.fail(new Skip({ reason: gone.message }))),
     ),
+});
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: an issue labelled to queue it, and a draft
+// its author marks ready, which wakes an adopted one's run.
+export default Events.declare(flow, {
+  events: [Events.issueLabelled, Events.readyForReview],
+  readsPhases: false,
 });

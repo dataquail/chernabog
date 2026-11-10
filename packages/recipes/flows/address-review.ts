@@ -13,6 +13,7 @@
 
 import {
   defineFlow,
+  Events,
   Implement,
   NeedsHuman,
   PullRequest,
@@ -129,7 +130,7 @@ const settings = Schema.Struct({
   ...Settings.Reviewers.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   labels: Settings.declaredLabels,
   settings,
   trigger,
@@ -141,3 +142,8 @@ export default defineFlow({
   stillValid: Review.stillValid,
   workflow,
 });
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: a review submitted. Its trigger reads each
+// pull request's phase, so a phase event wakes it too.
+export default Events.declare(flow, { events: [Events.reviewSubmitted], readsPhases: true });

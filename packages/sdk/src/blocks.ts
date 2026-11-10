@@ -64,6 +64,7 @@ import {
   laneScopes,
   loopStates as epicLoopStates,
 } from "./epic-blocks.ts";
+import * as Events from "./events.ts";
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
@@ -226,6 +227,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     contributes: {
       labels: Implement.adoptionLabels,
       wakes: Implement.readied.pipe(reportAs("trigger")),
+      wakeEvents: [Events.readyForReview],
       wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingReady] }],
     },
     outcomes: {},
@@ -715,6 +717,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
+      wakeEvents: [Events.ciCompleted],
       wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.mergeHeld] }],
     },
     outcomes: {},
@@ -799,6 +802,7 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
         settings: { ...Routing.Settings.fields, ...Settings.Board.fields },
       },
     }),
+    { events: [Events.issueLabelled] },
   ),
 
   // Pull requests that ask this persona for their first review, by their
@@ -827,6 +831,7 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
           ],
         },
       ],
+      events: [Events.reviewRequested],
     },
   ),
 
@@ -839,7 +844,11 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
       trigger: Review.waitingElsewhere.pipe(reportAs("trigger")),
       contributes: {},
     }),
-    { reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }] },
+    // Only status reads it, so nothing it finds needs waking.
+    {
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAsked, NO_RECORD] }],
+      events: [],
+    },
   ),
 } satisfies { readonly [name: string]: { readonly subject: SubjectName } }).entries;
 
@@ -1107,10 +1116,25 @@ export const assemble = (flow: {
     onSome: (item) => defineFlow({ ...common, item, start: true }),
   });
 
+  // The GitHub events its sources and its blocks' wakes declare, and whether
+  // they read phases, for a workflow in CI (events.ts).
+  const declared = {
+    events: unique([
+      ...flowSources.flatMap((source) => source.events ?? []),
+      ...contributions.flatMap((each) => each.wakeEvents ?? []),
+    ]),
+    readsPhases:
+      flowSources.some((source) => source.readsPhases === true) ||
+      flow.blocks.some((block) => (catalogue[block].contributes.wakeReads ?? []).length > 0),
+  };
+
   // Not enumerable, so the flow's keys stay those of a recipe written in
   // TypeScript, which declares none.
-  return Option.match(Option.fromUndefinedOr(flow.plan), {
-    onNone: () => defined,
-    onSome: (plan) => Object.defineProperty({ ...defined }, "plan", { value: plan }),
-  });
+  return Events.declare(
+    Option.match(Option.fromUndefinedOr(flow.plan), {
+      onNone: () => ({ ...defined }),
+      onSome: (plan) => Object.defineProperty({ ...defined }, "plan", { value: plan }),
+    }),
+    declared,
+  );
 };

@@ -478,6 +478,32 @@ A phase that no source reads, such as an issue's `handed-off` or a pull request'
 
 A flow written in TypeScript declares nothing, and nor does a document that can't be read. When the repo has one, the check can't tell whether it fills a gap, so each gap is a `note:` that names those flows rather than a `warning:`. Neither fails the command, and an SDK from before phases says nothing of them.
 
+## The GitHub events that wake a flow
+
+Each source names the GitHub events that can change what it finds, and each block whose wakes find parked runs names the events that settle the wait. `chernabog recipes blocks` lists them after `wakes on:` and `its wakes wake on:`. They are for running flows in GitHub Actions (#455): the workflow's `on:` block is built from them, so an event runs the plan job instead of waiting for the schedule.
+
+```
+review.changesRequested: …
+  wakes on: pull_request_review submitted, for the pull-request at pull_request.number, by an owner, member or collaborator (review.author_association), not by its own persona
+```
+
+Each one says:
+
+- the event and its activity types, such as `issues: labeled` or `workflow_run: completed`;
+- where its payload names the work item, so the plan job looks at that one item rather than the whole repo. A pull request closing can move the base under every open one, so `pr.conflicting` wakes for every item. So does `epic.queued` on what moves an epic's layers (a task closed or relabelled, a push to, review of or merge of a layer's pull request), since none of those names the epic;
+- its guards, on unless it opts out: whoever caused it must be the repo's owner, a member or a collaborator, where the payload says (an event only someone with triage or write access can cause, such as a label, needs no check), and it mustn't be the flow's own persona, so a flow doesn't wake itself. A merge and a finished CI run count even when the persona caused them.
+
+A document's flow carries its sources' and blocks' events. A flow written in TypeScript declares its own with the SDK's same values, as the recipes do:
+
+```ts
+export default Events.declare(flow, {
+  events: [Events.reviewSubmitted],
+  readsPhases: true,
+});
+```
+
+Phase advances aren't declared: a phase event wakes every flow whose sources read phases. Nothing can declare `check_suite`, since GitHub starts no workflow for a check suite Actions created, so waiting on CI is `workflow_run: completed`, filtered to the repo's CI workflows and never to chernabog's own. Nor can anything declare `pull_request_target`.
+
 ## What the blocks can't do yet
 
 Work no block covers can run as [your own step](#your-own-steps).

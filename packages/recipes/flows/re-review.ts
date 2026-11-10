@@ -13,6 +13,7 @@
 import {
   activity,
   defineFlow,
+  Events,
   GitHub,
   PullRequest,
   Repo,
@@ -191,7 +192,7 @@ const settings = Schema.Struct({
   ...Settings.MergeHold.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   labels: Settings.declaredLabels,
   settings,
   trigger,
@@ -203,4 +204,13 @@ export default defineFlow({
   // A pull request closed or merged ends the run as superseded.
   stillValid: Review.stillValid,
   workflow,
+});
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: a review asked again, and CI finishing on a
+// base, which wakes a run holding a merge. Its trigger reads each pull
+// request's phase, so a phase event wakes it too.
+export default Events.declare(flow, {
+  events: [Events.reviewRequestedAgain, Events.ciCompleted],
+  readsPhases: true,
 });

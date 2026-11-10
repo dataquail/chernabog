@@ -273,6 +273,32 @@ describe("chernabog recipes blocks", () => {
     );
   });
 
+  test("says which GitHub events wake each source and each block's wakes", async () => {
+    const { code, output } = await sandbox.runCli([
+      "recipes",
+      "blocks",
+      "pr.land",
+      "review.changesRequested",
+      "pr.conflicting",
+    ]);
+
+    expect(code).toBe(0);
+    expect(output).toContain(
+      "  its wakes wake on: workflow_run completed, for the branch at workflow_run.head_branch\n",
+    );
+    expect(output).toContain(
+      "  wakes on: pull_request_review submitted, for the pull-request at pull_request.number, by an owner, member or collaborator (review.author_association), not by its own persona\n",
+    );
+    expect(output).toContain("  wakes on: pull_request closed, for every item\n");
+
+    const json = await sandbox.runCli(["recipes", "blocks", "issues.queued", "--json"]);
+
+    expect(json.code).toBe(0);
+    expect(json.output).toContain(
+      '"events":[{"event":"issues","types":["labeled"],"item":{"kind":"issue","path":"issue.number"},"trusted":true,"ownPersona":false}]',
+    );
+  });
+
   test("lists the repo's Effect stages, with what each takes and gives", async () => {
     const all = await sandbox.runCli(["recipes", "blocks"]);
 

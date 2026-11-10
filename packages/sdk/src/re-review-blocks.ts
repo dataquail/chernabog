@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { Approved, defineBlock, defineSource, type PullRequestNumber } from "./block.ts";
+import * as Events from "./events.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
@@ -247,6 +248,7 @@ export const reReviewSources = {
           to: PHASES.pullRequest.reviewAskedAgain,
         },
       ],
+      events: [Events.reviewRequestedAgain],
     },
   ),
 };

@@ -32,6 +32,7 @@ import {
   Claims,
   defineFlow,
   Epic,
+  Events,
   Git,
   GitHub,
   Implement,
@@ -902,7 +903,7 @@ const settings = Schema.Struct({
   ...Own.fields,
 });
 
-export default defineFlow({
+const flow = defineFlow({
   trigger: Epic.queued.pipe(reportAs("trigger")),
   gate: Implement.gate,
   concurrency: 1,
@@ -928,4 +929,14 @@ export default defineFlow({
       // its tasks' claims go too; a run parked between rounds keeps them.
       return yield* workThrough(epic, ships, concurrency).pipe(Claims.releasing(Claims.epic(epic)));
     }),
+});
+
+// The GitHub events that can change what its trigger finds, so it wakes in CI
+// rather than only on the schedule: an issue labelled auto:epic, and what moves
+// an epic's layers (a task closed or relabelled, a push to, review of or merge
+// of a layer's pull request). Its trigger reads the epic's phase, so a phase
+// event wakes it too.
+export default Events.declare(flow, {
+  events: [Events.issueLabelled, ...Events.layerChanged],
+  readsPhases: true,
 });

@@ -37,6 +37,7 @@ import {
   startOf,
   subjects,
 } from "./blocks.ts";
+import { type FlowEvents, type WakingEvent } from "./events.ts";
 import {
   type ItemKind,
   NO_RECORD,
@@ -636,6 +637,7 @@ const sourcesByName: {
     readonly subject: string;
     readonly reads: ReadonlyArray<Reading>;
     readonly reconciles: ReadonlyArray<Reconciling>;
+    readonly events: ReadonlyArray<WakingEvent>;
   };
 } = sources;
 
@@ -2105,6 +2107,13 @@ const describeStage = (stage: StageDefinition) => {
   return { name: stage.name, inputs, gives, failures: STAGE_FAILURES };
 };
 
+// A declared event as a listing gives it.
+const eventJson = (waking: WakingEvent): Schema.Json => ({
+  ...waking,
+  types: [...waking.types],
+  item: { ...waking.item },
+});
+
 // Everything a document can use, for an agent or a person composing one, with
 // the repo's Effect stages when given them.
 export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Json => ({
@@ -2133,6 +2142,8 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
           from: [...reconciled.from],
           to: reconciled.to,
         })),
+        // The GitHub events that can change what it finds.
+        events: found.events.map(eventJson),
       }),
     }),
   })),
@@ -2180,6 +2191,8 @@ export const describe = (stages: ReadonlyArray<StageDefinition> = []): Schema.Js
       item: reading.item,
       phases: [...reading.phases],
     })),
+    // The GitHub events that settle the wait its wakes look for.
+    wakeEvents: (block.contributes.wakeEvents ?? []).map(eventJson),
   })),
   stages: stages.map(describeStage),
 });
@@ -3015,4 +3028,31 @@ export const phaseGaps = (
   );
 
   return [...unrecorded, ...unread];
+};
+
+const eventKey = (waking: WakingEvent) => printJson(eventJson(waking));
+
+// The GitHub events that can change what a document's trigger finds, as the
+// catalogue declares them: its sources' and its blocks' wakes'; and whether
+// it reads phases, so a phase event wakes it too (events.ts). A compiled
+// flow carries them.
+export const eventsOf = (document: FlowDocument): FlowEvents => {
+  const found = document.trigger.flatMap((entry) =>
+    Option.toArray(Record.get(sourcesByName, entry.use)),
+  );
+
+  const used = useStepsIn(document.steps).flatMap((step) =>
+    Option.toArray(Record.get(blocksByName, step.use)),
+  );
+
+  return {
+    events: Arr.dedupeWith(
+      [
+        ...found.flatMap((source) => source.events),
+        ...used.flatMap((block) => block.contributes.wakeEvents ?? []),
+      ],
+      (one, other) => eventKey(one) === eventKey(other),
+    ),
+    readsPhases: progressOf(document).reads.length > 0,
+  };
 };

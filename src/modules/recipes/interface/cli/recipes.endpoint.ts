@@ -22,7 +22,7 @@ import { type RecipesUpdated, type Unrecorded } from "../../commands/update-reci
 import { type RepoUpgraded } from "../../commands/upgrade-repo.command.ts";
 import { FlowDocumentsRefused } from "../../domain/recipe/recipe.errors.ts";
 import { type RecipesDiff } from "../../queries/diff-recipes.query.ts";
-import { FlowCatalogue } from "../../queries/list-flow-blocks.query.ts";
+import { type CatalogueEvent, FlowCatalogue } from "../../queries/list-flow-blocks.query.ts";
 import { type RecipeList } from "../../queries/list-recipes.query.ts";
 import { RecipesCommands } from "../../recipes.command-handlers.ts";
 import { enrollmentAccessQueries } from "../../recipes.imports.ts";
@@ -418,6 +418,21 @@ const describeRecorded = (
     () => "",
   )}`;
 
+// "issues labeled, for the issue at issue.number, if comment.author_association
+// is trusted, not the persona's own"
+const describeEvent = (waking: CatalogueEvent) =>
+  [
+    `${waking.event} ${waking.types.join(" or ")}`,
+    Option.match(Option.fromUndefinedOr(waking.item.path), {
+      onNone: () => "for every item",
+      onSome: (path) => `for the ${waking.item.kind} at ${path}`,
+    }),
+    ...Option.toArray(
+      Option.filter(Option.fromUndefinedOr(waking.association), () => waking.trusted),
+    ).map((path) => `by an owner, member or collaborator (${path})`),
+    ...Option.toArray(Option.liftPredicate("not by its own persona", () => !waking.ownPersona)),
+  ].join(", ");
+
 const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
   `${block.name}: ${block.about}`,
   ...listedAfter("suits", block.subjects ?? []),
@@ -451,6 +466,7 @@ const describeBlock = (block: FlowCatalogue["blocks"][number]) => [
     ),
   ]),
   ...listedAfter("its wakes read", (block.wakeReads ?? []).map(describeReading)),
+  ...(block.wakeEvents ?? []).map((waking) => `  its wakes wake on: ${describeEvent(waking)}`),
   ...Option.toArray(
     Option.liftPredicate(
       "  runs last: only on a run's way out, so in a repeat it takes no round, and no way past it goes on to another round",
@@ -488,6 +504,7 @@ const describeSource = (source: FlowCatalogue["sources"][number]) => [
         `${reconciled.item} ${reconciled.to} from ${describeReading({ item: reconciled.item, phases: reconciled.from }).slice(reconciled.item.length + 1)}`,
     ),
   ),
+  ...(source.events ?? []).map((waking) => `  wakes on: ${describeEvent(waking)}`),
 ];
 
 // A subject, with how a run on it starts: from a trigger, and by a person too

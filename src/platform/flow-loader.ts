@@ -424,13 +424,21 @@ export const flowPlanOf = (flow: Core.Flow): Option.Option<Core.Json> => {
   return Schema.decodeUnknownOption(Schema.Json)(flow.plan);
 };
 
-// A copy of a flow, with the plan it carries, which isn't enumerable, so a
-// spread alone would leave it behind.
+// What a flow carries beside its keys, as its SDK gives it: a compiled flow's
+// plan, and the GitHub events any flow declares (the SDK's Events.declare).
+const CARRIED = ["plan", "events"] as const;
+
+// A copy of a flow, with what it carries, which isn't enumerable, so a spread
+// alone would leave it behind.
 const copyOf = (flow: Core.Flow): Core.Flow =>
-  Option.match(flowPlanOf(flow), {
-    onNone: () => ({ ...flow }),
-    onSome: (plan) => Object.defineProperty({ ...flow }, "plan", { value: plan }),
-  });
+  CARRIED.reduce<Core.Flow>(
+    (copy, key) =>
+      Option.match(Option.fromUndefinedOr(Object.getOwnPropertyDescriptor(flow, key)), {
+        onNone: () => copy,
+        onSome: (carried) => Object.defineProperty(copy, key, { value: carried.value }),
+      }),
+    { ...flow },
+  );
 
 // The names of the flows in <configDir>/flows/, without importing them, so
 // listing an untrusted .chernabog/ runs none of its code.

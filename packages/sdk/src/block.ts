@@ -22,6 +22,7 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
+import type { WakingEvent } from "./events.ts";
 import * as Implement from "./implement.ts";
 import { type Reading, type Recorded, type SourceProgress } from "./phases.ts";
 import type { FlowSettings } from "./settings.ts";
@@ -185,6 +186,9 @@ export type Contribution = {
   // The phases its wakes find parked runs by, as a source declares what it
   // reads.
   readonly wakeReads?: ReadonlyArray<Reading>;
+  // The GitHub events that settle the wait its wakes look for, so a run parked
+  // in it wakes in CI (events.ts).
+  readonly wakeEvents?: ReadonlyArray<WakingEvent>;
   readonly ownWork?: boolean;
 };
 
@@ -286,25 +290,43 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
 export type Source = {
   readonly trigger: TriggeredFlow["trigger"];
   readonly contributes: Contribution;
+  // The GitHub events that can change what it finds, and whether it reads
+  // phases, so a phase event wakes its flow too: what defineSource declares,
+  // for the flow assembled from it to carry.
+  readonly events?: ReadonlyArray<WakingEvent>;
+  readonly readsPhases?: boolean;
 };
 
-const NO_PROGRESS: SourceProgress = { reads: [] };
+// What a source declares beside what it finds: the phases it reads of its
+// items, none when it decides by what GitHub says alone, and the GitHub
+// events that can change what it finds (events.ts).
+export type SourceDeclarations = Partial<SourceProgress> & {
+  readonly events: ReadonlyArray<WakingEvent>;
+};
 
 // A source, by the name a document uses it by, the subject of the work items
-// it finds, and the phases it reads of them: none, when it decides by what
-// GitHub says alone.
+// it finds, and what it declares.
 export const defineSource = <Subject extends string, Input extends ReadonlyArray<unknown>>(
   name: string,
   subject: Subject,
   find: (...input: Input) => Source,
-  progress: SourceProgress = NO_PROGRESS,
-) => ({
-  name,
-  subject,
-  find,
-  reads: progress.reads,
-  reconciles: progress.reconciles ?? [],
-});
+  declared: SourceDeclarations,
+) => {
+  const reads = declared.reads ?? [];
+
+  return {
+    name,
+    subject,
+    find: (...input: Input): Source => ({
+      ...find(...input),
+      events: declared.events,
+      readsPhases: reads.length > 0,
+    }),
+    reads,
+    reconciles: declared.reconciles ?? [],
+    events: declared.events,
+  };
+};
 
 type Named = { readonly [key: string]: { readonly name: string } };
 

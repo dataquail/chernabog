@@ -21,6 +21,7 @@ import {
   ToPerson,
   WorktreePath,
 } from "./block.ts";
+import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
@@ -457,6 +458,7 @@ export const addressReviewSources = {
           to: PHASES.pullRequest.changesAsked,
         },
       ],
+      events: [Events.reviewSubmitted],
     },
   ),
 };
