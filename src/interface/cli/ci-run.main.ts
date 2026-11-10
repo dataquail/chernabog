@@ -75,7 +75,7 @@ export const refusalOf = (
 ): Option.Option<string> => {
   if (Record.has(variables, "ANTHROPIC_API_KEY")) {
     return Option.some(
-      `ANTHROPIC_API_KEY is set, which claude bills per token over the subscription: unset it, and pass the subscription's token as ${OAUTH_TOKEN_ENV}`,
+      `ANTHROPIC_API_KEY is set (even empty), which claude bills per token over the subscription: unset it, and pass the subscription's token as ${OAUTH_TOKEN_ENV}`,
     );
   }
 
@@ -334,9 +334,10 @@ const releaseClaims = (runId: RunId, context: RepoContext) =>
   });
 
 // Commits what the agent left uncommitted in each of the job's worktrees and
-// pushes the branch it's on, as the persona: the next job repeats the phase
-// from its start, and finds the work on the branch. A checkout on no branch,
-// such as a review's, has nothing of its own to push.
+// pushes the branch it's on, as the persona, when that adds to what GitHub
+// has: the next job repeats the phase from its start, and finds the work on
+// the branch. A checkout on no branch, such as a review's, has nothing of its
+// own to push, and a branch GitHub no longer has is never made again.
 const pushWorktree = (path: string, why: string) =>
   Effect.gen(function* () {
     const git = yield* Git;
@@ -347,6 +348,18 @@ const pushWorktree = (path: string, why: string) =>
     );
 
     if (Option.isNone(branch) || branch.value.length === 0) {
+      return Option.none<string>();
+    }
+
+    // Only a branch GitHub still has: one the run's end deleted (a claim
+    // branch it never pushed to), or a merge did, stays deleted.
+    const remote = `refs/remotes/origin/${branch.value}`;
+
+    const fetched = yield* git
+      .run(["fetch", "-q", "origin", `+refs/heads/${branch.value}:${remote}`], path)
+      .pipe(Effect.option);
+
+    if (Option.isNone(fetched)) {
       return Option.none<string>();
     }
 
@@ -367,6 +380,12 @@ const pushWorktree = (path: string, why: string) =>
       // Work in progress, kept as the agent left it: the repo's hooks are for
       // finished work, and refusing this commit would lose it.
       yield* git.run([...author, "commit", "-q", "--no-verify", "-m", `wip: ${why}`], path);
+    }
+
+    const ahead = Number((yield* git.run(["rev-list", "--count", `${remote}..HEAD`], path)).trim());
+
+    if (ahead === 0) {
+      return Option.none<string>();
     }
 
     // A plain push, never forced: a branch that moved on elsewhere keeps what it has.
@@ -555,15 +574,15 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     // go, and its logs kept: the next job repeats the phase from its start.
     const wrapUp = (exit: Exit.Exit<CiRunEnding, unknown>) =>
       Effect.gen(function* () {
-        for (const runId of Option.toArray(started)) {
-          const ended = Exit.isSuccess(exit) && exit.value.kind === "ended";
+        // A run that ended has no phase for a next job to repeat, and the
+        // engine has cleaned up after it: its branches are left as they are.
+        const ended = Exit.isSuccess(exit) && exit.value.kind === "ended";
+
+        for (const runId of Option.toArray(Option.filter(started, () => !ended))) {
           yield* pushWork(repo, context, `chernabog ci run ${runId} stopped`).pipe(
             Effect.catch((error) => Console.error(`could not push the work: ${String(error)}`)),
           );
-
-          if (!ended) {
-            yield* releaseClaims(runId, context);
-          }
+          yield* releaseClaims(runId, context);
         }
 
         for (const dir of Option.toArray(options.logs)) {
