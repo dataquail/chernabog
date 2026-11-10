@@ -140,7 +140,7 @@ export const ciWorkflowFor = (options: CiWorkflowOptions) =>
       return yield* new ConfigError({ message: `no workflow written: ${built.failure}` });
     }
 
-    const text = `${HEADER}\n${options.workflowFiles.text(built.success.document)}`;
+    const text = `${HEADER}\n${CiWorkflow.withVersionComments(options.workflowFiles.text(built.success.document))}`;
 
     return Option.some<CiWorkflowText>({
       path: WORKFLOW_FILE,

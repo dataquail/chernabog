@@ -87,6 +87,9 @@ describe("the CI workflow", () => {
     expect(on.workflow_dispatch).toEqual({});
     expect(Object.keys(on)).not.toContain("pull_request_target");
     expect(permissions).toEqual({ contents: "read" });
+    expect(readFileSync(workflowFile(), "utf8")).toContain(
+      "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+    );
     // Every step's env written out, no YAML alias standing in for one.
     expect(readFileSync(workflowFile(), "utf8")).not.toMatch(/: \*\w+$/m);
     expect(jobs.run.if).toBe("needs.plan.outputs.items != '[]'");

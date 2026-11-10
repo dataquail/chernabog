@@ -93,6 +93,26 @@ export type Built = {
   readonly notes: ReadonlyArray<string>;
 };
 
+// The actions from elsewhere the workflow runs, pinned by commit with their
+// version beside it, as this repo's own workflows pin them: the jobs hold a
+// persona's token and Claude's in every enrolled repo, so a tag that moved
+// must not run there. They move with each binary release, as the action's
+// own tag does.
+const PINNED = {
+  checkout: {
+    uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+    version: "v7.0.1",
+  },
+  upload: {
+    uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+    version: "v7.0.2",
+  },
+} as const;
+
+// Both steps that run chernabog take both tokens: ci run's agent runs on
+// Claude's, and ci plan's usage gate (#459) reads the subscription's room
+// this week with it, through the oauthTokenEnv its runner's machine config
+// names. No other step takes either.
 const secretsEnv = {
   GH_TOKEN: "${{ secrets.CHERNABOG_TOKEN }}",
   CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}",
@@ -101,9 +121,11 @@ const secretsEnv = {
 // The default branch, never a pull request's merge commit: chernabog reads
 // its config from there, and a job never checks a contributor's code out.
 // The workflow's token stays out of git's config, so chernabog's pushes go as
-// the persona.
+// the persona. A schedule event's payload names no repository, so its ref is
+// empty and checkout takes the event's own, which for a schedule is the
+// default branch too.
 const checkout = (more: { readonly [key: string]: string | number | boolean } = {}): Step => ({
-  uses: "actions/checkout@v4",
+  uses: PINNED.checkout.uses,
   with: {
     ref: "${{ github.event.repository.default_branch }}",
     "persist-credentials": false,
@@ -188,7 +210,7 @@ const build = (options: {
           },
           {
             if: "always()",
-            uses: "actions/upload-artifact@v4",
+            uses: PINNED.upload.uses,
             with: {
               name: "chernabog-${{ matrix.flow }}-${{ matrix.item }}-${{ github.run_id }}-${{ github.run_attempt }}",
               path: LOGS,
@@ -237,4 +259,16 @@ const pinnedVersion = (text: string) =>
     (match) => Option.fromUndefinedOr(match[1]),
   );
 
-export const CiWorkflow = { build, ciWorkflows, pinnedVersion } as const;
+// The workflow's text with each pinned action's version said beside its
+// commit, as a comment YAML can't carry in a value.
+const withVersionComments = (text: string) =>
+  Object.values(PINNED).reduce(
+    (annotated, pinned) =>
+      annotated.replace(
+        new RegExp(`(uses: ${pinned.uses.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})$`, "gm"),
+        `$1 # ${pinned.version}`,
+      ),
+    text,
+  );
+
+export const CiWorkflow = { build, ciWorkflows, pinnedVersion, withVersionComments } as const;
