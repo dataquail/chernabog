@@ -192,7 +192,8 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: Issues labelled to queue them, and drafts their authors mark ready, which wake an adopted one's run.
+// rather than only on the schedule: an issue labelled to queue it, and a draft
+// its author marks ready, which wakes an adopted one's run.
 export default Events.declare(flow, {
   events: [Events.issueLabelled, Events.readyForReview],
   readsPhases: false,

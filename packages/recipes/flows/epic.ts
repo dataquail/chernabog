@@ -932,7 +932,10 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: Issues labelled auto:epic.
+// rather than only on the schedule: an issue labelled auto:epic, and what moves
+// an epic's layers (a task closed or relabelled, a push to, review of or merge
+// of a layer's pull request). Its trigger reads the epic's phase, so a phase
+// event wakes it too.
 export default Events.declare(flow, {
   events: [Events.issueLabelled, ...Events.layerChanged],
   readsPhases: true,
