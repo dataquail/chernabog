@@ -1,6 +1,6 @@
 // `chernabog doctor`: checks logins, gh scopes, labels, trust, the rulesets
-// that protect progress records, and the daemon,
-// and says how to fix what is wrong.
+// that protect progress records, a CI repo's workflow and secrets, and the
+// daemon, and says how to fix what is wrong.
 
 import { type Account, type ResolvedLauncher } from "@chernabog/core";
 import * as Arr from "effect/Array";
@@ -23,6 +23,10 @@ import {
   checkAccount,
   checkCodexAccount,
   checkThreadsSetup,
+  CI_SECRETS,
+  CI_WORKFLOW_FILE,
+  CiWorkflow,
+  ciWorkflowFor,
   declaredLabels,
   describeLauncher,
   flowWarnings,
@@ -61,15 +65,19 @@ import {
   viewerLoginAs,
 } from "../../platform/github-api.ts";
 import { Home } from "../../platform/home.ts";
+import { VERSION } from "../../platform/version.ts";
 import {
   type EffectiveRepo,
   type EnrolledRepo,
   flowOff,
+  loadCiConfig,
   loadMachineConfig,
   loadRepo,
   type MachineAccount,
   type MachineConfig,
+  readRepoWorkflows,
   repoNameOf,
+  workflowYaml,
 } from "../../repo-config.ts";
 import { daemonStatus } from "../daemon/daemon.client.ts";
 import { printJson, printLines } from "./cli.output.ts";
@@ -102,6 +110,10 @@ export const formatCheck = (check: Check) => {
 };
 
 const LabelsPage = Schema.Array(Label);
+
+const SecretsPage = Schema.Struct({
+  secrets: Schema.Array(Schema.Struct({ name: Schema.String })),
+});
 
 const notRun: ExecResult = { exitCode: 127, stdout: "", stderr: "" };
 
@@ -561,6 +573,129 @@ export const doctor = Effect.gen(function* () {
       }
     });
 
+  // A repo whose config runs flows on GitHub Actions: its workflow is what
+  // its config writes, and the secrets the workflow reads exist, by name. The
+  // rulesets its phase writes need are checkThreads'. A workflow that pins
+  // another chernabog, and differs in nothing else, is only a warning.
+  const checkCi = (repo: EnrolledRepo, name: string, configDir: string) =>
+    Effect.gen(function* () {
+      const ci = yield* Effect.result(loadCiConfig(configDir));
+
+      if (Result.isFailure(ci)) {
+        check(
+          false,
+          `${name}: ci: loads (${ci.failure.message})`,
+          "fix ci: in .chernabog/config.yaml",
+        );
+
+        return;
+      }
+
+      if (ci.success.flows.length === 0) {
+        return;
+      }
+
+      const write = `chernabog ci workflow --write in ${repo.path}, then commit and merge it`;
+
+      const built = (version: string) =>
+        Effect.result(
+          ciWorkflowFor({
+            root: repo.path,
+            configDir,
+            ciOf: loadCiConfig,
+            version,
+            workflowFiles: { read: readRepoWorkflows, text: workflowYaml },
+          }),
+        );
+
+      const wanted = yield* built(VERSION);
+
+      if (Result.isFailure(wanted)) {
+        check(
+          false,
+          `${name}: its CI workflow can be written (${wanted.failure.message})`,
+          `fix what it names, then ${write}`,
+        );
+
+        return;
+      }
+
+      const file = `${repo.path}/${CI_WORKFLOW_FILE}`;
+      const found = yield* fs.readFileString(file).pipe(Effect.option);
+
+      for (const text of Option.toArray(Option.map(wanted.success, (one) => one.text))) {
+        if (Option.isNone(found)) {
+          check(false, `${name}: ${CI_WORKFLOW_FILE} runs its CI flows`, write);
+          continue;
+        }
+
+        if (found.value === text) {
+          check(true, `${name}: ${CI_WORKFLOW_FILE} matches its config`, "");
+          continue;
+        }
+
+        const pinned = Option.filter(
+          CiWorkflow.pinnedVersion(found.value),
+          (version) => version !== VERSION,
+        );
+
+        const olderMatches = yield* Option.match(pinned, {
+          onNone: () => Effect.succeed(false),
+          onSome: (version) =>
+            Effect.map(built(version), (rebuilt) =>
+              Result.match(rebuilt, {
+                onFailure: () => false,
+                onSuccess: (again) => Option.exists(again, (one) => one.text === found.value),
+              }),
+            ),
+        });
+
+        if (olderMatches && Option.isSome(pinned)) {
+          warn(
+            `${name}: ${CI_WORKFLOW_FILE} runs chernabog ${pinned.value}, and this one is ${VERSION}`,
+            write,
+          );
+          continue;
+        }
+
+        check(false, `${name}: ${CI_WORKFLOW_FILE} matches its config`, write);
+      }
+
+      const listed = yield* Effect.result(
+        githubGetAllPages(
+          `/repos/${repo.repo}/actions/secrets?per_page=100`,
+          SecretsPage,
+          (page) => page.secrets,
+        ),
+      );
+
+      if (Result.isFailure(listed)) {
+        warn(
+          `${name}: its Actions secrets couldn't be listed (${listed.failure.message})`,
+          `gh secret list -R ${repo.repo}`,
+        );
+
+        return;
+      }
+
+      // An organization's secret the repo may read serves as well as its own.
+      const shared = yield* githubGetAllPages(
+        `/repos/${repo.repo}/actions/organization-secrets?per_page=100`,
+        SecretsPage,
+        (page) => page.secrets,
+      ).pipe(Effect.orElseSucceed(() => []));
+
+      const names = new Set([...listed.success, ...shared].map((secret) => secret.name));
+
+      for (const secret of CI_SECRETS) {
+        check(
+          names.has(secret),
+          `${name}: the Actions secret ${secret} exists, which its CI workflow reads`,
+          `gh secret set ${secret} -R ${repo.repo}`,
+        );
+      }
+    });
+
   // Where the repo's interactive sessions run for each persona, whether that tool works, and whether Claude will open its worktrees without asking.
   const checkLauncher = (repo: EnrolledRepo, name: string) =>
     Effect.gen(function* () {
@@ -590,6 +725,7 @@ export const doctor = Effect.gen(function* () {
       yield* checkFlowDiagnostics(loaded.success, name, loaded.success.settings.configDir);
       yield* checkFlowDocuments(name, loaded.success.settings.configDir);
       yield* checkThreads(loaded.success, name, repo.repo);
+      yield* checkCi(repo, name, loaded.success.settings.configDir);
       const trusted = new Set<string>();
 
       for (const { persona, settings } of loaded.success.personas) {
@@ -862,4 +998,8 @@ export const doctorCommand = Command.make("doctor", { json: jsonFlag }, ({ json 
       process.exitCode = 1;
     }
   }),
-).pipe(Command.withDescription("Check logins, gh scopes, labels, trust, rulesets and the daemon"));
+).pipe(
+  Command.withDescription(
+    "Check logins, gh scopes, labels, trust, rulesets, a CI repo's workflow and secrets, and the daemon",
+  ),
+);

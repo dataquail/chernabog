@@ -22,7 +22,7 @@ description: Every chernabog command and flag.
 | `labels [repo]`                   | Create or correct the repo's labels                                              |
 | `doctor`                          | Check logins, gh scopes, labels, trust, each repo's launcher, that each reviewer this machine acts as can merge, the [rulesets that protect progress records](/chernabog/operate/progress/#what-doctor-checks) and that each persona may write them, and the daemon; and print the warnings the repo's flows contribute (`defineFlow({ doctor })`), such as the recipes' reviewer-pool checks |
 | `setup`                           | Choose the GitHub personas this machine acts as, and add AI accounts; safe to run again |
-| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, add `@chernabog/recipes` there, copy the [recipes](/chernabog/recipes/) chosen, then enroll the repo once it has a flow |
+| `init [path]`                     | Scaffold `.chernabog/`, or refresh its schemas and pins, add `@chernabog/recipes` there, copy the [recipes](/chernabog/recipes/) chosen, write the [CI workflow](#ci-workflow) when `ci.flows` names a flow, then enroll the repo once it has a flow |
 | `recipes list [path]`             | The recipes of each recipe package installed in `.chernabog/`, with their descriptions and docs pages: `✓` by the ones the repo copied, `→` by the ones it imports |
 | `recipes add [names…]`            | Copy recipes into this repo's `.chernabog/`, recording the version each came from; asked in a terminal when none is named. Never overwrites a file the repo has. A name is `<package>/<recipe>`, or a bare name from `@chernabog/recipes` |
 | `recipes add --import [names…]`   | Import recipes instead: write `flows.<name>.from` in `config.yaml` and move the package to `dependencies`, copying nothing |
@@ -37,6 +37,7 @@ description: Every chernabog command and flag.
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
 | `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
 | `ci run --flow <flow> --persona <login> --item <item>` | The run job: one item on one runner, to the next phase boundary; see [below](#ci-run) |
+| `ci workflow [path] [--write]` | The workflow that runs them, printed or written to `.github/workflows/chernabog.yml`; see [below](#ci-workflow) |
 | `ui`                              | Open the [dashboard](/chernabog/operate/dashboard/) in the browser, starting it on 127.0.0.1 if it's off |
 | `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
 | `ui status`                       | Whether the dashboard is running, and its URL                                     |
@@ -63,6 +64,17 @@ It writes `items` (exactly `[]` when it starts nothing, which the run job's guar
 - **Logs for diagnosis.** It copies the run log and the agent's transcripts to `--logs` (`$RUNNER_TEMP/chernabog-logs` on a runner), for the workflow to upload when the job fails. A failed CI run can't be resumed: the next job repeats the phase from its start.
 
 It exits 1 when the run failed or ran out of time, and 0 otherwise. `--repo` defaults to `GITHUB_REPOSITORY`; `--from-checkout` reads the working copy's `.chernabog/`.
+
+## ci workflow
+
+`chernabog ci workflow --write` writes `.github/workflows/chernabog.yml`, the workflow that runs the flows `.chernabog/config.yaml` names under [`ci.flows`](/chernabog/reference/configuration/#repo); `chernabog init` writes it too. Without `--write` it prints it. Change the config or the flows and write it again rather than editing it: `chernabog doctor` checks the two still match.
+
+- **What wakes it.** The events the CI flows [declare](/chernabog/flows/documents/#the-github-events-that-wake-a-flow), each with its `types:`; `repository_dispatch` `chernabog-phase` when a flow reads phases; `workflow_run: completed` filtered to the repo's CI workflows (those a push or a pull request starts, never this one); `ci.schedule` for the sweep; and `workflow_dispatch`, to sweep by hand. Never `pull_request_target`: it refuses to write a workflow that would wake on it.
+- **A plan job, then a run job per item.** The plan job runs [`ci plan`](#ci-plan). The run job fans its matrix out with `strategy.matrix.include`, `fail-fast: false` and `max-parallel` from `ci.maxParallel`, and is skipped when the plan starts nothing. Each run job is in a `chernabog-<flow>-<item>` concurrency group that never cancels the job at work, so a later event for the same item waits for it.
+- **Least access.** The workflow's own token only reads the checkout (`permissions: contents: read`), and the checkout is always the default branch, with that token left out of git's config. Chernabog acts as a persona: its token, the `CHERNABOG_TOKEN` secret, is the job's `GH_TOKEN`, since pushes and pull requests made with the workflow's own token start no other workflow. `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, is the subscription's. Both are passed to the steps that run chernabog and to no other.
+- **Logs.** Each run job uploads the run log and the agent's transcripts, whatever became of it, kept 5 days. On a public repo, anyone signed in to GitHub can download them.
+
+Both jobs run the action published from this repo, `dataquail/chernabog/action`, at the tag of the chernabog that wrote the workflow, and it installs that release. On a runner, `ci plan` writes the home's machine config itself, enrolling the checkout for every CI flow as the job's `GH_TOKEN`, as `ci run` does for its one flow.
 
 ## Through the daemon
 

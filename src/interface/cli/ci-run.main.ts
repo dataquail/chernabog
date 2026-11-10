@@ -89,12 +89,13 @@ export const refusalOf = (
 };
 
 // The machine config a job's home starts from when the workflow gives it
-// none: the checkout, enrolled for the one flow, as the implicit persona (the
-// job's GH_TOKEN), with claude on the subscription token and under tmux.
+// none: the checkout, enrolled for the job's flows (a run job's one, the plan
+// job's every CI flow), as the implicit persona (the job's GH_TOKEN), with
+// claude on the subscription token and under tmux.
 export const ciMachineConfig = (options: {
   readonly slug: string;
   readonly checkout: string;
-  readonly flow: string;
+  readonly flows: ReadonlyArray<string>;
 }) => ({
   accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV } },
   launcher: "tmux",
@@ -104,7 +105,7 @@ export const ciMachineConfig = (options: {
       repo: options.slug,
       name: options.slug.split("/").at(-1) ?? options.slug,
       account: "ci",
-      flows: { [options.flow]: {} },
+      flows: Object.fromEntries(options.flows.map((flow) => [flow, {}])),
     },
   ],
 });
@@ -151,7 +152,7 @@ export type CiRunOptions = {
 
 const JsonText = Schema.fromJsonString(Schema.Json);
 
-const writeJson = (path: string, value: Schema.Json) =>
+export const writeJson = (path: string, value: Schema.Json) =>
   Effect.gen(function* () {
     const text = yield* Schema.encodeEffect(JsonText)(value).pipe(Effect.orDie);
     yield* (yield* FileSystem.FileSystem).writeFileString(path, `${text}\n`);
@@ -182,7 +183,7 @@ const prepareHome = (options: CiRunOptions) =>
       const slug = Option.getOrElse(Record.get(variables, "GITHUB_REPOSITORY"), () => options.repo);
       yield* writeJson(
         paths.machineConfig,
-        ciMachineConfig({ slug, checkout, flow: options.flow }),
+        ciMachineConfig({ slug, checkout, flows: [options.flow] }),
       );
     }
 

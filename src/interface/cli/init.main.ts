@@ -27,6 +27,7 @@ import {
 } from "../../modules/recipes/recipes.platform.ts";
 import { daemonReload } from "../daemon/daemon.client.ts";
 import { confirm } from "./asker.prompt.ts";
+import { type CiWorkflowAccess, writeCiWorkflow } from "./ci.main.ts";
 import { printLines } from "./cli.output.ts";
 
 const describeScaffold = (scaffolded: Scaffolded) =>
@@ -90,52 +91,65 @@ const offerRepoint = (root: string) =>
     return declined;
   });
 
-export const initCommand = Command.make(
-  "init",
-  { path: Argument.String("path").pipe(Argument.optional), recipes: recipesFlag, ...enrollFlags },
-  ({ path, recipes, ...flags }) =>
-    Effect.gen(function* () {
-      const root = yield* rootOf(path);
+export const initCommand = (ci: CiWorkflowAccess) =>
+  Command.make(
+    "init",
+    { path: Argument.String("path").pipe(Argument.optional), recipes: recipesFlag, ...enrollFlags },
+    ({ path, recipes, ...flags }) =>
+      Effect.gen(function* () {
+        const root = yield* rootOf(path);
 
-      yield* printLines(
-        describeScaffold(yield* (yield* RecipesCommands).ScaffoldRepoCommand({ root })),
-      );
-      // The recipes init offers.
-      yield* printLines(
-        describePackage(
-          yield* (yield* RecipesCommands).AddRecipePackageCommand({ root, name: OFFICIAL_PACKAGE }),
-        ),
-      );
-      yield* printLines(yield* bakeRecipes(root, recipes));
-      // config.schema.json again, describing the settings of the recipes it added.
-      yield* printLines(yield* refreshSchemas(root));
-
-      // Enrolling would point a moved entry here after all, so a checkout that
-      // isn't the moved one enrolls only under a name of its own.
-      if ((yield* offerRepoint(root)) && Option.isNone(flags.name)) {
-        yield* Console.log(
-          "Not enrolled: to run this checkout alongside the one that moved, chernabog enroll --name <another name> here",
+        yield* printLines(
+          describeScaffold(yield* (yield* RecipesCommands).ScaffoldRepoCommand({ root })),
+        );
+        // The recipes init offers.
+        yield* printLines(
+          describePackage(
+            yield* (yield* RecipesCommands).AddRecipePackageCommand({
+              root,
+              name: OFFICIAL_PACKAGE,
+            }),
+          ),
+        );
+        yield* printLines(yield* bakeRecipes(root, recipes));
+        // config.schema.json again, describing the settings of the recipes it added.
+        yield* printLines(yield* refreshSchemas(root));
+        // The workflow that runs the flows config.yaml names under ci.flows on
+        // GitHub Actions. One that can't be written leaves the rest of init be.
+        yield* printLines(
+          yield* writeCiWorkflow(root, ci).pipe(
+            Effect.catchTag("ConfigError", (error) =>
+              Effect.succeed([`no CI workflow written: ${error.message}`]),
+            ),
+          ),
         );
 
-        return;
-      }
+        // Enrolling would point a moved entry here after all, so a checkout that
+        // isn't the moved one enrolls only under a name of its own.
+        if ((yield* offerRepoint(root)) && Option.isNone(flags.name)) {
+          yield* Console.log(
+            "Not enrolled: to run this checkout alongside the one that moved, chernabog enroll --name <another name> here",
+          );
 
-      // Enrolling chooses among the repo's flows, so a repo with none waits for one.
-      yield* enrollHere(root, flags).pipe(
-        Effect.flatMap((repo) =>
-          Console.log(
-            `Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repo.name}.`,
+          return;
+        }
+
+        // Enrolling chooses among the repo's flows, so a repo with none waits for one.
+        yield* enrollHere(root, flags).pipe(
+          Effect.flatMap((repo) =>
+            Console.log(
+              `Next: commit .chernabog/ if it's new and merge it to the base branch, then chernabog trust ${repo.name}.`,
+            ),
           ),
-        ),
-        Effect.catchTag("NoFlows", () =>
-          Console.log(
-            "Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (chernabog recipes list names them), or write a flow, then chernabog enroll here.",
+          Effect.catchTag("NoFlows", () =>
+            Console.log(
+              "Not enrolled: .chernabog/flows/ has no flows. Add recipes with chernabog recipes add (chernabog recipes list names them), or write a flow, then chernabog enroll here.",
+            ),
           ),
-        ),
-      );
-    }),
-).pipe(
-  Command.withDescription(
-    "Scaffold .chernabog/ in a repo, install @chernabog/recipes there and copy the recipes you choose, enroll it on this machine, and point a moved checkout's settings at it",
-  ),
-);
+        );
+      }),
+  ).pipe(
+    Command.withDescription(
+      "Scaffold .chernabog/ in a repo, install @chernabog/recipes there and copy the recipes you choose, write the GitHub Actions workflow for the flows its config runs in CI, enroll it on this machine, and point a moved checkout's settings at it",
+    ),
+  );
