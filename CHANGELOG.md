@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3](https://github.com/dataquail/chernabog/compare/v0.16.2...v0.16.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **ci:** a run job's git pushes with the job's token and commits as its login ([#475](https://github.com/dataquail/chernabog/issues/475)) ([18fd52a](https://github.com/dataquail/chernabog/commit/18fd52a7ecf0e7bbc46f5e82bbc50abeab816682))
+
 ## [0.16.2](https://github.com/dataquail/chernabog/compare/v0.16.1...v0.16.2) (2026-11-10)
 
 
