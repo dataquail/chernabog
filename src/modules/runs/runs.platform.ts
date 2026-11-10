@@ -94,6 +94,7 @@ export {
   sessionFilesIn,
 } from "./infrastructure/runtime/agents/session-files.ts";
 export { checkAnswer, stopHook } from "./infrastructure/runtime/agents/stop-hook.ts";
+export { type CiEvent, type CiPlanResult, planCi } from "./infrastructure/runtime/ci-plan.ts";
 export { checkCodexAccount } from "./infrastructure/runtime/codex-usage.ts";
 export { flowWarnings } from "./infrastructure/runtime/diagnostics.ts";
 export {

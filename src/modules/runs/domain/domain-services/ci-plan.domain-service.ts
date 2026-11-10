@@ -208,13 +208,15 @@ const planOne = (
 
   const items = lookedAt(findings);
 
-  const unreported = Option.filter(findings.target.only, () => items.length === 0);
-
-  if (Option.isSome(unreported)) {
+  if (items.length === 0) {
     return {
       start: [],
       notes: [
-        `${label}: its trigger reports no work for ${unreported.value.map(describeConcerned).join(", ")}`,
+        Option.match(findings.target.only, {
+          onNone: () => `${label}: its trigger found no work`,
+          onSome: (named) =>
+            `${label}: its trigger reports no work for ${named.map(describeConcerned).join(", ")}`,
+        }),
       ],
     };
   }

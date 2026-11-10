@@ -53,7 +53,13 @@ import { Home, homePaths } from "../../platform/home.ts";
 import { withShutdownDeadline } from "../../platform/shutdown.ts";
 import { FileTelemetry, type TelemetryProcess } from "../../platform/telemetry.ts";
 import { VERSION } from "../../platform/version.ts";
-import { checkFlowSettings, findEnrolled, loadMachineConfig, loadRepo } from "../../repo-config.ts";
+import {
+  checkFlowSettings,
+  findEnrolled,
+  loadCiConfig,
+  loadMachineConfig,
+  loadRepo,
+} from "../../repo-config.ts";
 import { ApplicationLive } from "../application-runtime.ts";
 import { daemonRun, daemonTick } from "../daemon/daemon.client.ts";
 import type { TickResult } from "../daemon/daemon.protocol.ts";
@@ -62,6 +68,7 @@ import { runTui } from "../tui/app.ts";
 import { showStatus, statusCommand } from "../tui/status.ts";
 import { Asker } from "./asker.prompt.ts";
 import { cancelRun } from "./cancel.main.ts";
+import { ciCommand } from "./ci.main.ts";
 import { doctorCommand } from "./doctor.main.ts";
 import { initCommand } from "./init.main.ts";
 import { openPr } from "./open-pr.main.ts";
@@ -440,6 +447,15 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     enrollmentEndpoints.resume,
     trustEndpoints.trust,
     labels,
+    ciCommand({
+      enrolled: (repo) =>
+        Effect.gen(function* () {
+          const machine = yield* loadMachineConfig;
+
+          return { machine, enrolled: yield* findEnrolled(machine, repo) };
+        }),
+      ciOf: loadCiConfig,
+    }),
     doctorCommand,
     machineEndpoints.setup,
     initCommand,

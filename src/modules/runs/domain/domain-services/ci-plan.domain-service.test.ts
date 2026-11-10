@@ -121,6 +121,20 @@ describe("the plan", () => {
     expect(CiPlan.matrix(planned.start)).toBe("[]");
   });
 
+  test("starts nothing when the triggers find no work, and says so", () => {
+    const planned = CiPlan.plan([findings(every("implement", "bot"), [])], []);
+
+    expect(planned.start).toEqual([]);
+    expect(CiPlan.matrix(planned.start)).toBe("[]");
+    expect(planned.notes).toEqual(["implement as bot: its trigger found no work"]);
+  });
+
+  test("the matrix lists each job's flow, persona and item", () => {
+    expect(CiPlan.matrix([{ flow: "implement", persona: "bot", item: "issue-3" }])).toBe(
+      '[{"flow":"implement","persona":"bot","item":"issue-3"}]',
+    );
+  });
+
   test("starts the trigger's items in its order, up to the flow's concurrency", () => {
     const planned = CiPlan.plan(
       [
