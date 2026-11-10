@@ -23,6 +23,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `launcher`         | `headless`                 | the team's default launcher                                               |
 | `allowedLaunchers` | any                        | launchers a person may choose                                             |
 | `runners`          | anyone                     | GitHub logins `enroll` offers the flows to; see [Runners](#runners)      |
+| `announcePhases`   | `true`                     | announce each [phase advance](/chernabog/operate/progress/#announcing-each-advance) with a `repository_dispatch` of `chernabog-phase`, which starts the repo's CI workflow; `false` sends none |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `flows.<flow>.settings` | —                     | the flow's own settings, over `settings`; see [Flow settings](#flow-settings) |
 | `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |

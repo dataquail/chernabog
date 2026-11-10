@@ -837,6 +837,16 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   `test/acceptance/progress-live.test.ts` runs it, and two personas' races,
   on a real scratch repo when `CHERNABOG_PROGRESS_LIVE_REPO` and
   `CHERNABOG_PROGRESS_LIVE_PERSONAS` are set, and skips otherwise.
+- **Each advance is announced** (#458,
+  `src/modules/runs/infrastructure/runtime/phase-announcer.ts`): the binary
+  wraps its adapter, never core's port, so that after an advance that
+  succeeds it sends `repository_dispatch` `chernabog-phase` with
+  `{item, from, to}` as the persona, to start the repo's CI workflow (a
+  thread's commits start none). A lost race sends nothing; a retry that finds
+  its own write sends again; a failed send only writes a run log line. The
+  team's `announcePhases: false` turns it off (`PersonaRepo.announcePhases`,
+  through `repoServices`). The acceptance fake GitHub records each one
+  (`github.dispatches`).
 - **`doctor` checks the rulesets** (`threads-setup.ts`): missing ones, or a
   repo that can't have them, warn (writes still work, unprotected); a persona
   that doesn't bypass the write ruleset fails. The binary owns the check,
