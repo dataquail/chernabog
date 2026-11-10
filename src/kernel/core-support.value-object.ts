@@ -10,7 +10,7 @@ import * as Option from "effect/Option";
 // The core this binary bundles, as packages/core/package.json has it.
 // release-please moves both together (release-please-config.json), and
 // flow-deps.test.ts fails if they drift.
-export const BUNDLED_CORE_VERSION = "1.2.0"; // x-release-please-version
+export const BUNDLED_CORE_VERSION = "1.3.0"; // x-release-please-version
 
 // Every core this binary provides, newest first: the one it bundles, and, once
 // a major has changed a port, each major before it that it still provides

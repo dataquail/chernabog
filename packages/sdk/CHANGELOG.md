@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0](https://github.com/dataquail/chernabog/compare/sdk-v0.11.1...sdk-v0.12.0) (2026-11-10)
+
+
+### Features
+
+* **sdk:** declare the phases each source reads and block records, and check the gaps across flows ([#452](https://github.com/dataquail/chernabog/issues/452)) ([2acdc71](https://github.com/dataquail/chernabog/commit/2acdc717f96c0a96b2de1db71d083dbda77534bb))
+* **sdk:** flows declare the GitHub events that wake them, and a workflow's on: block is built from them ([#466](https://github.com/dataquail/chernabog/issues/466)) ([04948af](https://github.com/dataquail/chernabog/commit/04948af6f4cfb91edf78ac10166612c42de730c0))
+* **sdk:** run the review loop on recorded phases ([#454](https://github.com/dataquail/chernabog/issues/454)) ([561f1d5](https://github.com/dataquail/chernabog/commit/561f1d5324fc50519473a84398c80cf9b90d677d))
+
 ## [0.11.1](https://github.com/dataquail/chernabog/compare/sdk-v0.11.0...sdk-v0.11.1) (2026-11-09)
 
 

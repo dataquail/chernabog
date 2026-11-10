@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/dataquail/chernabog/compare/recipes-v0.4.1...recipes-v0.5.0) (2026-11-10)
+
+
+### Features
+
+* **sdk:** flows declare the GitHub events that wake them, and a workflow's on: block is built from them ([#466](https://github.com/dataquail/chernabog/issues/466)) ([04948af](https://github.com/dataquail/chernabog/commit/04948af6f4cfb91edf78ac10166612c42de730c0))
+* **sdk:** run the review loop on recorded phases ([#454](https://github.com/dataquail/chernabog/issues/454)) ([561f1d5](https://github.com/dataquail/chernabog/commit/561f1d5324fc50519473a84398c80cf9b90d677d))
+
 ## [0.4.1](https://github.com/dataquail/chernabog/compare/recipes-v0.4.0...recipes-v0.4.1) (2026-11-08)
 
 

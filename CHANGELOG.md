@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.16.0](https://github.com/dataquail/chernabog/compare/v0.15.0...v0.16.0) (2026-11-10)
+
+
+### Features
+
+* **cli:** chernabog ci plan, the plan job that starts a repo's flows on GitHub Actions ([#467](https://github.com/dataquail/chernabog/issues/467)) ([0cab031](https://github.com/dataquail/chernabog/commit/0cab0310ed7cafaff5a28ba38f56927eb43b3636))
+* **cli:** chernabog ci run, one item on one runner, ending at a phase boundary ([#468](https://github.com/dataquail/chernabog/issues/468)) ([6ff9cbe](https://github.com/dataquail/chernabog/commit/6ff9cbe8a90a9e34416f61fe7b9adfb86086c1bf))
+* **cli:** chernabog init writes the GitHub Actions workflow for a repo's CI flows, run through a published action ([#469](https://github.com/dataquail/chernabog/issues/469)) ([76183ee](https://github.com/dataquail/chernabog/commit/76183ee91e838c2fa0bb01ac155dc2973fea0bc6))
+* **core:** a Progress port for an item's phase, with a fake and the contract every adapter passes ([#450](https://github.com/dataquail/chernabog/issues/450)) ([6dfbe96](https://github.com/dataquail/chernabog/commit/6dfbe9625b62a41853646918b3962eee19b1ac65))
+* **runs:** announce each phase advance with repository_dispatch ([#464](https://github.com/dataquail/chernabog/issues/464)) ([53c94b1](https://github.com/dataquail/chernabog/commit/53c94b1c409259597a27a5d3ace70657848f34ba))
+* **runs:** record an item's phase on protected branches, with doctor's ruleset check ([#453](https://github.com/dataquail/chernabog/issues/453)) ([ff56487](https://github.com/dataquail/chernabog/commit/ff564870e6ffef5ba0bb4b0ca2ef8795388d707b))
+* **sdk:** declare the phases each source reads and block records, and check the gaps across flows ([#452](https://github.com/dataquail/chernabog/issues/452)) ([2acdc71](https://github.com/dataquail/chernabog/commit/2acdc717f96c0a96b2de1db71d083dbda77534bb))
+* **sdk:** flows declare the GitHub events that wake them, and a workflow's on: block is built from them ([#466](https://github.com/dataquail/chernabog/issues/466)) ([04948af](https://github.com/dataquail/chernabog/commit/04948af6f4cfb91edf78ac10166612c42de730c0))
+* **sdk:** run the review loop on recorded phases ([#454](https://github.com/dataquail/chernabog/issues/454)) ([561f1d5](https://github.com/dataquail/chernabog/commit/561f1d5324fc50519473a84398c80cf9b90d677d))
+
 ## [0.15.0](https://github.com/dataquail/chernabog/compare/v0.14.0...v0.15.0) (2026-11-09)
 
 
