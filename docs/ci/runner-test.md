@@ -223,7 +223,11 @@ the matrix entry, and needs the guard on the run job.
 
 ### 6. Cost of one run
 
-**A real review-loop phase: not observed**, because it needs the token. What was
+**A real review-loop phase: still not observed.** #456 couldn't run one without
+the token, and #460, which built `chernabog ci run`, was implemented by an
+unattended agent with no runner, secret or workflow to run it on: those are a
+person's (`.github/`, secrets). The billed minutes and setup time of the first
+real phase are to be recorded here when a person runs one, as below. What was
 measured is everything around the agent.
 
 Setup before an agent can start (from `runner-test-cost` and
@@ -366,9 +370,12 @@ the word OK and nothing else.'` with only the token and a seeded
 - **Question 7:** download the `claude-home` artifact, copy the session's
   `.jsonl` into `~/.claude/projects/<encoded checkout path>/` on a laptop, and
   run `claude --resume <session id>` from that checkout.
-- **Question 6:** a real phase needs `chernabog` itself on the runner, which is
-  #460's work. Its first run on a private repo gives the billed minutes from
-  `gh api repos/<repo>/actions/runs/<id>/timing`.
+- **Question 6:** a real phase needs `chernabog` itself on the runner:
+  `chernabog ci run --flow <flow> --persona <login> --item <item>` (#460), with
+  `CHERNABOG_HOME=$RUNNER_TEMP/chernabog` and `CLAUDE_CODE_OAUTH_TOKEN` from the
+  secret. Its first run on a private repo gives the billed minutes from
+  `gh api repos/<repo>/actions/runs/<id>/timing`, and the setup time from the
+  job's steps up to the one running `ci run`.
 
 Afterwards, delete the secret (`gh secret delete CLAUDE_CODE_OAUTH_TOKEN -R
 $R`) and the workflow, and revoke the token if it won't be reused.

@@ -7,7 +7,7 @@
 // longer reports, ends the job cleanly.
 
 import { type ChildProcess, execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -65,15 +65,25 @@ describe("chernabog ci run", () => {
   let sandbox: Sandbox;
   let jobs = 0;
 
-  // A home of its own for each job, as a runner's RUNNER_TEMP is, with the
-  // machine config the workflow gives it.
+  // A checkout and a home of its own for each job, as a runner's are, with
+  // the machine config the workflow gives it, enrolling that checkout.
   const jobHome = () => {
     jobs += 1;
-    const home = join(sandbox.root, `job-${jobs}`, "home");
+    const job = join(sandbox.root, `job-${jobs}`);
+    const home = join(job, "home");
+    const checkout = join(job, "checkout");
     mkdirSync(home, { recursive: true });
-    copyFileSync(join(sandbox.home, "config.yaml"), join(home, "config.yaml"));
+    execFileSync("git", ["clone", "-q", sandbox.bare, checkout]);
 
-    return { home, logs: join(sandbox.root, `job-${jobs}`, "logs") };
+    writeFileSync(
+      join(home, "config.yaml"),
+      readFileSync(join(sandbox.home, "config.yaml"), "utf8").replaceAll(
+        sandbox.checkout,
+        checkout,
+      ),
+    );
+
+    return { home, logs: join(job, "logs") };
   };
 
   const ciArgs = (issue: number, logs: string, extra: ReadonlyArray<string> = []) => [
@@ -105,7 +115,6 @@ describe("chernabog ci run", () => {
       {},
       {
         flows: { phased: {} },
-        recipes: [],
         repoFiles: { "flows/phased.ts": PHASED },
       },
     );
@@ -152,31 +161,46 @@ describe("chernabog ci run", () => {
     writeFileSync(hold, "");
     const job = jobHome();
 
-    const killed: ChildProcess = sandbox.cli(
-      ciArgs(issue, job.logs, ["--lease-ttl", "2 seconds"]),
-      {
-        CHERNABOG_HOME: job.home,
-        FAKE_CLAUDE_HOLD: hold,
-      },
-    );
+    const killed: ChildProcess = sandbox.cli(ciArgs(issue, job.logs, ["--lease-seconds", "2"]), {
+      CHERNABOG_HOME: job.home,
+      FAKE_CLAUDE_HOLD: hold,
+    });
 
     await waitFor(() => sandbox.claudeCalls().length === before + 1, "the agent to start");
     // Its own process group, never `-0`: that would be this test runner's group.
     process.kill(-Option.getOrThrow(Option.fromUndefinedOr(killed.pid)), "SIGKILL");
     await closed(killed);
-    execFileSync("rm", ["-f", hold]);
+    rmSync(hold, { force: true });
 
     // The killed job's claim is still there until its short lease runs out.
     expect(Option.isSome(sandbox.github.refSha(claimRef(issue)))).toBe(true);
     await Bun.sleep(2500);
 
-    const next = await ciRun(issue, ["--lease-ttl", "2 seconds"]);
+    const next = await ciRun(issue, ["--lease-seconds", "2"]);
 
     expect(next.output).toContain("parked");
     expect(next.code).toBe(0);
     expect(sandbox.claudeCalls()).toHaveLength(before + 2);
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
   }, 120_000);
+
+  test("stops before the job's time limit, letting go of the claim", async () => {
+    const issue = sandbox.github.addIssue("Out of time", ["ci:park"]);
+    const before = sandbox.claudeCalls().length;
+    const hold = join(sandbox.root, "hold-long");
+    writeFileSync(hold, "");
+
+    const { code, output } = await ciRun(issue, ["--stop-after-seconds", "6"], {
+      FAKE_CLAUDE_HOLD: hold,
+    });
+
+    rmSync(hold, { force: true });
+
+    expect(sandbox.claudeCalls()).toHaveLength(before + 1);
+    expect(output).toContain("stopped before the job's time limit");
+    expect(code).toBe(1);
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+  }, 60_000);
 
   test("a claim another run holds ends the job cleanly", async () => {
     const issue = sandbox.github.addIssue("Held elsewhere", ["ci:park"]);

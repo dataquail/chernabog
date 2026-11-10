@@ -11,6 +11,7 @@
     "test/acceptance/hybrid.test.ts": 40458,
     "test/acceptance/imports.test.ts": 36907,
     "test/acceptance/leases.test.ts": 36073,
+    "test/acceptance/ci-run.test.ts": 34490,
     "test/acceptance/agents.test.ts": 31684,
     "test/acceptance/still-valid.test.ts": 27455,
     "test/acceptance/events.test.ts": 27067,
