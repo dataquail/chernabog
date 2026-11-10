@@ -1,11 +1,13 @@
 // `chernabog ci`: what a repo's GitHub Actions workflow runs (#455). `ci plan`
 // is its plan job: the matrix of run jobs to start, written to the step's
-// outputs, with why nothing else starts in the job's summary.
+// outputs, with why nothing else starts in the job's summary. `ci run` is its
+// run job: one entry of that matrix, to the next phase boundary.
 
 import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -15,6 +17,7 @@ import * as Schema from "effect/Schema";
 import { type CiEvent, type CiPlanResult, planCi } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
+import { CI_LEASE_TTL, CI_STOP_AFTER, runInCi } from "./ci-run.main.ts";
 
 const EventPayload = Schema.fromJsonString(Schema.Json);
 
@@ -172,8 +175,89 @@ const planCommand = <R>(config: CiConfigAccess<R>) =>
     ),
   );
 
+const runCommand = <R>(config: CiConfigAccess<R>) =>
+  Command.make(
+    "run",
+    {
+      repo: Flag.String("repo").pipe(
+        Flag.withDescription(
+          "The enrolled repo, by name, owner/name or path; GITHUB_REPOSITORY when left out",
+        ),
+        Flag.optional,
+      ),
+      flow: Flag.String("flow").pipe(
+        Flag.withDescription("The flow, as the plan's entry names it"),
+      ),
+      persona: Flag.String("persona").pipe(
+        Flag.withDescription("The GitHub login the run acts as, as the plan's entry names it"),
+      ),
+      item: Flag.String("item").pipe(
+        Flag.withDescription(
+          "The work item, such as issue-12 or pr-73, as the plan's entry names it",
+        ),
+      ),
+      logs: Flag.String("logs").pipe(
+        Flag.withDescription(
+          "Where to keep the run log and the agent's transcripts, for the workflow to upload; $RUNNER_TEMP/chernabog-logs when left out on a runner",
+        ),
+        Flag.optional,
+      ),
+      leaseSeconds: Flag.Int("lease-seconds").pipe(
+        Flag.withDescription(
+          "How long the item's claim lasts unless the job renews it, so a killed job's runs out soon",
+        ),
+        Flag.withDefault(Duration.toSeconds(CI_LEASE_TTL)),
+      ),
+      stopAfterSeconds: Flag.Int("stop-after-seconds").pipe(
+        Flag.withDescription(
+          "When to stop on its own, inside the job's 6-hour limit, letting go of the claim",
+        ),
+        Flag.withDefault(Duration.toSeconds(CI_STOP_AFTER)),
+      ),
+      fromCheckout: Flag.Boolean("from-checkout").pipe(
+        Flag.withDescription(
+          "Read the working copy's .chernabog/, rather than the default branch's",
+        ),
+        Flag.withDefault(false),
+      ),
+    },
+    (options) =>
+      Effect.gen(function* () {
+        const variables = (yield* HostEnvironment).variables;
+        const fromEnv = (name: string) => Record.get(variables, name);
+
+        const repo = yield* Effect.fromOption(
+          Option.orElse(options.repo, () => fromEnv("GITHUB_REPOSITORY")),
+        ).pipe(
+          Effect.mapError(
+            () => new ConfigError({ message: "name the repo: --repo, or GITHUB_REPOSITORY" }),
+          ),
+        );
+
+        yield* runInCi(
+          {
+            flow: options.flow,
+            persona: options.persona,
+            item: options.item,
+            fromCheckout: options.fromCheckout,
+            leaseTtl: Duration.seconds(options.leaseSeconds),
+            stopAfter: Duration.seconds(options.stopAfterSeconds),
+            repo,
+            logs: Option.orElse(options.logs, () =>
+              Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
+            ),
+          },
+          config.enrolled,
+        );
+      }),
+  ).pipe(
+    Command.withDescription(
+      "The run job: one item on one runner, in a home of its own, to the next phase boundary: where a run would park on a signal, it lets go of the claim and exits 0",
+    ),
+  );
+
 export const ciCommand = <R>(config: CiConfigAccess<R>) =>
   Command.make("ci").pipe(
     Command.withDescription("What a repo's GitHub Actions workflow runs"),
-    Command.withSubcommands([planCommand(config)]),
+    Command.withSubcommands([planCommand(config), runCommand(config)]),
   );

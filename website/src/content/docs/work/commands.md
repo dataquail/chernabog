@@ -36,6 +36,7 @@ description: Every chernabog command and flag.
 | `start`, `stop`                   | Start or stop the daemon; runs in flight resume when it starts again. `start` with an issue is the hybrid path, above |
 | `daemon`                          | Run the daemon in the foreground (what the service runs)                         |
 | `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
+| `ci run --flow <flow> --persona <login> --item <item>` | The run job: one item on one runner, to the next phase boundary; see [below](#ci-run) |
 | `ui`                              | Open the [dashboard](/chernabog/operate/dashboard/) in the browser, starting it on 127.0.0.1 if it's off |
 | `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
 | `ui status`                       | Whether the dashboard is running, and its URL                                     |
@@ -48,6 +49,20 @@ description: Every chernabog command and flag.
 - **The sweep.** With no event, or `schedule` or `workflow_dispatch`, it plans across every item, its triggers reading every thread's phase from one query. Items whose phase and GitHub disagree are held by their trigger, and listed.
 
 It writes `items` (exactly `[]` when it starts nothing, which the run job's guard compares against) and `max-parallel` to `GITHUB_OUTPUT`, and why nothing else starts to `GITHUB_STEP_SUMMARY`, and prints the same reasons to stderr. `--repo` defaults to `GITHUB_REPOSITORY`; `--from-checkout` reads the working copy's `.chernabog/`.
+
+## ci run
+
+`chernabog ci run --flow <flow> --persona <login> --item <item>` is a run job of the workflow: one entry of the plan's matrix, on one runner. It runs the flow in the foreground, as `chernabog run` does, and ends the job at the next phase boundary.
+
+- **A home of its own.** `CHERNABOG_HOME` must be a fresh directory, such as `$RUNNER_TEMP/chernabog`; it refuses a home that already holds runs. When the home has no machine config, it writes one enrolling the checkout (`GITHUB_WORKSPACE`) for the flow, as the job's `GH_TOKEN`, with `claude` under tmux on `CLAUDE_CODE_OAUTH_TOKEN`. On a runner with no `~/.claude.json`, it writes one with onboarding done and the checkout and worktrees trusted, so an interactive `claude` starts at its prompt.
+- **Subscription billing only.** It stops with an error if `ANTHROPIC_API_KEY` is set, even empty, as a missing secret leaves it, which would bill per token. Agents run interactively, never with `-p`.
+- **Another run got there first.** If the item's claim is held, or its trigger no longer reports the item to start (its phase moved since the plan), it says so and exits 0.
+- **The phase boundary.** Where a run on a laptop would park on a signal, it lets go of the claim and exits 0; the event that settles the wait starts the next job, which reads the phase the run recorded. Unless the run ended, before the job exits it commits what the agent left uncommitted in its worktrees and pushes each branch that gains from it, never forced, so a job that stopped mid-phase repeats the phase from its start with the work on the branch. A branch GitHub no longer has (deleted, or merged and deleted) is never pushed again. A work-in-progress commit pushed to a pull request's branch is a `synchronize` like any other push, so it can start that pull request's review again.
+- **Its claim is a short lease** (`--lease-seconds`, 15 minutes by default) that the job renews as it runs, so a killed job's claim runs out soon and the next job can take the item.
+- **The time limit.** It stops on its own after `--stop-after-seconds` (5½ hours by default, inside a hosted job's 6), letting go of the claim and leaving the phase as it was, and exits 1.
+- **Logs for diagnosis.** It copies the run log and the agent's transcripts to `--logs` (`$RUNNER_TEMP/chernabog-logs` on a runner), for the workflow to upload when the job fails. A failed CI run can't be resumed: the next job repeats the phase from its start.
+
+It exits 1 when the run failed or ran out of time, and 0 otherwise. `--repo` defaults to `GITHUB_REPOSITORY`; `--from-checkout` reads the working copy's `.chernabog/`.
 
 ## Through the daemon
 
