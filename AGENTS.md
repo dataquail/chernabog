@@ -879,6 +879,46 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   document's run and its recipe's leave. The acceptance fake GitHub answers
   the threads adapter's GraphQL over its bare repo.
 
+## Runs on GitHub Actions (#455)
+
+A repo can run flows on GitHub-hosted runners instead of a daemon.
+docs/adr/0020-flows-run-on-github-actions.md has the why,
+`docs/ci/runner-test.md` what #456 found on a real runner, and the website's
+`operate/github-actions` page the setup, cost and security.
+
+How a CI run differs from a daemon run:
+
+- **No daemon, no state.db to keep.** `ci plan` (the plan job) and `ci run`
+  (one item on one runner) each run in a fresh `CHERNABOG_HOME`
+  (`$RUNNER_TEMP/chernabog`), whose machine config they write themselves
+  (`ciMachineConfig`, `src/interface/cli/ci-run.main.ts`): the checkout
+  enrolled for the repo's `ci.flows`, as the implicit persona (the job's
+  `GH_TOKEN`, the `CHERNABOG_TOKEN` secret), with `claude` under tmux on
+  `CLAUDE_CODE_OAUTH_TOKEN`. Never write that config outside Actions.
+- **The plan reads claims, not state.db.** An item already has a run when it
+  has a live claim, and live claims count against a flow's concurrency.
+  Otherwise it applies a tick's rules (`plan-tick.handler.ts`).
+- **A job ends at a phase boundary.** Where a daemon run parks, `ci run`
+  lets go of the claim and exits 0; the event that settles the wait starts
+  the next job. Its claim is a short lease it renews.
+- **A failed CI run is never resumed.** The runner and its journal are gone.
+  The next job repeats the phase from its start, from the work-in-progress
+  commit `ci run` pushed. The run log and transcripts it copies to `--logs`
+  are uploaded for diagnosis only.
+- **Events start plans; a sweep backs them.** Flows declare the GitHub events
+  that wake them (`packages/sdk/src/events.ts`), guarded by
+  `author_association` and by the flow's own persona, and phase advances are
+  sent as `repository_dispatch` `chernabog-phase`. Never let a flow wake on
+  `pull_request_target`, and never list chernabog's own workflow under
+  `workflow_run`.
+- **The workflow is generated.** `CiWorkflow.build`
+  (`src/modules/runs/domain/domain-services/ci-workflow.domain-service.ts`)
+  writes it and `doctor` checks it; `action/action.yml` is glue around the
+  binary. Change the builder, not a repo's workflow file.
+- **Still interactive, still subscription-billed.** `ci run` refuses to start
+  while `ANTHROPIC_API_KEY` is set, and seeds `~/.claude.json` so `claude`
+  starts at its prompt.
+
 ## Versions (#123, #163)
 
 One binary runs every enrolled repo, so compatibility is the binary's call.
