@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/dataquail/chernabog/compare/v0.16.1...v0.16.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **ci:** a runner's account launches without the usage gate, which a token can't read ([#473](https://github.com/dataquail/chernabog/issues/473)) ([5e9d3ad](https://github.com/dataquail/chernabog/commit/5e9d3addc9c8ef2c257830eac04e9544731a5163))
+
 ## [0.16.1](https://github.com/dataquail/chernabog/compare/v0.16.0...v0.16.1) (2026-11-10)
 
 
