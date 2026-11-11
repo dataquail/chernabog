@@ -59,6 +59,7 @@ import {
   loadCiConfig,
   loadMachineConfig,
   loadRepo,
+  machineTokenSources,
   readRepoWorkflows,
   workflowYaml,
 } from "../../repo-config.ts";
@@ -511,7 +512,7 @@ const TelemetryLive = Layer.unwrap(
 // once.
 const AppLive = ApplicationLive.pipe(
   Layer.provideMerge(Layer.mergeAll(GitHubApi.layerFor(IMPLICIT), Asker.layer)),
-  Layer.provideMerge(GitHubTokens.layer),
+  Layer.provideMerge(GitHubTokens.layer.pipe(Layer.provide(machineTokenSources))),
   Layer.provideMerge(Layer.mergeAll(Exec.layer, FetchHttpClient.layer)),
   Layer.provideMerge(TelemetryLive),
   Layer.provideMerge(PlatformLive),

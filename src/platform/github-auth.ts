@@ -7,14 +7,24 @@ import { GitHubError, NotAuthenticated, PersonaUnavailable } from "@chernabog/co
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import type { Persona } from "../kernel/persona.value-object.ts";
 import { type Environment, HostEnvironment, withVariables } from "./environment.ts";
 import { Exec, execOk } from "./exec.ts";
+import {
+  type FoundToken,
+  GH_SOURCE,
+  installationToken,
+  type TokenSource,
+  TokenSources,
+  UNEXPIRING_REFRESH,
+} from "./github-token-source.ts";
 
 // Variables gh reads a token from before any login it keeps. A persona's token
 // lookup must not see them, or gh answers with them whatever --user asks for.
@@ -54,78 +64,119 @@ export class GitHubTokens extends Context.Service<
     env(persona: Persona): Effect.Effect<Environment, GitHubError>;
   }
 >()("chernabog/GitHubTokens") {
-  public static readonly layer: Layer.Layer<GitHubTokens, never, Exec | HostEnvironment> =
-    Layer.effect(
-      GitHubTokens,
-      Effect.gen(function* () {
-        const exec = yield* Exec;
-        const host = yield* HostEnvironment;
+  // Each persona's token from its source in TokenSources, when one is
+  // provided; otherwise every persona's comes from gh.
+  public static readonly layer: Layer.Layer<
+    GitHubTokens,
+    never,
+    Exec | HostEnvironment | HttpClient.HttpClient
+  > = Layer.effect(
+    GitHubTokens,
+    Effect.gen(function* () {
+      const exec = yield* Exec;
+      const host = yield* HostEnvironment;
+      const services = yield* Effect.context<HttpClient.HttpClient>();
+      const sources = yield* Effect.serviceOption(TokenSources);
 
-        const fromConfig = yield* Config.String("GH_TOKEN").pipe(
-          Config.orElse(() => Config.String("GITHUB_TOKEN")),
-          Config.option,
-          Effect.orDie,
+      const fromConfig = yield* Config.String("GH_TOKEN").pipe(
+        Config.orElse(() => Config.String("GITHUB_TOKEN")),
+        Config.option,
+        Effect.orDie,
+      );
+
+      const gh = (args: ReadonlyArray<string>, env: Option.Option<Environment>) =>
+        execOk(
+          "gh",
+          ["auth", "token", ...args],
+          Option.match(env, { onNone: () => ({}), onSome: (variables) => ({ env: variables }) }),
+        ).pipe(
+          Effect.provideService(Exec, exec),
+          Effect.map((token) => token.trim()),
+          Effect.mapError(
+            (error) =>
+              new GitHubError({
+                message: `${["gh auth token", ...args].join(" ")}: ${error.message}`,
+              }),
+          ),
         );
 
-        const gh = (args: ReadonlyArray<string>, env: Option.Option<Environment>) =>
-          execOk(
-            "gh",
-            ["auth", "token", ...args],
-            Option.match(env, { onNone: () => ({}), onSome: (variables) => ({ env: variables }) }),
-          ).pipe(
-            Effect.provideService(Exec, exec),
-            Effect.map((token) => token.trim()),
-            Effect.mapError(
-              (error) =>
-                new GitHubError({
-                  message: `${["gh auth token", ...args].join(" ")}: ${error.message}`,
-                }),
-            ),
-          );
+      const unexpiring = (token: Effect.Effect<string, GitHubError>) =>
+        Effect.map(token, (found): FoundToken => ({ token: found, refreshIn: UNEXPIRING_REFRESH }));
 
-        const lookup = (persona: Persona) =>
-          Option.match(persona, {
-            onNone: () =>
-              Option.match(fromConfig, {
-                onNone: () => gh([], Option.none()),
-                onSome: Effect.succeed,
-              }),
-            onSome: (login) =>
+      const fromSource = (login: string, source: TokenSource) => {
+        switch (source.kind) {
+          case "gh":
+            return unexpiring(
               gh(
                 ["--hostname", "github.com", "--user", login],
                 Option.some(withVariables(host.variables, {}, TOKEN_VARIABLES)),
               ),
-          });
+            );
+          case "env":
+            return unexpiring(
+              Effect.fromOption(
+                Option.filter(
+                  Option.fromUndefinedOr(host.variables[source.variable]),
+                  (found) => found.length > 0,
+                ),
+              ).pipe(
+                Effect.mapError(
+                  () => new GitHubError({ message: `$${source.variable} isn't set, for ${login}` }),
+                ),
+              ),
+            );
+          case "app":
+            return installationToken(source).pipe(Effect.provideContext(services));
+        }
+      };
 
-        // Keyed by persona; Options compare by value. A failure is retried soon,
-        // rather than kept until the daemon restarts.
-        const tokens = yield* Cache.makeWith(lookup, {
-          capacity: 64,
-          timeToLive: (exit) => {
-            if (Exit.isSuccess(exit)) {
-              return "30 minutes";
-            }
-
-            return "10 seconds";
-          },
+      const lookup = (persona: Persona) =>
+        Option.match(persona, {
+          onNone: () =>
+            unexpiring(
+              Option.match(fromConfig, {
+                onNone: () => gh([], Option.none()),
+                onSome: Effect.succeed,
+              }),
+            ),
+          onSome: (login) =>
+            Option.match(sources, {
+              onNone: () => Effect.succeed(GH_SOURCE),
+              onSome: (found) => found.sourceOf(login),
+            }).pipe(Effect.flatMap((source) => fromSource(login, source))),
         });
 
-        const token = (persona: Persona) => Cache.get(tokens, persona);
+      // Keyed by persona; Options compare by value. A token is kept until its
+      // source says to look again (an App's, a few minutes before its hour is
+      // up). A failure is retried soon, rather than kept until the daemon restarts.
+      const tokens = yield* Cache.makeWith(lookup, {
+        capacity: 64,
+        timeToLive: (exit) => {
+          if (Exit.isSuccess(exit)) {
+            return exit.value.refreshIn;
+          }
 
-        const env = (persona: Persona) =>
-          Option.match(persona, {
-            onNone: () => Effect.succeed<Environment>({}),
-            onSome: () =>
-              Effect.map(token(persona), (found): Environment => ({
-                GH_TOKEN: found,
-                GITHUB_TOKEN: found,
-                ...gitCredentialEnv,
-              })),
-          });
+          return Duration.seconds(10);
+        },
+      });
 
-        return GitHubTokens.of({ token, env });
-      }),
-    );
+      const token = (persona: Persona) =>
+        Effect.map(Cache.get(tokens, persona), (found) => found.token);
+
+      const env = (persona: Persona) =>
+        Option.match(persona, {
+          onNone: () => Effect.succeed<Environment>({}),
+          onSome: () =>
+            Effect.map(token(persona), (found): Environment => ({
+              GH_TOKEN: found,
+              GITHUB_TOKEN: found,
+              ...gitCredentialEnv,
+            })),
+        });
+
+      return GitHubTokens.of({ token, env });
+    }),
+  );
 
   // A fake for tests: a fixed token per persona, "token-<login>", and the implicit one's.
   public static readonly fixed = (implicit: string) =>
