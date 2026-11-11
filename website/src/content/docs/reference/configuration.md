@@ -172,6 +172,7 @@ limits: { reviewRounds: 2 }
 | Key                     | Default      | Meaning                                                           |
 | ----------------------- | ------------ | ----------------------------------------------------------------- |
 | `github.<login>`        | —            | a GitHub persona this machine acts as, written by `chernabog setup`; see [GitHub personas](#github-personas) |
+| `github.<login>.token`  | gh's login   | where the persona's token comes from: `{ env: NAME }` or `{ app: { id, installation, key } }`; see [GitHub personas](#github-personas) |
 | `accounts.<name>`       | `work`, on `~/.claude` | `configDir`, `expectedEmail`, `oauthTokenEnv`, `usageGate` (`none` to run ungated), `agent` (default `claude`); `chernabog setup` adds them |
 | `usageGate`             | see [the gate](/chernabog/agents/usage-gate/) | all four thresholds, or none            |
 | `concurrency`           | `1`          | runs at once on this machine; caps every repo and flow            |
@@ -254,7 +255,17 @@ It leaves `local.yaml` in place; nothing reads it any more, so delete it once yo
 
 ### GitHub personas
 
-Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`'s active account. `github:` lists GitHub logins it acts as instead, each logged in to `gh` side by side (`gh auth login`, then `gh auth switch` back to your usual account). A persona's token always comes from `gh auth token --user <login>`; Chernabog never stores it.
+Without `github:`, the daemon acts on GitHub as one account: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh`'s active account. `github:` lists GitHub logins it acts as instead, each logged in to `gh` side by side (`gh auth login`, then `gh auth switch` back to your usual account). A persona's token comes from `gh auth token --user <login>` unless its `token` says otherwise; Chernabog never stores a token itself:
+
+- `token: { env: NAME }` takes it from the variable `NAME`, such as a CI job's.
+- `token: { app: { id, installation, key } }` acts as a GitHub App: Chernabog signs a JWT with the App's private key, the PEM file at `key` (`~` is your home), and trades it for an installation token, which lasts an hour and is made again a few minutes before it runs out. The key file is read each time, so a rotated key is picked up. The persona's login is the App's bot, `<slug>[bot]`.
+
+```yaml
+# ~/.config/chernabog/config.yaml
+github:
+  chernabog-author[bot]:
+    token: { app: { id: 123456, installation: 7890123, key: ~/.config/chernabog/author.pem } }
+```
 
 A repo's `personas` maps each login that runs its flows to that persona's own choices. With one login under `github:`, that one is the default; with several, the repo must name them. Without `github:` there are no persona entries, and the repo entry's own settings run the one implicit account, so a `GH_TOKEN`-only host such as CI still works. Each persona then runs each flow on its own schedule, as itself: its trigger, its API calls, its pushes, its agent sessions and its steps all act as that login, and `@me` and `runners` mean it. `status` shows the flow as `review as bob`, and its runs as `demo/review pr-12 as bob`.
 

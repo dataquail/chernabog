@@ -11,6 +11,7 @@ import {
   type Account,
   DEFAULT_LABELS,
   type Flow,
+  GitHubError,
   isManual,
   type Json,
   type LauncherCommands,
@@ -23,6 +24,7 @@ import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as PlatformError from "effect/PlatformError";
@@ -67,6 +69,7 @@ import { type Environment, HostEnvironment } from "./platform/environment.ts";
 import { updateFile } from "./platform/file-lock.ts";
 import { checkRunnable } from "./platform/flow-deps.ts";
 import { type PackageOverrides } from "./platform/flow-loader.ts";
+import { type TokenSource, TokenSourceFile, TokenSources } from "./platform/github-token-source.ts";
 import { expandHome, Home, homePaths } from "./platform/home.ts";
 import { nodeBinFor } from "./platform/node-version.ts";
 
@@ -334,8 +337,6 @@ export const UsageGateFile = Schema.Struct({
   humanRatePerHour: Schema.Finite,
 });
 
-// A GitHub persona on this machine. Its token always comes from
-// `gh auth token --user <login>` and is never written here.
 // Which events tick a persona's flows sooner than cron (#138): a change a run
 // here makes, and the persona's GitHub notifications.
 const EventsFile = Schema.Struct({
@@ -343,8 +344,14 @@ const EventsFile = Schema.Struct({
   notifications: Schema.optionalKey(Schema.Boolean),
 });
 
+// A GitHub persona on this machine. Its token comes from
+// `gh auth token --user <login>` unless token: says otherwise: `{ env: NAME }`
+// for a variable's, or `{ app: { id, installation, key } }` for a GitHub
+// App's installation token, made from the private key file at key (#477).
+// A token itself is never written here.
 const GitHubPersonaFile = Schema.Struct({
   events: Schema.optionalKey(EventsFile),
+  token: Schema.optionalKey(TokenSourceFile),
 });
 
 // ~/.config/chernabog/config.yaml: budget and accounts, for this machine only.
@@ -665,6 +672,57 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   events: eventsOf(file),
   repos: (file.repos ?? []).map((repo) => ({ ...repo, path: expandHome(repo.path, home) })),
 });
+
+// A persona's token source as machine config's github: entry gives it: gh's
+// login unless it says otherwise. An App's key is read from its file each time
+// a token is made, so a rotated key is picked up.
+export const tokenSourceOf = (login: string) =>
+  Effect.gen(function* () {
+    const home = yield* Home;
+    const fs = yield* FileSystem.FileSystem;
+    const file = yield* readYaml(MachineConfigFile, homePaths(home.root).machineConfig);
+    const source = file.github?.[login]?.token ?? "gh";
+
+    if (source === "gh") {
+      return { kind: "gh" } satisfies TokenSource;
+    }
+
+    if ("env" in source) {
+      return { kind: "env", variable: source.env } satisfies TokenSource;
+    }
+
+    const keyPath = expandHome(source.app.key, home.user);
+
+    const privateKey = yield* fs.readFileString(keyPath).pipe(
+      Effect.mapError(
+        (error) =>
+          new ConfigError({
+            message: `github.${login}.token.app.key: can't read ${keyPath}: ${error.message}`,
+          }),
+      ),
+    );
+
+    return {
+      kind: "app",
+      id: String(source.app.id),
+      installation: String(source.app.installation),
+      privateKey,
+    } satisfies TokenSource;
+  });
+
+// Each persona's token source, from machine config.
+export const machineTokenSources = Layer.effect(
+  TokenSources,
+  Effect.map(Effect.context<Home | FileSystem.FileSystem>(), (services) =>
+    TokenSources.of({
+      sourceOf: (login) =>
+        tokenSourceOf(login).pipe(
+          Effect.provideContext(services),
+          Effect.mapError((error) => new GitHubError({ message: error.message })),
+        ),
+    }),
+  ),
+);
 
 export const loadMachineConfig = Effect.gen(function* () {
   const home = yield* Home;
