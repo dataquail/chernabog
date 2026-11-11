@@ -76,6 +76,27 @@ A classic token, or `gh auth token --user <login>` for a persona `gh` is logged 
 
 The persona needs write access to the repo. On a repo with the thread rulesets (next step), it also needs to be in the write ruleset's bypass list.
 
+### GitHub Apps
+
+CI is moving from one persona's token to two GitHub Apps, one to write the code and one to review it ([#477](https://github.com/dataquail/chernabog/issues/477)). The workflow doesn't use them yet. `chernabog ci apps` sets them up ahead of that:
+
+```sh
+chernabog ci apps --repo owner/repo --environments
+```
+
+For each App, you click **Create GitHub App** and **Install** on GitHub, and Chernabog keeps its key on your machine, adds it as a persona there, and puts its id and key in the repo's `chernabog-author` or `chernabog-review` Environment. On the install page, choose **Only select repositories** and pick just the repo: GitHub offers all of the owner's repos first, and an App's key can write to every repo its installation covers. The command warns when an installation covers more than `--repo`. [`ci apps`](/chernabog/work/commands/#ci-apps) has the details. Each App gets only what its role needs:
+
+| Permission              | Author         | Reviewer                                                  |
+| ----------------------- | -------------- | --------------------------------------------------------- |
+| Contents                | Read and write | Read and write, which a ruleset keeps to `chernabog/threads/*` |
+| Pull requests           | Read and write | Read and write                                            |
+| Issues                  | Read and write | Read and write                                            |
+| Checks                  | Read           | Read and write                                            |
+| Actions, Commit statuses | Read          | Read                                                      |
+| Workflows               | None           | None                                                      |
+
+Neither has a webhook: the workflow wakes on the repo's own events. To rotate an App's key, generate a new one on the App's settings page, replace its file under `~/.config/chernabog/keys/`, set the Environment's secret again (`gh secret set CHERNABOG_APP_KEY --env chernabog-author -R owner/repo < key.pem`), then delete the old key on GitHub.
+
 ### 4. Protect the phase records
 
 Flows that read phases record them on `chernabog/threads/*` branches. Two branch rulesets keep anyone else from rewriting or deleting them. [Run progress](/chernabog/operate/progress/#protecting-it) has the rulesets and a script that creates them. Add the persona from step 3 to the write ruleset's bypass list.

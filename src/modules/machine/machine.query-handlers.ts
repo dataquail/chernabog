@@ -6,6 +6,8 @@ import { checkServiceHandler } from "./queries/check-service.handler.ts";
 import { CheckServiceQuery } from "./queries/check-service.query.ts";
 import { inspectAccountDirHandler } from "./queries/inspect-account-dir.handler.ts";
 import { InspectAccountDirQuery } from "./queries/inspect-account-dir.query.ts";
+import { planAppHandler } from "./queries/plan-app.handler.ts";
+import { PlanAppQuery } from "./queries/plan-app.query.ts";
 import { planSetupHandler } from "./queries/plan-setup.handler.ts";
 import { PlanSetupQuery } from "./queries/plan-setup.query.ts";
 import { readMachineSetupHandler } from "./queries/read-machine-setup.handler.ts";
@@ -14,6 +16,7 @@ import { ReadMachineSetupQuery } from "./queries/read-machine-setup.query.ts";
 export const machineQueryGroup = Query.group(
   CheckServiceQuery,
   InspectAccountDirQuery,
+  PlanAppQuery,
   PlanSetupQuery,
   ReadMachineSetupQuery,
 );
@@ -21,6 +24,7 @@ export const machineQueryGroup = Query.group(
 const MachineQueryHandlersLive = Query.handlersOf(machineQueryGroup, {
   CheckServiceQuery: () => checkServiceHandler(),
   InspectAccountDirQuery: (payload) => inspectAccountDirHandler(payload),
+  PlanAppQuery: (payload) => planAppHandler(payload),
   PlanSetupQuery: () => planSetupHandler(),
   ReadMachineSetupQuery: () => readMachineSetupHandler(),
 });

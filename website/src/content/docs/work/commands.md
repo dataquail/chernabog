@@ -38,6 +38,7 @@ description: Every chernabog command and flag.
 | `ci plan [--repo <repo>]`         | The plan job of a repo's GitHub Actions workflow; see [below](#ci-plan) |
 | `ci run --flow <flow> --persona <login> --item <item>` | The run job: one item on one runner, to the next phase boundary; see [below](#ci-run) |
 | `ci workflow [path] [--write]` | The workflow that runs them, printed or written to `.github/workflows/chernabog.yml`; see [below](#ci-workflow) |
+| `ci apps [--repo <repo>] [--environments]` | Make the repo's GitHub Apps, author and reviewer, from manifests; see [below](#ci-apps) |
 | `ui`                              | Open the [dashboard](/chernabog/operate/dashboard/) in the browser, starting it on 127.0.0.1 if it's off |
 | `ui start`, `ui stop`             | Open the dashboard's 127.0.0.1 listener and print its URL, or close it; the daemon opens it again after a restart until it's stopped |
 | `ui status`                       | Whether the dashboard is running, and its URL                                     |
@@ -77,6 +78,17 @@ It exits 1 when the run failed or ran out of time, and 0 otherwise. `--repo` def
 Both jobs run the action published from this repo, `dataquail/chernabog/action`, at the tag of the chernabog that wrote the workflow, and it installs that release. On a runner, `ci plan` writes the home's machine config itself, enrolling the checkout for every CI flow as the job's `GH_TOKEN`, as `ci run` does for its one flow.
 
 [Run on GitHub Actions](/chernabog/operate/github-actions/) walks through setting it up: the secrets, the rulesets, cost and security.
+
+## ci apps
+
+`chernabog ci apps` makes a repo's two [GitHub Apps](/chernabog/operate/github-actions/#github-apps), `<prefix>-author` and `<prefix>-review`, from manifests Chernabog writes. For each, it opens the browser on a page of its own on `127.0.0.1`, which sends you to GitHub's new-App page for the repo's owner, an organization's or yours, with the App's name and permissions filled in. You click **Create GitHub App**, then **Install** on the repo. Chernabog does the rest:
+
+- it takes the App GitHub made, within the hour a code lasts, and keeps its private key at `~/.config/chernabog/keys/<slug>.pem`, readable only by you;
+- it checks, as the App, that it's installed on the repo, rather than trusting what the redirect says;
+- it adds the App to machine config as a persona, `github.<slug>[bot].token: { app: { id, installation, key } }`, so a daemon here can act as it;
+- with `--environments`, it makes the repo's `chernabog-author` or `chernabog-review` Environment, with the App's id as the variable `CHERNABOG_APP_ID` and its key as the secret `CHERNABOG_APP_KEY`, and keeps `chernabog-review` to the default branch. That needs admin on the repo, as you.
+
+`--repo` defaults to the checkout's. `--role author` or `--role reviewer` makes only one. `--prefix` names them (`<owner>-chernabog` by default, since an App's name is unique across GitHub). A role this machine already acts as reuses its App: an installation is the owner's, so the one App, and the one persona, serve every repo of that owner it's installed on. If it isn't on the repo yet, the command opens the App's install page, where you add the repo to its installation, and then makes the repo's Environment. `--replace` makes a new App instead. Each owner, organization or user, has Apps of its own, since a manifest makes an App only its owner can install. `--print` prints each page's URL instead of opening it.
 
 ## Through the daemon
 

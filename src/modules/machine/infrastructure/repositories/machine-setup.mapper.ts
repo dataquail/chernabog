@@ -1,21 +1,50 @@
-// A machine's setup as machine config stores it: github: by login, and
-// accounts: by name, each with its config directory and, when it isn't
+// A machine's setup as machine config stores it: github: by login, an App's
+// with the token: { app: { id, installation, key } } its tokens are made from,
+// and accounts: by name, each with its config directory and, when it isn't
 // claude, its agent. The rest of an account's settings are the person's, and
 // saving never touches an account it didn't add.
 
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type YAML from "yaml";
 
 import { type MachineConfigFile } from "../../../../repo-config.ts";
+import { AppPersona } from "../../domain/machine-setup/app-persona.value-object.ts";
 import { MachineAccount } from "../../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
 
 // The keys of machine config a setup reads.
 export type SetupFile = Pick<MachineConfigFile, "github" | "accounts">;
 
+const AppToken = Schema.Struct({
+  app: Schema.Struct({
+    id: Schema.Union([Schema.String, Schema.Int]),
+    installation: Schema.Union([Schema.String, Schema.Int]),
+    key: Schema.String,
+  }),
+});
+
+const isAppToken = Schema.is(AppToken);
+
+// The personas whose token is a GitHub App's.
+const appsOf = (file: SetupFile) =>
+  Object.entries(file.github ?? {}).flatMap(([login, persona]) =>
+    Option.toArray(
+      Option.map(Option.filter(Option.fromUndefinedOr(persona.token), isAppToken), (token) =>
+        AppPersona.make({
+          login,
+          id: String(token.app.id),
+          installation: String(token.app.installation),
+          key: token.app.key,
+        }),
+      ),
+    ),
+  );
+
 export const toRoot = (file: SetupFile) =>
   MachineSetupRoot.make({
     personas: Object.keys(file.github ?? {}),
+    apps: appsOf(file),
     accounts: Object.entries(file.accounts ?? {}).map(([name, account]) =>
       MachineAccount.make({
         name,
@@ -49,6 +78,24 @@ export const applySetup = (
 
   for (const login of after.personas.filter((known) => !before.personas.includes(known))) {
     document.setIn(["github", login], document.createNode({}));
+  }
+
+  const same = (one: AppPersona, other: AppPersona) =>
+    one.login === other.login &&
+    one.id === other.id &&
+    one.installation === other.installation &&
+    one.key === other.key;
+
+  for (const app of after.apps.filter(
+    (candidate) => !before.apps.some((known) => same(known, candidate)),
+  )) {
+    // Numbers as GitHub gives them, so the file reads as the App's settings page does.
+    document.setIn(
+      ["github", app.login, "token"],
+      document.createNode({
+        app: { id: Number(app.id), installation: Number(app.installation), key: app.key },
+      }),
+    );
   }
 
   const names = (setup: MachineSetupRoot) => setup.accounts.map((account) => account.name);

@@ -52,3 +52,47 @@ export class ServiceFailed extends Schema.TaggedError<
   ServiceFailed,
   { readonly brand: "ServiceFailed" }
 >()("ServiceFailed", { message: Schema.String }) {}
+
+// GitHub refused or couldn't be reached while making or installing an App.
+export class GitHubAppsFailed extends Schema.TaggedError<
+  GitHubAppsFailed,
+  { readonly brand: "GitHubAppsFailed" }
+>()("GitHubAppsFailed", { message: Schema.String }) {}
+
+// The App isn't installed on the repo, as the App itself sees it: installed
+// on other repos only, or not at all.
+export class InstallationNotOnRepo extends Schema.TaggedError<
+  InstallationNotOnRepo,
+  { readonly brand: "InstallationNotOnRepo" }
+>()("InstallationNotOnRepo", { slug: Schema.String, repo: Schema.String }) {
+  // Where the person installs it, or adds the repo to its installation.
+  public get installUrl() {
+    return `https://github.com/apps/${this.slug}/installations/new`;
+  }
+
+  public override get message() {
+    return `${this.slug} isn't installed on ${this.repo}; install it there from ${this.installUrl}, then run chernabog ci apps again`;
+  }
+}
+
+// GitHub hasn't yet taken the key of an App it has only just made: for a
+// moment after a manifest's conversion, it refuses the App's JWT. Asking
+// again shortly does.
+export class AppKeyNotReady extends Schema.TaggedError<
+  AppKeyNotReady,
+  { readonly brand: "AppKeyNotReady" }
+>()("AppKeyNotReady", { id: Schema.String }) {
+  public override get message() {
+    return `GitHub doesn't take App ${this.id}'s key yet; try again in a moment`;
+  }
+}
+
+// An App to install again that this machine doesn't act as.
+export class AppPersonaUnknown extends Schema.TaggedError<
+  AppPersonaUnknown,
+  { readonly brand: "AppPersonaUnknown" }
+>()("AppPersonaUnknown", { login: Schema.String }) {
+  public override get message() {
+    return `this machine doesn't act as ${this.login}: machine config has no github.${this.login}.token.app`;
+  }
+}

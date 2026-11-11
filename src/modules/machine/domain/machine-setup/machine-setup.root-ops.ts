@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Record from "effect/Record";
 import * as Result from "effect/Result";
 
+import { type AppPersona } from "./app-persona.value-object.ts";
 import { MachineAccount } from "./machine-account.value-object.ts";
 import { NotLoggedIn, PersonaStillInUse } from "./machine-setup.errors.ts";
 import { MachineSetupRoot } from "./machine-setup.root.ts";
@@ -113,8 +114,12 @@ const addAccounts = (setup: MachineSetupRoot, adding: ReadonlyArray<NewAccount>,
   };
 };
 
+const appLogins = (setup: MachineSetupRoot) => setup.apps.map((app) => app.login);
+
 // The personas a person chose, of the logins gh has, replacing the ones
-// before; refused when an enrolled repo still runs as one it drops.
+// before; refused when an enrolled repo still runs as one it drops. The
+// machine's GitHub Apps aren't gh logins and stay: `chernabog ci apps` adds
+// them, and a person removes one from machine config.
 const choosePersonas = (
   setup: MachineSetupRoot,
   chosen: ReadonlyArray<string>,
@@ -127,14 +132,28 @@ const choosePersonas = (
     return Result.fail(new NotLoggedIn({ logins: unknown, loggedIn }));
   }
 
-  const dropped = Arr.dedupe(inUse).filter((login) => !chosen.includes(login));
+  const kept = Arr.dedupe([...chosen, ...appLogins(setup)]);
+  const dropped = Arr.dedupe(inUse).filter((login) => !kept.includes(login));
 
   if (dropped.length > 0) {
     return Result.fail(new PersonaStillInUse({ logins: dropped }));
   }
 
-  return Result.succeed(MachineSetupRoot.make({ ...setup, personas: Arr.dedupe(chosen) }));
+  return Result.succeed(MachineSetupRoot.make({ ...setup, personas: kept }));
 };
+
+// The App this machine acts as by `login`, if it's one.
+const appOf = (setup: MachineSetupRoot, login: string) =>
+  Arr.findFirst(setup.apps, (app) => app.login === login);
+
+// Acts as a GitHub App too: its login joins the personas, and an App there
+// with the same login, such as one installed again, is replaced.
+const addApp = (setup: MachineSetupRoot, app: AppPersona) =>
+  MachineSetupRoot.make({
+    ...setup,
+    personas: Arr.dedupe([...setup.personas, app.login]),
+    apps: [...setup.apps.filter((known) => known.login !== app.login), app],
+  });
 
 // Adds personas without dropping any, such as one whose gh login lapsed.
 const addPersonas = (setup: MachineSetupRoot, logins: ReadonlyArray<string>) =>
@@ -142,7 +161,12 @@ const addPersonas = (setup: MachineSetupRoot, logins: ReadonlyArray<string>) =>
 
 // The setup of a machine whose config says nothing of it: the implicit
 // persona, and the one default account.
-const unset = MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false });
+const unset = MachineSetupRoot.make({
+  personas: [],
+  apps: [],
+  accounts: [],
+  accountsWritten: false,
+});
 
 export const MachineSetupRootOps = {
   unset,
@@ -154,4 +178,6 @@ export const MachineSetupRootOps = {
   addAccounts,
   choosePersonas,
   addPersonas,
+  addApp,
+  appOf,
 } as const;

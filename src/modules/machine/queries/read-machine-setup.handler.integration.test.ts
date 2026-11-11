@@ -13,7 +13,12 @@ describe("readMachineSetupHandler", () => {
     () =>
       Effect.gen(function* () {
         yield* (yield* MachineSetupsRepository).upsertOne(
-          MachineSetupRoot.make({ personas: ["alice"], accounts: [], accountsWritten: false }),
+          MachineSetupRoot.make({
+            personas: ["alice"],
+            apps: [],
+            accounts: [],
+            accountsWritten: false,
+          }),
         );
 
         const view = yield* readMachineSetupHandler();

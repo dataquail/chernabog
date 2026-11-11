@@ -28,6 +28,7 @@ import { ConfigError } from "../../platform/config-error.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
 import { Home, homePaths } from "../../platform/home.ts";
 import { VERSION } from "../../platform/version.ts";
+import { appsCommand } from "./ci-apps.main.ts";
 import { CI_LEASE_TTL, CI_STOP_AFTER, ciMachineConfig, runInCi, writeJson } from "./ci-run.main.ts";
 
 const EventPayload = Schema.fromJsonString(Schema.Json);
@@ -416,5 +417,10 @@ const workflowCommand = <R>(config: CiConfigAccess<R>) =>
 export const ciCommand = <R>(config: CiConfigAccess<R>) =>
   Command.make("ci").pipe(
     Command.withDescription("What a repo's GitHub Actions workflow runs, and the workflow itself"),
-    Command.withSubcommands([planCommand(config), runCommand(config), workflowCommand(config)]),
+    Command.withSubcommands([
+      planCommand(config),
+      runCommand(config),
+      workflowCommand(config),
+      appsCommand,
+    ]),
   );

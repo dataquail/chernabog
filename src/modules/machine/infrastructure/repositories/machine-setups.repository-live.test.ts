@@ -5,8 +5,10 @@ import * as Option from "effect/Option";
 
 import { effectAtHome } from "../../../../../test/effect-test.ts";
 import { Home, homePaths } from "../../../../platform/home.ts";
+import { AppPersona } from "../../domain/machine-setup/app-persona.value-object.ts";
 import { MachineAccount } from "../../domain/machine-setup/machine-account.value-object.ts";
 import { MachineSetupRoot } from "../../domain/machine-setup/machine-setup.root.ts";
+import { MachineSetupRootOps } from "../../domain/machine-setup/machine-setup.root-ops.ts";
 import { MachineSetupSpecifications } from "../../domain/machine-setup/machine-setup.specification.ts";
 import { MachineSetupsRepository } from "../../domain/machine-setup/machine-setups.repository.ts";
 import { MachineSetupsRepositoryLive } from "./machine-setups.repository-live.ts";
@@ -30,7 +32,7 @@ describe("MachineSetupsRepositoryLive", () => {
 
         expect(yield* setups.findOne(MachineSetupSpecifications.thisMachine)).toEqual(
           Option.some(
-            MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false }),
+            MachineSetupRoot.make({ personas: [], apps: [], accounts: [], accountsWritten: false }),
           ),
         );
       }),
@@ -89,6 +91,48 @@ describe("MachineSetupsRepositoryLive", () => {
           "",
         ].join("\n"),
       );
+    }),
+  );
+
+  effectAtHome("writes an App persona's token source, and reads it back", () =>
+    Effect.gen(function* () {
+      const { file, fs, setups } = yield* opened;
+      yield* fs.makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true });
+      yield* fs.writeFileString(file, ["github:", "  alice: {} # me", ""].join("\n"));
+
+      const before = Option.getOrThrow(
+        yield* setups.findOne(MachineSetupSpecifications.thisMachine),
+      );
+
+      const author = AppPersona.make({
+        login: "acme-chernabog-author[bot]",
+        id: "101",
+        installation: "201",
+        key: "~/.config/chernabog/keys/acme-chernabog-author.pem",
+      });
+
+      yield* setups.upsertOne(MachineSetupRootOps.addApp(before, author));
+
+      expect(yield* fs.readFileString(file)).toBe(
+        [
+          "github:",
+          "  alice: {} # me",
+          "  acme-chernabog-author[bot]:",
+          "    token:",
+          "      app:",
+          "        id: 101",
+          "        installation: 201",
+          "        key: ~/.config/chernabog/keys/acme-chernabog-author.pem",
+          "",
+        ].join("\n"),
+      );
+
+      const after = Option.getOrThrow(
+        yield* setups.findOne(MachineSetupSpecifications.thisMachine),
+      );
+
+      expect(after.personas).toEqual(["alice", "acme-chernabog-author[bot]"]);
+      expect(after.apps).toEqual([author]);
     }),
   );
 });

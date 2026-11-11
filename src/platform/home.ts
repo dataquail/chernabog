@@ -55,6 +55,8 @@ export const homePaths = (root: string) => ({
   dashboard: `${root}/dashboard.json`,
   // The token a browser opens the dashboard with, only the person may read.
   dashboardToken: `${root}/dashboard.token`,
+  // Each GitHub App's private key (#481), which only the person may read.
+  appKey: (slug: string) => `${root}/keys/${slug}.pem`,
   runs: `${root}/runs`,
   runLog: (runId: string) => `${root}/runs/${runId}.log`,
   sessions: `${root}/sessions`,

@@ -35,7 +35,12 @@ describe("planSetupHandler", () => {
       }
 
       yield* (yield* MachineSetupsRepository).upsertOne(
-        MachineSetupRoot.make({ personas: ["bob"], accounts: [work], accountsWritten: true }),
+        MachineSetupRoot.make({
+          personas: ["bob"],
+          apps: [],
+          accounts: [work],
+          accountsWritten: true,
+        }),
       );
 
       const plan = yield* planSetupHandler();
