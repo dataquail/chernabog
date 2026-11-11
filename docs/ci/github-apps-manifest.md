@@ -50,11 +50,12 @@ opens on **All repositories** of the owner. To keep an App to one repo, the
 person has to choose **Only select repositories** and then pick the repo.
 `suggested_target_id` and `repository_ids[]` weren't tried.
 
-This matters more than it looks. Each installation in this run ended up
-covering six of the org's repos, `dataquail/chernabog` among them. An
-installation's token, and so the key in a repo's Environment, can write to
-every repo the installation covers. A CI job in the rehearsal repo could have
-written to this one.
+This matters more than it looks. An installation's token, and so the key in a
+repo's Environment, can write to every repo the installation covers. In this
+run each installation was given six of the org's repos on purpose,
+`dataquail/chernabog` among them, so a CI job in the rehearsal repo that reads
+either key can write to all six until each token is narrowed to its repo
+(below).
 
 ### 3. Does `hook_attributes: { url, active: false }` register an App with no webhook deliveries?
 
@@ -94,8 +95,6 @@ instead.
 
 ## Still to do
 
-- Narrow the two installations to `chernabog-rehearsal`. A person does this on
-  GitHub.
 - Narrow each token to the repo it's for. Both `POST
 /app/installations/{id}/access_tokens` and `actions/create-github-app-token`
   take the repos to limit it to. This belongs to #477's plan-and-run chunk,
