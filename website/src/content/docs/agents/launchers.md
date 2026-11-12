@@ -80,5 +80,5 @@ launchers:
 Every launcher runs the same short command, `chernabog __launch <spec>`, which starts Claude with its account's environment and the prompt from a file.
 
 :::note[Folder trust]
-An interactive session stops at "Do you trust this folder?" in a folder Claude doesn't trust yet. Worktrees inherit the trust of their checkout, so trust the checkout once, or a folder above it. `doctor` checks this, and that the launcher's tool works.
+An interactive session stops at "Do you trust this folder?" in a folder Claude doesn't trust yet. Worktrees inherit the trust of their checkout, wherever they are, so trust the checkout once: open `claude` in it and choose "Yes, I trust this folder". Trusting a folder above it, such as `~/code`, isn't enough. For a git repo, Claude only looks at the repo's own path. `doctor` checks this, and that the launcher's tool works.
 :::

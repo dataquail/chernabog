@@ -200,15 +200,18 @@ const ClaudeState = Schema.fromJsonString(
   }),
 );
 
-// The path and every folder above it, up to the root.
-const ancestorsOf = (path: string) => {
-  const parts = path.split("/").filter((part) => part.length > 0);
+type ClaudeProjects = NonNullable<Schema.Schema.Type<typeof ClaudeState>["projects"]>;
 
-  return [...parts.map((_, index) => `/${parts.slice(0, parts.length - index).join("/")}`), "/"];
-};
+// Whether Claude opens a git checkout without asking "do you trust this
+// folder?". For a git repo it looks up the repo's own path, not a folder above
+// it, and a worktree of the repo inherits its trust wherever the worktree is
+// (Claude Code 2.1.322, #465): a trusted ~/code covers neither.
+export const trustsCheckout = (projects: ClaudeProjects, path: string) =>
+  Option.exists(Record.get(projects, path), (project) => project.hasTrustDialogAccepted === true);
 
 // An interactive session stops at "do you trust this folder?" unless Claude
-// trusts the checkout or a folder above it; its worktrees inherit that trust.
+// trusts the checkout itself; its worktrees, under the chernabog home, inherit
+// that trust.
 export const claudeTrusts = (account: Account, path: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -220,14 +223,9 @@ export const claudeTrusts = (account: Account, path: string) =>
     });
 
     const state = yield* Schema.decodeEffect(ClaudeState)(yield* fs.readFileString(file));
-    const projects = state.projects ?? {};
+    const real = yield* fs.realPath(path).pipe(Effect.orElseSucceed(() => path));
 
-    return ancestorsOf(path).some((folder) =>
-      Option.exists(
-        Record.get(projects, folder),
-        (project) => project.hasTrustDialogAccepted === true,
-      ),
-    );
+    return [path, real].some((each) => trustsCheckout(state.projects ?? {}, each));
   }).pipe(Effect.orElseSucceed(() => false));
 
 // Each GitHub persona: gh has its login, and GitHub says the token is its. A
@@ -752,7 +750,7 @@ export const doctor = Effect.gen(function* () {
         check(
           yield* claudeTrusts(settings.account, repo.path),
           `${name}: Claude trusts ${repo.path}, so its worktrees open without a prompt`,
-          `cd ${repo.path} && CLAUDE_CONFIG_DIR=${configDir} claude, then choose "Yes, I trust this folder"`,
+          `cd ${repo.path} && CLAUDE_CONFIG_DIR=${configDir} claude, then choose "Yes, I trust this folder"; trusting a folder above the checkout isn't enough`,
         );
       }
     });
