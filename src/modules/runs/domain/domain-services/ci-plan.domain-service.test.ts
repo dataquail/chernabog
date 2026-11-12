@@ -271,6 +271,21 @@ describe("the plan", () => {
     expect(planned.notes).toEqual(["implement as bot: trigger failed: GitHub answered 502"]);
   });
 
+  test("a target that isn't the persona's to run starts nothing, and says it was skipped", () => {
+    const skipped: Findings = {
+      ...findings(every("review", "bot"), []),
+      found: { kind: "skipped", reason: "not in the reviewer pool (reviewers: bob)" },
+    };
+
+    const planned = CiPlan.plan([skipped], []);
+
+    expect(planned.start).toEqual([]);
+    expect(planned.notes).toEqual([
+      "review as bot: skipped: not in the reviewer pool (reviewers: bob)",
+    ]);
+    expect(CiPlan.startable(skipped, [])).toEqual([]);
+  });
+
   test("what a flow could start, before its gate, so only those flows' gates are asked", () => {
     expect(
       CiPlan.startable(findings(every("implement", "bot"), [item("issue-3"), item("issue-4")]), [
