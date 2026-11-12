@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.17.0](https://github.com/dataquail/chernabog/compare/v0.16.3...v0.17.0) (2026-11-12)
+
+
+### Features
+
+* **ci:** chernabog ci apps makes a repo's GitHub Apps from manifests ([#482](https://github.com/dataquail/chernabog/issues/482)) ([c73e905](https://github.com/dataquail/chernabog/commit/c73e905427ebec4e82e0aa26b4df02e92fbf8298))
+* **ci:** the plan job's summary shows a phase announcement's payload ([#484](https://github.com/dataquail/chernabog/issues/484)) ([df10121](https://github.com/dataquail/chernabog/commit/df10121e49732e77a1333d6485f283f1b8be0077))
+* **github:** a persona's token can come from a variable or a GitHub App ([#479](https://github.com/dataquail/chernabog/issues/479)) ([886fb3b](https://github.com/dataquail/chernabog/commit/886fb3b4190a72863204e9505b0abb71ab9a1e91))
+
 ## [0.16.3](https://github.com/dataquail/chernabog/compare/v0.16.2...v0.16.3) (2026-11-10)
 
 
