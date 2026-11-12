@@ -33,9 +33,24 @@ edits in flight; one that overlaps an edit fails spuriously.
 
 ## Hard rules
 
-- **Chernabog never runs Claude with `-p` / `--print`.** Every agent session it
-  starts is interactive, through a launcher (orca, tmux, or the person's own).
-  This is a billing constraint, not a style choice.
+- **Chernabog runs Claude with `-p` / `--print` only where a person has chosen
+  no launcher.** Every agent session it starts is interactive, through a
+  launcher (orca, tmux, or the person's own). This is a billing constraint, not
+  a style choice: `-p` sessions are billed more heavily, even on a
+  subscription. Exactly two uses are allowed, and only for a repo whose
+  launcher is `headless` (the default when machine config names none):
+  - the `headless` launcher itself (`src/modules/runs/infrastructure/runtime/agents/claude.ts`),
+    which a person picks by not setting up an interactive one; `doctor` says
+    so (`runs use claude -p (launcher headless)`);
+  - the usage gate's token refresh
+    (`src/modules/runs/infrastructure/runtime/usage-gate.ts`), one
+    `Reply with OK.` prompt on haiku, which makes claude refresh the stored
+    token. Under a launcher, it runs that prompt interactively instead.
+
+  Nothing else uses `-p`: not a flow, a step, a recipe or CI. Treat
+  `--output-format stream-json` and `--json-schema`, which need print mode,
+  the same way.
+
 - **Never kill processes by name** (`pkill claude` and the like). Target the PID
   or launcher handle you captured.
 - **Multi-PR work is a `gh stack`.** Read `gh stack --help` (or your agent's
