@@ -17,7 +17,7 @@ import { applySetupHandler } from "./apply-setup.handler.ts";
 const HOME = "/home/zw";
 
 const setupOf = (personas: ReadonlyArray<string>, accounts: ReadonlyArray<MachineAccount>) =>
-  MachineSetupRoot.make({ personas, accounts, accountsWritten: accounts.length > 0 });
+  MachineSetupRoot.make({ personas, apps: [], accounts, accountsWritten: accounts.length > 0 });
 
 const work = MachineAccount.make({ name: "work", agent: "claude", configDir: Option.none() });
 

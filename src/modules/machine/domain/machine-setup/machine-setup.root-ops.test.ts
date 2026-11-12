@@ -2,13 +2,19 @@ import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
+import { AppPersona } from "./app-persona.value-object.ts";
 import { MachineAccount } from "./machine-account.value-object.ts";
 import { MachineSetupRoot } from "./machine-setup.root.ts";
 import { MachineSetupRootOps } from "./machine-setup.root-ops.ts";
 
 const home = "/home/zw";
 
-const bare = MachineSetupRoot.make({ personas: [], accounts: [], accountsWritten: false });
+const bare = MachineSetupRoot.make({
+  personas: [],
+  apps: [],
+  accounts: [],
+  accountsWritten: false,
+});
 
 const account = (name: string, agent: string, configDir: Option.Option<string>) =>
   MachineAccount.make({ name, agent, configDir });
@@ -28,6 +34,7 @@ describe("MachineSetupRootOps account directories", () => {
   test("an account without a directory keeps its agent's default one", () => {
     const setup = MachineSetupRoot.make({
       personas: [],
+      apps: [],
       accounts: [
         account("work", "claude", Option.none()),
         account("personal", "claude", Option.some("~/.claude-personal")),
@@ -105,6 +112,42 @@ describe("MachineSetupRootOps personas", () => {
       "bob",
       "carol",
     ]);
+  });
+});
+
+describe("MachineSetupRootOps App personas", () => {
+  const author = AppPersona.make({
+    login: "acme-chernabog-author[bot]",
+    id: "101",
+    installation: "201",
+    key: "~/.config/chernabog/keys/acme-chernabog-author.pem",
+  });
+
+  test("an App joins the personas, and adding it again replaces it", () => {
+    const once = MachineSetupRootOps.addApp(bare, author);
+
+    expect(once.personas).toEqual(["acme-chernabog-author[bot]"]);
+    expect(once.apps).toEqual([author]);
+
+    const reinstalled = AppPersona.make({ ...author, installation: "202" });
+    const twice = MachineSetupRootOps.addApp(once, reinstalled);
+
+    expect(twice.personas).toEqual(["acme-chernabog-author[bot]"]);
+    expect(twice.apps).toEqual([reinstalled]);
+  });
+
+  test("choosing gh's logins keeps the Apps, which aren't gh logins", () => {
+    const withApp = MachineSetupRootOps.addApp(
+      MachineSetupRoot.make({ ...bare, personas: ["alice"] }),
+      author,
+    );
+
+    expect(
+      Result.map(
+        MachineSetupRootOps.choosePersonas(withApp, ["bob"], ["alice", "bob"], []),
+        (chosen) => chosen.personas,
+      ),
+    ).toEqual(Result.succeed(["bob", "acme-chernabog-author[bot]"]));
   });
 });
 

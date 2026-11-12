@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { AccountDirsClientLive } from "./infrastructure/clients/account-dirs.client-live.ts";
+import { AppKeysClientLive } from "./infrastructure/clients/app-keys.client-live.ts";
+import { GitHubAppsClientLive } from "./infrastructure/clients/github-apps.client-live.ts";
 import { GitHubLoginsClientLive } from "./infrastructure/clients/github-logins.client-live.ts";
 import { ServiceManagerClientLive } from "./infrastructure/clients/service-manager.client-live.ts";
 import { MachineSetupsRepositoryLive } from "./infrastructure/repositories/machine-setups.repository-live.ts";
@@ -22,6 +24,8 @@ export const MachineModule = {
       Layer.mergeAll(
         MachineSetupsRepositoryLive,
         GitHubLoginsClientLive,
+        GitHubAppsClientLive,
+        AppKeysClientLive,
         AccountDirsClientLive,
         ServiceManagerClientLive,
       ),

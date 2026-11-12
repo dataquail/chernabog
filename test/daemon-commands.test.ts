@@ -149,6 +149,7 @@ const FakeMachine = Layer.succeed(
   MachineQueries.of({
     CheckServiceQuery: () => Effect.die("not asked"),
     InspectAccountDirQuery: () => Effect.die("not asked"),
+    PlanAppQuery: () => Effect.die("not asked"),
     PlanSetupQuery: () => Effect.die("not asked"),
     ReadMachineSetupQuery: () => Effect.succeed(offered),
   }),

@@ -6,6 +6,10 @@ import * as Layer from "effect/Layer";
 import { ownUnitOfWork } from "../../platform/unit-of-work.ts";
 import { ApplySetupCommand } from "./commands/apply-setup.command.ts";
 import { applySetupHandler } from "./commands/apply-setup.handler.ts";
+import { CreateAppCommand } from "./commands/create-app.command.ts";
+import { createAppHandler } from "./commands/create-app.handler.ts";
+import { InstallAppCommand } from "./commands/install-app.command.ts";
+import { installAppHandler } from "./commands/install-app.handler.ts";
 import { InstallServiceCommand } from "./commands/install-service.command.ts";
 import { installServiceHandler } from "./commands/install-service.handler.ts";
 import { RefreshServiceCommand } from "./commands/refresh-service.command.ts";
@@ -19,6 +23,8 @@ import { uninstallServiceHandler } from "./commands/uninstall-service.handler.ts
 
 export const machineCommandGroup = Command.group(
   ApplySetupCommand,
+  CreateAppCommand,
+  InstallAppCommand,
   InstallServiceCommand,
   RefreshServiceCommand,
   StartServiceCommand,
@@ -28,6 +34,8 @@ export const machineCommandGroup = Command.group(
 
 const MachineCommandHandlersLive = Command.handlersOf(machineCommandGroup, {
   ApplySetupCommand: (payload) => applySetupHandler(payload),
+  CreateAppCommand: (payload) => createAppHandler(payload),
+  InstallAppCommand: (payload) => installAppHandler(payload),
   InstallServiceCommand: () => installServiceHandler(),
   RefreshServiceCommand: () => refreshServiceHandler(),
   StartServiceCommand: () => startServiceHandler(),
