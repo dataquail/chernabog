@@ -69,8 +69,10 @@ A **fine-grained token** limited to this one repo is best. It needs these permis
 | Issues          | Read and write | labels, comments and claims                                            |
 | Workflows       | Read and write | pushing a change that touches `.github/workflows/`; see [Trust](/chernabog/operate/trust/) |
 | Actions         | Read           | CI runs on a pull request's branch                                     |
-| Checks, Commit statuses | Read   | whether a pull request's CI is green                                   |
+| Commit statuses | Read           | whether a pull request's CI is green                                   |
 | Metadata        | Read           | required by GitHub for every fine-grained token                        |
+
+Fine-grained tokens have no Checks permission, and none is needed: a token with the permissions above reads a pull request's check runs. The rehearsal's implement run waited on its pull request's CI with such a token ([#465](https://github.com/dataquail/chernabog/issues/465)).
 
 A classic token, or `gh auth token --user <login>` for a persona `gh` is logged in as, needs the `repo` and `workflow` scopes. It can reach every repo that login can, so prefer the fine-grained one.
 
@@ -125,7 +127,7 @@ It also runs the thread rulesets' checks. Then start a sweep by hand:
 gh workflow run chernabog.yml -R owner/repo
 ```
 
-The plan job's summary lists what it started and why each other item wasn't started.
+The plan job's summary lists what it started and why each other item wasn't started. For a phase announcement it also shows the `repository_dispatch` payload, `{item, from, to}`, which GitHub's API doesn't show for the run.
 
 ## Cost
 
@@ -145,6 +147,8 @@ Team and Enterprise plans include their own credit; check the billing page of yo
 A private repo's runner has 2 cores, and a public repo's has 4, so a private repo's jobs take longer. The repo's full test suite took 6 minutes on 4 cores and 12 on 2.
 
 **What a job costs.** Setup before the agent starts takes about 10 seconds. A run job costs roughly $0.006 × (the agent's minutes + the test minutes + 1). A plan job is billed at least a minute each time any event starts it, even when it starts nothing.
+
+**A measured run.** The first real chain on the rehearsal repo ([#465](https://github.com/dataquail/chernabog/issues/465)) had three plan jobs of 11 to 18 seconds and one implement run job of 2 minutes 13 seconds: claim, the agent's change, push, open the pull request, wait about 70 seconds for its CI, and ask for a review. The repo is public, so nothing was billed. On a private repo it would bill 1 minute for each plan job and 3 for the run job, 6 minutes in all, about $0.04.
 
 **A worked example.** Three private repos, each running agents for 2 hours a day:
 

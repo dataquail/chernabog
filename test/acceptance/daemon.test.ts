@@ -150,9 +150,10 @@ describe("the daemon", () => {
       "the gate to skip",
     );
     expect(sandbox.github.pulls.size).toBe(1);
-    sandbox.github.setUsage(5, 10);
   }, 30_000);
 
+  // Usage stays over the ceiling until the repo is paused: lowered any sooner,
+  // a tick before the pause lands can start the queued issue.
   test("a paused repo starts nothing, and resumes", async () => {
     await sandbox.runCli(["pause", "demo"]);
     await waitFor(
@@ -160,6 +161,7 @@ describe("the daemon", () => {
       "a paused tick",
     );
     expect(sandbox.github.pulls.size).toBe(1);
+    sandbox.github.setUsage(5, 10);
     await sandbox.runCli(["resume", "demo"]);
     await waitFor(
       () => sandbox.github.pulls.size === 2,

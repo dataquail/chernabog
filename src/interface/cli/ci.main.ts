@@ -80,11 +80,31 @@ const why = (notes: ReadonlyArray<string>) =>
     onSome: (said) => ["", "Why nothing else starts:", "", ...said.map((note) => `- ${note}`)],
   });
 
+const DispatchPayload = Schema.Struct({ client_payload: Schema.Json });
+
+// A repository_dispatch's client_payload, which GitHub's API doesn't show for
+// the run it starts, so the summary does.
+const dispatched = (event: Option.Option<CiEvent>) =>
+  Option.match(
+    Option.flatMap(
+      Option.filter(event, (found) => found.name === "repository_dispatch"),
+      (found) => Schema.decodeUnknownOption(DispatchPayload)(found.payload),
+    ),
+    {
+      onNone: () => [],
+      onSome: (found) => [
+        `Payload: \`${Schema.encodeSync(EventPayload)(found.client_payload)}\``,
+        "",
+      ],
+    },
+  );
+
 // The plan as a job summary, in Markdown.
-const summaryOf = (plan: CiPlanResult) =>
+export const summaryOf = (plan: CiPlanResult, event: Option.Option<CiEvent>) =>
   [
     `### chernabog ci plan: ${plan.scope}`,
     "",
+    ...dispatched(event),
     starts(plan),
     "",
     ...plan.start.map((entry) => `- \`${entry.flow}\` as \`${entry.persona}\`: ${entry.item}`),
@@ -225,7 +245,7 @@ const planCommand = <R>(config: CiConfigAccess<R>) =>
           "GITHUB_OUTPUT",
           `items=${planned.matrix}\nmax-parallel=${planned.maxParallel}\n`,
         );
-        yield* append("GITHUB_STEP_SUMMARY", summaryOf(planned));
+        yield* append("GITHUB_STEP_SUMMARY", summaryOf(planned, event));
       }),
   ).pipe(
     Command.withDescription(
