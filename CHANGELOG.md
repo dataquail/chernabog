@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/dataquail/chernabog/compare/v0.17.0...v0.17.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **doctor:** Claude must trust the checkout itself, not a folder above it ([#485](https://github.com/dataquail/chernabog/issues/485)) ([7abf527](https://github.com/dataquail/chernabog/commit/7abf527d8a335d2483c91ab8036e2b1340e09969))
+
 ## [0.17.0](https://github.com/dataquail/chernabog/compare/v0.16.3...v0.17.0) (2026-11-12)
 
 
