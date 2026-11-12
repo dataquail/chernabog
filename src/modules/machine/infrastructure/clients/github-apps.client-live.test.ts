@@ -223,6 +223,48 @@ describe("GitHubAppsClientLive", () => {
     ),
   );
 
+  effect("describes the App as GitHub has it now, asked as the App", () => {
+    const sent: Array<Sent> = [];
+
+    return Effect.gen(function* () {
+      const keys = yield* keyPair;
+
+      const app = yield* (yield* GitHubAppsClient).describeApp({
+        id: "102",
+        privateKey: keys.pem,
+      });
+
+      expect(app).toEqual({
+        slug: "quail-gatekeeper",
+        owner: "DataQuail",
+        permissions: { checks: "write", contents: "write" },
+      });
+      expect(sent.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+        "GET /app",
+      ]);
+      expect(Option.getOrElse(sent[0].authorization, () => "")).toStartWith("Bearer ey");
+    }).pipe(
+      clientWith(
+        Layer.mergeAll(
+          appApi(sent, {
+            "GET /app": [
+              200,
+              {
+                id: 102,
+                slug: "quail-gatekeeper",
+                name: "Quail Gatekeeper",
+                owner: { login: "DataQuail", type: "Organization" },
+                permissions: { checks: "write", contents: "write" },
+              },
+            ],
+          }),
+          personApi([], {}),
+          gh([]),
+        ),
+      ),
+    );
+  });
+
   effect("lists the repos an installation covers, as the installation's own token", () => {
     const sent: Array<Sent> = [];
 

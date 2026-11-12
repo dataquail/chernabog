@@ -13,6 +13,12 @@ describe("AppRoles", () => {
     expect(AppRoles.defaultBranchOnly("reviewer")).toBe(true);
   });
 
+  test("an App that writes checks is a reviewer, and any other an author", () => {
+    expect(AppRoles.roleOf({ checks: "write", contents: "write" })).toBe("reviewer");
+    expect(AppRoles.roleOf({ checks: "read", contents: "write" })).toBe("author");
+    expect(AppRoles.roleOf({ contents: "write" })).toBe("author");
+  });
+
   test("an App acts as its slug's bot, and is installed from its own page", () => {
     expect(AppRoles.loginOf("acme-chernabog-author")).toBe("acme-chernabog-author[bot]");
     expect(AppRoles.slugOf("acme-chernabog-author[bot]")).toBe("acme-chernabog-author");

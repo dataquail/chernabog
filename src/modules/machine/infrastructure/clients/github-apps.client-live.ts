@@ -32,6 +32,12 @@ import {
 const Conversion = Schema.Struct({ id: Schema.Int, slug: Schema.String, pem: Schema.String });
 const Installation = Schema.Struct({ id: Schema.Int });
 
+const App = Schema.Struct({
+  slug: Schema.String,
+  owner: Schema.Struct({ login: Schema.String }),
+  permissions: Schema.Record(Schema.String, Schema.String),
+});
+
 const InstallationRepositories = Schema.Struct({
   total_count: Schema.Int,
   repositories: Schema.Array(Schema.Struct({ full_name: Schema.String })),
@@ -143,7 +149,9 @@ export const GitHubAppsClientLive = Layer.effect(
         return { id: String(app.id), slug: app.slug, privateKey: app.pem };
       });
 
-    const installationOn = (app: AppCredentials, repo: string) =>
+    // A call signed with the App's JWT. What GitHub says for a moment after
+    // it made the App, before it takes its key, is AppKeyNotReady.
+    const asApp = (app: AppCredentials, path: string) =>
       Effect.gen(function* () {
         const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
 
@@ -153,16 +161,37 @@ export const GitHubAppsClientLive = Layer.effect(
             new GitHubAppsFailed({ message: `signing as App ${app.id}: ${String(error)}` }),
         });
 
-        const path = `/repos/${repo}/installation`;
         const response = yield* own("GET", path, Option.some(jwt));
+
+        if (response.status === 401 && response.text.includes("must generate a public key")) {
+          return yield* new AppKeyNotReady({ id: app.id });
+        }
+
+        return response;
+      });
+
+    const describeApp = (app: AppCredentials) =>
+      Effect.gen(function* () {
+        const response = yield* asApp(app, "/app");
+
+        if (response.status !== 200) {
+          return yield* new GitHubAppsFailed({
+            message: `GET /app as App ${app.id}: HTTP ${response.status} ${response.text}`,
+          });
+        }
+
+        const found = yield* decoded(App, "GET /app", response.text);
+
+        return { slug: found.slug, owner: found.owner.login, permissions: found.permissions };
+      });
+
+    const installationOn = (app: AppCredentials, repo: string) =>
+      Effect.gen(function* () {
+        const path = `/repos/${repo}/installation`;
+        const response = yield* asApp(app, path);
 
         if (response.status === 404) {
           return Option.none<string>();
-        }
-
-        // What GitHub says for a moment after it made the App, before it takes its key.
-        if (response.status === 401 && response.text.includes("must generate a public key")) {
-          return yield* new AppKeyNotReady({ id: app.id });
         }
 
         if (response.status !== 200) {
@@ -293,6 +322,7 @@ export const GitHubAppsClientLive = Layer.effect(
     return GitHubAppsClient.of({
       ownerIsOrganization,
       convertManifest,
+      describeApp,
       installationOn,
       repositoriesOf,
       provisionEnvironment,

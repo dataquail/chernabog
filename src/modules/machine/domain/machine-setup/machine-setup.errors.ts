@@ -87,12 +87,13 @@ export class AppKeyNotReady extends Schema.TaggedError<
   }
 }
 
-// An App to install again that this machine doesn't act as.
+// No App this machine acts as plays the role on the owner's repos, so
+// there's none to install again: one is to be made.
 export class AppPersonaUnknown extends Schema.TaggedError<
   AppPersonaUnknown,
   { readonly brand: "AppPersonaUnknown" }
->()("AppPersonaUnknown", { login: Schema.String }) {
+>()("AppPersonaUnknown", { role: Schema.String, owner: Schema.String }) {
   public override get message() {
-    return `this machine doesn't act as ${this.login}: machine config has no github.${this.login}.token.app`;
+    return `this machine acts as no ${this.role} App of ${this.owner}'s: machine config has no github.<login>.token.app for one`;
   }
 }

@@ -142,10 +142,6 @@ const choosePersonas = (
   return Result.succeed(MachineSetupRoot.make({ ...setup, personas: kept }));
 };
 
-// The App this machine acts as by `login`, if it's one.
-const appOf = (setup: MachineSetupRoot, login: string) =>
-  Arr.findFirst(setup.apps, (app) => app.login === login);
-
 // Acts as a GitHub App too: its login joins the personas, and an App there
 // with the same login, such as one installed again, is replaced.
 const addApp = (setup: MachineSetupRoot, app: AppPersona) =>
@@ -179,5 +175,4 @@ export const MachineSetupRootOps = {
   choosePersonas,
   addPersonas,
   addApp,
-  appOf,
 } as const;

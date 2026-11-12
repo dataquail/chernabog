@@ -25,20 +25,41 @@ export const installAppHandler = Effect.fn("installAppHandler")(
       () => MachineSetupRootOps.unset,
     );
 
-    const app = yield* Option.match(command.created, {
-      onSome: Effect.succeed,
-      onNone: () =>
-        Effect.fromOption(MachineSetupRootOps.appOf(before, command.login)).pipe(
-          Effect.mapError(() => new AppPersonaUnknown({ login: command.login })),
-        ),
+    const keys = yield* AppKeysClient;
+
+    // The App this machine acts as for the role on the repo's owner, as
+    // GitHub says: whose each App is, and what it may do. GitHub's logins
+    // ignore case, so --repo DataQuail/x is dataquail's.
+    const known = Effect.gen(function* () {
+      const [owner] = command.repo.split("/");
+
+      for (const persona of before.apps) {
+        const privateKey = yield* keys.read(persona.key);
+        const described = yield* apps.describeApp({ id: persona.id, privateKey });
+
+        if (
+          described.owner.toLowerCase() === owner.toLowerCase() &&
+          AppRoles.roleOf(described.permissions) === command.role
+        ) {
+          return { ...persona, privateKey };
+        }
+      }
+
+      return yield* new AppPersonaUnknown({ role: command.role, owner });
     });
 
-    const privateKey = yield* (yield* AppKeysClient).read(app.key);
+    const app = yield* Option.match(command.created, {
+      onSome: (created) =>
+        Effect.map(keys.read(created.key), (privateKey) => ({ ...created, privateKey })),
+      onNone: () => known,
+    });
+
+    const privateKey = app.privateKey;
     const installation = yield* apps.installationOn({ id: app.id, privateKey }, command.repo);
 
     if (Option.isNone(installation)) {
       return yield* new InstallationNotOnRepo({
-        slug: AppRoles.slugOf(command.login),
+        slug: AppRoles.slugOf(app.login),
         repo: command.repo,
       });
     }
@@ -46,7 +67,7 @@ export const installAppHandler = Effect.fn("installAppHandler")(
     const covered = yield* apps.repositoriesOf({ id: app.id, privateKey }, installation.value);
 
     const persona = AppPersona.make({
-      login: command.login,
+      login: app.login,
       id: app.id,
       installation: installation.value,
       key: app.key,
@@ -71,8 +92,11 @@ export const installAppHandler = Effect.fn("installAppHandler")(
 
     return InstalledApp.make({
       login: persona.login,
+      id: app.id,
+      reused: Option.isNone(command.created),
       installation: installation.value,
-      alsoOn: covered.filter((other) => other !== command.repo),
+      // GitHub names the repo in its own case, which --repo needn't match.
+      alsoOn: covered.filter((other) => other.toLowerCase() !== command.repo.toLowerCase()),
       environment,
     });
   },

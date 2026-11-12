@@ -164,8 +164,17 @@ type Flags = {
   readonly print: boolean;
 };
 
-const describeInstalled = (plan: AppPlan, done: InstalledApp, repo: string) => [
-  `${plan.name}: installed on ${repo} (installation ${done.installation}); this machine acts as ${done.login}`,
+// What GitHub calls the App, from its bot's login: a renamed App isn't the plan's name.
+const slugOf = (login: string) => login.replace(/\[bot\]$/, "");
+
+const describeInstalled = (done: InstalledApp, repo: string) => [
+  `${slugOf(done.login)}: App ${done.id}, installed on ${repo} (installation ${done.installation}); this machine acts as ${done.login}`,
+  ...Option.toArray(
+    Option.map(
+      Option.liftPredicate(done, (app) => app.reused),
+      () => "  this machine acted as it already (--replace makes a new App)",
+    ),
+  ),
   // GitHub's install page offers every repo of the owner first: say what else its key reaches.
   ...Option.toArray(
     Option.map(
@@ -298,9 +307,6 @@ const setUpApps = (given: Flags) =>
 
     yield* server.serve(answer(port).pipe(Effect.provideContext(services)));
 
-    const already = (yield* queries.ReadMachineSetupQuery().pipe(Effect.mapError(asConfigError)))
-      .personas;
-
     const roles = Option.match(given.role, { onNone: () => ROLES, onSome: (only) => [only] });
 
     const show = (name: string, url: string, what: string) =>
@@ -318,11 +324,12 @@ const setUpApps = (given: Flags) =>
     // Asks until the App is on the repo: at once, then each time GitHub
     // sends the person back, and every few seconds between. The first time
     // it isn't, the person is shown where to install it, unless they're
-    // already on their way there.
+    // already on their way there. Without an App just created, it's the App
+    // this machine acts as for the role already, and none means there's
+    // none to reuse.
     const installed = (
       session: Session,
-      login: string,
-      created: Option.Option<{ readonly id: string; readonly key: string }>,
+      created: Option.Option<{ readonly login: string; readonly id: string; readonly key: string }>,
     ) =>
       Effect.gen(function* () {
         let shown = Option.isSome(created);
@@ -332,14 +339,17 @@ const setUpApps = (given: Flags) =>
             .InstallAppCommand({
               role: session.role,
               repo,
-              login,
               created,
               environments: given.environments,
             })
             .pipe(Effect.result);
 
           if (Result.isSuccess(attempt)) {
-            return attempt.success;
+            return Option.some(attempt.success);
+          }
+
+          if (Predicate.isTagged(attempt.failure, "AppPersonaUnknown")) {
+            return Option.none<InstalledApp>();
           }
 
           // Too soon for GitHub to take the new App's key: ask again shortly.
@@ -350,7 +360,7 @@ const setUpApps = (given: Flags) =>
           }
 
           if (!shown && Predicate.isTagged(attempt.failure, "InstallationNotOnRepo")) {
-            yield* show(session.plan.name, attempt.failure.installUrl, `add ${repo} to it`);
+            yield* show(attempt.failure.slug, attempt.failure.installUrl, `add ${repo} to it`);
             shown = true;
           }
 
@@ -377,19 +387,30 @@ const setUpApps = (given: Flags) =>
       yield* Ref.set(current, Option.some(session));
 
       const setUp = Effect.gen(function* () {
-        if (already.includes(plan.login) && !given.replace) {
-          yield* Console.log(
-            `${plan.name}: this machine acts as ${plan.login} already; checking it's installed on ${repo} (--replace makes a new App)`,
-          );
+        // The App this machine acts as for the role already, unless a new one is asked for.
+        if (!given.replace) {
+          const reused = yield* installed(session, Option.none());
 
-          return yield* installed(session, plan.login, Option.none());
+          if (Option.isSome(reused)) {
+            return reused.value;
+          }
         }
 
         yield* show(plan.name, `${origin}/start?state=${session.state}`, "create it on GitHub");
 
         const app = yield* Deferred.await(session.created);
 
-        return yield* installed(session, app.login, Option.some({ id: app.id, key: app.key }));
+        const made = yield* installed(
+          session,
+          Option.some({ login: app.login, id: app.id, key: app.key }),
+        );
+
+        // A command given the App it made always finds it.
+        return yield* Effect.fromOption(made).pipe(
+          Effect.mapError(
+            () => new ConfigError({ message: `${app.slug}: GitHub made it, but it wasn't found` }),
+          ),
+        );
       });
 
       const done = yield* setUp.pipe(
@@ -406,7 +427,7 @@ const setUpApps = (given: Flags) =>
 
       yield* Ref.set(current, Option.none());
 
-      for (const line of describeInstalled(plan, done, repo)) {
+      for (const line of describeInstalled(done, repo)) {
         yield* Console.log(line);
       }
     }

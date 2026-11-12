@@ -136,15 +136,6 @@ describe("MachineSetupRootOps App personas", () => {
     expect(twice.apps).toEqual([reinstalled]);
   });
 
-  test("an App is found by its login", () => {
-    const withApp = MachineSetupRootOps.addApp(bare, author);
-
-    expect(MachineSetupRootOps.appOf(withApp, "acme-chernabog-author[bot]")).toEqual(
-      Option.some(author),
-    );
-    expect(MachineSetupRootOps.appOf(withApp, "alice")).toEqual(Option.none());
-  });
-
   test("choosing gh's logins keeps the Apps, which aren't gh logins", () => {
     const withApp = MachineSetupRootOps.addApp(
       MachineSetupRoot.make({ ...bare, personas: ["alice"] }),

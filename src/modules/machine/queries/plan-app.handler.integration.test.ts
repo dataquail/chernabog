@@ -23,7 +23,6 @@ describe("planAppHandler", () => {
       });
 
       expect(plan.name).toBe("acme-chernabog-author");
-      expect(plan.login).toBe("acme-chernabog-author[bot]");
       expect(plan.newAppPage).toBe("https://github.com/organizations/acme/settings/apps/new");
       expect(manifestOf(plan)).toEqual({
         name: "acme-chernabog-author",
@@ -47,6 +46,20 @@ describe("planAppHandler", () => {
         },
       });
     }).pipe(Effect.provide(GitHubAppsClientFake({ organizations: ["acme"] }))),
+  );
+
+  effectAtHome("names an App for its owner as the owner writes it, capitals and all", () =>
+    Effect.gen(function* () {
+      const plan = yield* planAppHandler({
+        role: "author",
+        repo: "DataQuail/widgets",
+        prefix: Option.none(),
+        origin,
+      });
+
+      expect(plan.name).toBe("DataQuail-chernabog-author");
+      expect(plan.newAppPage).toBe("https://github.com/organizations/DataQuail/settings/apps/new");
+    }).pipe(Effect.provide(GitHubAppsClientFake({ organizations: ["DataQuail"] }))),
   );
 
   effectAtHome("plans a user's reviewer App under the prefix given, which writes checks", () =>

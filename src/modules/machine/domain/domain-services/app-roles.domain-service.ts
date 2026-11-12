@@ -1,5 +1,5 @@
 // What each GitHub App role (#477) is on GitHub once its App exists (#481):
-// its bot's login, where it's installed from, and the GitHub Environment a
+// its bot's login, which role an App plays, where it's installed from, and the GitHub Environment a
 // repo's CI job reads its key from. A domain service: it holds before any
 // persona does, for an App only just created.
 
@@ -23,6 +23,17 @@ const environmentOf = (role: AppRole) => ENVIRONMENTS[role];
 // request's branch starts never approves it (#477).
 const defaultBranchOnly = (role: AppRole) => role === "reviewer";
 
+// Which role an App plays, from what GitHub says it may do: only the
+// reviewer writes checks, since the check that gates a merge is its own
+// (#477). A person may rename an App on GitHub, so its name can't say.
+const roleOf = (permissions: Readonly<Record<string, string>>): AppRole => {
+  if (permissions.checks === "write") {
+    return "reviewer";
+  }
+
+  return "author";
+};
+
 // An App acts on GitHub as its bot, `<slug>[bot]`.
 const loginOf = (slug: string) => `${slug}[bot]`;
 
@@ -38,6 +49,7 @@ export const AppRoles = {
   APP_KEY_SECRET,
   environmentOf,
   defaultBranchOnly,
+  roleOf,
   loginOf,
   slugOf,
   installUrl,

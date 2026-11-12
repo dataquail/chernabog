@@ -81,7 +81,6 @@ export const planAppHandler = Effect.fn("planAppHandler")(function* (query: Plan
 
   return AppPlan.make({
     name,
-    login: `${name}[bot]`,
     newAppPage,
     manifest: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(manifest).pipe(
       Effect.orDie,

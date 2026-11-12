@@ -3,11 +3,11 @@ import * as Schema from "effect/Schema";
 
 // What GitHub's new-App page is to be sent for one role's App (#481): the
 // page, for an organization or a user, and the manifest to post to it, as
-// JSON. The App's name is what the person sees there and can change; the bot
-// it makes is login, unless they do.
+// JSON. The App's name is what the person sees there and can change. Its
+// bot's login is what GitHub makes of the name it ends up with, which
+// CreateAppCommand reads back rather than this guessing it.
 export class AppPlan extends Schema.Class<AppPlan, { readonly brand: "AppPlan" }>("AppPlan")({
   name: Schema.String,
-  login: Schema.String,
   newAppPage: Schema.String,
   manifest: Schema.String,
 }) {}
