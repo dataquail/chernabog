@@ -20,6 +20,7 @@ import {
   isManual,
   isSetupError,
   type Json,
+  NotInReviewerPool,
   Progress,
   Runs,
   Settings,
@@ -266,6 +267,25 @@ const failure = <E>(error: E) => {
   }
 
   return describeError(error);
+};
+
+// A review flow run as a persona outside the reviewer pool isn't the persona's
+// to run, as on a runner whose one account writes the code: the plan skips
+// it rather than report its trigger as failing on every plan (#465).
+const foundOnFailure = <E>(error: E) => {
+  if (!Schema.is(NotInReviewerPool)(error)) {
+    return { kind: "failed" as const, reason: failure(error) };
+  }
+
+  const pool = Option.match(
+    Arr.match(error.reviewers, { onEmpty: Option.none, onNonEmpty: Option.some }),
+    {
+      onNone: () => "the repo names no reviewers",
+      onSome: (logins) => `reviewers: ${logins.join(", ")}`,
+    },
+  );
+
+  return { kind: "skipped" as const, reason: `not in the reviewer pool (${pool})` };
 };
 
 // The gate's Skip is its own reason, as is a setup error; anything else is the gate failing.
@@ -540,7 +560,7 @@ export const planCi = (options: CiPlanOptions) =>
         concurrency,
         found: Result.match(items, {
           onSuccess: (found: ReadonlyArray<WorkItem>) => ({ kind: "items" as const, items: found }),
-          onFailure: (error) => ({ kind: "failed" as const, reason: failure(error) }),
+          onFailure: (error) => foundOnFailure(error),
         }),
         held: Option.none(),
       };
