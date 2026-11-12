@@ -223,12 +223,27 @@ the matrix entry, and needs the guard on the run job.
 
 ### 6. Cost of one run
 
-**A real review-loop phase: still not observed.** #456 couldn't run one without
-the token, and #460, which built `chernabog ci run`, was implemented by an
-unattended agent with no runner, secret or workflow to run it on: those are a
-person's (`.github/`, secrets). The billed minutes and setup time of the first
-real phase are to be recorded here when a person runs one, as below. What was
-measured is everything around the agent.
+**A real phase: observed in #465**, on 2026-11-10 with v0.16.3. A label
+started the chain on `dataquail/chernabog-rehearsal`, with no daemon in any CI
+step
+([run 42867256974](https://github.com/dataquail/chernabog-rehearsal/actions/runs/42867256974)):
+
+| Job                                                                    | Time   | Billed on a private repo |
+| ---------------------------------------------------------------------- | ------ | ------------------------ |
+| Plan, for `issues: labeled`                                            | 18 s   | 1 min                    |
+| Run, implement: claim, agent, push, open the PR, wait for CI, hand off | 2m 13s | 3 min                    |
+| Plan, for `chernabog-phase` `review-asked`                             | 13 s   | 1 min                    |
+| Plan, for `chernabog-phase` `handed-off`                               | 11 s   | 1 min                    |
+
+About 1 minute 10 seconds of the run job was waiting on the pull request's
+CI. The repo is public, so nothing was billed; on a private repo this chain
+would bill 6 minutes, about $0.04. Each phase advance started its workflow
+run about 4 seconds later, against question 3's 7.
+
+Before that, #456 couldn't run a phase without the token, and #460, which
+built `chernabog ci run`, was implemented by an unattended agent with no
+runner, secret or workflow to run it on. What #456 measured is everything
+around the agent.
 
 Setup before an agent can start (from `runner-test-cost` and
 `runner-test-claude`):
