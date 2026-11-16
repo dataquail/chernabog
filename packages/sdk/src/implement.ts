@@ -1390,10 +1390,42 @@ const CiReading = Schema.Union([
 
 type CiReading = typeof CiReading.Type;
 
-// Polls the pull request's checks durably until they stop pending, or ciTimeout passes.
-const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions) =>
+// The signal a run parked on its pull request's CI waits on. No trigger
+// reports it: the run parks only in a CI job, which ends there, and the job
+// that resumes the work is a new run (see CiWait.park).
+export const CI_SETTLED = "ci-settled";
+
+// How a wait for CI goes on: `park` names the item (Phases.issueItem or
+// pullRequestItem) a CI job's run records awaitingCi on before it parks,
+// rather than polling through the wait on a billed runner. The flow then
+// resumes from that record in the next job, at `firstRound`, the round the
+// record names. Without `park`, or outside a CI job (Repo's ciJob), it polls.
+export type CiWait = RepeatOptions & {
+  readonly park?: string;
+  readonly firstRound?: number;
+};
+
+// The item to park on, when this run is a CI job's and the flow can resume.
+const parkingOn = (options: CiWait) =>
+  Effect.map(Repo.use(Effect.succeed), (repo) =>
+    Option.filter(Option.fromUndefinedOr(options.park), () => repo.ciJob === true),
+  );
+
+// Records that the item waits on this round of CI, then parks; in a CI job,
+// the job ends there.
+const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
+  activity(
+    named(options, `awaiting-ci-${round}`),
+    Phases.record(item, Phases.awaitingCi(round)),
+  ).pipe(Effect.andThen(awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout })));
+
+// Polls the pull request's checks durably until they stop pending, or
+// ciTimeout passes. In a CI job, with somewhere to park, a first reading
+// still pending parks instead (parkOnCi).
+const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
   Effect.gen(function* () {
     const { timeout } = yield* Settings.ci;
+    const parking = yield* parkingOn(options);
 
     const maxPolls = Math.max(
       1,
@@ -1410,6 +1442,10 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
         });
       }
 
+      if (poll === 2 && Option.isSome(parking)) {
+        yield* parkOnCi(parking.value, round, timeout, options);
+      }
+
       if (poll > 1) {
         yield* sleep(named(options, `ci-${round}-wait-${poll}`), CI_POLL);
       }
@@ -1424,18 +1460,26 @@ const awaitChecks = (pullRequest: number, round: number, options: RepeatOptions)
     return reading;
   });
 
+// Why an item a CI job parked on its pull request's CI (awaitingCi) can't
+// start yet, for a source to hold it with: the checks are still pending.
+// None once they're green or red, when the job that resumes it reads them.
+export const waitingOnCi = (pullRequest: number) =>
+  Effect.map(Ci.pullRequestState(pullRequest), (reading) =>
+    Option.liftPredicate(`waits on CI for #${pullRequest}`, () => reading.state === "pending"),
+  );
+
 export type CiBranch = AuthorSession & BaseOptions & { readonly branch: string };
 
 const waitForCiIn = <E, R>(
   pullRequest: number,
   fixIn: Effect.Effect<string, E, R>,
   target: CiBranch,
-  options: RepeatOptions,
+  options: CiWait,
 ) =>
   Effect.gen(function* () {
     const { rounds } = yield* Settings.ci;
 
-    for (let round = 1; ; round++) {
+    for (let round = options.firstRound ?? 1; ; round++) {
       const reading = yield* awaitChecks(pullRequest, round, options);
 
       if (reading.state !== "red") {
@@ -1474,12 +1518,14 @@ const waitForCiIn = <E, R>(
 // Waits durably for the pull request's checks. On red, the agent reads the
 // failure, fixes, commits, and the branch is pushed again, up to
 // limits.ciRounds times. Fails with CiTimedOut when the checks stay pending
-// past limits.ciTimeout, and as push does for a fix it can't push.
+// past limits.ciTimeout, and as push does for a fix it can't push. In a CI
+// job, with `park`, it records the round it waits on and parks instead of
+// polling (CiWait).
 export const waitForCi = (
   pullRequest: number,
   worktree: string,
   target: CiBranch,
-  options: RepeatOptions = {},
+  options: CiWait = {},
 ) => waitForCiIn(pullRequest, Effect.succeed(worktree), target, options);
 
 // As waitForCi, for a pull request with no worktree yet, such as an adopted
@@ -1488,7 +1534,7 @@ export const waitForCiMaking = <E, R>(
   pullRequest: number,
   worktree: Effect.Effect<string, E, R>,
   target: CiBranch,
-  options: RepeatOptions = {},
+  options: CiWait = {},
 ) =>
   Effect.gen(function* () {
     let made = Option.none<string>();

@@ -181,6 +181,8 @@ export type MergeFake = {
   state: string;
   refusal: Option.Option<string>;
   requests: Array<MergeRequest>;
+  // What CI on the head reads once the branch is pushed, when a test sets it.
+  afterPush: Option.Option<CiState>;
 };
 
 // The checks a verdict stands for, every one required: green is one passing
@@ -289,6 +291,7 @@ export const makeFake = (
     state: "clean",
     refusal: Option.none(),
     requests: [],
+    afterPush: Option.none(),
   };
 
   // The pushed head, pushes so far, whether the pull request is open, the
@@ -1058,6 +1061,11 @@ export const makeFake = (
 
           if (git.pushes > 1) {
             git.head = `fix${git.pushes}0000000`;
+          }
+
+          // A push starts CI on the new head, as a test that sets it says.
+          for (const started of Option.toArray(merge.afterPush)) {
+            merge.ci = started;
           }
 
           return Effect.void;

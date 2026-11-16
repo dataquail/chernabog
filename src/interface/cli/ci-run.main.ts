@@ -289,6 +289,18 @@ const stillReported = (items: ReadonlyArray<WorkItem>, key: string) =>
 
 const GOT_THERE_FIRST = "another run got there first";
 
+// The repo as a CI job runs it: every persona's settings say so (ciJob), so
+// a flow that can resume from its record parks where it would poll, and the
+// job ends there rather than billing the wait.
+export const asCiJob = (repo: EffectiveRepo): EffectiveRepo => ({
+  ...repo,
+  settings: { ...repo.settings, ciJob: true },
+  personas: Arr.map(repo.personas, (own) => ({
+    ...own,
+    settings: { ...own.settings, ciJob: true },
+  })),
+});
+
 // Follows a run until it ends, parks on a signal, loses its claim or runs out
 // of the job's time, renewing its claim's short lease as it goes.
 const followToBoundary = (runId: RunId, options: CiRunOptions, stopAt: number) =>
@@ -549,7 +561,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     // The job renews the claim itself, on a lease short enough that a killed
     // job's runs out before long.
     const repo: EffectiveRepo = {
-      ...opened.repo,
+      ...asCiJob(opened.repo),
       leases: { ...opened.repo.leases, ttl: options.leaseTtl, parkedTtl: options.leaseTtl },
     };
 

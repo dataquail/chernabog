@@ -910,6 +910,7 @@ export declare const RepoSettings: Schema.Struct<{
     }>;
     readonly env: Schema.$Record<Schema.String, Schema.String>;
     readonly configDir: Schema.String;
+    readonly ciJob: Schema.optionalKey<Schema.Boolean>;
 }>;
 export type RepoSettings = typeof RepoSettings.Type;
 declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
@@ -994,6 +995,7 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
         readonly [x: string]: string;
     };
     readonly configDir: string;
+    readonly ciJob?: boolean | undefined;
 }>;
 export declare class Repo extends Repo_base {
 }
