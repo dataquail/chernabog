@@ -61,7 +61,9 @@ export type Findings = {
   readonly concurrency: number;
   readonly found:
     | { readonly kind: "items"; readonly items: ReadonlyArray<WorkItem> }
-    | { readonly kind: "failed"; readonly reason: string };
+    | { readonly kind: "failed"; readonly reason: string }
+    // Not this persona's to run, as a review flow is for one outside the reviewer pool.
+    | { readonly kind: "skipped"; readonly reason: string };
   readonly held: Option.Option<string>;
 };
 
@@ -168,7 +170,7 @@ const liveClaimOn = (claims: ReadonlyArray<LiveClaim>, key: string) =>
 
 // The items a target's trigger found that it looks at.
 const lookedAt = (findings: Findings): ReadonlyArray<WorkItem> => {
-  if (findings.found.kind === "failed") {
+  if (findings.found.kind !== "items") {
     return [];
   }
 
@@ -204,6 +206,10 @@ const planOne = (
 
   if (findings.found.kind === "failed") {
     return { start: [], notes: [`${label}: trigger failed: ${findings.found.reason}`] };
+  }
+
+  if (findings.found.kind === "skipped") {
+    return { start: [], notes: [`${label}: skipped: ${findings.found.reason}`] };
   }
 
   const items = lookedAt(findings);
