@@ -486,6 +486,53 @@ describe("address-review in a CI job", () => {
     }),
   );
 
+  effect(
+    "a review asking for changes on the fix's head while its CI pends is new work, not the parked one",
+    () =>
+      Effect.gen(function* () {
+        const fake = fixParked(1);
+        fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+        fake.submitted.push({
+          author: "data-quail",
+          state: "CHANGES_REQUESTED",
+          commitSha: "fix20000000",
+        });
+
+        // Not resumed as already addressed: nothing was pushed since this review.
+        expect(yield* resumes(fake)).toEqual([]);
+
+        // changesToAddress takes it up, as after a hand-off, and the record moves to changes-asked.
+        const items = yield* flowTriggered(fake, addressReview).pipe(Effect.orDie);
+        expect(
+          items.map((found) => [found.key.startsWith(`pr-${PULL}-changes-asked-`), found.data]),
+        ).toEqual([
+          [
+            true,
+            {
+              pullRequest: PULL,
+              headRef: "auto/issue-3",
+              baseRef: "main",
+              agentWritten: true,
+              reviewer: "data-quail",
+              reviewedSha: "fix20000000",
+            },
+          ],
+        ]);
+        expect(fake.phases()[PR_ITEM]).toBe("changes-asked");
+      }),
+  );
+
+  effect("an approval of the fix's head while its CI pends moves the record to approved", () =>
+    Effect.gen(function* () {
+      const fake = fixParked(1);
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: "fix20000000" });
+
+      expect(yield* flowTriggered(fake, addressReview).pipe(Effect.orDie)).toEqual([]);
+      expect(fake.phases()[PR_ITEM]).toBe("approved");
+    }),
+  );
+
   effect("resumed once CI is green, asks the reviewer again without another fix", () =>
     Effect.gen(function* () {
       const fake = fixParked(1);

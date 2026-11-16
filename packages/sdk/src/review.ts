@@ -865,8 +865,6 @@ export const decisiveReviews = (pullRequest: number) =>
     ),
   );
 
-// address-review's work item for a review that asks for changes, the
-// `count`th decisive review of the pull request.
 // What address-review needs of the pull request and the review it answers.
 const addressData = (pull: PullRequest, review: SubmittedReview) => ({
   pullRequest: pull.number,
@@ -877,6 +875,8 @@ const addressData = (pull: PullRequest, review: SubmittedReview) => ({
   reviewedSha: review.commitSha,
 });
 
+// address-review's work item for a review that asks for changes, the
+// `count`th decisive review of the pull request.
 export const addressItem = (
   pull: PullRequest,
   review: SubmittedReview,
@@ -975,8 +975,11 @@ const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
   Effect.gen(function* () {
     const item = Phases.pullRequestItem(pull.number);
     const asks = found.phase === P.changesAsked;
+    // A fix whose CI a CI job left pending (awaitingCi): a review asking for
+    // changes on its head is new work, as it is after a hand-off.
+    const fixPending = Option.isSome(Phases.ciRoundOf(found.phase));
 
-    if (!asks && !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])) {
+    if (!asks && !fixPending && !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])) {
       return Option.none<WorkItem>();
     }
 
@@ -1059,32 +1062,64 @@ export const parkOnPullRequest = (pullRequest: number): CiWait => ({
   park: Phases.pullRequestItem(pullRequest),
 });
 
+// What a pull request a CI job parked on its fix's CI is waiting for, by its
+// latest decisive review: the review the fix was pushed over still stands,
+// so the wait resumes; or the reviewer has moved on since, on the fix's own
+// head. Changes asked there are new work, which changesByRecord takes up; an
+// approval there moves the record to approved, as no run was there to
+// record it. Nothing else is this source's.
+type FixWaits =
+  | { readonly kind: "resume"; readonly review: SubmittedReview }
+  | { readonly kind: "approved" }
+  | { readonly kind: "other" };
+
+const fixWaits = (pull: PullRequest, latest: Option.Option<SubmittedReview>): FixWaits =>
+  Option.match(latest, {
+    onNone: (): FixWaits => ({ kind: "other" }),
+    onSome: (review): FixWaits => {
+      const onHead = review.commitSha === pull.headSha;
+
+      if (review.state === "CHANGES_REQUESTED" && !onHead) {
+        return { kind: "resume", review };
+      }
+
+      if (review.state === "APPROVED" && onHead) {
+        return { kind: "approved" };
+      }
+
+      return { kind: "other" };
+    },
+  });
+
 // One pull request whose record says a CI job parked on its fix's CI, as a
-// work item that resumes the wait: the review it addresses is the latest
-// decisive one, which asks for changes on the commit the fix was pushed
-// over. Held while the checks are pending.
+// work item that resumes the wait, when the review it answers is still the
+// latest decisive one (fixWaits). Held while the checks are pending.
 const fixAwaitingCi = (pull: PullRequest, found: PhaseRecord, round: number) =>
   Effect.gen(function* () {
-    const decisive = yield* decisiveReviews(pull.number);
-
-    const asked = Option.filter(
-      Arr.last(decisive),
-      (review) => review.state === "CHANGES_REQUESTED",
-    );
-
-    if (Option.isNone(asked) || (yield* ownedByARun(pull))) {
+    if (yield* ownedByARun(pull)) {
       return Option.none<WorkItem>();
     }
 
-    const item: WorkItem = {
-      ...reviewItem(pull, Phases.keyFor(Phases.pullRequestItem(pull.number), found)),
-      data: { ...addressData(pull, asked.value), resumeCi: { round } },
+    const item = Phases.pullRequestItem(pull.number);
+    const waits = fixWaits(pull, Arr.last(yield* decisiveReviews(pull.number)));
+
+    if (waits.kind === "approved") {
+      yield* Phases.reconcile(item, Option.some(found), P.approved, observer("review.approved"));
+    }
+
+    if (waits.kind !== "resume") {
+      return Option.none<WorkItem>();
+    }
+
+    const resumed: WorkItem = {
+      ...reviewItem(pull, Phases.keyFor(item, found)),
+      data: { ...addressData(pull, waits.review), resumeCi: { round } },
     };
 
     return Option.some(
       Option.match(yield* waitingOnCi(pull.number), {
-        onNone: () => item,
-        onSome: (held) => ({ ...item, held }),
+        onNone: () => resumed,
+        onSome: (held) => ({ ...resumed, held }),
       }),
     );
   });
