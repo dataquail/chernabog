@@ -49,6 +49,9 @@ describe("a CI job waiting on its pull request's CI", () => {
     CHERNABOG_HOME: join(job.job, "home"),
     HOME: job.user,
     GITHUB_ACTIONS: "true",
+    // chernabog's own workflow, whose runs never wake a flow: not the repo's
+    // CI that the events below finish, whatever the runner running this sets.
+    GITHUB_WORKFLOW: "chernabog",
     GITHUB_REPOSITORY: "dataquail/demo",
     GITHUB_WORKSPACE: workspace,
     GITHUB_OUTPUT: job.output,
