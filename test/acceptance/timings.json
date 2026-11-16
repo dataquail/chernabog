@@ -24,6 +24,7 @@
     "test/acceptance/ci-plan-phase.test.ts": 19835,
     "test/acceptance/marker-leases.test.ts": 17945,
     "test/acceptance/review-coverage.test.ts": 17092,
+    "test/acceptance/ci-park.test.ts": 12000,
     "test/acceptance/machine-config.test.ts": 10796,
     "test/acceptance/ci-workflow.test.ts": 9704,
     "test/acceptance/daemon-commands.test.ts": 8726,

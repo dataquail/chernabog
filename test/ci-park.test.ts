@@ -3,16 +3,21 @@
 // round it waits on and parks the run, so `ci run` ends the job rather than
 // billing the wait. A daemon's run, or one with nowhere to park, polls.
 
-import { defineFlow, Implement, NeedsHuman, Phases } from "@chernabog/sdk";
+import { DEFAULT_LABELS, defineFlow, Implement, NeedsHuman, Phases } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import implement from "../packages/recipes/flows/implement.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
   type EngineRun,
+  type Fake,
+  flowTriggered,
+  ISSUE,
   item,
   makeFake,
   onFake,
@@ -190,6 +195,162 @@ describe("waitingOnCi", () => {
       expect(yield* onFake(fake, Implement.waitingOnCi(PULL))).toEqual(Option.none());
       fake.merge.ci = { state: "green" };
       expect(yield* onFake(fake, Implement.waitingOnCi(PULL))).toEqual(Option.none());
+    }),
+  );
+});
+
+// The implement recipe in a CI job: it ends the job on pending CI, and a
+// later job resumes the issue from its record once CI has finished.
+describe("implement in a CI job", () => {
+  const implementing = flowHandle(repo, "implement", implement);
+  const ISSUE_ITEM = Phases.issueItem(ISSUE);
+  const POOL = { reviewers: ["zach", "data-quail"] };
+  const PULL_URL = `https://github.com/dataquail/demo/pull/${PULL}`;
+
+  // A queued issue, implemented in a CI job.
+  const queuedInCi = () => {
+    const fake = makeFake("approve", { ...POOL, ciJob: true });
+    fake.setLabels(ISSUE, [DEFAULT_LABELS.eligible]);
+
+    return fake;
+  };
+
+  // The issue's pull request open, and its record saying a CI job parked on round `round`.
+  const parkedInCi = (round: number) => {
+    const fake = makeFake("approve", { ...POOL, ciJob: true });
+    fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+    fake.git.opened = true;
+    fake.recordPhase(ISSUE_ITEM, Phases.awaitingCi(round));
+
+    return fake;
+  };
+
+  const resumes = (fake: Fake) =>
+    flowTriggered(fake, implement).pipe(
+      Effect.map((items) => items.filter((found) => Option.isSome(Implement.resumingCi(found)))),
+      Effect.orDie,
+    );
+
+  // The one item the trigger offers to resume.
+  const onlyResume = (fake: Fake) =>
+    Effect.flatMap(resumes(fake), (items) => Effect.fromOption(Arr.head(items))).pipe(Effect.orDie);
+
+  effect(
+    "ends the job on pending CI, having opened the pull request and recorded the wait on the issue",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedInCi();
+        fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+
+        const run = yield* runUntil(
+          implementing,
+          fake,
+          item(`issue-${ISSUE}`, { issue: ISSUE }),
+          (polled) => parkedOn(polled, 1),
+        );
+
+        expect(run.status).toBe("running");
+        expect(fake.git.opened).toBe(true);
+        expect(fake.phases()[ISSUE_ITEM]).toBe("awaiting-ci");
+        // Not handed off: nobody is asked to review it yet.
+        expect(fake.people.requested).toEqual([]);
+        expect(fake.phases()[PR_ITEM]).toBeUndefined();
+      }),
+  );
+
+  effect("holds the parked issue while CI runs, and offers it to resume once CI finishes", () =>
+    Effect.gen(function* () {
+      const fake = parkedInCi(2);
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+
+      const held = yield* resumes(fake);
+      expect(held.map((found) => [found.key, found.held])).toEqual([
+        [`issue-${ISSUE}`, `waits on CI for #${PULL}`],
+      ]);
+
+      fake.merge.ci = { state: "green" };
+      const ready = yield* resumes(fake);
+      expect(
+        ready.map((found) => [found.key, Option.fromUndefinedOr(found.held), found.data]),
+      ).toEqual([
+        [
+          `issue-${ISSUE}`,
+          Option.none(),
+          { issue: ISSUE, resumeCi: { pullRequest: PULL, url: PULL_URL, round: 2 } },
+        ],
+      ]);
+    }),
+  );
+
+  effect("offers nothing to resume for an issue a person has, or with no pull request open", () =>
+    Effect.gen(function* () {
+      const handed = parkedInCi(1);
+      handed.setLabels(ISSUE, [DEFAULT_LABELS.needsHuman]);
+      expect(yield* resumes(handed)).toEqual([]);
+
+      const unopened = parkedInCi(1);
+      unopened.git.opened = false;
+      expect(yield* resumes(unopened)).toEqual([]);
+
+      const elsewhere = parkedInCi(1);
+      elsewhere.recordPhase(ISSUE_ITEM, "handed-off");
+      expect(yield* resumes(elsewhere)).toEqual([]);
+    }),
+  );
+
+  effect("resumed once CI is green, hands the pull request off without implementing again", () =>
+    Effect.gen(function* () {
+      const fake = parkedInCi(1);
+      const finished = yield* runToEnd(implementing, fake, yield* onlyResume(fake));
+
+      expect(finished.status).toBe("done");
+      expect(summaryOf(finished)).toBe(`#${ISSUE}: ${PULL_URL} is ready for review`);
+      expect(fake.requests).toEqual([]);
+      expect(fake.git.pushes).toBe(0);
+      // One reviewer from the pool is asked.
+      expect(fake.people.requested).toHaveLength(1);
+      expect(POOL.reviewers).toContain(fake.people.requested[0] ?? "");
+      expect(fake.phases()[ISSUE_ITEM]).toBe("handed-off");
+      expect(fake.phases()[PR_ITEM]).toBe("review-asked");
+      // The issue says where the pull request is, and that CI passed after the job that opened it.
+      expect(
+        fake.comments.some(
+          (comment) =>
+            comment.body.startsWith(`Pull request ready for review: ${PULL_URL}`) &&
+            comment.body.includes("CI passed after the job that opened it ended"),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  effect(
+    "resumed on red CI, fixes it in a worktree on the issue's branch, from the recorded round",
+    () =>
+      Effect.gen(function* () {
+        const fake = parkedInCi(2);
+        fake.merge.ci = { state: "red", failedChecks: ["test"] };
+        fake.merge.afterPush = Option.some({ state: "green" });
+        const finished = yield* runToEnd(implementing, fake, yield* onlyResume(fake));
+
+        expect(finished.status).toBe("done");
+        expect(fake.requests).toHaveLength(1);
+        expect(fake.requests[0]?.cwd).toBe(`/tmp/demo-worktrees/auto/issue-${ISSUE}`);
+        expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
+        expect(fake.git.pushes).toBe(1);
+        expect(fake.phases()[ISSUE_ITEM]).toBe("handed-off");
+      }),
+  );
+
+  effect("resumed on red CI past ciRounds, goes to a person", () =>
+    Effect.gen(function* () {
+      const fake = parkedInCi(4);
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+      const finished = yield* runToEnd(implementing, fake, yield* onlyResume(fake));
+
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain("CI is still red after 3 fix attempts");
+      expect(fake.requests).toEqual([]);
+      expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
     }),
   );
 });

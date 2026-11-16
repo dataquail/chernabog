@@ -232,8 +232,8 @@ describe("a flow's events", () => {
         readsPhases: true,
       }),
       implement: Option.some({
-        events: ["issues: labeled", "pull_request: ready_for_review"],
-        readsPhases: false,
+        events: ["issues: labeled", "pull_request: ready_for_review", "workflow_run: completed"],
+        readsPhases: true,
       }),
       plan: Option.some({
         events: ["issues: labeled", "issue_comment: created"],
