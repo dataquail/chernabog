@@ -41,7 +41,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-// Issues labelled auto:eligible, then ones labelled auto:ship, the automated
+// Issues whose run a CI job left waiting on its pull request's CI first, to
+// finish what's started: each is held until the checks are green or red.
+// Then issues labelled auto:eligible, then ones labelled auto:ship, the automated
 // path, whose pull request chernabog merges once it's approved. Oldest first,
 // but a post-merge follow-up, the fix for red CI on the base, before the rest;
 // with a board, only those whose Status is its readyStatus. An issue another
@@ -59,8 +61,9 @@ const trigger = Effect.gen(function* () {
     (issue) => !eligible.some((queued) => queued.number === issue.number),
   );
 
-  // A follow-up fixing red CI on the base goes first, ahead of other work.
+  // A follow-up fixing red CI on the base goes first, ahead of other new work.
   return [
+    ...(yield* Implement.awaitingCi),
     ...(yield* Implement.queued(Implement.followUpsFirst(eligible))),
     ...(yield* Implement.queued(Implement.followUpsFirst(shipping), Option.some(labelNames.ship))),
     ...(yield* Implement.readied),
@@ -121,6 +124,30 @@ const flow = defineFlow({
         const claimed = yield* Implement.claim(issue, { ...queued, adopt: true });
         const { base, branch } = claimed;
         const adoption = Option.fromUndefinedOr(claimed.adopted);
+        const resuming = Implement.resumingCi(item);
+
+        // A CI job ended while this issue's pull request's CI ran, and it has
+        // finished: wait on from the round the record names (a fix of red CI
+        // starts a session of its own), then hand off.
+        if (Option.isSome(resuming)) {
+          const waited = resuming.value;
+          pullRequest = Option.some(waited.pullRequest);
+
+          return yield* Effect.gen(function* () {
+            yield* Implement.waitForCiMaking(
+              waited.pullRequest,
+              Implement.prepareWorktree(branch, { base }),
+              { ...Implement.thisRunsSession, branch, base },
+              { ...Implement.parkOnIssue(issue), firstRound: waited.round },
+            );
+
+            return yield* Implement.handOff(
+              issue,
+              { number: waited.pullRequest, url: waited.url },
+              Implement.resumedOutcome,
+            );
+          }).pipe(Effect.catchTags(forPerson));
+        }
 
         if (Option.isSome(adoption)) {
           const adopted = adoption.value;
@@ -169,11 +196,14 @@ const flow = defineFlow({
           yield* Implement.push("push", worktree, branch, { base });
           const opened = yield* Implement.openPullRequest(issue, outcome, { ...queued, base });
           pullRequest = Option.some(opened.number);
-          yield* Implement.waitForCi(opened.number, worktree, {
-            ...Implement.thisRunsSession,
-            branch,
-            base,
-          });
+          // In a CI job, still-pending CI ends the job here, and the item
+          // comes back through Implement.awaitingCi once CI finishes.
+          yield* Implement.waitForCi(
+            opened.number,
+            worktree,
+            { ...Implement.thisRunsSession, branch, base },
+            Implement.parkOnIssue(issue),
+          );
 
           return yield* Implement.handOff(issue, opened, outcome);
         }).pipe(Effect.catchTags(forPerson));
@@ -192,9 +222,11 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: an issue labelled to queue it, and a draft
-// its author marks ready, which wakes an adopted one's run.
+// rather than only on the schedule: an issue labelled to queue it, a draft
+// its author marks ready, which wakes an adopted one's run, and a finished CI
+// run, which frees an issue a CI job left waiting on its pull request's CI.
+// Its trigger reads issues' phases for those, so a phase event wakes it too.
 export default Events.declare(flow, {
-  events: [Events.issueLabelled, Events.readyForReview],
-  readsPhases: false,
+  events: [Events.issueLabelled, Events.readyForReview, Events.ciCompleted],
+  readsPhases: true,
 });
