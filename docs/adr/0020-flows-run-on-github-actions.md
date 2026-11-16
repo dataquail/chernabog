@@ -61,6 +61,20 @@ what that test found.
    what the agent left, so the work survives even though the session
    doesn't. The run log and the transcripts are uploaded as an artifact,
    kept 5 days, for diagnosis only.
+
+   **Waiting for CI (#513).** A wait for a pull request's CI was a durable
+   sleep between readings, not a park, so a run job followed it to the end
+   and billed the whole wait. Now a flow that can resume from its record
+   passes `waitForCi` a `park` item, and in a CI job (core's
+   `RepoSettings.ciJob`, which `ci run` sets) a first reading still pending
+   records `awaiting-ci` (`awaiting-ci-<n>` for fix round n) and parks. The
+   flow's trigger holds the item while the checks pend and starts it once
+   they settle, from `workflow_run: completed` or the sweep, and the new run
+   waits on from the recorded round. Implement records on the issue and
+   address-review on the pull request. The other flows that wait on CI, and
+   flow documents, still wait inside the job. A parked item has no deadline:
+   a record has no time, so `ciTimeout` applies only within one job.
+
 6. **Claims and phases for correctness, not Actions.** Claim refs and the
    phase store's compare-and-advance keep two runs off one item, including a
    CI run and a daemon on someone's machine at once. A run job's claim is a

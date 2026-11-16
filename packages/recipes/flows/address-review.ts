@@ -33,7 +33,11 @@ import * as Schema from "effect/Schema";
 // left moves the record there first.
 // A person has one labelled auto:needs-human, and a run of another flow one it
 // owns; both are left alone. Each is routed by its assignees and reviewers.
-const trigger = Review.changesToAddress.pipe(reportAs("trigger"));
+// Then pull requests whose fix a CI job pushed, ending the job while its CI
+// ran: each is held until the checks are green or red.
+const trigger = Effect.gen(function* () {
+  return [...(yield* Review.changesToAddress), ...(yield* Review.fixesAwaitingCi)];
+}).pipe(reportAs("trigger"));
 
 const answerReview = (address: Review.AddressItem) =>
   Effect.gen(function* () {
@@ -83,13 +87,51 @@ const answerReview = (address: Review.AddressItem) =>
       base: address.baseRef,
       withPerson: session.withPerson,
     });
+    // In a CI job, still-pending CI ends the job here, and the pull request
+    // comes back through Review.fixesAwaitingCi once CI finishes.
     yield* Implement.waitForCi(
       address.pullRequest,
       worktree,
       { ...session, branch: address.headRef, base: address.baseRef },
-      { id: `review-${round}` },
+      { id: `review-${round}`, ...Review.parkOnPullRequest(address.pullRequest) },
     );
     yield* Review.askAgain(address.pullRequest, round, address.reviewer, outcome.summary);
+
+    return `#${address.pullRequest}: addressed review ${round}; asked ${address.reviewer} to review again`;
+  });
+
+// The fix is pushed, and a CI job ended while its CI ran, which has finished:
+// wait on from the round the record names (a fix of red CI resumes the
+// author's session), then ask the reviewer again.
+const resumeCi = (address: Review.AddressItem, resumed: Review.ResumingCi) =>
+  Effect.gen(function* () {
+    const review = yield* Review.changesAsked(address);
+    const round = review.round ?? 1;
+    const author = yield* Review.authorSession(address.pullRequest);
+
+    const session = {
+      sessionId: Option.some(author.sessionId),
+      adapter: Option.some(author.adapter),
+      withPerson: author.withPerson === true,
+    };
+
+    const worktree = yield* Review.prepareAuthorWorktree(address.headRef);
+    yield* Implement.waitForCi(
+      address.pullRequest,
+      worktree,
+      { ...session, branch: address.headRef, base: address.baseRef },
+      {
+        id: `review-${round}`,
+        ...Review.parkOnPullRequest(address.pullRequest),
+        firstRound: resumed.round,
+      },
+    );
+    yield* Review.askAgain(
+      address.pullRequest,
+      round,
+      address.reviewer,
+      "the commits pushed since that review. Their CI finished after the job that pushed them ended.",
+    );
 
     return `#${address.pullRequest}: addressed review ${round}; asked ${address.reviewer} to review again`;
   });
@@ -103,7 +145,17 @@ const workflow = (item: WorkItem) =>
     // Anything that stops it hands the pull request to a person, unless it
     // closed meanwhile. It owns the pull request throughout, so no other run
     // pushes to the branch under it; one another run owns is skipped.
-    return yield* answerReview(address).pipe(
+    const answering = Effect.gen(function* () {
+      const resumed = Review.resumingCi(address);
+
+      if (Option.isSome(resumed)) {
+        return yield* resumeCi(address, resumed.value);
+      }
+
+      return yield* answerReview(address);
+    });
+
+    return yield* answering.pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
         StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
@@ -144,6 +196,10 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: a review submitted. Its trigger reads each
+// rather than only on the schedule: a review submitted, and a finished CI run,
+// which frees a fix a CI job left waiting on its CI. Its trigger reads each
 // pull request's phase, so a phase event wakes it too.
-export default Events.declare(flow, { events: [Events.reviewSubmitted], readsPhases: true });
+export default Events.declare(flow, {
+  events: [Events.reviewSubmitted, Events.ciCompleted],
+  readsPhases: true,
+});

@@ -218,7 +218,7 @@ describe("a flow's events", () => {
 
     expect(declared).toEqual({
       "address-review": Option.some({
-        events: ["pull_request_review: submitted"],
+        events: ["pull_request_review: submitted", "workflow_run: completed"],
         readsPhases: true,
       }),
       epic: Option.some({

@@ -22,7 +22,13 @@ Each line is one SDK block, in the order the recipe calls them.
 3. `implementWithAgent` — the agent implements test first, with `notes` and `humanOnly` in its prompt. It may answer with questions instead: `askForClarification` posts them and labels the issue `auto:needs-clarification`.
 4. `localGate` — runs each `localGate` command; on failure sends the agent back, up to `localGateRounds`.
 5. `push` — a change touching `humanOnlyPaths` stops here, at `auto:needs-human`, and so does a branch with no commits; when the agent left its changes staged or unstaged instead, the reason names the files.
-6. `openPullRequest`, then `waitForCi` — an `auto:ship` issue's pull request is labelled `auto:ship`. Waits up to `ciTimeout`, fixing red up to `ciRounds`.
+6. `openPullRequest`, then `waitForCi` — an `auto:ship` issue's pull request is labelled `auto:ship`. Waits up to `ciTimeout`, fixing red up to `ciRounds`. In a [CI job](/chernabog/operate/github-actions/), CI that is still pending ends the job instead: see [On GitHub Actions](#on-github-actions).
 7. `handOff` — records the pull request's [phase](/chernabog/operate/progress/) as `review-asked` (`draft` for a draft) and the issue's as `handed-off`, then asks one reviewer from the pool for a review.
 
 However the run ends, `Claims.releasing` lets the claim go; the branch and any pull request stay. Anything that stops it once the issue is claimed hands the issue, and its pull request if one is open, to a person with `auto:needs-human`.
+
+## On GitHub Actions
+
+A run job doesn't wait on a billed runner for its pull request's CI. When the first reading of the checks is still pending, `waitForCi` records the issue's phase as `awaiting-ci`, or `awaiting-ci-<n>` once it has pushed fixes for red CI, and the job ends. A daemon run waits as before.
+
+The trigger reads those records first (`Implement.awaitingCi`). It holds the issue while its pull request's checks are pending, and `chernabog status` and the plan job's summary show `waits on CI for #<n>`. Once they're green or red, a finished CI run (`workflow_run: completed`) or the sweep starts implement on it again. That run claims the issue, waits on from the round the record names, fixing red CI in a new session if it has to, and hands the pull request off. It doesn't implement the issue again, and the issue's comment says CI passed after the job that opened the pull request ended.

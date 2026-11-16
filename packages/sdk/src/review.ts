@@ -41,7 +41,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
-import { ADOPTED_LABEL, sessionIdFor } from "./implement.ts";
+import { ADOPTED_LABEL, type CiWait, sessionIdFor, waitingOnCi } from "./implement.ts";
 import * as Phases from "./phases.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
@@ -867,6 +867,16 @@ export const decisiveReviews = (pullRequest: number) =>
 
 // address-review's work item for a review that asks for changes, the
 // `count`th decisive review of the pull request.
+// What address-review needs of the pull request and the review it answers.
+const addressData = (pull: PullRequest, review: SubmittedReview) => ({
+  pullRequest: pull.number,
+  headRef: pull.headRef,
+  baseRef: pull.baseRef,
+  agentWritten: isAgentBranch(pull.headRef),
+  reviewer: review.author,
+  reviewedSha: review.commitSha,
+});
+
 export const addressItem = (
   pull: PullRequest,
   review: SubmittedReview,
@@ -875,24 +885,25 @@ export const addressItem = (
   key: `pr-${pull.number}-changes-${count}`,
   title: pull.title,
   url: pull.url,
-  data: {
-    pullRequest: pull.number,
-    headRef: pull.headRef,
-    baseRef: pull.baseRef,
-    agentWritten: isAgentBranch(pull.headRef),
-    reviewer: review.author,
-    reviewedSha: review.commitSha,
-  },
+  data: addressData(pull, review),
 });
+
+// The round of CI a CI job's address-review run parked on (awaitingCi),
+// which the job that resumes the work waits on.
+export const ResumingCi = Schema.Struct({ round: Schema.Finite });
+
+export type ResumingCi = typeof ResumingCi.Type;
 
 // baseRef: the pull request's base, which a layer of a stack has as the
 // layer below's branch. An item saved without it pushes against the repo's
-// base branch.
+// base branch. resumeCi: the fix is pushed, and a CI job ended while its CI
+// ran (fixesAwaitingCi).
 export const AddressItem = Schema.Struct({
   ...ReviewItem.fields,
   baseRef: Schema.optionalKey(Schema.String),
   reviewer: Schema.String,
   reviewedSha: Schema.String,
+  resumeCi: Schema.optionalKey(ResumingCi),
 });
 
 export type AddressItem = typeof AddressItem.Type;
@@ -1041,6 +1052,77 @@ export const changesToAddress = Effect.gen(function* () {
 
   return items;
 });
+
+// Where address-review parks in a CI job while the CI of its pushed fix
+// runs: on the pull request's record, which fixesAwaitingCi reads to resume.
+export const parkOnPullRequest = (pullRequest: number): CiWait => ({
+  park: Phases.pullRequestItem(pullRequest),
+});
+
+// One pull request whose record says a CI job parked on its fix's CI, as a
+// work item that resumes the wait: the review it addresses is the latest
+// decisive one, which asks for changes on the commit the fix was pushed
+// over. Held while the checks are pending.
+const fixAwaitingCi = (pull: PullRequest, found: PhaseRecord, round: number) =>
+  Effect.gen(function* () {
+    const decisive = yield* decisiveReviews(pull.number);
+
+    const asked = Option.filter(
+      Arr.last(decisive),
+      (review) => review.state === "CHANGES_REQUESTED",
+    );
+
+    if (Option.isNone(asked) || (yield* ownedByARun(pull))) {
+      return Option.none<WorkItem>();
+    }
+
+    const item: WorkItem = {
+      ...reviewItem(pull, Phases.keyFor(Phases.pullRequestItem(pull.number), found)),
+      data: { ...addressData(pull, asked.value), resumeCi: { round } },
+    };
+
+    return Option.some(
+      Option.match(yield* waitingOnCi(pull.number), {
+        onNone: () => item,
+        onSome: (held) => ({ ...item, held }),
+      }),
+    );
+  });
+
+// Pull requests this persona wrote whose fix for a review a CI job pushed,
+// and ended the job while its CI ran (their record is awaitingCi), as work
+// items that resume that wait: held while the checks are pending, and free to
+// start once they're green or red. One a person has (auto:needs-human), or a
+// run of another flow owns, is left alone. Each is routed by its assignees
+// and reviewers.
+export const fixesAwaitingCi = Effect.gen(function* () {
+  const labelNames = yield* Settings.labels;
+  const all = yield* Phases.records;
+  const items: Array<WorkItem> = [];
+
+  for (const pull of yield* authoredByMe) {
+    if (pull.labels.includes(labelNames.needsHuman)) {
+      continue;
+    }
+
+    const parked = Option.flatMap(
+      Phases.recordOf(all, Phases.pullRequestItem(pull.number)),
+      (found) => Option.map(Phases.ciRoundOf(found.phase), (round) => ({ found, round })),
+    );
+
+    for (const { found, round } of Option.toArray(parked)) {
+      for (const resumed of Option.toArray(yield* fixAwaitingCi(pull, found, round))) {
+        items.push(yield* routedUnlessHeld(pull, resumed));
+      }
+    }
+  }
+
+  return items;
+});
+
+// The wait an address-review item from fixesAwaitingCi resumes; none for any other.
+export const resumingCi = (address: AddressItem): Option.Option<ResumingCi> =>
+  Option.fromUndefinedOr(address.resumeCi);
 
 // The author's session, from the marker the implement run left; a fresh one
 // for `purpose` if there is none. Outside an activity, for a block that reads

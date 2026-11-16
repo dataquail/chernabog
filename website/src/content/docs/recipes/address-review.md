@@ -24,9 +24,15 @@ A pull request with no record yet, one handed off before chernabog recorded phas
 3. `Implement.considerFindings` — resumes that session and asks whether to address the findings:
    - **Disagree.** It posts "Not addressing review N:" with its reasons and hands the pull request to a person. It doesn't push, and doesn't ask the reviewer again.
    - **Agree.** `Implement.addressFindings` makes and commits the changes.
-4. `Review.checkChanged`, `Implement.localGate`, `Implement.push` and `Implement.waitForCi` — checks something was committed and nothing was left uncommitted, runs the local gate, pushes, and waits for CI, fixing red up to `ciRounds`.
+4. `Review.checkChanged`, `Implement.localGate`, `Implement.push` and `Implement.waitForCi` — checks something was committed and nothing was left uncommitted, runs the local gate, pushes, and waits for CI, fixing red up to `ciRounds`. In a [CI job](/chernabog/operate/github-actions/), CI that is still pending ends the job instead: see [On GitHub Actions](#on-github-actions).
 5. `Review.askAgain` — comments "Addressed review N:" with what changed, asks the reviewer who requested the changes to review again, and records `review-asked-again`.
 
 On a pull request from the [hybrid path](/chernabog/recipes/human-initiated/), the session marker says a person worked in the session, so `address-review` reopens it in front of them: the person and the agent weigh the review, make the changes, and fix the local gate and CI there, together. Its push passes `{ withPerson: session.withPerson }`, so a fix that touches `humanOnlyPaths` pushes on that pull request, and goes to a person on one an unattended run opened. See [Trust](/chernabog/operate/trust/).
 
 Anything else that stops it, such as CI still red, a failing local gate, the agent needing an answer, or a failed step, hands the pull request to a person with `auto:needs-human`. A person settles a dispute, removes the label, and asks the reviewer again if it should look again.
+
+## On GitHub Actions
+
+A run job doesn't wait on a billed runner for its fix's CI. When the first reading of the checks after the push is still pending, `waitForCi` records the pull request's phase as `awaiting-ci`, or `awaiting-ci-<n>` once it has pushed fixes for red CI, and the job ends. A daemon run waits as before.
+
+The trigger also reads those records (`Review.fixesAwaitingCi`), keyed `pr-<n>-awaiting-ci-<version>`. It holds the pull request while the checks are pending, and starts address-review on it again once they're green or red, from a finished CI run (`workflow_run: completed`) or the sweep. That run reads the review it answers again, waits on from the round the record names, fixing red CI in the author's session if it has to, and asks the reviewer again. The agent's summary of its changes was only in the job that ended, so the comment reads "Addressed review N: the commits pushed since that review."
