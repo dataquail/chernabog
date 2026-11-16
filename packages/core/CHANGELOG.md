@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/dataquail/chernabog/compare/core-v1.3.0...core-v1.4.0) (2026-11-16)
+
+
+### Features
+
+* **sdk:** a CI job's wait for CI parks on a record instead of polling ([#514](https://github.com/dataquail/chernabog/issues/514)) ([c9b1003](https://github.com/dataquail/chernabog/commit/c9b10037ec4402f4650858bfbd9d773a867965f4))
+
 ## [1.3.0](https://github.com/dataquail/chernabog/compare/core-v1.2.0...core-v1.3.0) (2026-11-10)
 
 

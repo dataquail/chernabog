@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/dataquail/chernabog/compare/recipes-v0.5.0...recipes-v0.6.0) (2026-11-16)
+
+
+### Features
+
+* **recipes:** address-review ends a CI job on its fix's pending CI and resumes from the record ([#516](https://github.com/dataquail/chernabog/issues/516)) ([0977189](https://github.com/dataquail/chernabog/commit/097718933d92706cb1f8b6b541c0750722a89dcd))
+* **recipes:** implement ends a CI job on pending CI and resumes from the issue's record ([#515](https://github.com/dataquail/chernabog/issues/515)) ([0f21f25](https://github.com/dataquail/chernabog/commit/0f21f254bb78b425640c8f5abad4b988a7ef4980))
+
 ## [0.5.0](https://github.com/dataquail/chernabog/compare/recipes-v0.4.1...recipes-v0.5.0) (2026-11-10)
 
 

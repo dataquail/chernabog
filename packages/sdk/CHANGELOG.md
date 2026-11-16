@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.0](https://github.com/dataquail/chernabog/compare/sdk-v0.12.0...sdk-v0.13.0) (2026-11-16)
+
+
+### Features
+
+* **recipes:** address-review ends a CI job on its fix's pending CI and resumes from the record ([#516](https://github.com/dataquail/chernabog/issues/516)) ([0977189](https://github.com/dataquail/chernabog/commit/097718933d92706cb1f8b6b541c0750722a89dcd))
+* **recipes:** implement ends a CI job on pending CI and resumes from the issue's record ([#515](https://github.com/dataquail/chernabog/issues/515)) ([0f21f25](https://github.com/dataquail/chernabog/commit/0f21f254bb78b425640c8f5abad4b988a7ef4980))
+* **sdk:** a CI job's wait for CI parks on a record instead of polling ([#514](https://github.com/dataquail/chernabog/issues/514)) ([c9b1003](https://github.com/dataquail/chernabog/commit/c9b10037ec4402f4650858bfbd9d773a867965f4))
+
 ## [0.12.0](https://github.com/dataquail/chernabog/compare/sdk-v0.11.1...sdk-v0.12.0) (2026-11-10)
 
 
