@@ -926,6 +926,13 @@ How a CI run differs from a daemon run:
 - **A job ends at a phase boundary.** Where a daemon run parks, `ci run`
   lets go of the claim and exits 0; the event that settles the wait starts
   the next job. Its claim is a short lease it renews.
+- **A wait for CI parks only where the flow can resume** (#513).
+  `Implement.waitForCi` with a `park` item, in a CI job (`RepoSettings.ciJob`,
+  set by `asCiJob` in `ci-run.main.ts`), records `awaiting-ci[-n]` on that
+  item and parks on `ci-settled`; the flow's trigger then holds the item
+  while CI pends (`Implement.waitingOnCi`) and resumes from the record
+  (`Implement.awaitingCi`, `Review.fixesAwaitingCi`). A flow that passes no
+  `park` polls inside the job, as every flow does on a daemon.
 - **A failed CI run is never resumed.** The runner and its journal are gone.
   The next job repeats the phase from its start, from the work-in-progress
   commit `ci run` pushed. The run log and transcripts it copies to `--logs`

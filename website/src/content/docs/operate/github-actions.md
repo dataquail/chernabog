@@ -9,7 +9,7 @@ How it runs:
 
 - **A plan job, then a run job per item.** The plan job, [`chernabog ci plan`](/chernabog/work/commands/#ci-plan), runs the CI flows' triggers and lists the items to start. Each item gets a run job, [`chernabog ci run`](/chernabog/work/commands/#ci-run), on a runner of its own, at most `ci.maxParallel` at once.
 - **Events first, with a sweep behind them.** Whatever can change a flow's answer starts the plan job: a label, a review, a pull request closing, a CI run finishing, or a [phase](/chernabog/operate/progress/) advance (sent as `repository_dispatch` `chernabog-phase`). The plan job re-reads GitHub each time, so a duplicate event only costs one plan job. A slower scheduled sweep, `ci.schedule`, plans across every item and picks up anything a dropped event missed.
-- **A job ends at a phase boundary.** Where a run on your laptop would wait (for CI, a review or a person), a run job records its phase and ends rather than waiting on a billed runner. The event that settles the wait starts the next job.
+- **A job ends at a phase boundary.** Where a run on your laptop would wait (for CI, a review or a person), a run job records its phase and ends rather than waiting on a billed runner. The event that settles the wait starts the next job. [`implement`](/chernabog/recipes/implement/#on-github-actions) and [`address-review`](/chernabog/recipes/address-review/#on-github-actions) end the job while their pull request's CI runs, and a finished CI run starts the next one. The other flows that wait on CI (`resolve-conflicts`, `human-initiated`, `epic`, and flow documents) still wait for it inside the job, and are billed for that wait.
 - **Claims keep two runs off one item**, whether both are in CI or one is a daemon on someone's machine. You can run a flow in CI and on a daemon at once. It's only wasteful.
 
 ## Set it up
@@ -146,9 +146,9 @@ Team and Enterprise plans include their own credit; check the billing page of yo
 
 A private repo's runner has 2 cores, and a public repo's has 4, so a private repo's jobs take longer. The repo's full test suite took 6 minutes on 4 cores and 12 on 2.
 
-**What a job costs.** Setup before the agent starts takes about 10 seconds. A run job costs roughly $0.006 × (the agent's minutes + the test minutes + 1). A plan job is billed at least a minute each time any event starts it, even when it starts nothing.
+**What a job costs.** Setup before the agent starts takes about 10 seconds. A run job costs roughly $0.006 × (the agent's minutes + 1). Where a flow ends its job on pending CI, the CI's own minutes are billed once, to the CI workflow, and the job that picks the work up again costs another minute or so, plus a plan job. Where a flow still waits for CI inside the job, add the test minutes. A plan job is billed at least a minute each time any event starts it, even when it starts nothing.
 
-**A measured run.** The first real chain on the rehearsal repo ([#465](https://github.com/dataquail/chernabog/issues/465)) had three plan jobs of 11 to 18 seconds and one implement run job of 2 minutes 13 seconds: claim, the agent's change, push, open the pull request, wait about 70 seconds for its CI, and ask for a review. The repo is public, so nothing was billed. On a private repo it would bill 1 minute for each plan job and 3 for the run job, 6 minutes in all, about $0.04.
+**A measured run.** The first real chain on the rehearsal repo ([#465](https://github.com/dataquail/chernabog/issues/465)) had three plan jobs of 11 to 18 seconds and one implement run job of 2 minutes 13 seconds: claim, the agent's change, push, open the pull request, wait about 70 seconds for its CI, and ask for a review. The repo is public, so nothing was billed. On a private repo it would bill 1 minute for each plan job and 3 for the run job, 6 minutes in all, about $0.04. That run waited for CI inside its job; implement now ends the job there instead ([#513](https://github.com/dataquail/chernabog/issues/513)).
 
 **A worked example.** Three private repos, each running agents for 2 hours a day:
 

@@ -3,12 +3,22 @@
 // round it waits on and parks the run, so `ci run` ends the job rather than
 // billing the wait. A daemon's run, or one with nowhere to park, polls.
 
-import { DEFAULT_LABELS, defineFlow, Implement, NeedsHuman, Phases } from "@chernabog/sdk";
+import {
+  DEFAULT_LABELS,
+  defineFlow,
+  Implement,
+  NeedsHuman,
+  Phases,
+  Review,
+  reviewMarker,
+} from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
 import implement from "../packages/recipes/flows/implement.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
@@ -17,6 +27,7 @@ import {
   type EngineRun,
   type Fake,
   flowTriggered,
+  HEAD,
   ISSUE,
   item,
   makeFake,
@@ -351,6 +362,210 @@ describe("implement in a CI job", () => {
       expect(summaryOf(finished)).toContain("CI is still red after 3 fix attempts");
       expect(fake.requests).toEqual([]);
       expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
+    }),
+  );
+});
+
+// The address-review recipe in a CI job: it ends the job on its pushed fix's
+// pending CI, and a later job asks the reviewer again once CI has finished.
+describe("address-review in a CI job", () => {
+  const addressing = flowHandle(repo, "address-review", addressReview);
+
+  // A pull request this persona wrote, whose latest review, by data-quail,
+  // asks for changes on HEAD, in a CI job.
+  const changesAsked = () => {
+    const fake = makeFake("approve", { ciJob: true });
+    fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+    fake.comment(
+      reviewMarker.write({
+        sha: HEAD,
+        round: 1,
+        verdict: "request-changes",
+        reviewer: "data-quail",
+        sessionId: "review-session",
+        adapter: "codex",
+      }),
+    );
+    fake.comment(
+      'Implemented by claude for #3. <!-- chernabog-session {"adapter":"claude","sessionId":"implement-session","issue":3,"branch":"auto/issue-3"} -->',
+    );
+    // The implement run's push.
+    fake.git.pushes = 1;
+
+    return fake;
+  };
+
+  // The fix pushed over HEAD, and the record saying a CI job parked on round `round`.
+  const fixParked = (round: number) => {
+    const fake = changesAsked();
+    fake.git.pushes = 2;
+    fake.git.head = "fix20000000";
+    fake.recordPhase(PR_ITEM, Phases.awaitingCi(round));
+
+    return fake;
+  };
+
+  const resumes = (fake: Fake) =>
+    flowTriggered(fake, addressReview).pipe(
+      Effect.map((items) =>
+        items.filter((found) =>
+          Option.exists(Schema.decodeUnknownOption(Review.AddressItem)(found.data), (address) =>
+            Option.isSome(Review.resumingCi(address)),
+          ),
+        ),
+      ),
+      Effect.orDie,
+    );
+
+  const onlyResume = (fake: Fake) =>
+    Effect.flatMap(resumes(fake), (items) => Effect.fromOption(Arr.head(items))).pipe(Effect.orDie);
+
+  effect(
+    "pushes the fix and ends the job on its pending CI, recording the wait on the pull request",
+    () =>
+      Effect.gen(function* () {
+        const fake = changesAsked();
+        fake.merge.afterPush = Option.some({ state: "pending", waitingOn: ["test"] });
+
+        const run = yield* runUntil(
+          addressing,
+          fake,
+          item(`pr-${PULL}-changes-1`, {
+            pullRequest: PULL,
+            headRef: "auto/issue-3",
+            agentWritten: true,
+            reviewer: "data-quail",
+            reviewedSha: HEAD,
+          }),
+          (polled) =>
+            Effect.map(
+              listRunWaitsHandler({ runId: polled.id, signal: Implement.CI_SETTLED }),
+              ({ waits }) => waits.length > 0,
+            ),
+        );
+
+        expect(run.status).toBe("running");
+        expect(fake.git.pushes).toBe(2);
+        expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
+        // The reviewer isn't asked again until CI has finished.
+        expect(fake.people.requested).toEqual([]);
+      }),
+  );
+
+  effect("holds the parked fix while CI runs, and offers it to resume once CI finishes", () =>
+    Effect.gen(function* () {
+      const fake = fixParked(2);
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+
+      const held = yield* resumes(fake);
+      expect(
+        held.map((found) => [found.key.startsWith(`pr-${PULL}-awaiting-ci-2-`), found.held]),
+      ).toEqual([[true, `waits on CI for #${PULL}`]]);
+
+      fake.merge.ci = { state: "green" };
+      const ready = yield* resumes(fake);
+      expect(ready.map((found) => [Option.fromUndefinedOr(found.held), found.data])).toEqual([
+        [
+          Option.none(),
+          {
+            pullRequest: PULL,
+            headRef: "auto/issue-3",
+            baseRef: "main",
+            agentWritten: true,
+            reviewer: "data-quail",
+            reviewedSha: HEAD,
+            resumeCi: { round: 2 },
+          },
+        ],
+      ]);
+      // Only once: changes asked on a head that has moved is not another item to address.
+      expect(yield* flowTriggered(fake, addressReview).pipe(Effect.orDie)).toHaveLength(1);
+
+      fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
+      expect(yield* resumes(fake)).toEqual([]);
+    }),
+  );
+
+  effect(
+    "a review asking for changes on the fix's head while its CI pends is new work, not the parked one",
+    () =>
+      Effect.gen(function* () {
+        const fake = fixParked(1);
+        fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+        fake.submitted.push({
+          author: "data-quail",
+          state: "CHANGES_REQUESTED",
+          commitSha: "fix20000000",
+        });
+
+        // Not resumed as already addressed: nothing was pushed since this review.
+        expect(yield* resumes(fake)).toEqual([]);
+
+        // changesToAddress takes it up, as after a hand-off, and the record moves to changes-asked.
+        const items = yield* flowTriggered(fake, addressReview).pipe(Effect.orDie);
+        expect(
+          items.map((found) => [found.key.startsWith(`pr-${PULL}-changes-asked-`), found.data]),
+        ).toEqual([
+          [
+            true,
+            {
+              pullRequest: PULL,
+              headRef: "auto/issue-3",
+              baseRef: "main",
+              agentWritten: true,
+              reviewer: "data-quail",
+              reviewedSha: "fix20000000",
+            },
+          ],
+        ]);
+        expect(fake.phases()[PR_ITEM]).toBe("changes-asked");
+      }),
+  );
+
+  effect("an approval of the fix's head while its CI pends moves the record to approved", () =>
+    Effect.gen(function* () {
+      const fake = fixParked(1);
+      fake.merge.ci = { state: "pending", waitingOn: ["test"] };
+      fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: "fix20000000" });
+
+      expect(yield* flowTriggered(fake, addressReview).pipe(Effect.orDie)).toEqual([]);
+      expect(fake.phases()[PR_ITEM]).toBe("approved");
+    }),
+  );
+
+  effect("resumed once CI is green, asks the reviewer again without another fix", () =>
+    Effect.gen(function* () {
+      const fake = fixParked(1);
+      const finished = yield* runToEnd(addressing, fake, yield* onlyResume(fake));
+
+      expect(finished.status).toBe("done");
+      expect(summaryOf(finished)).toBe(
+        `#${PULL}: addressed review 1; asked data-quail to review again`,
+      );
+      expect(fake.requests).toEqual([]);
+      expect(fake.git.pushes).toBe(2);
+      expect(fake.people.requested).toEqual(["data-quail"]);
+      expect(fake.phases()[PR_ITEM]).toBe("review-asked-again");
+      expect(
+        fake.comments.some((comment) =>
+          comment.body.startsWith("Addressed review 1: the commits pushed since that review."),
+        ),
+      ).toBe(true);
+    }),
+  );
+
+  effect("resumed on red CI, fixes it in the author's session from the recorded round", () =>
+    Effect.gen(function* () {
+      const fake = fixParked(2);
+      fake.merge.ci = { state: "red", failedChecks: ["test"] };
+      fake.merge.afterPush = Option.some({ state: "green" });
+      const finished = yield* runToEnd(addressing, fake, yield* onlyResume(fake));
+
+      expect(finished.status).toBe("done");
+      expect(fake.requests.map((request) => request.sessionId)).toEqual(["implement-session"]);
+      expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
+      expect(fake.git.pushes).toBe(3);
+      expect(fake.people.requested).toEqual(["data-quail"]);
     }),
   );
 });

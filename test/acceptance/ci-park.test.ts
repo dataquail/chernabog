@@ -3,7 +3,9 @@
 // implement job opens the pull request, records the wait on the issue and
 // ends. A plan woken by the finished CI run (workflow_run) holds the issue
 // while CI is pending, and starts implement on it again once it settles; that
-// job hands the pull request off without implementing the issue again.
+// job hands the pull request off without implementing the issue again. Then
+// bob, on his laptop, asks for changes; address-review in CI pushes the fix
+// and ends its job on the fix's pending CI, and a later job asks bob again.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -116,11 +118,15 @@ describe("a CI job waiting on its pull request's CI", () => {
 
   beforeAll(async () => {
     sandbox = openSandbox(
-      { reviewers: ["bob"], ci: { flows: ["implement"] } },
+      {
+        reviewers: ["bob"],
+        flows: { review: { agent: "codex" } },
+        ci: { flows: ["implement", "address-review"] },
+      },
       {
         github: ["alice", "bob"],
         personas: ["alice", "bob"],
-        personaFlows: { alice: { implement: {} }, bob: { review: {} } },
+        personaFlows: { alice: { implement: {}, "address-review": {} }, bob: { review: {} } },
       },
     );
     await sandbox.installCheckout();
@@ -181,5 +187,60 @@ describe("a CI job waiting on its pull request's CI", () => {
     expect(sandbox.github.pull(pull.number).reviewers).toEqual(["bob"]);
     expect(phasesOf(`issue-${issue}`)).toEqual(["awaiting-ci", "handed-off"]);
     expect(phasesOf(`pr-${pull.number}`)).toEqual(["review-asked"]);
+  }, 180_000);
+
+  // The plan job for a phase announcement, as the daemon sends one.
+  const announced = (item: string, from: string, to: string) =>
+    plan(`phase-${to}`, "repository_dispatch", {
+      action: "chernabog-phase",
+      client_payload: { item, from, to },
+    });
+
+  test("address-review pushes its fix and ends the job on the fix's pending CI", async () => {
+    const pull = Option.getOrThrow(sandbox.github.firstPull());
+    // bob reviews on his laptop, and asks for changes.
+    const review = await sandbox.runCli(["run", "review", "--repo", "demo", "--as", "bob"]);
+
+    expect(review.code).toBe(0);
+    expect(phasesOf(`pr-${pull.number}`)).toEqual(["review-asked", "changes-asked"]);
+
+    sandbox.github.setChecks("pending");
+    const changes = await announced(`pr-${pull.number}`, "review-asked", "changes-asked");
+
+    expect(changes.matrix).toHaveLength(1);
+    expect(changes.matrix[0]?.flow).toBe("address-review");
+
+    const calls = sandbox.claudeCalls().length;
+    const fixed = await run(changes.matrix[0] ?? { flow: "", persona: "", item: "" });
+
+    expect(fixed.code).toBe(0);
+    expect(fixed.output).toContain("parked");
+    expect(sandbox.claudeCalls().length).toBeGreaterThan(calls);
+    expect(phasesOf(`pr-${pull.number}`)).toEqual(["review-asked", "changes-asked", "awaiting-ci"]);
+    expect(sandbox.github.pull(pull.number).reviewers).toEqual([]);
+  }, 180_000);
+
+  test("once the fix's CI is green, the finished CI run starts address-review again, which asks bob again", async () => {
+    const pull = Option.getOrThrow(sandbox.github.firstPull());
+    const pending = await ciFinished("fix-pending");
+
+    expect(pending.matrix).toEqual([]);
+    expect(pending.summary).toContain("waits on CI");
+
+    sandbox.github.setChecks("green");
+    const green = await ciFinished("fix-green");
+
+    expect(green.matrix).toHaveLength(1);
+    expect(green.matrix[0]?.flow).toBe("address-review");
+    expect(green.matrix[0]?.item).toStartWith(`pr-${pull.number}-awaiting-ci-`);
+
+    const calls = sandbox.claudeCalls().length;
+    const resumed = await run(green.matrix[0] ?? { flow: "", persona: "", item: "" });
+
+    expect(resumed.code).toBe(0);
+    expect(resumed.output).toContain("asked bob to review again");
+    expect(sandbox.claudeCalls()).toHaveLength(calls);
+    expect(sandbox.github.pull(pull.number).reviewers).toEqual(["bob"]);
+    expect(phasesOf(`pr-${pull.number}`).at(-1)).toBe("review-asked-again");
   }, 180_000);
 });
