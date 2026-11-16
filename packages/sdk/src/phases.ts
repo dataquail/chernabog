@@ -36,6 +36,7 @@ export const PHASES = {
     handedOff: "handed-off",
     askedQuestions: "asked-questions",
     awaitingReady: "awaiting-ready",
+    awaitingCi: "awaiting-ci",
     proposed: "proposed",
     becameEpic: "became-epic",
   },
@@ -48,6 +49,7 @@ export const PHASES = {
     readyForPerson: "ready-for-person",
     draft: "draft",
     watched: "watched",
+    awaitingCi: "awaiting-ci",
   },
   epic: { waiting: "waiting", finished: "finished" },
 } as const;
@@ -57,6 +59,29 @@ type PhasesOf<Kind extends keyof typeof PHASES> =
 
 // One of the SDK's phases.
 export type Phase = PhasesOf<"issue"> | PhasesOf<"pullRequest"> | PhasesOf<"epic">;
+
+// The phase a CI job's run records before it parks on its pull request's CI
+// (Implement.waitForCi's park): awaiting-ci for the first round, then
+// awaiting-ci-2 once one fix of red CI was pushed, and so on, so the job that
+// resumes it counts ciRounds on from there.
+export const awaitingCi = (round: number) => {
+  if (round <= 1) {
+    return PHASES.issue.awaitingCi;
+  }
+
+  return `${PHASES.issue.awaitingCi}-${round}`;
+};
+
+const AWAITING_CI = /^awaiting-ci(?:-(\d+))?$/;
+
+// The round of CI a phase awaitingCi recorded waits on; none for any other phase.
+export const ciRoundOf = (phase: string): Option.Option<number> =>
+  Option.map(Option.fromNullOr(AWAITING_CI.exec(phase)), (found) =>
+    Option.match(Option.fromUndefinedOr(found[1]), {
+      onNone: () => 1,
+      onSome: Number,
+    }),
+  );
 
 // What a source reads of an item with no record yet.
 export const NO_RECORD = "none";

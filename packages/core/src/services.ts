@@ -183,6 +183,10 @@ export const RepoSettings = Schema.Struct({
   env: Schema.Record(Schema.String, Schema.String),
   // The trusted copy of the repo's .chernabog/, read from the base branch.
   configDir: Schema.String,
+  // Whether the run is a CI job's (`chernabog ci run`), which ends where the
+  // run parks: a flow that can resume from its record parks on a wait it
+  // would otherwise poll through on a billed runner. Absent: a daemon's run.
+  ciJob: Schema.optionalKey(Schema.Boolean),
 });
 
 export type RepoSettings = typeof RepoSettings.Type;
