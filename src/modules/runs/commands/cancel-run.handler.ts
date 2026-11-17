@@ -312,8 +312,18 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const leftForPerson: Array<string> = [];
 
   // A run that lost its item leaves everything on it, worktree included, to
-  // the run that took it over, and for a person to look at.
-  if (cancelled.status === "lost") {
+  // the run that took it over, and for a person to look at. One that ended at
+  // a park leaves the same to the run that takes it up from its record, but
+  // lets go of its claim ref, so that run may be on any machine or in CI.
+  if (cancelled.status === "lost" || cancelled.status === "ended-at-park") {
+    const releasedClaims = yield* Option.match(
+      Option.liftPredicate(cancelled, (run) => run.status === "ended-at-park"),
+      {
+        onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+        onSome: (run) => releaseClaimRefs(run, leftForPerson),
+      },
+    );
+
     yield* tellEnded(cancelled);
 
     return CancelledRun.make({
@@ -322,7 +332,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       stopped,
       wakesCleared: parked.length,
       removedWorktrees: [],
-      releasedClaims: [],
+      releasedClaims: [...releasedClaims],
       released: Option.none(),
       closedSessions: [],
       openSessions: yield* cleanup.openSessions(cancelled),

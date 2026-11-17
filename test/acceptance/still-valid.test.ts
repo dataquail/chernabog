@@ -16,15 +16,15 @@ import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
 import { BOT } from "./fake-github.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
-// Claims an issue labelled `label`, prepares its worktree, and waits on a
-// signal no trigger reports, as a run waiting on a person would. Its
-// stillValid is `check`.
+// Claims an issue labelled `label`, prepares its worktree, and works for a
+// long while, in flight: a run that parked would end at its park (ADR 0021).
+// Its stillValid is `check`.
 const parked = (label: string, check: string) => `import {
-  awaitSignal,
   defineFlow,
   GitHub,
   Implement,
   reportAs,
+  sleep,
   StepFailed,
 } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
@@ -41,7 +41,7 @@ export default defineFlow({
       const issue = yield* Implement.issueOf(item);
       const { branch } = yield* Implement.claim(issue);
       yield* Implement.prepareWorktree(branch);
-      yield* awaitSignal(["never"], { id: "park", timeout: "1 day" });
+      yield* sleep("working", "1 day");
 
       return "woke";
     }),
@@ -72,17 +72,21 @@ describe("a run whose work item goes", () => {
       JSON.parse((await sandbox.runCli(["status", "--json"])).output),
     );
 
-  // The run in flight for an issue, once it's parked on its signal.
+  // The run in flight for an issue, once it has claimed it.
   const parkedOn = async (issue: number) => {
     let found = Option.none<string>();
 
     await eventually(async () => {
       found = Option.fromUndefinedOr(
-        (await status()).active.find((run) => run.itemKey === `issue-${issue}` && run.parked)?.id,
+        (await status()).active.find(
+          (run) =>
+            run.itemKey === `issue-${issue}` &&
+            sandbox.github.issue(issue).labels.includes("auto:in-progress"),
+        )?.id,
       );
 
       return Option.isSome(found);
-    }, `the run for #${issue} to park`);
+    }, `the run for #${issue} to claim it`);
 
     return Option.getOrThrow(found);
   };
@@ -92,9 +96,11 @@ describe("a run whose work item goes", () => {
       { limits: { validityEvery: "1 second" } },
       {
         flows: {
-          parked: { schedule: "*/2 * * * * *" },
+          parked: { schedule: "*/2 * * * * *", concurrency: 4 },
           flaky: { schedule: "*/2 * * * * *" },
         },
+        // Runs in flight hold a slot each, as a parked run never did.
+        concurrency: 4,
         recipes: [],
         repoFiles: {
           "flows/parked.ts": parked("auto:eligible", "Implement.stillValid"),
@@ -112,7 +118,7 @@ describe("a run whose work item goes", () => {
     await sandbox.github.stop();
   });
 
-  test("a parked run whose issue is closed ends as superseded, its claim released", async () => {
+  test("a run in flight whose issue is closed ends as superseded, its claim released", async () => {
     const issue = sandbox.github.addIssue("Park me", ["auto:eligible"]);
     const runId = await parkedOn(issue);
 
@@ -129,7 +135,7 @@ describe("a run whose work item goes", () => {
 
     expect(ended?.status).toBe("superseded");
     expect(Option.getOrElse(ended?.summary ?? Option.none(), () => "")).toMatch(
-      new RegExp(`^#${issue} was closed; interrupted in await-`),
+      new RegExp(`^#${issue} was closed; interrupted in `),
     );
 
     // The daemon records the run's ending before it stops the workflow and
@@ -169,9 +175,9 @@ describe("a run whose work item goes", () => {
   }, 90_000);
 });
 
-// Reviews each open pull request by waiting on a signal no trigger reports,
-// as a review run waiting on a person would.
-const PARKED_REVIEW = `import { awaitSignal, defineFlow, GitHub, reportAs, Review } from "@chernabog/sdk";
+// Reviews each open pull request by working on it a long while, in flight: a
+// run that parked would end at its park (ADR 0021).
+const PARKED_REVIEW = `import { defineFlow, GitHub, reportAs, Review, sleep } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 
 export default defineFlow({
@@ -183,7 +189,7 @@ export default defineFlow({
   stillValid: Review.stillValid,
   workflow: () =>
     Effect.gen(function* () {
-      yield* awaitSignal(["never"], { id: "park", timeout: "1 day" });
+      yield* sleep("reviewing", "1 day");
 
       return "woke";
     }),
@@ -225,11 +231,10 @@ describe("a notification about a run's work item (#149)", () => {
     let runId = "";
 
     await eventually(async () => {
-      runId =
-        (await status()).active.find((run) => run.itemKey === `pr-${pull}` && run.parked)?.id ?? "";
+      runId = (await status()).active.find((run) => run.itemKey === `pr-${pull}`)?.id ?? "";
 
       return runId !== "";
-    }, `the review of #${pull} to park`);
+    }, `the review of #${pull} to start`);
 
     sandbox.github.closePull(pull);
     sandbox.github.notify(BOT, "review_requested", pull);

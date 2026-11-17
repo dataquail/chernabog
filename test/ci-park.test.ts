@@ -1,7 +1,8 @@
 // Implement.waitForCi in a CI job (#513): with somewhere to park, a first
 // reading of the pull request's checks that is still pending records the
 // round it waits on and parks the run, so `ci run` ends the job rather than
-// billing the wait. A daemon's run, or one with nowhere to park, polls.
+// billing the wait. A daemon's run parks the same way (ADR 0021); one with
+// nowhere to park polls.
 
 import {
   DEFAULT_LABELS,
@@ -167,7 +168,7 @@ describe("a wait for CI in a CI job", () => {
     }),
   );
 
-  effect("with nowhere to park, polls as a daemon's run does", () =>
+  effect("with nowhere to park, polls", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve", { ciJob: true });
       fake.merge.ci = { state: "pending", waitingOn: ["test"] };
@@ -180,14 +181,16 @@ describe("a wait for CI in a CI job", () => {
 });
 
 describe("a wait for CI on a daemon", () => {
-  effect("polls, even with somewhere to park", () =>
+  // ADR 0021, decision 4: a daemon's run parks as a CI job's does, and the
+  // daemon ends it there; the record carries the wait.
+  effect("parks on pending CI, as a CI job's run does, having recorded the round", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.merge.ci = { state: "pending", waitingOn: ["test"] };
       const { parked, run } = yield* parkedAfterPolls(waiting(PARKING), fake);
       expect(run.status).toBe("running");
-      expect(parked).toBe(false);
-      expect(fake.phases()[PR_ITEM]).toBeUndefined();
+      expect(parked).toBe(true);
+      expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
     }),
   );
 });

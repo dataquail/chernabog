@@ -153,7 +153,7 @@ const supersede = (
   run: RunRoot,
   reason: string,
   at: string,
-  ending: "superseded" | "lost" = "superseded",
+  ending: "superseded" | "lost" | "ended-at-park" = "superseded",
 ) =>
   whileRunning(run, () =>
     RunRoot.make({

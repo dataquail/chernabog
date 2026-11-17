@@ -79,6 +79,8 @@ export type MachineOptions = {
   // Which events tick every persona's flows sooner than cron (#138), and each login's own.
   readonly events?: Readonly<Record<string, Json>>;
   readonly personaEvents?: Readonly<Record<string, Readonly<Record<string, Json>>>>;
+  // How many runs the machine keeps in flight at once; its default of one when unset.
+  readonly concurrency?: number;
 };
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
@@ -164,7 +166,7 @@ const machineConfigText = (root: string, checkout: string, machine: MachineOptio
     );
   }
 
-  for (const key of ["agents", "launcher", "launchers", "events"] as const) {
+  for (const key of ["agents", "launcher", "launchers", "events", "concurrency"] as const) {
     const value = Option.fromUndefinedOr(machine[key]);
 
     if (Option.isSome(value)) {

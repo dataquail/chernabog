@@ -804,6 +804,13 @@ working an item's progress out from labels and review counts.
 docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
 #361's storage test and #362's map of every recipe's handoffs.
 
+- **A run that parks ends there**, on a daemon as in a CI job (ADR 21,
+  decision 4): the daemon's validity loop (`endParked`) ends every parked
+  run with `CancelRunCommand` `endAs ended-at-park`. That status keeps every
+  marker, worktree and session for the run that takes the item up from its
+  record, as `lost` does (`RunMarkerRootOps.keptOn`), and releases the claim
+  ref. A test that needs a run to stay in flight uses a durable `sleep`, not
+  `awaitSignal`, and a run in flight holds a concurrency slot.
 - **The record is the only progress** (`docs/adr/0021-one-ledger-the-forge-is-input.md`).
   A source finds where an item is from its record. Labels, review counts,
   assignees and comment markers are intent, fact or projection, never
