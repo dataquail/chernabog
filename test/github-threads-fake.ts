@@ -5,10 +5,11 @@
 // (docs/run-progress/storage-test.md). It answers githubTestLayer's handler.
 
 import { type Json } from "@chernabog/core";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-type Commit = { readonly oid: string; readonly message: string };
+type Commit = { readonly oid: string; readonly message: string; readonly date: string };
 
 // How a lost createCommitOnBranch is answered: a stale head found up front, or
 // a true race, which GitHub reports as FORBIDDEN.
@@ -58,19 +59,29 @@ export const makeThreadsFake = (slug: string) => {
     requests: [],
   };
 
+  // GitHub dates each commit it makes; here the nth is n seconds past noon.
+  const dateOf = (n: number) =>
+    DateTime.formatIso(DateTime.add(DateTime.makeUnsafe("2026-11-17T12:00:00Z"), { seconds: n }));
+
   const commit = (message: string) => {
     made += 1;
     const oid = made.toString(16).padStart(40, "0");
-    commits.set(oid, { oid, message });
+    commits.set(oid, { oid, message, date: dateOf(made) });
 
     return oid;
   };
 
+  const committed = (oid: string) => Option.fromUndefinedOr(commits.get(oid));
+
   const target = (oid: string) => ({
     oid,
     message: Option.getOrElse(
-      Option.map(Option.fromUndefinedOr(commits.get(oid)), (found) => found.message),
+      Option.map(committed(oid), (found) => found.message),
       () => "",
+    ),
+    committedDate: Option.getOrElse(
+      Option.map(committed(oid), (found) => found.date),
+      () => dateOf(0),
     ),
   });
 
@@ -120,7 +131,11 @@ export const makeThreadsFake = (slug: string) => {
       const oid = commit(`${input.message.headline}\n\n${input.message.body ?? ""}`);
       refs.set(ref, oid);
 
-      return answer({ data: { createCommitOnBranch: { commit: { oid } } } });
+      return answer({
+        data: {
+          createCommitOnBranch: { commit: { oid, committedDate: target(oid).committedDate } },
+        },
+      });
     }
 
     if (query.includes("refs(refPrefix")) {
@@ -170,7 +185,9 @@ export const makeThreadsFake = (slug: string) => {
     state.requests.push(`${method} ${path}`);
 
     if (method === "POST" && path === `${repo}/git/commits`) {
-      return answer({ sha: commit(body.message ?? "") }, 201);
+      const sha = commit(body.message ?? "");
+
+      return answer({ sha, committer: { date: target(sha).committedDate } }, 201);
     }
 
     if (method === "POST" && path === `${repo}/git/refs`) {

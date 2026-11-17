@@ -261,6 +261,8 @@ export const makeFake = (
 
   // The phase each item holds now, by item.
   const phases = progress.phases;
+  // Each item's whole record now, by item.
+  const records = progress.records;
 
   // Records `to` on `item`, as a run before this test's would have: from
   // whatever it holds now.
@@ -1152,6 +1154,7 @@ export const makeFake = (
     people,
     submitted,
     phases,
+    records,
     recordPhase,
     graph,
     branchPulls,

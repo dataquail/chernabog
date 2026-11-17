@@ -4,12 +4,14 @@
 
 import {
   type Phase,
+  type PhaseData,
   PhaseMoved,
   type PhaseRecord,
   type PhaseTransition,
   type PhaseWriter,
   type Progress,
 } from "@chernabog/core";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
@@ -26,9 +28,10 @@ const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.phase === transition.to &&
   Equal.equals(record.from, transition.from);
 
-// What advancing `item` by `transition` does to `store`, all in one step.
+// What advancing `item` by `transition` does to `store`, all in one step, `at`
+// the time it would be written.
 const advancing =
-  (item: string, transition: PhaseTransition) =>
+  (item: string, transition: PhaseTransition, at: DateTime.Utc) =>
   (store: Store): [Result.Result<PhaseRecord, PhaseMoved>, Store] => {
     const current = Option.fromUndefinedOr(store.records.get(item));
     const own = Option.filter(current, (record) => isOwn(record, transition));
@@ -51,6 +54,8 @@ const advancing =
       from: transition.from,
       by: transition.by,
       version: `v${written}`,
+      at,
+      data: Option.fromUndefinedOr(transition.data),
     };
 
     return [
@@ -67,23 +72,35 @@ export const progressStore = () => {
   const service: Progress["Service"] = {
     read: (item) => Effect.sync(() => Option.fromUndefinedOr(store.records.get(item))),
     readAll: Effect.sync(() => store.records),
+    // Written at the Clock's time, so a test that moves a TestClock moves
+    // when its records say they were written.
     advance: (item, transition) =>
-      Effect.suspend(() => {
-        const [result, next] = advancing(item, transition)(store);
-        store = next;
+      Effect.flatMap(DateTime.now, (at) =>
+        Effect.suspend(() => {
+          const [result, next] = advancing(item, transition, at)(store);
+          store = next;
 
-        return Effect.fromResult(result);
-      }),
+          return Effect.fromResult(result);
+        }),
+      ),
   };
 
   return {
     service,
+    // Each item's whole record now, by item.
+    records: (): ReadonlyMap<string, PhaseRecord> => store.records,
     // The phase each item holds now, by item.
     phases: (): Record<string, string> =>
       Object.fromEntries([...store.records].map(([item, record]) => [item, record.phase])),
     // Moves `item` to `phase` from whatever it holds, as a writer before the
-    // test would have: a state for the test to start from.
-    seed: (item: string, phase: Phase, by: PhaseWriter) => {
+    // test would have: a state for the test to start from. Written `at` the
+    // epoch unless the test says when, which a TestClock also starts at.
+    seed: (
+      item: string,
+      phase: Phase,
+      by: PhaseWriter,
+      when: { readonly at?: DateTime.Utc; readonly data?: PhaseData } = {},
+    ) => {
       const written = store.written + 1;
 
       const record: PhaseRecord = {
@@ -91,6 +108,8 @@ export const progressStore = () => {
         from: phaseOf(Option.fromUndefinedOr(store.records.get(item))),
         by,
         version: `v${written}`,
+        at: when.at ?? DateTime.makeUnsafe(0),
+        data: Option.fromUndefinedOr(when.data),
       };
 
       store = { records: new Map([...store.records, [item, record]]), written };

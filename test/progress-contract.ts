@@ -5,6 +5,7 @@
 
 import {
   Phase,
+  PhaseData,
   PhaseMoved,
   type PhaseRecord,
   type PhaseTransition,
@@ -12,6 +13,7 @@ import {
   type Progress,
 } from "@chernabog/core";
 import { describe, expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -43,6 +45,8 @@ const after = (from: Phase, to: Phase, by: PhaseWriter): PhaseTransition => ({
   by,
 });
 
+const DATA = Schema.decodeSync(PhaseData)({ adopted: 81, round: 2, nested: { draft: true } });
+
 const isPhaseMoved = Schema.is(PhaseMoved);
 
 // The lost race an advance failed with, if it failed with one.
@@ -53,6 +57,55 @@ const what = (record: PhaseRecord) => ({ phase: record.phase, from: record.from,
 
 export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
   describe(`${name}: the Progress contract`, () => {
+    effect("keeps the data a transition carries, alone and in readAll", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+
+        const written = yield* progress.advance(ITEM, {
+          ...first(REVIEW_ASKED, RUN_A),
+          data: DATA,
+        });
+
+        expect(written.data).toEqual(Option.some(DATA));
+        expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
+          Option.some(Option.some(DATA)),
+        );
+        expect((yield* progress.readAll).get(ITEM)?.data).toEqual(Option.some(DATA));
+
+        const next = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+
+        expect(next.data).toEqual(Option.none());
+        expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
+          Option.some(Option.none()),
+        );
+      }),
+    );
+
+    effect("says when each record was written, a later one never before an earlier", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const changes = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+
+        expect(DateTime.isLessThanOrEqualTo(asked.at, changes.at)).toBe(true);
+        expect(Option.map(yield* progress.read(ITEM), (record) => record.at)).toEqual(
+          Option.some(changes.at),
+        );
+      }),
+    );
+
+    effect("a retry of a write that landed returns it with the data it carried", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const transition = { ...first(REVIEW_ASKED, RUN_A), data: DATA };
+
+        const written = yield* progress.advance(ITEM, transition);
+
+        expect(yield* progress.advance(ITEM, transition)).toEqual(written);
+      }),
+    );
+
     effect("an item with no record reads as none, alone and in readAll", () =>
       Effect.gen(function* () {
         const progress = yield* make;

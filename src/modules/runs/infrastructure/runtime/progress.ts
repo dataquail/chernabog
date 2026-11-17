@@ -12,16 +12,20 @@
 
 import {
   type Json,
+  parseJson,
   Phase,
+  PhaseData,
   PhaseMoved,
   type PhaseRecord,
   type PhaseTransition,
   PhaseWriter,
+  printJson,
   Progress,
   ProgressError,
   ProgressUnwritable,
   type RepoSettings,
 } from "@chernabog/core";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
@@ -64,9 +68,11 @@ export const isThreadItem = (item: string) =>
   ITEM.test(item) && !item.includes("..") && !item.endsWith(".lock");
 
 // The record a commit's message carries, in trailers: `Phase`, `From` (absent
-// for an item's first phase) and `By`, its writer. The headline is for a
-// person reading the branch. Nothing in it names the machine: a thread is as
-// public as the repo.
+// for an item's first phase), `By`, its writer, and `Data` (absent when the
+// transition carried none), the record's data as one line of JSON. The
+// headline is for a person reading the branch. Nothing in it names the
+// machine: a thread is as public as the repo. When it was written is the
+// commit's date, which GitHub sets, so no trailer says it.
 export const recordMessage = (item: string, transition: PhaseTransition) => {
   const from = Option.match(transition.from, {
     onNone: () => "",
@@ -77,6 +83,9 @@ export const recordMessage = (item: string, transition: PhaseTransition) => {
     `Phase: ${transition.to}`,
     ...Option.toArray(Option.map(transition.from, (phase) => `From: ${phase}`)),
     `By: ${transition.by}`,
+    ...Option.toArray(
+      Option.map(Option.fromUndefinedOr(transition.data), (data) => `Data: ${printJson(data)}`),
+    ),
   ];
 
   return {
@@ -92,20 +101,34 @@ const trailer = (message: string, key: string) =>
 
 const decodePhase = Schema.decodeUnknownOption(Phase);
 const decodeWriter = Schema.decodeUnknownOption(PhaseWriter);
+const decodeData = Schema.decodeUnknownOption(PhaseData);
 
-// The record a commit holds, read from its message; none for one that isn't a record.
-export const parseRecord = (version: string, message: string): Option.Option<PhaseRecord> => {
+// The record a commit holds, read from its message and written `at` its
+// commit's date; none for one that isn't a record. A `From` or `Data` trailer
+// that is there but doesn't decode makes it no record, as a bad `Phase` does.
+export const parseRecord = (
+  version: string,
+  message: string,
+  at: DateTime.Utc,
+): Option.Option<PhaseRecord> => {
   const from = trailer(message, "From");
   const fromPhase = Option.flatMap(from, decodePhase);
+  const data = trailer(message, "Data");
+  const parsed = Option.flatMap(Option.flatMap(data, parseJson), decodeData);
 
-  if (Option.isSome(from) && Option.isNone(fromPhase)) {
+  if (
+    (Option.isSome(from) && Option.isNone(fromPhase)) ||
+    (Option.isSome(data) && Option.isNone(parsed))
+  ) {
     return Option.none();
   }
 
   return Option.all({
     phase: Option.flatMap(trailer(message, "Phase"), decodePhase),
     by: Option.flatMap(trailer(message, "By"), decodeWriter),
-  }).pipe(Option.map(({ by, phase }) => ({ phase, from: fromPhase, by, version })));
+  }).pipe(
+    Option.map(({ by, phase }) => ({ phase, from: fromPhase, by, version, at, data: parsed })),
+  );
 };
 
 // The record is this transition, by this writer: a retry of a write that landed.
@@ -139,6 +162,7 @@ export const decide = (
 const Tip = Schema.Struct({
   oid: Schema.String,
   message: Schema.optionalKey(Schema.String),
+  committedDate: Schema.optionalKey(Schema.String),
 });
 
 const ReadData = Schema.Struct({
@@ -164,7 +188,9 @@ const AdvanceResponse = Schema.Struct({
     Schema.OptionFromNullOr(
       Schema.Struct({
         createCommitOnBranch: Schema.OptionFromNullOr(
-          Schema.Struct({ commit: Schema.Struct({ oid: Schema.String }) }),
+          Schema.Struct({
+            commit: Schema.Struct({ oid: Schema.String, committedDate: Schema.String }),
+          }),
         ),
       }),
     ),
@@ -176,14 +202,17 @@ const AdvanceResponse = Schema.Struct({
   ),
 });
 
-const Created = Schema.Struct({ sha: Schema.String });
+const Created = Schema.Struct({
+  sha: Schema.String,
+  committer: Schema.Struct({ date: Schema.String }),
+});
 
 const RefError = Schema.Struct({ message: Schema.String });
 
 const READ = `
   query ($owner: String!, $name: String!, $ref: String!) {
     repository(owner: $owner, name: $name) {
-      ref(qualifiedName: $ref) { target { oid ... on Commit { message } } }
+      ref(qualifiedName: $ref) { target { oid ... on Commit { message committedDate } } }
     }
   }`;
 
@@ -191,7 +220,7 @@ const READ_ALL = `
   query ($owner: String!, $name: String!, $prefix: String!, $after: String) {
     repository(owner: $owner, name: $name) {
       refs(refPrefix: $prefix, first: 100, after: $after) {
-        nodes { name target { oid ... on Commit { message } } }
+        nodes { name target { oid ... on Commit { message committedDate } } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -199,10 +228,24 @@ const READ_ALL = `
 
 const ADVANCE = `
   mutation ($input: CreateCommitOnBranchInput!) {
-    createCommitOnBranch(input: $input) { commit { oid } }
+    createCommitOnBranch(input: $input) { commit { oid committedDate } }
   }`;
 
 const failed = (error: GitHubError) => new ProgressError({ message: error.message });
+
+// The time GitHub gave a commit, which a record is `at`.
+const commitTime = (
+  version: string,
+  date: Option.Option<string>,
+): Effect.Effect<DateTime.Utc, ProgressError> =>
+  Option.match(
+    Option.flatMap(date, (found) => DateTime.make(found)),
+    {
+      onNone: () =>
+        Effect.fail(new ProgressError({ message: `commit ${version} has no date GitHub gave it` })),
+      onSome: (at) => Effect.succeed(DateTime.toUtc(at)),
+    },
+  );
 
 // Where an adapter keeps its threads: a repo, the persona it writes as, and
 // the branches' prefix, which a live test moves aside so it holds no records.
@@ -233,20 +276,24 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         return Effect.succeed(cached.value);
       }
 
-      return Option.match(parseRecord(tip.oid, tip.message ?? ""), {
-        onNone: () =>
-          Effect.fail(
-            new ProgressError({
-              message: `${prefix}${item} is at ${tip.oid}, which holds no phase record`,
-            }),
-          ),
-        onSome: (record) =>
-          Effect.sync(() => {
-            seen.set(tip.oid, record);
+      return commitTime(tip.oid, Option.fromUndefinedOr(tip.committedDate)).pipe(
+        Effect.flatMap((at) =>
+          Option.match(parseRecord(tip.oid, tip.message ?? "", at), {
+            onNone: () =>
+              Effect.fail(
+                new ProgressError({
+                  message: `${prefix}${item} is at ${tip.oid}, which holds no phase record`,
+                }),
+              ),
+            onSome: (record) =>
+              Effect.sync(() => {
+                seen.set(tip.oid, record);
 
-            return record;
+                return record;
+              }),
           }),
-      });
+        ),
+      );
     };
 
     const branchOf = (item: string) => {
@@ -317,12 +364,21 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       }
     });
 
-    const written = (version: string, transition: PhaseTransition): PhaseRecord => {
-      const record = { phase: transition.to, from: transition.from, by: transition.by, version };
-      seen.set(version, record);
+    const written = (version: string, date: string, transition: PhaseTransition) =>
+      Effect.map(commitTime(version, Option.some(date)), (at): PhaseRecord => {
+        const record = {
+          phase: transition.to,
+          from: transition.from,
+          by: transition.by,
+          version,
+          at,
+          data: Option.fromUndefinedOr(transition.data),
+        };
 
-      return record;
-    };
+        seen.set(version, record);
+
+        return record;
+      });
 
     // The item's first phase: a root commit with the empty tree, then the ref
     // to it, which only one writer can create.
@@ -364,7 +420,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         ).pipe(Effect.mapError(failed));
 
         if (ref.status === 201) {
-          return Option.some(written(sha.sha, transition));
+          return Option.some(yield* written(sha.sha, sha.committer.date, transition));
         }
 
         const said = Option.getOrElse(
@@ -417,7 +473,12 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         );
 
         if (Option.isSome(commit)) {
-          return { written: Option.some(written(commit.value.commit.oid, transition)), errors: [] };
+          const made = commit.value.commit;
+
+          return {
+            written: Option.some(yield* written(made.oid, made.committedDate, transition)),
+            errors: [],
+          };
         }
 
         return { written: Option.none<PhaseRecord>(), errors: response.errors ?? [] };
