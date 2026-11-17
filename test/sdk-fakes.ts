@@ -26,6 +26,7 @@ import {
   MergeRefused,
   type MergeRequest,
   Phase,
+  PhaseData,
   PhaseWriter,
   printJson,
   Progress,
@@ -265,12 +266,27 @@ export const makeFake = (
   const records = progress.records;
 
   // Records `to` on `item`, as a run before this test's would have: from
-  // whatever it holds now.
-  const recordPhase = (name: string, to: string) => {
+  // whatever it holds now, at the epoch unless `when` says when, with the
+  // data it gives.
+  const recordPhase = (
+    name: string,
+    to: string,
+    when: { readonly at?: DateTime.Utc; readonly data?: { readonly [key: string]: Json } } = {},
+  ) => {
     progress.seed(
       name,
       Schema.decodeSync(Phase)(to),
       Schema.decodeSync(PhaseWriter)("an-earlier-run"),
+      {
+        ...Option.match(Option.fromUndefinedOr(when.at), {
+          onNone: () => ({}),
+          onSome: (at) => ({ at }),
+        }),
+        ...Option.match(Option.fromUndefinedOr(when.data), {
+          onNone: () => ({}),
+          onSome: (data) => ({ data: Schema.decodeSync(PhaseData)(data) }),
+        }),
+      },
     );
   };
 
