@@ -316,6 +316,67 @@ describe("chernabog ci run", () => {
     expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.some(sha));
   }, 60_000);
 
+  // The claim a plan job of the workflow run `workflowRun` makes on the item
+  // it starts a run job for (#519), with a lease that hasn't run out.
+  const reservedBy = (issue: number, workflowRun: string) => {
+    const sha = sandbox.github.commit(
+      [
+        "chernabog claim",
+        "",
+        `Run: ci-plan-${workflowRun}-issue-${issue}`,
+        "Persona: chernabog-bot",
+        "Flow: phased",
+        "Claimed-At: 2026-11-10T00:00:00.000Z",
+        "Expires-At: 2999-01-01T00:00:00.000Z",
+      ].join("\n"),
+      [],
+    );
+
+    sandbox.github.setRef(claimRef(issue), sha);
+
+    return sha;
+  };
+
+  test("the job takes over the reservation its plan job made, and runs the item", async () => {
+    const issue = sandbox.github.addIssue("Reserved for this job", ["ci:park"]);
+    const before = sandbox.claudeCalls().length;
+    reservedBy(issue, "77");
+
+    const { code, output } = await ciRun(issue, [], { GITHUB_RUN_ID: "77" });
+
+    expect(output).toContain("parked");
+    expect(output).not.toContain("another run got there first");
+    expect(code).toBe(0);
+    expect(sandbox.claudeCalls()).toHaveLength(before + 1);
+    // The run's claim replaced the reservation, and the park let it go.
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+  }, 60_000);
+
+  test("another plan's reservation ends the job cleanly, and is left alone", async () => {
+    const issue = sandbox.github.addIssue("Reserved for another job", ["ci:park"]);
+    const before = sandbox.claudeCalls().length;
+    const sha = reservedBy(issue, "77");
+
+    const { code, output } = await ciRun(issue, [], { GITHUB_RUN_ID: "78" });
+
+    expect(output).toContain("another run got there first");
+    expect(code).toBe(0);
+    expect(sandbox.claudeCalls()).toHaveLength(before);
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.some(sha));
+  }, 60_000);
+
+  test("a job that starts nothing lets go of its reservation, so the item waits for no lease", async () => {
+    const issue = sandbox.github.addIssue("Reserved, then moved on", []);
+    reservedBy(issue, "79");
+
+    const { code, output } = await ciRun(issue, [], { GITHUB_RUN_ID: "79" });
+
+    expect(output).toContain("another run got there first");
+    expect(output).toContain(`let go of the plan's reservation of issue-${issue}`);
+    expect(code).toBe(0);
+    expect(sandbox.github.refSha(claimRef(issue))).toEqual(Option.none());
+  }, 60_000);
+
   test("an item whose phase moved since the plan ends the job cleanly", async () => {
     const issue = sandbox.github.addIssue("Moved on", []);
     const { code, output } = await ciRun(issue);

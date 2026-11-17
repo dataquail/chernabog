@@ -110,6 +110,12 @@ const targets = (flows: ReadonlyArray<CiFlow>, scope: Scope): ReadonlyArray<Targ
 const claimName = (key: string) =>
   Option.match(itemTarget(key), { onNone: () => key, onSome: claimOf });
 
+// The run id a plan job reserves an item it starts under (#519): its workflow
+// run's id, which the run jobs it starts share, and the item's claim, so a run
+// job takes over only its own entry's. A second plan for the same step then
+// finds the item claimed and starts no job of its own.
+const reservationFor = (workflowRun: string, claim: string) => `ci-plan-${workflowRun}-${claim}`;
+
 // Whether an event's item is the work item with this key. A branch names no
 // key: resolveBranch turns it into what it does name first.
 const concerns = (concerned: EventItem, key: string) => {
@@ -345,4 +351,13 @@ const matrix = (start: ReadonlyArray<Entry>) =>
     start.map((entry) => ({ flow: entry.flow, persona: entry.persona, item: entry.item })),
   );
 
-export const CiPlan = { targets, concerns, resolveBranch, startable, plan, matrix } as const;
+export const CiPlan = {
+  targets,
+  concerns,
+  resolveBranch,
+  startable,
+  plan,
+  matrix,
+  claimName,
+  reservationFor,
+} as const;

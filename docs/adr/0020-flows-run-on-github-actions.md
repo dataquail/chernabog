@@ -52,7 +52,13 @@ what that test found.
    limit is `max-parallel`, not a ranking. The runner test found that an
    empty matrix fails the whole workflow, so the plan job writes exactly `[]`
    when it starts nothing, and the run job is guarded by
-   `needs.plan.outputs.items != '[]'`.
+   `needs.plan.outputs.items != '[]'`. The plan job reserves each item it
+   starts with a short claim, `ci-plan-<run id>-<item>`, and the run job's run
+   takes that claim over (#519). Otherwise a dispatch and a GitHub event for
+   one step start two plans within seconds of each other, and both start a
+   run job. A repo-wide concurrency group on the plan job was rejected: it
+   keeps one plan waiting and cancels the one before it, which would drop
+   the events of the cancelled plan.
 5. **A job ends at a phase boundary.** A run that would park records its
    phase and ends its job, rather than waiting on a billed runner. The event
    that settles the wait starts the next job. A runner keeps no history, so

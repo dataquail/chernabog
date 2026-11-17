@@ -25,6 +25,9 @@ export type LeaseLimits = {
   readonly ttl: Duration.Duration;
   readonly parkedTtl: Duration.Duration;
   readonly renewEvery: Duration.Duration;
+  // The run id of a reservation made for the run (Claims.reserve), whose live
+  // claim its own replaces: a CI job's plan job's (#519). None elsewhere.
+  readonly takesOver?: string;
 };
 
 export const DEFAULT_LEASE_LIMITS: LeaseLimits = {

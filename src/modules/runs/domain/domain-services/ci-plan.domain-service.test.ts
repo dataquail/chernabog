@@ -294,3 +294,31 @@ describe("the plan", () => {
     ).toEqual(["issue-4"]);
   });
 });
+
+describe("a plan job's reservation (#519)", () => {
+  test("is named for the workflow run its run jobs share, and the entry's claim", () => {
+    expect(CiPlan.reservationFor("43911316867", "pr-73")).toBe("ci-plan-43911316867-pr-73");
+  });
+
+  test("is made on the claim a run of the entry's item takes", () => {
+    expect(CiPlan.claimName("issue-12")).toBe("issue-12");
+    expect(CiPlan.claimName("pr-73-changes-asked-c832d64")).toBe("pr-73");
+    expect(CiPlan.claimName("epic-9")).toBe("epic-9");
+  });
+
+  test("a reservation's live claim keeps another plan from starting the item", () => {
+    const reserved: LiveClaim = {
+      item: "pr-73",
+      runId: CiPlan.reservationFor("1", "pr-73"),
+      flow: "address-review",
+      persona: "bot",
+    };
+
+    expect(
+      CiPlan.plan(
+        [findings(every("address-review", "bot"), [item("pr-73-changes-asked-c832d64")])],
+        [reserved],
+      ).start,
+    ).toEqual([]);
+  });
+});

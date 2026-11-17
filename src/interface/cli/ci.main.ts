@@ -226,6 +226,7 @@ const planCommand = <R>(config: CiConfigAccess<R>) =>
           fromCheckout: options.fromCheckout,
           event,
           workflow: fromEnv("GITHUB_WORKFLOW"),
+          workflowRun: fromEnv("GITHUB_RUN_ID"),
         });
 
         for (const note of planned.notes) {
@@ -321,6 +322,7 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             leaseTtl: Duration.seconds(options.leaseSeconds),
             stopAfter: Duration.seconds(options.stopAfterSeconds),
             repo,
+            workflowRun: fromEnv("GITHUB_RUN_ID"),
             logs: Option.orElse(options.logs, () =>
               Option.map(fromEnv("RUNNER_TEMP"), (temp) => `${temp}/chernabog-logs`),
             ),

@@ -71,6 +71,7 @@ export { runEventSpanAttributes } from "./runs.event-span-attributes.ts";
 // logs, repo runtime, agents, the usage gate, labels, steps and the launch shim).
 // It is published here only until the runtime finishes moving into the module behind
 // its commands, queries and Layers; each line goes when its root stops naming it.
+export { CiPlan } from "./domain/domain-services/ci-plan.domain-service.ts";
 export {
   SECRETS as CI_SECRETS,
   WORKFLOW_FILE as CI_WORKFLOW_FILE,
@@ -137,6 +138,7 @@ export {
   servicesFrom,
   unreportedItem,
   withRepo,
+  withRepoReservedFor,
 } from "./infrastructure/runtime/repo-runtime.ts";
 export { runLogWriting } from "./infrastructure/runtime/runlog.ts";
 export { runStepChild, StepServicesLive } from "./infrastructure/runtime/steps.ts";

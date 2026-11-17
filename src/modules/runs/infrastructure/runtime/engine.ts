@@ -738,6 +738,10 @@ export const flowLayer = <R>(
           executionId,
           item: payload.item,
           leaseTtl: Duration.toMillis(handle.repo.leases.ttl),
+          ...Option.match(Option.fromUndefinedOr(handle.repo.leases.takesOver), {
+            onNone: () => ({}),
+            onSome: (takesOver) => ({ takesOver }),
+          }),
         }),
         // An imported flow's prompts and steps are looked up in its package after the repo.
         provideFlowPackage(flow),

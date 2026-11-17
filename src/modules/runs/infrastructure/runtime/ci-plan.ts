@@ -30,6 +30,7 @@ import {
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -93,7 +94,15 @@ export type CiPlanOptions = {
   readonly event: Option.Option<CiEvent>;
   // The workflow the plan job runs in, which a workflow_run of never wakes a flow.
   readonly workflow: Option.Option<string>;
+  // The workflow run the plan job is part of (GITHUB_RUN_ID), under which it
+  // reserves each item it starts; none outside Actions, which reserves nothing.
+  readonly workflowRun: Option.Option<string>;
 };
+
+// How long a plan's reservation of an item lasts, unless the run job it
+// started takes it over first: a run job's own lease, so a job that never
+// starts holds the item up no longer than a killed one does (#519).
+export const CI_RESERVATION_TTL = Duration.minutes(15);
 
 export type CiPlanResult = {
   // What the plan looked at: "sweep", or the event and its activity type.
@@ -259,6 +268,61 @@ const liveClaims = (slug: string, persona: Persona) =>
       after = page.endCursor;
     }
   }).pipe(Effect.provide(GitHubApi.layerFor(persona)));
+
+// Reserves each item the plan starts, as its entry's persona, so that another
+// plan for the same step, a dispatch's and a GitHub event's arriving within
+// seconds of each other, finds it claimed and starts no second run job for it
+// (#519). Creating the claim ref is the write GitHub refuses a second writer,
+// so of two plans racing, one reserves the item. One another run or plan
+// holds is left out, and the summary says who holds it. One that can't be
+// reserved, through an error, still starts: its run job checks the claim
+// again, as it did before plans reserved.
+const reserveEach = (
+  start: ReadonlyArray<Entry>,
+  workflowRun: string,
+  contextOf: (login: string) => Option.Option<RepoContext>,
+) =>
+  Effect.gen(function* () {
+    const kept: Array<Entry> = [];
+    const notes: Array<string> = [];
+
+    for (const entry of start) {
+      const label = `${entry.flow} as ${entry.persona}`;
+      const claim = CiPlan.claimName(entry.item);
+
+      const reserved = yield* Option.match(contextOf(entry.persona), {
+        onNone: () => Effect.fail(`${entry.persona} has no services`),
+        onSome: (context) =>
+          Effect.provideContext(
+            Claims.reserve(
+              claim,
+              { runId: CiPlan.reservationFor(workflowRun, claim), flow: entry.flow },
+              CI_RESERVATION_TTL,
+            ),
+            context,
+          ).pipe(Effect.mapError(describeError)),
+      }).pipe(Effect.result);
+
+      if (Result.isFailure(reserved)) {
+        kept.push(entry);
+        notes.push(
+          `${label}: ${entry.item} starts unreserved, as reserving it failed: ${reserved.failure}`,
+        );
+        continue;
+      }
+
+      if (reserved.success.reserved) {
+        kept.push(entry);
+        continue;
+      }
+
+      notes.push(
+        `${label}: ${entry.item} was claimed first (${Claims.describeHolder(claim, reserved.success.holder)})`,
+      );
+    }
+
+    return { start: kept, notes };
+  });
 
 // A setup error says itself, fix included; anything else is the flow failing.
 const failure = <E>(error: E) => {
@@ -588,11 +652,19 @@ export const planCi = (options: CiPlanOptions) =>
 
     const plan = CiPlan.plan(findings, claims);
 
+    const reserved = yield* Option.match(options.workflowRun, {
+      onNone: () => Effect.succeed({ start: plan.start, notes: [] }),
+      onSome: (workflowRun) =>
+        reserveEach(plan.start, workflowRun, (login) =>
+          Option.flatMap(Option.fromUndefinedOr(contexts.get(login)), Result.getSuccess),
+        ),
+    });
+
     return {
       scope,
-      start: plan.start,
-      matrix: CiPlan.matrix(plan.start),
-      notes: [...notes, ...plan.notes],
+      start: reserved.start,
+      matrix: CiPlan.matrix(reserved.start),
+      notes: [...notes, ...plan.notes, ...reserved.notes],
       maxParallel: ci.maxParallel,
     } satisfies CiPlanResult;
   }).pipe(Effect.scoped);
