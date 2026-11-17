@@ -373,9 +373,13 @@ export const GitHubLive = (settings: RepoSettings): Layer.Layer<GitHub, never, G
       const has = (found: ReadonlyArray<LinkedIssue>, number: number) =>
         found.some((one) => one.number === number);
 
-      const self = provide(
-        githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login)),
-      );
+      // Who the persona is: a named one's login, as GitHub won't say whose an
+      // App's installation token is (#477); the implicit one's, its token's.
+      const self = Option.match(Option.fromUndefinedOr(settings.persona), {
+        onSome: (named) => Effect.succeed(named),
+        onNone: () =>
+          provide(githubJson("GET", "/user", RestUser).pipe(Effect.map((user) => user.login))),
+      });
 
       // One issue or pull request, which GitHub may not have.
       const readOrNotFound = <A>(what: string, rest: string, schema: Schema.Codec<A, Json>) =>

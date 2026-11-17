@@ -21,6 +21,7 @@ import {
   type CiEvent,
   type CiPlanResult,
   ciWorkflowFor,
+  type CiWorkflowSettings,
   planCi,
   type WorkflowFiles,
 } from "../../modules/runs/runs.platform.ts";
@@ -116,9 +117,7 @@ export const summaryOf = (plan: CiPlanResult, event: Option.Option<CiEvent>) =>
 
 type PlanOptions = Parameters<typeof planCi>[0];
 
-type CiSection = Effect.Success<ReturnType<PlanOptions["ciOf"]>> & {
-  readonly schedule: string;
-};
+type CiSection = Effect.Success<ReturnType<PlanOptions["ciOf"]>> & CiWorkflowSettings;
 
 // How the command reads machine config and a repo's ci: section, which the
 // CLI's root hands it.
@@ -160,7 +159,14 @@ const prepareRunnerHome = (
     }
 
     const ci = yield* ciOf(`${checkout.value}/.chernabog`);
-    const config = ciMachineConfig({ slug: slug.value, checkout: checkout.value, flows: ci.flows });
+
+    const config = ciMachineConfig({
+      slug: slug.value,
+      checkout: checkout.value,
+      flows: ci.flows,
+      apps: ci.apps,
+    });
+
     yield* fs.makeDirectory(home.root, { recursive: true });
     yield* writeJson(paths.machineConfig, config);
   }).pipe(
@@ -370,6 +376,7 @@ const runCommand = <R>(config: CiConfigAccess<R>) =>
             ),
           },
           config.enrolled,
+          config.ciOf,
         );
       }),
   ).pipe(
@@ -397,7 +404,7 @@ export const writeCiWorkflow = (root: string, access: CiWorkflowAccess) =>
       return [];
     }
 
-    const { notes, path, text } = found.value;
+    const { needs, notes, path, text } = found.value;
     const file = `${root}/${path}`;
     const before = yield* fs.readFileString(file).pipe(Effect.option);
 
@@ -409,7 +416,7 @@ export const writeCiWorkflow = (root: string, access: CiWorkflowAccess) =>
     yield* fs.writeFileString(file, text);
 
     return [
-      `wrote ${path}${Option.match(before, { onNone: () => "", onSome: () => " (updated)" })}: give the repo the secrets CHERNABOG_TOKEN and CLAUDE_CODE_OAUTH_TOKEN, then commit and merge it`,
+      `wrote ${path}${Option.match(before, { onNone: () => "", onSome: () => " (updated)" })}: ${needs}, then commit and merge it`,
       ...notes,
     ];
   }).pipe(

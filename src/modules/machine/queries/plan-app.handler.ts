@@ -2,33 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { AppRoles } from "../domain/domain-services/app-roles.domain-service.ts";
 import { GitHubAppsClient } from "../domain/ports/clients/github-apps.client.ts";
 import { AppPlan, AppPlanFailed, type PlanAppPayload } from "./plan-app.query.ts";
-
-// What each role's App may do on the repos it's installed on (#477). The
-// reviewer writes contents only to chernabog/threads/*, which a ruleset holds
-// it to, and only it writes checks: the check that gates a merge is its own.
-// Neither touches .github/, so neither has workflows.
-const PERMISSIONS: Readonly<Record<PlanAppPayload["role"], Readonly<Record<string, string>>>> = {
-  author: {
-    contents: "write",
-    pull_requests: "write",
-    issues: "write",
-    checks: "read",
-    actions: "read",
-    statuses: "read",
-    metadata: "read",
-  },
-  reviewer: {
-    contents: "write",
-    pull_requests: "write",
-    issues: "write",
-    checks: "write",
-    actions: "read",
-    statuses: "read",
-    metadata: "read",
-  },
-};
 
 // What each role's App's name ends in, after the prefix.
 const SUFFIXES: Readonly<Record<PlanAppPayload["role"], string>> = {
@@ -76,7 +52,7 @@ export const planAppHandler = Effect.fn("planAppHandler")(function* (query: Plan
     setup_on_update: true,
     request_oauth_on_install: false,
     default_events: [],
-    default_permissions: PERMISSIONS[query.role],
+    default_permissions: AppRoles.permissionsOf(query.role),
   };
 
   return AppPlan.make({
