@@ -140,7 +140,7 @@ change.
      live in comments that anyone can delete. `advance` takes an optional
      `data`, a JSON object of at most 4 KB, and the record returns it. Core
      doesn't interpret it, and the compare-and-set compares phases, not data.
-     On the git adapter it is a fenced block in the commit body.
+     On the git adapter it is a `Data:` trailer of one-line JSON.
 
    Both fields are additive to core (ADR 4): a new optional argument and two
    new fields on a returned record.
