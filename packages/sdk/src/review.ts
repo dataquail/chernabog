@@ -352,18 +352,19 @@ export const waitingElsewhere = Effect.gen(function* () {
 // that ask for reviews.
 export const reviewerCheck: DoctorCheck = (context) =>
   Effect.gen(function* () {
-    const { pool } = yield* Settings.reviewers;
+    const { apps, pool } = yield* Settings.reviewers;
+    const seated = [...pool, ...apps.map((app) => app.login)];
 
     const unseated = Option.filter(
       context.login,
-      (login) => context.runs && pool.length > 0 && !actsAs(pool, login),
+      (login) => context.runs && seated.length > 0 && !actsAs(seated, login),
     );
 
     return Option.match(unseated, {
       onNone: () => [],
       onSome: (login) => [
         {
-          warning: `${login} runs ${context.flow}, but the reviewer pool (${pool.join(", ")}) doesn't list it, so no pull request asks it to review`,
+          warning: `${login} runs ${context.flow}, but the reviewer pool (${seated.join(", ")}) doesn't list it, so no pull request asks it to review`,
           fix: `add ${login} to reviewers: in .chernabog/config.yaml, or turn ${context.flow} off for ${login}`,
         },
       ],

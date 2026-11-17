@@ -26,6 +26,8 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `announcePhases`   | `true`                     | announce each [phase advance](/chernabog/operate/progress/#announcing-each-advance) with a `repository_dispatch` of `chernabog-phase`, which starts the repo's CI workflow; `false` sends none |
 | `flows.<flow>`     | —                          | `enabled` (the default `enroll` offers), `schedule` (an error for a manual flow), `concurrency`, `agent`, `agents`, `runners`, `assignee`, `reviewRequested` for one flow; see [Agents by role](#agents-by-role) and [Routing by assignee and reviewer](#routing-by-assignee-and-reviewer) |
 | `flows.<flow>.settings` | —                     | the flow's own settings, over `settings`; see [Flow settings](#flow-settings) |
+| `flows.<flow>.as`  | none                       | which of the team's GitHub Apps (`apps`) the flow acts as in CI: `author` or `reviewer`; see [GitHub Apps](#github-apps) |
+| `apps.author`, `apps.reviewer` | none           | the team's GitHub Apps, each as `{ id, slug }`; see [GitHub Apps](#github-apps) |
 | `flows.<flow>.from` | —                         | Run this flow from a recipe package installed in `.chernabog/` (in `package.json`'s `dependencies`), as `"<package>/<recipe>"`, instead of a file in `flows/`; see [Copy or import](/chernabog/recipes/#copy-or-import). A flow with both is an error |
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
@@ -97,7 +99,7 @@ flows:
 
 ### Reviewers
 
-`reviewers`, a [flow setting](#flow-settings), names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
+`reviewers`, a [flow setting](#flow-settings), names the team's reviewer pool: people by GitHub login, and the team's reviewer App as `app:reviewer` (see [GitHub Apps](#github-apps)). Once a pull request's CI is green, `implement` asks one of the people, at random, to review it, never the pull request's author. The App is never asked, since GitHub can't ask an App for a review: it reviews through its own `chernabog review` check. With only the App in the pool, no one is asked. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.
 
 On the automated path, an `auto:ship` pull request, the approving reviewer merges, so every login in `reviewers` needs write access to the repo. `chernabog doctor` checks it for each reviewer this machine acts as, from `github:` in machine config.
 
@@ -111,6 +113,24 @@ A review request for a login this machine doesn't act as waits for the machine t
 settings:
   reviewers: [alice, data-quail]
 ```
+
+### GitHub Apps
+
+`apps` names the team's GitHub Apps, which CI acts as instead of a person's token: `author`, which writes the code, and `reviewer`, which reviews it. Each is `{ id, slug }`, and acts on GitHub as its bot, `<slug>[bot]`. [`chernabog ci apps`](/chernabog/work/commands/#ci-apps) makes them. Each flow names the App it acts as with `as`, and a reviewer pool names the reviewer App as `app:reviewer`. A flow's `as` or a pool's `app:<role>` that names a role `apps` has no App for is a config error.
+
+```yaml
+# .chernabog/config.yaml
+apps:
+  author: { id: 5714322, slug: chernabog-author }
+  reviewer: { id: 5714350, slug: chernabog-review }
+settings:
+  reviewers: [app:reviewer, alice]
+flows:
+  implement: { as: author }
+  review: { as: reviewer }
+```
+
+A persona in machine config whose login is the reviewer App's bot, `chernabog-review[bot]`, holds a seat in a pool that names `app:reviewer`. A repo without `apps` runs as before, as personas.
 
 ### Agents by role
 

@@ -857,12 +857,25 @@ export declare const ResolvedLauncher: Schema.Struct<{
 }>;
 export type ResolvedLauncher = typeof ResolvedLauncher.Type;
 export declare const HEADLESS: ResolvedLauncher;
+export declare const AppIdentity: Schema.Struct<{
+    readonly id: Schema.Int;
+    readonly slug: Schema.String;
+    readonly login: Schema.String;
+}>;
+export type AppIdentity = typeof AppIdentity.Type;
+export declare const APP_REVIEWER = "app:";
 export declare const RepoSettings: Schema.Struct<{
     readonly name: Schema.String;
     readonly slug: Schema.String;
     readonly path: Schema.String;
     readonly baseBranch: Schema.String;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
+    readonly apps: Schema.optionalKey<Schema.$Record<Schema.String, Schema.Struct<{
+        readonly id: Schema.Int;
+        readonly slug: Schema.String;
+        readonly login: Schema.String;
+    }>>>;
+    readonly flowApps: Schema.optionalKey<Schema.$Record<Schema.String, Schema.String>>;
     readonly persona: Schema.optionalKey<Schema.String>;
     readonly account: Schema.Struct<{
         readonly name: Schema.String;
@@ -936,6 +949,16 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
     readonly path: string;
     readonly baseBranch: string;
     readonly reviewers?: readonly string[] | undefined;
+    readonly apps?: {
+        readonly [x: string]: {
+            readonly id: number;
+            readonly slug: string;
+            readonly login: string;
+        };
+    } | undefined;
+    readonly flowApps?: {
+        readonly [x: string]: string;
+    } | undefined;
     readonly persona?: string | undefined;
     readonly account: {
         readonly name: string;
