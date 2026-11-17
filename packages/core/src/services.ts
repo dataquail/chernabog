@@ -2,6 +2,7 @@
 // a team can replace any of them with its own layer, and tests can use fakes.
 
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -20,7 +21,7 @@ import type {
   UsageError,
 } from "./errors.ts";
 import type { Json } from "./json.ts";
-import type { Phase, PhaseWriter } from "./phase.ts";
+import type { Phase, PhaseData, PhaseWriter } from "./phase.ts";
 
 // The labels of the SDK's issue-to-pull-request recipes. Deprecated: they are
 // those recipes' settings now (the SDK's Settings.labels), and core's next
@@ -788,20 +789,27 @@ export const ReviewerSeatCapability = Capabilities.declare(ReviewerSeat, () => (
 // What an item's record holds: its phase, the transition that wrote it
 // (`from` the phase before, `by` its writer), and a version that changes with
 // every record and never names another, so a reader can tell a record it has
-// already seen.
+// already seen. `at` is when the adapter wrote it, by the store's clock, not
+// the writer's, so a park can tell how long it has waited. `data` is what the
+// transition carried for the next run, none when it carried nothing
+// (ADR 0021, decision 4).
 export type PhaseRecord = {
   readonly phase: Phase;
   readonly from: Option.Option<Phase>;
   readonly by: PhaseWriter;
   readonly version: string;
+  readonly at: DateTime.Utc;
+  readonly data: Option.Option<PhaseData>;
 };
 
 // One move of an item's phase: `from` the phase it must still be in (none:
-// the item has no record yet), `to` the phase it moves to, `by` who moves it.
+// the item has no record yet), `to` the phase it moves to, `by` who moves it,
+// and `data` for the run that picks the item up next, which the record keeps.
 export type PhaseTransition = {
   readonly from: Option.Option<Phase>;
   readonly to: Phase;
   readonly by: PhaseWriter;
+  readonly data?: PhaseData;
 };
 
 export class Progress extends Context.Service<

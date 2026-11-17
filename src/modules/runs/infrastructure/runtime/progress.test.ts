@@ -1,6 +1,14 @@
-import { isSetupError, Phase, PhaseMoved, PhaseWriter, ProgressUnwritable } from "@chernabog/core";
+import {
+  isSetupError,
+  Phase,
+  PhaseData,
+  PhaseMoved,
+  PhaseWriter,
+  ProgressUnwritable,
+} from "@chernabog/core";
 import { describe, expect, test } from "bun:test";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -40,6 +48,13 @@ const CHANGES = phase("changes-asked");
 const RUN_A = writer("0eee9982-bb65-4a62-b603-25023ad948cb");
 const RUN_B = writer("data-quail");
 
+const AT = DateTime.makeUnsafe("2026-11-17T12:00:00Z");
+
+const DATA = Schema.decodeSync(PhaseData)({
+  adopted: 81,
+  url: "https://github.com/acme/app/pull/81",
+});
+
 const isPhaseMoved = Schema.is(PhaseMoved);
 const isProgressUnwritable = Schema.is(ProgressUnwritable);
 
@@ -65,12 +80,41 @@ describe("a thread's commit message", () => {
     });
   });
 
-  test("reads back as the record it was written from, with its commit as the version", () => {
+  test("carries data as one line of JSON in a Data trailer", () => {
+    expect(
+      recordMessage("issue-12", { from: Option.none(), to: ASKED, by: RUN_B, data: DATA }).body,
+    ).toEqual(
+      'Phase: review-asked\nBy: data-quail\nData: {"adopted":81,"url":"https://github.com/acme/app/pull/81"}',
+    );
+  });
+
+  test("reads back as the record it was written from, with its commit as the version and time", () => {
     const message = recordMessage("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B });
 
-    expect(parseRecord("abc123", `${message.headline}\n\n${message.body}\n`)).toEqual(
-      Option.some({ phase: CHANGES, from: Option.some(ASKED), by: RUN_B, version: "abc123" }),
+    expect(parseRecord("abc123", `${message.headline}\n\n${message.body}\n`, AT)).toEqual(
+      Option.some({
+        phase: CHANGES,
+        from: Option.some(ASKED),
+        by: RUN_B,
+        version: "abc123",
+        at: AT,
+        data: Option.none(),
+      }),
     );
+
+    const carrying = recordMessage("issue-12", {
+      from: Option.none(),
+      to: ASKED,
+      by: RUN_B,
+      data: DATA,
+    });
+
+    expect(
+      Option.map(
+        parseRecord("def456", `${carrying.headline}\n\n${carrying.body}\n`, AT),
+        (record) => record.data,
+      ),
+    ).toEqual(Option.some(Option.some(DATA)));
   });
 
   test("a commit with no record, or a malformed one, holds none", () => {
@@ -80,8 +124,10 @@ describe("a thread's commit message", () => {
         "Phase: Not A Phase\nBy: x",
         "Phase: review-asked",
         "Phase: a\nFrom: B C\nBy: x",
-      ].map((message) => Option.isSome(parseRecord("abc", message))),
-    ).toEqual([false, false, false, false]);
+        "Phase: a\nBy: x\nData: not json",
+        "Phase: a\nBy: x\nData: [1, 2]",
+      ].map((message) => Option.isSome(parseRecord("abc", message, AT))),
+    ).toEqual([false, false, false, false, false, false]);
   });
 });
 
@@ -114,7 +160,14 @@ describe("an item's thread", () => {
 });
 
 describe("decide", () => {
-  const record = { phase: ASKED, from: Option.none<Phase>(), by: RUN_A, version: "v1" };
+  const record = {
+    phase: ASKED,
+    from: Option.none<Phase>(),
+    by: RUN_A,
+    version: "v1",
+    at: AT,
+    data: Option.none(),
+  };
 
   test("its own write, retried, is that record", () => {
     expect(

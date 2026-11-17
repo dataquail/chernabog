@@ -7,6 +7,8 @@
 
 import * as Schema from "effect/Schema";
 
+import { printJson } from "./json.ts";
+
 // A phase: lowercase letters and digits in words joined by single hyphens,
 // such as `review-asked` or `changes-asked`, at most 64 characters. No
 // spaces, newlines, slashes or dots, which a commit trailer, a ref or a URL
@@ -33,3 +35,28 @@ export const PhaseWriter = Schema.String.check(
 export type PhaseWriter = typeof PhaseWriter.Type;
 
 export const isPhaseWriter = Schema.is(PhaseWriter);
+
+// The most a record's data may take, as JSON text in UTF-8.
+export const PHASE_DATA_MAX_BYTES = 4096;
+
+const fitsARecord = (data: { readonly [key: string]: Schema.Json }) => {
+  const bytes = new TextEncoder().encode(printJson(data)).length;
+
+  return (
+    bytes <= PHASE_DATA_MAX_BYTES ||
+    `a record's data is ${bytes} bytes as JSON, over the ${PHASE_DATA_MAX_BYTES} it may take`
+  );
+};
+
+// What a record carries for the run that picks the item up next, such as the
+// pull request a run adopted or a plan's round (ADR 0021, decision 4): a JSON
+// object of at most PHASE_DATA_MAX_BYTES. Core gives it no meaning and never
+// compares it: an advance is a compare-and-set on the phase alone.
+export const PhaseData = Schema.Record(Schema.String, Schema.Json).pipe(
+  Schema.check(Schema.makeFilter(fitsARecord)),
+  Schema.brand("PhaseData"),
+);
+
+export type PhaseData = typeof PhaseData.Type;
+
+export const isPhaseData = Schema.is(PhaseData);
