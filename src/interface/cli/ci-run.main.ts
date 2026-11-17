@@ -94,27 +94,61 @@ export const refusalOf = (
 
 // The machine config a job's home starts from when the workflow gives it
 // none: the checkout, enrolled for the job's flows (a run job's one, the plan
-// job's every CI flow), as the implicit persona (the job's GH_TOKEN), with
-// claude on the subscription token and under tmux. The account has no usage
-// gate: a setup-token token can't read usage, and the gate refuses to try, so
-// with one every plan would hold every flow back. checkAccount still runs.
+// job's every CI flow), with claude on the subscription token and under tmux.
+// The account has no usage gate: a setup-token token can't read usage, and
+// the gate refuses to try, so with one every plan would hold every flow back.
+// checkAccount still runs.
+//
+// The flows act as the implicit persona, the job's GH_TOKEN, unless config
+// names their Apps (#477): then each App's login is a persona whose token is
+// GH_TOKEN, running the flows that act as it. GitHub won't say who an App's
+// token or the workflow's is, so the login comes from config, never the token.
 export const ciMachineConfig = (options: {
   readonly slug: string;
   readonly checkout: string;
   readonly flows: ReadonlyArray<string>;
-}) => ({
-  accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
-  launcher: "tmux",
-  repos: [
-    {
-      path: options.checkout,
-      repo: options.slug,
-      name: options.slug.split("/").at(-1) ?? options.slug,
-      account: "ci",
-      flows: Object.fromEntries(options.flows.map((flow) => [flow, {}])),
-    },
-  ],
-});
+  readonly apps: Readonly<Record<string, { readonly login: string }>>;
+}) => {
+  const enabled = (flows: ReadonlyArray<string>) =>
+    Object.fromEntries(flows.map((flow) => [flow, {}]));
+
+  const loginOf = (flow: string) => Option.map(Record.get(options.apps, flow), (app) => app.login);
+  const logins = Arr.dedupe(options.flows.flatMap((flow) => Option.toArray(loginOf(flow))));
+
+  const repo = {
+    path: options.checkout,
+    repo: options.slug,
+    name: options.slug.split("/").at(-1) ?? options.slug,
+    account: "ci",
+  };
+
+  const base = {
+    accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
+    launcher: "tmux",
+  };
+
+  if (logins.length === 0) {
+    return { ...base, repos: [{ ...repo, flows: enabled(options.flows) }] };
+  }
+
+  return {
+    ...base,
+    github: Object.fromEntries(logins.map((login) => [login, { token: { env: "GH_TOKEN" } }])),
+    repos: [
+      {
+        ...repo,
+        personas: Object.fromEntries(
+          logins.map((login) => [
+            login,
+            {
+              flows: enabled(options.flows.filter((flow) => Option.contains(loginOf(flow), login))),
+            },
+          ]),
+        ),
+      },
+    ],
+  };
+};
 
 // What a fresh runner's git needs, as global config: a credential helper that
 // answers github.com with the job's GH_TOKEN, since the checkout keeps no
@@ -157,6 +191,15 @@ export type CiRunConfigAccess<R> = (
   R
 >;
 
+// How the command reads the Apps a repo's CI flows act as, from its .chernabog/.
+export type CiAppsAccess = (
+  configDir: string,
+) => Effect.Effect<
+  { readonly apps: Readonly<Record<string, { readonly login: string }>> },
+  ConfigError,
+  FileSystem.FileSystem
+>;
+
 export type CiRunOptions = {
   readonly repo: string;
   readonly flow: string;
@@ -181,8 +224,9 @@ export const writeJson = (path: string, value: Schema.Json) =>
 
 // The home's machine config, written from the job's environment when the
 // workflow left none; and on a runner, ~/.claude.json, seeded when it has
-// none, and git's credential and identity (runnerGitConfig).
-const prepareHome = (options: CiRunOptions) =>
+// none, and git's credential and identity (runnerGitConfig), the identity of
+// the persona the job acts as.
+const prepareHome = (options: CiRunOptions, ciOf: CiAppsAccess) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
@@ -195,6 +239,11 @@ const prepareHome = (options: CiRunOptions) =>
 
     yield* fs.makeDirectory(home.root, { recursive: true });
 
+    const { apps } = yield* ciOf(`${checkout}/.chernabog`);
+
+    // The flow's App, if config names one; else the implicit persona.
+    const persona: Persona = Option.map(Record.get(apps, options.flow), (app) => app.login);
+
     if (!(yield* fs.exists(paths.machineConfig))) {
       if (!Record.has(variables, OAUTH_TOKEN_ENV)) {
         return yield* new ConfigError({
@@ -205,7 +254,7 @@ const prepareHome = (options: CiRunOptions) =>
       const slug = Option.getOrElse(Record.get(variables, "GITHUB_REPOSITORY"), () => options.repo);
       yield* writeJson(
         paths.machineConfig,
-        ciMachineConfig({ slug, checkout, flows: [options.flow] }),
+        ciMachineConfig({ slug, checkout, flows: [options.flow], apps }),
       );
     }
 
@@ -227,9 +276,9 @@ const prepareHome = (options: CiRunOptions) =>
         });
       }
 
-      const viewer = yield* viewerAs(IMPLICIT).pipe(
+      const viewer = yield* viewerAs(persona).pipe(
         Effect.mapError(
-          (error) => new ConfigError({ message: `who the job's token is: ${error.message}` }),
+          (error) => new ConfigError({ message: `who the job acts as: ${error.message}` }),
         ),
       );
 
@@ -537,7 +586,11 @@ const describeEnding = (ending: CiRunEnding) => {
 
 // One item on one runner, to the next phase boundary. Fails only for a run
 // that failed or ran out of the job's time, so the workflow keeps its logs.
-export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) =>
+export const runInCi = <R>(
+  options: CiRunOptions,
+  config: CiRunConfigAccess<R>,
+  ciOf: CiAppsAccess,
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const home = yield* Home;
@@ -551,7 +604,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     }
 
     const stopAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(options.stopAfter);
-    yield* prepareHome(options);
+    yield* prepareHome(options, ciOf);
 
     const { enrolled, machine } = yield* config(options.repo);
     const opened = yield* openRepo(machine, enrolled, options.fromCheckout);

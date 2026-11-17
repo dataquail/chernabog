@@ -38,6 +38,7 @@ describe("ciMachineConfig", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/home/runner/work/r/r",
         flows: ["review"],
+        apps: {},
       }),
     ).toEqual({
       accounts: { ci: { oauthTokenEnv: OAUTH_TOKEN_ENV, usageGate: "none" } },
@@ -64,6 +65,7 @@ describe("ciMachineConfig, as machine config reads it", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/w",
         flows: ["implement"],
+        apps: {},
       }),
     );
 
@@ -86,8 +88,44 @@ describe("ciMachineConfig for the plan job", () => {
         slug: "dataquail/chernabog-rehearsal",
         checkout: "/w",
         flows: ["implement", "review"],
-      }).repos[0]?.flows,
-    ).toEqual({ implement: {}, review: {} });
+        apps: {},
+      }).repos[0],
+    ).toHaveProperty("flows", { implement: {}, review: {} });
+  });
+});
+
+describe("ciMachineConfig with the repo's GitHub Apps (#477)", () => {
+  const apps = {
+    implement: { login: "acme-author[bot]" },
+    "address-review": { login: "acme-author[bot]" },
+    review: { login: "acme-review[bot]" },
+  };
+
+  test("makes each App's login a persona on the job's GH_TOKEN, running the flows that act as it", () => {
+    const config = ciMachineConfig({
+      slug: "acme/widgets",
+      checkout: "/w",
+      flows: ["implement", "address-review", "review"],
+      apps,
+    });
+
+    expect(config).toHaveProperty("github", {
+      "acme-author[bot]": { token: { env: "GH_TOKEN" } },
+      "acme-review[bot]": { token: { env: "GH_TOKEN" } },
+    });
+
+    expect(config.repos[0]).toHaveProperty("personas", {
+      "acme-author[bot]": { flows: { implement: {}, "address-review": {} } },
+      "acme-review[bot]": { flows: { review: {} } },
+    });
+  });
+
+  test("a run job's home has only its flow's App", () => {
+    const file = Schema.decodeUnknownSync(MachineConfigFile)(
+      ciMachineConfig({ slug: "acme/widgets", checkout: "/w", flows: ["review"], apps }),
+    );
+
+    expect(Object.keys(file.github ?? {})).toEqual(["acme-review[bot]"]);
   });
 });
 

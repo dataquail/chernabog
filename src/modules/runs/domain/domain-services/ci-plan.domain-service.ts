@@ -6,6 +6,7 @@
 
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Schema from "effect/Schema";
 
 import {
@@ -340,15 +341,40 @@ const plan = (findings: ReadonlyArray<Findings>, claims: ReadonlyArray<LiveClaim
     { start: [], notes: [] },
   );
 
+// The GitHub App a CI flow acts as (#477): its role, its login, and the
+// Environment holding its key, which the run job takes.
+export type FlowApp = {
+  readonly role: string;
+  readonly login: string;
+  readonly environment: string;
+};
+
 // The matrix as the workflow reads it: exactly `[]` when it starts nothing,
-// which the run job's guard compares against (docs/ci/runner-test.md).
+// which the run job's guard compares against (docs/ci/runner-test.md). An
+// entry whose flow acts as an App names its role and Environment.
 const MatrixText = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ flow: Schema.String, persona: Schema.String, item: Schema.String })),
+  Schema.Array(
+    Schema.Struct({
+      flow: Schema.String,
+      persona: Schema.String,
+      item: Schema.String,
+      role: Schema.optionalKey(Schema.String),
+      environment: Schema.optionalKey(Schema.String),
+    }),
+  ),
 );
 
-const matrix = (start: ReadonlyArray<Entry>) =>
+const matrix = (start: ReadonlyArray<Entry>, apps: Readonly<Record<string, FlowApp>> = {}) =>
   Schema.encodeSync(MatrixText)(
-    start.map((entry) => ({ flow: entry.flow, persona: entry.persona, item: entry.item })),
+    start.map((entry) => ({
+      flow: entry.flow,
+      persona: entry.persona,
+      item: entry.item,
+      ...Option.match(Record.get(apps, entry.flow), {
+        onNone: () => ({}),
+        onSome: (app) => ({ role: app.role, environment: app.environment }),
+      }),
+    })),
   );
 
 export const CiPlan = {

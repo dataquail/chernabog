@@ -272,12 +272,23 @@ export const viewerLogin = githubJson("GET", "/user", Schema.Struct({ login: Sch
   Effect.map((user) => user.login),
 );
 
-// The GitHub account a persona's token belongs to: its login and numeric id.
+const Account = Schema.Struct({ login: Schema.String, id: Schema.Int });
+
+// The GitHub account a persona acts as: its login and numeric id. The
+// implicit persona's is its token's. A named one's is read by its login, as
+// GitHub won't say whose an App's installation token is (#477).
 export const viewerAs = (persona: Persona) =>
   Layer.build(GitHubApi.layerFor(persona)).pipe(
     Effect.flatMap((api) =>
       Effect.provideContext(
-        githubJson("GET", "/user", Schema.Struct({ login: Schema.String, id: Schema.Int })),
+        githubJson(
+          "GET",
+          Option.match(persona, {
+            onNone: () => "/user",
+            onSome: (login) => `/users/${encodeURIComponent(login)}`,
+          }),
+          Account,
+        ),
         api,
       ),
     ),

@@ -57,7 +57,7 @@ const settings: RepoSettings = {
 };
 
 // GitHub answering every request with one status and body, and the requests it got.
-const answering = (status: number, body: Option.Option<Json>) => {
+const answering = (status: number, body: Option.Option<Json>, repo: RepoSettings = settings) => {
   const requests: Array<{
     readonly method: string;
     readonly path: string;
@@ -76,8 +76,32 @@ const answering = (status: number, body: Option.Option<Json>) => {
     }),
   );
 
-  return { requests, layer: GitHubLive(settings).pipe(Layer.provide(api)) };
+  return { requests, layer: GitHubLive(repo).pipe(Layer.provide(api)) };
 };
+
+const loginOf = (repo: RepoSettings) => {
+  const github = answering(
+    403,
+    Option.some({ message: "Resource not accessible by integration" }),
+    repo,
+  );
+
+  return GitHub.use((service) => service.login).pipe(
+    Effect.provide(github.layer),
+    Effect.map((login) => ({ login, requests: github.requests })),
+  );
+};
+
+effect(
+  "a named persona's login is its own, never asked of GitHub, which won't say whose an App's token is",
+  () =>
+    Effect.gen(function* () {
+      const { login, requests } = yield* loginOf({ ...settings, persona: "acme-author[bot]" });
+
+      expect(login).toBe("acme-author[bot]");
+      expect(requests).toEqual([]);
+    }),
+);
 
 const mergeWith = (status: number, body: Option.Option<Json>) => {
   const github = answering(status, body);

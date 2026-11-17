@@ -301,29 +301,25 @@ export type RepoConfigFile = typeof RepoConfigFile.Type;
 // The sweep's schedule when config gives none: every three hours, at an odd minute.
 export const DEFAULT_CI_SCHEDULE = "17 */3 * * *";
 
+// The GitHub App a CI flow acts as (#477): the role its as: names, the App's
+// login, the Environment its run jobs read the App's key from, and what the
+// App may do, which the job's token is narrowed to.
+export type CiApp = {
+  readonly role: AppRole;
+  readonly login: string;
+  readonly environment: string;
+  readonly permissions: Readonly<Record<string, string>>;
+};
+
 // A repo's ci: section, with its defaults: no flow runs in CI unless named.
 export type CiConfig = {
   readonly flows: ReadonlyArray<string>;
   readonly maxParallel: number;
   readonly schedule: string;
+  // Each CI flow's App, by flow, when config.yaml names apps:; else empty,
+  // and every flow acts as the one persona CHERNABOG_TOKEN is.
+  readonly apps: Readonly<Record<string, CiApp>>;
 };
-
-// The ci: section of a repo's config, or why it can't be used.
-export const ciConfigOf = (file: RepoConfigFile) =>
-  Effect.gen(function* () {
-    const ci = file.ci ?? { flows: [] };
-    const schedule = ci.schedule ?? DEFAULT_CI_SCHEDULE;
-
-    for (const problem of Option.toArray(cronProblem(schedule))) {
-      return yield* new ConfigError({ message: `ci.schedule: ${problem}` });
-    }
-
-    return {
-      flows: Arr.dedupe(ci.flows),
-      maxParallel: ci.maxParallel ?? 1,
-      schedule,
-    } satisfies CiConfig;
-  });
 
 const AccountFile = Schema.Struct({
   configDir: Nullable(Schema.String),
@@ -1226,6 +1222,64 @@ export const appsProblems = (repo: RepoConfigFile): ReadonlyArray<string> => {
 
   return [...asProblems, ...poolProblems];
 };
+
+// Each CI flow's App, when config.yaml names apps:. A job there holds only
+// its Apps' tokens, so every CI flow says which it acts as.
+const ciAppsOf = (file: RepoConfigFile, flows: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const apps = appsOf(file);
+
+    if (Record.isEmptyRecord(apps)) {
+      return {};
+    }
+
+    for (const problem of Option.toArray(Arr.head(appsProblems(file)))) {
+      return yield* new ConfigError({ message: problem });
+    }
+
+    const roles = flowAppsOf(file);
+    const found: Record<string, CiApp> = {};
+
+    for (const flow of flows) {
+      const role = Option.filter(Record.get(roles, flow), Schema.is(AppRole));
+      const app = Option.flatMap(role, (named) => Record.get(apps, named));
+
+      if (Option.isNone(role) || Option.isNone(app)) {
+        return yield* new ConfigError({
+          message: `ci.flows names ${flow}, which acts as no App: with apps:, a CI job holds only its Apps' tokens, so give it flows.${flow}.as`,
+        });
+      }
+
+      found[flow] = {
+        role: role.value,
+        login: app.value.login,
+        environment: AppRoles.environmentOf(role.value),
+        permissions: AppRoles.permissionsOf(role.value),
+      };
+    }
+
+    return found;
+  });
+
+// The ci: section of a repo's config, or why it can't be used.
+export const ciConfigOf = (file: RepoConfigFile) =>
+  Effect.gen(function* () {
+    const ci = file.ci ?? { flows: [] };
+    const schedule = ci.schedule ?? DEFAULT_CI_SCHEDULE;
+
+    for (const problem of Option.toArray(cronProblem(schedule))) {
+      return yield* new ConfigError({ message: `ci.schedule: ${problem}` });
+    }
+
+    const flows = Arr.dedupe(ci.flows);
+
+    return {
+      flows,
+      maxParallel: ci.maxParallel ?? 1,
+      schedule,
+      apps: yield* ciAppsOf(file, flows),
+    } satisfies CiConfig;
+  });
 
 // Merges the layers for one persona of a repo. `configDir` is where its
 // .chernabog/ was read from; `env` is the extra environment its commands run

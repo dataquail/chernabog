@@ -80,7 +80,7 @@ The persona needs write access to the repo. On a repo with the thread rulesets (
 
 ### GitHub Apps
 
-CI is moving from one persona's token to two GitHub Apps, one to write the code and one to review it ([#477](https://github.com/dataquail/chernabog/issues/477)). The workflow doesn't use them yet. `chernabog ci apps` sets them up ahead of that:
+CI can act as two GitHub Apps instead of one persona's token: one writes the code and one reviews it ([#477](https://github.com/dataquail/chernabog/issues/477)). `chernabog ci apps` sets them up:
 
 ```sh
 chernabog ci apps --repo owner/repo --environments
@@ -97,7 +97,17 @@ For each App, you click **Create GitHub App** and **Install** on GitHub, and Che
 | Actions, Commit statuses | Read          | Read                                                      |
 | Workflows               | None           | None                                                      |
 
-Neither has a webhook: the workflow wakes on the repo's own events. To rotate an App's key, generate a new one on the App's settings page, replace its file under `~/.config/chernabog/keys/`, set the Environment's secret again (`gh secret set CHERNABOG_APP_KEY --env chernabog-author -R owner/repo < key.pem`), then delete the old key on GitHub.
+Neither has a webhook: the workflow wakes on the repo's own events.
+
+To have CI act as them, name them under [`apps:`](/chernabog/reference/configuration/#github-apps) in `.chernabog/config.yaml`, give every flow under `ci.flows` an `as:`, and write the workflow again. The workflow then changes in three ways:
+
+- **The plan job runs as the workflow's own `GITHUB_TOKEN`.** It gets `contents: write` for the claims it reserves items with, and read access to the rest. It takes no Environment and holds no App's key.
+- **Each run job runs in its App's Environment.** The plan's matrix names each entry's `role` and `environment`. The job's first step makes the App's installation token with [`actions/create-github-app-token`](https://github.com/actions/create-github-app-token). The token covers only the workflow's repo and only what that role's App may do (the table above). Only that step and chernabog's own step see the token. GitHub revokes it when the job ends. The reviewer's Environment lets only the default branch's runs read its key.
+- **The login comes from config.** GitHub won't say whose an App's token is, nor whose `GITHUB_TOKEN` is. So each flow acts as `<slug>[bot]`, from `apps:`, and git commits as that login.
+
+The repo then needs only the `CLAUDE_CODE_OAUTH_TOKEN` secret, plus each Environment's `CHERNABOG_APP_ID` variable and `CHERNABOG_APP_KEY` secret. It doesn't need `CHERNABOG_TOKEN`. #477 isn't finished yet. Two parts are still to come: the reviewer's own check, and guards that recognise the Apps' own events.
+
+To rotate an App's key, generate a new one on the App's settings page, replace its file under `~/.config/chernabog/keys/`, set the Environment's secret again (`gh secret set CHERNABOG_APP_KEY --env chernabog-author -R owner/repo < key.pem`), then delete the old key on GitHub.
 
 ### 4. Protect the phase records
 

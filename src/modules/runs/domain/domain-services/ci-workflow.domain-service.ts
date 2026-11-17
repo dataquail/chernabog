@@ -68,6 +68,8 @@ export type Job = {
   readonly name?: string;
   readonly needs?: string;
   readonly if?: string;
+  readonly environment?: string;
+  readonly permissions?: { readonly [scope: string]: string };
   readonly "runs-on": string;
   readonly "timeout-minutes": number;
   readonly outputs?: { readonly [key: string]: string };
@@ -107,7 +109,108 @@ const PINNED = {
     uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
     version: "v7.0.2",
   },
+  appToken: {
+    uses: "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510",
+    version: "v3.3.0",
+  },
 } as const;
+
+// The repo's GitHub Apps, for a repo whose CI flows act as them (#477): each
+// role its flows act as, with what its App may do.
+export type WorkflowApps = {
+  readonly roles: ReadonlyArray<{
+    readonly role: string;
+    readonly permissions: { readonly [permission: string]: string };
+  }>;
+};
+
+// What each role's Environment calls its App's id and private key, as
+// `chernabog ci apps` sets them up (AppRoles, in the machine module).
+export const APP_ID_VARIABLE = "CHERNABOG_APP_ID";
+export const APP_KEY_SECRET = "CHERNABOG_APP_KEY";
+
+// What the plan job's GITHUB_TOKEN may do when the flows act as Apps: write
+// the claim refs it reserves items with (#519), and read what the triggers
+// read. It holds no App's key, so it runs on every event without exposing one.
+const PLAN_PERMISSIONS = {
+  contents: "write",
+  issues: "read",
+  "pull-requests": "read",
+  checks: "read",
+  statuses: "read",
+  actions: "read",
+};
+
+// The token step's id, whose token output the run step takes.
+const APP_TOKEN_STEP = "app-token";
+
+// A token step's input for one permission: the same for every role, or each
+// role's by the matrix entry's role, the last role's when no other matches.
+const permissionInput = (
+  roles: WorkflowApps["roles"],
+  permission: string,
+): Option.Option<string> => {
+  const values = roles.flatMap((one) =>
+    Option.toArray(
+      Option.map(Option.fromUndefinedOr(one.permissions[permission]), (value) => ({
+        role: one.role,
+        value,
+      })),
+    ),
+  );
+
+  if (values.length === 0) {
+    return Option.none();
+  }
+
+  if (Arr.dedupe(values.map((one) => one.value)).length === 1) {
+    return Option.fromUndefinedOr(values[0]?.value);
+  }
+
+  const last = values.at(-1);
+
+  const chosen = values
+    .slice(0, -1)
+    .map((one) => `matrix.role == '${one.role}' && '${one.value}'`)
+    .join(" || ");
+
+  return Option.map(
+    Option.fromUndefinedOr(last),
+    (fallback) => `\${{ ${chosen} || '${fallback.value}' }}`,
+  );
+};
+
+// The token step's permission-* inputs: every permission a role's App has,
+// but metadata, which every token reads.
+const permissionInputs = (roles: WorkflowApps["roles"]) =>
+  Object.fromEntries(
+    Arr.dedupe(roles.flatMap((one) => Object.keys(one.permissions)))
+      .filter((permission) => permission !== "metadata")
+      .flatMap((permission) =>
+        Option.toArray(
+          Option.map(permissionInput(roles, permission), (value) => [
+            `permission-${permission.replaceAll("_", "-")}`,
+            value,
+          ]),
+        ),
+      ),
+  );
+
+// The run job's token: its App's, made from the id and key the job's
+// Environment holds, narrowed to what its role's App may do. With no
+// repositories or owner, the token reaches only the workflow's own repo,
+// which a schedule event's payload doesn't name.
+const appTokenStep = (apps: WorkflowApps): Step => ({
+  name: "The App's token",
+  id: APP_TOKEN_STEP,
+  uses: PINNED.appToken.uses,
+  with: {
+    // The action takes an App's id where it asks for a client id.
+    "client-id": `\${{ vars.${APP_ID_VARIABLE} }}`,
+    "private-key": `\${{ secrets.${APP_KEY_SECRET} }}`,
+    ...permissionInputs(apps.roles),
+  },
+});
 
 // Both steps that run chernabog take both tokens: ci run's agent runs on
 // Claude's, and ci plan's usage gate (#459) reads the subscription's room
@@ -116,6 +219,13 @@ const PINNED = {
 const secretsEnv = {
   GH_TOKEN: "${{ secrets.CHERNABOG_TOKEN }}",
   CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}",
+};
+
+// With Apps, the plan job acts as the workflow's own token, and a run job as
+// its App's, from the token step.
+const appsEnv = {
+  plan: { ...secretsEnv, GH_TOKEN: "${{ github.token }}" },
+  run: { ...secretsEnv, GH_TOKEN: `\${{ steps.${APP_TOKEN_STEP}.outputs.token }}` },
 };
 
 // The default branch, never a pull request's merge commit: chernabog reads
@@ -143,6 +253,9 @@ const build = (options: {
   readonly on: WorkflowOn;
   readonly schedule: string;
   readonly version: string;
+  // The repo's Apps, when its CI flows act as them; else every job acts as
+  // the persona CHERNABOG_TOKEN is.
+  readonly apps: Option.Option<WorkflowApps>;
 }): Result.Result<Built, string> => {
   const refused = Object.keys(options.on).filter((event) => REFUSED.includes(event));
 
@@ -154,6 +267,22 @@ const build = (options: {
 
   const action = `${ACTION}@v${options.version}`;
 
+  // What the jobs differ in when the flows act as Apps: the plan job's
+  // permissions and token, and each run job's Environment and token step.
+  const plan = Option.match(options.apps, {
+    onNone: () => ({ job: {}, env: secretsEnv }),
+    onSome: () => ({ job: { permissions: PLAN_PERMISSIONS }, env: appsEnv.plan }),
+  });
+
+  const run = Option.match(options.apps, {
+    onNone: () => ({ job: {}, steps: [], env: secretsEnv }),
+    onSome: (apps) => ({
+      job: { environment: "${{ matrix.environment }}" },
+      steps: [appTokenStep(apps)],
+      env: appsEnv.run,
+    }),
+  });
+
   const document: WorkflowDocument = {
     name: WORKFLOW_NAME,
     on: {
@@ -164,6 +293,7 @@ const build = (options: {
     permissions: { contents: "read" },
     jobs: {
       plan: {
+        ...plan.job,
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 15,
         outputs: {
@@ -176,7 +306,7 @@ const build = (options: {
             id: "plan",
             uses: action,
             with: { step: "plan", version: options.version },
-            env: secretsEnv,
+            env: plan.env,
           },
         ],
       },
@@ -184,6 +314,7 @@ const build = (options: {
         name: "${{ matrix.flow }} ${{ matrix.item }}",
         needs: "plan",
         if: "needs.plan.outputs.items != '[]'",
+        ...run.job,
         "runs-on": "ubuntu-latest",
         "timeout-minutes": 360,
         strategy: {
@@ -197,6 +328,7 @@ const build = (options: {
         },
         steps: [
           checkout({ "fetch-depth": 0 }),
+          ...run.steps,
           {
             uses: action,
             with: {
@@ -206,7 +338,7 @@ const build = (options: {
               persona: "${{ matrix.persona }}",
               item: "${{ matrix.item }}",
             },
-            env: secretsEnv,
+            env: run.env,
           },
           {
             if: "always()",
