@@ -27,6 +27,7 @@ import { IMPLICIT, type Persona } from "../../kernel/persona.value-object.ts";
 import { type RunId, runLabel } from "../../kernel/run-id.id.ts";
 import {
   buildPersonaContexts,
+  CiPlan,
   EngineLive,
   type FlowHandle,
   flowHandle,
@@ -38,6 +39,7 @@ import {
   RunsQueries,
   servicesFrom,
   withRepo,
+  withRepoReservedFor,
 } from "../../modules/runs/runs.platform.ts";
 import { ConfigError } from "../../platform/config-error.ts";
 import { HostEnvironment } from "../../platform/environment.ts";
@@ -164,6 +166,9 @@ export type CiRunOptions = {
   readonly leaseTtl: Duration.Duration;
   readonly stopAfter: Duration.Duration;
   readonly fromCheckout: boolean;
+  // The workflow run the job is part of (GITHUB_RUN_ID), whose plan job
+  // reserved the item for it (#519); none outside Actions.
+  readonly workflowRun: Option.Option<string>;
 };
 
 const JsonText = Schema.fromJsonString(Schema.Json);
@@ -558,11 +563,26 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
       });
     }
 
+    // The plan job's reservation of the item, which the run's claim replaces.
+    const claim = CiPlan.claimName(options.item);
+
+    const reservation = Option.map(options.workflowRun, (workflowRun) =>
+      CiPlan.reservationFor(workflowRun, claim),
+    );
+
     // The job renews the claim itself, on a lease short enough that a killed
     // job's runs out before long.
     const repo: EffectiveRepo = {
       ...asCiJob(opened.repo),
-      leases: { ...opened.repo.leases, ttl: options.leaseTtl, parkedTtl: options.leaseTtl },
+      leases: {
+        ...opened.repo.leases,
+        ttl: options.leaseTtl,
+        parkedTtl: options.leaseTtl,
+        ...Option.match(reservation, {
+          onNone: () => ({}),
+          onSome: (takesOver) => ({ takesOver }),
+        }),
+      },
     };
 
     const handle = flowHandle(repo, options.flow, flow.value, Option.none());
@@ -583,8 +603,12 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
     let started = Option.none<RunId>();
 
     const program = Effect.gen(function* () {
-      const holder = yield* withRepo(context, Claims.liveHolder(options.item)).pipe(
-        Effect.mapError((error) => new ConfigError({ message: error.message })),
+      // The plan job's reservation is this job's to take over, not another run's.
+      const holder = Option.filter(
+        yield* withRepo(context, Claims.liveHolder(claim)).pipe(
+          Effect.mapError((error) => new ConfigError({ message: error.message })),
+        ),
+        (found) => !Option.contains(reservation, found.runId),
       );
 
       if (Option.isSome(holder)) {
@@ -594,7 +618,7 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
         } satisfies CiRunEnding;
       }
 
-      const items = yield* withRepo(context, triggerOf(handle.flow)).pipe(
+      const items = yield* withRepoReservedFor(reservation)(context, triggerOf(handle.flow)).pipe(
         Effect.mapError((error) => new ConfigError({ message: String(error) })),
       );
 
@@ -638,6 +662,18 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
             Effect.catch((error) => Console.error(`could not push the work: ${String(error)}`)),
           );
           yield* releaseClaims(runId, context);
+        }
+
+        // A reservation the run never took over, as when nothing started, is
+        // let go, so the item waits for no lease; one it took over is gone.
+        for (const reserved of Option.toArray(reservation)) {
+          const released = yield* withRepo(context, Claims.releaseFor(claim, reserved)).pipe(
+            Effect.orElseSucceed(() => false),
+          );
+
+          if (released) {
+            yield* Console.log(`let go of the plan's reservation of ${claim}`);
+          }
         }
 
         for (const dir of Option.toArray(options.logs)) {

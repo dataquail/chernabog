@@ -241,6 +241,10 @@ export const RunInfo = Schema.Struct({
   // How long a claim the run makes lasts, in milliseconds, until the daemon
   // renews it: the team's limits.leaseTtl. Claims' default when absent.
   leaseTtl: Schema.optionalKey(Schema.Finite),
+  // The run id of a reservation made for this run (Claims.reserve), such as
+  // the CI plan job's that started its job: Claims.acquire replaces its live
+  // claim, as no takeover. Absent for a run nothing reserved an item for.
+  takesOver: Schema.optionalKey(Schema.String),
 });
 
 export type RunInfo = typeof RunInfo.Type;

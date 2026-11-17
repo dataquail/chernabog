@@ -109,6 +109,23 @@ export declare const acquire: (item: string, options?: AcquireOptions) => Effect
     acquired: false;
     holder: Option.Option<Holder>;
 }, GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
+export type Reservation = {
+    readonly runId: string;
+    readonly flow: string;
+};
+export type Reserved = {
+    readonly reserved: true;
+} | {
+    readonly reserved: false;
+    readonly holder: Option.Option<Holder>;
+};
+export declare const reserve: (item: string, reservation: Reservation, ttl: Duration.Duration) => Effect.Effect<{
+    reserved: false;
+    holder: Option.Option<Holder>;
+} | {
+    holder?: undefined;
+    reserved: true;
+}, GitHubError, GitHub>;
 export declare const release: (item: string) => Effect.Effect<boolean, GitHubError | import("./errors.ts").StepFailed, GitHub | Run>;
 export declare const releasing: (item: string) => <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R | import("effect/workflow/WorkflowEngine").WorkflowEngine | import("effect/workflow/WorkflowEngine").WorkflowInstance | Markers.ReleaseServices>;
 export declare const describeHolder: (item: string, held: Option.Option<Holder>) => string;
@@ -1039,6 +1056,7 @@ export declare const RunInfo: Schema.Struct<{
     readonly subjects: Schema.optionalKey<Schema.$Array<Schema.String>>;
     readonly pullRequest: Schema.optionalKey<Schema.Finite>;
     readonly leaseTtl: Schema.optionalKey<Schema.Finite>;
+    readonly takesOver: Schema.optionalKey<Schema.String>;
 }>;
 export type RunInfo = typeof RunInfo.Type;
 declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
@@ -1064,6 +1082,7 @@ declare const Run_base: Context.ServiceClass<Run, "@chernabog/sdk/Run", {
     readonly subjects?: readonly string[] | undefined;
     readonly pullRequest?: number | undefined;
     readonly leaseTtl?: number | undefined;
+    readonly takesOver?: string | undefined;
 }>;
 export declare class Run extends Run_base {
 }

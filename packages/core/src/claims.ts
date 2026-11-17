@@ -405,10 +405,74 @@ const leaseTtlOf = (run: Run["Service"]) =>
     onSome: Duration.millis,
   });
 
+// What taking the claim on `item` came to.
+type Taken =
+  | { readonly kind: "won" }
+  // The claim named the run allowed to hand it over, which it did.
+  | { readonly kind: "handed-over" }
+  | { readonly kind: "taken-over"; readonly from: Holder }
+  | { readonly kind: "held"; readonly holder: Option.Option<Holder> };
+
+// Takes the claim on `item` for `mine`: by creating its ref, by finding it
+// already `mine`'s, by replacing the live claim of `handedOverBy` (a
+// reservation made for this run), or by taking over a claim whose lease
+// expired. Of every writer that tries to replace one claim commit, exactly one
+// wins.
+const take = (item: string, mine: Holder, handedOverBy: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const now = yield* DateTime.now;
+
+    const sha = yield* github.createCommit({
+      message: messageOf(mine),
+      tree: EMPTY_TREE,
+      parents: [],
+    });
+
+    if ((yield* github.createRef(refFor(item), sha)) === "created") {
+      return { kind: "won" } satisfies Taken;
+    }
+
+    const found = yield* current(item);
+
+    if (Option.exists(found, (claim) => claim.holder.runId === mine.runId)) {
+      return { kind: "won" } satisfies Taken;
+    }
+
+    const handed = Option.filter(found, (claim) =>
+      Option.contains(handedOverBy, claim.holder.runId),
+    );
+
+    if (Option.isSome(handed) && (yield* replace(item, handed.value, mine))) {
+      return { kind: "handed-over" } satisfies Taken;
+    }
+
+    const lapsed = Option.filter(
+      found,
+      (claim) => Option.isNone(handed) && expired(claim.holder, now),
+    );
+
+    if (
+      Option.isSome(lapsed) &&
+      (yield* replace(item, lapsed.value, { ...mine, takenOverFrom: lapsed.value.holder.runId }))
+    ) {
+      return { kind: "taken-over", from: lapsed.value.holder } satisfies Taken;
+    }
+
+    // Another writer replaced it first, when this one tried to.
+    if (Option.isSome(handed) || Option.isSome(lapsed)) {
+      return { kind: "held", holder: yield* holder(item) } satisfies Taken;
+    }
+
+    return { kind: "held", holder: Option.map(found, (claim) => claim.holder) } satisfies Taken;
+  });
+
 // Claims `item` for this run, or says who holds it. A claim whose lease
 // expired is taken over, by a commit on top of it: of every run that tries,
-// and the holder renewing, exactly one wins. Safe to repeat: a run that
-// already holds the claim keeps it.
+// and the holder renewing, exactly one wins. So is the live claim of the
+// reservation the run may take over (Run's takesOver), which is no takeover:
+// the reservation was made for this run. Safe to repeat: a run that already
+// holds the claim keeps it.
 export const acquire = (item: string, options: AcquireOptions = {}) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
@@ -424,11 +488,7 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
       expiresAt: leaseEnd(now, leaseTtlOf(run)),
     };
 
-    const sha = yield* github.createCommit({
-      message: messageOf(mine),
-      tree: EMPTY_TREE,
-      parents: [],
-    });
+    const taken = yield* take(item, mine, Option.fromUndefinedOr(run.takesOver));
 
     // Held once the claim is the run's, and so before anything else this run
     // does, so the engine lets it go however the run ends. A crash just before
@@ -439,33 +499,53 @@ export const acquire = (item: string, options: AcquireOptions = {}) =>
         Effect.as({ acquired: true, takenOver } satisfies Acquired),
       );
 
-    if ((yield* github.createRef(refFor(item), sha)) === "created") {
-      return yield* won(Option.none());
+    switch (taken.kind) {
+      case "won":
+      case "handed-over":
+        return yield* won(Option.none());
+      case "taken-over":
+        return yield* won(Option.some(taken.from));
+      case "held":
+        return { acquired: false, holder: taken.holder } satisfies Acquired;
+    }
+  });
+
+// Who a reservation is for: a run of `flow` that hasn't started yet, which
+// the reservation's run id names, such as a CI plan job's.
+export type Reservation = { readonly runId: string; readonly flow: string };
+
+export type Reserved =
+  | { readonly reserved: true }
+  | { readonly reserved: false; readonly holder: Option.Option<Holder> };
+
+// Claims `item` for a run that hasn't started yet, for `ttl`, as `acquire`
+// claims it for a run, but holding no marker: nothing renews it, and its
+// lease ends it unless the run it is for takes it over first (Run's
+// takesOver). Whoever reserves an item first holds it, as a run's claim does;
+// reserving it again under the same run id keeps it.
+export const reserve = (item: string, reservation: Reservation, ttl: Duration.Duration) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const now = yield* DateTime.now;
+
+    const taken = yield* take(
+      item,
+      {
+        runId: reservation.runId,
+        persona: yield* github.login,
+        flow: reservation.flow,
+        claimedAt: DateTime.formatIso(now),
+        withPerson: false,
+        expiresAt: leaseEnd(now, ttl),
+      },
+      Option.none(),
+    );
+
+    if (taken.kind === "held") {
+      return { reserved: false, holder: taken.holder } satisfies Reserved;
     }
 
-    const found = yield* current(item);
-
-    if (Option.exists(found, (claim) => claim.holder.runId === run.runId)) {
-      return yield* won(Option.none());
-    }
-
-    const lapsed = Option.filter(found, (claim) => expired(claim.holder, now));
-
-    if (
-      Option.isSome(lapsed) &&
-      (yield* replace(item, lapsed.value, { ...mine, takenOverFrom: lapsed.value.holder.runId }))
-    ) {
-      return yield* won(Option.some(lapsed.value.holder));
-    }
-
-    return {
-      acquired: false,
-      holder: yield* Option.match(lapsed, {
-        onNone: () => Effect.succeed(Option.map(found, (claim) => claim.holder)),
-        // Another run took it over first.
-        onSome: () => holder(item),
-      }),
-    } satisfies Acquired;
+    return { reserved: true } satisfies Reserved;
   });
 
 // Lets go of this run's claim on `item`.

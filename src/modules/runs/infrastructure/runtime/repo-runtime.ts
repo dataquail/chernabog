@@ -51,11 +51,25 @@ import { withRepoOver } from "./flow-registry.ts";
 // Runs a flow's trigger with the repo's services, as the runtime does, for a
 // composition root that asks one itself (a foreground run, a rehearsal): it
 // reads this machine's runs through the runs' queries.
-export const withRepo = withRepoOver((runId: string) =>
+const runningHere = (runId: string) =>
   RunsQueries.use((runs) => runs.FindRunQuery({ runId: RunId.make(runId) })).pipe(
     Effect.map((found) => Option.map(found.run, (run) => run.status === "running")),
-  ),
-);
+  );
+
+export const withRepo = withRepoOver(runningHere);
+
+// withRepo for a CI run job (#519), to whose trigger the reservation its plan
+// job made is a run that has ended: a trigger that leaves alone a pull request
+// another run owns (the SDK's ownedByARun) would leave the job's own item
+// alone otherwise.
+export const withRepoReservedFor = (reservation: Option.Option<string>) =>
+  withRepoOver((runId: string) => {
+    if (Option.contains(reservation, runId)) {
+      return Effect.succeedSome(false);
+    }
+
+    return runningHere(runId);
+  });
 
 export type OpenRepo = {
   readonly repo: EffectiveRepo;
