@@ -22,7 +22,7 @@ ours have none of (`events: []`). A button the check carries itself sends
 `check_run: rerequested`, but neither starts a workflow: both go only to the
 App's webhook. A new head SHA still asks for a re-review, through the CI
 `workflow_run` the workflow already wakes on. A person who wants one without
-a push needs another way, such as a label.
+a push adds the `chernabog:review` label.
 
 The details are listed under [Changes to the design](#changes-to-the-design).
 
@@ -156,16 +156,29 @@ what decision 8 used a persona for, and an installation token does it too.
 
 ## Changes to the design
 
-1. **Re-review is asked for by a new head SHA, or by a label.** Drop "the
-   check's Re-run button" from #477's decisions. A new head already comes
-   to the reviewer through the CI `workflow_run` the workflow wakes on. For a
-   person, a label on the pull request (such as `chernabog:review`) is the
-   simplest: `pull_request: labeled` is one more event type in the `on:`
-   block, needs triage permission, and leaves a record on the timeline. A
-   `/review` comment would need `issue_comment` and a check of the
-   commenter's permission. The reviewer takes the label off when it starts.
-   `check_run` doesn't belong in the `on:` block: none of its events is a
-   person's ask.
+1. **A review is asked for by a new head SHA, or by the `chernabog:review`
+   label.** This replaces "the check's Re-run button" in #477's decisions,
+   as the maintainer decided on 2026-11-17:
+   - The reviewer's trigger finds open pull requests with green CI whose
+     head has no `chernabog review` check, or that carry `chernabog:review`.
+     A new head comes to it through the CI `workflow_run` the workflow
+     already wakes on.
+   - A person asks by adding the label, which needs triage permission and
+     shows on the timeline. The workflow adds `labeled` to its
+     `pull_request` types, and the plan job ignores every other label. A
+     `/review` comment was passed over: `issue_comment` fires on every
+     comment and needs the commenter's permission checked. So was "Run
+     workflow" with a pull request's number, which shows nothing on it.
+   - The same label asks for a first review of a pull request the author App
+     didn't open. It's #477's "asking for review in another agreed way".
+   - On a head the reviewer has already reviewed, the label asks for a full
+     review from scratch, whose verdict replaces the check's conclusion.
+     Rechecking earlier findings is for a new head.
+   - The reviewer takes the label off when it starts, which shows the ask was
+     taken and lets a person ask again. The plan job's reservation keeps two
+     plans from starting it twice.
+   - `check_run` doesn't belong in the `on:` block: none of its events is a
+     person's ask.
 2. **The self-event guard reads the check's App, not the sender.** A
    `check_run` or `check_suite` event's `sender` is the head's pusher, so a
    reviewer's own check reads as the author's event. The guard and any
