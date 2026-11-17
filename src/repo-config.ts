@@ -743,6 +743,24 @@ export const normalizeMachineConfig = (file: MachineConfigFile, home: string): M
   silentExits: file.spokes?.silentExits ?? DEFAULT_SILENT_EXITS,
 });
 
+// The names of the repos a persona runs on this machine, which its App token
+// is narrowed to: those whose personas: names it, and every repo when it's
+// machine config's only login and a repo names none.
+const enrolledNamesOf = (file: MachineConfigFile, login: string) => {
+  const only = Object.keys(file.github ?? {}).length === 1;
+
+  return Arr.dedupe(
+    (file.repos ?? []).flatMap((repo) => {
+      const runs = Option.match(Option.fromUndefinedOr(repo.personas), {
+        onNone: () => only,
+        onSome: (personas) => Object.hasOwn(personas, login),
+      });
+
+      return Arr.filter([repo.repo.split("/").at(-1) ?? ""], (name) => runs && name !== "");
+    }),
+  );
+};
+
 // A persona's token source as machine config's github: entry gives it: gh's
 // login unless it says otherwise. An App's key is read from its file each time
 // a token is made, so a rotated key is picked up.
@@ -777,6 +795,7 @@ export const tokenSourceOf = (login: string) =>
       id: String(source.app.id),
       installation: String(source.app.installation),
       privateKey,
+      repositories: enrolledNamesOf(file, login),
     } satisfies TokenSource;
   });
 

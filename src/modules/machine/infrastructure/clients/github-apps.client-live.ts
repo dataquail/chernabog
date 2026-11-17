@@ -210,6 +210,8 @@ export const GitHubAppsClientLive = Layer.effect(
           id: app.id,
           installation,
           privateKey: app.privateKey,
+          // Every repo it covers, since listing them is what it's for.
+          repositories: [],
         }).pipe(Effect.mapError(failed), Effect.provideContext(services));
 
         const names: Array<string> = [];

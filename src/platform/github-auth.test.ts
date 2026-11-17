@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 
 import { effect } from "../../test/effect-test.ts";
@@ -25,14 +26,21 @@ import {
 
 type Call = { readonly args: ReadonlyArray<string>; readonly options: ExecOptions };
 
-type Posted = { readonly url: string; readonly authorization: string };
+type Posted = { readonly url: string; readonly authorization: string; readonly body: string };
 
 // An API that answers every installation token request with one that expires in an hour.
 const fakeApi = (posted: Array<Posted>) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      posted.push({ url: request.url, authorization: request.headers.authorization });
+      posted.push({
+        url: request.url,
+        authorization: request.headers.authorization,
+        body: Match.value(request.body).pipe(
+          Match.tag("Uint8Array", (body) => new TextDecoder().decode(body.body)),
+          Match.orElse(() => ""),
+        ),
+      });
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
       return Effect.succeed(
@@ -101,6 +109,7 @@ const APP: TokenSource = {
   id: "123",
   installation: "456",
   privateKey: PRIVATE_KEY,
+  repositories: ["rehearsal"],
 };
 
 effect("an App persona's token is an installation token, asked for with a JWT the App signs", () =>
@@ -115,6 +124,8 @@ effect("an App persona's token is an installation token, asked for with a JWT th
     expect(posted.map((post) => post.url)).toEqual([
       "https://api.github.com/app/installations/456/access_tokens",
     ]);
+    // Narrowed to the repos the persona is enrolled on (#477).
+    expect(JSON.parse(posted[0]?.body ?? "")).toEqual({ repositories: ["rehearsal"] });
 
     const jwt = posted[0]?.authorization.replace(/^Bearer /, "") ?? "";
     const [header = "", payload = "", signature = ""] = jwt.split(".");
