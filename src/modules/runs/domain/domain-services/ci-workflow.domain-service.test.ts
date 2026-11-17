@@ -3,7 +3,7 @@ import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-import { CiWorkflow } from "./ci-workflow.domain-service.ts";
+import { CiWorkflow, type Job } from "./ci-workflow.domain-service.ts";
 
 const on = {
   issues: { types: ["labeled"] },
@@ -13,7 +13,15 @@ const on = {
 };
 
 const built = (more: Partial<Parameters<typeof CiWorkflow.build>[0]> = {}) =>
-  Result.getOrThrow(CiWorkflow.build({ on, schedule: "17 */3 * * *", version: "0.16.0", ...more }));
+  Result.getOrThrow(
+    CiWorkflow.build({
+      on,
+      schedule: "17 */3 * * *",
+      version: "0.16.0",
+      apps: Option.none(),
+      ...more,
+    }),
+  );
 
 describe("the workflow chernabog writes", () => {
   test("wakes on the flows' events, with their types, then on the schedule's sweep and by hand", () => {
@@ -147,6 +155,7 @@ describe("the workflow chernabog writes", () => {
       on: { ...on, pull_request_target: { types: ["opened"] } },
       schedule: "17 */3 * * *",
       version: "0.16.0",
+      apps: Option.none(),
     });
 
     expect(Result.isFailure(refused)).toBe(true);
@@ -182,5 +191,94 @@ describe("the version a workflow file pins", () => {
       ),
     ).toBe("0.16.0");
     expect(Option.isNone(CiWorkflow.pinnedVersion("name: other\n"))).toBe(true);
+  });
+});
+
+describe("the workflow, when the flows act as the repo's GitHub Apps (#477)", () => {
+  const apps = Option.some({
+    roles: [
+      {
+        role: "author",
+        permissions: {
+          contents: "write",
+          pull_requests: "write",
+          checks: "read",
+          metadata: "read",
+        },
+      },
+      {
+        role: "reviewer",
+        permissions: {
+          contents: "write",
+          pull_requests: "write",
+          checks: "write",
+          metadata: "read",
+        },
+      },
+    ],
+  });
+
+  const document = built({ apps }).document;
+
+  test("plans as the workflow's own token, which writes claim refs and reads the rest", () => {
+    const plan = document.jobs.plan;
+
+    expect(plan.environment).toBeUndefined();
+    expect(plan.permissions).toEqual({
+      contents: "write",
+      issues: "read",
+      "pull-requests": "read",
+      checks: "read",
+      statuses: "read",
+      actions: "read",
+    });
+    expect(plan.steps.find((step) => step.id === "plan")?.env?.GH_TOKEN).toBe(
+      "${{ github.token }}",
+    );
+
+    const said = (job: Job) =>
+      job.steps.flatMap((step) => [
+        ...Object.values(step.env ?? {}),
+        ...Object.values(step.with ?? {}).map(String),
+      ]);
+
+    expect(said(plan).filter((value) => value.includes("CHERNABOG_APP_KEY"))).toEqual([]);
+
+    expect(
+      [...said(plan), ...said(document.jobs.run)].filter((value) =>
+        value.includes("CHERNABOG_TOKEN"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("runs each entry in its App's Environment, as the App's token, narrowed to its role", () => {
+    const run = document.jobs.run;
+    const token = run.steps.find((step) => step.id === "app-token");
+
+    expect(run.environment).toBe("${{ matrix.environment }}");
+    expect(token?.uses).toStartWith("actions/create-github-app-token@");
+    expect(token?.with).toEqual({
+      "client-id": "${{ vars.CHERNABOG_APP_ID }}",
+      "private-key": "${{ secrets.CHERNABOG_APP_KEY }}",
+      "permission-contents": "write",
+      "permission-pull-requests": "write",
+      "permission-checks": "${{ matrix.role == 'author' && 'read' || 'write' }}",
+    });
+
+    const chernabog = run.steps.find((step) => step.with?.step === "run");
+    expect(chernabog?.env?.GH_TOKEN).toBe("${{ steps.app-token.outputs.token }}");
+    expect(run.steps.indexOf(token ?? {})).toBeLessThan(run.steps.indexOf(chernabog ?? {}));
+  });
+
+  test("with one role, its permissions are said as they are", () => {
+    const one = built({
+      apps: Option.some({ roles: [{ role: "author", permissions: { checks: "read" } }] }),
+    }).document.jobs.run.steps.find((step) => step.id === "app-token");
+
+    expect(one?.with?.["permission-checks"]).toBe("read");
+  });
+
+  test("keeps the workflow's own token to reading the checkout", () => {
+    expect(document.permissions).toEqual({ contents: "read" });
   });
 });

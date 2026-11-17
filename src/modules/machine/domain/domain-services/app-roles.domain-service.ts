@@ -19,6 +19,35 @@ const APP_KEY_SECRET = "CHERNABOG_APP_KEY";
 
 const environmentOf = (role: AppRole) => ENVIRONMENTS[role];
 
+// What each role's App may do on the repos it's installed on (#477), by
+// GitHub's permission names: its manifest asks for these, and a CI job's
+// token step narrows its token to them. The reviewer writes contents only to
+// chernabog/threads/* and claim refs, which a ruleset holds it to, and only
+// it writes checks: the check that gates a merge is its own. Neither touches
+// .github/, so neither has workflows.
+const PERMISSIONS: Readonly<Record<AppRole, Readonly<Record<string, string>>>> = {
+  author: {
+    contents: "write",
+    pull_requests: "write",
+    issues: "write",
+    checks: "read",
+    actions: "read",
+    statuses: "read",
+    metadata: "read",
+  },
+  reviewer: {
+    contents: "write",
+    pull_requests: "write",
+    issues: "write",
+    checks: "write",
+    actions: "read",
+    statuses: "read",
+    metadata: "read",
+  },
+};
+
+const permissionsOf = (role: AppRole) => PERMISSIONS[role];
+
 // Only the default branch's runs may read the reviewer's key: a job a pull
 // request's branch starts never approves it (#477).
 const defaultBranchOnly = (role: AppRole) => role === "reviewer";
@@ -48,6 +77,7 @@ export const AppRoles = {
   APP_ID_VARIABLE,
   APP_KEY_SECRET,
   environmentOf,
+  permissionsOf,
   defaultBranchOnly,
   roleOf,
   loginOf,

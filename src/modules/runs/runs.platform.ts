@@ -103,6 +103,7 @@ export { checkAnswer, stopHook } from "./infrastructure/runtime/agents/stop-hook
 export { type CiEvent, type CiPlanResult, planCi } from "./infrastructure/runtime/ci-plan.ts";
 export {
   ciWorkflowFor,
+  type CiWorkflowSettings,
   type CiWorkflowText,
   type WorkflowFiles,
 } from "./infrastructure/runtime/ci-workflow.ts";
