@@ -399,7 +399,8 @@ export const claimComment = (claim: ClaimMarker) =>
 export const ADOPTED_LABEL = "auto:adopted";
 
 // The label on an issue whose run waits for its adopted draft to be marked
-// ready, so `readied` reads only those issues. The run holds it as a marker.
+// ready, so a person sees it. The run holds it as a marker. `readied` reads
+// the issue's awaiting-ready record, not this label.
 export const AWAITING_READY_LABEL = "auto:awaiting-ready";
 
 // For a flow's `labels`, so `chernabog labels` creates them.
@@ -1696,15 +1697,50 @@ export const awaitReady = (issue: number, pullRequest: number, timeout: Duration
 
 const DraftState = Schema.Struct({ draft: Schema.Boolean });
 
-// Issues whose run waits on a draft it adopted (AWAITING_READY_LABEL) that
-// its author has since marked ready, as `ready` signals to that run. Never
-// starts a run.
+const ISSUE_RECORD = /^issue-(\d+)$/;
+
+// The issue an item's record is kept for, by its claim's name; none for another item.
+const issueNamed = (name: string) =>
+  Option.map(Option.fromNullOr(ISSUE_RECORD.exec(name)), (found) => Number(found[1]));
+
+// The open issue `number`, or none once it is closed or gone.
+const openIssue = (number: number) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+
+    const issue = yield* github.issue(number).pipe(
+      Effect.asSome,
+      Effect.catchTag("NotFound", () => Effect.succeedNone),
+    );
+
+    return Option.filter(issue, (found) => found.state !== "closed");
+  });
+
+// Issues whose run waits on a draft it adopted (their record is
+// awaiting-ready) that its author has since marked ready, as `ready` signals
+// to that run. Never starts a run. The record, not AWAITING_READY_LABEL, says
+// which runs wait (ADR 21, decision 3): the label is for people, and taking it
+// off leaves the run waiting as before.
 export const readied = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const items: Array<WorkItem> = [];
 
-  for (const issue of yield* github.issuesLabelled(AWAITING_READY_LABEL)) {
+  const waiting = Arr.flatMap(Array.from(yield* Phases.records), ([name, found]) =>
+    Option.toArray(
+      Option.filter(issueNamed(name), () => found.phase === Phases.PHASES.issue.awaitingReady),
+    ),
+  );
+
+  for (const number of waiting) {
+    const open = yield* openIssue(number);
+
+    if (Option.isNone(open)) {
+      continue;
+    }
+
+    const issue = open.value;
+
     const draft = Option.filter(
       Option.flatMap(yield* latestClaim(issue.number), (marker) =>
         Option.fromUndefinedOr(marker.adopted),
@@ -1731,12 +1767,6 @@ export const readied = Effect.gen(function* () {
 // Where implement parks in a CI job while its pull request's CI runs: on the
 // issue's record, which awaitingCi reads to resume the work.
 export const parkOnIssue = (issue: number): CiWait => ({ park: Phases.issueItem(issue) });
-
-const ISSUE_RECORD = /^issue-(\d+)$/;
-
-// The issue an item's record is kept for, by its claim's name; none for another item.
-const issueNamed = (name: string) =>
-  Option.map(Option.fromNullOr(ISSUE_RECORD.exec(name)), (found) => Number(found[1]));
 
 // One issue whose record says a CI job parked its run on CI, as a work item
 // that resumes the wait, when its pull request is still open on the issue's
