@@ -557,6 +557,7 @@ export declare const OwnerMarker: Schema.Struct<{
 export type OwnerMarker = typeof OwnerMarker.Type;
 export declare const PlanMarker: Schema.Struct<{
     readonly round: Schema.Finite;
+    readonly plan: Schema.optionalKey<Schema.$Array<Schema.Codec<Schema.Json, Schema.Json, never, never>>>;
 }>;
 export type PlanMarker = typeof PlanMarker.Type;
 export declare const PlanNodeMarker: Schema.Struct<{
@@ -643,9 +644,11 @@ export declare const ownerMarker: {
 export declare const planMarker: {
     write: (value: {
         readonly round: number;
+        readonly plan?: readonly Schema.Json[] | undefined;
     }) => string;
     read: (body: string) => Option.Option<{
         readonly round: number;
+        readonly plan?: readonly Schema.Json[] | undefined;
     }>;
 };
 export declare const planNodeMarker: {

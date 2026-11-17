@@ -123,6 +123,12 @@ describe("the plan's comment", () => {
     expect(comment).toContain("<details><summary><code>api</code>");
     expect(comment).toContain("Blocked by `api-schema`.");
     expect(comment).toContain("`auto:plan-approved`");
-    expect(planMarker.read(comment)).toEqual(Option.some({ round: 2 }));
+    // The marker keeps the round, and the tasks as posted for a run that takes the plan up later.
+    expect(Option.map(planMarker.read(comment), (marker) => marker.round)).toEqual(Option.some(2));
+    expect(
+      Option.map(planMarker.read(comment), (marker) =>
+        Option.fromUndefinedOr(marker.plan).pipe(Option.map((kept) => kept.length)),
+      ),
+    ).toEqual(Option.some(Option.some(2)));
   });
 });

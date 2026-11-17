@@ -143,7 +143,9 @@ describe("plan", () => {
         `issue-${ISSUE}`,
       ]);
 
-      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Plan.LABELS.proposed]);
+      // The spec's record says its plan waits on a person; the label is only for people.
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+      fake.recordPhase(`issue-${ISSUE}`, "proposed", { data: { round: 1 } });
       fake.comment(`## Proposed plan\n\n${'<!-- chernabog-plan {"round":1} -->'}`);
       expect(yield* triggered(fake, Plan.answers)).toEqual([]);
 

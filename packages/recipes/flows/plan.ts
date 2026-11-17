@@ -36,11 +36,13 @@ const ANSWER_WITHIN = "14 days";
 
 // Specs labelled auto:plan, oldest first, as work to start; with a board,
 // only those whose Status is its readyStatus, routed by their assignees. Then
-// specs whose posted plan a person has answered, which wake the run waiting on it.
+// specs whose posted plan a person has answered, or nobody answered within
+// ANSWER_WITHIN: they wake the run still waiting on it, or a CI job's ended
+// one is taken up by a new run, from the spec's record.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const queued = yield* github.queuedIssuesLabelled(Plan.LABELS.plan);
-  const answered = yield* Plan.answers;
+  const answered = yield* Plan.answered(ANSWER_WITHIN);
 
   const specs = yield* Effect.forEach(queued, (issue) =>
     Implement.routed(issue, Implement.issueItem(issue, Option.some(Plan.LABELS.plan))),
@@ -49,14 +51,40 @@ const trigger = Effect.gen(function* () {
   return [...specs, ...answered];
 }).pipe(reportAs("trigger"));
 
+// Nobody answered the plan in time: a person's to pick up.
+const unanswered = new NeedsHuman({
+  reason: `nobody answered the plan within ${ANSWER_WITHIN}`,
+});
+
 // Drafts, checks and proposes the plan, and waits for a person's answer,
 // round after round until they approve it. Returns the run's summary, or,
 // for a spec that needs answers first, the agent's draft with its questions.
-const planUntilApproved = (spec: number) =>
+// A run that takes up an answer to a plan an earlier run posted (`resumed`)
+// acts on it first: makes the approved plan, or drafts the next round.
+const planUntilApproved = (spec: number, resumed: Option.Option<Plan.Resumed>) =>
   Effect.gen(function* () {
     let changes = Option.none<string>();
+    let first = 1;
 
-    for (let round = 1; ; round++) {
+    if (Option.isSome(resumed)) {
+      const { answer, round } = resumed.value;
+
+      if (answer === "timeout") {
+        return yield* unanswered;
+      }
+
+      if (answer === "approved") {
+        const plan = yield* Plan.posted(spec, round);
+        const created = yield* Plan.create(spec, plan);
+
+        return yield* Plan.becomeEpic(spec, plan, created);
+      }
+
+      changes = Option.some(yield* Plan.changesAsked(spec, round));
+      first = round + 1;
+    }
+
+    for (let round = first; ; round++) {
       const draft = yield* Plan.checkedDraft(spec, round, changes);
 
       if (draft.status === "needs-clarification") {
@@ -73,9 +101,7 @@ const planUntilApproved = (spec: number) =>
       }
 
       if (answer === "timeout") {
-        return yield* new NeedsHuman({
-          reason: `nobody answered the plan within ${ANSWER_WITHIN}`,
-        });
+        return yield* unanswered;
       }
 
       changes = Option.some(yield* Plan.changesAsked(spec, round));
@@ -93,7 +119,7 @@ const work = (spec: number, item: WorkItem) =>
         Effect.flatMap(Implement.endForPerson),
       );
 
-    const outcome = yield* planUntilApproved(spec).pipe(
+    const outcome = yield* planUntilApproved(spec, Plan.resuming(item)).pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
         // Any other failure once the spec is claimed hands it to a person,
