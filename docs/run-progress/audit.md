@@ -74,17 +74,24 @@ that makes `waitForCi` record and park. On a daemon the same flow polls.
 Each fix is its own pull request.
 
 1. **S1:** `readied` reads the `awaiting-ready` record.
-2. **W1 to W3:** a source reports a startable item for each parked phase, and the
-   flow resumes from the record. This needs `at` on the record (ADR 21, decision 4)
-   for the 14-day and merge-hold deadlines. It also needs S2's `proposed` and S3's
-   `merge-held` to be read.
-3. **W4 on a daemon:** drop the `ciJob` gate in `parkingOn`, so a daemon records
-   `awaiting-ci` and ends as a CI job does.
-4. **S2 to S5:** the remaining sources read their records, and the recipes write
+2. **Core: `at` and `data` on the record** (ADR 21, decision 4). The git adapter
+   takes `at` from the commit's date and keeps `data` in the commit body. The
+   contract suite covers both.
+3. **A test that reproduces W1 in a CI job**, then **W1 to W3:** a source
+   reports a startable item for each parked phase, and the flow resumes from the
+   record. `at` gives the 14-day and merge-hold deadlines. `data` carries the
+   adopted pull request, the plan's round and when the hold began. S2's
+   `proposed` and S3's `merge-held` are read along the way.
+4. **A daemon run ends at a park.** The engine lets a daemon run end at a park,
+   as `ci run` does today. A watch of parked records marks a flow due when the
+   fact it waits on settles. Then the `ciJob` gate in `parkingOn` goes, and W4
+   parks on a daemon too.
+5. **S2 to S5:** the remaining sources read their records, and the recipes write
    the phases that today only the documents declare.
-5. **W5 to W10:** each CI wait gets a phase and a source, starting with resolve-conflicts
-   and post-merge, then the blocks, then the epic.
-6. **S6, S7:** drop the no-record paths once every open pull request has a record.
+6. **W5 to W10:** each CI wait gets a phase and a source. Resolve-conflicts and
+   post-merge come first, then the blocks, then the epic.
+7. **Backfill, then S6 and S7:** `chernabog progress backfill` writes a record
+   for every open item without one. Then the no-record paths go.
 
 ## What this changes in handoffs.md
 
