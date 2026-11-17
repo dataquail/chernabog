@@ -101,11 +101,27 @@ change.
    With every wait a park, the daemon and CI do the same thing:
    - **One planner.** It takes the ledger and the world and returns the work
      to start. Daemon ticks and CI's plan job (`ci plan`) both call it.
-   - **Different wakes and hosts.** A daemon is woken by its tick, and a CI
-     plan job by an event or the sweep. A daemon runs a phase on a
-     person's machine, and a CI job on a runner.
+   - **The same wakes, from different sources.** Both plan again on an event,
+     with a scheduled pass behind it for events that are lost. A daemon runs a
+     phase on a person's machine, and a CI job on a runner.
    - **Free movement.** A flow can move between them between any two phases,
      with no special case.
+
+   A daemon run that ends at a park doesn't wait for cron to be picked up
+   again. Each kind of event already has, or gets, a local source:
+
+   | Event                                         | CI                                      | Daemon                                                                                                                                                                                                                           |
+   | --------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | A run records a phase that another flow reads | `repository_dispatch` `chernabog-phase` | A run that ends marks the repo's flows due (`noteLocal`): 3 seconds to settle, at least 30 seconds between event ticks                                                                                                           |
+   | Someone on GitHub reviews, labels or comments | The workflow's `on:` events             | The persona's notifications poll                                                                                                                                                                                                 |
+   | CI settles on a parked pull request           | `workflow_run: completed`               | **New:** a watch of parked records whose wait is a fact the daemon can poll cheaply, such as a head SHA's checks. It runs at the cadence `waitForCi` polls today (1 minute) and marks the owning flow due when the fact settles. |
+   | A person wants it now                         | Re-run the workflow                     | "Run now" in the dashboard, or `chernabog tick`                                                                                                                                                                                  |
+   | Any event was lost                            | The scheduled sweep                     | Cron                                                                                                                                                                                                                             |
+
+   With these sources in place, parking costs a daemon a few seconds over
+   waiting inside the run. The watch replaces each run's own polling with one
+   loop over all parked records. A hosted service could later relay GitHub's
+   webhooks to daemons, so a daemon would no longer need to poll.
 
    Two things follow for sources and records:
    - **A parked phase is startable work.** A source that reads a parked phase
@@ -116,9 +132,18 @@ change.
    - **A record says when it was written.** A park with a deadline, such as
      14 days for an adopted draft to be marked ready, needs to know how long
      it has waited, and today's record has no time (ADR 20, decision 5).
-     `PhaseRecord` gains `at`, the time the adapter wrote it. Adding a field
-     to a record is additive to core (ADR 4). On the git adapter it is the
-     commit's date.
+     `PhaseRecord` gains `at`, the time the adapter wrote it. On the git
+     adapter that is the commit's date, which GitHub sets, not the writer.
+   - **A record can carry what the next run needs.** A run that ends at a park
+     loses whatever it held in memory: the adopted pull request's number, a
+     plan's round, when a merge hold began, an epic's attempts. Today these
+     live in comments that anyone can delete. `advance` takes an optional
+     `data`, a JSON object of at most 4 KB, and the record returns it. Core
+     doesn't interpret it, and the compare-and-set compares phases, not data.
+     On the git adapter it is a fenced block in the commit body.
+
+   Both fields are additive to core (ADR 4): a new optional argument and two
+   new fields on a returned record.
 
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
@@ -172,6 +197,11 @@ change.
   daemon pays nothing for a long wait, but a flow that behaves differently on
   a daemon and in CI is the problem this ADR exists to remove. Parking costs
   wake latency. A tick, an event or the sweep pays that.
+- **Start-or-wake: a daemon keeps its journal park, and a startable item
+  wakes it if it is there.** This is a smaller change, and a daemon could still
+  resume mid-phase across a wait. But the parked run keeps its claim on
+  `parkedTtl` (12 hours), so a sleeping laptop holds the item away from CI and
+  every other machine until the claim runs out. That breaks free movement.
 - **Keeping forge-shaped item names in the hosted tier.** A name like
   `pr-73` can't say which forge or repo it belongs to. It also can't link a
   Jira ticket to the pull request that closes it.
@@ -196,6 +226,11 @@ change.
 - A team on GitHub Free with a private repo still has an unprotected ledger,
   as ADR 20 notes. Decision 5's checks catch what a ruleset would have
   refused, just later.
+- Open items with no record get one from a single backfill,
+  `chernabog progress backfill`. It infers each item's phase from GitHub,
+  the one time that inference is allowed, and writes it as
+  `observer:backfill`. After that, the sources' no-record paths (audit S6,
+  S7) are removed.
 - `Items`, the hosted adapter, the local adapter and the ledger config key are
   not built. Decision 6 fixes the direction so that nothing new takes a forge
   object's name as an item id.
