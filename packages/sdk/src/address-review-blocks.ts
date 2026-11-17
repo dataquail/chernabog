@@ -7,6 +7,7 @@
 import { NeedsHuman, NothingCommitted, reportAs, type WorkItem } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import {
   BaseBranch,
@@ -54,6 +55,7 @@ export type Dispute = { readonly reasons: string };
 export const addressReviewBlocks = {
   "review.changesAsked": defineBlock({
     name: "review.changesAsked",
+    again: true,
     about:
       "Reads the review that asks for changes on the pull request: its round, from the reviewer's marker, and what the reviewer said, for the author to weigh and answer.",
     inputKinds: {
@@ -86,6 +88,7 @@ export const addressReviewBlocks = {
 
   "author.session": defineBlock({
     name: "author.session",
+    again: true,
     about:
       "Finds the agent session that wrote the pull request's code, from the session marker the run that opened it left on it, to answer the review in. On a layer of an epic's stack it is that task's own session, not the epic run's. A pull request a person worked on with the agent reopens their session in front of them. With no marker, it is a fresh session.",
     inputKinds: { pr: "PullRequestNumber" },
@@ -113,6 +116,7 @@ export const addressReviewBlocks = {
 
   "author.worktree": defineBlock({
     name: "author.worktree",
+    again: true,
     about: "Makes or reuses the worktree on the pull request's branch, and pulls it up to date.",
     inputKinds: { branch: "BranchName: the pull request's, trigger.branch" },
     outputKinds: "WorktreePath",
@@ -186,6 +190,14 @@ export const addressReviewBlocks = {
 
   "author.address": defineBlock({
     name: "author.address",
+    keeps: Schema.toCodecJson(
+      Schema.Struct({
+        outcome: Implement.ImplementOutcome,
+        summary: Schema.String,
+        round: Schema.Finite,
+        committed: Committed,
+      }),
+    ),
     about:
       "Resumes the author's session to make the changes the review asks for, and commit them. It finishes done, or with questions for a person. Its prompt is .chernabog/prompts/address.md, or the SDK's own.",
     inputKinds: {
@@ -293,6 +305,7 @@ export const addressReviewBlocks = {
 
   "author.push": defineBlock({
     name: "author.push",
+    keeps: Schema.toCodecJson(Schema.Struct({ pushed: Pushed })),
     about:
       "Pushes the author's fix to the pull request's branch. A layer of a stack is checked against the layer below, so only its own commits count. Only a fix made in front of a person may touch humanOnlyPaths; on any other it goes to a person.",
     inputKinds: {
@@ -365,14 +378,16 @@ export const addressReviewBlocks = {
       readonly review: ChangesAsked;
       readonly session: AuthorSession;
     }) =>
-      committedNothing(
-        Implement.waitForCi(
-          input.pr,
-          input.worktree,
-          { ...input.session, branch: input.branch, ...onBase(input.base) },
-          { id: `review-${input.review.round}` },
-        ),
-      ),
+      Effect.gen(function* () {
+        return yield* committedNothing(
+          Implement.waitForCi(
+            input.pr,
+            input.worktree,
+            { ...input.session, branch: input.branch, ...onBase(input.base) },
+            yield* Implement.documentCiWait(input.pr, { id: `review-${input.review.round}` }),
+          ),
+        );
+      }),
     failures: {
       CiTimedOut: "person",
       NeedsHuman: "person",
@@ -382,7 +397,13 @@ export const addressReviewBlocks = {
     },
     outcomes: {},
     mustRoute: [],
-    contributes: { settings: Settings.Ci.fields },
+    records: [{ item: "pull-request", phase: PHASES.pullRequest.awaitingCi }],
+    parks: Implement.documentCiResumes,
+    contributes: {
+      settings: Settings.Ci.fields,
+      wakeEvents: [Events.ciCompleted],
+      wakeReads: [{ item: "pull-request", phases: [PHASES.pullRequest.awaitingCi] }],
+    },
   }),
 
   "review.askAgain": defineBlock({
