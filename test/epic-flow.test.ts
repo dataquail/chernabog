@@ -340,15 +340,14 @@ describe("epic", () => {
     }),
   );
 
-  effect("signals a parked run only once a layer changes since its status", () =>
+  effect("offers a parked epic, with a signal, only once a layer changes since it parked", () =>
     Effect.gen(function* () {
       const fake = epicFake();
       const { snapshots } = yield* workWith(fake, []);
       expect(snapshots).toHaveLength(1);
 
-      // The run parked with nothing changed since: no signal.
-      const quiet = yield* triggered(fake, Epic.queued);
-      expect(quiet.map((found) => Option.fromUndefinedOr(found.signals))).toEqual([Option.none()]);
+      // The run parked with nothing changed since: nothing to start or wake.
+      expect(yield* triggered(fake, Epic.queued)).toEqual([]);
 
       // A push to #10's pull request is a change.
       for (const pull of Option.toArray(pullOf(fake, 10))) {

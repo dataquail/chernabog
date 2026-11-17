@@ -201,10 +201,14 @@ const EPIC_STEPS = [
   "refresh-head-202-base1234 @ carried r3",
   "update-from-base#refresh-202-base1234 @ carried r3",
   "refresh-diff-202-base1234 @ carried r3",
-  // Nothing to start: the run parks, at the node of the branch it took.
+  // Nothing to start: the run records the epic's wait and parks, at the node
+  // of the branch it took.
+  "epic-waiting-3 @ parked r3",
   "await-layer-changed:epic-3 @ parked r3",
   "epic-tasks-4 @ progress r4",
   "epic-status-4 @ status r4",
+  // Every task closed: the epic's record says so.
+  "epic-finished-4 @ closed r4",
   // The subject's claim, let go as the run ends, outside any node.
   "release-claim-epic-40 @ -",
 ];

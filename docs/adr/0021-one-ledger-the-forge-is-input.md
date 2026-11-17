@@ -226,10 +226,11 @@ change.
   `ended-at-park`: it keeps every marker, worktree and agent session for the
   run that takes the item up, as a lost run does, and releases its claim ref
   so that run may be on any machine or in CI. Until a flow document's waits
-  (audit W8) and the epic's park (W10) resume from a record, they are
-  stranded on a daemon as in CI, and an epic's run is started afresh each
-  time its trigger offers it. That was chosen over ending only the parks
-  that can resume, so the daemon and CI behave alike from now on.
+  (audit W8) resume from a record, they are stranded on a daemon as in CI.
+  That was chosen over ending only the parks that can resume, so the daemon
+  and CI behave alike from now on. The epic's park (W10) records the epic's
+  `waiting` phase, with what the run kept between rounds, and `Epic.queued`
+  offers the epic again only once a layer changed since, or a day passed.
 - Removing a label or dismissing a review can no longer derail a run
   silently. At worst the item goes to a person as an anomaly or a declared
   intent.

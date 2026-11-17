@@ -652,6 +652,39 @@ export type TaskStart = {
 // go on to the next round: epic.recordEndings says how each lane ended first.
 export type TasksStarted = { readonly started: TaskState };
 
+// What the epic's waiting record keeps of a round that parks.
+const waitingOf = (
+  progress: Epic.Progress,
+  tasks: Option.Option<TaskState>,
+  stack: Option.Option<Upkeep>,
+): Epic.Waiting => {
+  const kept: Epic.Waiting = {
+    fingerprint: progress.fingerprint,
+    tasks: Option.match(tasks, {
+      onNone: () => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onSome: (state) => ({
+        attempts: [...state.attempts],
+        handedBack: [...state.handedBack],
+        withPerson: [...state.withPerson],
+      }),
+    }),
+  };
+
+  return Option.match(stack, {
+    onNone: () => kept,
+    onSome: (upkeep) => ({
+      ...kept,
+      layers: {
+        attempts: [...upkeep.attempts],
+        recorded: [...upkeep.recorded],
+        withPerson: [...upkeep.withPerson],
+        below: [...upkeep.below],
+        caughtUp: [...upkeep.caughtUp],
+      },
+    }),
+  });
+};
+
 // What a loop starts with, by the name a document uses it by.
 export const loopStates = {
   "epic.tasks": (): TaskState => ({
@@ -903,17 +936,26 @@ export const epicBlocks = {
   "epic.finished": defineBlock({
     name: "epic.finished",
     about: "Whether every task is closed.",
-    inputKinds: { epic: "EpicNumber", progress: "from epic.progress" },
+    inputKinds: { epic: "EpicNumber", round: "the round", progress: "from epic.progress" },
     outputKinds: { finished: "boolean", summary: "a summary, for `end`'s summary" },
     outcomeKinds: { finished: "a summary, for `end`'s summary" },
-    stepNames: [],
-    inputs: { epic: "required", progress: "required" },
-    run: (input: { readonly epic: EpicNumber; readonly progress: Epic.Progress }) =>
-      Effect.succeed({
-        finished: Epic.finished(input.progress),
-        summary: `#${input.epic}: every task is closed`,
+    inputs: { epic: "required", round: "required", progress: "required" },
+    run: (input: {
+      readonly epic: EpicNumber;
+      readonly round: number;
+      readonly progress: Epic.Progress;
+    }) =>
+      Effect.gen(function* () {
+        const finished = Epic.finished(input.progress);
+
+        // The epic's record says so, as the recipe's does.
+        if (finished) {
+          yield* Epic.recordFinished(input.epic, input.round);
+        }
+
+        return { finished, summary: `#${input.epic}: every task is closed` };
       }),
-    failures: {},
+    failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {
       finished: (read: { readonly finished: boolean; readonly summary: string }) =>
         Option.liftPredicate(read.summary, () => read.finished),
@@ -1033,20 +1075,60 @@ export const epicBlocks = {
   }),
 
   // Parks until a layer changes, or a day passes, for what changes no layer: a
-  // person's task closed, say.
+  // person's task closed, say. Given the epic, the round's progress and the
+  // run's state, it first records the epic's waiting record, as the recipe
+  // does (Epic.park), which Epic.queued offers the epic again by.
   "epic.park": defineBlock({
     name: "epic.park",
     fixed: ["lookAgainAfter"],
     about: "Parks the run until a layer changes, or `lookAgainAfter` passes.",
-    inputKinds: { round: "the round", lookAgainAfter: 'how long: "1 day"' },
+    inputKinds: {
+      round: "the round",
+      lookAgainAfter: 'how long: "1 day"',
+      epic: "EpicNumber",
+      progress: "from epic.progress",
+      tasks: "the epic.tasks state",
+      stack: "the stack.upkeep state",
+    },
     outputKinds: "which came first",
     outcomeKinds: {},
-    inputs: { round: "required", lookAgainAfter: "required" },
-    run: (input: { readonly round: number; readonly lookAgainAfter: "1 day" }) =>
-      awaitSignal([Epic.LAYER_CHANGED], {
-        id: `epic-${input.round}`,
-        timeout: input.lookAgainAfter,
-      }),
+    inputs: {
+      round: "required",
+      lookAgainAfter: "required",
+      epic: "optional",
+      progress: "optional",
+      tasks: "optional",
+      stack: "optional",
+    },
+    run: (input: {
+      readonly round: number;
+      readonly lookAgainAfter: "1 day";
+      readonly epic?: EpicNumber;
+      readonly progress?: Epic.Progress;
+      readonly tasks?: TaskState;
+      readonly stack?: Upkeep;
+    }) =>
+      Option.match(
+        Option.all([Option.fromUndefinedOr(input.epic), Option.fromUndefinedOr(input.progress)]),
+        {
+          onNone: () =>
+            awaitSignal([Epic.LAYER_CHANGED], {
+              id: `epic-${input.round}`,
+              timeout: input.lookAgainAfter,
+            }),
+          onSome: ([epic, progress]) =>
+            Epic.park(
+              epic,
+              input.round,
+              waitingOf(
+                progress,
+                Option.fromUndefinedOr(input.tasks),
+                Option.fromUndefinedOr(input.stack),
+              ),
+              input.lookAgainAfter,
+            ),
+        },
+      ),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},
     mustRoute: [],

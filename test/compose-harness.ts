@@ -580,7 +580,7 @@ steps:
           in: { progress: progress, tasks: state.tasks }
         - id: closed
           use: epic.finished
-          in: { epic: trigger.epic, progress: progress }
+          in: { epic: trigger.epic, round: round, progress: progress }
           on:
             finished:
               as: summary
@@ -615,7 +615,14 @@ steps:
               steps:
                 - id: parked
                   use: epic.park
-                  in: { round: round }
+                  in:
+                    {
+                      round: round,
+                      epic: trigger.epic,
+                      progress: progress,
+                      tasks: waiting,
+                      stack: latest.stack,
+                    }
                   with: { lookAgainAfter: 1 day }
                 - next: { tasks: waiting, stack: latest.stack }
         - id: started
