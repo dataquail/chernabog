@@ -49,13 +49,31 @@ describe("the SDK's shared settings", () => {
         install: Option.none(),
       });
       expect(yield* reading(Settings.reviewers, { reviewers: ["alice"], reviewRounds: 2 })).toEqual(
-        { pool: ["alice"], rounds: 2 },
+        { pool: ["alice"], apps: [], rounds: 2 },
       );
       expect(yield* reading(Settings.reviewers, {})).toEqual({
         pool: [],
+        apps: [],
         rounds: settings.limits.reviewRounds,
       });
     }),
+  );
+
+  effect(
+    "a pool's app:<role> is the team's App, which is never asked, beside the people who are",
+    () =>
+      Effect.gen(function* () {
+        const reviewer = { id: 5714350, slug: "chernabog-review", login: "chernabog-review[bot]" };
+        const withApps = { ...settings, apps: { reviewer } };
+
+        expect(
+          yield* reading(
+            Settings.reviewers,
+            { reviewers: ["app:reviewer", "alice", "app:author"] },
+            withApps,
+          ),
+        ).toEqual({ pool: ["alice"], apps: [reviewer], rounds: settings.limits.reviewRounds });
+      }),
   );
 
   effect("a flow renames one label and keeps the rest, and declares the set by its names", () =>

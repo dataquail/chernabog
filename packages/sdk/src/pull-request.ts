@@ -746,17 +746,25 @@ const sameLogin = (left: string, right: string) => left.toLowerCase() === right.
 
 // Asks one reviewer from the team's pool (reviewers: in config) to review the
 // pull request, never its author. The choice is made once, at random, in an
-// activity, so a replay asks the same person. Without a pool, or with no one
-// in it but the author, it labels the pull request needs-review for a person.
+// activity, so a replay asks the same person. A pool's App (app:reviewer) is
+// never asked: it reviews through its check. With no one else in the pool,
+// the App's check is all the pull request needs; without a pool, or with no
+// one in it but the author, it labels the pull request needs-review for a person.
 export const requestReview = (pullRequest: number) =>
   activity(
     `request-review-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const reviewerPool = (yield* Settings.reviewers).pool;
+      const reviewers = yield* Settings.reviewers;
       const labelNames = yield* Settings.labels;
       const pull = yield* github.pullRequest(pullRequest);
-      const pool = reviewerPool.filter((login) => !sameLogin(login, pull.author));
+      const pool = reviewers.pool.filter((login) => !sameLogin(login, pull.author));
+
+      if (pool.length === 0 && reviewers.apps.length > 0) {
+        const apps = reviewers.apps.map((app) => app.login).join(", ");
+
+        return `#${pullRequest}: left for ${apps}, which reviews through its check`;
+      }
 
       if (pool.length === 0) {
         yield* github.addLabel(pullRequest, labelNames.needsReview);
