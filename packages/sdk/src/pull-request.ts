@@ -907,23 +907,30 @@ const sameLogin = (left: string, right: string) => left.toLowerCase() === right.
 
 // Asks one reviewer from the team's pool (reviewers: in config) to review the
 // pull request, never its author. The choice is made once, at random, in an
-// activity, so a replay asks the same person. Without a pool, or with no one
-// in it but the author, it asks nobody: the hand-off recorded the pull
+// activity, so a replay asks the same person. A pool's App (app:reviewer) is
+// never asked: it reviews through its check. With no one else in the pool,
+// the App's check is all the pull request needs; without a pool, or with no
+// one in it but the author, it asks nobody: the hand-off recorded the pull
 // request unasked, which projects needs-review for a person.
 // The reviewers in the team's pool (reviewers: in config) who may review the
-// pull request: all but its author.
+// pull request, all but its author: `pool` the people requestReview asks,
+// `apps` the Apps that review through their check.
 const poolFor = (pullRequest: number) =>
   Effect.gen(function* () {
-    const reviewerPool = (yield* Settings.reviewers).pool;
+    const reviewers = yield* Settings.reviewers;
     const pull = yield* (yield* GitHub).pullRequest(pullRequest);
 
-    return reviewerPool.filter((login) => !sameLogin(login, pull.author));
+    return {
+      pool: reviewers.pool.filter((login) => !sameLogin(login, pull.author)),
+      apps: reviewers.apps.filter((app) => !sameLogin(app.login, pull.author)),
+    };
   });
 
-// Whether requestReview has someone to ask: without, the hand-off records
-// the pull request unasked, which projects needs-review for a person.
+// Whether the pull request has a reviewer, a person requestReview asks or an
+// App reviewing through its check: without, the hand-off records the pull
+// request unasked, which projects needs-review for a person.
 export const hasReviewer = (pullRequest: number) =>
-  Effect.map(poolFor(pullRequest), (pool) => pool.length > 0);
+  Effect.map(poolFor(pullRequest), ({ apps, pool }) => pool.length > 0 || apps.length > 0);
 
 export const requestReview = (pullRequest: number) =>
   activity(
@@ -931,7 +938,13 @@ export const requestReview = (pullRequest: number) =>
     Effect.gen(function* () {
       const github = yield* GitHub;
       const labelNames = yield* Settings.labels;
-      const pool = yield* poolFor(pullRequest);
+      const { apps, pool } = yield* poolFor(pullRequest);
+
+      if (pool.length === 0 && apps.length > 0) {
+        const logins = apps.map((app) => app.login).join(", ");
+
+        return `#${pullRequest}: left for ${logins}, which reviews through its check`;
+      }
 
       if (pool.length === 0) {
         return `#${pullRequest}: no reviewer in the pool but its author; ${labelNames.needsReview}, for a person`;

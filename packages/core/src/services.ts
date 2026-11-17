@@ -147,6 +147,20 @@ export const HEADLESS: ResolvedLauncher = {
 // a flow's own settings (Settings) hold them now, the binary fills these
 // from config.yaml's old keys for SDKs that still read them, and core's next
 // major drops them (ADR 0005). reviewTrigger is always none.
+// One of the team's GitHub Apps (#477): its id, its slug, and the login it
+// acts as on GitHub, its bot, `<slug>[bot]`.
+export const AppIdentity = Schema.Struct({
+  id: Schema.Int,
+  slug: Schema.String,
+  login: Schema.String,
+});
+
+export type AppIdentity = typeof AppIdentity.Type;
+
+// How a reviewer pool names one of the team's Apps: app:<role>, such as
+// app:reviewer. The App reviews through its check and is never asked.
+export const APP_REVIEWER = "app:";
+
 export const RepoSettings = Schema.Struct({
   name: Schema.String,
   slug: Schema.String,
@@ -160,6 +174,12 @@ export const RepoSettings = Schema.Struct({
   // machine and CI job checks a record's writer against. Machine config's
   // github: only maps a persona to its credentials.
   personas: Strings,
+  // The team's GitHub Apps by role, such as author and reviewer (apps: in
+  // config.yaml, #477). A reviewer pool's app:<role> names one. Absent when
+  // the team has none.
+  apps: Schema.optionalKey(Schema.Record(Schema.String, AppIdentity)),
+  // The App role each flow acts as (flows.<name>.as), for the flows that name one.
+  flowApps: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   // The GitHub login this run acts as, when machine config names personas;
   // absent, it acts as whoever the daemon is.
   persona: Schema.optionalKey(Schema.String),
