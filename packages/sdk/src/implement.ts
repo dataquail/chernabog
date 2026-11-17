@@ -25,6 +25,8 @@ import {
   NeedsHuman,
   NothingCommitted,
   pathsMatching,
+  type PhaseRecord,
+  Progress,
   type PullRequest,
   Repo,
   reportAs,
@@ -551,10 +553,21 @@ const seenThrough = (adopted: Adopted) => {
   return "Chernabog sees it through CI and review.";
 };
 
+// What the adoption comment opens with: `again` when an earlier run adopted
+// the same pull request, and this one takes it up from there, as one does once
+// a CI job ended waiting on its draft.
+const adoptionLead = (claim: ClaimMarker, adopted: Adopted, again: boolean) => {
+  if (again) {
+    return `Took ${describePull(adopted)} up again at ${claim.claimedAt}.`;
+  }
+
+  return `Adopted ${describePull(adopted)}, which already closes this issue, at ${claim.claimedAt}, rather than implementing it again.`;
+};
+
 // The issue says what claim took on, as claimComment does for a branch.
-export const adoptionComment = (claim: ClaimMarker, adopted: Adopted) =>
+export const adoptionComment = (claim: ClaimMarker, adopted: Adopted, again = false) =>
   [
-    `Adopted ${describePull(adopted)}, which already closes this issue, at ${claim.claimedAt}, rather than implementing it again. ${seenThrough(adopted)}`,
+    `${adoptionLead(claim, adopted, again)} ${seenThrough(adopted)}`,
     "",
     `- Run: \`${claim.runId}\``,
     "",
@@ -645,7 +658,13 @@ const adopt = (issue: number, label: string, takenOver: ReadonlyArray<string>) =
       adopted,
     };
 
-    yield* github.comment(issue, [...takenOver, adoptionComment(marker, adopted)].join("\n\n"));
+    // An earlier run's claim adopted the same one: this run takes it up again.
+    const again = Option.exists(latest, (found) => found.adopted?.number === adopted.number);
+
+    yield* github.comment(
+      issue,
+      [...takenOver, adoptionComment(marker, adopted, again)].join("\n\n"),
+    );
 
     return Option.some({ branch: only.headRefName, base: only.baseRefName, adopted });
   });
@@ -1678,15 +1697,86 @@ export const adoptedOutcome = (adopted: Adopted): ImplementOutcome => ({
   body: "",
 });
 
+// What an issue's awaiting-ready record carries: the adopted draft it waits
+// on, and how long it waits, so a source can tell a wait whose time is up.
+const ReadyWait = Schema.Struct({ pullRequest: Schema.Finite, withinMillis: Schema.Finite });
+
+const readyWaitOf = (record: PhaseRecord) =>
+  Option.flatMap(record.data, Schema.decodeUnknownOption(ReadyWait));
+
+// When the wait on an awaiting-ready record runs out; none for a record from
+// before records carried their wait.
+const readyDeadline = (record: PhaseRecord) =>
+  Option.map(readyWaitOf(record), (wait) =>
+    DateTime.add(record.at, { milliseconds: wait.withinMillis }),
+  );
+
+// How many milliseconds are left of the wait on `pullRequest`, the issue's
+// adopted draft. A run that finds the issue already waiting on that draft
+// waits on from its record, as one does that took over from a CI job that
+// ended at the park; any other starts the wait afresh, with a record of its
+// own. Zero or less: the time is up.
+const readyWaitLeft = (issue: number, pullRequest: number, within: Duration.Input) =>
+  Effect.gen(function* () {
+    const item = Phases.issueItem(issue);
+    const withinMillis = Duration.toMillis(Duration.fromInputUnsafe(within));
+
+    const waiting = Option.filter(
+      yield* Progress.use((progress) => progress.read(item)),
+      (record) =>
+        record.phase === Phases.PHASES.issue.awaitingReady &&
+        Option.exists(readyWaitOf(record), (wait) => wait.pullRequest === pullRequest),
+    );
+
+    const since = yield* Option.match(waiting, {
+      onSome: (record) => Effect.succeed(record.at),
+      onNone: () =>
+        Effect.map(
+          Phases.recording(
+            item,
+            Phases.PHASES.issue.awaitingReady,
+            { pullRequest, withinMillis },
+            { again: true },
+          ),
+          (record) => record.at,
+        ),
+    });
+
+    const waited = DateTime.distance(since, yield* DateTime.now);
+
+    return withinMillis - Duration.toMillis(waited);
+  });
+
 // Parks the run until the author marks the issue's adopted draft ready for
-// review: `ready`, or `timeout` once `timeout` passes. Either way the issue's
-// awaiting-ready label comes off.
+// review: `ready`, or `timeout` once `timeout` passes. The wait is the issue's
+// awaiting-ready record (ADR 0021, decision 4): a run in a CI job ends at the
+// park, and readied starts a new one once the draft is ready or the time is
+// up, which waits on from the record rather than from the start. A timeout
+// records ready-timed-out, so a person who queues the issue again starts a
+// fresh wait. Either way the issue's awaiting-ready label comes off.
 export const awaitReady = (issue: number, pullRequest: number, timeout: Duration.Input) =>
   activity(
-    `awaiting-ready-${pullRequest}`,
-    Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.awaitingReady),
+    `ready-wait-${pullRequest}`,
+    readyWaitLeft(issue, pullRequest, timeout),
+    Schema.Finite,
   ).pipe(
-    Effect.andThen(awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout })),
+    Effect.flatMap((left) => {
+      if (left <= 0) {
+        return Effect.succeed("timeout");
+      }
+
+      return awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout: Duration.millis(left) });
+    }),
+    Effect.tap((result) => {
+      if (result !== "timeout") {
+        return Effect.void;
+      }
+
+      return activity(
+        `ready-timed-out-${pullRequest}`,
+        Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.readyTimedOut),
+      );
+    }),
     Effect.tap(() =>
       activity(
         `ready-${pullRequest}`,
@@ -1716,48 +1806,76 @@ const openIssue = (number: number) =>
     return Option.filter(issue, (found) => found.state !== "closed");
   });
 
+// The adopted draft an awaiting-ready record waits on: from the record's
+// data, or for a record from before records carried data, from the claim
+// marker that adopted it.
+const draftWaitedOn = (issue: number, record: PhaseRecord) =>
+  Option.match(readyWaitOf(record), {
+    onSome: (wait) => Effect.succeedSome(wait.pullRequest),
+    onNone: () =>
+      Effect.map(latestClaim(issue), (marker) =>
+        Option.flatMap(marker, (found) =>
+          Option.map(
+            Option.filter(Option.fromUndefinedOr(found.adopted), (adopted) => adopted.draft),
+            (adopted) => adopted.number,
+          ),
+        ),
+      ),
+  });
+
 // Issues whose run waits on a draft it adopted (their record is
-// awaiting-ready) that its author has since marked ready, as `ready` signals
-// to that run. Never starts a run. The record, not AWAITING_READY_LABEL, says
-// which runs wait (ADR 21, decision 3): the label is for people, and taking it
-// off leaves the run waiting as before.
+// awaiting-ready), once its author has marked it ready or the wait's time is
+// up. Each is work a run may start (ADR 0021, decision 4): a CI job that
+// parked there has ended, and a new run takes the issue on from the record.
+// One marked ready also signals `ready`, which wakes a daemon's run still
+// parked on it; that run holds the issue, so no second one starts. The
+// record, not AWAITING_READY_LABEL, says which issues wait: the label is for
+// people, and taking it off changes nothing.
 export const readied = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
+  const now = yield* DateTime.now;
   const items: Array<WorkItem> = [];
 
-  const waiting = Arr.flatMap(Array.from(yield* Phases.records), ([name, found]) =>
+  const waiting = Arr.flatMap(Array.from(yield* Phases.records), ([name, record]) =>
     Option.toArray(
-      Option.filter(issueNamed(name), () => found.phase === Phases.PHASES.issue.awaitingReady),
+      Option.map(
+        Option.filter(issueNamed(name), () => record.phase === Phases.PHASES.issue.awaitingReady),
+        (number) => ({ number, record }),
+      ),
     ),
   );
 
-  for (const number of waiting) {
+  for (const { number, record } of waiting) {
     const open = yield* openIssue(number);
+    const draft = yield* draftWaitedOn(number, record);
 
-    if (Option.isNone(open)) {
+    if (Option.isNone(open) || Option.isNone(draft)) {
       continue;
     }
 
-    const issue = open.value;
-
-    const draft = Option.filter(
-      Option.flatMap(yield* latestClaim(issue.number), (marker) =>
-        Option.fromUndefinedOr(marker.adopted),
-      ),
-      (adopted) => adopted.draft,
+    const pull = yield* github.request(
+      "GET",
+      `/repos/${repo.slug}/pulls/${draft.value}`,
+      Option.none(),
     );
 
-    for (const adopted of Option.toArray(draft)) {
-      const pull = yield* github.request(
-        "GET",
-        `/repos/${repo.slug}/pulls/${adopted.number}`,
-        Option.none(),
-      );
+    const ready = Option.exists(
+      Schema.decodeUnknownOption(DraftState)(pull),
+      (state) => !state.draft,
+    );
 
-      if (Option.exists(Schema.decodeUnknownOption(DraftState)(pull), (state) => !state.draft)) {
-        items.push({ ...issueItem(issue), signals: ["ready"], wakeOnly: true });
-      }
+    if (ready) {
+      items.push(yield* routed(open.value, { ...issueItem(open.value), signals: ["ready"] }));
+      continue;
+    }
+
+    if (
+      Option.exists(readyDeadline(record), (deadline) =>
+        DateTime.isLessThanOrEqualTo(deadline, now),
+      )
+    ) {
+      items.push(yield* routed(open.value, issueItem(open.value)));
     }
   }
 

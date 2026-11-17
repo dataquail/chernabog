@@ -49,8 +49,9 @@ import * as Schema from "effect/Schema";
 // with a board, only those whose Status is its readyStatus. An issue another
 // open issue blocks waits for it, as the tasks of a plan's epic do, and a task
 // of an epic that an epic run holds is that run's to start; both are held,
-// and `chernabog status` says why. And the issues whose adopted draft its
-// author marked ready, which wake their run.
+// and `chernabog status` says why. And the issues waiting on an adopted
+// draft whose author marked it ready, or whose wait's time is up: they wake a
+// run still parked on it, or a CI job's ended one is taken up by a new run.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const labelNames = yield* Settings.labels;
