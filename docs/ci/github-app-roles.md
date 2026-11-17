@@ -1,7 +1,8 @@
 # CI: two GitHub Apps, author and reviewer, tried for real
 
 The five questions #477 asks before CI moves onto two GitHub Apps,
-`chernabog-author` and `chernabog-review`. Everything here was observed on
+`chernabog-author` and `chernabog-review`, and a sixth about the plan job's
+token. Everything here was observed on
 `dataquail/chernabog-rehearsal` on 2026-11-17, with the Apps
 [`chernabog ci apps`](github-apps-manifest.md) made there, unless marked
 **not observed**.
@@ -143,6 +144,35 @@ workflow's schedule, which will show it.
 (`x-access-token`) started `ci` again on `synchronize` (44115527092). This is
 what decision 8 used a persona for, and an installation token does it too.
 
+### 6. Can the plan job reserve items with the workflow's own token?
+
+Asked after the five, since #520's plan job writes claim refs and so needs a
+token that can write. **Yes.** A `workflow_dispatch` job with `permissions:
+contents: write` and `issues`, `pull-requests`, `checks` and `actions` read
+(44152909791, 44153041204) made each GitHub call `Claims` makes, with
+`GITHUB_TOKEN`:
+
+| Call                                                        | Result                                           |
+| ----------------------------------------------------------- | ------------------------------------------------ |
+| `POST git/commits`, the empty tree                          | made                                             |
+| `POST git/refs`, `refs/chernabog/claims/probe-gt`           | made                                             |
+| the same again                                              | **422** `Reference already exists`               |
+| `POST git/refs`, a lease ref under `refs/chernabog/leases/` | made                                             |
+| `PATCH` the claim ref, forced                               | made                                             |
+| `DELETE` the lease and the claim                            | made                                             |
+| `GET /user`                                                 | **403** `Resource not accessible by integration` |
+| `GET /rate_limit`                                           | core 5000 an hour, search 30 a minute            |
+
+A claim the job left was then taken over by the author App, with its own
+token: a lease, a forced update and both deletes went through. A claim
+records its holder's login, but a takeover matches the reservation's run id,
+so who wrote it doesn't matter.
+
+`GITHUB_TOKEN` could also make a branch, as the rehearsal repo has no
+ruleset over every branch yet. With the reviewer's "every other branch"
+ruleset (question 3), which `github-actions[bot]` doesn't bypass, its writes
+are limited to refs outside `refs/heads/`, where claims live.
+
 ## Also found
 
 - **Each App gets a check suite on every push.** An App with checks write has
@@ -194,8 +224,17 @@ what decision 8 used a persona for, and an installation token does it too.
    `permission-*` inputs, so a job's token reaches only its repo, with only
    what its role needs.
 
+5. **The plan job reserves with `GITHUB_TOKEN` and holds no App key.** It
+   runs on every event, so it gets `contents: write` for claim refs and read
+   for the rest, and takes no environment. Moving the reservation into the
+   run job was passed over, as it brings back #519's second run job on every
+   step. Since neither `GITHUB_TOKEN` nor an installation token can read
+   `GET /user`, the plan job, and a run job's git identity, take each role's
+   login from config (`apps:`), as `<slug>[bot]`, never from the token.
+
 ## Cleanup
 
-After the probes: `probe-477.yml` was removed from `main`; the `probe-477/*`
-branches, the claim ref and the three rulesets were deleted; #182 was closed;
-the `chernabog` workflow was enabled again.
+After the probes: `probe-477.yml` and `probe-plan-token.yml` were removed
+from `main`; the `probe-477/*` and `probe-gt-branch` branches, the claim refs
+and the three rulesets were deleted; #182 was closed; the `chernabog`
+workflow was enabled again.
