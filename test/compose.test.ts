@@ -1797,7 +1797,7 @@ describe("the blocks that decide what an epic starts", () => {
   });
 
   const after = (attempts: ReadonlyArray<readonly [number, number]>) => ({
-    ...Blocks.loopStates["epic.tasks"](),
+    ...Blocks.loopStates["epic.tasks"]({ key: "epic-40", data: { issue: 40 } }),
     attempts: new Map(attempts),
   });
 

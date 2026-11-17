@@ -811,6 +811,15 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   record, as `lost` does (`RunMarkerRootOps.keptOn`), and releases the claim
   ref. A test that needs a run to stay in flight uses a durable `sleep`, not
   `awaitSignal`, and a run in flight holds a concurrency slot.
+- **A flow document resumes at the node it parked on** (ADR 21, decision 4;
+  `packages/sdk/src/resume.ts`). A block with `parks` records its wait with
+  `resume` data: the node's id, the work item, the persona and the values the
+  steps after it read, which the compiler works out (`resumeNodesOf`).
+  `assemble` adds the document's `Resume.parked` source, and the generated
+  flow starts a resumed run at the node. A block with `again` (a worktree, a
+  cheap read) runs again rather than being kept. When a resume entry
+  duplicates a step's code, a test that edits generated code must edit every
+  copy (`replaceAll`).
 - **The record is the only progress** (`docs/adr/0021-one-ledger-the-forge-is-input.md`).
   A source finds where an item is from its record. Labels, review counts,
   assignees and comment markers are intent, fact or projection, never

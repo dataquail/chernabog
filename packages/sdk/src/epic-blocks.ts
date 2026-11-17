@@ -686,20 +686,45 @@ const waitingOf = (
 };
 
 // What a loop starts with, by the name a document uses it by.
+// Given the run's work item: one from Epic.queued that carries what a run
+// that parked on the epic kept (Epic.resuming) starts from that, so the
+// document carries on as the recipe does, rather than starting afresh.
 export const loopStates = {
-  "epic.tasks": (): TaskState => ({
-    attempts: new Map(),
-    handedBack: new Set(),
-    withPerson: new Set(),
-    waitedOn: new Map(),
-  }),
-  "stack.upkeep": (): Upkeep => ({
-    attempts: new Map(),
-    recorded: new Map(),
-    withPerson: new Set(),
-    below: new Map(),
-    caughtUp: new Set(),
-  }),
+  "epic.tasks": (item: WorkItem): TaskState => {
+    const kept = Option.match(Epic.resuming(item), {
+      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onSome: (parked) => parked.tasks,
+    });
+
+    return {
+      attempts: new Map(kept.attempts),
+      handedBack: new Set(kept.handedBack),
+      withPerson: new Set(kept.withPerson),
+      waitedOn: new Map(),
+    };
+  },
+  "stack.upkeep": (item: WorkItem): Upkeep => {
+    const kept = Option.flatMap(Epic.resuming(item), (parked) =>
+      Option.fromUndefinedOr(parked.layers),
+    );
+
+    return Option.match(kept, {
+      onNone: () => ({
+        attempts: new Map(),
+        recorded: new Map(),
+        withPerson: new Set(),
+        below: new Map(),
+        caughtUp: new Set(),
+      }),
+      onSome: (found) => ({
+        attempts: new Map(found.attempts),
+        recorded: new Map(found.recorded),
+        withPerson: new Set(found.withPerson),
+        below: new Map(found.below),
+        caughtUp: new Set(found.caughtUp),
+      }),
+    });
+  },
 };
 
 // The lanes of a task's attempts in this run so far, by the ids its steps

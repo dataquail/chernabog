@@ -10,11 +10,14 @@ import {
   type Json,
   NeedsHuman,
   NothingCommitted,
+  type PhaseData,
   type Repo,
   Skip,
   StepFailed,
   StepRunner,
   type TriggeredFlow,
+  type TriggerServices,
+  type WorkItem,
 } from "@chernabog/core";
 import * as Brand from "effect/Brand";
 import * as Effect from "effect/Effect";
@@ -45,6 +48,13 @@ export const BranchName = Brand.nominal<BranchName>();
 export type BaseBranch = string & Brand.Brand<"BaseBranch">;
 
 export const BaseBranch = Brand.nominal<BaseBranch>();
+
+// The brands as schemas, for a block's `keeps`.
+export const Kept = {
+  pullRequest: Schema.Finite.pipe(Schema.brand("PullRequestNumber")),
+  branch: Schema.String.pipe(Schema.brand("BranchName")),
+  base: Schema.String.pipe(Schema.brand("BaseBranch")),
+};
 
 export type WorktreePath = string & Brand.Brand<"WorktreePath">;
 
@@ -217,7 +227,7 @@ type OutputKinds<Output> = [Output] extends [string | number | boolean | void]
   ? string
   : { readonly [Field in keyof Output]-?: string };
 
-type BlockSpec<Input, Output, E, R, Outcomes> = {
+type BlockSpec<Input, Output, E, R, Outcomes, Kept> = {
   readonly name: string;
   // What it does, for someone choosing blocks.
   readonly about: string;
@@ -283,6 +293,22 @@ type BlockSpec<Input, Output, E, R, Outcomes> = {
   // The fixed input naming a phase it records on the run's item, for a block
   // that records the phase its document names: progress.advance.
   readonly recordsInput?: keyof Input & string;
+  // For a block that parks: at a node a document can resume at, whether a
+  // record it parked with lets its item start again, with why it is held
+  // while what it waits on hasn't settled (resume.ts). The document's source
+  // of parked items asks it.
+  readonly parks?: (
+    data: PhaseData,
+    item: WorkItem,
+  ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
+  // How its output goes into a record and back, as JSON: a step that has one
+  // can be kept for a document's run that resumes after it (resume.ts). It
+  // may keep less than the output has, so long as the output is one.
+  readonly keeps?: Schema.Codec<Kept, Json>;
+  // Whether a document's run that resumes past it runs it again rather than
+  // restore what it gave: a cheap read, or what is this machine's, such as a
+  // worktree's path, which another machine taking the item up hasn't got.
+  readonly again?: boolean;
   readonly contributes: Contribution;
 };
 
@@ -399,8 +425,9 @@ export const defineBlock = <
   const Outcomes extends {
     readonly [Name in string]: (output: Output) => Option.Option<unknown>;
   },
+  Kept = never,
 >(
-  spec: BlockSpec<Input, Output, E, R, Outcomes>,
+  spec: BlockSpec<Input, Output, E, R, Outcomes, Kept>,
 ) => {
   const table = dispositionsOf(spec.failures);
 
@@ -430,6 +457,9 @@ export const defineBlock = <
     suits: Option.fromUndefinedOr(spec.suits),
     records: spec.records ?? [],
     recordsInput: Option.fromUndefinedOr(spec.recordsInput),
+    parks: Option.fromUndefinedOr(spec.parks),
+    keeps: Option.fromUndefinedOr(spec.keeps),
+    again: spec.again === true,
     contributes: spec.contributes,
     run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
       const own = dispositionsOf(overrides);

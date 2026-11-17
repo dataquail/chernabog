@@ -46,6 +46,7 @@ import {
   gather,
   inLane,
   IssueNumber,
+  Kept,
   type LaneId,
   laneSession,
   onBase,
@@ -79,6 +80,7 @@ import {
   resolveConflictsBlocks,
   resolveConflictsSources,
 } from "./resolve-conflicts-blocks.ts";
+import * as Resume from "./resume.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
@@ -132,6 +134,13 @@ const elsewhere = gather("block", "epic-blocks.ts", epicBlocks)
 export const catalogue = elsewhere.and("blocks.ts", {
   "issue.claim": defineBlock({
     name: "issue.claim",
+    keeps: Schema.toCodecJson(
+      Schema.Struct({
+        branch: Kept.branch,
+        base: Schema.Option(Kept.base),
+        adopted: Schema.optional(Implement.Adopted),
+      }),
+    ),
     // Only these let its claim go: an issue's and a spec's scopes, and the
     // engine for an epic's tasks.
     suits: ["epic", "issue", "spec"],
@@ -252,12 +261,15 @@ export const catalogue = elsewhere.and("blocks.ts", {
       readonly branch: BranchName;
       readonly base: Option.Option<BaseBranch>;
     }) =>
-      Implement.waitForCiMaking(
-        input.pr,
-        // The worktree is made only for a fix.
-        Implement.prepareWorktree(input.branch, onBase(input.base)),
-        { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
-      ),
+      Effect.gen(function* () {
+        return yield* Implement.waitForCiMaking(
+          input.pr,
+          // The worktree is made only for a fix.
+          Implement.prepareWorktree(input.branch, onBase(input.base)),
+          { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
+          yield* Implement.documentCiWait(input.pr),
+        );
+      }),
     failures: {
       CiTimedOut: "person",
       NeedsHuman: "person",
@@ -266,7 +278,13 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
-    contributes: { settings: Settings.Ci.fields },
+    records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
+    parks: Implement.documentCiResumes,
+    contributes: {
+      settings: Settings.Ci.fields,
+      wakeEvents: [Events.ciCompleted],
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingCi] }],
+    },
     outcomes: {},
     mustRoute: [],
   }),
@@ -308,6 +326,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "worktree.prepare": defineBlock({
     name: "worktree.prepare",
+    again: true,
     about: "Makes a worktree on the branch.",
     inputKinds: { branch: "BranchName", base: "Option<BaseBranch>", lane: "LaneId" },
     outputKinds: "WorktreePath",
@@ -331,6 +350,9 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "agent.implement": defineBlock({
     name: "agent.implement",
+    keeps: Schema.toCodecJson(
+      Schema.Struct({ outcome: Implement.ImplementOutcome, committed: Committed }),
+    ),
     about:
       "Has the agent implement the issue in the worktree and commit. It finishes done, or with questions for a person.",
     inputKinds: {
@@ -455,6 +477,9 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "pr.open": defineBlock({
     name: "pr.open",
+    keeps: Schema.toCodecJson(
+      Schema.Struct({ number: Kept.pullRequest, url: Schema.String, draft: Schema.Boolean }),
+    ),
     fixed: ["draft"],
     about:
       "Opens the pull request for the pushed branch, ready for review, or with draft: true as a draft. It leaves the hand-off to do: issue.handOff, which asks nobody to review a draft and tells the issue a person marks it ready; pr.readyForPerson, which gives it to a person as the run's success; or pr.handToPerson and end: needs-human.",
@@ -537,7 +562,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           input.pr,
           input.worktree,
           { ...session, branch: input.branch, ...onBase(input.base) },
-          inLane(input.lane),
+          yield* Implement.documentCiWait(input.pr, inLane(input.lane)),
         );
       }),
     failures: {
@@ -548,7 +573,13 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
-    contributes: { settings: Settings.Ci.fields },
+    records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
+    parks: Implement.documentCiResumes,
+    contributes: {
+      settings: Settings.Ci.fields,
+      wakeEvents: [Events.ciCompleted],
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingCi] }],
+    },
     outcomes: {},
     mustRoute: [],
   }),
@@ -1035,9 +1066,28 @@ export const assemble = (flow: {
   // The document's tree as data (Compose.plan), which a run is drawn on. The
   // flow carries it, so the loader finds it on a flow compiled from a document.
   readonly plan?: Schema.Json;
+  // The nodes a run of the document can resume at, each with its block, and
+  // the document's flow, which its parked records name (resume.ts).
+  readonly resumes?: {
+    readonly flow: string;
+    readonly nodes: { readonly [node: string]: BlockName };
+  };
   readonly workflow: (item: WorkItem) => Effect.Effect<string | void, FlowError, WorkflowServices>;
 }) => {
   const flowSources = flow.sources ?? [];
+
+  // Items a run of the document parked at one of those nodes, which a new run
+  // takes up there.
+  const parked = Option.map(Option.fromUndefinedOr(flow.resumes), (resumes) =>
+    Resume.parked(
+      resumes.flow,
+      Object.fromEntries(
+        Object.entries(resumes.nodes).flatMap(([node, block]) =>
+          Option.toArray(Option.map(catalogue[block].parks, (parks) => [node, parks] as const)),
+        ),
+      ),
+    ).pipe(reportAs("trigger")),
+  );
 
   const contributions: ReadonlyArray<Contribution> = [
     ...flowSources.map((source) => source.contributes),
@@ -1053,6 +1103,7 @@ export const assemble = (flow: {
   };
 
   const triggers = [
+    ...Option.toArray(parked),
     ...flowSources.map((source) => source.trigger),
     ...unique(contributions.flatMap((each) => Option.toArray(Option.fromUndefinedOr(each.wakes)))),
   ];

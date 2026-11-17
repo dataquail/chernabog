@@ -414,6 +414,7 @@ const RESERVED = new Set([
   "Effect",
   "NeedsHuman",
   "Option",
+  "Resume",
   "assemble",
   "runStage",
   "catalogue",
@@ -2263,8 +2264,10 @@ const emitCall = (
   overrides: string,
   round: string,
   indent: string,
+  keep: Option.Option<string>,
 ) => {
-  const call = `yield* catalogue[${printJson(step.use)}].run(${input}${overrides}).pipe(${atNode(step.id, round)})`;
+  const pipes = [...Option.toArray(keep), atNode(step.id, round)].join(", ");
+  const call = `yield* catalogue[${printJson(step.use)}].run(${input}${overrides}).pipe(${pipes})`;
 
   return Option.match(Option.fromUndefinedOr(step.if), {
     onNone: () => [`${indent}const ${step.id} = ${call};`],
@@ -2280,6 +2283,7 @@ const emitUse = (
   round: string,
   indent: string,
   bodyOf: (outcome: string, branch: Branch) => ReadonlyArray<string>,
+  keep: Option.Option<string> = Option.none(),
 ) => {
   const input = emitObject([
     ...Object.entries(step.in ?? {}).flatMap(([key, reference]) =>
@@ -2299,7 +2303,7 @@ const emitUse = (
   });
 
   return [
-    ...emitCall(step, input, overrides, round, indent),
+    ...emitCall(step, input, overrides, round, indent, keep),
     ...emitRemembered(remembered, step.id, indent),
     ...branchesOf(step).flatMap(([outcome, branch]) =>
       emitBranch(remembered, step, outcome, branch, round, indent, bodyOf(outcome, branch)),
@@ -2365,7 +2369,7 @@ const emitFirst = (step: FirstStep, indent: string) => {
 const emitRepeat = (step: RepeatStep, indent: string, body: ReadonlyArray<string>) => {
   const state = emitObject(
     Object.entries(step.repeat.state).map(
-      ([name, init]) => [name, `loopStates[${printJson(init)}]()`] as const,
+      ([name, init]) => [name, `loopStates[${printJson(init)}](item)`] as const,
     ),
   );
 
@@ -2399,8 +2403,16 @@ const emitForEach = (
   `${indent}{ concurrency: ${step.atOnce} }).pipe(${atNode(step.id, round)});`,
 ];
 
+// What emitting a document's steps carries along: what a failure going to a
+// person remembers, and, by node, how a block at a node the document can
+// resume at keeps what the steps after it read (Resume.keeping).
+type Emitting = {
+  readonly remembered: Remembered;
+  readonly keeps: ReadonlyMap<string, string>;
+};
+
 type EmitSteps = (
-  remembered: Remembered,
+  emitting: Emitting,
   steps: ReadonlyArray<Step>,
   path: string,
   round: string,
@@ -2412,7 +2424,7 @@ const IN_ROUND = "Option.some(round)";
 
 const emitStep = (
   emitSteps: EmitSteps,
-  remembered: Remembered,
+  emitting: Emitting,
   step: Step,
   path: string,
   round: string,
@@ -2434,7 +2446,7 @@ const emitStep = (
     return emitRepeat(
       step,
       indent,
-      emitSteps(remembered, step.repeat.steps, `${path}.repeat.steps`, IN_ROUND, `${indent}  `),
+      emitSteps(emitting, step.repeat.steps, `${path}.repeat.steps`, IN_ROUND, `${indent}  `),
     );
   }
 
@@ -2443,26 +2455,58 @@ const emitStep = (
       step,
       round,
       indent,
-      emitSteps(step.failureContext ?? {}, step.steps, `${path}.steps`, round, `${indent}      `),
+      emitSteps(
+        { remembered: step.failureContext ?? {}, keeps: new Map() },
+        step.steps,
+        `${path}.steps`,
+        round,
+        `${indent}      `,
+      ),
     );
   }
 
   if (isStage(step)) {
-    return emitStage(remembered, step, round, indent);
+    return emitStage(emitting.remembered, step, round, indent);
   }
 
-  return emitUse(remembered, step, round, indent, (outcome, branch) =>
-    emitSteps(remembered, branch.steps, `${path}.on.${outcome}.steps`, round, `${indent}  `),
+  return emitUse(
+    emitting.remembered,
+    step,
+    round,
+    indent,
+    (outcome, branch) =>
+      emitSteps(emitting, branch.steps, `${path}.on.${outcome}.steps`, round, `${indent}  `),
+    Option.fromUndefinedOr(emitting.keeps.get(step.id)),
   );
 };
 
 // Each step under a comment naming where in the document it came from, which
 // is how `tsc`'s word on this file finds its way back there.
-const emitSteps: EmitSteps = (remembered, steps, path, round, indent) =>
-  steps.flatMap((step, index) => [
-    `${indent}// ${path}[${index}]`,
-    ...emitStep(emitSteps, remembered, step, `${path}[${index}]`, round, indent),
-  ]);
+// From the `from`th of them on, for a run that resumes there.
+const emitStepsFrom = (
+  emitting: Emitting,
+  steps: ReadonlyArray<Step>,
+  path: string,
+  from: number,
+  round: string,
+  indent: string,
+): ReadonlyArray<string> =>
+  steps
+    .slice(from)
+    .flatMap((step, index) => [
+      `${indent}// ${path}[${from + index}]`,
+      ...emitStep(
+        (inner, more, at, inRound, deeper) => emitStepsFrom(inner, more, at, 0, inRound, deeper),
+        emitting,
+        step,
+        `${path}[${from + index}]`,
+        round,
+        indent,
+      ),
+    ]);
+
+const emitSteps: EmitSteps = (emitting, steps, path, round, indent) =>
+  emitStepsFrom(emitting, steps, path, 0, round, indent);
 
 const emitSource = (source: FlowDocument["trigger"][number]) => {
   const input = Option.match(Option.fromUndefinedOr(source.with), {
@@ -2475,6 +2519,309 @@ const emitSource = (source: FlowDocument["trigger"][number]) => {
 
 // The blocks that claim the subject's issue, which its scope lets go however the run ends.
 const CLAIMING = ["issue.claim", "hybrid.claim"];
+
+// A name a step before a node binds, as the steps from the node on read it:
+// a block's output, or the value an outcome of it binds, which a run that
+// resumes there restores; or anything else (a stage's output, a first, a
+// lane's or a round's), which it can't.
+type Bound =
+  | { readonly kind: "output"; readonly step: UseStep }
+  | { readonly kind: "outcome"; readonly step: UseStep; readonly outcome: string }
+  | { readonly kind: "other" };
+
+// The steps a run that resumes at a node runs, a level at a time, innermost
+// first: from the node itself, then the rest of each sequence it is in.
+type Frame = { readonly steps: ReadonlyArray<Step>; readonly path: string; readonly from: number };
+
+// A node a document can resume at: a step whose block parks (Block.parks),
+// on the document's own path or its outcomes' branches, never in a repeat's
+// rounds or a forEach's lanes. What it keeps is the names bound before it
+// that it and the steps after it read; a step whose block runs again
+// (Block.again) is run again, and what it reads is kept instead.
+type ResumeNode = {
+  readonly step: UseStep;
+  readonly frames: ReadonlyArray<Frame>;
+  readonly bound: ReadonlyMap<string, Bound>;
+  readonly kept: ReadonlyArray<{ readonly block: string; readonly name: string }>;
+  readonly outcomes: ReadonlyArray<string>;
+  readonly again: ReadonlyArray<UseStep>;
+  readonly claims: boolean;
+};
+
+// The frames a resumed run reaches: up to the first whose steps end the run,
+// as a branch that ends never goes on to the steps after it.
+const reached = (frames: ReadonlyArray<Frame>): ReadonlyArray<Frame> => {
+  const ending = frames.findIndex((frame) =>
+    Option.exists(Option.fromUndefinedOr(frame.steps.at(-1)), isEnd),
+  );
+
+  if (ending === -1) {
+    return frames;
+  }
+
+  return frames.slice(0, ending + 1);
+};
+
+// Whether a step always runs where it is: it has no `if`.
+const always = (step: UseStep) => Option.isNone(Option.fromUndefinedOr(step.if));
+
+const parksAt = (step: UseStep) =>
+  always(step) &&
+  Option.exists(Record.get(blocksByName, step.use), (block) => Option.isSome(block.parks));
+
+type Candidate = {
+  readonly step: UseStep;
+  readonly frames: ReadonlyArray<Frame>;
+  readonly bound: ReadonlyMap<string, Bound>;
+};
+
+const candidatesIn = (
+  steps: ReadonlyArray<Step>,
+  path: string,
+  outer: ReadonlyArray<Frame>,
+  bound: ReadonlyMap<string, Bound>,
+): ReadonlyArray<Candidate> => {
+  const found: Array<Candidate> = [];
+  const before = new Map(bound);
+
+  for (const [index, step] of steps.entries()) {
+    if (!isUse(step)) {
+      for (const name of idOf(step)) {
+        before.set(name, { kind: "other" });
+      }
+
+      continue;
+    }
+
+    if (parksAt(step)) {
+      found.push({
+        step,
+        frames: reached([{ steps, path, from: index }, ...outer]),
+        bound: new Map(before),
+      });
+    }
+
+    before.set(step.id, { kind: "output", step });
+
+    for (const [outcome, branch] of branchesOf(step)) {
+      const inBranch = new Map(before);
+
+      for (const name of Option.toArray(Option.fromUndefinedOr(branch.as))) {
+        inBranch.set(name, { kind: "outcome", step, outcome });
+      }
+
+      const deeper = candidatesIn(
+        branch.steps,
+        `${path}[${index}].on.${outcome}.steps`,
+        [{ steps, path, from: index + 1 }, ...outer],
+        inBranch,
+      );
+
+      for (const candidate of deeper) {
+        found.push(candidate);
+      }
+    }
+  }
+
+  return found;
+};
+
+// Every reference the steps make, deep in their branches, rounds and lanes.
+const referencesIn = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
+  steps.flatMap((step): ReadonlyArray<string> => {
+    if (isEnd(step)) {
+      if (step.end === "needs-human") {
+        return [step.reason];
+      }
+
+      return Option.toArray(Option.fromUndefinedOr(step.summary));
+    }
+
+    if (isNext(step)) {
+      return Object.values(step.next);
+    }
+
+    if (isFirst(step)) {
+      return step.first;
+    }
+
+    if (isForEach(step)) {
+      return [step.forEach, step.atOnce, ...referencesIn(step.steps)];
+    }
+
+    if (isRepeat(step)) {
+      return referencesIn(step.repeat.steps);
+    }
+
+    return [
+      ...Object.values(step.in ?? {}).filter(Predicate.isString),
+      ...Option.toArray(Option.fromUndefinedOr(step.if)),
+      ...referencesIn(inside(step)),
+    ];
+  });
+
+type BoundOutput = { readonly kind: "output"; readonly step: UseStep };
+
+// A step a run that resumes past runs again: its block's own say, and only a
+// plain step, with no condition and no branches to take again.
+const runsAgain = (bound: Bound): bound is BoundOutput =>
+  bound.kind === "output" &&
+  always(bound.step) &&
+  branchesOf(bound.step).length === 0 &&
+  Option.exists(Record.get(blocksByName, bound.step.use), (block) => block.again);
+
+// A step whose output a record can keep: its block says how, and it always ran.
+const keepable = (bound: Bound): bound is BoundOutput =>
+  bound.kind === "output" &&
+  always(bound.step) &&
+  Option.exists(Record.get(blocksByName, bound.step.use), (block) =>
+    Predicate.isTagged(block.keeps, "Some"),
+  );
+
+// What a name read needs read too: a step run again, what it reads; an
+// outcome's value, the step it is worked out from.
+const readsOf = (bound: Bound): ReadonlyArray<string> => {
+  if (bound.kind === "outcome") {
+    return [bound.step.id];
+  }
+
+  if (runsAgain(bound)) {
+    return referencesIn([bound.step]).map(rootOf);
+  }
+
+  return [];
+};
+
+// The node a candidate is, when everything it would keep can be restored.
+const resumeNodeOf = (candidate: Candidate, remembered: Remembered): Option.Option<ResumeNode> => {
+  const wanted = new Set(
+    [
+      ...referencesIn(candidate.frames.flatMap((frame) => frame.steps.slice(frame.from))),
+      ...Object.values(remembered).flat(),
+    ].map(rootOf),
+  );
+
+  // What a name read needs is read too, until nothing more is.
+  for (let grew = true; grew;) {
+    grew = false;
+
+    for (const [name, bound] of candidate.bound) {
+      if (!wanted.has(name)) {
+        continue;
+      }
+
+      for (const more of readsOf(bound)) {
+        if (!wanted.has(more)) {
+          wanted.add(more);
+          grew = true;
+        }
+      }
+    }
+  }
+
+  const used = [...candidate.bound].filter(([name]) => wanted.has(name));
+
+  const restorable = used.every(
+    ([, bound]) => bound.kind === "outcome" || runsAgain(bound) || keepable(bound),
+  );
+
+  if (!restorable) {
+    return Option.none();
+  }
+
+  return Option.some({
+    step: candidate.step,
+    frames: candidate.frames,
+    bound: candidate.bound,
+    kept: used.flatMap(([name, bound]) =>
+      Arr.filter([bound], keepable).flatMap((output) =>
+        Arr.filter([{ block: output.step.use, name }], () => !runsAgain(output)),
+      ),
+    ),
+    outcomes: used.flatMap(([name, bound]) => Arr.filter([name], () => bound.kind === "outcome")),
+    again: used.flatMap(([, bound]) => Arr.filter([bound], runsAgain).map((found) => found.step)),
+    claims: [...candidate.bound.values()].some(
+      (bound) => bound.kind === "output" && CLAIMING.includes(bound.step.use),
+    ),
+  });
+};
+
+// The nodes a document can resume at. A flow a person starts has none: no
+// trigger would offer its item again.
+const resumeNodesOf = (document: FlowDocument): ReadonlyArray<ResumeNode> => {
+  if (document.start === true) {
+    return [];
+  }
+
+  return candidatesIn(document.steps, "steps", [], new Map()).flatMap((candidate) =>
+    Option.toArray(resumeNodeOf(candidate, document.failureContext ?? {})),
+  );
+};
+
+// The run's resume, when its item came from a parked record.
+const RESUMED = "$resumed";
+
+// How the block at a node keeps what a run resuming there needs.
+const keepOf = (document: FlowDocument, node: ResumeNode) => {
+  const kept = node.kept.map(
+    ({ block, name }) => `${printJson(name)}: Resume.keep(catalogue[${printJson(block)}], ${name})`,
+  );
+
+  return `Resume.keeping({ flow: ${printJson(document.flow)}, item, node: ${printJson(node.step.id)}, kept: { ${kept.join(", ")} }, resumed: Option.flatMap(${RESUMED}, (at) => Option.liftPredicate(at.phase, () => at.node === ${printJson(node.step.id)})) })`;
+};
+
+// A name a resumed run restores: a kept step's output, or an outcome's value
+// worked out again from its step's.
+const restoreOf = (name: string, bound: Bound): Option.Option<string> => {
+  if (bound.kind === "other") {
+    return Option.none();
+  }
+
+  if (bound.kind === "outcome") {
+    return Option.some(
+      `yield* Resume.outcome($kept, ${printJson(name)}, catalogue[${printJson(bound.step.use)}].outcomes[${printJson(bound.outcome)}](${bound.step.id}))`,
+    );
+  }
+
+  return Option.some(
+    `yield* Resume.kept($kept, ${printJson(name)}, catalogue[${printJson(bound.step.use)}])`,
+  );
+};
+
+// Where a run whose item came from a record parked at the node starts: it
+// claims the item again, if the steps before held a claim, restores what the
+// node kept, runs again the steps whose blocks run again, and goes on from
+// the node to the end.
+const emitResume = (emitting: Emitting, node: ResumeNode, indent: string) => {
+  const inner = `${indent}  `;
+
+  const ends = Option.exists(Option.fromUndefinedOr(node.frames.at(-1)?.steps.at(-1)), isEnd);
+
+  return [
+    `${indent}// A run that takes up a record parked at ${node.step.id} starts there.`,
+    `${indent}if (Option.isSome(${RESUMED}) && ${RESUMED}.value.node === ${printJson(node.step.id)}) {`,
+    `${inner}const $kept = ${RESUMED}.value;`,
+    ...Arr.filter([`${inner}yield* Resume.claimAgain;`], () => node.claims),
+    ...[...node.kept.map((found) => found.name), ...node.outcomes].flatMap((name) =>
+      Option.toArray(
+        Option.flatMap(Option.fromUndefinedOr(node.bound.get(name)), (found) =>
+          restoreOf(name, found),
+        ),
+      ).flatMap((restored) => [
+        `${inner}const ${name} = ${restored};`,
+        ...emitRemembered(emitting.remembered, name, inner),
+      ]),
+    ),
+    ...node.again.flatMap((step) =>
+      emitUse(emitting.remembered, step, "Option.none()", inner, () => []),
+    ),
+    ...node.frames.flatMap((frame) =>
+      emitStepsFrom(emitting, frame.steps, frame.path, frame.from, "Option.none()", inner),
+    ),
+    ...Arr.filter([`${inner}return;`], () => !ends),
+    `${indent}}`,
+  ];
+};
 
 // Where the flow's work comes from: its sources, or, for a flow a person
 // starts, none, and the item lookup its subject gives.
@@ -2673,6 +3020,15 @@ export const plan = (document: FlowDocument): FlowPlan => {
 
 const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>) => {
   const blocks = [...new Set(usedIn(document.steps))];
+  const nodes = resumeNodesOf(document);
+
+  const emitting: Emitting = {
+    remembered: document.failureContext ?? {},
+    keeps: new Map(nodes.map((node) => [node.step.id, keepOf(document, node)])),
+  };
+
+  const resumes = Option.liftPredicate(nodes, (found) => found.length > 0);
+  const resumeImport = Option.match(resumes, { onNone: () => "", onSome: () => ", Resume" });
   const staged = [...new Set(stagesIn(document.steps))];
   const subject = `subjects[${printJson(document.subject)}]`;
 
@@ -2691,7 +3047,7 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
 
   return [
     `// Generated from the flow document ${document.flow}; change the document, not this file.`,
-    `import { Blocks, type Compose, NeedsHuman, PlanNodes } from ${printJson(sdk)};`,
+    `import { Blocks, type Compose, NeedsHuman, PlanNodes${resumeImport} } from ${printJson(sdk)};`,
     `import * as Effect from "effect/Effect";`,
     `import * as Option from "effect/Option";`,
     ...stageImports,
@@ -2712,19 +3068,19 @@ const emit = (document: FlowDocument, sdk: string, stages: ReadonlyArray<string>
     "  // steps",
     `  blocks: ${printJson(blocks)},`,
     "  plan,",
+    ...Option.toArray(resumes).map(
+      (found) =>
+        `  resumes: { flow: ${printJson(document.flow)}, nodes: ${emitObject(found.map((node) => [node.step.id, printJson(node.step.use)] as const))} },`,
+    ),
     "  workflow: (item) =>",
     "    Effect.gen(function* () {",
     `      const trigger = yield* ${subject}.read(item);`,
+    ...Option.toArray(resumes).map(() => `      const ${RESUMED} = Resume.resumedAt(item);`),
     "",
     `      return yield* ${subject}.scope(trigger, { claims: ${blocks.some((block) => CLAIMING.includes(block))} }, (failureContext) =>`,
     "        Effect.gen(function* () {",
-    ...emitSteps(
-      document.failureContext ?? {},
-      document.steps,
-      "steps",
-      "Option.none()",
-      "          ",
-    ),
+    ...nodes.flatMap((node) => emitResume(emitting, node, "          ")),
+    ...emitSteps(emitting, document.steps, "steps", "Option.none()", "          "),
     "        }),",
     "      );",
     "    }),",
