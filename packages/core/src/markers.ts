@@ -83,8 +83,14 @@ export const OwnerMarker = Schema.Struct({
 export type OwnerMarker = typeof OwnerMarker.Type;
 
 // A plan proposed on its spec issue, by round, so the run finds the comments
-// a person left on it since.
-export const PlanMarker = Schema.Struct({ round: Schema.Finite });
+// a person left on it since. plan: its tasks as posted, so a run that takes up
+// the plan once a person approves it, after the run that posted it ended
+// (ADR 0021), makes exactly what was approved; a marker without it is from
+// before plans were kept, or from one too long to keep beside its comment.
+export const PlanMarker = Schema.Struct({
+  round: Schema.Finite,
+  plan: Schema.optionalKey(Schema.Array(Schema.Json)),
+});
 
 export type PlanMarker = typeof PlanMarker.Type;
 

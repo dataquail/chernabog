@@ -168,6 +168,7 @@ export const planBlocks = {
     failures: { NeedsHuman: "person", NotFound: "skip", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "issue", phase: PHASES.issue.proposed }],
     contributes: {},
   }),
 
@@ -205,7 +206,6 @@ export const planBlocks = {
     mustRoute: ["approved", "changes"],
     exhaustive: true,
     waits: true,
-    records: [{ item: "issue", phase: PHASES.issue.proposed }],
     contributes: {
       wakes: Plan.answers.pipe(reportAs("trigger")),
       wakeEvents: [Events.commentCreated],

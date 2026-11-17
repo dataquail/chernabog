@@ -41,6 +41,7 @@ export const PHASES = {
     readyTimedOut: "ready-timed-out",
     awaitingCi: "awaiting-ci",
     proposed: "proposed",
+    planHandedBack: "plan-handed-back",
     becameEpic: "became-epic",
   },
   pullRequest: {
