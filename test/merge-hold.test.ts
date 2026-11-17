@@ -157,6 +157,13 @@ describe("holding a merge on a red base branch", () => {
                   found.body.startsWith("Holding the merge: CI is failing on `main`."),
                 ),
               ).toBe(true);
+              // The hold is the pull request's record, naming the work item that holds it.
+              expect(fake.phases()[`pr-${PULL}`]).toBe("merge-held");
+              expect(
+                Option.flatMap(Option.fromUndefinedOr(fake.records().get(`pr-${PULL}`)), (record) =>
+                  Option.map(record.data, (data) => data.key),
+                ),
+              ).toEqual(Option.some("hold"));
               // Still red: nothing wakes it.
               expect(yield* woken(fake)).toEqual([]);
               fake.merge.baseCi = Option.some(GREEN);

@@ -32,9 +32,15 @@ import * as Schema from "effect/Schema";
 // one item per request, unless a person has them (auto:needs-human): asking
 // again during a dispute doesn't restart the loop. Each is routed by its
 // assignees and reviewers.
-// And the runs holding a merge whose base branch is green again, to wake them.
+// And the merges its runs hold whose base branch is green again, or whose
+// hold has lasted past mergeHoldTimeout: they wake a run still parked on one,
+// or a CI job's ended one is taken up by a new run, from the pull request's
+// record. A re-review's work item is keyed pr-N-<more>; review's is pr-N.
 const trigger = Effect.gen(function* () {
-  return [...(yield* Review.requestedAgain), ...(yield* PullRequest.baseTurnedGreen)];
+  return [
+    ...(yield* Review.requestedAgain),
+    ...(yield* PullRequest.heldMerges((key, pullRequest) => key.startsWith(`pr-${pullRequest}-`))),
+  ];
 }).pipe(reportAs("trigger"));
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
@@ -133,7 +139,15 @@ const reReviews = (count: number) => {
 const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
     const { rounds } = yield* Settings.reviewers;
+    // A merge an earlier run held, which a CI job ended on: it was approved, so merge it.
+    const held = PullRequest.resumingMerge(item);
+
+    if (Option.isSome(held)) {
+      return yield* mergeIfShipping(held.value);
+    }
+
     const { pullRequest } = yield* Review.pullRequestOf(item);
+
     const earlier = yield* Review.latestOwnReview(pullRequest);
 
     // No review of its own to resume, as one posted before markers named their reviewer: review afresh.
