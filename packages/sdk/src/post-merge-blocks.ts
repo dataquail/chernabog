@@ -10,13 +10,22 @@
 // is known by the hidden marker in that comment. The follow-up
 // carries a marker with the merge commit's sha, so a run that resumes after
 // filing finds it rather than filing another.
+//
+// Push CI can take minutes or hours, and a run ends at every park (ADR 0021,
+// decision 4), so a watch whose first reading is still pending parks: it
+// records awaiting-merge-ci on the pull request, with the merge commit and
+// when the watch began, and the run ends. The source offers it again once CI
+// settles or the watch's time is up, and the run that takes it up reads CI
+// once, records watched again when the watch ends, and goes on.
 
 import {
   activity,
+  awaitSignal,
   type CiFailedRun,
   GitHub,
   type Json,
   NeedsHuman,
+  type PhaseData,
   type PhaseRecord,
   Repo,
   reportAs,
@@ -42,8 +51,9 @@ import {
   ToPerson,
 } from "./block.ts";
 import * as Events from "./events.ts";
-import { holds, PHASES, pullRequestItem, record, recordOf, records } from "./phases.ts";
+import { current, PHASES, pullRequestItem, record, recordOf, records } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
+import * as Resume from "./resume.ts";
 import * as Settings from "./settings.ts";
 
 // A commit, by its sha: the merge commit a run watches.
@@ -111,20 +121,55 @@ const MARK_WATCHED = "mark-watched";
 const markWatched = (pr: number, sha: string) =>
   activity(MARK_WATCHED, record(pullRequestItem(pr), PHASES.pullRequest.watched, { sha }));
 
-// Whether a run has watched the merge of pull request `pr`: by its record, or,
-// for a merge watched before runs recorded it, by the watched marker on it.
-const wasWatched = (all: ReadonlyMap<string, PhaseRecord>, pr: number) =>
-  Effect.gen(function* () {
-    const recorded = recordOf(all, pullRequestItem(pr));
+const WATCHED = PHASES.pullRequest.watched;
+const AWAITING = PHASES.pullRequest.awaitingMergeCi;
 
-    if (Option.exists(recorded, (found) => holds(found, [PHASES.pullRequest.watched]))) {
-      return true;
+// What a parked watch's record carries beside where a document resumes: the
+// merge commit, and when the watch began, which noCiGrace and ciTimeout count
+// from across the runs that take it up. The record's `at` won't do for that:
+// a record written afresh has a new one.
+const ParkedWatch = Schema.Struct({ sha: Schema.String, since: Schema.String });
+
+// When the watch of `sha` that `found` parked began; none for any other record.
+const parkedSince = (found: PhaseRecord, sha: string) =>
+  Option.flatMap(
+    Option.filter(
+      Option.flatMap(found.data, Schema.decodeUnknownOption(ParkedWatch)),
+      (watch) => found.phase === AWAITING && watch.sha === sha,
+    ),
+    (watch) => DateTime.make(watch.since),
+  );
+
+// How far a run has watched a merge, by the pull request's record: finished,
+// by watched, or parked, by awaiting-merge-ci, at a document's node (its data
+// says where to resume) or a recipe's.
+type Watch = "finished" | "parked" | "parked-to-resume";
+
+const recordedWatch = (all: ReadonlyMap<string, PhaseRecord>, pr: number) =>
+  Option.flatMap(recordOf(all, pullRequestItem(pr)), (found): Option.Option<Watch> => {
+    if (found.phase === WATCHED) {
+      return Option.some("finished");
     }
 
-    const comments = yield* (yield* GitHub).trustedComments(pr);
+    if (found.phase !== AWAITING) {
+      return Option.none();
+    }
 
-    return comments.some((comment) => Option.isSome(watchedMarker.read(comment.body)));
+    if (Option.exists(found.data, (data) => "resume" in data)) {
+      return Option.some("parked-to-resume");
+    }
+
+    return Option.some("parked");
   });
+
+// Whether a run watched the merge of pull request `pr` before runs recorded
+// it, by the watched marker on it: for a merge whose record is neither
+// watched nor parked watching it.
+const markedWatched = (pr: number) =>
+  Effect.map(
+    GitHub.use((github) => github.trustedComments(pr)),
+    (comments) => comments.some((comment) => Option.isSome(watchedMarker.read(comment.body))),
+  );
 
 // On a follow-up issue: the merge commit whose red CI it is for.
 const followUpMarker = marker(
@@ -235,23 +280,114 @@ const WatchLimits = Schema.Struct({ grace: Schema.Duration, timeout: Schema.Dura
 
 type WatchLimits = typeof WatchLimits.Type;
 
-// The no-CI grace and the CI timeout, read once, so a replay decides the same.
-const watchLimits = activity(
-  "watch-limits",
-  Effect.gen(function* () {
-    const own = yield* Settings.read(Own);
-    const ci = yield* Settings.ci;
+// The no-CI grace and the CI timeout, from the flow's settings.
+const limitsNow = Effect.gen(function* () {
+  const own = yield* Settings.read(Own);
+  const ci = yield* Settings.ci;
 
-    return {
-      grace: Option.getOrElse(
-        Option.flatMap(Option.fromUndefinedOr(own.noCiGrace), durationOf),
-        () => NO_CI_GRACE,
-      ),
-      timeout: ci.timeout,
-    };
-  }),
-  WatchLimits,
-);
+  return {
+    grace: Option.getOrElse(
+      Option.flatMap(Option.fromUndefinedOr(own.noCiGrace), durationOf),
+      () => NO_CI_GRACE,
+    ),
+    timeout: ci.timeout,
+  };
+});
+
+// The no-CI grace and the CI timeout, read once, so a replay decides the same.
+const watchLimits = activity("watch-limits", limitsNow, WatchLimits);
+
+// When the watch began, as ISO text, and how long it had gone when this run
+// first read CI: no time for a watch this run began, and since the record's
+// `since` for one it takes up from a park. Read once, so a replay decides the
+// same.
+const WatchClock = Schema.Struct({ since: Schema.String, waited: Schema.Duration });
+
+const watchClock = (pr: number, sha: string) =>
+  activity(
+    "watch-since",
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const found = yield* current(pullRequestItem(pr));
+
+      return Option.match(
+        Option.flatMap(found, (parked) => parkedSince(parked, sha)),
+        {
+          onNone: () => ({ since: DateTime.formatIso(now), waited: Duration.zero }),
+          onSome: (began) => ({
+            since: DateTime.formatIso(began),
+            waited: Duration.millis(
+              Math.max(0, DateTime.toEpochMillis(now) - DateTime.toEpochMillis(began)),
+            ),
+          }),
+        },
+      );
+    }),
+    WatchClock,
+  );
+
+// The watch is over: a pull request whose watch parked is recorded watched
+// again, which the source takes for finished, by this run, not the one that
+// parked. One whose watch never parked holds watched already.
+const endWatch = (pr: number, sha: string) =>
+  activity(
+    "watch-ended",
+    Effect.gen(function* () {
+      const found = yield* current(pullRequestItem(pr));
+
+      if (Option.isSome(Option.flatMap(found, (parked) => parkedSince(parked, sha)))) {
+        yield* record(pullRequestItem(pr), WATCHED, { sha });
+      }
+    }),
+  );
+
+// The signal a parked watch waits on. Nothing sends it: the run ends at the
+// park, and the one that takes the watch up is a new run.
+export const MERGE_CI_SETTLED = "merge-ci-settled";
+
+// Where a watch parks, and what its record carries: on the merged pull
+// request, the merge commit and when the watch began, and, for a document,
+// where it resumes.
+type WatchParking = { readonly item: string; readonly data: { readonly [key: string]: Json } };
+
+// Records that the watch waits on push CI and parks, which ends the run. A
+// run that takes up a parked watch and parks again keeps the record it found,
+// `since` and all: Phases.record writes nothing over the same phase.
+const parkWatch = (parking: WatchParking, timeout: Duration.Duration) =>
+  activity("awaiting-merge-ci", record(parking.item, AWAITING, parking.data)).pipe(
+    Effect.andThen(awaitSignal([MERGE_CI_SETTLED], { id: "merge-ci", timeout })),
+  );
+
+// Why a parked watch of `sha` can't be taken up yet, for a source to hold it
+// with: push CI still pending, with a run to wait on inside ciTimeout, or
+// none yet inside noCiGrace, both counted from `since`. None once a run that
+// takes it up goes on: CI green or red, no CI within the grace, or time up.
+const watchHeld = (sha: string, since: DateTime.Utc, limits: WatchLimits) =>
+  Effect.gen(function* () {
+    const report = yield* (yield* GitHub).commitCiState(sha, { event: "push" });
+    const now = yield* DateTime.now;
+
+    if (report.state !== "pending") {
+      return Option.none<string>();
+    }
+
+    const waited = Duration.millis(DateTime.toEpochMillis(now) - DateTime.toEpochMillis(since));
+    const timedOut = Duration.isGreaterThanOrEqualTo(waited, limits.timeout);
+
+    const noCi =
+      report.waitingOn.length === 0 && Duration.isGreaterThanOrEqualTo(waited, limits.grace);
+
+    if (timedOut || noCi) {
+      return Option.none<string>();
+    }
+
+    return Option.some(
+      Arr.match(report.waitingOn, {
+        onEmpty: () => `waits for push CI to start on ${sha.slice(0, 7)}`,
+        onNonEmpty: (names) => `waits on push CI on ${sha.slice(0, 7)}: ${names.join(", ")}`,
+      }),
+    );
+  });
 
 // What a watch of the merge commit came to, as merged.awaitCi gives it.
 type Watched = {
@@ -269,14 +405,25 @@ type Merge = {
 
 const shortOf = (sha: CommitSha) => sha.slice(0, 7);
 
-// Polls the merge commit's push CI durably until it stops pending. No run
-// within the noCiGrace setting is no CI for this push; still pending after
-// the ciTimeout setting is a person's to look at.
-const awaitMergeCi = (merge: Merge, limits: WatchLimits) =>
+// Watches the merge commit's push CI until it stops pending. No run within
+// the noCiGrace setting is no CI for this push; still pending after the
+// ciTimeout setting is a person's to look at; both count from when the watch
+// began, across the runs that take it up. A first reading still pending
+// parks, given somewhere to (`parking`, from when the watch began); with
+// nowhere, as at a document's node it can't resume at, it reads CI once a
+// minute, durably.
+const awaitMergeCi = <E, R>(
+  merge: Merge,
+  limits: WatchLimits,
+  parking: (since: string) => Effect.Effect<Option.Option<WatchParking>, E, R>,
+) =>
   Effect.gen(function* () {
     const grace = Duration.toMillis(limits.grace);
     const timeout = Duration.toMillis(limits.timeout);
     const every = Duration.toMillis(CI_POLL);
+    const clock = yield* watchClock(merge.pr, merge.sha);
+    const where = yield* parking(clock.since);
+    const ended = endWatch(merge.pr, merge.sha);
 
     for (let poll = 1; ; poll++) {
       if (poll > 1) {
@@ -286,19 +433,29 @@ const awaitMergeCi = (merge: Merge, limits: WatchLimits) =>
       const reading = yield* readMergeCi(merge.sha, poll);
 
       if (reading.state !== "pending") {
+        yield* ended;
+
         return reading;
       }
 
-      const waited = (poll - 1) * every;
+      const waited = Duration.toMillis(clock.waited) + (poll - 1) * every;
 
       if (reading.waitingOn.length === 0 && waited >= grace) {
+        yield* ended;
+
         return { state: "none" as const };
       }
 
       if (waited >= timeout) {
+        yield* ended;
+
         return yield* new NeedsHuman({
           reason: `CI on ${merge.base} at ${merge.sha} stayed pending for ${Duration.format(limits.timeout)} after #${merge.pr} merged`,
         });
+      }
+
+      if (poll === 1 && Option.isSome(where)) {
+        yield* parkWatch(where.value, limits.timeout);
       }
     }
   });
@@ -556,7 +713,7 @@ export const postMergeBlocks = {
   "merged.awaitCi": defineBlock({
     name: "merged.awaitCi",
     about:
-      "Waits for push CI on the merge commit, reading it once a minute, durably (ci-1, then ci-2-wait and ci-2, and on), with the noCiGrace and ciTimeout settings read once first (watch-limits). Comes to green, to red, or to none when no CI run started within noCiGrace (10 minutes by default). Still pending after ciTimeout, the run ends needing a person. Only push runs count, so a pull request's runs on the same commit don't.",
+      "Waits for push CI on the merge commit, with the noCiGrace and ciTimeout settings read once first (watch-limits) and when the watch began (watch-since). A first reading still pending (ci-1) records awaiting-merge-ci on the pull request, with the merge commit and when the watch began, and the run ends at the park (awaiting-merge-ci); pr.mergedRecently's document offers it again once CI settles or its time is up, and the run that takes it up starts here, reads CI once, and records watched again (watch-ended). At a node the document can't resume at, it reads CI once a minute, durably (ci-2-wait and ci-2, and on). Comes to green, to red, or to none when no CI run started within noCiGrace (10 minutes by default). Still pending after ciTimeout, the run ends needing a person. Both count from when the watch began. Only push runs count, so a pull request's runs on the same commit don't.",
     inputKinds: {
       pr: "PullRequestNumber: the merged pull request, trigger.pr",
       sha: "CommitSha: its merge commit, trigger.sha",
@@ -573,13 +730,17 @@ export const postMergeBlocks = {
       red: "the red CI: failedChecks and failedRuns, for merged.failureDetails and merged.fileFollowUp",
     },
     waits: true,
-    stepNames: ["watch-limits", CI_STEPS],
+    stepNames: ["watch-limits", "watch-since", "watch-ended", "awaiting-merge-ci", CI_STEPS],
     inputs: { pr: "required", sha: "required", base: "required" },
     run: (input: Merge) =>
       Effect.gen(function* () {
         const limits = yield* watchLimits;
 
-        return watched(input, limits, yield* awaitMergeCi(input, limits));
+        const ci = yield* awaitMergeCi(input, limits, (since) =>
+          Resume.parking({ sha: input.sha, since }),
+        );
+
+        return watched(input, limits, ci);
       }),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {
@@ -591,7 +752,35 @@ export const postMergeBlocks = {
     },
     mustRoute: ["none", "green", "red"],
     exhaustive: true,
-    contributes: { settings: { ...Settings.Ci.fields, ...Own.fields } },
+    // Its watched record again is written only over its own park; what puts
+    // a merge's watch on record is merged.markWatched.
+    records: [{ item: "pull-request", phase: AWAITING }],
+    // A parked watch may start again once push CI on its merge commit
+    // settled, or none started within noCiGrace, or ciTimeout passed, all
+    // counted from when the watch began; held, with why, until then.
+    parks: (data: PhaseData, item: WorkItem) =>
+      Effect.gen(function* () {
+        const parked = Option.flatMap(Schema.decodeUnknownOption(ParkedWatch)(data), (watch) =>
+          Option.map(DateTime.make(watch.since), (since) => ({ sha: watch.sha, since })),
+        );
+
+        if (Option.isNone(parked)) {
+          return Option.none<WorkItem>();
+        }
+
+        const held = yield* watchHeld(parked.value.sha, parked.value.since, yield* limitsNow);
+
+        return Option.some(
+          Option.match(held, {
+            onNone: () => item,
+            onSome: (why): WorkItem => ({ ...item, held: why }),
+          }),
+        );
+      }).pipe(reportAs("trigger")),
+    contributes: {
+      settings: { ...Settings.Ci.fields, ...Own.fields },
+      wakeEvents: [Events.baseCiCompleted],
+    },
   }),
 
   "merged.redBefore": defineBlock({
@@ -761,7 +950,8 @@ export const postMergeBlocks = {
 export const postMergeSources = {
   // Pull requests this persona wrote that merged into the base branch in the
   // last day, among the 30 closed most lately, and that no run has watched
-  // yet: none recorded watched, nor, from before records, carries the marker.
+  // yet: none recorded watched or parked watching it (awaiting-merge-ci),
+  // nor, from before records, carries the marker.
   "pr.mergedRecently": defineSource(
     "pr.mergedRecently",
     "merged",
@@ -793,7 +983,15 @@ export const postMergeSources = {
             continue;
           }
 
-          if (yield* wasWatched(all, pull.number)) {
+          // A finished watch isn't watched again, and a parked one is the
+          // document's parked items' (Resume.parked) to offer. One the recipe
+          // parked, which says nowhere to resume, is watched again from the top.
+          const recorded = recordedWatch(all, pull.number);
+
+          if (
+            Option.exists(recorded, (watch) => watch !== "parked") ||
+            (Option.isNone(recorded) && (yield* markedWatched(pull.number)))
+          ) {
             continue;
           }
 
@@ -825,7 +1023,7 @@ export const postMergeSources = {
       contributes: { settings: Settings.Base.fields, ownWork: true },
     }),
     {
-      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.watched] }],
+      reads: [{ item: "pull-request", phases: [WATCHED, AWAITING] }],
       events: [Events.pullRequestClosed],
     },
   ),

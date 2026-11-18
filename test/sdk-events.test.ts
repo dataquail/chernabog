@@ -239,7 +239,10 @@ describe("a flow's events", () => {
         events: ["issues: labeled", "issue_comment: created"],
         readsPhases: false,
       }),
-      "post-merge": Option.some({ events: ["pull_request: closed"], readsPhases: false }),
+      "post-merge": Option.some({
+        events: ["pull_request: closed", "workflow_run: completed"],
+        readsPhases: false,
+      }),
       "re-review": Option.some({
         events: ["pull_request: review_requested", "workflow_run: completed"],
         readsPhases: true,

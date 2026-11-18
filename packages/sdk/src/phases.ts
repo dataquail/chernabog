@@ -54,6 +54,9 @@ export const PHASES = {
     draft: "draft",
     watched: "watched",
     awaitingCi: "awaiting-ci",
+    // A watch of a merge commit's push CI that parked: post-merge's, not the
+    // pull request's own CI, which awaiting-ci is.
+    awaitingMergeCi: "awaiting-merge-ci",
   },
   epic: { waiting: "waiting", finished: "finished" },
 } as const;
@@ -233,6 +236,9 @@ export const record = (
 
 // Every item's record, in one read, for a source that looks at every open item.
 export const records = Progress.use((progress) => progress.readAll);
+
+// The record of one item, for a run that reads only its own.
+export const current = (item: string) => Progress.use((progress) => progress.read(item));
 
 // The record of `item` among `all`, from records.
 export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>
