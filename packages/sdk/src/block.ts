@@ -20,6 +20,7 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Brand from "effect/Brand";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Record from "effect/Record";
@@ -51,6 +52,7 @@ export const BaseBranch = Brand.nominal<BaseBranch>();
 
 // The brands as schemas, for a block's `keeps`.
 export const Kept = {
+  issue: Schema.Finite.pipe(Schema.brand("IssueNumber")),
   pullRequest: Schema.Finite.pipe(Schema.brand("PullRequestNumber")),
   branch: Schema.String.pipe(Schema.brand("BranchName")),
   base: Schema.String.pipe(Schema.brand("BaseBranch")),
@@ -300,11 +302,16 @@ type BlockSpec<Input, Output, E, R, Outcomes, Kept> = {
   readonly parks?: (
     data: PhaseData,
     item: WorkItem,
+    at: DateTime.Utc,
   ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
   // How its output goes into a record and back, as JSON: a step that has one
   // can be kept for a document's run that resumes after it (resume.ts). It
   // may keep less than the output has, so long as the output is one.
   readonly keeps?: Schema.Codec<Kept, Json>;
+  // For an output too big for a record: how a document's run that resumes
+  // after it reads the output back from what it kept, as plan.propose keeps
+  // its round and reads the plan back from the comment it posted.
+  readonly recall?: (kept: Kept) => Effect.Effect<Output, E, R>;
   // Whether a document's run that resumes past it runs it again rather than
   // restore what it gave: a cheap read, or what is this machine's, such as a
   // worktree's path, which another machine taking the item up hasn't got.
@@ -431,6 +438,23 @@ export const defineBlock = <
 ) => {
   const table = dispositionsOf(spec.failures);
 
+  // Each failure as the document's overrides, then the block's table, say.
+  const disposed =
+    (own: typeof table) =>
+    <A>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.mapError((error) =>
+          settled(
+            spec.name,
+            error,
+            Option.getOrElse(
+              Option.orElse(Record.get(own, error._tag), () => Record.get(table, error._tag)),
+              (): Disposition => "fail",
+            ),
+          ),
+        ),
+      );
+
   return {
     name: spec.name,
     failures: table,
@@ -459,24 +483,15 @@ export const defineBlock = <
     recordsInput: Option.fromUndefinedOr(spec.recordsInput),
     parks: Option.fromUndefinedOr(spec.parks),
     keeps: Option.fromUndefinedOr(spec.keeps),
+    recall: Option.map(
+      Option.fromUndefinedOr(spec.recall),
+      (recall) => (kept: Kept) => disposed({})(recall(kept)),
+    ),
+    recalls: Option.isSome(Option.fromUndefinedOr(spec.recall)),
     again: spec.again === true,
     contributes: spec.contributes,
-    run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) => {
-      const own = dispositionsOf(overrides);
-
-      return spec.run(input).pipe(
-        Effect.mapError((error) =>
-          settled(
-            spec.name,
-            error,
-            Option.getOrElse(
-              Option.orElse(Record.get(own, error._tag), () => Record.get(table, error._tag)),
-              (): Disposition => "fail",
-            ),
-          ),
-        ),
-      );
-    },
+    run: (input: Input, overrides: Partial<Failures<NoInfer<E>>> = {}) =>
+      disposed(dispositionsOf(overrides))(spec.run(input)),
   };
 };
 

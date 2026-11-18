@@ -817,9 +817,18 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   steps after it read, which the compiler works out (`resumeNodesOf`).
   `assemble` adds the document's `Resume.parked` source, and the generated
   flow starts a resumed run at the node. A block with `again` (a worktree, a
-  cheap read) runs again rather than being kept. When a resume entry
+  cheap read) runs again rather than being kept; one with `recall` keeps
+  less and reads its output back (`plan.propose` reads the plan from its
+  comment). A node in a repeat's rounds resumes in its round, which the
+  record keeps as `round`. A parking block whose node can't resume polls
+  instead, since a park there would strand the run. When a resume entry
   duplicates a step's code, a test that edits generated code must edit every
-  copy (`replaceAll`).
+  copy (`replaceAll`), and the flow compiler reports a type error in it once.
+- **Two advances by one writer from the same phase to the same phase are one
+  write**: the port takes the second as a retry of the first and keeps the
+  first's data. Add data to a record in the write that makes it, as a
+  document's `plan.awaitAnswer` writes the spec's `proposed` record itself
+  rather than amending `plan.propose`'s.
 - **The record is the only progress** (`docs/adr/0021-one-ledger-the-forge-is-input.md`).
   A source finds where an item is from its record. Labels, review counts,
   assignees and comment markers are intent, fact or projection, never
