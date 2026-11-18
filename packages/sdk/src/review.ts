@@ -41,7 +41,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
-import { ADOPTED_LABEL, type CiWait, sessionIdFor, waitingOnCi } from "./implement.ts";
+import { ADOPTED_LABEL, type CiWait, heldOnCi, sessionIdFor } from "./implement.ts";
 import * as Phases from "./phases.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
@@ -1126,7 +1126,7 @@ const fixAwaitingCi = (pull: PullRequest, found: PhaseRecord, round: number) =>
     };
 
     return Option.some(
-      Option.match(yield* waitingOnCi(pull.number), {
+      Option.match(yield* heldOnCi(pull.number, found.data), {
         onNone: () => resumed,
         onSome: (held) => ({ ...resumed, held }),
       }),

@@ -228,6 +228,14 @@ change.
    poll, as every wait did before a record could carry anything; backfill
    gives every open pull request a record.
 
+   Every wait for CI that parks keeps `since` in its data, when the round's
+   wait began, as post-merge's watch does, so `ciTimeout` counts across the
+   runs that take it up: a source stops holding the item once it passes,
+   and the run that takes it up, finding CI still pending, hands it to a
+   person. implement's wait on a pull request it adopted parks on the
+   issue's `awaiting-ci` as its wait on one it opened does, and the data
+   keeps the pull request, which isn't on the issue's branch.
+
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
    run itself still ends.
