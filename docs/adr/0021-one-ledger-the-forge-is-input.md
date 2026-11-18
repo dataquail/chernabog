@@ -180,7 +180,14 @@ change.
    compiler takes such a node only when nothing from it on reads the state,
    every `next` sets all of it, and the round can't run off its end; a wait
    anywhere else in the rounds polls, and the epic's rounds start from its
-   `waiting` record. A wait in a forEach's lanes polls (audit W7). A flow a
+   `waiting` record. A wait in a forEach's lanes polls, except an epic
+   task's wait for CI: its lane can't park alone, so it ends, and the
+   epic's `waiting` record keeps the task's pending CI (`tasks.ci`: the
+   pull request, its round, and `since`). `Epic.queued` offers the epic
+   once that CI settles or `ciTimeout` passes, and holds it with why until
+   then; a round takes the task up (`Epic.takeUpCi`, `epic.settleCi`),
+   hands it off on green, fixes red, and gives it to a person past the
+   timeout. The stack refresh's wait for CI still polls (audit W7). A flow a
    person starts has no trigger to offer its item again, so its waits poll
    too.
 

@@ -21,6 +21,7 @@ import {
 import * as Brand from "effect/Brand";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import {
@@ -636,10 +637,18 @@ export type TaskState = {
   readonly handedBack: ReadonlySet<number>;
   readonly withPerson: ReadonlySet<number>;
   readonly waitedOn: ReadonlyMap<number, ReadonlySet<number>>;
+  // Tasks whose lane ended on their pull request's pending CI, which
+  // epic.settleCi takes up once it settles.
+  readonly ci: ReadonlyArray<Epic.PendingCi>;
 };
 
-// How a task's attempt ended, for the next round to read.
-export type LaneEnding = { readonly issue: number; readonly withPerson: boolean };
+// How a task's attempt ended, for the next round to read: with a person, or
+// on its pull request's pending CI.
+export type LaneEnding = {
+  readonly issue: number;
+  readonly withPerson: boolean;
+  readonly ci: Option.Option<Epic.PendingCi>;
+};
 
 // A task to start: its lane carries its attempt.
 export type TaskStart = {
@@ -666,6 +675,7 @@ const waitingOf = (
         attempts: [...state.attempts],
         handedBack: [...state.handedBack],
         withPerson: [...state.withPerson],
+        ci: state.ci,
       }),
     }),
   };
@@ -701,6 +711,7 @@ export const loopStates = {
       handedBack: new Set(kept.handedBack),
       withPerson: new Set(kept.withPerson),
       waitedOn: new Map(),
+      ci: kept.ci ?? [],
     };
   },
   "stack.upkeep": (item: WorkItem): Upkeep => {
@@ -768,7 +779,7 @@ const planStarts = (progress: Epic.Progress, tasks: TaskState) => {
     };
   });
 
-  return { attempts, handedBack, withPerson, waitedOn: tasks.waitedOn, starts };
+  return { attempts, handedBack, withPerson, waitedOn: tasks.waitedOn, ci: tasks.ci, starts };
 };
 
 // Publishes a task's work: its branch pushed, its pull request opened on the
@@ -1051,6 +1062,48 @@ export const epicBlocks = {
     contributes: { settings: Settings.MergeHold.fields },
   }),
 
+  // A task's lane that ended on its pull request's pending CI (Epic.leaveLane)
+  // is taken up here once CI settles, as the recipe does (Epic.takeUpCi).
+  "epic.settleCi": defineBlock({
+    name: "epic.settleCi",
+    about:
+      "Takes up the tasks whose lanes ended on their pull request's pending CI, once CI is green or red, or past ciTimeout from when that round's wait began (task-ci-<round>#<lane>): in a worktree on the task's branch it waits on from that round, fixing red, and hands the pull request off once CI is green. One still pending after a fix is left again; one past ciTimeout goes to a person. Comes to moved when it took any up, for the round to read the epic again.",
+    inputKinds: {
+      round: "the round",
+      tasks: "the epic.tasks state",
+      atOnce: "number: how many at once, from epic.atOnce",
+    },
+    outputKinds: {
+      taken: "boolean: whether it took any up",
+      tasks: "the epic.tasks state, updated",
+    },
+    outcomeKinds: { moved: "the epic.tasks state, updated" },
+    before: ["epic.startable"],
+    inputs: { round: "required", tasks: "required", atOnce: "required" },
+    run: (input: { readonly round: number; readonly tasks: TaskState; readonly atOnce: number }) =>
+      Effect.map(Epic.takeUpCi(input.round, input.tasks.ci, input.atOnce), (tasksCi) => ({
+        taken: tasksCi.taken,
+        tasks: {
+          ...input.tasks,
+          ci: tasksCi.pending,
+          withPerson: new Set([...input.tasks.withPerson, ...tasksCi.withPerson]),
+        },
+      })),
+    failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
+    outcomes: {
+      moved: (settled: { readonly taken: boolean; readonly tasks: TaskState }) =>
+        Option.liftPredicate(settled.tasks, () => settled.taken),
+    },
+    mustRoute: ["moved"],
+    progressOn: ["moved"],
+    contributes: {
+      settings: Settings.Ci.fields,
+      // A finished CI run settles a task's CI; its branch is the task's, which
+      // names no epic.
+      wakeEvents: [Events.baseCiCompleted],
+    },
+  }),
+
   "epic.startable": defineBlock({
     name: "epic.startable",
     about:
@@ -1181,6 +1234,10 @@ export const epicBlocks = {
             ...input.tasks.started.withPerson,
             ...input.endings.filter((ending) => ending.withPerson).map((ending) => ending.issue),
           ]),
+          ci: [
+            ...input.tasks.started.ci,
+            ...input.endings.flatMap((ending) => Option.toArray(ending.ci)),
+          ],
         },
       }),
     failures: {},
@@ -1271,27 +1328,34 @@ type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;
 // holds, or that is gone, leaves nothing to do; the run carries on with the
 // rest either way.
 export const laneScopes = {
-  "epic.task": <A, E, R>(task: TaskStart, body: Scoped<A, E | ToPerson | Skip, R>) => {
-    const context: FailureContext = { pr: Option.none() };
+  "epic.task": <A, E, R>(task: TaskStart, body: Scoped<A, E | ToPerson | Skip, R>) =>
+    Effect.gen(function* () {
+      const context: FailureContext = { pr: Option.none() };
+      // Where a wait for CI in the lane leaves its pending CI (Epic.leaveLane).
+      const left = yield* Ref.make(Option.none<Epic.PendingCi>());
 
-    // Each task's steps run in its lane of the forEach's node.
-    return Effect.suspend(() => body(context)).pipe(
-      PlanNodes.inLane(task.lane),
-      Effect.as<LaneEnding>({ issue: task.issue, withPerson: false }),
-      Effect.catchIf(
-        (failure): failure is Skip => failure instanceof Skip,
-        () => Effect.succeed<LaneEnding>({ issue: task.issue, withPerson: false }),
-      ),
-      Effect.catchIf(
-        (failure): failure is ToPerson => failure instanceof ToPerson,
-        (failure) =>
-          Implement.handToHuman(task.issue, failure.reason, context.pr, { id: task.lane }).pipe(
-            Effect.tap(() => releaseTask(task.issue, task.lane)),
-            Effect.as<LaneEnding>({ issue: task.issue, withPerson: true }),
-          ),
-      ),
-    );
-  },
+      const ended = (withPerson: boolean) =>
+        Effect.map(Ref.get(left), (ci): LaneEnding => ({ issue: task.issue, withPerson, ci }));
+
+      // Each task's steps run in its lane of the forEach's node.
+      return yield* Effect.suspend(() => body(context)).pipe(
+        PlanNodes.inLane(task.lane),
+        Effect.provideService(Epic.LaneCi, Option.some({ issue: task.issue, left })),
+        Effect.andThen(ended(false)),
+        Effect.catchIf(
+          (failure): failure is Skip => failure instanceof Skip,
+          () => ended(false),
+        ),
+        Effect.catchIf(
+          (failure): failure is ToPerson => failure instanceof ToPerson,
+          (failure) =>
+            Implement.handToHuman(task.issue, failure.reason, context.pr, { id: task.lane }).pipe(
+              Effect.tap(() => releaseTask(task.issue, task.lane)),
+              Effect.andThen(ended(true)),
+            ),
+        ),
+      );
+    }),
 };
 
 export const epicSources = {

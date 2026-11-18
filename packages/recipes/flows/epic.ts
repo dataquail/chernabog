@@ -187,6 +187,7 @@ const implementTask = (
   attempt: number,
   ships: boolean,
   withPerson: Set<number>,
+  pendingCi: Array<Epic.PendingCi>,
 ) =>
   Effect.gen(function* () {
     const issue = task.number;
@@ -269,12 +270,32 @@ const implementTask = (
 
         pullRequest = Option.some(opened.number);
 
-        yield* Implement.waitForCi(
+        // A lane can't park on its own: CI still pending ends it, and a later
+        // round, or the run that takes the parked epic up, takes the task up
+        // once CI settles (Epic.takeUpCi).
+        const left = yield* Implement.waitForCiLeaving(
           opened.number,
           worktree,
           { ...session, branch, base: openedOn },
           { id },
         );
+
+        if (Option.isSome(left)) {
+          const pending = yield* Epic.leftOnCi(
+            {
+              issue,
+              pullRequest: opened.number,
+              lane: id,
+              branch,
+              base: openedOn,
+            },
+            left.value,
+          );
+
+          pendingCi.push(pending);
+
+          return `#${issue}: waits on CI for #${opened.number}`;
+        }
 
         return yield* Implement.handOff(issue, opened, outcome, { needsReview: true, id });
       }).pipe(
@@ -821,6 +842,38 @@ const declareLane = (
     ),
   ]);
 
+// A task the run attempted that reads as something other than ready since,
+// or whose attempt ended with a person, is handed back: it may start again.
+const noteHandedBack = (
+  progress: Epic.Progress,
+  attempts: ReadonlyMap<number, number>,
+  handedBack: Set<number>,
+  withPerson: Set<number>,
+) => {
+  for (const layer of progress.layers) {
+    if (attempts.has(layer.number) && (layer.state !== "ready" || withPerson.has(layer.number))) {
+      handedBack.add(layer.number);
+      withPerson.delete(layer.number);
+    }
+  }
+};
+
+// Takes up the tasks whose lanes left on pending CI once it has settled
+// (Epic.takeUpCi); those that went to a person count as ended with one.
+const takeUpTasks = (
+  round: number,
+  pendingCi: ReadonlyArray<Epic.PendingCi>,
+  concurrency: number,
+  withPerson: Set<number>,
+) =>
+  Effect.tap(Epic.takeUpCi(round, pendingCi, concurrency), (tasksCi) =>
+    Effect.sync(() => {
+      for (const issue of tasksCi.withPerson) {
+        withPerson.add(issue);
+      }
+    }),
+  );
+
 // Round after round: read where the epic stands, write its status comment,
 // carry each moved layer's change up its stack, land the layers that ship
 // and may, start every ready task, and
@@ -849,6 +902,8 @@ const workThrough = (
     const handedBack = new Set(kept.handedBack);
     // Tasks whose attempt ended with a person.
     const withPerson = new Set(kept.withPerson);
+    // Tasks whose lane ended on their pull request's pending CI.
+    let pendingCi: Array<Epic.PendingCi> = [...(kept.ci ?? [])];
     // The sub-issues each task waited on, as the rounds read them.
     const waitedOn = new Map<number, Set<number>>();
 
@@ -877,15 +932,16 @@ const workThrough = (
         continue;
       }
 
-      for (const layer of progress.layers) {
-        if (
-          attempts.has(layer.number) &&
-          (layer.state !== "ready" || withPerson.has(layer.number))
-        ) {
-          handedBack.add(layer.number);
-          withPerson.delete(layer.number);
-        }
+      // A task left on pending CI whose CI has settled, or run out of time,
+      // is taken up: then read the epic again.
+      const tasksCi = yield* takeUpTasks(round, pendingCi, concurrency, withPerson);
+      pendingCi = [...tasksCi.pending];
+
+      if (tasksCi.taken) {
+        continue;
       }
+
+      noteHandedBack(progress, attempts, handedBack, withPerson);
 
       const ready = Epic.startable(progress).filter(
         (task) => !attempts.has(task.number) || handedBack.has(task.number),
@@ -906,7 +962,7 @@ const workThrough = (
 
         yield* Effect.forEach(
           starts,
-          (start) => implementTask(epic, start.task, start.attempt, ships, withPerson),
+          (start) => implementTask(epic, start.task, start.attempt, ships, withPerson, pendingCi),
           {
             concurrency,
             discard: true,
@@ -924,6 +980,7 @@ const workThrough = (
           attempts: [...attempts],
           handedBack: [...handedBack],
           withPerson: [...withPerson],
+          ci: pendingCi,
         },
         layers: keptOf(upkeep),
       });
@@ -976,11 +1033,13 @@ const flow = defineFlow({
 });
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
-// rather than only on the schedule: an issue labelled auto:epic, and what moves
+// rather than only on the schedule: an issue labelled auto:epic, what moves
 // an epic's layers (a task closed or relabelled, a push to, review of or merge
-// of a layer's pull request). Its trigger reads the epic's phase, so a phase
+// of a layer's pull request), and a finished CI run, which settles a task's
+// CI the run left pending; its branch is the task's, which names no epic, so
+// every item is looked at. Its trigger reads the epic's phase, so a phase
 // event wakes it too.
 export default Events.declare(flow, {
-  events: [Events.issueLabelled, ...Events.layerChanged],
+  events: [Events.issueLabelled, ...Events.layerChanged, Events.baseCiCompleted],
   readsPhases: true,
 });
