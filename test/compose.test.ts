@@ -1822,7 +1822,7 @@ describe("the blocks that decide what an epic starts", () => {
     Effect.gen(function* () {
       const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
         tasks: { started: after([[10, 1]]) },
-        endings: [{ issue: 10, withPerson: true }],
+        endings: [{ issue: 10, withPerson: true, ci: Option.none() }],
       });
 
       expect(yield* lanes(tasks, reading([ready(10)]))).toEqual(["task-10-2"]);
@@ -1833,7 +1833,7 @@ describe("the blocks that decide what an epic starts", () => {
     Effect.gen(function* () {
       const { tasks } = yield* Blocks.catalogue["epic.recordEndings"].run({
         tasks: { started: after([[10, 1]]) },
-        endings: [{ issue: 10, withPerson: false }],
+        endings: [{ issue: 10, withPerson: false, ci: Option.none() }],
       });
 
       expect(yield* lanes(tasks, reading([ready(10)]))).toEqual([]);

@@ -606,9 +606,17 @@ steps:
                 - next: { tasks: noted.tasks, stack: moved }
         - id: latest
           first: [landed, carried]
+        - id: settled
+          use: epic.settleCi
+          in: { round: round, tasks: noted.tasks, atOnce: howMany.value }
+          on:
+            moved:
+              as: tookUp
+              steps:
+                - next: { tasks: tookUp, stack: latest.stack }
         - id: ready
           use: epic.startable
-          in: { progress: progress, tasks: noted.tasks }
+          in: { progress: progress, tasks: settled.tasks }
           on:
             none:
               as: waiting

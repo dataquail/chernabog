@@ -119,7 +119,7 @@ describe("the canvas draws a document's plan", () => {
       outcomeNode("agent", "needs-clarification"),
       "asked",
       "released",
-      "steps[3].repeat.steps[8].steps[2].on.needs-clarification.steps[2]",
+      "steps[3].repeat.steps[9].steps[2].on.needs-clarification.steps[2]",
       "gate",
       "published",
       "ci",
@@ -222,8 +222,9 @@ describe("the arrows, worked out by walking the plan", () => {
     expect(loops).toEqual([
       edge("steps[3].repeat.steps[4].on.moved.steps[0]", "rounds", "loop"),
       edge("steps[3].repeat.steps[5].on.moved.steps[0]", "rounds", "loop"),
-      edge("steps[3].repeat.steps[7].on.none.steps[1]", "rounds", "loop"),
-      edge("steps[3].repeat.steps[10]", "rounds", "loop"),
+      edge("steps[3].repeat.steps[7].on.moved.steps[0]", "rounds", "loop"),
+      edge("steps[3].repeat.steps[8].on.none.steps[1]", "rounds", "loop"),
+      edge("steps[3].repeat.steps[11]", "rounds", "loop"),
       edge("rounds", "rounds", "loop"),
     ]);
   });
