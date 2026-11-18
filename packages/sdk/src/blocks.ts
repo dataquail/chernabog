@@ -639,6 +639,9 @@ export const catalogue = elsewhere.and("blocks.ts", {
 
   "review.round": defineBlock({
     name: "review.round",
+    keeps: Schema.toCodecJson(
+      Schema.Struct({ verdict: Schema.String, changesAsked: Schema.String }),
+    ),
     fixed: ["role"],
     // A single review gives its round; a loop's rounds take theirs from the loop.
     either: ["round"],
@@ -727,8 +730,19 @@ export const catalogue = elsewhere.and("blocks.ts", {
           return `#${input.pr} approved; ${waiting.value}`;
         }
 
-        // While CI on the base branch is red, the merge holds rather than going to a person.
-        return yield* PullRequest.mergeHolding(input.pr, { method: input.method }).pipe(
+        // While CI on the base branch is red, the merge holds rather than
+        // going to a person. At a node its document can resume at, it parks,
+        // and the hold's record keeps where to resume (Resume.parking): a run
+        // that takes it up holds from when the hold began.
+        const parking = yield* Resume.parking({ pullRequest: input.pr });
+
+        // Anywhere else, it polls the base, so the run isn't stranded.
+        const hold = Option.match(parking, {
+          onNone: () => ({ poll: true }),
+          onSome: (found) => ({ data: found.data }),
+        });
+
+        return yield* PullRequest.mergeHolding(input.pr, { method: input.method, ...hold }).pipe(
           Effect.catchTag("MergeRefused", (refused) =>
             Effect.gen(function* () {
               if (yield* conflicts(input.pr)) {
@@ -748,6 +762,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
       StepFailed: "fail",
     },
     records: [{ item: "pull-request", phase: PHASES.pullRequest.mergeHeld }],
+    parks: PullRequest.documentMergeResumes,
     contributes: {
       settings: { ...Settings.Base.fields, ...Settings.MergeHold.fields },
       wakes: PullRequest.baseTurnedGreen.pipe(reportAs("trigger")),
