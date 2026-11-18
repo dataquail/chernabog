@@ -182,6 +182,16 @@ export const ciCompleted = on(
   { ownPersona: true },
 );
 
+// A CI run finished, a push's to the base branch among them, which settles a
+// merge commit's CI. Its branch names no work item, so the plan job looks at
+// every one. Filtered to the repo's CI workflows as ciCompleted is.
+export const baseCiCompleted = on(
+  "workflow_run",
+  ["completed"],
+  { kind: "repo" },
+  { ownPersona: true },
+);
+
 // A comment by someone the repo trusts.
 export const commentCreated = on("issue_comment", ["created"], issueNumber, {
   association: "comment.author_association",

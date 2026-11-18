@@ -184,6 +184,24 @@ change.
    person starts has no trigger to offer its item again, so its waits poll
    too.
 
+   A wait whose record must say both that it is parked and, later, that it
+   finished parks on a phase of its own. post-merge's watch of a merge
+   commit's push CI first records the pull request `watched` (which both
+   triggers take for finished), then, on a first reading still pending,
+   `awaiting-merge-ci`, with the merge commit and `since`, when the watch
+   began, and a document's `resume` beside them. It is not `awaiting-ci`,
+   which address-review records on an open pull request's own CI and W6
+   may use for resolve-conflicts. The trigger offers it once push CI
+   settles, or no run started within `noCiGrace`, or `ciTimeout` passed,
+   both counted from `since`, and holds it with why until then. The run
+   that takes it up, a different writer, records `watched` again when the
+   watch ends. Amending `watched` with more data wouldn't do: `advance` from
+   a phase to the same one by the same writer is a retry and keeps the data
+   (`Phases.recording`), and `again`, which writes over it, gives the record
+   a fresh `at`. That is also why the time the watch began is `since` in the
+   data, not the record's `at`: a run that parks again keeps the record it
+   found, but a record written afresh would restart the clock.
+
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
    run itself still ends.
