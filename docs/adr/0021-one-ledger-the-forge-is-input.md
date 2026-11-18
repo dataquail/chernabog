@@ -190,8 +190,7 @@ change.
    triggers take for finished), then, on a first reading still pending,
    `awaiting-merge-ci`, with the merge commit and `since`, when the watch
    began, and a document's `resume` beside them. It is not `awaiting-ci`,
-   which address-review records on an open pull request's own CI and W6
-   may use for resolve-conflicts. The trigger offers it once push CI
+   which address-review records on an open pull request's own CI. The trigger offers it once push CI
    settles, or no run started within `noCiGrace`, or `ciTimeout` passed,
    both counted from `since`, and holds it with why until then. The run
    that takes it up, a different writer, records `watched` again when the
@@ -201,6 +200,33 @@ change.
    a fresh `at`. That is also why the time the watch began is `since` in the
    data, not the record's `at`: a run that parks again keeps the record it
    found, but a record written afresh would restart the clock.
+
+   A wait on an item whose record another flow reads parks over that
+   record and puts it back. resolve-conflicts waits for CI on the merge it
+   pushed to an open pull request, whose record holds a review phase, such
+   as `review-asked` or `approved`, that review, re-review and
+   address-review read. The wait records `awaiting-conflict-ci` (with
+   `-2` and on for later rounds, as `awaiting-ci` has) on the pull request,
+   and its data keeps `restore`, the phase and data of the record it parked
+   over, with `since`, when the round's wait began, and a document's
+   `resume`. It is not `awaiting-ci`, which address-review reads as the wait
+   on its own fix. The run that takes the wait up records `restore` again
+   once the wait ends, however it ends short of a park, so the review phase
+   is back; an approval is then asked again, as before. While it is parked
+   no other flow's source reads the pull request's phase, much as none did
+   while the run that polled owned it, and review holds a review request
+   with why. Two other places were weighed and rejected. A separate item
+   for the conflict would leave the review phase in place but in view: with
+   the claim gone at the park, review and address-review would take the
+   pull request up under the pending CI unless every pull-request source
+   read a second record. Restoring with nothing in the data would lose
+   what the review phase carried, such as a merge hold's `resume`. The
+   cost of a restore is a fresh record: a new `at` and version, so a merge
+   hold put back counts its time again from there, and a source keyed by
+   the record sees new work. A pull request with no record has nothing to
+   put back, and one whose record doesn't fit beside the rest, so both
+   poll, as every wait did before a record could carry anything; backfill
+   gives every open pull request a record.
 
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
@@ -290,8 +316,9 @@ change.
   spec's `proposed` record) and a merge held by `pr.land` (from the pull
   request's `merge-held` record) park at a node and resume there. Where a
   node can't resume, the wait polls rather than park. The epic document's
-  rounds start from the `waiting` record. resolve-conflicts' CI still polls
-  (audit W6). No flow document's wait is stranded.
+  rounds start from the `waiting` record. resolve-conflicts' CI parks on
+  `awaiting-conflict-ci` over the pull request's review phase, which the run
+  that takes it up puts back (audit W6). No flow document's wait is stranded.
 - Removing a label or dismissing a review can no longer derail a run
   silently. At worst the item goes to a person as an anomaly or a declared
   intent.

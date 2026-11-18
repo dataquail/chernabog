@@ -54,6 +54,13 @@ const kinds = (
   declared: ReadonlyArray<{ readonly event: string; readonly types: ReadonlyArray<string> }>,
 ) => declared.map((each) => `${each.event}: ${each.types.join(", ")}`);
 
+// resolve-conflicts' document without its wait for CI, which parks: its
+// sources read no phase.
+const NO_PARK_DOCUMENT = RESOLVE_CONFLICTS_DOCUMENT.replace(
+  / {2}- id: ci\n[\s\S]*?(?= {2}- id: again)/,
+  "",
+);
+
 describe("the catalogue's events", () => {
   test("every source names the events it depends on", () => {
     expect(catalogue.sources.length).toBeGreaterThan(0);
@@ -174,7 +181,9 @@ describe("a flow's events", () => {
   });
 
   test("a document whose sources read no phase isn't woken by a phase event", () => {
-    expect(Compose.eventsOf(documentOf(RESOLVE_CONFLICTS_DOCUMENT)).readsPhases).toBe(false);
+    expect(Compose.eventsOf(documentOf(NO_PARK_DOCUMENT)).readsPhases).toBe(false);
+    // Its wait for CI parks, and the record it parks on wakes it.
+    expect(Compose.eventsOf(documentOf(RESOLVE_CONFLICTS_DOCUMENT)).readsPhases).toBe(true);
     expect(Compose.eventsOf(documentOf(ADDRESS_REVIEW_DOCUMENT)).readsPhases).toBe(true);
   });
 
@@ -247,7 +256,10 @@ describe("a flow's events", () => {
         events: ["pull_request: review_requested", "workflow_run: completed"],
         readsPhases: true,
       }),
-      "resolve-conflicts": Option.some({ events: ["pull_request: closed"], readsPhases: false }),
+      "resolve-conflicts": Option.some({
+        events: ["pull_request: closed", "workflow_run: completed"],
+        readsPhases: true,
+      }),
       review: Option.some({
         events: ["pull_request: review_requested, ready_for_review", "workflow_run: completed"],
         readsPhases: true,
@@ -314,7 +326,7 @@ describe("the workflow's on: block", () => {
   });
 
   test("wakes on phase events only when a flow's sources read phases", () => {
-    const wiring = Events.workflowOn([ciFlow("resolve-conflicts", RESOLVE_CONFLICTS_DOCUMENT)], {
+    const wiring = Events.workflowOn([ciFlow("resolve-conflicts", NO_PARK_DOCUMENT)], {
       ciWorkflows: ["CI"],
     });
 

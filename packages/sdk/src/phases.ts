@@ -57,6 +57,11 @@ export const PHASES = {
     // A watch of a merge commit's push CI that parked: post-merge's, not the
     // pull request's own CI, which awaiting-ci is.
     awaitingMergeCi: "awaiting-merge-ci",
+    // resolve-conflicts' wait for CI on the merge it pushed, which parked: not
+    // awaiting-ci, which is address-review's wait on its own fix. Its data
+    // keeps the review phase it parked over, which the run that takes it up
+    // records again (Conflict.waitForCi).
+    awaitingConflictCi: "awaiting-conflict-ci",
   },
   epic: { waiting: "waiting", finished: "finished" },
 } as const;
@@ -84,6 +89,28 @@ const AWAITING_CI = /^awaiting-ci(?:-(\d+))?$/;
 // The round of CI a phase awaitingCi recorded waits on; none for any other phase.
 export const ciRoundOf = (phase: string): Option.Option<number> =>
   Option.map(Option.fromNullOr(AWAITING_CI.exec(phase)), (found) =>
+    Option.match(Option.fromUndefinedOr(found[1]), {
+      onNone: () => 1,
+      onSome: Number,
+    }),
+  );
+
+// The phase resolve-conflicts records before it parks on CI for the merge it
+// pushed, by round, as awaitingCi does: awaiting-conflict-ci, then
+// awaiting-conflict-ci-2 once one fix of red CI was pushed.
+export const conflictCi = (round: number) => {
+  if (round <= 1) {
+    return PHASES.pullRequest.awaitingConflictCi;
+  }
+
+  return `${PHASES.pullRequest.awaitingConflictCi}-${round}`;
+};
+
+const AWAITING_CONFLICT_CI = /^awaiting-conflict-ci(?:-(\d+))?$/;
+
+// The round of CI a phase conflictCi recorded waits on; none for any other phase.
+export const conflictCiRoundOf = (phase: string): Option.Option<number> =>
+  Option.map(Option.fromNullOr(AWAITING_CONFLICT_CI.exec(phase)), (found) =>
     Option.match(Option.fromUndefinedOr(found[1]), {
       onNone: () => 1,
       onSome: Number,

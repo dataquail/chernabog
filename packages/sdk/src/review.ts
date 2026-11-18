@@ -207,6 +207,15 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
         return { kind: "reconcile", record: found };
       }
 
+      // resolve-conflicts parked on CI for its merge, over the review phase
+      // it records again once that settles (Conflict.waitForCi).
+      if (Option.isSome(Phases.conflictCiRoundOf(found.phase))) {
+        return {
+          kind: "disagrees",
+          reason: "it waits on CI for the merge that resolved its conflicts",
+        };
+      }
+
       return {
         kind: "disagrees",
         reason: `its record says ${found.phase}, but GitHub asks ${me} for a review`,
