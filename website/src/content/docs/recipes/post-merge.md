@@ -19,7 +19,7 @@ Once a pull request merges, nothing else looks at what happens next. When CI on 
 
 ## Its steps
 
-1. A comment on the merged pull request saying it's being watched, with a hidden marker (`chernabog-post-merge-watched`). The trigger leaves a pull request with that marker alone, so each is watched once.
+1. `mark-watched` — records the pull request's `watched` phase, with its merge commit, then comments on it that it's being watched. The trigger leaves a pull request recorded `watched` alone, so each is watched once, even if the comment is deleted. A merge watched before runs recorded the phase is known by the comment's hidden marker (`chernabog-post-merge-watched`) instead.
 2. `watch-limits` — reads the `noCiGrace` and `ciTimeout` settings once, so a run that resumes decides by the same ones.
 3. `ci-<n>` — reads CI on the merge commit, `commitCiState(sha, { event: "push" })`, so runs of other events on the same sha don't count, once a minute, durably (`ci-<n>-wait` between reads).
    - No run at all within `noCiGrace` (10 minutes by default) is taken as no CI for that push, and the run ends done.

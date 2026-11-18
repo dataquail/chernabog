@@ -5,8 +5,10 @@
 // labelled auto:eligible, with the failed runs and the tail of their logs, so
 // implement takes the fix on.
 //
-// Each pull request is watched once: the run's first step comments on it
-// with a hidden marker, which the trigger looks for. The follow-up carries a
+// Each pull request is watched once: the run's first step records its
+// watched phase, which the trigger reads, and comments on it that it is
+// watching. A merge watched before runs recorded it is known by the hidden
+// marker in that comment. The follow-up carries a
 // marker with the merge commit's sha, so a run that resumes after filing
 // finds it rather than filing another. A red merge of a follow-up's own fix
 // goes to a person (auto:needs-human), not to another follow-up. And when CI
@@ -15,9 +17,9 @@
 //
 // This file is chernabog's post-merge recipe, and this repo's to change:
 // `chernabog recipes diff` shows how it differs from the recipe's current
-// version. The names of its steps ("watch-limits", "ci-<n>", "ci-before-merge",
-// "closes-follow-up", "failure-details", "file-follow-up") are the keys a
-// run in flight resumes by, so renaming one restarts that step.
+// version. The names of its steps ("mark-watched", "watch-limits", "ci-<n>",
+// "ci-before-merge", "closes-follow-up", "failure-details", "file-follow-up")
+// are the keys a run in flight resumes by, so renaming one restarts that step.
 
 import {
   activity,
@@ -27,6 +29,8 @@ import {
   GitHub,
   type Json,
   NeedsHuman,
+  type PhaseRecord,
+  Phases,
   PullRequest,
   Repo,
   reportAs,
@@ -87,8 +91,35 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   };
 };
 
-// On the merged pull request: a run watched its merge commit.
+// On the merged pull request: a run watched its merge commit. Written still,
+// for a person and for an older chernabog's trigger; read only for a merge
+// with no watched record, one watched before runs recorded it.
 const watchedMarker = marker("post-merge-watched", Schema.Struct({ sha: Schema.String }));
+
+const WATCHED = Phases.PHASES.pullRequest.watched;
+
+// Records that a run is watching the merge: the pull request's watched phase,
+// carrying the merge commit, from whatever phase its review left.
+const markWatched = (merged: MergedItem) =>
+  activity(
+    "mark-watched",
+    Phases.record(Phases.pullRequestItem(merged.pullRequest), WATCHED, { sha: merged.mergeSha }),
+  );
+
+// Whether a run has watched the merge of pull request `number`: by its record,
+// or, for a merge watched before runs recorded it, by the marker on it.
+const wasWatched = (all: ReadonlyMap<string, PhaseRecord>, number: number) =>
+  Effect.gen(function* () {
+    const recorded = Phases.recordOf(all, Phases.pullRequestItem(number));
+
+    if (Option.exists(recorded, (found) => Phases.holds(found, [WATCHED]))) {
+      return true;
+    }
+
+    const comments = yield* (yield* GitHub).trustedComments(number);
+
+    return comments.some((comment) => Option.isSome(watchedMarker.read(comment.body)));
+  });
 
 // On a follow-up issue: the merge commit whose red CI it is for.
 const followUpMarker = marker(
@@ -151,13 +182,15 @@ const isRecent = (mergedAt: string, now: DateTime.Utc) =>
   });
 
 // Pull requests this persona wrote that merged into the base branch lately,
-// and that no run has watched yet.
+// and that no run has watched yet: none recorded watched, nor, from before
+// records, carries the marker.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const base = yield* Settings.base;
   const me = yield* github.login;
   const now = yield* DateTime.now;
+  const all = yield* Phases.records;
   const items: Array<WorkItem> = [];
 
   const closed = yield* github
@@ -178,9 +211,7 @@ const trigger = Effect.gen(function* () {
       continue;
     }
 
-    const comments = yield* github.trustedComments(pull.number);
-
-    if (comments.some((comment) => Option.isSome(watchedMarker.read(comment.body)))) {
+    if (yield* wasWatched(all, pull.number)) {
       continue;
     }
 
@@ -501,6 +532,8 @@ const watch = (merged: MergedItem) =>
     const repo = yield* Repo;
     const short = merged.mergeSha.slice(0, 7);
     const pr = `#${merged.pullRequest}`;
+
+    yield* markWatched(merged);
 
     yield* PullRequest.comment(
       merged.pullRequest,
