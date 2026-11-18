@@ -399,6 +399,11 @@ head. The key format isn't part of the port. It's the SDK's, as now, so
 changing it needs no migration beyond letting runs in flight finish under
 their old keys.
 
+An open item from before phases were recorded has none. `chernabog progress
+backfill` writes one from GitHub, once, by the table in the
+[audit](audit.md#backfill), so no source needs a path for an item with no
+record.
+
 ### 4. Item identity
 
 A phase attaches to the item a handoff is keyed on. The SDK names that item

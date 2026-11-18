@@ -101,6 +101,71 @@ W4 was the first wait that followed the rule, and only in CI: `RepoSettings.ciJo
 gated `parkingOn`. Since a daemon run ends at every park (fix-order step 4), the
 gate is gone, and a daemon's wait for CI parks too.
 
+## Backfill
+
+`chernabog progress backfill --repo <repo>` (`backfill.ts`, run through the
+repo's own SDK as `ci plan` runs its `Events`) writes a record for each open
+item that needs one and holds none. It infers the phase from the same GitHub
+facts the no-record paths read, the one time ADR 21 allows that, and writes it
+as `observer:backfill`. It prints what it would write; `--write` writes. Each
+write advances from no record, so an item a run recorded since the survey
+keeps the run's record, and a second run finds nothing to write. Where the
+facts don't settle a phase, it writes nothing and lists the item for a person.
+
+Pull requests: open ones an agent wrote (`auto/` head), a run adopted
+(`auto:adopted`), or one of the repo's personas is asked to review or has
+reviewed. The first row that matches decides.
+
+| #   | GitHub says                                                                                                                             | Phase                | Data                        |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------- |
+| P1  | Reviewers are asked, and every one of them has reviewed it before (any review, as `legacyAsked` counted)                                | `review-asked-again` |                             |
+| P2  | Reviewers are asked, none has reviewed it, and nobody has approved it or asked for changes                                              | `review-asked`       |                             |
+| P3  | Reviewers are asked, and some reviewed before while others didn't, or another reviewer's decisive review is there already               | for a person         |                             |
+| P4  | No review asked; `auto:ship`, not `auto:needs-human`; the hold markers name one work item; the latest decisive review approves the head | `merge-held`         | `key`, from the hold marker |
+| P5  | As P4, but the markers name several work items, or the latest decisive review doesn't approve the head                                  | for a person         |                             |
+| P6  | No review asked; the latest decisive review asks for changes, on the head or before a push since                                        | `changes-asked`      |                             |
+| P7  | No review asked; the latest decisive review approves                                                                                    | `approved`           |                             |
+| P8  | No review asked or given; an agent's draft                                                                                              | `draft`              |                             |
+| P9  | No review asked or given, otherwise: handed to a person, or a request was taken off                                                     | for a person         |                             |
+
+A hold marker on a pull request labelled `auto:needs-human` is a hold that
+ended, so P4 skips it and P7 reads the approval. P6 covers changes asked
+before a push: `review.round` recorded `changes-asked` then, and nothing moved
+it since, so `review.changesRequested` holds it, with why, until the reviewer
+is asked again.
+
+Issues and epics:
+
+| #   | GitHub says                                                                                    | Phase            | Data                                                                     |
+| --- | ---------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------ |
+| I1  | `auto:awaiting-ready`, and the latest claim marker adopted a draft                             | `awaiting-ready` | `pullRequest` from the marker; `withinMillis` 14 days, the recipe's wait |
+| I2  | `auto:plan-proposed`, and a plan was posted                                                    | `proposed`       | `round`, from the latest plan marker                                     |
+| —   | `auto:awaiting-ready` with no adopted draft, `auto:plan-proposed` with no plan, or both labels | for a person     |                                                                          |
+| E1  | `auto:epic`, a task open, and a persona's status comment                                       | epic `waiting`   | the status comment's `fingerprint`; no task attempts kept                |
+| —   | Any other open issue or epic: queued, in progress, or never run                                | none             | no record is its phase                                                   |
+
+What it can't backfill, and leaves to the legacy path or to time:
+
+- A record's `at` is when backfill wrote it, so a backfilled
+  `awaiting-ready`, `proposed` or `merge-held` counts its 14-day wait or
+  `mergeHoldTimeout` from then, not from when the wait began.
+- A flow document's parked run keeps the node it parked at in its record
+  (`resume`), which no marker gives. A backfilled `proposed` or `merge-held`
+  wakes a daemon's run still parked in its journal, and a recipe's run takes
+  it up from the record; a document's run that a CI job left there stays
+  stranded, as it was.
+- An epic's backfilled `waiting` keeps no task attempts, as the restart from
+  GitHub lost them before (W10).
+- A pull request's CI waits (`awaiting-ci`, `awaiting-conflict-ci`,
+  `awaiting-merge-ci`) always wrote their record, so none needs backfill. A
+  resolve-conflicts wait over a pull request with no record polls (W6) and
+  parks once backfill gives it one.
+
+Neither `doctor` nor `recipes upgrade` suggests running it. It is a one-time
+step of the upgrade that removes the no-record paths (S6, S7), and that
+release's notes say to run it first. Every later run writes a record at each
+handoff, so a repo needs it once.
+
 ## Order of the fixes
 
 Each fix is its own pull request.
@@ -133,7 +198,8 @@ Each fix is its own pull request.
    `waiting` record (`tasks.ci`), and a later round takes it up once CI
    settles. The stack refresh's wait for CI still polls; it is the next layer.
 7. **Backfill, then S6 and S7:** `chernabog progress backfill` writes a record
-   for every open item without one. Then the no-record paths go.
+   for every open item without one. Then the no-record paths go. Backfill is
+   done ([Backfill](#backfill)).
 
 ## What this changes in handoffs.md
 
