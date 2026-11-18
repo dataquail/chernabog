@@ -164,7 +164,7 @@ On `conflict`, `conflict.resolve` merges `trigger.base` into the branch, never b
 
 `conflict.askApproverAgain` asks the reviewer whose latest decisive review approved the pull request to review again, since they approved the code before the merge, and asks no one otherwise.
 
-On `merged`, `merged.markWatched` leaves the marker `pr.mergedRecently` looks for, so each merge is watched once. `merged.awaitCi` waits for push CI on the merge commit and comes to `none`, `green` or `red`, each of which a document must route; CI still pending after `ciTimeout` ends the run needing a person. `merged.redBefore` comes to `already-red` when CI was red before the merge too. On red, `merged.fileFollowUp` files a follow-up for `implement`, or for a person when the merged pull request was a follow-up's own fix, as `merged.closesFollowUp` finds:
+On `merged`, `merged.markWatched` records the pull request's `watched` phase, which `pr.mergedRecently` reads, so each merge is watched once. It also comments that the merge is being watched; a merge watched before runs recorded the phase is known by that comment's marker. `merged.awaitCi` waits for push CI on the merge commit and comes to `none`, `green` or `red`, each of which a document must route; CI still pending after `ciTimeout` ends the run needing a person. `merged.redBefore` comes to `already-red` when CI was red before the merge too. On red, `merged.fileFollowUp` files a follow-up for `implement`, or for a person when the merged pull request was a follow-up's own fix, as `merged.closesFollowUp` finds:
 
 ```yaml
 - id: ci
