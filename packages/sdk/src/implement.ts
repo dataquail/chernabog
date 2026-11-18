@@ -1443,28 +1443,26 @@ export type CiWait = RepeatOptions & {
   readonly data?: { readonly [key: string]: Json };
   // The phase it records for a round: awaiting-ci's by default (Phases.awaitingCi).
   readonly phase?: (round: number) => string;
-  // Whether the record keeps `since`, when the round's wait began, so that
-  // ciTimeout counts across the runs that take it up: a run whose first
-  // reading is still pending past it fails with CiTimedOut. A park again
-  // keeps the record it found, and with it `since`.
-  readonly since?: boolean;
 };
 
 const phaseOfRound = (options: CiWait, round: number) =>
   (options.phase ?? Phases.awaitingCi)(round);
 
-// When the round's wait began, by the record of the item it parks on: none
-// for a record of another round, or one that keeps no `since`.
+// What a parked wait's record keeps beside the wait's own data: `since`, when
+// the round's wait began, so ciTimeout counts across the runs that take it
+// up. A park again keeps the record it found, and with it `since`.
 const SinceData = Schema.Struct({ since: Schema.String });
 
-const waitSince = (item: string, round: number, options: CiWait) =>
-  Effect.map(Phases.current(item), (found) =>
-    Option.flatMap(
-      Option.filter(found, (record) => record.phase === phaseOfRound(options, round)),
-      (record) =>
-        Option.flatMap(Option.flatMap(record.data, Schema.decodeUnknownOption(SinceData)), (data) =>
-          DateTime.make(data.since),
-        ),
+const sinceOf = (data: Option.Option<{ readonly [key: string]: Json }>) =>
+  Option.flatMap(Option.flatMap(data, Schema.decodeUnknownOption(SinceData)), (found) =>
+    DateTime.make(found.since),
+  );
+
+// Whether a wait that began `since` has run past `timeout` by now.
+const pastSince = (since: Option.Option<DateTime.Utc>, timeout: Duration.Duration) =>
+  Effect.map(DateTime.now, (now) =>
+    Option.exists(since, (began) =>
+      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
     ),
   );
 
@@ -1472,33 +1470,35 @@ const waitSince = (item: string, round: number, options: CiWait) =>
 // as in a CI job, a run that waits on CI ends at the park.
 const parkingOn = (options: CiWait) => Effect.succeed(Option.fromUndefinedOr(options.park));
 
-// Records that the item waits on this round of CI, then parks, which ends the
-// run, on a daemon as in a CI job.
+const Parking = Schema.Literals(["parked", "timed-out"]);
+
+// Records that the item waits on this round of CI, with when the wait began,
+// then parks, which ends the run, on a daemon as in a CI job. A run that took
+// the wait up and finds its round's record already past ciTimeout, counted
+// from `since`, doesn't park again: it has timed out.
 const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
   activity(
     named(options, `awaiting-ci-${round}`),
     Effect.gen(function* () {
-      if (options.since !== true) {
-        return yield* Phases.record(item, phaseOfRound(options, round), options.data);
+      const phase = phaseOfRound(options, round);
+
+      const parked = Option.filter(yield* Phases.current(item), (found) => found.phase === phase);
+
+      if (Option.isSome(parked)) {
+        if (yield* pastSince(sinceOf(parked.value.data), timeout)) {
+          return "timed-out" as const;
+        }
+
+        return "parked" as const;
       }
 
       const since = DateTime.formatIso(yield* DateTime.now);
+      yield* Phases.record(item, phase, { ...options.data, since });
 
-      yield* Phases.record(item, phaseOfRound(options, round), { ...options.data, since });
+      return "parked" as const;
     }),
-  ).pipe(Effect.andThen(awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout })));
-
-// Whether a wait that keeps `since` has run past ciTimeout, counted from when
-// its round began in the run that first parked it.
-const pastTimeout = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
-  Effect.gen(function* () {
-    const since = yield* waitSince(item, round, options);
-    const now = yield* DateTime.now;
-
-    return Option.exists(since, (began) =>
-      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
-    );
-  });
+    Parking,
+  );
 
 // Polls the pull request's checks durably until they stop pending, or
 // ciTimeout passes. In a CI job, with somewhere to park, a first reading
@@ -1524,18 +1524,11 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
       }
 
       if (poll === 2 && Option.isSome(parking)) {
-        if (
-          options.since === true &&
-          (yield* activity(
-            named(options, `ci-${round}-since`),
-            pastTimeout(parking.value, round, timeout, options),
-            Schema.Boolean,
-          ))
-        ) {
+        if ((yield* parkOnCi(parking.value, round, timeout, options)) === "timed-out") {
           return yield* new CiTimedOut({ pullRequest, after: Duration.format(timeout) });
         }
 
-        yield* parkOnCi(parking.value, round, timeout, options);
+        yield* awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout });
       }
 
       if (poll > 1) {
@@ -1559,6 +1552,26 @@ export const waitingOnCi = (pullRequest: number) =>
   Effect.map(Ci.pullRequestState(pullRequest), (reading) =>
     Option.liftPredicate(`waits on CI for #${pullRequest}`, () => reading.state === "pending"),
   );
+
+// As waitingOnCi, for a parked wait whose record's `data` says when it began:
+// none once ciTimeout has passed since, too, when the run that takes it up
+// times out and hands it to a person.
+export const heldOnCi = (
+  pullRequest: number,
+  data: Option.Option<{ readonly [key: string]: Json }>,
+) =>
+  Effect.gen(function* () {
+    const pending = yield* waitingOnCi(pullRequest);
+
+    if (Option.isNone(pending)) {
+      return pending;
+    }
+
+    const { timeout } = yield* Settings.ci;
+    const past = yield* pastSince(sinceOf(data), timeout);
+
+    return Option.filter(pending, () => !past);
+  });
 
 // How a flow document's wait for CI on the pull request goes on: at a node
 // the document can resume at, it records the wait on the run's item, with
@@ -1612,7 +1625,7 @@ export const documentCiResumes = (data: { readonly [key: string]: Json }, item: 
     }
 
     return Option.some(
-      Option.match(yield* waitingOnCi(parked.value.pullRequest), {
+      Option.match(yield* heldOnCi(parked.value.pullRequest, Option.some(data)), {
         onNone: () => item,
         onSome: (held): WorkItem => ({ ...item, held }),
       }),
@@ -2004,10 +2017,38 @@ export const readied = Effect.gen(function* () {
 // issue's record, which awaitingCi reads to resume the work.
 export const parkOnIssue = (issue: number): CiWait => ({ park: Phases.issueItem(issue) });
 
+// Where implement parks while an adopted pull request's CI runs: on the
+// issue's record, as parkOnIssue, which keeps the pull request, since it
+// isn't on the issue's branch for awaitingCi to find (audit W5).
+export const parkOnAdopted = (issue: number, pullRequest: number): CiWait => ({
+  ...parkOnIssue(issue),
+  data: { pullRequest },
+});
+
+const ParkedPull = Schema.Struct({ pullRequest: Schema.Finite });
+
+// The pull request a parked wait on CI waits on: the one its record keeps,
+// an adopted one's, or the one on the issue's branch.
+const parkedPull = (number: number, record: PhaseRecord) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const kept = Option.flatMap(record.data, Schema.decodeUnknownOption(ParkedPull));
+
+    if (Option.isNone(kept)) {
+      return yield* github.pullRequestForBranch(branchFor(number));
+    }
+
+    return yield* github.pullRequest(kept.value.pullRequest).pipe(
+      Effect.asSome,
+      Effect.catchTag("NotFound", () => Effect.succeedNone),
+    );
+  });
+
 // One issue whose record says a CI job parked its run on CI, as a work item
-// that resumes the wait, when its pull request is still open on the issue's
-// branch and no person has it.
-const awaitingCiItem = (number: number, round: number) =>
+// that resumes the wait, when its pull request is still open and no person
+// has it: the one the record keeps, for an adopted one, or else the one on
+// the issue's branch.
+const awaitingCiItem = (number: number, round: number, record: PhaseRecord) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
     const labelNames = yield* Settings.labels;
@@ -2027,7 +2068,7 @@ const awaitingCiItem = (number: number, round: number) =>
     }
 
     const pull = Option.filter(
-      yield* github.pullRequestForBranch(branchFor(number)),
+      yield* parkedPull(number, record),
       (found) => found.state === "open",
     );
 
@@ -2043,7 +2084,7 @@ const awaitingCiItem = (number: number, round: number) =>
     });
 
     return Option.some(
-      Option.match(yield* waitingOnCi(pull.value.number), {
+      Option.match(yield* heldOnCi(pull.value.number, record.data), {
         onNone: () => item,
         onSome: (held) => ({ ...item, held }),
       }),
@@ -2063,7 +2104,7 @@ export const awaitingCi = Effect.gen(function* () {
     const parked = Option.all({ number: issueNamed(name), round: Phases.ciRoundOf(found.phase) });
 
     for (const { number, round } of Option.toArray(parked)) {
-      for (const resumed of Option.toArray(yield* awaitingCiItem(number, round))) {
+      for (const resumed of Option.toArray(yield* awaitingCiItem(number, round, found))) {
         items.push(resumed);
       }
     }
