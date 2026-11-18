@@ -118,18 +118,25 @@ describe("the catalogue's phases", () => {
     ]);
 
     expect(sourceNamed("review.changesRequested")).toMatchObject({
-      reads: [{ item: "pull-request", phases: ["changes-asked", "none"] }],
+      reads: [{ item: "pull-request", phases: ["changes-asked"] }],
       reconciles: [
         {
           item: "pull-request",
-          from: ["review-asked", "review-asked-again", "approved", "draft", "ready-for-person"],
+          from: [
+            "none",
+            "review-asked",
+            "review-asked-again",
+            "approved",
+            "draft",
+            "ready-for-person",
+          ],
           to: "changes-asked",
         },
       ],
     });
 
     expect(sourceNamed("review.requestedAgain")).toMatchObject({
-      reads: [{ item: "pull-request", phases: ["review-asked-again", "none"] }],
+      reads: [{ item: "pull-request", phases: ["review-asked-again"] }],
       reconciles: [
         {
           item: "pull-request",

@@ -11,6 +11,7 @@ import {
   activity,
   Claims,
   CurrentNode,
+  GitHub,
   type Json,
   type NodeAt,
   Phase as CorePhase,
@@ -287,6 +288,48 @@ export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: P
         Effect.catchTag("PhaseMoved", () => progress.read(item)),
       ),
   );
+
+// What a record a pull request waits on a review at carries (review-asked,
+// draft, ready-for-person): who had reviewed it when it was written, so a
+// review asked of one of them later is a review again, not a first (ADR 21,
+// decision 3). An adopted pull request a persona reviewed before the
+// hand-off is one. Left out when nobody had.
+const ReviewedBefore = Schema.Struct({ reviewed: Schema.Array(Schema.String) });
+
+// Whether `found` says `login` had reviewed its pull request when it was
+// written; false for a record that says nobody had, or from before records
+// said so.
+export const reviewedBefore = (found: PhaseRecord, login: string) =>
+  Option.exists(Option.flatMap(found.data, Schema.decodeUnknownOption(ReviewedBefore)), (data) =>
+    data.reviewed.some((own) => own.toLowerCase() === login.toLowerCase()),
+  );
+
+// Who has reviewed the pull request so far, as data for its record
+// (reviewedBefore); none when nobody has.
+export const reviewersOf = (pullRequest: number) =>
+  Effect.map(
+    GitHub.use((github) => github.reviews(pullRequest)),
+    (reviews) =>
+      Option.map(
+        Arr.match(Arr.dedupe(reviews.map((review) => review.author)), {
+          onEmpty: () => Option.none<ReadonlyArray<string>>(),
+          onNonEmpty: (authors) => Option.some<ReadonlyArray<string>>(authors),
+        }),
+        (reviewed) => ({ reviewed: [...reviewed] }),
+      ),
+  );
+
+// Records `to` on the pull request, a phase it waits on a review at, with who
+// had reviewed it so far (reviewersOf).
+export const recordAwaitingReview = (pullRequest: number, to: Phase) =>
+  Effect.gen(function* () {
+    const reviewed = yield* reviewersOf(pullRequest);
+
+    yield* Option.match(reviewed, {
+      onNone: () => record(pullRequestItem(pullRequest), to),
+      onSome: (data) => record(pullRequestItem(pullRequest), to, data),
+    });
+  });
 
 // A work item's key for the record an item holds: the item, its phase and
 // the record's version shortened as a head SHA is, `pr-7-changes-asked-1a2b3c4`.

@@ -973,17 +973,17 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about:
-      "Pull requests that ask this persona for their first review: recorded review-asked, or draft or ready-for-person and not reviewed by it yet. One with no record: a review it hasn't given yet.",
+      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written. One with no record, which a person opened, is a first review.",
     with: {},
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4. One with no record: its latest approval or request for changes, keyed pr-7-changes-2.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4. One with no record whose latest approval or request for changes asks for changes on the head is moved to changes-asked first.",
     with: {},
   },
   "review.requestedAgain": {
     about:
-      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked when it has reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record: one it reviewed already, keyed pr-7-review-2.",
+      "Pull requests that ask this persona to review again, recorded review-asked-again, one run per request, except those labelled auto:needs-human. A request of one recorded changes-asked or approved, or review-asked, draft or ready-for-person whose record says it had reviewed it already, such as an adopted pull request, moves the record there first. Each run's key carries the record: pr-7-review-asked-again-1a2b3c4. One with no record is a first review's (review.requested).",
     with: {},
   },
   "review.waitingElsewhere": {

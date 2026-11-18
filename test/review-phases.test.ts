@@ -179,32 +179,45 @@ describe("the review loop runs on its phases", () => {
       }),
   );
 
-  effect("a pull request from before phases, with no record, still goes round the loop", () =>
-    Effect.gen(function* () {
-      const fake = changesAskedOnHead();
-      implemented(fake);
-      expect(yield* keys(fake, addressReview)).toEqual([`${ITEM}-changes-1`]);
+  effect(
+    "a pull request with no record whose review asks for changes moves to changes-asked, and goes round the loop",
+    () =>
+      Effect.gen(function* () {
+        const fake = changesAskedOnHead();
+        implemented(fake);
+        expect(yield* keys(fake, addressReview)).toEqual([`${ITEM}-changes-asked-v1`]);
+        expect(fake.records().get(ITEM)).toMatchObject({
+          phase: "changes-asked",
+          by: "observer:review.changesRequested",
+        });
 
-      const addressed = yield* runToEnd(addressing, fake, addressWork(`${ITEM}-changes-1`));
-      expect(addressed.status).toBe("done");
-      expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
+        const addressed = yield* runToEnd(
+          addressing,
+          fake,
+          addressWork(`${ITEM}-changes-asked-v1`),
+        );
 
-      asReviewer(fake);
-      expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-asked-again-v1`]);
-    }),
+        expect(addressed.status).toBe("done");
+        expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
+
+        asReviewer(fake);
+        expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-asked-again-v2`]);
+      }),
   );
 
-  effect("a review requested of a pull request with no record is its first by the count", () =>
-    Effect.gen(function* () {
-      const fake = makeFake(["approve"]);
-      asReviewer(fake);
-      fake.people.requested = ["data-quail"];
-      expect(yield* keys(fake, review)).toEqual([ITEM]);
+  effect(
+    "a review requested of a pull request with no record is its first, whatever the persona's reviews",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake(["approve"]);
+        asReviewer(fake);
+        fake.people.requested = ["data-quail"];
+        expect(yield* keys(fake, review)).toEqual([ITEM]);
 
-      fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
-      expect(yield* keys(fake, review)).toEqual([]);
-      expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-2`]);
-    }),
+        fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
+        expect(yield* keys(fake, review)).toEqual([ITEM]);
+        expect(yield* keys(fake, reReview)).toEqual([]);
+      }),
   );
 });
 
@@ -314,12 +327,37 @@ describe("a pull request this persona reviewed before its hand-off", () => {
         const fake = makeFake(["approve"]);
         asReviewer(fake);
         fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
-        fake.recordPhase(ITEM, "review-asked");
+        fake.recordPhase(ITEM, "review-asked", { data: { reviewed: ["data-quail"] } });
         fake.people.requested = ["data-quail"];
 
         expect(yield* triggered(fake, review)).toEqual([]);
         expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-asked-again-v2`]);
         expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
+      }),
+  );
+
+  effect(
+    "the record decides, not the persona's reviews: one that says nobody had reviewed it is a first review",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFake(["approve"]);
+        asReviewer(fake);
+        fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
+        fake.recordPhase(ITEM, "review-asked", { data: { reviewed: ["someone-else"] } });
+        fake.people.requested = ["data-quail"];
+
+        expect(yield* keys(fake, review)).toEqual([ITEM]);
+        expect(yield* keys(fake, reReview)).toEqual([]);
+
+        for (const phase of ["draft", "ready-for-person"]) {
+          const recorded = makeFake(["approve"]);
+          asReviewer(recorded);
+          recorded.people.requested = ["data-quail"];
+          recorded.recordPhase(ITEM, phase, { data: { reviewed: ["data-quail"] } });
+
+          expect(yield* keys(recorded, review)).toEqual([]);
+          expect(yield* keys(recorded, reReview)).toEqual([`${ITEM}-review-asked-again-v2`]);
+        }
       }),
   );
 });
