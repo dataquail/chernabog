@@ -147,10 +147,17 @@ const LimitsFile = Schema.Struct({
   eventTickMin: Schema.optionalKey(DurationText),
   // How often the daemon asks whether each run's work item is still valid (#142).
   validityEvery: Schema.optionalKey(DurationText),
-  // How long a run's claim lasts unless its daemon renews it, executing and
-  // parked, and how often the daemon renews it (#134).
+  // How long a run's claim lasts unless its daemon renews it, and how often
+  // the daemon renews it (#134).
   leaseTtl: Schema.optionalKey(DurationText),
-  parkedLeaseTtl: Schema.optionalKey(DurationText),
+  // A run parked on a signal ends at its park (ADR 0021, decision 4), so no
+  // lease is held through one: kept so a config that sets it still reads.
+  parkedLeaseTtl: Schema.optionalKey(
+    DurationText.annotate({
+      description:
+        "Deprecated, and has no effect: a run parked on review, CI or a person ends at its park, and holds no lease while it waits.",
+    }),
+  ),
   leaseRenewEvery: Schema.optionalKey(DurationText),
   planNodes: recipeLimit("planNodes", Schema.Int),
   planRounds: recipeLimit("planRounds", Schema.Int),
@@ -467,8 +474,8 @@ export type EffectiveRepo = {
   readonly eventTickMin: Duration.Duration;
   // The team's limits.validityEvery: how often each run in flight has its work item checked.
   readonly validityEvery: Duration.Duration;
-  // The team's limits.leaseTtl, parkedLeaseTtl and leaseRenewEvery: how long a
-  // run's claims last, executing and parked, and how often the daemon renews them.
+  // The team's limits.leaseTtl and leaseRenewEvery: how long a run's claims
+  // last, and how often the daemon renews them.
   readonly leases: LeaseLimits;
 };
 
@@ -1254,10 +1261,6 @@ export const mergeRepoConfig = (
 
     const leases: LeaseLimits = {
       ttl: duration(Option.fromUndefinedOr(repo.limits?.leaseTtl), DEFAULT_LEASE_LIMITS.ttl),
-      parkedTtl: duration(
-        Option.fromUndefinedOr(repo.limits?.parkedLeaseTtl),
-        DEFAULT_LEASE_LIMITS.parkedTtl,
-      ),
       renewEvery: duration(
         Option.fromUndefinedOr(repo.limits?.leaseRenewEvery),
         DEFAULT_LEASE_LIMITS.renewEvery,

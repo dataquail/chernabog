@@ -151,7 +151,7 @@ const jobLease = Markers.define(
 );
 ```
 
-- **The daemon renews every hold of it** while the run is in flight, parked runs included, as the run's persona with what a release can use, every `limits.leaseRenewEvery`: set that well inside your source's TTL. `ttl` is the daemon's, `limits.leaseTtl`, or `limits.parkedLeaseTtl` while the run waits on a signal. A source whose lease length is its own ignores it.
+- **The daemon renews every hold of it** while the run is in flight, parked runs included, as the run's persona with what a release can use, every `limits.leaseRenewEvery`: set that well inside your source's TTL. `ttl` is the daemon's, `limits.leaseTtl`. A source whose lease length is its own ignores it.
 - **`renew` reports** `held` (with `expiresAt` and `renewedAt`, if it knows them), `lost` with a `reason`, which ends the run as `lost`, or `released` when nothing holds the lease any more, which is passed over. A run that ends as `lost` keeps its markers, so nothing is released: the work is someone else's now. **Failing** says only that the renewal failed, which loses nothing: `status` shows the lease at risk, the run carries on and the daemon tries again. Fail rather than report `lost` when you can't tell.
 - **`check`**, optional, reads the lease without renewing it, for the checks the daemon makes between renewals, such as before waking a parked run. Without it, only a renewal finds a lease lost. **`on`**, optional, is what `status` calls the lease; the marker's name otherwise.
 - A marker with no `renew` is never renewed. The claim ref is the first marker to use this (`Claims.refMarker`).

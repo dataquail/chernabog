@@ -403,7 +403,8 @@
           "type": "string"
         },
         "parkedLeaseTtl": {
-          "type": "string"
+          "type": "string",
+          "description": "Deprecated, and has no effect: a run parked on review, CI or a person ends at its park, and holds no lease while it waits."
         },
         "leaseRenewEvery": {
           "type": "string"

@@ -1,6 +1,6 @@
 // The leases a run holds, each a held marker that declares one (#134, #354),
-// its claim refs first among them: how long one lasts, executing or parked, how
-// often the daemon renews it, and what a renewal found. A run whose lease went
+// its claim refs first among them: how long one lasts, how often the daemon
+// renews it, and what a renewal found. A run whose lease went
 // to someone else has lost its work and ends as lost.
 
 import * as DateTime from "effect/DateTime";
@@ -13,17 +13,11 @@ import * as Schema from "effect/Schema";
 // giving the work away, and far longer than clock skew between machines.
 export const DEFAULT_LEASE_TTL = Duration.hours(12);
 
-// How long while its run is parked, waiting on review, CI or a person: the
-// team's limits.parkedLeaseTtl. A pull request waiting days for review is
-// normal, and its state is on GitHub anyway.
-export const DEFAULT_PARKED_LEASE_TTL = Duration.days(3);
-
 // How often the daemon renews each lease of its runs in flight: the team's limits.leaseRenewEvery.
 export const DEFAULT_LEASE_RENEW_EVERY = Duration.minutes(30);
 
 export type LeaseLimits = {
   readonly ttl: Duration.Duration;
-  readonly parkedTtl: Duration.Duration;
   readonly renewEvery: Duration.Duration;
   // The run id of a reservation made for the run (Claims.reserve), whose live
   // claim its own replaces: a CI job's plan job's (#519). None elsewhere.
@@ -32,17 +26,7 @@ export type LeaseLimits = {
 
 export const DEFAULT_LEASE_LIMITS: LeaseLimits = {
   ttl: DEFAULT_LEASE_TTL,
-  parkedTtl: DEFAULT_PARKED_LEASE_TTL,
   renewEvery: DEFAULT_LEASE_RENEW_EVERY,
-};
-
-// The lease a run's renewal asks for: the parked TTL while it waits on a signal.
-export const leaseTtlFor = (limits: LeaseLimits, parked: boolean) => {
-  if (parked) {
-    return limits.parkedTtl;
-  }
-
-  return limits.ttl;
 };
 
 // What a lease was found to be: still the run's, with when it runs out and was
