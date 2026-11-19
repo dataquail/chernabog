@@ -187,9 +187,17 @@ change.
    once that CI settles or `ciTimeout` passes, and holds it with why until
    then; a round takes the task up (`Epic.takeUpCi`, `epic.settleCi`),
    hands it off on green, fixes red, and gives it to a person past the
-   timeout. The stack refresh's wait for CI still polls (audit W7). A flow a
-   person starts has no trigger to offer its item again, so its waits poll
-   too.
+   timeout. An epic's stack refresh (`Stack.refreshLayer`) waits on its
+   layer's CI the same way: CI still pending ends the refresh, the layer and
+   those above it wait, and so does its review, and the `waiting` record
+   keeps it (`layers.ci`: the layer, its pull request, the base and its
+   head, the round, `since`, and a few words for the reviewer). The next
+   round takes it up first (`Epic.takeUpRefreshes`, in `carryUp`). Those
+   refreshes take at most half the record; one past that waits inside the
+   run. A flow a person starts has no trigger to offer its item again, so
+   its waits poll too, by design: `hybrid.waitForCi` is the one block that
+   polls in any document, and polling is not a park, so it strands
+   nothing.
 
    A wait whose record must say both that it is parked and, later, that it
    finished parks on a phase of its own. post-merge's watch of a merge
