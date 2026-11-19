@@ -32,6 +32,7 @@
 import {
   activity,
   awaitSignal,
+  Blocks,
   type CiFailedRun,
   defineFlow,
   Events,
@@ -492,7 +493,11 @@ const trigger = Effect.gen(function* () {
   }
 
   return items;
-}).pipe(reportAs("trigger"));
+}).pipe(
+  // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
+  Blocks.checked("pr.mergedRecently", "merged.awaitCi"),
+  reportAs("trigger"),
+);
 
 const Parents = Schema.Struct({ parents: Schema.Array(Schema.Struct({ sha: Schema.String })) });
 

@@ -12,6 +12,7 @@
 // the keys a run in flight resumes by, so renaming one restarts that step.
 
 import {
+  Blocks,
   defineFlow,
   Events,
   Implement,
@@ -37,7 +38,11 @@ import * as Schema from "effect/Schema";
 // ran: each is held until the checks are green or red.
 const trigger = Effect.gen(function* () {
   return [...(yield* Review.changesToAddress), ...(yield* Review.fixesAwaitingCi)];
-}).pipe(reportAs("trigger"));
+}).pipe(
+  // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
+  Blocks.checked("review.changesRequested", "author.waitForCi"),
+  reportAs("trigger"),
+);
 
 const answerReview = (address: Review.AddressItem) =>
   Effect.gen(function* () {

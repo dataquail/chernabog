@@ -256,11 +256,78 @@ export const record = (
   options: { readonly again?: boolean } = {},
 ) => Effect.asVoid(recording(item, to, data, options));
 
-// Every item's record, in one read, for a source that looks at every open item.
-export const records = Progress.use((progress) => progress.readAll);
+// A record a source won't act on (ADR 21, decision 5): the item's record,
+// named by its transition, writer and version, and why it fails the check.
+// Plain JSON, as `chernabog progress anomalies` reads it.
+export type Anomaly = {
+  readonly item: string;
+  readonly phase: string;
+  readonly from?: string;
+  readonly by: string;
+  readonly version: string;
+  readonly why: string;
+};
 
-// The record of one item, for a run that reads only its own.
-export const current = (item: string) => Progress.use((progress) => progress.read(item));
+// The check a source's reads go through, inside a trigger that checks them
+// (ledger-check.ts, checking): why a record is an anomaly, if it is, and the
+// anomalies its reads found, by item. None outside one, as in a run, which
+// reads its own item's record as it is.
+export const Checking = Context.Reference<
+  Option.Option<{
+    readonly check: (item: string, record: PhaseRecord) => Option.Option<Anomaly>;
+    readonly noted: Map<string, Anomaly>;
+  }>
+>("@chernabog/sdk/Phases/Checking", { defaultValue: () => Option.none() });
+
+// `found`, the record of `item`, unless the check finds it an anomaly: then
+// none, as if the item had no record, and the anomaly noted for the trigger
+// to hold the item by. A source that would write from no record loses the
+// compare-and-set to the record that is there, so it writes nothing.
+const passing = (item: string, found: PhaseRecord) =>
+  Effect.gen(function* () {
+    const checking = yield* Checking;
+
+    return Option.match(checking, {
+      onNone: () => Option.some(found),
+      onSome: (checker) =>
+        Option.match(checker.check(item, found), {
+          onNone: () => Option.some(found),
+          onSome: (anomaly) => {
+            checker.noted.set(item, anomaly);
+
+            return Option.none<PhaseRecord>();
+          },
+        }),
+    });
+  });
+
+// Every item's record, in one read, for a source that looks at every open
+// item. Inside a checking trigger, without the anomalies.
+export const records = Effect.gen(function* () {
+  const all = yield* Progress.use((progress) => progress.readAll);
+  const kept = new Map<string, PhaseRecord>();
+
+  for (const [item, found] of all) {
+    for (const passed of Option.toArray(yield* passing(item, found))) {
+      kept.set(item, passed);
+    }
+  }
+
+  const passed: ReadonlyMap<string, PhaseRecord> = kept;
+
+  return passed;
+});
+
+// The record of one item, for a run that reads only its own, or a source
+// that reads one. Inside a checking trigger, none for an anomaly.
+export const current = (item: string) =>
+  Effect.flatMap(
+    Progress.use((progress) => progress.read(item)),
+    Option.match({
+      onNone: () => Effect.succeedNone,
+      onSome: (found) => passing(item, found),
+    }),
+  );
 
 // The record of `item` among `all`, from records.
 export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>

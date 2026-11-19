@@ -129,6 +129,7 @@ describe("the catalogue's phases", () => {
             "approved",
             "draft",
             "ready-for-person",
+            "awaiting-ci",
           ],
           to: "changes-asked",
         },

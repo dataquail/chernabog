@@ -328,6 +328,9 @@ export type Source = {
   // for the flow assembled from it to carry.
   readonly events?: ReadonlyArray<WakingEvent>;
   readonly readsPhases?: boolean;
+  // The phases it reads, as defineSource declares them, for the ledger's
+  // check to hold an anomaly on one by (ledger-check.ts).
+  readonly reads?: ReadonlyArray<Reading>;
 };
 
 // What a source declares beside what it finds: the phases it reads of its
@@ -354,6 +357,7 @@ export const defineSource = <Subject extends string, Input extends ReadonlyArray
       ...find(...input),
       events: declared.events,
       readsPhases: reads.length > 0,
+      reads,
     }),
     reads,
     reconciles: declared.reconciles ?? [],

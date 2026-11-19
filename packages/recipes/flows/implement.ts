@@ -23,6 +23,7 @@
 // in flight resumes by, so renaming one restarts that step.
 
 import {
+  Blocks,
   type CiTimedOut,
   Claims,
   defineFlow,
@@ -71,7 +72,11 @@ const trigger = Effect.gen(function* () {
     ...(yield* Implement.queued(Implement.followUpsFirst(shipping), Option.some(labelNames.ship))),
     ...(yield* Implement.readied),
   ];
-}).pipe(reportAs("trigger"));
+}).pipe(
+  // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
+  Blocks.checked("issues.queued", "ci.waitAndFix", "pr.awaitReady"),
+  reportAs("trigger"),
+);
 
 // How long an adopted draft waits for its author to mark it ready.
 const READY_WITHIN = "14 days";

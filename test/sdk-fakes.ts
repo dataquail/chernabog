@@ -92,7 +92,7 @@ import { type FlowRegistry } from "../src/modules/runs/infrastructure/runtime/fl
 import { RunsModule } from "../src/modules/runs/runs.platform.ts";
 import { Home, homePaths } from "../src/platform/home.ts";
 import { DEFAULT_LIMITS, type EffectiveRepo, type PersonaRepo } from "../src/repo-config.ts";
-import { progressStore } from "./progress-fake.ts";
+import { EARLIER_RUN, progressStore } from "./progress-fake.ts";
 
 export const PULL = 7;
 export const ISSUE = 3;
@@ -265,18 +265,22 @@ export const makeFake = (
   // Each item's whole record now, by item.
   const records = progress.records;
 
-  // Records `to` on `item`, as a run before this test's would have: from
-  // whatever it holds now, at the epoch unless `when` says when, with the
-  // data it gives.
+  // Records `to` on `item`, as a run before this test's would have, or as
+  // `by` when `when` names another writer: from whatever it holds now, at the
+  // epoch unless `when` says when, with the data it gives.
   const recordPhase = (
     name: string,
     to: string,
-    when: { readonly at?: DateTime.Utc; readonly data?: { readonly [key: string]: Json } } = {},
+    when: {
+      readonly at?: DateTime.Utc;
+      readonly data?: { readonly [key: string]: Json };
+      readonly by?: string;
+    } = {},
   ) => {
     progress.seed(
       name,
       Schema.decodeSync(Phase)(to),
-      Schema.decodeSync(PhaseWriter)("an-earlier-run"),
+      Schema.decodeSync(PhaseWriter)(when.by ?? EARLIER_RUN),
       {
         ...Option.match(Option.fromUndefinedOr(when.at), {
           onNone: () => ({}),

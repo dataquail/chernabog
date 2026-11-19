@@ -12,6 +12,7 @@
 
 import {
   activity,
+  Blocks,
   defineFlow,
   Events,
   GitHub,
@@ -41,7 +42,11 @@ const trigger = Effect.gen(function* () {
     ...(yield* Review.requestedAgain),
     ...(yield* PullRequest.heldMerges((key, pullRequest) => key.startsWith(`pr-${pullRequest}-`))),
   ];
-}).pipe(reportAs("trigger"));
+}).pipe(
+  // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
+  Blocks.checked("review.requestedAgain", "pr.land"),
+  reportAs("trigger"),
+);
 
 const MergeState = Schema.Struct({ mergeable_state: Schema.String });
 

@@ -13,6 +13,7 @@
 // run in flight resumes by, so renaming one restarts that step.
 
 import {
+  Blocks,
   Claims,
   defineFlow,
   Events,
@@ -49,7 +50,11 @@ const trigger = Effect.gen(function* () {
   );
 
   return [...specs, ...answered];
-}).pipe(reportAs("trigger"));
+}).pipe(
+  // Every record it reads is checked first, as its document's are (ADR 21, decision 5).
+  Blocks.checked("plan.queued", "plan.awaitAnswer"),
+  reportAs("trigger"),
+);
 
 // Nobody answered the plan in time: a person's to pick up.
 const unanswered = new NeedsHuman({

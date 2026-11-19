@@ -476,6 +476,10 @@ export const addressReviewSources = {
             PHASES.pullRequest.approved,
             PHASES.pullRequest.draft,
             PHASES.pullRequest.readyForPerson,
+            // A fix whose CI a CI job left pending, and its later rounds'
+            // (Review.changesToAddress): a review asking for changes on its
+            // head is new work.
+            PHASES.pullRequest.awaitingCi,
           ],
           to: PHASES.pullRequest.changesAsked,
         },

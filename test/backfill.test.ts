@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { effect } from "./effect-test.ts";
+import { EARLIER_RUN } from "./progress-fake.ts";
 import { type Fake, HEAD, ISSUE, makeFake, onFake, PULL } from "./sdk-fakes.ts";
 
 const PR_ITEM = Phases.pullRequestItem(PULL);
@@ -406,7 +407,7 @@ describe("progress backfill's writing", () => {
       expect(written.map((each) => each.written)).toEqual([false]);
       expect(fake.records().get(PR_ITEM)).toMatchObject({
         phase: Phases.PHASES.pullRequest.changesAsked,
-        by: "an-earlier-run",
+        by: EARLIER_RUN,
       });
     }),
   );
