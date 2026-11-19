@@ -87,8 +87,7 @@ settings:
 #   # still there to work on, and ends a run whose item went as superseded.
 #   validityEvery: 5 minutes
 #   # A run's claim on its issue or pull request is a lease its daemon renews:
-#   # one not renewed for leaseTtl (parkedLeaseTtl while the run waits on
-#   # review, CI or a person) expires, and another run may take the work over.
+#   # one not renewed for leaseTtl expires, and another run may take the work
+#   # over. A run parked on review, CI or a person ends at its park.
 #   leaseTtl: 12 hours
-#   parkedLeaseTtl: 3 days
 #   leaseRenewEvery: 30 minutes

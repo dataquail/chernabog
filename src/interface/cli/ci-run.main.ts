@@ -577,7 +577,6 @@ export const runInCi = <R>(options: CiRunOptions, config: CiRunConfigAccess<R>) 
       leases: {
         ...opened.repo.leases,
         ttl: options.leaseTtl,
-        parkedTtl: options.leaseTtl,
         ...Option.match(reservation, {
           onNone: () => ({}),
           onSome: (takesOver) => ({ takesOver }),

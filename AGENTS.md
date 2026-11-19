@@ -1180,7 +1180,7 @@ Decisions that cut across them:
   once it has won.
 - **The daemon renews** each run's claim-ref markers through
   `CheckRunLeasesCommand` (`FlowsClient.lease`) every `limits.leaseRenewEvery`,
-  for `leaseTtl` or `parkedLeaseTtl`, and reads them before each stillValid
+  for `leaseTtl`, and reads them before each stillValid
   check; a claim naming another run ends the run as `lost` (`CancelRunCommand`
   with `endAs lost`, which removes nothing). In the run, `fencing` in the
   engine checks `Claims.holds` before every write a capability port declares
