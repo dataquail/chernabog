@@ -277,8 +277,9 @@ describe("leases", () => {
     expect(Option.getOrElse(parked.summary, () => "")).toContain(
       "its record carries the wait, and a later run takes it up",
     );
-    // Any machine, or CI, may take the item up now.
-    expect(Option.isNone(claimOn(issue))).toBe(true);
+    // Any machine, or CI, may take the item up now. The run is recorded as
+    // ended before its claim ref is deleted, so wait for the ref to go.
+    await eventually(async () => Option.isNone(claimOn(issue)), `the claim ref on #${issue} to go`);
     // What it put on the issue stays for the run that takes it up.
     expect(sandbox.github.issue(issue).labels).toContain("auto:in-progress");
   }, 90_000);
