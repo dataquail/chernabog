@@ -1,4 +1,7 @@
 [test]
+# Every advance on the Progress fake is checked against the catalogue (ADR 21,
+# decision 5), so the suite shows every transition its flows make is declared.
+preload = ["./test/ledger-checked.preload.ts"]
 # `bun test` measures coverage the same here and in CI. Its totals' floor is
 # scripts/coverage.ts's, which CI checks after the tests: Bun's own
 # coverageThreshold holds every file to it, not the total.

@@ -29,6 +29,7 @@ import * as Schema from "effect/Schema";
 
 import { statusMarker } from "./epic.ts";
 import { ADOPTED_LABEL, AWAITING_READY_LABEL } from "./implement.ts";
+import type { Observed } from "./ledger-check.ts";
 import * as Phases from "./phases.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { holdKeysOf, ships } from "./pull-request.ts";
@@ -37,6 +38,27 @@ import * as Settings from "./settings.ts";
 
 // Who backfill's records name as their writer.
 export const WRITER = "observer:backfill";
+
+// The first records backfill writes, each from no record, for the ledger's
+// check (ADR 21, decision 5): the phases of the table in
+// docs/run-progress/audit.md, "Backfill".
+export const OBSERVED: ReadonlyArray<Observed> = [
+  ...[
+    Phases.PHASES.pullRequest.reviewAsked,
+    Phases.PHASES.pullRequest.reviewAskedAgain,
+    Phases.PHASES.pullRequest.changesAsked,
+    Phases.PHASES.pullRequest.approved,
+    Phases.PHASES.pullRequest.draft,
+    Phases.PHASES.pullRequest.mergeHeld,
+  ].map((to): Observed => ({ by: WRITER, item: "pull-request", from: [Phases.NO_RECORD], to })),
+  ...[Phases.PHASES.issue.awaitingReady, Phases.PHASES.issue.proposed].map((to): Observed => ({
+    by: WRITER,
+    item: "issue",
+    from: [Phases.NO_RECORD],
+    to,
+  })),
+  { by: WRITER, item: "epic", from: [Phases.NO_RECORD], to: Phases.PHASES.epic.waiting },
+];
 
 // How long an adopted draft's wait lasts in a backfilled awaiting-ready
 // record: the implement recipe's, and every shipped document's. The run that

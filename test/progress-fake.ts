@@ -64,9 +64,32 @@ const advancing =
     ];
   };
 
+// The writer a test's seeded records name: a run before the test's, as the
+// daemon and `ci run` name one, so the ledger's check takes it for a run.
+export const EARLIER_RUN = "00000000-0000-4000-8000-000000000001";
+
+// Why the record `item` would hold after a transition is one the catalogue
+// doesn't declare (ADR 21, decision 5), if it is: the SDK's check, which
+// test/ledger-checked.preload.ts registers for every test. This file imports
+// no SDK, since the binary's own tests use it (ADR 4).
+type TransitionCheck = (item: string, record: PhaseRecord) => Option.Option<string>;
+
+let undeclared: TransitionCheck = () => Option.none();
+
+export const checkTransitionsWith = (check: TransitionCheck) => {
+  undeclared = check;
+};
+
+// Every advance a test's flows make, checked against the catalogue: so the
+// whole suite, every recipe and document it runs, shows the catalogue
+// declares every transition they really make. A transition it doesn't
+// declare fails the test, as a defect; `checked: false` for a test of the
+// port itself, which records phases of no flow.
+export type StoreOptions = { readonly checked?: boolean };
+
 // A fake holding no records, and its store, which a test seeds and reads as
 // it likes: every trigger and run given the service shares the one store.
-export const progressStore = () => {
+export const progressStore = (options: StoreOptions = {}) => {
   let store: Store = { records: new Map(), written: 0 };
 
   const service: Progress["Service"] = {
@@ -78,6 +101,13 @@ export const progressStore = () => {
       Effect.flatMap(DateTime.now, (at) =>
         Effect.suspend(() => {
           const [result, next] = advancing(item, transition, at)(store);
+
+          if (Result.isSuccess(result) && options.checked !== false) {
+            for (const why of Option.toArray(undeclared(item, result.success))) {
+              return Effect.die(new Error(`an undeclared transition: ${why}`));
+            }
+          }
+
           store = next;
 
           return Effect.fromResult(result);
@@ -119,5 +149,5 @@ export const progressStore = () => {
 
 // A fresh fake, holding no records, each time it runs.
 export const progressFake: Effect.Effect<Progress["Service"]> = Effect.sync(
-  () => progressStore().service,
+  () => progressStore({ checked: false }).service,
 );
