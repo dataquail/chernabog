@@ -168,20 +168,6 @@ export const loadRepoSdk = (configDir: string) =>
     Effect.map((sdk) => sdk.Compose),
   );
 
-const ParkingSdk = Schema.Struct({
-  Phases: Schema.declare(
-    (phases): phases is { readonly park: unknown } =>
-      Predicate.hasProperty(phases, "park") && Predicate.isFunction(phases.park),
-    { title: "Phases" },
-  ),
-});
-
-// Whether the SDK a repo pins records every wait before it parks (its
-// Phases.park, ADR 21, decision 4): this binary ends every run at its park,
-// so an SDK from before it would strand the items its runs park on.
-export const recordsEveryPark = (configDir: string) =>
-  Effect.map(importRepoSdk(configDir), Schema.is(ParkingSdk));
-
 // One of a repo's CI flows as its SDK's Events.workflowOn takes it: its name,
 // the logins it runs as, and what it declares (Events.of).
 export type CiFlowEvents = {
