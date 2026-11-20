@@ -55,6 +55,9 @@ const DATA = Schema.decodeSync(PhaseData)({
   url: "https://github.com/acme/app/pull/81",
 });
 
+// Strings a regex's `^` and `$` would break a line at, though git doesn't.
+const SEPARATED = Schema.decodeSync(PhaseData)({ title: "a\u2028b", body: "c\u2029d" });
+
 const isPhaseMoved = Schema.is(PhaseMoved);
 const isProgressUnwritable = Schema.is(ProgressUnwritable);
 
@@ -117,6 +120,29 @@ describe("a thread's commit message", () => {
     ).toEqual(Option.some(Option.some(DATA)));
   });
 
+  test("data holding U+2028 or U+2029 reads back as written, on one line", () => {
+    const message = recordMessage("pr-73", {
+      from: Option.none(),
+      to: ASKED,
+      by: RUN_B,
+      data: SEPARATED,
+    });
+
+    expect(message.body).not.toMatch(/[\u2028\u2029]/);
+    expect(
+      Option.map(
+        parseRecord("abc123", `${message.headline}\n\n${message.body}\n`, AT),
+        (record) => record.data,
+      ),
+    ).toEqual(Option.some(Option.some(SEPARATED)));
+    expect(
+      Option.map(
+        parseRecord("abc123", 'Phase: review-asked\nBy: x\nData: {"title":"a\u2028b"}', AT),
+        (record) => record.data,
+      ),
+    ).toEqual(Option.some(Option.some(Schema.decodeSync(PhaseData)({ title: "a\u2028b" }))));
+  });
+
   test("a commit with no record, or a malformed one, holds none", () => {
     expect(
       [
@@ -145,6 +171,27 @@ describe("an item's thread", () => {
       ),
     ).toEqual([false, false, false, false, false, false, false]);
   });
+
+  effect("a later run reads data holding U+2028 or U+2029 back, and can advance the item", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+
+      yield* Effect.flatMap(adapterOver(fake), (progress) =>
+        progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A, data: SEPARATED }),
+      );
+
+      // A fresh adapter has seen no commit, so it reads the record from the message.
+      const later = yield* adapterOver(fake);
+
+      expect(Option.map(yield* later.read("pr-73"), (record) => record.data)).toEqual(
+        Option.some(Option.some(SEPARATED)),
+      );
+      expect((yield* later.readAll).get("pr-73")?.data).toEqual(Option.some(SEPARATED));
+      expect(
+        (yield* later.advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B })).phase,
+      ).toEqual(CHANGES);
+    }),
+  );
 
   effect("a name with a slash is a ProgressError, not a branch it would miss", () =>
     Effect.gen(function* () {

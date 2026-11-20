@@ -69,10 +69,16 @@ export const isThreadItem = (item: string) =>
 
 // The record a commit's message carries, in trailers: `Phase`, `From` (absent
 // for an item's first phase), `By`, its writer, and `Data` (absent when the
-// transition carried none), the record's data as one line of JSON. The
+// transition carried none), the record's data as one line of JSON, with
+// U+2028 and U+2029 escaped so no reader takes either for a line break. The
 // headline is for a person reading the branch. Nothing in it names the
 // machine: a thread is as public as the repo. When it was written is the
 // commit's date, which GitHub sets, so no trailer says it.
+// JSON.stringify leaves U+2028 and U+2029 raw; escaped, they are still JSON
+// and decode to the same string.
+const printDataLine = (data: PhaseData) =>
+  printJson(data).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+
 export const recordMessage = (item: string, transition: PhaseTransition) => {
   const from = Option.match(transition.from, {
     onNone: () => "",
@@ -84,7 +90,7 @@ export const recordMessage = (item: string, transition: PhaseTransition) => {
     ...Option.toArray(Option.map(transition.from, (phase) => `From: ${phase}`)),
     `By: ${transition.by}`,
     ...Option.toArray(
-      Option.map(Option.fromUndefinedOr(transition.data), (data) => `Data: ${printJson(data)}`),
+      Option.map(Option.fromUndefinedOr(transition.data), (data) => `Data: ${printDataLine(data)}`),
     ),
   ];
 
@@ -94,10 +100,13 @@ export const recordMessage = (item: string, transition: PhaseTransition) => {
   };
 };
 
+// A trailer's value, from the first line that starts with its key. Lines are
+// split on `\n` alone, as git writes them: a regex's `^` and `$` would also
+// break at U+2028 and U+2029, which a value may hold.
 const trailer = (message: string, key: string) =>
-  Option.fromNullishOr(new RegExp(`^${key}: (.+)$`, "m").exec(message)?.[1]).pipe(
-    Option.map((value) => value.trim()),
-  );
+  Option.fromNullishOr(
+    message.split("\n").find((line) => line.startsWith(`${key}: `) && line.length > key.length + 2),
+  ).pipe(Option.map((line) => line.slice(key.length + 2).trim()));
 
 const decodePhase = Schema.decodeUnknownOption(Phase);
 const decodeWriter = Schema.decodeUnknownOption(PhaseWriter);

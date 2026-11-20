@@ -47,6 +47,9 @@ const after = (from: Phase, to: Phase, by: PhaseWriter): PhaseTransition => ({
 
 const DATA = Schema.decodeSync(PhaseData)({ adopted: 81, round: 2, nested: { draft: true } });
 
+// Strings a regex's `^` and `$` would break a line at, though git doesn't.
+const SEPARATED = Schema.decodeSync(PhaseData)({ title: "a\u2028b", body: "c\u2029d" });
+
 const isPhaseMoved = Schema.is(PhaseMoved);
 
 // The lost race an advance failed with, if it failed with one.
@@ -78,6 +81,23 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
           Option.some(Option.none()),
         );
+      }),
+    );
+
+    effect("keeps data whose strings hold U+2028 or U+2029, and the item can still advance", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+
+        yield* progress.advance(ITEM, { ...first(REVIEW_ASKED, RUN_A), data: SEPARATED });
+
+        expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
+          Option.some(Option.some(SEPARATED)),
+        );
+        expect((yield* progress.readAll).get(ITEM)?.data).toEqual(Option.some(SEPARATED));
+
+        const next = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+
+        expect(next.phase).toEqual(CHANGES_ASKED);
       }),
     );
 
