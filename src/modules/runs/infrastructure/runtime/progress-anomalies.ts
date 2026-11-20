@@ -49,6 +49,9 @@ const Acknowledged = Schema.Struct({
 
 export type AnomaliesResult = {
   readonly repo: string;
+  // The repo's personas: (RepoSettings.personas). With none, every record a
+  // persona wrote has an unknown writer, so each is an anomaly.
+  readonly personas: ReadonlyArray<string>;
   readonly anomalies: ReadonlyArray<Anomaly>;
   // With `acknowledge`: the items recorded again, and those whose record moved first.
   readonly acknowledged: ReadonlyArray<string>;
@@ -98,6 +101,7 @@ export const progressAnomalies = (options: AnomaliesOptions) =>
 
     const result: AnomaliesResult = {
       repo: repo.settings.name,
+      personas: repo.settings.personas,
       anomalies,
       acknowledged: [],
       moved: [],

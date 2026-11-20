@@ -49,6 +49,9 @@ const BackfillWritten = Schema.Struct({
 
 export type BackfillResult = {
   readonly repo: string;
+  // The repo's personas: (RepoSettings.personas). The survey reads its logins
+  // from them alone, so with none it misses whatever only a persona marks.
+  readonly personas: ReadonlyArray<string>;
   // What the survey found to write, and what it leaves for a person.
   readonly findings: ReadonlyArray<BackfillFinding>;
   // With `write`: the items written, and those a run recorded first.
@@ -90,7 +93,13 @@ export const backfillProgress = (options: BackfillOptions) =>
       }),
     );
 
-    const result: BackfillResult = { repo: repo.settings.name, findings, written: [], lost: [] };
+    const result: BackfillResult = {
+      repo: repo.settings.name,
+      personas: repo.settings.personas,
+      findings,
+      written: [],
+      lost: [],
+    };
 
     if (!options.write) {
       return result;

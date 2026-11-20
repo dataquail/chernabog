@@ -26,7 +26,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import addressReview from "../packages/recipes/flows/address-review.ts";
-import { anomaliesReportOf } from "../src/interface/cli/progress.main.ts";
+import { anomaliesReportOf, reportOf } from "../src/interface/cli/progress.main.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
@@ -466,7 +466,10 @@ describe("chernabog progress anomalies' report", () => {
 
   test("names each record, and how to fix it", () => {
     expect(
-      anomaliesReportOf({ repo: "demo", anomalies: [anomaly], acknowledged: [], moved: [] }, false),
+      anomaliesReportOf(
+        { repo: "demo", personas: PERSONAS, anomalies: [anomaly], acknowledged: [], moved: [] },
+        false,
+      ),
     ).toEqual([
       `${PR_ITEM}: record 0123456 (none -> changes-asked, by mallory): its writer, mallory, is none of the repo's personas, a run or an observer chernabog writes as`,
       "Each one's item is held until its record is fixed: record the phase again as a persona, or run it again with --acknowledge to record each one's phase again as it is.",
@@ -478,6 +481,7 @@ describe("chernabog progress anomalies' report", () => {
       anomaliesReportOf(
         {
           repo: "demo",
+          personas: PERSONAS,
           anomalies: [anomaly, { ...anomaly, item: "issue-3" }],
           acknowledged: [PR_ITEM],
           moved: ["issue-3"],
@@ -492,7 +496,39 @@ describe("chernabog progress anomalies' report", () => {
 
   test("says when every record passes", () => {
     expect(
-      anomaliesReportOf({ repo: "demo", anomalies: [], acknowledged: [], moved: [] }, false),
+      anomaliesReportOf(
+        { repo: "demo", personas: PERSONAS, anomalies: [], acknowledged: [], moved: [] },
+        false,
+      ),
     ).toEqual(["demo: every record passes the check"]);
+  });
+
+  test("warns first when the repo lists no personas, since every persona's record is then an anomaly", () => {
+    expect(
+      anomaliesReportOf(
+        { repo: "demo", personas: [], anomalies: [], acknowledged: [], moved: [] },
+        false,
+      ),
+    ).toEqual([
+      "warning: demo's .chernabog/config.yaml lists no personas:, so every record a persona wrote has an unknown writer, and is an anomaly. List the logins its flows run as under personas: (in the checkout, with --from-checkout) and run it again.",
+      "demo: every record passes the check",
+    ]);
+  });
+});
+
+describe("chernabog progress backfill's report", () => {
+  const empty = { repo: "demo", findings: [], written: [], lost: [] };
+
+  test("warns first when the repo lists no personas, since the survey reads its logins from them", () => {
+    expect(reportOf({ ...empty, personas: [] }, false)).toEqual([
+      "warning: demo's .chernabog/config.yaml lists no personas:, so backfill misses a pull request that only a persona's review marks as automated, and every epic status comment. List the logins its flows run as under personas: (in the checkout, with --from-checkout) and run it again.",
+      "demo: every open item that needs a record has one",
+    ]);
+  });
+
+  test("says nothing of personas when the repo lists them", () => {
+    expect(reportOf({ ...empty, personas: PERSONAS }, false)).toEqual([
+      "demo: every open item that needs a record has one",
+    ]);
   });
 });

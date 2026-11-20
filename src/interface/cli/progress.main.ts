@@ -7,6 +7,7 @@
 // transition the catalogue doesn't know (ADR 21, decision 5);
 // `--acknowledge` records each one's phase again, so the sources act on it.
 
+import * as Arr from "effect/Array";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
@@ -41,8 +42,21 @@ const describeFinding = (finding: BackfillFinding) => {
   return `${finding.item}: ${finding.phase} (${finding.why})`;
 };
 
-// What the command prints of what backfill found, and did.
-export const reportOf = (result: BackfillResult, wrote: boolean) => {
+// A repo that lists no personas: in its .chernabog/config.yaml: the ledger
+// checks writers against them, and backfill reads its logins from them alone.
+const noPersonas = (repo: string, consequence: string) =>
+  `warning: ${repo}'s .chernabog/config.yaml lists no personas:, so ${consequence}. List the logins its flows run as under personas: (in the checkout, with --from-checkout) and run it again.`;
+
+const personasWarning = (
+  result: { readonly repo: string; readonly personas: ReadonlyArray<string> },
+  consequence: string,
+) =>
+  Arr.match(result.personas, {
+    onEmpty: () => [noPersonas(result.repo, consequence)],
+    onNonEmpty: () => [],
+  });
+
+const backfillLines = (result: BackfillResult, wrote: boolean) => {
   const toWrite = result.findings.filter((finding) => finding.kind === "write");
   const toPerson = result.findings.filter((finding) => finding.kind === "person");
 
@@ -70,6 +84,15 @@ export const reportOf = (result: BackfillResult, wrote: boolean) => {
 
   return said;
 };
+
+// What the command prints of what backfill found, and did.
+export const reportOf = (result: BackfillResult, wrote: boolean) => [
+  ...personasWarning(
+    result,
+    "backfill misses a pull request that only a persona's review marks as automated, and every epic status comment",
+  ),
+  ...backfillLines(result, wrote),
+];
 
 const backfillCommand = <R>(config: ProgressConfigAccess<R>) =>
   Command.make(
@@ -111,8 +134,7 @@ const backfillCommand = <R>(config: ProgressConfigAccess<R>) =>
 const describeAnomaly = (anomaly: Anomaly) =>
   `${anomaly.item}: record ${anomaly.version.slice(0, 7)} (${anomaly.from ?? "none"} -> ${anomaly.phase}, by ${anomaly.by}): ${anomaly.why}`;
 
-// What the command prints of the anomalies it found, and acknowledged.
-export const anomaliesReportOf = (result: AnomaliesResult, acknowledged: boolean) => {
+const anomalyLines = (result: AnomaliesResult, acknowledged: boolean) => {
   if (result.anomalies.length === 0) {
     return [`${result.repo}: every record passes the check`];
   }
@@ -138,6 +160,15 @@ export const anomaliesReportOf = (result: AnomaliesResult, acknowledged: boolean
 
   return lines;
 };
+
+// What the command prints of the anomalies it found, and acknowledged.
+export const anomaliesReportOf = (result: AnomaliesResult, acknowledged: boolean) => [
+  ...personasWarning(
+    result,
+    "every record a persona wrote has an unknown writer, and is an anomaly",
+  ),
+  ...anomalyLines(result, acknowledged),
+];
 
 const anomaliesCommand = <R>(config: ProgressConfigAccess<R>) =>
   Command.make(
