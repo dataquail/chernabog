@@ -200,8 +200,9 @@ change.
 - **Start-or-wake: a daemon keeps its journal park, and a startable item
   wakes it if it is there.** This is a smaller change, and a daemon could still
   resume mid-phase across a wait. But the parked run keeps its claim on
-  `parkedTtl` (12 hours), so a sleeping laptop holds the item away from CI and
-  every other machine until the claim runs out. That breaks free movement.
+  `parkedTtl` (`limits.parkedLeaseTtl`, 3 days by default), so a sleeping
+  laptop holds the item away from CI and every other machine until the claim
+  runs out. That breaks free movement.
 - **Keeping forge-shaped item names in the hosted tier.** A name like
   `pr-73` can't say which forge or repo it belongs to. It also can't link a
   Jira ticket to the pull request that closes it.
