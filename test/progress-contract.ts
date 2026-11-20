@@ -7,6 +7,7 @@ import {
   Phase,
   PhaseData,
   PhaseMoved,
+  type PhaseRead,
   type PhaseRecord,
   type PhaseTransition,
   PhaseWriter,
@@ -39,11 +40,15 @@ const ITEM = "pr-73";
 
 const first = (to: Phase, by: PhaseWriter): PhaseTransition => ({ from: Option.none(), to, by });
 
-const after = (from: Phase, to: Phase, by: PhaseWriter): PhaseTransition => ({
+// A move on from `from`, the record the writer read.
+const after = (from: PhaseRead, to: Phase, by: PhaseWriter): PhaseTransition => ({
   from: Option.some(from),
   to,
   by,
 });
+
+// A record no adapter wrote: a writer that read a phase the item never held.
+const neverHeld = (at: Phase): PhaseRead => ({ phase: at, version: "never-written" });
 
 const DATA = Schema.decodeSync(PhaseData)({ adopted: 81, round: 2, nested: { draft: true } });
 
@@ -75,7 +80,7 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         );
         expect((yield* progress.readAll).get(ITEM)?.data).toEqual(Option.some(DATA));
 
-        const next = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const next = yield* progress.advance(ITEM, after(written, CHANGES_ASKED, RUN_B));
 
         expect(next.data).toEqual(Option.none());
         expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
@@ -88,14 +93,17 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
       Effect.gen(function* () {
         const progress = yield* make;
 
-        yield* progress.advance(ITEM, { ...first(REVIEW_ASKED, RUN_A), data: SEPARATED });
+        const asked = yield* progress.advance(ITEM, {
+          ...first(REVIEW_ASKED, RUN_A),
+          data: SEPARATED,
+        });
 
         expect(Option.map(yield* progress.read(ITEM), (record) => record.data)).toEqual(
           Option.some(Option.some(SEPARATED)),
         );
         expect((yield* progress.readAll).get(ITEM)?.data).toEqual(Option.some(SEPARATED));
 
-        const next = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const next = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
 
         expect(next.phase).toEqual(CHANGES_ASKED);
       }),
@@ -106,7 +114,7 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         const progress = yield* make;
 
         const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
-        const changes = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
 
         expect(DateTime.isLessThanOrEqualTo(asked.at, changes.at)).toBe(true);
         expect(Option.map(yield* progress.read(ITEM), (record) => record.at)).toEqual(
@@ -152,7 +160,7 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         const progress = yield* make;
         const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
 
-        const changes = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
 
         expect(what(changes)).toEqual({
           phase: CHANGES_ASKED,
@@ -167,14 +175,10 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("a phase can come round again, as a new record", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(CHANGES_ASKED, RUN_A));
-        const once = yield* progress.advance(ITEM, after(CHANGES_ASKED, REVIEW_ASKED_AGAIN, RUN_A));
-        yield* progress.advance(ITEM, after(REVIEW_ASKED_AGAIN, CHANGES_ASKED, RUN_B));
-
-        const twice = yield* progress.advance(
-          ITEM,
-          after(CHANGES_ASKED, REVIEW_ASKED_AGAIN, RUN_A),
-        );
+        const changes = yield* progress.advance(ITEM, first(CHANGES_ASKED, RUN_A));
+        const once = yield* progress.advance(ITEM, after(changes, REVIEW_ASKED_AGAIN, RUN_A));
+        const again = yield* progress.advance(ITEM, after(once, CHANGES_ASKED, RUN_B));
+        const twice = yield* progress.advance(ITEM, after(again, REVIEW_ASKED_AGAIN, RUN_A));
 
         expect(twice.phase).toBe(REVIEW_ASKED_AGAIN);
         expect(twice.version).not.toBe(once.version);
@@ -184,17 +188,37 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("refuses to advance from a phase the item has left, and writes nothing", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
-        const changes = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A));
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
 
         const exit = yield* Effect.exit(
-          progress.advance(ITEM, after(REVIEW_ASKED, REVIEW_ASKED_AGAIN, RUN_B)),
+          progress.advance(ITEM, after(asked, REVIEW_ASKED_AGAIN, RUN_B)),
         );
 
         expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
           Option.some([Option.some(REVIEW_ASKED), Option.some(CHANGES_ASKED)]),
         );
         expect(yield* progress.read(ITEM)).toEqual(Option.some(changes));
+      }),
+    );
+
+    // The compare-and-set is on the version the writer read, not its phase:
+    // a record that moved on and came back to the same phase is a new one.
+    effect("refuses an advance from a record the item has since left and come back to", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+        const back = yield* progress.advance(ITEM, after(changes, REVIEW_ASKED, RUN_A));
+
+        expect(back.phase).toBe(asked.phase);
+
+        const exit = yield* Effect.exit(progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B)));
+
+        expect(Option.map(moved(exit), (error) => error.found)).toEqual(
+          Option.some(Option.some(REVIEW_ASKED)),
+        );
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(back));
       }),
     );
 
@@ -216,7 +240,7 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
         const progress = yield* make;
 
         const exit = yield* Effect.exit(
-          progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A)),
+          progress.advance(ITEM, after(neverHeld(REVIEW_ASKED), CHANGES_ASKED, RUN_A)),
         );
 
         expect(Option.map(moved(exit), (error) => [error.expected, error.found])).toEqual(
@@ -231,10 +255,10 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("a retried advance finds its own transition and succeeds, writing nothing", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
-        const landed = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const landed = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
 
-        const retried = yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B));
+        const retried = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B));
 
         expect(retried).toEqual(landed);
         expect(yield* progress.read(ITEM)).toEqual(Option.some(landed));
@@ -254,12 +278,10 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("the same transition by another writer is a lost race", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
-        yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A));
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
 
-        const exit = yield* Effect.exit(
-          progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_B)),
-        );
+        const exit = yield* Effect.exit(progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_B)));
 
         expect(Option.map(moved(exit), (error) => error.found)).toEqual(
           Option.some(Option.some(CHANGES_ASKED)),
@@ -272,17 +294,11 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("a retry after another writer moved the item on is a lost race", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
-        yield* progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A));
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const changes = yield* progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A));
+        const later = yield* progress.advance(ITEM, after(changes, REVIEW_ASKED_AGAIN, RUN_B));
 
-        const later = yield* progress.advance(
-          ITEM,
-          after(CHANGES_ASKED, REVIEW_ASKED_AGAIN, RUN_B),
-        );
-
-        const exit = yield* Effect.exit(
-          progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A)),
-        );
+        const exit = yield* Effect.exit(progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A)));
 
         expect(Option.isSome(moved(exit))).toBe(true);
         expect(yield* progress.read(ITEM)).toEqual(Option.some(later));
@@ -292,12 +308,12 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
     effect("of two advances from the same phase at once, exactly one wins", () =>
       Effect.gen(function* () {
         const progress = yield* make;
-        yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
 
         const exits = yield* Effect.all(
           [
-            Effect.exit(progress.advance(ITEM, after(REVIEW_ASKED, CHANGES_ASKED, RUN_A))),
-            Effect.exit(progress.advance(ITEM, after(REVIEW_ASKED, REVIEW_ASKED_AGAIN, RUN_B))),
+            Effect.exit(progress.advance(ITEM, after(asked, CHANGES_ASKED, RUN_A))),
+            Effect.exit(progress.advance(ITEM, after(asked, REVIEW_ASKED_AGAIN, RUN_B))),
           ],
           { concurrency: "unbounded" },
         );

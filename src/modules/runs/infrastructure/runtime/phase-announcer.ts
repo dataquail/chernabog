@@ -24,7 +24,7 @@ export const PHASE_EVENT = "chernabog-phase";
 // phase. Three top-level keys, well inside GitHub's ten.
 export const phasePayload = (item: string, transition: PhaseTransition) => ({
   item,
-  from: Option.getOrNull(transition.from),
+  from: Option.getOrNull(Option.map(transition.from, (read) => read.phase)),
   to: transition.to,
 });
 

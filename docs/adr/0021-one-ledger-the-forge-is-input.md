@@ -139,8 +139,21 @@ change.
      plan's round, when a merge hold began, an epic's attempts. Today these
      live in comments that anyone can delete. `advance` takes an optional
      `data`, a JSON object of at most 4 KB, and the record returns it. Core
-     doesn't interpret it, and the compare-and-set compares phases, not data.
+     doesn't interpret it, and the compare-and-set never compares it.
      On the git adapter it is a `Data:` trailer of one-line JSON.
+   - **The compare-and-set is on the version the writer read.** `advance`
+     takes the record the writer read (`from`: its phase and version, none
+     for an item with no record), and lands only while the item's record is
+     still that version; the record written names the phase as `from`. A
+     record that moved on and came back to the same phase is a new version,
+     so a writer that read the old one loses the race, where a compare on
+     the phase would have let it write over what happened in between. The
+     git adapter compares on it through `createCommitOnBranch`'s
+     `expectedHeadOid`, the commit the writer read, so it no longer reads
+     the branch again and starts over when it moved and came back. The
+     SDK's writes pass the record they read (`Phases.recording`,
+     `Phases.reconcile`), backfill passes none, the version its survey
+     found, and an acknowledgement passes the version the person saw.
 
    `at` and `data` are required on `PhaseRecord`: every adapter provides
    both, and a reader never has to ask whether a record has a time. That
@@ -389,9 +402,11 @@ change.
      removed phase doesn't flood anyone. What remains, such as a renamed
      persona's own write, is listed first by a survey modeled on backfill:
      `chernabog progress anomalies --repo X` lists every record that fails
-     the check, as the repo's personas see it, and `--acknowledge` records
-     each one's phase again, with its data, as `observer:acknowledged`,
-     only if the record is still the one listed. Its `at` was rejected as
+     the check, as the repo's personas see it, each named
+     `<item>@<version>`, and `--acknowledge <item>@<version>` records the
+     phase of each one the person names again, with its data, as
+     `observer:acknowledged`, from that version: the advance refuses one
+     whose record changed since the person saw it, even at the same phase. Its `at` was rejected as
      the way to tell old records apart: on the git adapter a pushed
      commit's date is the pusher's to set, so a forged record could
      backdate itself. An allowlist in config was rejected too: it grows
@@ -486,7 +501,8 @@ change.
   does.
 - Every source's reads are checked (decision 5). A record that fails holds
   its item with the record named, in `chernabog status`, until a persona
-  records it again or `chernabog progress anomalies --acknowledge` does.
+  records it again or `chernabog progress anomalies --acknowledge` does,
+  for the version a person saw listed.
   Upgrading is: run `chernabog progress anomalies`, look at what it lists,
   acknowledge what is right. A repo's own TypeScript flow that doesn't wrap
   its trigger in `Blocks.checked` reads unchecked, as before. A new writer

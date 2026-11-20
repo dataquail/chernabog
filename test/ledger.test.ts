@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 
 import addressReview from "../packages/recipes/flows/address-review.ts";
 import { anomaliesReportOf, reportOf } from "../src/interface/cli/progress.main.ts";
+import { parseSeen } from "../src/modules/runs/runs.platform.ts";
 import {
   ADDRESS_REVIEW_DOCUMENT,
   documentOf,
@@ -279,6 +280,22 @@ describe("a person's fix for an anomaly", () => {
     }),
   );
 
+  // The compare-and-set is on the version the person saw: a record written
+  // again since, at the same phase, by the same writer, is another record.
+  effect("a record written again since, at the same phase, isn't acknowledged either", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+      const anomalies = yield* onFake(fake, Ledger.survey);
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+
+      const acknowledged = yield* onFake(fake, Ledger.acknowledge(anomalies));
+
+      expect(acknowledged.map((one) => one.acknowledged)).toEqual([false]);
+      expect(fake.records().get(PR_ITEM)?.by).toBe(asWriter("mallory"));
+    }),
+  );
+
   effect("a record a persona writes again is an ordinary fix", () =>
     Effect.gen(function* () {
       const fake = changesAsked();
@@ -464,41 +481,51 @@ describe("chernabog progress anomalies' report", () => {
     why: "its writer, mallory, is none of the repo's personas, a run or an observer chernabog writes as",
   };
 
-  test("names each record, and how to fix it", () => {
+  test("names each record as --acknowledge takes it back, and how to fix it", () => {
     expect(
       anomaliesReportOf(
         { repo: "demo", personas: PERSONAS, anomalies: [anomaly], acknowledged: [], moved: [] },
-        false,
+        [],
       ),
     ).toEqual([
-      `${PR_ITEM}: record 0123456 (none -> changes-asked, by mallory): its writer, mallory, is none of the repo's personas, a run or an observer chernabog writes as`,
-      "Each one's item is held until its record is fixed: record the phase again as a persona, or run it again with --acknowledge to record each one's phase again as it is.",
+      `${PR_ITEM}: record 0123456 (none -> changes-asked, by mallory): its writer, mallory, is none of the repo's personas, a run or an observer chernabog writes as [${PR_ITEM}@0123456]`,
+      "Each one's item is held until its record is fixed: record the phase again as a persona, or, for one that is right as it is, run it again with --acknowledge <item>@<version> as listed, which records its phase again only while the record is still that one.",
     ]);
   });
 
-  test("says which it acknowledged, and which moved first", () => {
-    expect<unknown>(
+  test("says which records it acknowledged, and which it left because they changed", () => {
+    const seen = { item: PR_ITEM, version: "0123456" };
+    const gone = { item: "issue-3", version: "fedcba9" };
+
+    expect(
       anomaliesReportOf(
         {
           repo: "demo",
           personas: PERSONAS,
-          anomalies: [anomaly, { ...anomaly, item: "issue-3" }],
-          acknowledged: [PR_ITEM],
-          moved: ["issue-3"],
+          anomalies: [anomaly],
+          acknowledged: [seen],
+          moved: [gone],
         },
-        true,
+        [seen, gone],
       ),
     ).toEqual([
-      expect.stringMatching(new RegExp(`^acknowledged ${PR_ITEM}: record 0123456`)),
-      "left issue-3: its record moved after the survey read it",
+      `acknowledged ${PR_ITEM}@0123456`,
+      "left issue-3@fedcba9: the item's record is no longer that one, or passes the check now; list it again",
     ]);
+  });
+
+  test("reads a record as the listing names it", () => {
+    expect(parseSeen("pr-184@9bf23c1")).toEqual(
+      Option.some({ item: "pr-184", version: "9bf23c1" }),
+    );
+    expect(parseSeen("pr-184")).toEqual(Option.none());
   });
 
   test("says when every record passes", () => {
     expect(
       anomaliesReportOf(
         { repo: "demo", personas: PERSONAS, anomalies: [], acknowledged: [], moved: [] },
-        false,
+        [],
       ),
     ).toEqual(["demo: every record passes the check"]);
   });
@@ -507,7 +534,7 @@ describe("chernabog progress anomalies' report", () => {
     expect(
       anomaliesReportOf(
         { repo: "demo", personas: [], anomalies: [], acknowledged: [], moved: [] },
-        false,
+        [],
       ),
     ).toEqual([
       "warning: demo's .chernabog/config.yaml lists no personas:, so every record a persona wrote has an unknown writer, and is an anomaly. List the logins its flows run as under personas: (in the checkout, with --from-checkout) and run it again.",

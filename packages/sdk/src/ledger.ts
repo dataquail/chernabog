@@ -92,8 +92,10 @@ export const acknowledge = (anomalies: ReadonlyArray<Anomaly>) =>
       const record = still.value;
       const phase = asPhase(record.phase);
 
+      // From the version the person saw, as listed: the advance refuses a
+      // record that changed since, whatever its phase.
       const base = {
-        from: Option.some(phase),
+        from: Option.some({ phase, version: anomaly.version }),
         to: phase,
         by: acknowledger,
       };

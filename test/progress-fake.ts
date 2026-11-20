@@ -22,11 +22,18 @@ type Store = { readonly records: ReadonlyMap<string, PhaseRecord>; readonly writ
 const phaseOf = (record: Option.Option<PhaseRecord>): Option.Option<Phase> =>
   Option.map(record, (found) => found.phase);
 
+// The phase the writer read, which the record it writes names as `from`.
+const fromPhase = (transition: PhaseTransition) =>
+  Option.map(transition.from, (read) => read.phase);
+
+const versionOf = (read: Option.Option<{ readonly version: string }>) =>
+  Option.map(read, (found) => found.version);
+
 // The record is this transition, by this writer: a retry of a write that landed.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, transition.from);
+  Equal.equals(record.from, fromPhase(transition));
 
 // What advancing `item` by `transition` does to `store`, all in one step, `at`
 // the time it would be written.
@@ -40,9 +47,12 @@ const advancing =
       return [Result.succeed(own.value), store];
     }
 
-    if (!Equal.equals(phaseOf(current), transition.from)) {
+    // A compare-and-set on the version the writer read.
+    if (!Equal.equals(versionOf(current), versionOf(transition.from))) {
       return [
-        Result.fail(new PhaseMoved({ item, expected: transition.from, found: phaseOf(current) })),
+        Result.fail(
+          new PhaseMoved({ item, expected: fromPhase(transition), found: phaseOf(current) }),
+        ),
         store,
       ];
     }
@@ -51,7 +61,7 @@ const advancing =
 
     const record: PhaseRecord = {
       phase: transition.to,
-      from: transition.from,
+      from: fromPhase(transition),
       by: transition.by,
       version: `v${written}`,
       at,

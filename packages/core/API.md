@@ -1436,8 +1436,9 @@ export type PhaseRecord = {
     readonly at: DateTime.Utc;
     readonly data: Option.Option<PhaseData>;
 };
+export type PhaseRead = Pick<PhaseRecord, "phase" | "version">;
 export type PhaseTransition = {
-    readonly from: Option.Option<Phase>;
+    readonly from: Option.Option<PhaseRead>;
     readonly to: Phase;
     readonly by: PhaseWriter;
     readonly data?: PhaseData;

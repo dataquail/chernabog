@@ -1,4 +1,4 @@
-import { type Json, Phase, PhaseWriter, RunLog } from "@chernabog/core";
+import { type Json, Phase, type PhaseRead, PhaseWriter, RunLog } from "@chernabog/core";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -84,7 +84,7 @@ describe("an announced advance", () => {
       const fake = makeFake();
       const progress = yield* announcingOver(fake);
 
-      yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
 
       expect(fake.sent).toEqual([
         {
@@ -93,7 +93,7 @@ describe("an announced advance", () => {
         },
       ]);
 
-      yield* progress.advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B });
+      yield* progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B });
 
       expect(fake.sent).toHaveLength(2);
       expect(fake.sent[1]).toEqual({
@@ -126,7 +126,7 @@ describe("an announced advance", () => {
     Effect.gen(function* () {
       const fake = makeFake();
       const progress = yield* announcingOver(fake);
-      const move = { from: Option.none<Phase>(), to: ASKED, by: RUN_A };
+      const move = { from: Option.none<PhaseRead>(), to: ASKED, by: RUN_A };
 
       const first = yield* progress.advance("pr-73", move);
       const again = yield* progress.advance("pr-73", move);
@@ -152,7 +152,7 @@ describe("an announced advance", () => {
       fake.dispatch.status = Option.none();
 
       const unreached = yield* progress
-        .advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B })
+        .advance("pr-73", { from: Option.some(refused), to: CHANGES, by: RUN_B })
         .pipe(Effect.provideService(RunLog, log));
 
       expect([refused.phase, unreached.phase]).toEqual([ASKED, CHANGES]);
