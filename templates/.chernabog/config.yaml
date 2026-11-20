@@ -49,6 +49,12 @@ settings:
   # recipe waits for the bottom one to merge.
   stackDepth: 4
 
+# The GitHub logins Chernabog acts as here, its personas: the only place that
+# says who they are. A record of an item's progress that a persona writes by
+# hand is trusted only from one of these, on every machine and in CI. Each
+# person's machine config maps a persona to its credentials (github:).
+# personas: [chernabog-bot]
+
 # Default schedule for every flow, as cron. Unset spreads repos across the hour.
 # schedule: "17 * * * *"
 

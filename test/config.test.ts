@@ -667,6 +667,18 @@ describe("a flow's own settings", () => {
     }),
   );
 
+  effect(
+    "the repo's personas come from its committed config alone, whatever machine config's github: lists",
+    () =>
+      Effect.gen(function* () {
+        const listed = yield* merge({ personas: ["chernabog-bot", "data-quail"] }, {});
+        expect(listed.settings.personas).toEqual(["chernabog-bot", "data-quail"]);
+
+        // A machine with no github:, as a CI job's, checks the same set.
+        expect((yield* merge({}, {})).settings.personas).toEqual([]);
+      }),
+  );
+
   effect("the reviewer pool and the board may be shared settings, for the engine to read too", () =>
     Effect.gen(function* () {
       const board = { projectNumber: 3, readyStatus: "Ready", inProgressStatus: "Doing" };

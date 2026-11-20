@@ -11,10 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { IMPLICIT } from "../../../../kernel/persona.value-object.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { loadRepoLedger } from "../../../../platform/flow-loader.ts";
-import { viewerLoginAs } from "../../../../platform/github-api.ts";
 import { defaultPersona } from "./engine.ts";
 import { buildPersonaContexts, openRepo, servicesFrom } from "./repo-runtime.ts";
 
@@ -89,25 +87,14 @@ export const progressAnomalies = (options: AnomaliesOptions) =>
 
     const servicesFor = servicesFrom(yield* buildPersonaContexts(repo, options.machine));
 
-    // Each persona's login: its name, or the implicit one's token's.
-    const logins: Array<string> = [];
-
-    for (const own of repo.personas) {
-      logins.push(
-        yield* Option.match(own.persona, {
-          onNone: () => viewerLoginAs(IMPLICIT),
-          onSome: Effect.succeed,
-        }),
-      );
-    }
-
     const context = yield* yield* Effect.fromOption(servicesFor(defaultPersona(repo))).pipe(
       Effect.orDie,
     );
 
-    const anomalies = yield* ledger.value
-      .survey(logins)
-      .pipe(Effect.provideContext(context), decodedAs(Schema.Array(Anomaly), "anomalies"));
+    const anomalies = yield* ledger.value.survey.pipe(
+      Effect.provideContext(context),
+      decodedAs(Schema.Array(Anomaly), "anomalies"),
+    );
 
     const result: AnomaliesResult = {
       repo: repo.settings.name,

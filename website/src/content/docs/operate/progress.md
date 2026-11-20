@@ -125,7 +125,7 @@ ruleset chernabog-threads-protect '[{"type":"deletion"},{"type":"non_fast_forwar
 
 ## Records a source won't act on
 
-The rulesets limit who can write a thread; each source also checks every record it reads. A record is acted on when its writer is a run (a run's id), one of the repo's personas, or an observer chernabog writes as (`observer:<source>`, `observer:backfill`, `observer:acknowledged`), and its transition is one that writer may make. Any other record, such as one a person wrote by hand or one from an undeclared transition, is hidden from the source, and its item is held, with the record named in `chernabog status`. Nothing is written or commented.
+The rulesets limit who can write a thread; each source also checks every record it reads. A record is acted on when its writer is a run (a run's id), one of the repo's personas (`personas:` in `.chernabog/config.yaml`, the same list on every machine and in CI), or an observer chernabog writes as (`observer:<source>`, `observer:backfill`, `observer:acknowledged`), and its transition is one that writer may make. Any other record, such as one a person wrote by hand or one from an undeclared transition, is hidden from the source, and its item is held, with the record named in `chernabog status`. Nothing is written or commented.
 
 `chernabog progress anomalies --repo <repo>` lists every such record on an open item:
 
