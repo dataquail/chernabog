@@ -6,11 +6,12 @@
 // carries on from what the record kept.
 
 import { Claims, DEFAULT_LABELS, Epic, type LinkedIssue, Plan } from "@chernabog/sdk";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import epic from "../packages/recipes/flows/epic.ts";
 import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
@@ -245,4 +246,40 @@ describe("an epic parked in a CI job", () => {
       expect(yield* offered(fake)).toEqual([]);
     }),
   );
+});
+
+const decodeWaiting = Schema.decodeUnknownOption(Epic.Waiting);
+
+describe("the epic's waiting record, when what the run kept is too big for it", () => {
+  const pendingCi = (issue: number): Epic.PendingCi => ({
+    issue,
+    pullRequest: issue + 100,
+    lane: `lane-${issue}`,
+    branch: `auto/issue-${issue}`,
+    round: 1,
+    since: "2026-11-19T12:00:00.000Z",
+  });
+
+  test("keeps the tasks left on pending CI, dropping the attempts first", () => {
+    const attempts = Arr.makeBy(600, (index): readonly [number, number] => [1000 + index, 3]);
+    const ci = [pendingCi(10), pendingCi(11)];
+
+    const data = Epic.waitingData({
+      fingerprint: "f",
+      tasks: { attempts, handedBack: [], withPerson: [], ci },
+    });
+
+    expect(Option.map(decodeWaiting(data), (decoded) => decoded.tasks)).toEqual(
+      Option.some({ attempts: [], handedBack: [], withPerson: [], ci }),
+    );
+  });
+
+  test("keeps everything when it fits", () => {
+    const waiting: Epic.Waiting = {
+      fingerprint: "f",
+      tasks: { attempts: [[10, 1]], handedBack: [], withPerson: [], ci: [pendingCi(10)] },
+    };
+
+    expect(decodeWaiting(Epic.waitingData(waiting))).toEqual(Option.some(waiting));
+  });
 });
