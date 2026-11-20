@@ -33,6 +33,6 @@ Anything else that stops it, such as CI still red, a failing local gate, the age
 
 ## On GitHub Actions
 
-A run job doesn't wait on a billed runner for its fix's CI. When the first reading of the checks after the push is still pending, `waitForCi` records the pull request's phase as `awaiting-ci`, or `awaiting-ci-<n>` once it has pushed fixes for red CI, and the job ends. A daemon run waits as before.
+A run job doesn't wait on a billed runner for its fix's CI. When the first reading of the checks after the push is still pending, `waitForCi` records the pull request's phase as `awaiting-ci`, or `awaiting-ci-<n>` once it has pushed fixes for red CI, and the job ends. A daemon's run does the same: it records the phase and [ends at its park](/chernabog/operate/daemon/#runs-that-park), and the same source takes the pull request up again, on that machine, another or in CI.
 
 The trigger also reads those records (`Review.fixesAwaitingCi`), keyed `pr-<n>-awaiting-ci-<version>`. It holds the pull request while the checks are pending, and starts address-review on it again once they're green or red, from a finished CI run (`workflow_run: completed`) or the sweep. That run reads the review it answers again, waits on from the round the record names, fixing red CI in the author's session if it has to, and asks the reviewer again. The agent's summary of its changes was only in the job that ended, so the comment reads "Addressed review N: the commits pushed since that review."

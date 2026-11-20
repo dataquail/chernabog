@@ -52,10 +52,10 @@ The workflow body runs again on every replay. Side effects belong inside activit
 
 ## Work that goes away
 
-A run learns that its item changed only if a trigger reports a signal it waits on, or a step reads the item again. `stillValid` says when the item is gone, and the daemon asks it of every run of the flow in flight, executing or parked:
+A run learns that its item changed only if a trigger reports a signal it waits on, or a step reads the item again. `stillValid` says when the item is gone, and the daemon asks it of every run of the flow in flight:
 
 - every `limits.validityEvery` (default `5 minutes`), whatever the flow's own schedule;
-- when a signal is about to wake a parked run, before it resumes;
+- when a signal is about to wake a parked run, before it resumes, in the brief window before the daemon [ends it at its park](/chernabog/operate/daemon/#runs-that-park);
 - at once, when a persona's [notifications](/chernabog/operate/daemon/#ticks-on-events) have news about the repo.
 
 ```ts
@@ -76,6 +76,8 @@ export default defineFlow({
 A run whose item is `Gone` ends as **`superseded`**, with the reason as its summary (`#42 was closed; interrupted in implement`). An agent step in progress stops, and its session is left open, as `chernabog cancel` leaves it; any other activity in progress finishes first, and the run starts no more. Its worktrees, claim ref and claim on its issue are released as `cancel` releases them. `status`, the live view and `chernabog logs <run>` show the ending and the reason.
 
 Before `stillValid`, the daemon checks the run's [lease](/chernabog/operate/daemon/#leases): a run whose claim another run took over, after its lease expired, ends as **`lost`** instead, leaving what it put on the item to that run.
+
+On a daemon, a run that parks on a signal ends as **`ended-at-park`**, as a CI job's run ends at its phase boundary: its record says what it waits on, and the flow's trigger offers the item again once that settles. It keeps what it put on the item and lets its claim ref go; see [Runs that park](/chernabog/operate/daemon/#runs-that-park).
 
 A check that fails (GitHub down, rate limited, or past its one-minute timeout) is not `Gone`: the run carries on, the daemon's log says so once, and `status` shows the failure under the run until a check succeeds. The check runs with the persona's services, and `Run` names the run it asks about, including `subjects`, the work items it [named](/chernabog/flows/sdk/#subjects).
 
