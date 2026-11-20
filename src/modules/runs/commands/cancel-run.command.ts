@@ -8,6 +8,7 @@ import {
   RunAlreadyFinished,
   RunNotFound,
   RunNotNamed,
+  RunNotParked,
   SeveralRunsInFlight,
 } from "../domain/run/run.errors.ts";
 
@@ -42,6 +43,7 @@ export const CancelRunCommand = Command.make("CancelRunCommand", {
     AmbiguousRunPrefix,
     NoRunInFlight,
     SeveralRunsInFlight,
+    RunNotParked,
   ]),
 });
 

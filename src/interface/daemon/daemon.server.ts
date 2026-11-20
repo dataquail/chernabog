@@ -915,22 +915,22 @@ export const runDaemon = Effect.gen(function* () {
               endAs: Option.some({ ending: "ended-at-park", reason: PARKED_REASON }),
             }),
           ).pipe(
-            Effect.result,
-            Effect.flatMap((ended) =>
-              log(
-                Result.match(ended, {
-                  onSuccess: () => `ended ${run.id} (${runLabel(run)}) at its park`,
-                  onFailure: (error) =>
-                    `could not end ${run.id} (${runLabel(run)}) at its park: ${error.message}`,
-                }),
-              ),
-            ),
             Effect.tap(() =>
               Effect.sync(() => {
                 leaseNotes.delete(run.id);
                 leasesRenewed.delete(run.id);
               }),
             ),
+            Effect.as(`ended ${run.id} (${runLabel(run)}) at its park`),
+            Effect.catchTag("RunNotParked", () =>
+              Effect.succeed(`left ${run.id} (${runLabel(run)}) running: a signal woke it`),
+            ),
+            Effect.catch((error) =>
+              Effect.succeed(
+                `could not end ${run.id} (${runLabel(run)}) at its park: ${error.message}`,
+              ),
+            ),
+            Effect.flatMap(log),
           );
         }
       }).pipe(Effect.catchCause((cause) => log(`ending parked runs failed: ${String(cause)}`)));

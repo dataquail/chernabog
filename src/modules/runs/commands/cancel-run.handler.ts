@@ -21,7 +21,12 @@ import {
   CancelTarget,
   type EndAs,
 } from "../domain/run/cancelled-run.value-object.ts";
-import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
+import {
+  type CleanupFailed,
+  RunAlreadyFinished,
+  RunNotFound,
+  RunNotParked,
+} from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
@@ -287,11 +292,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   );
 
   // The run's ending and its waits go together; stopping its workflow and
-  // cleaning up after it come once they have, and saying it ended last.
+  // cleaning up after it come once they have, and saying it ended last. A run
+  // ended at its park must still be waiting: a signal delivered since it was
+  // found parked took its wait and woke it, and it is left running.
   const parked = yield* Effect.gen(function* () {
-    yield* runs.upsertOne(cancelled);
-
     const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
+
+    if (cancelled.status === "ended-at-park" && waiting.length === 0) {
+      return yield* new RunNotParked({ runId: found.id });
+    }
+
+    yield* runs.upsertOne(cancelled);
 
     for (const wait of waiting) {
       yield* waits.deleteOne(wait);

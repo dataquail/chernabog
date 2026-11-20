@@ -399,6 +399,32 @@ describe("cancelRunHandler", () => {
     ),
   );
 
+  const wokenEngine = stoppingEngine("w");
+  const wokenHoldings = fakeHoldings({ claimRefs: { w: ["issue-8"] } });
+
+  effect("a run a signal woke since it was found parked is left running", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        cancelRunHandler({
+          target: byId("w"),
+          by: "chernabog",
+          closeSessions: false,
+          endAs: Option.some<EndAs>({ ending: "ended-at-park", reason: "it waits on CI" }),
+        }),
+      );
+
+      expect(failure._tag).toBe("RunNotParked");
+      expect([wokenEngine.interrupted, wokenEngine.notes]).toEqual([[], []]);
+      expect(yield* statusOf("w")).toEqual(Option.some("running"));
+    }).pipe(
+      Effect.provide(
+        runtime(wokenEngine, wokenHoldings, {
+          runs: [run("w", { flow: "implement", itemKey: "issue-8" })],
+        }),
+      ),
+    ),
+  );
+
   const closing = stoppingEngine("i");
 
   const closingHoldings = fakeHoldings({
