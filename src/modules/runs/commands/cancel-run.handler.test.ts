@@ -371,6 +371,34 @@ describe("cancelRunHandler", () => {
       ),
   );
 
+  const parkedEngine = stoppingEngine("p");
+  const parkedHoldings = fakeHoldings({ claimRefs: { p: ["issue-8"] } });
+
+  effect("ends a run still waiting on a signal at its park, letting its claim ref go", () =>
+    Effect.gen(function* () {
+      const ended = yield* cancelRunHandler({
+        target: byId("p"),
+        by: "chernabog",
+        closeSessions: false,
+        endAs: Option.some<EndAs>({ ending: "ended-at-park", reason: "it waits on CI" }),
+      });
+
+      expect(ended.run.status).toBe("ended-at-park");
+      expect(parkedEngine.notes).toEqual([
+        `p: ended-at-park: ${Option.getOrThrow(ended.run.summary)}`,
+      ]);
+      expect(ended.releasedClaims).toEqual(["refs/chernabog/claims/issue-8"]);
+      expect(yield* statusOf("p")).toEqual(Option.some("ended-at-park"));
+    }).pipe(
+      Effect.provide(
+        runtime(parkedEngine, parkedHoldings, {
+          runs: [run("p", { flow: "implement", itemKey: "issue-8" })],
+          waits: [wait("p", "ci")],
+        }),
+      ),
+    ),
+  );
+
   const closing = stoppingEngine("i");
 
   const closingHoldings = fakeHoldings({

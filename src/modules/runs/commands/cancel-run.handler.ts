@@ -62,7 +62,11 @@ const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
 const noteOf = (ended: RunRoot) => {
   const summary = Option.getOrElse(ended.summary, () => ended.status);
 
-  if (ended.status === "superseded" || ended.status === "lost") {
+  if (
+    ended.status === "superseded" ||
+    ended.status === "lost" ||
+    ended.status === "ended-at-park"
+  ) {
     return `${ended.status}: ${summary}`;
   }
 
