@@ -3,8 +3,10 @@
 // phase read that no flow records, or recorded where nothing reads it though a
 // source the SDK has would (docs/run-progress/handoffs.md, question 8).
 
-import { Compose, Phases } from "@chernabog/sdk";
+import { Compose, Ledger, Phase, type PhaseRecord, Phases, PhaseWriter } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -373,5 +375,67 @@ describe("Compose.check of progress.advance", () => {
     );
 
     expect(Compose.check(wired).map((problem) => problem.path)).toContain("steps[0].in.phase");
+  });
+});
+
+// The ledger's check and the compiler's go by one catalogue of the SDK's
+// phases, by name and kind of item (Phases.misplacedOn), so they can't
+// disagree: what a document may record, a run of it may, and the other way.
+describe("one catalogue, for the compiler and the ledger", () => {
+  const ITEMS = { issue: "issue-3", "pull-request": "pr-7", epic: "epic-3" } as const;
+
+  // A run's record of `phase`, as a run writes it: by a run's id.
+  const asRun = (phase: string): PhaseRecord => ({
+    phase: Schema.decodeSync(Phase)(phase),
+    from: Option.none(),
+    by: Schema.decodeSync(PhaseWriter)("00000000-0000-4000-8000-000000000001"),
+    version: "v1",
+    at: DateTime.makeUnsafe(0),
+    data: Option.none(),
+  });
+
+  const anomaly = (item: Phases.ItemKind, phase: string) =>
+    Option.map(Ledger.anomalyIn([], ITEMS[item], asRun(phase)), (found) => found.why);
+
+  test("every phase each recipe's document records, and each source reconciles, passes both", () => {
+    for (const document of everyRecipe) {
+      expect(Compose.check(document)).toEqual([]);
+
+      for (const recorded of Compose.progressOf(document).records) {
+        expect([document.flow, recorded.phase, anomaly(recorded.item, recorded.phase)]).toEqual([
+          document.flow,
+          recorded.phase,
+          Option.none(),
+        ]);
+      }
+    }
+
+    expect(Compose.phaseGaps(everyRecipe).filter((gap) => gap.gap === "misplaced")).toEqual([]);
+  });
+
+  test("refuses, in both, another kind's phase that a document records", () => {
+    const advanced = postMergeWith(`  - id: watching
+    use: progress.advance
+    with: { phase: waiting }
+`);
+
+    expect(Compose.check(advanced).map((problem) => problem.message)).toContain(
+      "waiting isn't a phase of a pull-request, so a run of this flow can't record it",
+    );
+    expect(Compose.phaseGaps([...others, advanced]).map((gap) => gap.gap)).toContain("misplaced");
+    expect(anomaly("pull-request", "waiting")).toEqual(
+      Option.some("waiting isn't a phase of a pull-request"),
+    );
+  });
+
+  test("takes a phase two kinds share, and a later round's, on either", () => {
+    for (const item of ["issue", "pull-request"] as const) {
+      expect(Phases.misplacedOn(item, "awaiting-ci-3")).toEqual(Option.none());
+      expect(anomaly(item, "awaiting-ci")).toEqual(Option.none());
+    }
+
+    expect(Phases.misplacedOn("epic", "awaiting-ci")).toEqual(
+      Option.some("awaiting-ci isn't a phase of an epic"),
+    );
   });
 });
