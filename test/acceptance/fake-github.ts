@@ -529,14 +529,29 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return sha;
   };
 
+  // A commit's message and committer date, as GitHub gives them, read with one
+  // git call and kept: a commit never changes, and the epic tests read every
+  // thread's tip again and again, so a git process per read is what they wait on.
+  const commitFacts = new Map<string, { readonly message: string; readonly date: string }>();
+
+  const factsOf = (oid: string) =>
+    Option.getOrElse(Option.fromUndefinedOr(commitFacts.get(oid)), () => {
+      const [date = "", ...message] = git("log", "-1", "--format=%cI%n%B", oid).split("\n");
+      const facts = { date, message: message.join("\n").trim() };
+
+      commitFacts.set(oid, facts);
+
+      return facts;
+    });
+
   // When a commit was made, as GitHub gives it: its committer date.
-  const committedDate = (oid: string) => git("log", "-1", "--format=%cI", oid).trim();
+  const committedDate = (oid: string) => factsOf(oid).date;
 
   // A thread's tip as the Progress adapter reads it: its commit, message and date.
   const threadTarget = (oid: string) => ({
     oid,
-    message: git("log", "-1", "--format=%B", oid),
-    committedDate: committedDate(oid),
+    message: factsOf(oid).message,
+    committedDate: factsOf(oid).date,
   });
 
   // The Progress adapter's GraphQL (#364): a thread's ref, every thread under
