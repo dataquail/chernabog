@@ -1109,10 +1109,10 @@ const flow = defineFlow({
 // rather than only on the schedule: an issue labelled auto:epic, what moves
 // an epic's layers (a task closed or relabelled, a push to, review of or merge
 // of a layer's pull request), and a finished CI run, which settles a task's
-// CI the run left pending; its branch is the task's, which names no epic, so
-// every item is looked at. Its trigger reads the epic's phase, so a phase
-// event wakes it too.
+// or a layer's CI the run left pending: the plan looks only at the epic whose
+// waiting record names the run's pull request. Its trigger reads the epic's
+// phase, so a phase event wakes it too.
 export default Events.declare(flow, {
-  events: [Events.issueLabelled, ...Events.layerChanged, Events.baseCiCompleted],
+  events: [Events.issueLabelled, ...Events.layerChanged, Events.ciRunCompleted],
   readsPhases: true,
 });

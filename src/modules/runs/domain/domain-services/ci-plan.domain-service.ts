@@ -23,6 +23,11 @@ import { Routing } from "./routing.domain-service.ts";
 export type EventItem =
   | { readonly kind: "issue" | "pull-request"; readonly number: number }
   | { readonly kind: "branch" | "item"; readonly name: string }
+  | {
+      readonly kind: "ci-run";
+      readonly sha: string;
+      readonly pullRequests: ReadonlyArray<number>;
+    }
   | { readonly kind: "repo" };
 
 // A flow an event wakes, for one persona, and the item it concerns.
@@ -116,8 +121,10 @@ const claimName = (key: string) =>
 // finds the item claimed and starts no job of its own.
 const reservationFor = (workflowRun: string, claim: string) => `ci-plan-${workflowRun}-${claim}`;
 
-// Whether an event's item is the work item with this key. A branch names no
-// key: resolveBranch turns it into what it does name first.
+// Whether an event's item is the work item with this key. A branch and a CI
+// run name no key: resolveBranch, and the records that name a CI run's
+// commit or pull requests (the SDK's Events.parkedOn), turn each into what it
+// does name first.
 const concerns = (concerned: EventItem, key: string) => {
   switch (concerned.kind) {
     case "repo":
@@ -131,6 +138,7 @@ const concerns = (concerned: EventItem, key: string) => {
     case "item":
       return key === concerned.name || claimName(key) === concerned.name;
     case "branch":
+    case "ci-run":
       return false;
   }
 };
@@ -165,6 +173,8 @@ const describeConcerned = (concerned: EventItem) => {
     case "item":
     case "branch":
       return concerned.name;
+    case "ci-run":
+      return `what waits on CI at ${concerned.sha.slice(0, 7)}`;
   }
 };
 

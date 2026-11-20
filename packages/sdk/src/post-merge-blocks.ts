@@ -765,7 +765,9 @@ export const postMergeBlocks = {
       }).pipe(reportAs("trigger")),
     contributes: {
       settings: { ...Settings.Ci.fields, ...Own.fields },
-      wakeEvents: [Events.baseCiCompleted],
+      // Push CI on the default branch settles a parked watch, whose record
+      // names the merge commit.
+      wakeEvents: [Events.mergeCiCompleted],
     },
   }),
 

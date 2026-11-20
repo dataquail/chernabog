@@ -9,7 +9,9 @@ import { describe, expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import epicRecipe from "../packages/recipes/flows/epic.ts";
 import implementRecipe from "../packages/recipes/flows/implement.ts";
+import postMergeRecipe from "../packages/recipes/flows/post-merge.ts";
 import reviewRecipe from "../packages/recipes/flows/review.ts";
 import { CiPlan } from "../src/modules/runs/domain/domain-services/ci-plan.domain-service.ts";
 
@@ -120,5 +122,89 @@ describe("the plan job's guards", () => {
         sender: { login: "a-maintainer" },
       }),
     ).toEqual([]);
+  });
+});
+
+// A finished CI run wakes only what waits on it: the items whose record names
+// its head commit or one of its pull requests (Events.parkedOn), not every
+// item. post-merge waits on push CI on the default branch, a merge commit's;
+// the epic on a task's or a layer's pull request, which its waiting record
+// names, since that CI's branch names no epic.
+describe("what a finished CI run wakes", () => {
+  const ciFlows = [
+    { flow: "post-merge", personas: ["author-bot"], recipe: postMergeRecipe },
+    { flow: "epic", personas: ["author-bot"], recipe: epicRecipe },
+  ];
+
+  const ciTargets = (payload: Json) =>
+    CiPlan.targets(
+      ciFlows.map(({ flow, personas }) => ({ flow, personas })),
+      {
+        kind: "event",
+        woken: Events.wokenBy(
+          Events.workflowOn(
+            ciFlows.map(({ flow, personas, recipe }) => ({
+              flow,
+              personas,
+              declared: Option.getOrThrow(Events.of(recipe)),
+            })),
+            { ciWorkflows: ["CI"], own: "chernabog" },
+          ).routes,
+          "workflow_run",
+          payload,
+        ),
+      },
+    );
+
+  // A push's run names no pull request; a pull request's run names #7.
+  const run = (event: "push" | "pull_request", branch: string) => ({
+    action: "completed",
+    workflow_run: {
+      name: "CI",
+      event,
+      head_branch: branch,
+      head_sha: "c0ffee0000000000000000000000000000000000",
+      pull_requests: { push: [], pull_request: [{ number: 7 }] }[event],
+    },
+    repository: { default_branch: "main" },
+    sender: { login: "author-bot" },
+  });
+
+  test("a pull request's CI looks only at what waits on its commit or pull request", () => {
+    expect(
+      ciTargets(run("pull_request", "auto/issue-12")).map((target) => [target.flow, target.only]),
+    ).toEqual([
+      [
+        "epic",
+        Option.some([
+          { kind: "ci-run", sha: "c0ffee0000000000000000000000000000000000", pullRequests: [7] },
+        ]),
+      ],
+    ]);
+  });
+
+  test("push CI on the default branch wakes post-merge too, for its merge commit", () => {
+    expect(ciTargets(run("push", "main")).map((target) => target.flow)).toEqual([
+      "post-merge",
+      "epic",
+    ]);
+    expect(ciTargets(run("push", "auto/issue-12")).map((target) => target.flow)).toEqual(["epic"]);
+  });
+
+  test("the items it concerns are those whose record names the commit or a pull request", () => {
+    const records = [
+      ["epic-4", { tasks: { ci: [{ pullRequest: 7, round: 1, since: "x" }] } }],
+      ["pr-12", { sha: "c0ffee0000000000000000000000000000000000", since: "x" }],
+      ["pr-13", { sha: "beef", since: "x" }],
+      ["epic-5", { tasks: { ci: [{ pullRequest: 8, round: 1, since: "x" }] } }],
+      ["issue-3", {}],
+    ] as const;
+
+    expect(
+      Events.parkedOn(records, {
+        sha: "c0ffee0000000000000000000000000000000000",
+        pullRequests: [7],
+      }),
+    ).toEqual(["epic-4", "pr-12"]);
   });
 });

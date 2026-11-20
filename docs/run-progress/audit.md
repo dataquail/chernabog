@@ -69,8 +69,9 @@ finished: a second advance to `watched` by the same writer is a retry that
 keeps the old data. The run that takes the watch up records `watched` again.
 `since` in the data, not the record's `at`, is when the watch began, so the
 grace and the timeout count across the runs that take it up. Both forms wake
-on any finished CI run (`Events.baseCiCompleted`): a push run's branch is the
-base, which names no item.
+on push CI finishing on the default branch (`Events.mergeCiCompleted`), and the
+plan job looks only at the pull request whose record names that merge commit
+(`Events.parkedOn`).
 `plan.awaitAnswer` resumes in a repeat's round: the record keeps the round, and
 `plan.propose` keeps its spec and round and reads the plan back from its comment.
 `pr.land` resumes from its hold's record, which still names the work item that

@@ -1103,9 +1103,9 @@ export const epicBlocks = {
     progressOn: ["moved"],
     contributes: {
       settings: { ...Settings.Stacks.fields, ...Settings.Ci.fields },
-      // A finished CI run settles a refresh's CI; its branch is the layer's,
-      // which names no epic.
-      wakeEvents: [Events.baseCiCompleted],
+      // A finished CI run settles a refresh's CI: its pull request is the
+      // layer's, which the epic's waiting record names (layers.ci).
+      wakeEvents: [Events.ciRunCompleted],
     },
   }),
 
@@ -1175,9 +1175,9 @@ export const epicBlocks = {
     progressOn: ["moved"],
     contributes: {
       settings: Settings.Ci.fields,
-      // A finished CI run settles a task's CI; its branch is the task's, which
-      // names no epic.
-      wakeEvents: [Events.baseCiCompleted],
+      // A finished CI run settles a task's CI: its pull request is the
+      // task's, which the epic's waiting record names (tasks.ci).
+      wakeEvents: [Events.ciRunCompleted],
     },
   }),
 

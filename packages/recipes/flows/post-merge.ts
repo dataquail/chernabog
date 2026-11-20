@@ -748,11 +748,11 @@ const flow = defineFlow({
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
 // rather than only on the schedule: a pull request closing, merged among them,
-// and a CI run finishing, which may settle a parked watch's push CI. A push
-// CI run's branch is the base, which names no item, so it wakes the plan for
-// every one. Only its own runs record the phases its trigger reads, and a
-// park settles nothing, so a phase event doesn't wake it.
+// and push CI finishing on the default branch, which settles a parked watch:
+// the plan looks only at the pull request whose record names that merge
+// commit. Only its own runs record the phases its trigger reads, and a park
+// settles nothing, so a phase event doesn't wake it.
 export default Events.declare(flow, {
-  events: [Events.pullRequestClosed, Events.baseCiCompleted],
+  events: [Events.pullRequestClosed, Events.mergeCiCompleted],
   readsPhases: false,
 });
