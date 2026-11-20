@@ -627,14 +627,23 @@ const decodeWaiting = Schema.decodeUnknownOption(Waiting);
 const NOTHING_KEPT: TaskKeep = { attempts: [], handedBack: [], withPerson: [] };
 
 // `waiting` as record data, as much of it as a record takes: without the
-// layers' upkeep, then without the tasks', when it is too big.
-const asData = (waiting: Waiting) => {
+// layers' upkeep, then without the tasks' but for those left on pending CI,
+// then with neither, when it is too big. The tasks left on pending CI go
+// last: nothing but this record takes them up again.
+export const waitingData = (waiting: Waiting) => {
   const { layers: _layers, ...tasksOnly } = waiting;
   const least: Waiting = { fingerprint: waiting.fingerprint, tasks: NOTHING_KEPT };
 
+  const pendingCiOnly: Waiting = {
+    ...least,
+    tasks: { ...NOTHING_KEPT, ci: waiting.tasks.ci ?? [] },
+  };
+
   return encodeWaiting(
     Option.getOrElse(
-      Arr.findFirst([waiting, tasksOnly], (kept) => isPhaseData(encodeWaiting(kept))),
+      Arr.findFirst([waiting, tasksOnly, pendingCiOnly], (kept) =>
+        isPhaseData(encodeWaiting(kept)),
+      ),
       () => least,
     ),
   );
@@ -656,7 +665,7 @@ export const park = (
   Effect.gen(function* () {
     yield* activity(
       `epic-waiting-${round}`,
-      Phases.record(Claims.epic(epic), Phases.PHASES.epic.waiting, asData(waiting), {
+      Phases.record(Claims.epic(epic), Phases.PHASES.epic.waiting, waitingData(waiting), {
         always: true,
       }),
     );
