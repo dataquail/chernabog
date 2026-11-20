@@ -24,7 +24,8 @@ const PERSON = "a-person";
 // nobody for a review; and whose issue is in progress, with no record.
 const fresh = () => makeFake("approve");
 
-const survey = (fake: Fake) => onFake(fake, Backfill.survey([ME]));
+// As the repo's personas, by its committed config: the fake's, ME.
+const survey = (fake: Fake) => onFake(fake, Backfill.survey);
 
 // What backfill writes: the survey, then each finding written.
 const backfill = (fake: Fake) =>

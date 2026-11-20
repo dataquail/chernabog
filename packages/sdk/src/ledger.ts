@@ -15,6 +15,7 @@ import {
   type PhaseRecord,
   PhaseWriter,
   Progress,
+  Repo,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -35,26 +36,26 @@ export const catalogue = transitions;
 export const anomalyIn = (personas: ReadonlyArray<string>, item: string, record: PhaseRecord) =>
   check(catalogue, personas)(item, record);
 
-// Every record that fails the check, as the repo's personas, `logins`, see
-// it. Plain JSON, as the binary reads it from the repo's SDK
-// (loadRepoLedger) and hands it back to `acknowledge`.
-export const survey = (logins: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const all = yield* Progress.use((progress) => progress.readAll);
-    const judge = check(catalogue, logins);
-    const found: Array<Anomaly> = [];
+// Every record that fails the check, as the repo's personas, by its
+// committed config (Repo.personas), see it. Plain JSON, as the binary reads
+// it from the repo's SDK (loadRepoLedger) and hands it back to `acknowledge`.
+export const survey = Effect.gen(function* () {
+  const { personas } = yield* Repo;
+  const all = yield* Progress.use((progress) => progress.readAll);
+  const judge = check(catalogue, personas);
+  const found: Array<Anomaly> = [];
 
-    for (const [item, record] of all) {
-      for (const anomaly of Option.toArray(judge(item, record))) {
-        found.push(anomaly);
-      }
+  for (const [item, record] of all) {
+    for (const anomaly of Option.toArray(judge(item, record))) {
+      found.push(anomaly);
     }
+  }
 
-    return Arr.sort(
-      found,
-      Order.mapInput(Order.String, (anomaly: Anomaly) => anomaly.item),
-    );
-  });
+  return Arr.sort(
+    found,
+    Order.mapInput(Order.String, (anomaly: Anomaly) => anomaly.item),
+  );
+});
 
 // What acknowledging one anomaly did: recorded again, or left, because its
 // record moved since the survey read it.

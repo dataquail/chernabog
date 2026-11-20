@@ -258,6 +258,12 @@ export const RepoConfigFile = Schema.Struct({
         "Whether each phase an item advances to is announced with a repository_dispatch of chernabog-phase, which starts this repo's CI workflow for the item's next step. Every machine announces, a laptop's too. Default true; false sends none, and a CI sweep finds the item instead.",
     }),
   ),
+  personas: Schema.optionalKey(
+    Strings.annotate({
+      description:
+        "The GitHub logins chernabog acts as on this repo: the only place that says who its personas are. A record a persona writes by hand is trusted only from one of these, on every machine and in CI; machine config's github: maps each to its credentials. None when unset.",
+    }),
+  ),
   reviewers: Schema.optionalKey(
     Strings.annotate({
       description: `The reviewer pool, by GitHub login. ${deprecated("reviewers")}`,
@@ -1159,6 +1165,7 @@ const mergePersona = (
     const settings: RepoSettings = {
       name: repoNameOf(enrolled),
       slug: enrolled.repo,
+      personas: repo.personas ?? [],
       path: enrolled.path,
       baseBranch: repo.baseBranch ?? defaultBranch,
       account: agentAccounts[agent] ?? ownAccount(account),

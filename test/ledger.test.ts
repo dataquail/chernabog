@@ -12,7 +12,6 @@ import {
   Compose,
   type Flow,
   Ledger,
-  Machine,
   Phase,
   type PhaseRecord,
   Phases,
@@ -93,14 +92,10 @@ const changesAsked = () => {
 
 const PERSONAS = ["chernabog-bot"];
 
-// What address-review's trigger finds, as a machine whose personas are PERSONAS.
+// What address-review's trigger finds, in a repo whose personas, by its
+// committed config, are PERSONAS (the fake's).
 const found = <E, R>(fake: Fake, flow: Effect.Effect<Flow, E, R>) =>
-  Effect.flatMap(flow, (loaded) =>
-    flowTriggered(fake, loaded).pipe(
-      Effect.provideService(Machine, { personas: PERSONAS }),
-      Effect.orDie,
-    ),
-  );
+  Effect.flatMap(flow, (loaded) => flowTriggered(fake, loaded).pipe(Effect.orDie));
 
 const startable = (items: ReadonlyArray<WorkItem>) =>
   items.filter(
@@ -250,7 +245,7 @@ describe("a person's fix for an anomaly", () => {
       fake.recordPhase(Phases.issueItem(3), Phases.PHASES.issue.handedOff);
       fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory", data: { kept: true } });
 
-      const anomalies = yield* onFake(fake, Ledger.survey(PERSONAS));
+      const anomalies = yield* onFake(fake, Ledger.survey);
 
       expect(anomalies.map((one) => [one.item, one.by, one.phase])).toEqual([
         [PR_ITEM, "mallory", "changes-asked"],
@@ -265,7 +260,7 @@ describe("a person's fix for an anomaly", () => {
         by: Ledger.ACKNOWLEDGED,
         data: Option.some({ kept: true }),
       });
-      expect(yield* onFake(fake, Ledger.survey(PERSONAS))).toEqual([]);
+      expect(yield* onFake(fake, Ledger.survey)).toEqual([]);
       expect(startable(yield* found(fake, recipe)).length).toBe(1);
     }),
   );
@@ -274,7 +269,7 @@ describe("a person's fix for an anomaly", () => {
     Effect.gen(function* () {
       const fake = changesAsked();
       fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
-      const anomalies = yield* onFake(fake, Ledger.survey(PERSONAS));
+      const anomalies = yield* onFake(fake, Ledger.survey);
       fake.recordPhase(PR_ITEM, P.approved, { by: "mallory" });
 
       const acknowledged = yield* onFake(fake, Ledger.acknowledge(anomalies));

@@ -95,6 +95,15 @@ flows:
   review: { runners: [alice, bob] }
 ```
 
+### Personas
+
+`personas` names the GitHub logins Chernabog acts as in the repo. It is the only place that says who the repo's personas are: every machine and every CI job checks the writer of an item's [progress record](/chernabog/operate/progress/#records-a-source-wont-act-on) against it, and `chernabog progress backfill` and `progress anomalies` read the repo as these logins. Machine config's [`github:`](#github-personas) only maps a persona to its credentials. Unset, the repo has no personas: a record is trusted from a run or an observer only.
+
+```yaml
+# .chernabog/config.yaml
+personas: [chernabog-author, chernabog-reviewer]
+```
+
 ### Reviewers
 
 `reviewers`, a [flow setting](#flow-settings), names the team's reviewer pool. Once a pull request's CI is green, `implement` asks one of them, at random, to review it, never the pull request's author. The `review` flow then runs as that persona, and `re-review` when it's asked again; see [the review loop](/chernabog/work/flows/#the-reviewer-pool). Without a pool, or with only the author in it, the pull request is labelled `auto:needs-review` for a person.

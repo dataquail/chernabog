@@ -154,6 +154,11 @@ export const RepoSettings = Schema.Struct({
   // The team's reviewer pool, by GitHub login: a pull request with green CI
   // gets one of them, never its author. None, when the team names no pool.
   reviewers: Schema.optionalKey(Strings),
+  // The repo's personas, by GitHub login, as its committed config lists them
+  // (personas:): the only place that says who they are, so the one set every
+  // machine and CI job checks a record's writer against. Machine config's
+  // github: only maps a persona to its credentials.
+  personas: Strings,
   // The GitHub login this run acts as, when machine config names personas;
   // absent, it acts as whoever the daemon is.
   persona: Schema.optionalKey(Schema.String),
