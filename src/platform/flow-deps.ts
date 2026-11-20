@@ -38,12 +38,7 @@ import { ConfigError, IncompatibleConfig } from "./config-error.ts";
 import { EFFECT_VERSION } from "./effect-modules.ts";
 import { HostEnvironment } from "./environment.ts";
 import { Exec } from "./exec.ts";
-import {
-  flowImports,
-  packageDirOf,
-  type PackageOverrides,
-  recordsEveryPark,
-} from "./flow-loader.ts";
+import { flowImports, packageDirOf, type PackageOverrides } from "./flow-loader.ts";
 import { bunExecutable } from "./self.ts";
 import { VERSION } from "./version.ts";
 
@@ -381,9 +376,9 @@ const coreAdvice = (support: CoreSupport, older: string) => {
 };
 
 // The installed SDK's version, or why this binary can't run it: it isn't
-// installed, isn't the version bun.lock pins, needs a core this binary
-// doesn't provide, or is from before every park recorded its wait (the
-// floor: this binary ends a run at every park).
+// installed, isn't the version bun.lock pins, or needs a core this binary
+// doesn't provide. That is also the SDK floor: every SDK from before every
+// park recorded its wait needs core 1, which this binary no longer provides.
 const installedSdk = (configDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -418,16 +413,6 @@ const installedSdk = (configDir: string) =>
     if (support !== "supported") {
       return yield* incompatible(
         `its flows are written from ${SDK_PACKAGE} ${sdk.version}, which needs ${CORE_PACKAGE} ${range.value}, and chernabog ${VERSION} provides ${providedRange}; ${coreAdvice(support, `move .chernabog/ to a newer ${SDK_PACKAGE} with ${UPGRADE_COMMAND}`)}`,
-      );
-    }
-
-    const parks = yield* recordsEveryPark(configDir).pipe(
-      Effect.mapError((error) => new ConfigError({ message: `.chernabog/: ${error.message}` })),
-    );
-
-    if (!parks) {
-      return yield* incompatible(
-        `its flows are written from ${SDK_PACKAGE} ${sdk.version}, from before every wait recorded where its item waits, and chernabog ${VERSION} ends a run at every wait; run ${UPGRADE_COMMAND} and commit the result`,
       );
     }
 

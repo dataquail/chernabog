@@ -142,8 +142,13 @@ change.
      doesn't interpret it, and the compare-and-set compares phases, not data.
      On the git adapter it is a `Data:` trailer of one-line JSON.
 
-   Both fields are additive to core (ADR 4): a new optional argument and two
-   new fields on a returned record.
+   `at` and `data` are required on `PhaseRecord`: every adapter provides
+   both, and a reader never has to ask whether a record has a time. That
+   is a breaking change to a port (ADR 4), since an adapter written for
+   core 1 provides neither, so core's major moves to 2. The binary provides
+   core 2 alone, with no adapter over the old port: backwards compatibility
+   is not kept, and every SDK published before this release, all of which
+   need core 1, is refused until `recipes upgrade` moves it on.
 
    A flow document resumes at the node it parked on, found by a **node id the
    record's data names**, not by the phase. One phase can be recorded at
@@ -280,9 +285,11 @@ change.
      for runs from before claim refs are gone too. Backfill is the
      upgrade's migration step instead.
    - **An SDK floor.** The daemon and `ci plan` refuse a repo whose SDK is
-     older than this release, one with no `Phases.park`, as they refuse
-     one that needs a core they don't provide, and `doctor` says to run
-     `chernabog recipes upgrade`.
+     older than this release, and `doctor` says to run
+     `chernabog recipes upgrade`. The floor is core's major: every older
+     SDK needs core 1, and this binary provides core 2 only, so it is
+     refused as any SDK is that needs a core the binary doesn't provide,
+     with no check of its own.
 
 5. **The ledger is tamper-evident, not tamper-proof.** Every record names its
    writer (ADR 19, decision 5). Before a source acts on a record, it checks

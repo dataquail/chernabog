@@ -265,10 +265,8 @@ describe("importing flows from a recipe package", () => {
   );
 });
 
-// A .chernabog/ with an SDK installed whose package.json needs `coreRange`,
-// and that parks through Phases.park unless `parks` is false: an SDK from
-// before every park recorded its wait.
-const withSdkNeeding = (coreRange: Option.Option<string>, parks = true) =>
+// A .chernabog/ with an SDK installed whose package.json needs `coreRange`.
+const withSdkNeeding = (coreRange: Option.Option<string>) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const configDir = yield* fs.makeTempDirectoryScoped({ prefix: "chernabog-sdk-" });
@@ -285,10 +283,6 @@ const withSdkNeeding = (coreRange: Option.Option<string>, parks = true) =>
         }),
       }),
     );
-    yield* fs.writeFileString(
-      `${configDir}/node_modules/@chernabog/sdk/index.ts`,
-      `export const Phases = { ${["park: () => undefined"].filter(() => parks).join("")} };\n`,
-    );
 
     return configDir;
   });
@@ -298,22 +292,6 @@ describe("the repo's SDK", () => {
     Effect.gen(function* () {
       yield* checkInstalled(yield* withSdkNeeding(Option.some(`^${BUNDLED_CORE}`)));
     }),
-  );
-
-  effect(
-    "refuses one from before every park recorded its wait, saying to run recipes upgrade",
-    () =>
-      Effect.gen(function* () {
-        const old = yield* Effect.flip(
-          Effect.flatMap(withSdkNeeding(Option.some(`^${BUNDLED_CORE}`), false), checkInstalled),
-        );
-
-        expect(old._tag).toBe("IncompatibleConfig");
-        expect(old.message).toContain(
-          "its flows are written from @chernabog/sdk 9.9.9, from before every wait recorded where its item waits",
-        );
-        expect(old.message).toEndWith("run chernabog recipes upgrade and commit the result");
-      }),
   );
 
   effect("refuses as incompatible one that isn't installed, saying to install it", () =>
