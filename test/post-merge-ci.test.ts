@@ -47,8 +47,6 @@ const ENGINE_TIMEOUT = 60_000;
 // The signal a parked watch waits on, which nothing sends: the run ends there.
 const MERGE_CI_SETTLED = "merge-ci-settled";
 
-const WATCHED_MARKER = `<!-- chernabog-post-merge-watched {"sha":"merge5678"} -->`;
-
 const RUN = "https://github.com/dataquail/demo/actions/runs/41/job/42";
 
 const RED: CiReport = {
@@ -129,7 +127,7 @@ for (const [form, loading] of forms) {
       const data = yield* parkedData;
       const since = DateTime.subtractDuration(yield* DateTime.now, ago);
       const fake = mergedPull();
-      fake.comment(`Watching CI on \`main\` at ${MERGE}. ${WATCHED_MARKER}`);
+      fake.comment(`Watching CI on \`main\` at ${MERGE}.`);
       fake.commitCi.set(MERGE, ci);
 
       fake.recordPhase(PR_ITEM, "awaiting-merge-ci", {
@@ -305,16 +303,6 @@ for (const [form, loading] of forms) {
         });
 
         expect(fake.comments).toEqual([]);
-        expect(yield* offered(fake)).toEqual([]);
-      }),
-    );
-
-    effect("with only the marker from before records, isn't watched again", () =>
-      Effect.gen(function* () {
-        const fake = mergedPull();
-        fake.recordPhase(PR_ITEM, "approved", { at: yield* DateTime.now });
-        fake.comment(`<!-- chernabog-post-merge-watched {"sha":"${MERGE}"} -->`);
-
         expect(yield* offered(fake)).toEqual([]);
       }),
     );

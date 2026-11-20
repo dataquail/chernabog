@@ -72,17 +72,6 @@ const holderOf = (fake: Fake, ref: string) =>
 const claimsMade = (fake: Fake) =>
   [...fake.commits.values()].flatMap((message) => Option.toArray(Claims.holderOf(message)));
 
-// An unattended run of an earlier version's claim: its marker names no claim ref.
-const legacyMarker = (fake: Fake) => {
-  fake.comment(
-    claimMarker.write({
-      runId: "an-earlier-version",
-      claimedAt: "2026-10-20T00:00:00Z",
-      branch: `auto/issue-${ISSUE}`,
-    }),
-  );
-};
-
 describe("a claim commit", () => {
   effect("records whose run holds the claim, and reads back", () =>
     Effect.sync(() => {
@@ -181,24 +170,6 @@ describe("claiming an issue", () => {
       expect(fake.requests).toHaveLength(1);
       expect(fake.refs.has(ISSUE_REF)).toBe(false);
     }),
-  );
-
-  effect(
-    "while runs of an earlier version hold issues by their branch, leaves such a one to them",
-    () =>
-      Effect.gen(function* () {
-        const fake = makeFake("approve", POOL);
-        fake.existing.branch = true;
-        legacyMarker(fake);
-        const skipped = yield* runToEnd(implementing, fake, work);
-        expect(skipped.status).toBe("skipped");
-        expect(summaryOf(skipped)).toBe(
-          `#${ISSUE} is already claimed (auto/issue-${ISSUE} exists)`,
-        );
-        // The claim ref it took to find out goes back.
-        expect(fake.refs.has(ISSUE_REF)).toBe(false);
-        expect(fake.requests).toEqual([]);
-      }),
   );
 });
 
@@ -366,6 +337,7 @@ describe("the flows that push to a pull request", () => {
     const fake = makeFake("approve");
     fake.setLabels(PULL, []);
     fake.merge.state = "dirty";
+    fake.recordPhase(`pr-${PULL}`, "review-asked");
 
     return fake;
   };
@@ -374,6 +346,8 @@ describe("the flows that push to a pull request", () => {
   const changesAsked = () => {
     const fake = makeFake("approve");
     fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+    // As review.round recorded it.
+    fake.recordPhase(`pr-${PULL}`, "changes-asked");
     fake.comment(
       reviewMarker.write({
         sha: HEAD,
@@ -455,8 +429,7 @@ describe("the flows that push to a pull request", () => {
       expect(fake.git.pushes).toBe(1);
       expect(holderOf(fake, PULL_REF)).toEqual(Option.some(RESOLVING));
 
-      // Once it ends, the review is a person's, which no run recorded: it
-      // moves the pull request to changes-asked, and is keyed by that record.
+      // Once it ends, the pull request is address-review's, by its record.
       fake.knowRun(false);
       expect((yield* flowTriggered(fake, addressReview)).map((found) => found.key)).toEqual([
         `pr-${PULL}-changes-asked-v1`,

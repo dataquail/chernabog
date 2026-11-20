@@ -1097,6 +1097,8 @@ const conflicting = () => {
   const fake = repoFake("approve");
   fake.setLabels(PULL, []);
   fake.merge.state = "dirty";
+  // Handed off for review by an earlier run, as every pull request a run opens is.
+  fake.recordPhase(`pr-${PULL}`, "review-asked");
 
   return fake;
 };
@@ -1431,7 +1433,7 @@ const redMerge = () => {
   return fake;
 };
 
-const WATCHED = "<!-- chernabog-post-merge-watched";
+const WATCHED = "Watching CI on";
 
 export const POST_MERGE_SCENARIOS = scenarios((scenario) => {
   const watched = (recipe: Observed) => {
@@ -1665,12 +1667,7 @@ export const HUMAN_INITIATED_SCENARIOS = scenarios((scenario) => {
   scenario(
     "when an earlier unattended run left the issue's branch",
     () => startedEarlier(EARLIER_CLAIM),
-    "skipped",
-    void 0,
-    {},
-    (recipe) => {
-      expect(recipe.summary).toContain("already claimed by an unattended run");
-    },
+    "done",
   );
 
   // Before the session, a failure fails the run rather than going to a person.

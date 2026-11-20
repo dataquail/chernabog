@@ -238,10 +238,9 @@ change.
    what the review phase carried, such as a merge hold's `resume`. The
    cost of a restore is a fresh record: a new `at` and version, so a merge
    hold put back counts its time again from there, and a source keyed by
-   the record sees new work. A pull request with no record has nothing to
-   put back, and one whose record doesn't fit beside the rest, so both
-   poll, as every wait did before a record could carry anything; backfill
-   gives every open pull request a record.
+   the record sees new work. One whose record doesn't fit beside the rest
+   polls. A pull request with no record goes to a person: every one a run
+   opened has a record, backfill gave one to those from before.
 
    Every wait for CI that parks keeps `since` in its data, when the round's
    wait began, as post-merge's watch does, so `ciTimeout` counts across the
@@ -254,6 +253,36 @@ change.
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
    run itself still ends.
+
+   **A park is always a record.** The daemon ends every run at its park, so
+   a park that wrote nothing would strand its item. Three things make one
+   impossible:
+   - **One way to park.** `Phases.park` takes the wait as a record (its
+     step, item, phase and data, which record already there is the same
+     wait, and an optional timeout), records it, with `since`, and only
+     then parks. A record already there that is the same wait is kept, so
+     a run that took the wait up and parks again keeps `since`; one past
+     its timeout parks no more. Every wait in the SDK and the recipes parks
+     through it: a wait for CI (whose constructors, `parkOnIssue`,
+     `parkOnAdopted`, `Review.parkOnPullRequest`, `documentCiWait` and
+     `Conflict.waitForCi`'s, each say the item, phase and data for a
+     round), an adopted draft, a plan's answer (the recipe's
+     `Plan.awaitAnswer` records `proposed` itself now, not `Plan.propose`),
+     a merge held for a red base, an epic between rounds and post-merge's
+     watch. The architecture rule `no-bare-park` refuses core's
+     `awaitSignal` anywhere else in the SDK or a recipe.
+   - **No fallback to the world.** A source finds parked work by its record
+     alone: `readied` by the record's adopted draft, not the claim marker;
+     `heldMerges` by merge-held records, whose `key` is required, not hold
+     markers; `pr.mergedRecently` by `watched`, not the
+     `post-merge-watched` marker; `review.changesRequested` by its record,
+     with no reconcile from none. The claim and owner markers' fallbacks
+     for runs from before claim refs are gone too. Backfill is the
+     upgrade's migration step instead.
+   - **An SDK floor.** The daemon and `ci plan` refuse a repo whose SDK is
+     older than this release, one with no `Phases.park`, as they refuse
+     one that needs a core they don't provide, and `doctor` says to run
+     `chernabog recipes upgrade`.
 
 5. **The ledger is tamper-evident, not tamper-proof.** Every record names its
    writer (ADR 19, decision 5). Before a source acts on a record, it checks
@@ -438,8 +467,12 @@ change.
 - Open items with no record get one from a single backfill,
   `chernabog progress backfill`. It infers each item's phase from GitHub,
   the one time that inference is allowed, and writes it as
-  `observer:backfill`. After that, the sources' no-record paths (audit S6,
-  S7) are removed.
+  `observer:backfill`. It is the upgrade's one migration step: the sources'
+  no-record paths (audit S6, S7) and every record-or-marker fallback are
+  removed, and a binary refuses an SDK from before them. Upgrading a repo
+  is: let its runs drain, upgrade the binary (the repo starts nothing until
+  its upgrade merges), `recipes upgrade` in a checkout, backfill from it,
+  merge.
 - `Items`, the hosted adapter, the local adapter and the ledger config key are
   not built; they wait on the hosted service. Decision 6 fixes the direction so that nothing new takes a forge
   object's name as an item id.

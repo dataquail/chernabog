@@ -69,7 +69,7 @@ const waiting = (options: Implement.CiWait) =>
     }),
   );
 
-const PARKING: Implement.CiWait = { park: PR_ITEM };
+const PARKING: Implement.CiWait = Review.parkOnPullRequest(PULL);
 
 // Whether the run waits on CI_SETTLED for this round.
 const parkedOn = (run: EngineRun, round: number) =>

@@ -8,7 +8,6 @@
 import {
   activity,
   Agent,
-  awaitSignal,
   type Comment,
   type FlowLabel,
   GitHub,
@@ -16,6 +15,7 @@ import {
   type Issue,
   type Json,
   NeedsHuman,
+  type PhaseRecord,
   planMarker,
   planNodeMarker,
   Progress,
@@ -415,6 +415,13 @@ const SPEC_RECORD = /^issue-(\d+)$/;
 
 // What a spec's proposed record carries: the round whose plan waits.
 const Proposed = Schema.Struct({ round: Schema.Finite });
+
+// The round a proposed record's plan waits on.
+const proposedRound = (found: PhaseRecord) =>
+  Option.map(
+    Option.flatMap(found.data, Schema.decodeUnknownOption(Proposed)),
+    (data) => data.round,
+  );
 
 // A person's answer to a posted plan, or that nobody gave one in time.
 export type Answer = "approved" | "changes-requested" | "timeout";
@@ -841,14 +848,9 @@ export const askForClarification = (spec: number, answer: PlanDraft) =>
 
 // Posts the plan on the spec, with the verify task added, and labels it as
 // waiting on a person. Returns the plan as posted, which is the one created.
-// It records the spec's proposed phase, with the round, unless `record` is
-// false: a flow document's plan.awaitAnswer records it, with where to resume.
-export const propose = (
-  spec: number,
-  round: number,
-  answer: PlanDraft,
-  options: { readonly record?: boolean } = {},
-) =>
+// The wait on the person's answer, which awaitAnswer records, is the spec's
+// proposed record.
+export const propose = (spec: number, round: number, answer: PlanDraft) =>
   activity(
     `propose-plan-${round}`,
     Effect.gen(function* () {
@@ -857,27 +859,53 @@ export const propose = (
       yield* github.comment(spec, planComment(round, answer.summary, plan));
       yield* github.addLabel(spec, LABELS.proposed);
 
-      // The wait on a person is the spec's record, which answered reads.
-      if (options.record !== false) {
-        yield* Phases.record(
-          Phases.issueItem(spec),
-          Phases.PHASES.issue.proposed,
-          { round },
-          {
-            again: true,
-          },
-        );
-      }
-
       return plan;
     }),
     Plan,
   );
 
-// Parks the run until a person answers the plan: `approved`,
-// `changes-requested`, or `timeout` once `timeout` passes.
-export const awaitAnswer = (round: number, timeout: Duration.Input) =>
-  awaitSignal(["approved", "changes-requested"], { id: `plan-${round}`, timeout });
+// The wait on a person's answer to the plan of `round`, as the spec's
+// proposed record (plan-<round>-waits): the round, and what else the record
+// keeps, such as a document's `resume`. A record of the round already there
+// is kept, so a run that took the plan up waits on from it, and `timeout`
+// counts from when the plan was posted.
+export const answerParking = (
+  spec: number,
+  round: number,
+  timeout: Duration.Input,
+  data: { readonly [key: string]: Json } = {},
+): Phases.Parking => ({
+  step: `plan-${round}-waits`,
+  item: Phases.issueItem(spec),
+  phase: Phases.PHASES.issue.proposed,
+  data: { ...data, round },
+  keeps: (found) => Option.contains(proposedRound(found), round),
+  timeout: Duration.fromInputUnsafe(timeout),
+});
+
+// Records the wait on a person's answer to the plan (answerParking) and
+// parks, which ends the run; answered offers the spec to a new run from the
+// record once a person answers. Gives `approved`, `changes-requested`, or
+// `timeout` once `timeout` passes.
+export const awaitAnswer = (
+  spec: number,
+  round: number,
+  timeout: Duration.Input,
+  data: { readonly [key: string]: Json } = {},
+) =>
+  Phases.park(
+    answerParking(spec, round, timeout, data),
+    ["approved", "changes-requested"],
+    `plan-${round}`,
+  ).pipe(
+    Effect.map((answer) => {
+      if (answer === "timed-out") {
+        return "timeout";
+      }
+
+      return answer;
+    }),
+  );
 
 // What a person asked to change, from their comments since the plan.
 export const changesAsked = (spec: number, round: number) =>

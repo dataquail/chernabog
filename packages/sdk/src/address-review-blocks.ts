@@ -24,7 +24,7 @@ import {
 } from "./block.ts";
 import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
-import { NO_RECORD, PHASES } from "./phases.ts";
+import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -470,7 +470,6 @@ export const addressReviewSources = {
         {
           item: "pull-request",
           from: [
-            NO_RECORD,
             PHASES.pullRequest.reviewAsked,
             PHASES.pullRequest.reviewAskedAgain,
             PHASES.pullRequest.approved,

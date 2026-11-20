@@ -76,7 +76,7 @@ const parkedEarlier = (draft: boolean, at: DateTime.Utc) => {
   );
   fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.awaitingReady, {
     at,
-    data: { pullRequest: PULL, withinMillis: FOURTEEN_DAYS },
+    data: { pullRequest: PULL, withinMillis: FOURTEEN_DAYS, since: DateTime.formatIso(at) },
   });
 
   return fake;
