@@ -1079,10 +1079,9 @@ export const readyForPerson = (pullRequest: number, message: string) =>
       const label = yield* Settings.readyForPerson;
       yield* github.addLabel(pullRequest, label);
       yield* github.comment(pullRequest, message);
-      yield* Phases.record(
-        Phases.pullRequestItem(pullRequest),
-        Phases.PHASES.pullRequest.readyForPerson,
-      );
+      // With who reviewed it, so a review asked of one of them later is a
+      // review again (Phases.reviewedBefore).
+      yield* Phases.recordAwaitingReview(pullRequest, Phases.PHASES.pullRequest.readyForPerson);
 
       return `#${pullRequest}: labelled ${label}; ${message}`;
     }),

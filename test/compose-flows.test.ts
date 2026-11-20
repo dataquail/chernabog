@@ -627,6 +627,8 @@ describe("a document's sources find what its recipe's trigger does", () => {
             state: "CHANGES_REQUESTED",
             commitSha: HEAD,
           });
+          // As review.round recorded it: the request to review again moves it on.
+          fake.recordPhase(`pr-${PULL}`, "changes-asked");
           fake.setLabels(PULL, [...labels]);
 
           return fake;
@@ -688,13 +690,15 @@ describe("a document's sources find what its recipe's trigger does", () => {
 
   // By the pull request's record (#365): the phase it reads, one a person's
   // review or request moves on first, and one GitHub disagrees with, held.
-  const recorded = (phase: string, change: (fake: Fake) => void) => () => {
-    const fake = makeFake("approve");
-    fake.recordPhase(`pr-${PULL}`, phase);
-    change(fake);
+  const recorded =
+    (phase: string, change: (fake: Fake) => void, when: Parameters<Fake["recordPhase"]>[2] = {}) =>
+    () => {
+      const fake = makeFake("approve");
+      fake.recordPhase(`pr-${PULL}`, phase, when);
+      change(fake);
 
-    return fake;
-  };
+      return fake;
+    };
 
   const changesOnHead = (fake: Fake) => {
     fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
@@ -737,10 +741,15 @@ describe("a document's sources find what its recipe's trigger does", () => {
       "re-review, on a record of a first review this persona has given, as an adopted one's",
       reReview,
       composedReReview,
-      recorded("review-asked", (fake) => {
-        askedOf(fake);
-        fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
-      }),
+      // The hand-off recorded that data-quail had reviewed it already.
+      recorded(
+        "review-asked",
+        (fake) => {
+          askedOf(fake);
+          fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
+        },
+        { data: { reviewed: ["data-quail"] } },
+      ),
     ],
     [
       "re-review, on its record of a review asked again",

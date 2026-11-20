@@ -84,6 +84,19 @@ const decisive = (reviews: ReadonlyArray<SubmittedReview>) =>
 const reviewedBy = (reviews: ReadonlyArray<SubmittedReview>, login: string) =>
   reviews.some((review) => sameLogin(review.author, login));
 
+// Who reviewed the pull request so far, as a review-asked or draft record
+// keeps it (Phases.reviewedBefore); none when nobody has.
+const reviewedData = (reviews: ReadonlyArray<SubmittedReview>) =>
+  Option.getOrUndefined(
+    Option.map(
+      Option.liftPredicate(
+        Arr.dedupe(reviews.map((review) => review.author)),
+        (authors) => authors.length > 0,
+      ),
+      (reviewed) => ({ reviewed }),
+    ),
+  );
+
 const DraftState = Schema.Struct({ draft: Schema.Boolean });
 
 // Whether GitHub says the pull request is a draft, which PullRequest leaves out.
@@ -135,7 +148,8 @@ const requestedFinding = (
   }
 
   return Option.match(Arr.last(decisive(reviews)), {
-    onNone: () => write(item, P.reviewAsked, `${asked} asked for a first review`),
+    onNone: () =>
+      write(item, P.reviewAsked, `${asked} asked for a first review`, reviewedData(reviews)),
     onSome: (review) =>
       person(
         item,
@@ -218,7 +232,7 @@ const pullRequestFinding = (pull: PullRequest, reviews: ReadonlyArray<SubmittedR
 
     // P8: an agent's draft, which nobody was asked to review.
     if (isAgentBranch(pull.headRef) && (yield* isDraft(pull))) {
-      return write(item, P.draft, "an agent's draft, no review asked");
+      return write(item, P.draft, "an agent's draft, no review asked", reviewedData(reviews));
     }
 
     // P9.

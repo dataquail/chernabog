@@ -1774,7 +1774,9 @@ const handedOffAs = (options: { readonly draft?: boolean }): Phases.Phase => {
 };
 
 // The phases a hand-off records: the pull request's, waiting for its first
-// review or, as a draft, for a person to mark it ready, and then the issue's,
+// review or, as a draft, for a person to mark it ready, with who had reviewed
+// it already, such as an adopted one's reviewers (Phases.reviewedBefore), and
+// then the issue's,
 // whose progress goes on as the pull request's. In that order, so a crash
 // between the two leaves the pull request findable, and a replay of the
 // hand-off writes the issue's.
@@ -1784,7 +1786,7 @@ export const recordHandOff = (
   options: { readonly draft?: boolean },
 ) =>
   Effect.gen(function* () {
-    yield* Phases.record(Phases.pullRequestItem(pullRequest), handedOffAs(options));
+    yield* Phases.recordAwaitingReview(pullRequest, handedOffAs(options));
     yield* Phases.record(Phases.issueItem(issue), Phases.PHASES.issue.handedOff);
   });
 

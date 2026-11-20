@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 
 import { Approved, defineBlock, defineSource, type PullRequestNumber } from "./block.ts";
 import * as Events from "./events.ts";
-import { NO_RECORD, PHASES } from "./phases.ts";
+import { PHASES } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Review from "./review.ts";
 import * as Routing from "./routing.ts";
@@ -236,7 +236,7 @@ export const reReviewSources = {
       },
     }),
     {
-      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAskedAgain, NO_RECORD] }],
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.reviewAskedAgain] }],
       reconciles: [
         {
           item: "pull-request",

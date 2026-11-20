@@ -152,6 +152,34 @@ describe("an issue an open pull request already closes", () => {
       }),
   );
 
+  effect(
+    "records, at its hand-off, who had reviewed it already, so their review asked again is a re-review",
+    () =>
+      Effect.gen(function* () {
+        const fake = queuedWithPull();
+        fake.submitted.push({ author: "data-quail", state: "COMMENTED", commitSha: HEAD });
+
+        const finished = yield* runToEnd(implementing, fake, work);
+        expect(finished.status).toBe("done");
+        expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
+          phase: "review-asked",
+          data: Option.some({ reviewed: ["data-quail"] }),
+        });
+      }),
+  );
+
+  effect("records no reviewers at the hand-off of one nobody has reviewed", () =>
+    Effect.gen(function* () {
+      const fake = queuedWithPull();
+
+      yield* runToEnd(implementing, fake, work);
+      expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
+        phase: "review-asked",
+        data: Option.none(),
+      });
+    }),
+  );
+
   effect("on the run's own branch is not adopted: the run goes on with the work as before", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve", POOL);

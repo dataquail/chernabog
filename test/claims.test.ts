@@ -455,9 +455,11 @@ describe("the flows that push to a pull request", () => {
       expect(fake.git.pushes).toBe(1);
       expect(holderOf(fake, PULL_REF)).toEqual(Option.some(RESOLVING));
 
+      // Once it ends, the review is a person's, which no run recorded: it
+      // moves the pull request to changes-asked, and is keyed by that record.
       fake.knowRun(false);
       expect((yield* flowTriggered(fake, addressReview)).map((found) => found.key)).toEqual([
-        addressWork.key,
+        `pr-${PULL}-changes-asked-v1`,
       ]);
     }),
   );
