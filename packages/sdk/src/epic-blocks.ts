@@ -4,7 +4,6 @@
 
 import {
   activity,
-  awaitSignal,
   Claims,
   Git,
   GitHub,
@@ -1231,9 +1230,9 @@ export const epicBlocks = {
   }),
 
   // Parks until a layer changes, or a day passes, for what changes no layer: a
-  // person's task closed, say. Given the epic, the round's progress and the
-  // run's state, it first records the epic's waiting record, as the recipe
-  // does (Epic.park), which Epic.queued offers the epic again by.
+  // person's task closed, say. It first records the epic's waiting record,
+  // with the round's progress and the run's state, as the recipe does
+  // (Epic.park), which Epic.queued offers the epic again by.
   "epic.park": defineBlock({
     name: "epic.park",
     fixed: ["lookAgainAfter"],
@@ -1251,39 +1250,28 @@ export const epicBlocks = {
     inputs: {
       round: "required",
       lookAgainAfter: "required",
-      epic: "optional",
-      progress: "optional",
+      epic: "required",
+      progress: "required",
       tasks: "optional",
       stack: "optional",
     },
     run: (input: {
       readonly round: number;
       readonly lookAgainAfter: "1 day";
-      readonly epic?: EpicNumber;
-      readonly progress?: Epic.Progress;
+      readonly epic: EpicNumber;
+      readonly progress: Epic.Progress;
       readonly tasks?: TaskState;
       readonly stack?: Upkeep;
     }) =>
-      Option.match(
-        Option.all([Option.fromUndefinedOr(input.epic), Option.fromUndefinedOr(input.progress)]),
-        {
-          onNone: () =>
-            awaitSignal([Epic.LAYER_CHANGED], {
-              id: `epic-${input.round}`,
-              timeout: input.lookAgainAfter,
-            }),
-          onSome: ([epic, progress]) =>
-            Epic.park(
-              epic,
-              input.round,
-              waitingOf(
-                progress,
-                Option.fromUndefinedOr(input.tasks),
-                Option.fromUndefinedOr(input.stack),
-              ),
-              input.lookAgainAfter,
-            ),
-        },
+      Epic.park(
+        input.epic,
+        input.round,
+        waitingOf(
+          input.progress,
+          Option.fromUndefinedOr(input.tasks),
+          Option.fromUndefinedOr(input.stack),
+        ),
+        input.lookAgainAfter,
       ),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
     outcomes: {},

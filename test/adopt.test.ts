@@ -13,6 +13,7 @@ import {
   sessionMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -279,17 +280,13 @@ describe("an issue an open pull request already closes", () => {
       // The record says the run waits; the label is only for people, and a
       // person who took it off leaves the run to be woken as before.
       fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
-      fake.recordPhase(`issue-${ISSUE}`, "awaiting-ready");
-      fake.comment(
-        claimMarker.write({
-          runId: "a-run",
-          claimedAt: "2026-10-28T00:00:00Z",
-          branch: BRANCH,
-          base: "main",
-          ref: true,
-          adopted: { number: PULL, url: PULL_URL, draft: true },
-        }),
-      );
+      fake.recordPhase(`issue-${ISSUE}`, "awaiting-ready", {
+        data: {
+          pullRequest: PULL,
+          withinMillis: 14 * 24 * 60 * 60 * 1000,
+          since: DateTime.formatIso(yield* DateTime.now),
+        },
+      });
       expect(yield* flowTriggered(fake, implement)).toEqual([]);
 
       fake.authored.draft = false;

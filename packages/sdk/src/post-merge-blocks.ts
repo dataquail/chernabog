@@ -6,10 +6,9 @@
 //
 // Each merge is watched once: the run's first step records the pull
 // request's watched phase, which the source reads (ADR 0021, decision 3), and
-// comments that it is watching. A merge watched before the record was written
-// is known by the hidden marker in that comment. The follow-up
-// carries a marker with the merge commit's sha, so a run that resumes after
-// filing finds it rather than filing another.
+// comments that it is watching. The follow-up carries a marker with the merge
+// commit's sha, so a run that resumes after filing finds it rather than
+// filing another.
 //
 // Push CI can take minutes or hours, and a run ends at every park (ADR 0021,
 // decision 4), so a watch whose first reading is still pending parks: it
@@ -20,7 +19,6 @@
 
 import {
   activity,
-  awaitSignal,
   type CiFailedRun,
   GitHub,
   type Json,
@@ -51,7 +49,7 @@ import {
   ToPerson,
 } from "./block.ts";
 import * as Events from "./events.ts";
-import { current, PHASES, pullRequestItem, record, recordOf, records } from "./phases.ts";
+import { current, park, PHASES, pullRequestItem, record, recordOf, records } from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Resume from "./resume.ts";
 import * as Settings from "./settings.ts";
@@ -106,11 +104,6 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   };
 };
 
-// On the merged pull request: a run watched its merge commit. Written still,
-// for a person and for an older chernabog's trigger; read only for a merge
-// with no watched record, one watched before runs recorded it.
-const watchedMarker = marker("post-merge-watched", Schema.Struct({ sha: Schema.String }));
-
 // The step that records a merge watched. The recipe's step has the same name.
 const MARK_WATCHED = "mark-watched";
 
@@ -161,15 +154,6 @@ const recordedWatch = (all: ReadonlyMap<string, PhaseRecord>, pr: number) =>
 
     return Option.some("parked");
   });
-
-// Whether a run watched the merge of pull request `pr` before runs recorded
-// it, by the watched marker on it: for a merge whose record is neither
-// watched nor parked watching it.
-const markedWatched = (pr: number) =>
-  Effect.map(
-    GitHub.use((github) => github.trustedComments(pr)),
-    (comments) => comments.some((comment) => Option.isSome(watchedMarker.read(comment.body))),
-  );
 
 // On a follow-up issue: the merge commit whose red CI it is for.
 const followUpMarker = marker(
@@ -352,10 +336,12 @@ type WatchParking = { readonly item: string; readonly data: { readonly [key: str
 
 // Records that the watch waits on push CI and parks, which ends the run. A
 // run that takes up a parked watch and parks again keeps the record it found,
-// `since` and all: Phases.record writes nothing over the same phase.
-const parkWatch = (parking: WatchParking, timeout: Duration.Duration) =>
-  activity("awaiting-merge-ci", record(parking.item, AWAITING, parking.data)).pipe(
-    Effect.andThen(awaitSignal([MERGE_CI_SETTLED], { id: "merge-ci", timeout })),
+// `since` and all.
+const parkWatch = (parking: WatchParking) =>
+  park(
+    { step: "awaiting-merge-ci", item: parking.item, phase: AWAITING, data: parking.data },
+    [MERGE_CI_SETTLED],
+    "merge-ci",
   );
 
 // Why a parked watch of `sha` can't be taken up yet, for a source to hold it
@@ -455,7 +441,7 @@ const awaitMergeCi = <E, R>(
       }
 
       if (poll === 1 && Option.isSome(where)) {
-        yield* parkWatch(where.value, limits.timeout);
+        yield* parkWatch(where.value);
       }
     }
   });
@@ -681,7 +667,7 @@ export const postMergeBlocks = {
   "merged.markWatched": defineBlock({
     name: "merged.markWatched",
     about:
-      "Records the merged pull request's watched phase, with its merge commit (mark-watched), and comments on it that a run is watching CI on that commit. pr.mergedRecently leaves a pull request recorded watched alone, so each merge is watched once; one watched before runs recorded it is known by the comment's hidden marker (chernabog-post-merge-watched).",
+      "Records the merged pull request's watched phase, with its merge commit (mark-watched), and comments on it that a run is watching CI on that commit. pr.mergedRecently leaves a pull request recorded watched alone, so each merge is watched once.",
     inputKinds: {
       pr: "PullRequestNumber: the merged pull request, trigger.pr",
       sha: "CommitSha: its merge commit, trigger.sha",
@@ -700,7 +686,7 @@ export const postMergeBlocks = {
 
         yield* PullRequest.comment(
           input.pr,
-          `Watching CI on \`${input.base}\` at ${input.sha}, this pull request's merge commit. ${watchedMarker.write({ sha: input.sha })}`,
+          `Watching CI on \`${input.base}\` at ${input.sha}, this pull request's merge commit.`,
         );
       }),
     failures: { NeedsHuman: "told", Skip: "skip", StepFailed: "fail" },
@@ -950,8 +936,7 @@ export const postMergeBlocks = {
 export const postMergeSources = {
   // Pull requests this persona wrote that merged into the base branch in the
   // last day, among the 30 closed most lately, and that no run has watched
-  // yet: none recorded watched or parked watching it (awaiting-merge-ci),
-  // nor, from before records, carries the marker.
+  // yet: none recorded watched or parked watching it (awaiting-merge-ci).
   "pr.mergedRecently": defineSource(
     "pr.mergedRecently",
     "merged",
@@ -988,10 +973,7 @@ export const postMergeSources = {
           // parked, which says nowhere to resume, is watched again from the top.
           const recorded = recordedWatch(all, pull.number);
 
-          if (
-            Option.exists(recorded, (watch) => watch !== "parked") ||
-            (Option.isNone(recorded) && (yield* markedWatched(pull.number)))
-          ) {
+          if (Option.exists(recorded, (watch) => watch !== "parked")) {
             continue;
           }
 

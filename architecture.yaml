@@ -470,6 +470,21 @@ defs:
       source: 'export const zzHandler = () => Console.log("done");'
       name: log
 
+  # Every wait a run parks on is a record first (ADR 21, decision 4): the
+  # daemon ends every run at its park, so a park without one strands its item.
+  # Phases.park records the wait and then parks; nothing else in the SDK or a
+  # recipe may park.
+  no-bare-park:
+    message: >-
+      `{name}` parks without recording the wait, and a run ends at every park, so nothing would
+      take its item up again. Park with Phases.park, which records the wait's phase and data
+      first.
+    subject: calls
+    match: [awaitSignal]
+    probe:
+      source: 'export const zz = () => awaitSignal(["ready"], { id: "x", timeout: "1 day" });'
+      name: awaitSignal
+
   no-in-place-writes:
     message: >-
       `{name}` rewrites a file in place, truncating it first: a write cut short leaves it empty
@@ -1682,7 +1697,9 @@ tree:
     surface:
       - use: no-default-exports
     children:
-      "*.ts": {}
+      "*.ts": { members: [{ use: no-bare-park }] }
+      # Phases.park, the one park, which records the wait first.
+      "phases.ts": {}
 
   "~/recipes/":
     message: >-
@@ -1702,6 +1719,7 @@ tree:
         children:
           "*.ts":
             surface: [{ use: flow-exports-only-itself }, { use: no-star-exports }]
+            members: [{ use: no-bare-park }]
       "prompts/":
         children:
           "*.md": {}

@@ -914,36 +914,6 @@ const changesOnHead = (pull: PullRequest, decisive: ReadonlyArray<SubmittedRevie
     (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
   );
 
-// A pull request with no record, such as one a person opened, whose latest
-// approval or request for changes asks for changes on the head: a person's
-// review no run was there to record, which moves it to changes-asked first
-// (ADR 21, decision 3), and the item is keyed by that record. None for one
-// with no changes asked on its head, owned by another run, or whose record
-// another writer moved elsewhere first.
-const changesUnrecorded = (pull: PullRequest) =>
-  Effect.gen(function* () {
-    const item = Phases.pullRequestItem(pull.number);
-    const latest = changesOnHead(pull, yield* decisiveReviews(pull.number));
-
-    if (Option.isNone(latest) || (yield* ownedByARun(pull))) {
-      return Option.none<WorkItem>();
-    }
-
-    const now = Option.filter(
-      yield* Phases.reconcile(
-        item,
-        Option.none(),
-        P.changesAsked,
-        observer("review.changesRequested"),
-      ),
-      (record) => record.phase === P.changesAsked,
-    );
-
-    return Option.map(now, (record) =>
-      addressItem(pull, latest.value, Phases.keyFor(item, record)),
-    );
-  });
-
 // The phases a review that asks for changes on the head moves a pull request
 // on from: a person's review, which no run was there to record.
 const CHANGES_FROM = [P.reviewAsked, P.reviewAskedAgain, P.approved, P.draft, P.readyForPerson];
@@ -1041,9 +1011,9 @@ const routedUnlessHeld = (pull: PullRequest, item: WorkItem) => {
 // the head of one whose record is before it moves the record on first. One a
 // person has (auto:needs-human), or a run of another flow owns, is left
 // alone; one whose record GitHub disagrees with is held, with why, for status
-// to show. One with no record whose latest review asks for changes on the
-// head is moved to changes-asked first, then keyed by it. Each
-// is routed by its assignees and reviewers.
+// to show. One with no record isn't one a run of this persona's opened
+// (backfill gave one to those from before records). Each is routed by its
+// assignees and reviewers.
 export const changesToAddress = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
   const all = yield* Phases.records;
@@ -1055,7 +1025,7 @@ export const changesToAddress = Effect.gen(function* () {
     }
 
     const found = yield* Option.match(Phases.recordOf(all, Phases.pullRequestItem(pull.number)), {
-      onNone: () => changesUnrecorded(pull),
+      onNone: () => Effect.succeedNone,
       onSome: (record) => changesByRecord(pull, record),
     });
 
@@ -1070,7 +1040,11 @@ export const changesToAddress = Effect.gen(function* () {
 // Where address-review parks in a CI job while the CI of its pushed fix
 // runs: on the pull request's record, which fixesAwaitingCi reads to resume.
 export const parkOnPullRequest = (pullRequest: number): CiWait => ({
-  park: Phases.pullRequestItem(pullRequest),
+  park: (round) => ({
+    item: Phases.pullRequestItem(pullRequest),
+    phase: Phases.awaitingCi(round),
+    data: {},
+  }),
 });
 
 // What a pull request a CI job parked on its fix's CI is waiting for, by its

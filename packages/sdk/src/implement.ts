@@ -10,7 +10,6 @@ import {
   activity,
   Agent,
   type AgentResult,
-  awaitSignal,
   CiTimedOut,
   type ClaimMarker,
   claimMarker,
@@ -26,7 +25,6 @@ import {
   NothingCommitted,
   pathsMatching,
   type PhaseRecord,
-  Progress,
   type PullRequest,
   Repo,
   reportAs,
@@ -496,13 +494,6 @@ export const latestClaim = (issue: number) =>
     ),
   );
 
-// Migration: a run of an earlier version holds an issue by its branch alone,
-// and its claim marker names no claim ref. While such runs may be in flight,
-// an existing branch whose latest marker is one of theirs is still theirs.
-// Drop this a release after claims became refs.
-export const legacyClaim = (latest: Option.Option<ClaimMarker>, runId: string) =>
-  Option.filter(latest, (marker) => marker.ref !== true && marker.runId !== runId);
-
 // Labels the issue in progress, moves it to In Progress on the board, if the
 // repo has one, and assigns the persona, as a person picking it up would.
 // Each is a marker the run holds, held before it is put on, so however the
@@ -728,12 +719,6 @@ export const claim = (
           }
 
           return { branch, base: yield* claimedBase(latest.value) };
-        }
-
-        if (Option.isSome(legacyClaim(latest, run.runId))) {
-          yield* Claims.release(item);
-
-          return yield* new Skip({ reason: `#${issue} is already claimed (${branch} exists)` });
         }
       } else {
         yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });
@@ -1429,79 +1414,35 @@ type CiReading = typeof CiReading.Type;
 // that resumes the work is a new run (see CiWait.park).
 export const CI_SETTLED = "ci-settled";
 
-// How a wait for CI goes on: `park` names the item (Phases.issueItem or
-// pullRequestItem) a CI job's run records awaitingCi on before it parks,
-// rather than polling through the wait on a billed runner. The flow then
-// resumes from that record in the next run, at `firstRound`, the round the
-// record names. A daemon's run parks the same way and ends there (ADR 0021,
-// decision 4). Without `park`, it polls.
+// Where a wait for CI parks, by round: the item, the phase and the data its
+// record keeps, which the wait's constructor says (parkOnIssue,
+// parkOnAdopted, Review.parkOnPullRequest, documentCiWait, Conflict's), so a
+// park always has its record (Phases.park).
+export type CiParking = (round: number) => Pick<Phases.Parking, "item" | "phase" | "data">;
+
+// How a wait for CI goes on: with `park`, a first reading still pending
+// records the round's wait and parks, which ends the run, on a daemon as in a
+// CI job (ADR 0021, decision 4). The flow then resumes from that record in
+// the next run, at `firstRound`, the round the record names. Without `park`,
+// it polls.
 export type CiWait = RepeatOptions & {
-  readonly park?: string;
+  readonly park?: CiParking;
   readonly firstRound?: number;
-  // What the record keeps for the run that takes the wait up, such as where
-  // a flow document resumes (Resume.parking).
-  readonly data?: { readonly [key: string]: Json };
-  // The phase it records for a round: awaiting-ci's by default (Phases.awaitingCi).
-  readonly phase?: (round: number) => string;
   // Whether a first reading still pending ends the wait, rather than a park
   // or a poll: for a line of work beside others, as an epic's task, which
   // can't park on its own (waitForCiLeaving).
   readonly leave?: boolean;
 };
 
-const phaseOfRound = (options: CiWait, round: number) =>
-  (options.phase ?? Phases.awaitingCi)(round);
-
-// What a parked wait's record keeps beside the wait's own data: `since`, when
-// the round's wait began, so ciTimeout counts across the runs that take it
-// up. A park again keeps the record it found, and with it `since`.
-const SinceData = Schema.Struct({ since: Schema.String });
-
-const sinceOf = (data: Option.Option<{ readonly [key: string]: Json }>) =>
-  Option.flatMap(Option.flatMap(data, Schema.decodeUnknownOption(SinceData)), (found) =>
-    DateTime.make(found.since),
-  );
-
-// Whether a wait that began `since` has run past `timeout` by now.
-const pastSince = (since: Option.Option<DateTime.Utc>, timeout: Duration.Duration) =>
-  Effect.map(DateTime.now, (now) =>
-    Option.exists(since, (began) =>
-      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
-    ),
-  );
-
-// The item to park on, when the flow can resume from its record: on a daemon
-// as in a CI job, a run that waits on CI ends at the park.
-const parkingOn = (options: CiWait) => Effect.succeed(Option.fromUndefinedOr(options.park));
-
-const Parking = Schema.Literals(["parked", "timed-out"]);
-
 // Records that the item waits on this round of CI, with when the wait began,
 // then parks, which ends the run, on a daemon as in a CI job. A run that took
 // the wait up and finds its round's record already past ciTimeout, counted
 // from `since`, doesn't park again: it has timed out.
-const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
-  activity(
-    named(options, `awaiting-ci-${round}`),
-    Effect.gen(function* () {
-      const phase = phaseOfRound(options, round);
-
-      const parked = Option.filter(yield* Phases.current(item), (found) => found.phase === phase);
-
-      if (Option.isSome(parked)) {
-        if (yield* pastSince(sinceOf(parked.value.data), timeout)) {
-          return "timed-out" as const;
-        }
-
-        return "parked" as const;
-      }
-
-      const since = DateTime.formatIso(yield* DateTime.now);
-      yield* Phases.record(item, phase, { ...options.data, since });
-
-      return "parked" as const;
-    }),
-    Parking,
+const parkOnCi = (park: CiParking, round: number, timeout: Duration.Duration, options: CiWait) =>
+  Phases.park(
+    { ...park(round), step: named(options, `awaiting-ci-${round}`), timeout },
+    [CI_SETTLED],
+    named(options, `ci-${round}`),
   );
 
 // Polls the pull request's checks durably until they stop pending, or
@@ -1510,7 +1451,7 @@ const parkOnCi = (item: string, round: number, timeout: Duration.Duration, optio
 const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
   Effect.gen(function* () {
     const { timeout } = yield* Settings.ci;
-    const parking = yield* parkingOn(options);
+    const parking = Option.fromUndefinedOr(options.park);
 
     const maxPolls = Math.max(
       1,
@@ -1531,12 +1472,12 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
         });
       }
 
-      if (poll === 2 && Option.isSome(parking)) {
-        if ((yield* parkOnCi(parking.value, round, timeout, options)) === "timed-out") {
-          return yield* new CiTimedOut({ pullRequest, after: Duration.format(timeout) });
-        }
-
-        yield* awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout });
+      if (
+        poll === 2 &&
+        Option.isSome(parking) &&
+        (yield* parkOnCi(parking.value, round, timeout, options)) === "timed-out"
+      ) {
+        return yield* new CiTimedOut({ pullRequest, after: Duration.format(timeout) });
       }
 
       if (poll > 1) {
@@ -1576,7 +1517,7 @@ export const heldOnCi = (
     }
 
     const { timeout } = yield* Settings.ci;
-    const past = yield* pastSince(sinceOf(data), timeout);
+    const past = yield* Phases.pastSince(Phases.sinceOf(data), timeout);
 
     return Option.filter(pending, () => !past);
   });
@@ -1598,7 +1539,11 @@ export const documentCiWait = (pullRequest: number, options: RepeatOptions = {})
 
     return Option.match(parking, {
       onNone: (): CiWait => ({ ...options, ...from }),
-      onSome: ({ data, item }): CiWait => ({ ...options, ...from, park: item, data }),
+      onSome: ({ data, item }): CiWait => ({
+        ...options,
+        ...from,
+        park: (round) => ({ item, phase: Phases.awaitingCi(round), data }),
+      }),
     });
   });
 
@@ -1865,68 +1810,44 @@ const ReadyWait = Schema.Struct({ pullRequest: Schema.Finite, withinMillis: Sche
 const readyWaitOf = (record: PhaseRecord) =>
   Option.flatMap(record.data, Schema.decodeUnknownOption(ReadyWait));
 
-// When the wait on an awaiting-ready record runs out; none for a record from
-// before records carried their wait.
+// When the wait on an awaiting-ready record runs out, counted from `since`,
+// when it began.
 const readyDeadline = (record: PhaseRecord) =>
-  Option.map(readyWaitOf(record), (wait) =>
-    DateTime.add(record.at, { milliseconds: wait.withinMillis }),
+  Option.flatMap(readyWaitOf(record), (wait) =>
+    Option.map(Phases.sinceOf(record.data), (since) =>
+      DateTime.add(since, { milliseconds: wait.withinMillis }),
+    ),
   );
-
-// How many milliseconds are left of the wait on `pullRequest`, the issue's
-// adopted draft. A run that finds the issue already waiting on that draft
-// waits on from its record, as one does that took over from a CI job that
-// ended at the park; any other starts the wait afresh, with a record of its
-// own. Zero or less: the time is up.
-const readyWaitLeft = (issue: number, pullRequest: number, within: Duration.Input) =>
-  Effect.gen(function* () {
-    const item = Phases.issueItem(issue);
-    const withinMillis = Duration.toMillis(Duration.fromInputUnsafe(within));
-
-    const waiting = Option.filter(
-      yield* Progress.use((progress) => progress.read(item)),
-      (record) =>
-        record.phase === Phases.PHASES.issue.awaitingReady &&
-        Option.exists(readyWaitOf(record), (wait) => wait.pullRequest === pullRequest),
-    );
-
-    const since = yield* Option.match(waiting, {
-      onSome: (record) => Effect.succeed(record.at),
-      onNone: () =>
-        Effect.map(
-          Phases.recording(
-            item,
-            Phases.PHASES.issue.awaitingReady,
-            { pullRequest, withinMillis },
-            { again: true },
-          ),
-          (record) => record.at,
-        ),
-    });
-
-    const waited = DateTime.distance(since, yield* DateTime.now);
-
-    return withinMillis - Duration.toMillis(waited);
-  });
 
 // Parks the run until the author marks the issue's adopted draft ready for
 // review: `ready`, or `timeout` once `timeout` passes. The wait is the issue's
-// awaiting-ready record (ADR 0021, decision 4): a run in a CI job ends at the
-// park, and readied starts a new one once the draft is ready or the time is
-// up, which waits on from the record rather than from the start. A timeout
-// records ready-timed-out, so a person who queues the issue again starts a
-// fresh wait. Either way the issue's awaiting-ready label comes off.
-export const awaitReady = (issue: number, pullRequest: number, timeout: Duration.Input) =>
-  activity(
-    `ready-wait-${pullRequest}`,
-    readyWaitLeft(issue, pullRequest, timeout),
-    Schema.Finite,
+// awaiting-ready record (ADR 0021, decision 4): the run ends at the park, and
+// readied starts a new one once the draft is ready or the time is up, which
+// waits on from the record, `since` and all, rather than from the start. A
+// timeout records ready-timed-out, so a person who queues the issue again
+// starts a fresh wait. Either way the issue's awaiting-ready label comes off.
+export const awaitReady = (issue: number, pullRequest: number, timeout: Duration.Input) => {
+  const within = Duration.fromInputUnsafe(timeout);
+
+  return Phases.park(
+    {
+      step: `ready-wait-${pullRequest}`,
+      item: Phases.issueItem(issue),
+      phase: Phases.PHASES.issue.awaitingReady,
+      data: { pullRequest, withinMillis: Duration.toMillis(within) },
+      keeps: (record) =>
+        Option.exists(readyWaitOf(record), (wait) => wait.pullRequest === pullRequest),
+      timeout: within,
+    },
+    ["ready"],
+    `draft-${pullRequest}`,
   ).pipe(
-    Effect.flatMap((left) => {
-      if (left <= 0) {
-        return Effect.succeed("timeout");
+    Effect.map((result) => {
+      if (result === "timed-out") {
+        return "timeout";
       }
 
-      return awaitSignal(["ready"], { id: `draft-${pullRequest}`, timeout: Duration.millis(left) });
+      return result;
     }),
     Effect.tap((result) => {
       if (result !== "timeout") {
@@ -1945,6 +1866,7 @@ export const awaitReady = (issue: number, pullRequest: number, timeout: Duration
       ),
     ),
   );
+};
 
 const DraftState = Schema.Struct({ draft: Schema.Boolean });
 
@@ -1965,23 +1887,6 @@ const openIssue = (number: number) =>
     );
 
     return Option.filter(issue, (found) => found.state !== "closed");
-  });
-
-// The adopted draft an awaiting-ready record waits on: from the record's
-// data, or for a record from before records carried data, from the claim
-// marker that adopted it.
-const draftWaitedOn = (issue: number, record: PhaseRecord) =>
-  Option.match(readyWaitOf(record), {
-    onSome: (wait) => Effect.succeedSome(wait.pullRequest),
-    onNone: () =>
-      Effect.map(latestClaim(issue), (marker) =>
-        Option.flatMap(marker, (found) =>
-          Option.map(
-            Option.filter(Option.fromUndefinedOr(found.adopted), (adopted) => adopted.draft),
-            (adopted) => adopted.number,
-          ),
-        ),
-      ),
   });
 
 // Issues whose run waits on a draft it adopted (their record is
@@ -2009,15 +1914,15 @@ export const readied = Effect.gen(function* () {
 
   for (const { number, record } of waiting) {
     const open = yield* openIssue(number);
-    const draft = yield* draftWaitedOn(number, record);
+    const wait = readyWaitOf(record);
 
-    if (Option.isNone(open) || Option.isNone(draft)) {
+    if (Option.isNone(open) || Option.isNone(wait)) {
       continue;
     }
 
     const pull = yield* github.request(
       "GET",
-      `/repos/${repo.slug}/pulls/${draft.value}`,
+      `/repos/${repo.slug}/pulls/${wait.value.pullRequest}`,
       Option.none(),
     );
 
@@ -2045,15 +1950,18 @@ export const readied = Effect.gen(function* () {
 
 // Where implement parks in a CI job while its pull request's CI runs: on the
 // issue's record, which awaitingCi reads to resume the work.
-export const parkOnIssue = (issue: number): CiWait => ({ park: Phases.issueItem(issue) });
+export const parkOnIssue = (
+  issue: number,
+  data: { readonly [key: string]: Json } = {},
+): CiWait => ({
+  park: (round) => ({ item: Phases.issueItem(issue), phase: Phases.awaitingCi(round), data }),
+});
 
 // Where implement parks while an adopted pull request's CI runs: on the
 // issue's record, as parkOnIssue, which keeps the pull request, since it
 // isn't on the issue's branch for awaitingCi to find (audit W5).
-export const parkOnAdopted = (issue: number, pullRequest: number): CiWait => ({
-  ...parkOnIssue(issue),
-  data: { pullRequest },
-});
+export const parkOnAdopted = (issue: number, pullRequest: number): CiWait =>
+  parkOnIssue(issue, { pullRequest });
 
 const ParkedPull = Schema.Struct({ pullRequest: Schema.Finite });
 

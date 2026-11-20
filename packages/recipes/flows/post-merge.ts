@@ -7,9 +7,7 @@
 //
 // Each pull request is watched once: the run's first step records its
 // watched phase, which the trigger reads, and comments on it that it is
-// watching. A merge watched before runs recorded it is known by the hidden
-// marker in that comment. The follow-up carries a
-// marker with the merge commit's sha, so a run that resumes after filing
+// watching. The follow-up carries a marker with the merge commit's sha, so a run that resumes after filing
 // finds it rather than filing another. A red merge of a follow-up's own fix
 // goes to a person (auto:needs-human), not to another follow-up. And when CI
 // was already red on the commit before the merge, the merge didn't break it,
@@ -31,7 +29,6 @@
 
 import {
   activity,
-  awaitSignal,
   Blocks,
   type CiFailedRun,
   defineFlow,
@@ -101,11 +98,6 @@ const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   };
 };
 
-// On the merged pull request: a run watched its merge commit. Written still,
-// for a person and for an older chernabog's trigger; read only for a merge
-// with no watched record, one watched before runs recorded it.
-const watchedMarker = marker("post-merge-watched", Schema.Struct({ sha: Schema.String }));
-
 const WATCHED = Phases.PHASES.pullRequest.watched;
 
 // Records that a run is watching the merge: the pull request's watched phase,
@@ -132,15 +124,6 @@ const parkedSince = (found: PhaseRecord, sha: string) =>
       (watch) => found.phase === AWAITING && watch.sha === sha,
     ),
     (watch) => DateTime.make(watch.since),
-  );
-
-// Whether a run watched the merge of pull request `number` before runs
-// recorded it, by the marker on it: for a merge whose record is neither
-// watched nor parked watching it.
-const markedWatched = (number: number) =>
-  Effect.map(
-    GitHub.use((github) => github.trustedComments(number)),
-    (comments) => comments.some((comment) => Option.isSome(watchedMarker.read(comment.body))),
   );
 
 // On a follow-up issue: the merge commit whose red CI it is for.
@@ -317,18 +300,20 @@ const endWatch = (merged: MergedItem) =>
   );
 
 // Records that the watch waits on push CI, with the merge commit and when the
-// watch began, and parks, which ends the run. A run that takes up a parked
-// watch and parks again keeps the record it found, `since` and all:
-// Phases.record writes nothing over the same phase. Nothing sends the signal:
-// the run that takes the watch up is a new one.
-const parkWatch = (merged: MergedItem, since: string, timeout: Duration.Duration) =>
-  activity(
-    "awaiting-merge-ci",
-    Phases.record(Phases.pullRequestItem(merged.pullRequest), AWAITING, {
-      sha: merged.mergeSha,
-      since,
-    }),
-  ).pipe(Effect.andThen(awaitSignal(["merge-ci-settled"], { id: "merge-ci", timeout })));
+// watch began, and parks, which ends the run (Phases.park). A run that takes
+// up a parked watch and parks again keeps the record it found, `since` and
+// all. Nothing sends the signal: the run that takes the watch up is a new one.
+const parkWatch = (merged: MergedItem, since: string) =>
+  Phases.park(
+    {
+      step: "awaiting-merge-ci",
+      item: Phases.pullRequestItem(merged.pullRequest),
+      phase: AWAITING,
+      data: { sha: merged.mergeSha, since },
+    },
+    ["merge-ci-settled"],
+    "merge-ci",
+  );
 
 // Why a parked watch of `sha` can't be taken up yet, for the trigger to hold
 // it with: push CI still pending, with a run to wait on inside ciTimeout, or
@@ -403,7 +388,7 @@ const awaitMergeCi = (merged: MergedItem, limits: WatchLimits) =>
       }
 
       if (poll === 1) {
-        yield* parkWatch(merged, clock.since, limits.timeout);
+        yield* parkWatch(merged, clock.since);
       }
     }
   });
@@ -449,13 +434,6 @@ const trigger = Effect.gen(function* () {
     }
 
     const parked = Option.flatMap(recorded, (found) => parkedSince(found, sha));
-
-    if (
-      !Option.exists(recorded, (found) => found.phase === AWAITING) &&
-      (yield* markedWatched(pull.number))
-    ) {
-      continue;
-    }
 
     const issue = closedIssue(
       Option.getOrElse(pull.body, () => ""),
@@ -699,7 +677,7 @@ const watch = (merged: MergedItem) =>
 
       yield* PullRequest.comment(
         merged.pullRequest,
-        `Watching CI on \`${merged.baseRef}\` at ${merged.mergeSha}, this pull request's merge commit. ${watchedMarker.write({ sha: merged.mergeSha })}`,
+        `Watching CI on \`${merged.baseRef}\` at ${merged.mergeSha}, this pull request's merge commit.`,
       );
     }
 

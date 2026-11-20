@@ -97,7 +97,7 @@ const planUntilApproved = (spec: number, resumed: Option.Option<Plan.Resumed>) =
       }
 
       const plan = yield* Plan.propose(spec, round, draft);
-      const answer = yield* Plan.awaitAnswer(round, ANSWER_WITHIN);
+      const answer = yield* Plan.awaitAnswer(spec, round, ANSWER_WITHIN);
 
       if (answer === "approved") {
         const created = yield* Plan.create(spec, plan);

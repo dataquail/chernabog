@@ -30,7 +30,7 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -214,9 +214,6 @@ const keptItem = (item: WorkItem) => ({
   data: itemData(item),
 });
 
-// A `since` as long as any, for sizing a record before it's written.
-export const SINCE_SIZE = DateTime.formatIso(DateTime.makeUnsafe(0));
-
 // Where a block at a resumable node records its wait, and the data, with its
 // own beside, and the round of a node in a repeat: none outside a document's
 // resumable node, or when what the node keeps can't go into a record, and
@@ -253,8 +250,8 @@ export const parking = (own: JsonObject = {}) =>
             },
             isPhaseData,
           ),
-          // With room for when the wait began, which a wait for CI adds.
-          (fits) => isPhaseData({ ...fits, since: SINCE_SIZE }),
+          // With room for when the wait began, which a park adds.
+          Phases.fitsAPark,
         ),
     );
 

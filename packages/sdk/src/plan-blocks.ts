@@ -9,15 +9,7 @@
 // the issues, the epic, removing the checkout, posting questions) is `last`:
 // in a repeat it takes no round, so its step names are the recipe's.
 
-import {
-  Claims,
-  GitHub,
-  NeedsHuman,
-  reportAs,
-  Run,
-  StepFailed,
-  type WorkItem,
-} from "@chernabog/core";
+import { Claims, GitHub, NeedsHuman, reportAs, Run, type WorkItem } from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -121,48 +113,35 @@ export const planSources = {
 
 // A document's wait on a person's answer to the plan of `round`, which the
 // spec's proposed record holds: the round, how long a person has, and, at a
-// node the document can resume at, where to resume (Resume.parking). The
-// recipe's propose writes that record; a document's leaves it to this, so
-// one write holds it all. At such a node it parks, and a run that took the
-// plan up there acts on the answer given since, or, with none yet, waits
-// again on the record it took up, which still says when the plan was posted.
-// Anywhere else it polls, so the run isn't stranded.
+// node the document can resume at, where to resume (Resume.parking). At such
+// a node it parks (Plan.awaitAnswer), and a run that took the plan up there
+// acts on the answer given since, or, with none yet, waits again on the
+// record it took up, which still says when the plan was posted. Anywhere else
+// it records the wait and polls, so the run isn't stranded.
 const documentAnswer = (round: number, within: Days) =>
   Effect.gen(function* () {
     const run = yield* Run;
+    const spec = yield* Implement.issueOf(run.item);
 
     if (Option.isSome(yield* Resume.resumedPhase)) {
-      const answer = yield* Plan.answerNow(yield* Implement.issueOf(run.item), round, within);
+      const answer = yield* Plan.answerNow(spec, round, within);
 
       if (Option.isSome(answer)) {
         return answer.value;
       }
 
-      return yield* Plan.awaitAnswer(round, within);
+      return yield* Plan.awaitAnswer(spec, round, within);
     }
 
     const parking = yield* Resume.parking({ within });
 
-    const data = Option.match(parking, {
-      onNone: () => ({ round, within }),
-      onSome: (found) => found.data,
-    });
-
-    // Not a step of its own, so the document's steps are the recipe's: a
-    // replay finds this run's record there already and writes nothing.
-    for (const item of Option.toArray(yield* Phases.RecordedOn)) {
-      yield* Phases.record(item, PHASES.issue.proposed, data, { again: true }).pipe(
-        Effect.mapError(
-          (failed) => new StepFailed({ step: `plan-${round}-waits`, message: failed.message }),
-        ),
-      );
+    if (Option.isSome(parking)) {
+      return yield* Plan.awaitAnswer(spec, round, within, parking.value.data);
     }
 
-    if (Option.isNone(parking)) {
-      return yield* Plan.pollAnswer(yield* Implement.issueOf(run.item), round, within);
-    }
+    yield* Phases.recordParking(Plan.answerParking(spec, round, within, { within }));
 
-    return yield* Plan.awaitAnswer(round, within);
+    return yield* Plan.pollAnswer(spec, round, within);
   });
 
 // What every plan block suits: each reads or writes the spec's plan, whose
@@ -226,8 +205,7 @@ export const planBlocks = {
       readonly round: number;
       readonly draft: Plan.PlanDraft;
     }) =>
-      // plan.awaitAnswer records the wait, with where to resume.
-      Plan.propose(input.issue, input.round, input.draft, { record: false }).pipe(
+      Plan.propose(input.issue, input.round, input.draft).pipe(
         Effect.map((plan) => ({ plan, issue: input.issue, round: input.round })),
       ),
     // A plan can outgrow a record: a document's run that resumes after it

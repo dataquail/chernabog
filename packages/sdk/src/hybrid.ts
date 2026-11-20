@@ -44,7 +44,6 @@ import {
   issueItem,
   landedBase,
   latestClaim,
-  legacyClaim,
   markClaimed,
   PullRequestRef,
   recordHandOff,
@@ -135,15 +134,6 @@ export const claim = (issue: number, options: BaseOptions = {}) =>
 
         if (Option.isSome(latest) && latest.value.runId === run.runId) {
           return { branch, base: yield* claimedBase(latest.value) };
-        }
-
-        // An earlier start that held it by its branch alone is taken over, as before claim refs.
-        if (Option.exists(legacyClaim(latest, run.runId), (marker) => marker.withPerson !== true)) {
-          yield* Claims.release(item);
-
-          return yield* new Skip({
-            reason: `#${issue} is already claimed by an unattended run (${branch} exists)`,
-          });
         }
       } else {
         yield* Markers.hold(Markers.claimBranch, { branch, base }, { keepOn: ["needs-human"] });

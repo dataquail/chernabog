@@ -119,7 +119,7 @@ describe("human-initiated", () => {
   );
 
   effect(
-    "takes over the branch an earlier version's start left, but leaves an earlier unattended run's to it",
+    "takes over the branch an earlier start or an unattended run left, whose claim ref it holds now",
     () =>
       Effect.gen(function* () {
         const earlier = makeFake("approve", POOL);
@@ -143,10 +143,7 @@ describe("human-initiated", () => {
             branch: `auto/issue-${ISSUE}`,
           }),
         );
-        const skipped = yield* runToEnd(starting, unattended, work);
-        expect(skipped.status).toBe("skipped");
-        expect(summaryOf(skipped)).toContain("already claimed by an unattended run");
-        expect(unattended.requests).toEqual([]);
+        expect((yield* runToEnd(starting, unattended, work)).status).toBe("done");
       }),
   );
 

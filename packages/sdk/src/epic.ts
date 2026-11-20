@@ -8,10 +8,8 @@ import { createHash } from "node:crypto";
 
 import {
   activity,
-  awaitSignal,
   Claims,
   GitHub,
-  isPhaseData,
   type LinkedIssue,
   type PhaseRecord,
   planNodeMarker,
@@ -701,7 +699,7 @@ export const waitingData = (waiting: Waiting) => {
   return encodeWaiting(
     Option.getOrElse(
       Arr.findFirst([waiting, refreshesOnly, pendingCiOnly, tasksOnly], (kept) =>
-        isPhaseData(encodeWaiting(kept)),
+        Phases.fitsAPark(encodeWaiting(kept)),
       ),
       () => least,
     ),
@@ -712,25 +710,27 @@ export const waitingData = (waiting: Waiting) => {
 // `epic-waiting-<round>`, then parks until one does or `after` passes. A
 // daemon's run or a CI job's ends at the park, and Epic.queued offers the
 // epic to a new run from this record once a layer changes or `after` passes.
-// Each park writes its round's record, even over one this run wrote: a
-// signal may wake the run before the daemon ends it, and the run then parks
-// again with a new fingerprint and what it kept since.
+// Each round's record is written afresh, with what that round kept, even over
+// one this run wrote: a signal may wake the run before the daemon ends it, and
+// the run then parks again with a new fingerprint and what it kept since.
 export const park = (
   epic: number,
   round: number,
   waiting: Waiting,
   after: Duration.Input = LOOK_AGAIN_AFTER,
 ) =>
-  Effect.gen(function* () {
-    yield* activity(
-      `epic-waiting-${round}`,
-      Phases.record(Claims.epic(epic), Phases.PHASES.epic.waiting, waitingData(waiting), {
-        always: true,
-      }),
-    );
-
-    return yield* awaitSignal([LAYER_CHANGED], { id: `epic-${round}`, timeout: after });
-  });
+  Phases.park(
+    {
+      step: `epic-waiting-${round}`,
+      item: Claims.epic(epic),
+      phase: Phases.PHASES.epic.waiting,
+      data: waitingData(waiting),
+      keeps: () => false,
+      timeout: Duration.fromInputUnsafe(after),
+    },
+    [LAYER_CHANGED],
+    `epic-${round}`,
+  );
 
 // Records that every task of the epic is closed, as the step
 // `epic-finished-<round>`: the round that read it so.

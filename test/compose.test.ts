@@ -1591,17 +1591,7 @@ describe("a document with a loop and lanes", () => {
                   ...inputs,
                   on: {
                     approve: { steps: [{ end: "done" }] },
-                    changes: {
-                      steps: [
-                        {
-                          id: "parked",
-                          use: "epic.park",
-                          in: { round: "round" },
-                          with: { lookAgainAfter: "1 day" },
-                        },
-                        { next: {} },
-                      ],
-                    },
+                    changes: { steps: [{ next: {} }] },
                   },
                 },
               ],
@@ -1610,9 +1600,13 @@ describe("a document with a loop and lanes", () => {
         ],
       });
 
+      // What the check says of review.round; the loop's own wait is beside the point.
+      const ofRound = (doc: Doc) =>
+        messages(doc).filter((message) => message.startsWith("review.round"));
+
       test("takes its round from the loop", () => {
         expect(
-          messages(
+          ofRound(
             reviewing({ in: { pr: "trigger.pr", round: "round" }, with: { role: "reviewer" } }),
           ),
         ).toEqual([]);
@@ -1620,7 +1614,7 @@ describe("a document with a loop and lanes", () => {
 
       test("refuses a fixed round, which would review once for every round", () => {
         expect(
-          messages(reviewing({ in: { pr: "trigger.pr" }, with: { round: 1, role: "reviewer" } })),
+          ofRound(reviewing({ in: { pr: "trigger.pr" }, with: { round: 1, role: "reviewer" } })),
         ).toEqual(["review.round runs in every round here, and must take round"]);
       });
 
