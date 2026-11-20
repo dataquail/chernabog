@@ -131,4 +131,20 @@ describe("the plan's comment", () => {
       ),
     ).toEqual(Option.some(Option.some(2)));
   });
+
+  test("keeps tasks whose text holds --> and {} --> in its marker, and reads them back the same", () => {
+    const nodes = [
+      { ...node("arrow"), body: "Requests go client --> server <b>fast</b>." },
+      { ...node("brace", ["arrow"]), body: "if (x) {} --> y" },
+    ];
+
+    const comment = Plan.planComment(1, "Arrows in prose.", nodes);
+    const marker = comment.slice(comment.indexOf("<!-- chernabog-plan"));
+
+    // Nothing in the tasks closes the HTML comment before the marker's own -->.
+    expect(marker.indexOf("-->")).toBe(marker.length - "-->".length);
+    expect(
+      Option.flatMap(planMarker.read(comment), (read) => Option.fromUndefinedOr(read.plan)),
+    ).toEqual(Option.some(nodes));
+  });
 });

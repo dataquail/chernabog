@@ -34,12 +34,19 @@ export const ReviewMarker = Schema.Struct({
 
 export type ReviewMarker = typeof ReviewMarker.Type;
 
+// A marker's JSON with < and > as \u escapes, which JSON reads back the same:
+// a marker may carry free text, such as a plan's task bodies, and a raw -->
+// in it would end the HTML comment, or the marker's match, early.
+const escapeMarkerJson = (json: string) =>
+  json.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
+
 const marker = <A>(name: string, schema: Schema.Codec<A, Json>) => {
   const pattern = new RegExp(`<!-- chernabog-${name} (\\{.*?\\}) -->`);
   const codec = Schema.fromJsonString(schema);
 
   return {
-    write: (value: A) => `<!-- chernabog-${name} ${Schema.encodeSync(codec)(value)} -->`,
+    write: (value: A) =>
+      `<!-- chernabog-${name} ${escapeMarkerJson(Schema.encodeSync(codec)(value))} -->`,
     read: (body: string): Option.Option<A> =>
       Option.fromNullishOr(body.match(pattern)).pipe(
         Option.flatMap((match) => Schema.decodeOption(codec)(match[1])),
