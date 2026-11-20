@@ -13,11 +13,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import epic from "../packages/recipes/flows/epic.ts";
+import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
 import {
+  deliverSignals,
   type EngineRun,
   type Fake,
   item,
@@ -185,6 +187,68 @@ describe("an epic parked in a CI job", () => {
             [12, 2],
           ]),
         );
+        expect(yield* offered(fake)).toEqual([]);
+      }),
+    ENGINE_TIMEOUT,
+  );
+
+  effect(
+    "a run a signal woke before it ended parks again with its new round's record",
+    () =>
+      Effect.gen(function* () {
+        const fake = epicFake();
+        // #12's agent answers with questions the first time.
+        fake.author.asks.push("/tmp/demo-worktrees/auto/issue-12");
+        let first = Option.none<string>();
+
+        // The run parks; a person hands #12 back, and the trigger's signal
+        // wakes the run before it ends at its park. It works on, and parks
+        // again in a later round.
+        const run = yield* runUntil(working, fake, fresh, (current) =>
+          Effect.gen(function* () {
+            const { waits } = yield* listRunWaitsHandler({
+              runId: current.id,
+              signal: Epic.LAYER_CHANGED,
+            });
+
+            const parked = Arr.head(waits.map((wait) => wait.deferred));
+
+            if (Option.isNone(first)) {
+              if (Option.isNone(parked)) {
+                return false;
+              }
+
+              fake.setLabels(12, [DEFAULT_LABELS.eligible]);
+              const found = yield* offered(fake);
+
+              if ((yield* deliverSignals(working, IMPLICIT, found)) > 0) {
+                first = parked;
+              }
+
+              return false;
+            }
+
+            return Option.isSome(parked) && !Option.contains(first, parked.value);
+          }),
+        );
+
+        const woken = Option.isSome(first);
+        expect([woken, run.status]).toEqual([true, "running"]);
+        expect(fake.steps.flatMap(Option.toArray)).toContain("implement#task-12-2");
+
+        // The record is the later park's: the epic as the run last read it,
+        // and #12's second attempt.
+        const now = yield* onFake(fake, Epic.fingerprint(EPIC)).pipe(Effect.orDie);
+        expect(Option.map(kept(fake), (found) => found.fingerprint)).toEqual(Option.some(now));
+        expect(Option.map(kept(fake), (found) => sorted(found.tasks.attempts))).toEqual(
+          Option.some([
+            [10, 1],
+            [11, 1],
+            [12, 2],
+          ]),
+        );
+
+        // Nothing changed since its last park: nothing to wake it again.
         expect(yield* offered(fake)).toEqual([]);
       }),
     ENGINE_TIMEOUT,

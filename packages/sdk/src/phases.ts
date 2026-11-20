@@ -167,13 +167,16 @@ const RECORD_TRIES = 3;
 // JSON object of at most 4 KB (core's PhaseData); an item already at `to`
 // keeps the data it has. `again` writes a fresh record even then, unless this
 // run wrote the one there: a wait that starts over, with a new `at` and data.
+// `always` writes a fresh record even when this run wrote the one there: a
+// wait a run may enter again after a signal woke it, whose data is this
+// round's, not the round it first parked in.
 // Gives the record the item holds afterwards; record gives nothing, for an
 // activity that journals no result.
 export const recording = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean } = {},
+  options: { readonly again?: boolean; readonly always?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
@@ -187,7 +190,10 @@ export const recording = (
 
       const there = Option.filter(
         current,
-        (found) => found.phase === phase && (options.again !== true || found.by === by),
+        (found) =>
+          found.phase === phase &&
+          options.always !== true &&
+          (options.again !== true || found.by === by),
       );
 
       if (Option.isSome(there)) {
@@ -222,7 +228,7 @@ export const record = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean } = {},
+  options: { readonly again?: boolean; readonly always?: boolean } = {},
 ) => Effect.asVoid(recording(item, to, data, options));
 
 // Every item's record, in one read, for a source that looks at every open item.

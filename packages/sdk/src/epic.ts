@@ -620,6 +620,9 @@ const asData = (waiting: Waiting) => {
 // `epic-waiting-<round>`, then parks until one does or `after` passes. A
 // daemon's run or a CI job's ends at the park, and Epic.queued offers the
 // epic to a new run from this record once a layer changes or `after` passes.
+// Each park writes its round's record, even over one this run wrote: a
+// signal may wake the run before the daemon ends it, and the run then parks
+// again with a new fingerprint and what it kept since.
 export const park = (
   epic: number,
   round: number,
@@ -630,7 +633,7 @@ export const park = (
     yield* activity(
       `epic-waiting-${round}`,
       Phases.record(Claims.epic(epic), Phases.PHASES.epic.waiting, asData(waiting), {
-        again: true,
+        always: true,
       }),
     );
 
