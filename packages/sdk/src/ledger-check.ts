@@ -18,16 +18,15 @@ import * as Schema from "effect/Schema";
 import {
   type Anomaly,
   Checking,
-  ciRoundOf,
-  conflictCiRoundOf,
+  declaredAs,
   type ItemKind,
+  misplacedOn,
   NO_RECORD,
-  PHASES,
-  phasesOf,
   type Reading,
 } from "./phases.ts";
 
 export type { Anomaly } from "./phases.ts";
+export { declaredAs } from "./phases.ts";
 
 // A transition a writer outside a run records, as the catalogue declares it:
 // a source's reconcile (`observer:<source>`), backfill's first records, or a
@@ -79,44 +78,16 @@ export const kindOf = (item: string): Option.Option<ItemKind> =>
     ([, kind]) => kind,
   );
 
-// A phase as the catalogue declares it: a later round's wait for CI
-// (`awaiting-ci-2`, `awaiting-conflict-ci-3`) is its first round's phase.
-export const declaredAs = (phase: string) => {
-  if (Option.isSome(ciRoundOf(phase))) {
-    return PHASES.issue.awaitingCi;
-  }
-
-  if (Option.isSome(conflictCiRoundOf(phase))) {
-    return PHASES.pullRequest.awaitingConflictCi;
-  }
-
-  return phase;
-};
-
-const SDK_PHASES = new Set<string>([
-  ...phasesOf("issue"),
-  ...phasesOf("pull-request"),
-  ...phasesOf("epic"),
-]);
-
 const sameLogin = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
 
 const listed = (phases: ReadonlyArray<string>) => phases.join(", ");
 
 // What is wrong with a run's, or a persona's, record: a phase of the SDK's
-// that isn't one of the item's kind, such as an epic's `waiting` on a pull
-// request. A phase that isn't the SDK's is a team's own, which the repo
-// names, and passes, as does any phase on an item of a team's own.
+// that isn't one of the item's kind (Phases.misplacedOn, the catalogue the
+// compiler checks a document by too). A team's own phase passes, as does any
+// phase on an item of a team's own.
 const runTransition = (item: string, record: PhaseRecord): Option.Option<string> =>
-  Option.flatMap(kindOf(item), (kind) => {
-    const phase = declaredAs(record.phase);
-
-    if (!SDK_PHASES.has(phase) || phasesOf(kind).includes(phase)) {
-      return Option.none();
-    }
-
-    return Option.some(`${record.phase} isn't a phase of a ${kind}`);
-  });
+  Option.flatMap(kindOf(item), (kind) => misplacedOn(kind, record.phase));
 
 // What is wrong with an observer's record: its writer records no such
 // transition. None when one of its declared transitions is this one.

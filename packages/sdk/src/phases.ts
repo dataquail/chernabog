@@ -132,6 +132,49 @@ export const phasesOf = (item: ItemKind): ReadonlyArray<string> =>
     { issue: PHASES.issue, "pull-request": PHASES.pullRequest, epic: PHASES.epic }[item],
   );
 
+// A phase as the catalogue keys it: a later round's wait for CI
+// (`awaiting-ci-2`, `awaiting-conflict-ci-3`) is its first round's phase.
+export const declaredAs = (phase: string) => {
+  if (Option.isSome(ciRoundOf(phase))) {
+    return PHASES.issue.awaitingCi;
+  }
+
+  if (Option.isSome(conflictCiRoundOf(phase))) {
+    return PHASES.pullRequest.awaitingConflictCi;
+  }
+
+  return phase;
+};
+
+// The one catalogue of the SDK's phases, keyed by phase name: the kinds of
+// item each is a phase of (awaiting-ci is an issue's and a pull request's).
+// The ledger's check of a run's record and the compiler's check of a phase a
+// document names both go by it (misplacedOn), so they can't disagree.
+const CATALOGUE: ReadonlyMap<string, ReadonlyArray<ItemKind>> = new Map(
+  Arr.dedupe(ITEM_KINDS.flatMap(phasesOf)).map((phase) => [
+    phase,
+    ITEM_KINDS.filter((kind) => phasesOf(kind).includes(phase)),
+  ]),
+);
+
+const ARTICLES = {
+  issue: "an",
+  "pull-request": "a",
+  epic: "an",
+} as const satisfies { readonly [kind in ItemKind]: string };
+
+// Why `phase` can't be recorded on an item of `kind`: it is one of the SDK's
+// phases, of other kinds of item only, such as an epic's `waiting` on a pull
+// request. None for a phase of the kind's, and for a team's own, which the
+// repo names.
+export const misplacedOn = (kind: ItemKind, phase: string): Option.Option<string> =>
+  Option.flatMap(Option.fromUndefinedOr(CATALOGUE.get(declaredAs(phase))), (kinds) =>
+    Option.liftPredicate(
+      `${phase} isn't a phase of ${ARTICLES[kind]} ${kind}`,
+      () => !kinds.includes(kind),
+    ),
+  );
+
 // The item a run on each subject works on, which a team's own
 // progress.advance step records its phase on. Four subjects are one pull
 // request, seen by different flows.
