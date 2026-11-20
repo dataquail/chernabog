@@ -111,6 +111,13 @@ describe("a merge held in a CI job", () => {
       expect(
         fake.comments.some((comment) => comment.body.includes("CI on main stayed red for 1d")),
       ).toBe(true);
+
+      // Handed to a person, it is not offered again, red base or green.
+      expect(yield* offeredBy(fake, reviewFlow)).toEqual([]);
+
+      fake.merge.baseCi = Option.some(GREEN);
+      expect(yield* offeredBy(fake, reviewFlow)).toEqual([]);
+      expect(fake.merge.requests).toEqual([]);
     }),
   );
 });

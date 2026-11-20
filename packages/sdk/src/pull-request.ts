@@ -758,11 +758,17 @@ type Held = {
 // Every run holding a merge on an open pull request on the automated path
 // (ships): by its record (ADR 0021, decision 3), and, for a hold from before
 // records named the run's work item, by the hold marker on the pull request,
-// when this machine doesn't know that run has ended.
+// when this machine doesn't know that run has ended. Not one labelled
+// needs-human: a run that gave the hold up handed it to a person
+// (handToPerson), and no flow takes it up again until they remove the label.
 const heldMergesOnPulls = Effect.gen(function* () {
   const github = yield* GitHub;
   const labelNames = yield* Settings.labels;
-  const shipping = (yield* github.openPullRequests).filter((pull) => ships(pull, labelNames));
+
+  const shipping = (yield* github.openPullRequests).filter(
+    (pull) => ships(pull, labelNames) && !pull.labels.includes(labelNames.needsHuman),
+  );
+
   const all = yield* Phases.records;
   const held: Array<Held> = [];
 
