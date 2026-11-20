@@ -200,8 +200,8 @@ Each fix is its own pull request.
 7. **Backfill, then S6 and S7:** `chernabog progress backfill` writes a record
    for every open item without one. Then the no-record paths go. Done:
    backfill ([Backfill](#backfill)), then S6 and S7, so the review sources read
-   the record alone. Upgrade order: run backfill, let review runs in flight
-   finish, then upgrade (see S6 and S7 below).
+   the record alone. Upgrade order: see [Upgrading](#upgrading-to-s6-and-s7)
+   below.
 
 ## S6 and S7: the review sources read the record alone
 
@@ -217,7 +217,11 @@ Each fix is its own pull request.
   said for an adopted pull request this persona reviewed before the
   hand-off, and for one `pr.readyForPerson` gave a person after a review. A
   record written before this release has no `reviewed`, so a review asked
-  of it is a first, whoever reviewed before.
+  of it is a first, whoever reviewed before. That covers a hand-off record
+  and a P2 record written by an earlier release's backfill (#544) alike:
+  a persona that had only commented when it was written gets a first
+  review, not a re-review. Rerunning backfill doesn't add `reviewed`,
+  since it skips an item that has a record.
 - **Keys.** `pr-N-review-K` and `pr-N-changes-K` are gone. A request to
   review again keys by its `review-asked-again` record, and a review asking
   for changes on a pull request with no record moves it to `changes-asked`
@@ -230,9 +234,23 @@ Each fix is its own pull request.
   CI plan job reserves an item by its claim (`pr-N`), not its key (#520). A
   merge a legacy re-review run holds keeps `pr-N-review-K` in its
   `merge-held` data, which re-review's `heldMerges` still owns
-  (`pr-N-` prefix). Upgrade order, in the release notes: run `chernabog
-progress backfill --write` on each repo, let review runs in flight
-  finish, then upgrade.
+  (`pr-N-` prefix).
+
+### Upgrading to S6 and S7
+
+Backfill (#544) and S6 and S7 (#545) are in one stack, so the release order
+decides the upgrade order:
+
+- **One release with both** (the default): no binary has backfill without
+  S6 and S7, so backfill can't run first. Stop the daemon, upgrade, run
+  `chernabog progress backfill --repo <repo> --write` on each repo, then
+  start the daemon, so no tick reads a repo before its backfill. Runs in
+  flight under a legacy key are covered above. Every backfill record then
+  carries `reviewed`.
+- **A release between them**: run that release's backfill on each repo, let
+  review runs in flight finish, then upgrade. Its P2 records have no
+  `reviewed`, so a pull request whose persona had only commented gets a
+  first review once, after the upgrade, instead of a re-review.
 
 ## What this changes in handoffs.md
 
