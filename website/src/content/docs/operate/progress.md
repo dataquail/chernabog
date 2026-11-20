@@ -60,6 +60,21 @@ The phases are recorded and read inside the SDK's functions, so a recipe you hav
 - **A flow of your own in TypeScript** that hands off, reviews or asks again through the SDK records phases already. One whose trigger reads `Review.reviewRequests` gets each pull request's record, and no review count: `ReviewRequest.reviewed` is gone. Read who reviewed before from the record with `Phases.reviewedBefore`, and use the functions above to find work by phase.
 - **A document** needs no change. Where a stage of your own does what a recording block would, such as posting the review itself, follow it with `progress.advance` so the flow that reads that phase finds the item; a review your stage posts on GitHub is reconciled anyway.
 
+## Upgrading a repo from before record-only reading
+
+From this release the review sources read the record alone: a pull request with no record is a first review, and the keys worked out from review counts (`pr-7-review-2`, `pr-7-changes-2`) are gone. A repo with open pull requests from an older SDK needs a record for each before it upgrades, and backfill needs the new SDK to write them, so the upgrade is made in a checkout and merged last:
+
+1. **Upgrade Chernabog** on the machines that run the repo's flows, so `chernabog progress` is there.
+2. **Upgrade the SDK and recipes in a checkout**, with `chernabog recipes upgrade` (see [Versions](/chernabog/operate/versions/#upgrading-a-repo)). Don't merge it yet.
+3. **Backfill**: `chernabog progress backfill --repo <repo> --from-checkout` prints the record it would write for each open item that has none, and the items the facts don't settle, for a person to look at. Run it again with `--write` to write them, by `observer:backfill`. A second run writes nothing. Run on the published SDK, without `--from-checkout`, it refuses, naming `recipes upgrade`.
+4. **Let review runs drain.** Wait until `chernabog status` shows no `review`, `re-review`, `address-review` or `resolve-conflicts` run in flight for the repo, on any machine. A run under an old key that outlives the upgrade doesn't start a second run on its pull request, but its work is keyed anew.
+5. **Merge the upgrade** to the base branch, with its `bun.lock`, and `chernabog trust` it again.
+6. **Check the records**: `chernabog progress anomalies --repo <repo>` lists each record a source won't act on (see [below](#records-a-source-wont-act-on)). Acknowledge the ones you expect with `--acknowledge`; fix any other by recording the item's phase again as a persona.
+
+What backfill can't carry over: a record's `at` is when backfill wrote it, so the 14-day wait on an adopted draft and `mergeHoldTimeout` start again; a flow document that a CI job left parked has no node to resume at; and an epic's task attempts start from none. A record written before this release has no `reviewed`, so a review asked of an adopted pull request handed off before the upgrade is read as a first review.
+
+A flow of your own that read `ReviewRequest.reviewed` or called `Review.addressItem` with a review count no longer compiles: read the record with `Phases.reviewedBefore`, and key work with `Phases.keyFor`. `limits.parkedLeaseTtl` still loads, but does nothing: no run holds a lease through a park now.
+
 ## Announcing each advance
 
 A thread's commits start no workflow, so after each phase an item advances to, the writer sends a [`repository_dispatch`](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event) to the repo: event type `chernabog-phase`, payload `{"item": "pr-73", "from": "review-asked", "to": "changes-asked"}` (`from` is `null` for an item's first phase). It starts the default branch's workflows that listen for it, so a repo running its flows in CI starts the item's next step on a runner, whoever advanced the phase, a laptop's daemon included.
@@ -107,6 +122,18 @@ ruleset chernabog-threads-protect '[{"type":"deletion"},{"type":"non_fast_forwar
 
 - **A personal repo has no teams.** The write ruleset's bypass list can name the repository admin role, deploy keys and GitHub Apps, so the personas have to be repository admins, which also lets them delete threads.
 - **A private repo needs a paid plan for rulesets**: GitHub Team for an organization's, Pro for a person's. On GitHub Free, GitHub refuses them for a private repo, and the record stays unprotected.
+
+## Records a source won't act on
+
+The rulesets limit who can write a thread; each source also checks every record it reads. A record is acted on when its writer is a run (a run's id), one of the repo's personas, or an observer chernabog writes as (`observer:<source>`, `observer:backfill`, `observer:acknowledged`), and its transition is one that writer may make. Any other record, such as one a person wrote by hand or one from an undeclared transition, is hidden from the source, and its item is held, with the record named in `chernabog status`. Nothing is written or commented.
+
+`chernabog progress anomalies --repo <repo>` lists every such record on an open item:
+
+```
+pr-184: record 9bf23c1 (review-asked -> approved, by rehearsal-stranger): its writer, rehearsal-stranger, is none of the repo's personas, a run or an observer chernabog writes as
+```
+
+With `--acknowledge`, it records each one's phase again, as it is, by `observer:acknowledged`, so the sources act on it; a record that moved since the listing is left alone. To put an item somewhere else, record its phase as a persona instead. Run it after upgrading a repo whose threads predate the check.
 
 ## What doctor checks
 
