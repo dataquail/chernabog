@@ -804,6 +804,13 @@ working an item's progress out from labels and review counts.
 docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
 #361's storage test and #362's map of every recipe's handoffs.
 
+- **The record is the only progress** (`docs/adr/0021-one-ledger-the-forge-is-input.md`).
+  A source finds where an item is from its record. Labels, review counts,
+  assignees and comment markers are intent, fact or projection, never
+  progress. A wait on a person or another system records a phase and ends
+  the run, on a daemon as in CI, and the source that reads that phase
+  reports an item a run may start, not only a wake.
+
 - **The port is core's `Progress`** (`packages/core/src/services.ts`):
   `read(item)`, `readAll` and `advance(item, { from, to, by })`, a
   compare-and-set that writes `to` only if the phase is still `from` (none:
