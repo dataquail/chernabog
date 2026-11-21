@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.0.0](https://github.com/dataquail/chernabog/compare/core-v1.4.0...core-v2.0.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** PhaseTransition.from is a PhaseRead ({phase, version}), not a Phase; `progress anomalies --acknowledge` takes the records to acknowledge, `<item>@<version>`, repeated.
+* **core:** Backfill.survey and Ledger.survey are effects, not functions of logins; a repo lists its personas under `personas:`.
+* **sdk:** a flow parks with Phases.park, not awaitSignal; Plan.awaitAnswer takes the spec; Plan.propose no longer records proposed; epic.park requires epic and progress; a binary refuses an SDK from before this release.
+
+### Features
+
+* **ci:** a plan job reserves the items it starts, so two plans for one step start one run job ([#520](https://github.com/dataquail/chernabog/issues/520)) ([32d0e79](https://github.com/dataquail/chernabog/commit/32d0e79a75f5c58f9866e7edc495cc440826f4ec))
+* **core:** a phase record says when it was written and carries data for the next run ([#529](https://github.com/dataquail/chernabog/issues/529)) ([0631dda](https://github.com/dataquail/chernabog/commit/0631ddaaa7527874433f079cbccd94fe93684889))
+* **core:** one persona set, from the repo's committed config ([#551](https://github.com/dataquail/chernabog/issues/551)) ([428d916](https://github.com/dataquail/chernabog/commit/428d91654598db220c4997f35858f82ca73511ea))
+* **core:** Progress.advance compares and sets on the version the writer read ([#554](https://github.com/dataquail/chernabog/issues/554)) ([9924472](https://github.com/dataquail/chernabog/commit/9924472c2e04a3db791f8682e0601e3ba9ebdfbc))
+* **sdk:** a park is always a record ([#550](https://github.com/dataquail/chernabog/issues/550)) ([5411cca](https://github.com/dataquail/chernabog/commit/5411cca5b4b0940b8bb315f416509a1a525476ac))
+
+
+### Bug Fixes
+
+* **sdk:** a plan parked in a CI job is taken up again once a person answers it, or nobody does in time ([#532](https://github.com/dataquail/chernabog/issues/532)) ([5184586](https://github.com/dataquail/chernabog/commit/51845865e3b6fcc064b4380be501a5d6bc6e0c5c))
+
 ## [1.4.0](https://github.com/dataquail/chernabog/compare/core-v1.3.0...core-v1.4.0) (2026-11-16)
 
 
