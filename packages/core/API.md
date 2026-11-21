@@ -806,7 +806,7 @@ import * as Schema from "effect/Schema";
 import * as Capabilities from "./capabilities.ts";
 import type { AgentError, GitError, GitHubError, MergeRefused, NotFound, PhaseMoved, ProgressError, PullRequestClosed, PushRejected, UsageError } from "./errors.ts";
 import type { Json } from "./json.ts";
-import type { Phase, PhaseData, PhaseWriter } from "./phase.ts";
+import { Phase, PhaseData, PhaseWriter } from "./phase.ts";
 export declare const Labels: Schema.Struct<{
     readonly eligible: Schema.String;
     readonly inProgress: Schema.String;
@@ -1436,6 +1436,10 @@ export type PhaseRecord = {
     readonly at: DateTime.Utc;
     readonly data: Option.Option<PhaseData>;
 };
+export declare const UNREADABLE_WRITER = "chernabog:unreadable";
+export declare const UNREADABLE_PHASE = "unreadable";
+export declare const unreadableRecord: (version: string, at: DateTime.Utc, why: string) => PhaseRecord;
+export declare const unreadableWhy: (record: PhaseRecord) => Option.Option<string>;
 export type PhaseRead = Pick<PhaseRecord, "phase" | "version">;
 export type PhaseTransition = {
     readonly from: Option.Option<PhaseRead>;

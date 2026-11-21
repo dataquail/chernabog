@@ -21,7 +21,7 @@ import type {
   UsageError,
 } from "./errors.ts";
 import type { Json } from "./json.ts";
-import type { Phase, PhaseData, PhaseWriter } from "./phase.ts";
+import { Phase, PhaseData, PhaseWriter } from "./phase.ts";
 
 // The labels of the SDK's issue-to-pull-request recipes. Deprecated: they are
 // those recipes' settings now (the SDK's Settings.labels), and core's next
@@ -806,6 +806,39 @@ export type PhaseRecord = {
   readonly at: DateTime.Utc;
   readonly data: Option.Option<PhaseData>;
 };
+
+// The record an adapter gives for one its store holds but can't read, such
+// as a commit a person pushed to a git thread with no `Phase:` trailer: its
+// version and time are the store's, its writer UNREADABLE_WRITER, its phase
+// UNREADABLE_PHASE, and its data's `unreadable` says why it isn't a record.
+// No writer records as UNREADABLE_WRITER (a login holds no `:`), so the
+// SDK's check of every source's reads holds the item for a person (ADR 21,
+// decision 5), and every other item reads as usual, where failing the read
+// would stop every source that reads them all.
+export const UNREADABLE_WRITER = "chernabog:unreadable";
+
+export const UNREADABLE_PHASE = "unreadable";
+
+const Unreadable = Schema.Struct({ unreadable: Schema.String });
+
+export const unreadableRecord = (version: string, at: DateTime.Utc, why: string): PhaseRecord => ({
+  phase: Schema.decodeSync(Phase)(UNREADABLE_PHASE),
+  from: Option.none(),
+  by: Schema.decodeSync(PhaseWriter)(UNREADABLE_WRITER),
+  version,
+  at,
+  data: Option.some(Schema.decodeSync(PhaseData)({ unreadable: why })),
+});
+
+// Why `record` is one its adapter couldn't read, or none for a record.
+export const unreadableWhy = (record: PhaseRecord): Option.Option<string> =>
+  Option.map(
+    Option.flatMap(
+      Option.filter(record.data, () => record.by === UNREADABLE_WRITER),
+      Schema.decodeUnknownOption(Unreadable),
+    ),
+    (found) => found.unreadable,
+  );
 
 // The record a writer read before it moves an item on: its phase, and its
 // version, which the advance compares and sets on. A PhaseRecord is one.

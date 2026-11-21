@@ -5,6 +5,9 @@ import {
   PhaseMoved,
   PhaseWriter,
   ProgressUnwritable,
+  UNREADABLE_PHASE,
+  UNREADABLE_WRITER,
+  unreadableWhy,
 } from "@chernabog/core";
 import { describe, expect, test } from "bun:test";
 import * as Cause from "effect/Cause";
@@ -335,17 +338,94 @@ describe("the protected-branch adapter on GitHub", () => {
     }),
   );
 
-  effect("a branch under the threads that holds no record is a ProgressError", () =>
+  // One bad thread holds only its own item (#549): the record it reads as
+  // names the commit and why it isn't one, for the ledger's check to hold
+  // the item by, rather than failing every read of every item.
+  effect("a branch under the threads that holds no record reads as an unreadable record", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const oid = fake.advanceAs(`${THREADS}pr-73`, "someone's own commit");
+      const progress = yield* adapterOver(fake);
+
+      const read = yield* progress.read("pr-73");
+
+      expect(Option.map(read, (record) => [record.phase, record.by, record.version])).toEqual(
+        Option.some([UNREADABLE_PHASE, UNREADABLE_WRITER, oid]),
+      );
+      expect(Option.flatMap(read, unreadableWhy)).toEqual(Option.some("it has no Phase trailer"));
+    }),
+  );
+
+  effect("a branch's commit that holds no record says why", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const messages = [
+        "root",
+        "Phase: Not A Phase\nBy: x",
+        "Phase: review-asked",
+        "Phase: a\nBy: not a writer",
+        "Phase: a\nFrom: B C\nBy: x",
+        "Phase: a\nBy: x\nData: not json",
+      ];
+
+      messages.forEach((message, index) => fake.advanceAs(`${THREADS}item-${index}`, message));
+      const progress = yield* adapterOver(fake);
+
+      const whys = yield* Effect.forEach(messages, (_, index) =>
+        Effect.map(progress.read(`item-${index}`), (read) => Option.flatMap(read, unreadableWhy)),
+      );
+
+      expect(whys).toEqual(
+        [
+          "it has no Phase trailer",
+          "its Phase trailer isn't a phase",
+          "it has no By trailer",
+          "its By trailer isn't a writer",
+          "its From trailer isn't a phase",
+          "its Data trailer isn't a JSON object a record can hold",
+        ].map(Option.some),
+      );
+    }),
+  );
+
+  effect("readAll reads every other item when one thread holds no record", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      yield* progress.advance("pr-72", { from: Option.none(), to: ASKED, by: RUN_A });
+      yield* progress.advance("pr-74", { from: Option.none(), to: CHANGES, by: RUN_B });
+      fake.advanceAs(
+        `${THREADS}pr-73`,
+        'chernabog: pr-73\n\nPhase: review-asked\nBy: x\nData: {"a"',
+      );
+
+      const all = yield* (yield* adapterOver(fake)).readAll;
+
+      const phases = [...all].map(([item, record]) => [item, record.phase]);
+
+      expect(phases.toSorted(([left = ""], [right = ""]) => left.localeCompare(right))).toEqual([
+        ["pr-72", ASKED],
+        ["pr-73", phase(UNREADABLE_PHASE)],
+        ["pr-74", CHANGES],
+      ]);
+      expect(Option.flatMap(Option.fromUndefinedOr(all.get("pr-73")), unreadableWhy)).toEqual(
+        Option.some("its Data trailer isn't a JSON object a record can hold"),
+      );
+    }),
+  );
+
+  effect("an advance from no record loses the race to an unreadable record", () =>
     Effect.gen(function* () {
       const fake = makeThreadsFake(SLUG);
       fake.advanceAs(`${THREADS}pr-73`, "someone's own commit");
       const progress = yield* adapterOver(fake);
 
-      const exit = yield* Effect.exit(progress.read("pr-73"));
-
-      expect(Option.map(Exit.findErrorOption(exit), (error) => error._tag)).toEqual(
-        Option.some("ProgressError"),
+      const exit = yield* Effect.exit(
+        progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A }),
       );
+
+      expect(movedTo(exit)).toEqual(Option.some(Option.some(phase(UNREADABLE_PHASE))));
     }),
   );
 });
