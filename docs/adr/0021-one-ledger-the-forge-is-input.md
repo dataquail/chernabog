@@ -3,7 +3,12 @@
 Status: proposed, 2026-11-17. Builds on [ADR 19](0019-run-progress-port.md)
 (an item's phase is a record behind a port) and
 [ADR 20](0020-flows-run-on-github-actions.md) (a CI job ends at a phase
-boundary).
+boundary). Amended 2026-11-21 by epic #557 (#558): decision 1 makes "with a
+person" a phase, decision 4 makes a park a phase boundary, decision 6 keeps
+the linking markers until `Items`, and decisions 7 and 8 are new. Where the
+code still does what an amended paragraph replaced, the amendment wins and
+the code is a gap, listed in [the audit](../run-progress/audit.md) with the
+epic's task that closes it.
 
 ## Context
 
@@ -54,6 +59,26 @@ change.
    - The **world** is everything else: labels, reviews, pull requests, CI
      results, a Jira ticket's status. Anyone may change it. Chernabog reads
      it as input and writes it as projection.
+
+   The rule that follows: **the world is input, never record.** A label or a
+   comment chernabog writes is a projection for people, never something it
+   reads back as truth.
+
+   **Amended (#557): "with a person" is a phase.** It used to be the
+   `auto:needs-human` label, which chernabog wrote and then read back as
+   truth in ten SDK files, and which also stood for the plan's `human` task
+   kind. It is a ledger phase now:
+   - `with-person` on issues, pull requests and epics, with data
+     `{ why, from }`, where `from` is the phase it left.
+   - Every hand-off to a person records it: `Implement.handToHuman`,
+     `PullRequest.handToPerson`, `Plan.handToHuman` and the epic's. A plan's
+     `human` task is recorded `with-person` when it is created, so there is
+     one concept, not two.
+   - `auto:needs-human` is that record's projection (decision 8). A source
+     reads whether an item is with a person from the record, never from the
+     label.
+   - A trusted person removing the label is intent. An observer records
+     `handed-back`, and sources act on that record.
 
 2. **Each repo has exactly one ledger.** The ledger is a port with
    adapters, and a repo's committed config chooses one. Two ledgers are never
@@ -155,7 +180,9 @@ change.
      live in comments that anyone can delete. `advance` takes an optional
      `data`, a JSON object of at most 4 KB, and the record returns it. Core
      doesn't interpret it, and the compare-and-set never compares it.
-     On the git adapter it is a `Data:` trailer of one-line JSON.
+     On the git adapter it is a `Data:` trailer of one-line JSON. (Amended
+     by #557: `data` holds facts, never step outputs. Content too big for a
+     record goes in a ledger blob, decision 7.)
    - **The compare-and-set is on the version the writer read.** `advance`
      takes the record the writer read (`from`: its phase and version, none
      for an item with no record), and lands only while the item's record is
@@ -177,6 +204,38 @@ change.
    core 2 alone, with no adapter over the old port: backwards compatibility
    is not kept, and every SDK published before this release, all of which
    need core 1, is refused until `recipes upgrade` moves it on.
+
+   **Amended (#557): a park is a phase boundary.** The journal covers one
+   phase and never outlives it, so nothing a run held before a park may reach
+   the run after it except through the record:
+   - **Every park site records a phase of its own;** no two share one. A test
+     of the catalogue proves it.
+   - **The run that takes an item up reads only the record's phase and
+     `data`, plus the world.** Nothing from the run before the park carries
+     over.
+   - **`data` carries facts the next phase needs** (a sha, a pull request,
+     `since`, a round), **never step outputs.** The 4 KB check is the only
+     size budget left; `REFRESH_CI_SIZE`, `SAID_SIZE` and polling because a
+     record is too big go.
+   - **In a flow document, a node after a park may read only what its park
+     block declares it records.** The compiler rejects anything else.
+   - **`resume.node`, `kept`, `Block.keeps` and `Block.recall` go.**
+   - **An epic's record holds the epic's state only.** A task's or a stack
+     layer's CI wait is on that task's or pull request's own record, and the
+     epic reads those records instead of copying them into its own `data`
+     (`tasks.ci` and `layers.ci` go).
+
+   This reverses the choice #537 made, which the four paragraphs after this
+   one describe: a document resumed at the node it parked on, found by a node id
+   in the record's `data`, with the outputs of earlier steps kept beside it.
+   That carried the journal across a park inside the record. A park happens
+   mid-phase only because one phase was recorded at several nodes, so the
+   record had to say where within the phase to go on, and what the run had
+   done there. It is why size budgets exist and why a wait whose outputs
+   didn't fit polled instead. With a phase per park site, the phase alone
+   says where the next run starts, and what it needs is a fact, small and
+   readable again from the world. Until #566 and #567 land, the code does
+   what these paragraphs describe; the audit lists it.
 
    A flow document resumes at the node it parked on, found by a **node id the
    record's data names**, not by the phase. One phase can be recorded at
@@ -450,6 +509,43 @@ change.
      copies each thread's latest record and links the old name to its new
      id. Nothing in a flow names a forge object as an item directly once
      sources and blocks go through `Items`.
+   - **Amended (#557): linking markers stay until `Items`.** A marker that
+     only links two objects or deduplicates a write is not progress:
+     `planNodeMarker` (a task's issue to its plan node), `followUpMarker`
+     (a follow-up issue to the merge it is about) and the epic status
+     comment's own marker. They stay, and sources may read them, until
+     `Items` links replace them. Every other marker chernabog writes is one
+     of its outputs, and decision 7 moves it to the ledger.
+
+7. **Chernabog's own outputs live in the ledger.** (#557) What a run
+   produced that a later run acts on is coordination, so it is ledger state,
+   not a comment someone can edit or delete:
+   - **Small outputs go in the records' `data`:** the reviewed sha and the
+     reviewer behind the merge gate (today `reviewMarker`), the author's
+     session (today `sessionMarker`), and the claim's facts, such as its
+     branch, base and adopted pull request (today `claimMarker`).
+   - **Content too big for a record, like the plan, goes in a ledger
+     blob.** A blob is content-addressed and immutable, and is written in
+     the same commit as the record that names it. On the git adapter it is a
+     file in the thread commit's tree, named by its hash in the record's
+     `data`. The plan (today `planMarker`, read back by `Plan.posted`) is the
+     first.
+   - **Comments still show all of this to people.** Nothing reads them back.
+     Deleting or editing one changes nothing but what a person sees.
+
+8. **Status labels are a projection.** (#557)
+   - **One projector derives them from the ledger**, from an item's phase
+     and its claim, after each advance and each claim change. It writes the
+     whole set, so a label a person removed or added by hand is put right on
+     the next change.
+   - **No flow writes a status label directly.** `auto:in-progress`,
+     `auto:needs-human`, `auto:awaiting-ready`, `auto:plan-proposed`,
+     `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`
+     and the plan's and epic's labels are the projector's.
+   - **Intent labels are input only:** `auto:eligible`, `auto:plan`,
+     `auto:plan-approved` and `auto:ship`. Chernabog removes one only to
+     acknowledge it, on claim. A source may read an intent label; no source
+     reads a status label.
 
 ## Rejected
 
@@ -470,6 +566,14 @@ change.
   `parkedTtl` (`limits.parkedLeaseTtl`, 3 days by default), so a sleeping
   laptop holds the item away from CI and every other machine until the claim
   runs out. That breaks free movement.
+- **Resuming a flow document at a node the record names** (#537, reversed by
+  #557). It let one phase be recorded at several nodes, but only by carrying
+  the journal across a park in the record's `data`: step outputs, size
+  budgets, and polling when they didn't fit. A phase per park site needs
+  none of that.
+- **Reading chernabog's own outputs back from its comments.** A marker in a
+  comment is world: anyone can edit or delete it. A blob in the ledger costs
+  one file in a commit chernabog writes anyway.
 - **Keeping forge-shaped item names in the hosted tier.** A name like
   `pr-73` can't say which forge or repo it belongs to. It also can't link a
   Jira ticket to the pull request that closes it.
@@ -537,3 +641,33 @@ change.
 - `Items`, the hosted adapter, the local adapter and the ledger config key are
   not built; they wait on the hosted service. Decision 6 fixes the direction so that nothing new takes a forge
   object's name as an item id.
+
+What the #557 amendments change for flow authors:
+
+- **A park block declares what it records, and that is all a node after it
+  reads.** A flow document's node after a park may read the item, the
+  record's phase, the facts its park block declares in `data`, and the
+  world. The compiler rejects a read of an earlier step's output across a
+  park. A document that read one must read the fact again from the world,
+  or have its park block record it.
+- **Each park site has a phase of its own.** A document can no longer
+  record one phase, such as `awaiting-ci`, at two nodes and tell them apart
+  by a node id; each wait gets its own phase, and the catalogue's test
+  refuses two sites that share one. `resume.node`, `kept`, `Block.keeps` and
+  `Block.recall` are gone, so a custom block no longer says how its output
+  is kept.
+- **`end: needs-human` and the hand-off blocks record `with-person`.** A
+  flow that wants to know whether a person has an item reads the record, not
+  `auto:needs-human`. A person handing an item back is a `handed-back`
+  record, which a source can act on.
+- **No block or flow writes a status label.** A repo's own TypeScript flow
+  that added or removed `auto:in-progress`, `auto:needs-human` or another
+  status label stops doing so; the projector writes them from the record.
+  Intent labels are still read as before.
+- **Chernabog's comments are for people.** A flow that read a plan, a
+  review, a session or a claim from a comment marker reads it from the
+  record or its blob instead. The linking markers of decision 6 stay.
+- **Upgrading is a backfill.** Backwards compatibility isn't kept.
+  `chernabog progress backfill` maps the old state of items in flight (a
+  label, a marker, a node in `data`) onto the new records, as it did for
+  the first records.

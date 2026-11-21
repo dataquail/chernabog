@@ -35,14 +35,18 @@ Borderline, and left as they are:
 - **Queue labels** (`auto:eligible`, `auto:ship`, `auto:plan`) are intent. A claim
   takes them off, so "label present" also means "not started". The record could say
   that, but a person putting the label back is a real request to run again.
-- **`auto:needs-human`** is a pause that a run applies and a person removes. That is
-  intent both ways.
+- **`auto:needs-human`** was a pause that a run applies and a person removes, so
+  intent both ways. It is no longer borderline: ADR 21's amended decision 1 makes "with a
+  person" a phase and the label its projection. Every read is a gap,
+  [H1 to H12](#the-world-read-back-as-a-record-epic-557).
 - **`auto:adopted`** decides who owns a pull request (`review.ts:853`), not how far
   it got.
 - The adopted pull request's number comes from the claim marker comment
   (`implement.ts:1709`), because a record carries no payload. Deleting that comment
   strands an adopted draft. A record payload, or an `Items` link from the issue to
-  the pull request (ADR 21, decision 6), would remove it.
+  the pull request (ADR 21, decision 6), would remove it. The record's data now
+  carries it (`awaiting-ready`'s `pullRequest`); the claim marker's other reads are
+  [M8 and M9](#the-world-read-back-as-a-record-epic-557).
 
 ## Waits that don't park (decision 4)
 
@@ -101,6 +105,97 @@ adopted pull request, and the resumed run hands it off as an adopted one.
 W4 was the first wait that followed the rule, and only in CI: `RepoSettings.ciJob`
 gated `parkingOn`. Since a daemon run ends at every park (fix-order step 4), the
 gate is gone, and a daemon's wait for CI parks too.
+
+## The world read back as a record (epic #557)
+
+Audit of `main` at c38058b9 (#555) against ADR 21 as #557 amends it: the world is
+input, never record. A park is a phase boundary (decision 4), "with a person" is a
+phase (decision 1), chernabog's own outputs live in the ledger (decision 7), and
+status labels are a projection that one projector writes (decision 8). This lists
+every place left that reads the world back as a record, or that writes a status
+label by hand, with the fix and the task in #557 that makes it. Line numbers are
+at c38058b9.
+
+### The journal outlives a phase (decision 4)
+
+| #   | Where                                                                                                                                                            | What it carries across a park                                                                                       | Fix                                                                                                                                                                   | Task |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| J1  | Park sites that share a phase, such as implement's two waits for CI on the issue's `awaiting-ci` (`implement.ts:1953`, `phases.ts:48`)                           | Which wait it is, told apart only by `resume.node`                                                                  | Every park site records a phase of its own; a test of the catalogue proves no two share one                                                                           | #566 |
+| J2  | `resume.ts:48`, `:52`, `:70`, `:101`, `:114`: `Block.keeps`, `Block.recall`, `kept` and `resume.node`                                                            | The node a document parked at and earlier steps' outputs, in the record's `data`                                    | They go. A document resumes at the phase it parked on; a node after a park reads only what its park block declares it records, and the compiler rejects anything else | #567 |
+| J3  | The epic's `waiting` record: `tasks.ci` (`epic.ts:593`) and `layers.ci` (`epic.ts:627`), with `REFRESH_CI_SIZE` (`epic.ts:637`) and `SAID_SIZE` (`stack.ts:363`) | A task's or a layer's pending CI, copied into the epic's `data`, under a size budget that polls when it is exceeded | A task's or a layer's CI wait is on that task's or pull request's own record, and the epic reads those records. The budgets go; the 4 KB check is the only one left   | #568 |
+
+### `auto:needs-human` read back as "with a person" (decision 1)
+
+Each reads the label where it should read the item's `with-person` record. #559
+records `with-person` at every hand-off first; the reads move after it.
+
+| #   | Where                                                                   | Reads the label to                                                                          | Fix                                                                                           | Task       |
+| --- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
+| H1  | `implement.ts:1575`                                                     | Leave an issue parked on CI alone when its pull request went to a person                    | Read the pull request's record for `with-person`                                              | #560       |
+| H2  | `implement.ts:2001`                                                     | Skip an issue a person has, in the CI-wait source                                           | Read the issue's record                                                                       | #560       |
+| H3  | `plan.ts:463`, `plan.ts:585`                                            | Skip a spec a person has, in `Plan.answers` and the document's `proposed` source            | Read the spec's record                                                                        | #560       |
+| H4  | `epic.ts:72` (`Epic.kindOf`)                                            | Tell a plan's `human` task from an `auto` or `hybrid` one                                   | A `human` task is recorded `with-person` when it is created (#559); `kindOf` reads the record | #560       |
+| H5  | `epic.ts:339` (`personReason`)                                          | Say why a task the epic doesn't implement waits                                             | Read the task's record                                                                        | #560       |
+| H6  | `epic-blocks.ts:187`, `epic-blocks.ts:495`                              | Tell whether a stack layer's pull request is with a person, before a refresh or a landing   | Read the layer's pull request's record                                                        | #560       |
+| H7  | `review.ts:292`                                                         | Skip a request to review again of a pull request a person has                               | Read the pull request's record                                                                | #561       |
+| H8  | `review.ts:1023`, `review.ts:1124`                                      | Skip a pull request a person has, in `review.changesRequested` and the fix's CI-wait source | Read the pull request's record                                                                | #561       |
+| H9  | `conflict.ts:202`, `conflict.ts:252`, `resolve-conflicts-blocks.ts:522` | Skip a conflicting pull request a person has, in the recipe and the document                | Read the pull request's record                                                                | #561       |
+| H10 | `pull-request.ts:726`, `pull-request.ts:815`                            | Skip a held merge a person has (`heldMerges`, `baseTurnedGreen`)                            | Read the pull request's record                                                                | #561       |
+| H11 | A person removing the label                                             | Nothing reads it: today the next source just sees no label                                  | An observer records `handed-back`, and sources act on that record                             | #560, #561 |
+| H12 | `backfill.ts:189`                                                       | Infer a merge hold that ended                                                               | Stays: backfill is the one place inference is allowed. It maps the label onto `with-person`   | #559       |
+
+### Chernabog's outputs read back from comments (decision 7)
+
+| #   | Where                                                                                                                                                   | Reads                                                                         | Fix                                                                                        | Task |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---- |
+| M1  | `plan.ts:373`, `plan.ts:380` (write), `plan.ts:386`                                                                                                     | `planMarker`: whether, and which round of, a plan was posted                  | The plan is a ledger blob named in the spec's `proposed` record; the comment is for people | #563 |
+| M2  | `plan.ts:679`, `:688` (`Plan.posted`)                                                                                                                   | `planMarker`: the posted plan itself, by round                                | Read the blob the record names (the ledger's blobs are #562)                               | #563 |
+| M3  | `backfill.ts:311`                                                                                                                                       | `planMarker`: the round of a plan posted before records                       | Backfill maps it onto the record and its blob, once                                        | #563 |
+| M4  | `pull-request.ts:416` (`PullRequest.merge`)                                                                                                             | `reviewMarker`: the reviewed sha behind the merge gate                        | The reviewed sha and reviewer are in the pull request's `approved` record's `data`         | #564 |
+| M5  | `review.ts:816` (`latestOwnReview`, from `re-review-blocks.ts:76`)                                                                                      | `reviewMarker`: this persona's last review                                    | Read the record                                                                            | #564 |
+| M6  | `review.ts:1205` (`read-review`)                                                                                                                        | `reviewMarker`: the review address-review answers, by its sha                 | Read the `changes-asked` record's `data`                                                   | #564 |
+| M7  | `review.ts:1157` (`findAuthorSession`, from `review.ts:1171`, `stack.ts:617`, `stack.ts:715`); written at `implement.ts:1768`, `hybrid.ts:303`          | `sessionMarker`: the author's agent session                                   | The session is in the pull request's record's `data`                                       | #565 |
+| M8  | `implement.ts:491` (`latestClaim`), from `implement.ts:593`, `implement.ts:709`, `hybrid.ts:133`; written at `implement.ts:392`, `:566`, `hybrid.ts:96` | `claimMarker`: the claim's run, branch, base and whether a person works on it | The claim's facts are in the issue's record's `data`                                       | #565 |
+| M9  | `backfill.ts:289`                                                                                                                                       | `claimMarker`: an adopted draft from before records                           | Backfill maps it onto the record, once                                                     | #565 |
+
+The linking markers stay until `Items` (amended decision 6): `planNodeMarker`
+(`epic.ts:86`), `followUpMarker` (`post-merge-blocks.ts:513`) and the epic status
+comment's own marker. They link objects or deduplicate a write; they say nothing
+about progress.
+
+### Status labels written by hand (decision 8)
+
+Each is a status label a flow adds or removes itself. #569 replaces every one with
+the projector, which derives the labels from the record's phase and the claim after
+each advance and claim change.
+
+| #   | Where                                                                                        | Label                                                                         | Task |
+| --- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---- |
+| L1  | `implement.ts:512` (on claim), `implement.ts:532` (`dropInProgress`, on release)             | `auto:in-progress`                                                            | #569 |
+| L2  | `implement.ts:575` (`referToPerson`), `implement.ts:2082`, `:2086` (`Implement.handToHuman`) | `auto:needs-human` on the issue and its pull request                          | #569 |
+| L3  | `implement.ts:641`                                                                           | `auto:awaiting-ready`                                                         | #569 |
+| L4  | `implement.ts:1167`                                                                          | `auto:needs-clarification`                                                    | #569 |
+| L5  | `implement.ts:1772`                                                                          | `auto:adopted`                                                                | #569 |
+| L6  | `plan.ts:860`, `plan.ts:916`                                                                 | `auto:plan-proposed`                                                          | #569 |
+| L7  | `plan.ts:1067`, `plan.ts:1071` (`becomeEpic`)                                                | `auto:epic`, and the spec's proposed, approved and in-progress labels off     | #569 |
+| L8  | `plan.ts:1107`, `plan.ts:1112` (`Plan.handToHuman`)                                          | `auto:needs-human` on the spec, and its proposed and in-progress labels off   | #569 |
+| L9  | `plan.ts:1050`                                                                               | A task's `auto:needs-human`, by kind; its `auto:eligible` is intent and stays | #569 |
+| L10 | `pull-request.ts:924`                                                                        | `auto:needs-review`, with no reviewer in the pool                             | #569 |
+| L11 | `pull-request.ts:945` (`PullRequest.handToPerson`)                                           | `auto:needs-human`                                                            | #569 |
+| L12 | `pull-request.ts:959` (`PullRequest.readyForPerson`)                                         | `auto:ready-for-person`                                                       | #569 |
+| L13 | `hybrid.ts:276`                                                                              | `hybrid` on the opened pull request                                           | #569 |
+| L14 | `stack.ts:753`                                                                               | `auto:needs-human` on a stack layer whose refresh went to a person            | #569 |
+
+Intent labels are left to people: `auto:eligible`, `auto:plan`, `auto:plan-approved`
+and `auto:ship`. Removing one on claim, as `implement.ts:574`, `:637`, `:715` and `:728`
+and `hybrid.ts:147` do, acknowledges it and stays. So does `implement.ts:1394`, which
+carries the issue's `auto:ship` onto the pull request it opens: it is the person's
+intent, copied, not a status.
+
+#570 adds a `lint:architecture` rule that no source reads a status label or a marker
+other than the linking ones, and a world-sabotage suite that edits or deletes every
+label and comment chernabog wrote, mid-flight, and checks that nothing changes but
+the projection.
 
 ## Backfill
 
