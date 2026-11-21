@@ -33,14 +33,17 @@ import * as Schema from "effect/Schema";
 // this persona, routed by their assignees and reviewers (one whose record
 // GitHub disagrees with is held, for status to show why), those waiting on a reviewer
 // no persona on this machine acts as, which status lists, and the runs
-// holding a merge whose base branch is green again, to wake them. Reading
+// holding a merge whose base branch is green again, or whose hold lasted past
+// mergeHoldTimeout: they wake a run still parked on one, or a CI job's ended
+// one is taken up by a new run, from the pull request's record. Reading
 // review requests needs the persona's seat in the reviewer pool, which
 // chernabog checks before the flow runs.
 const trigger = Effect.gen(function* () {
   return [
     ...(yield* Review.requestedFirst),
     ...(yield* Review.waitingElsewhere),
-    ...(yield* PullRequest.baseTurnedGreen),
+    // A first review's work item is keyed pr-N; re-review's are pr-N-<more>.
+    ...(yield* PullRequest.heldMerges((key, pullRequest) => key === `pr-${pullRequest}`)),
   ];
 }).pipe(reportAs("trigger"));
 
@@ -100,7 +103,15 @@ const mergeIfShipping = (pullRequest: number) =>
 
 const workflow = (item: WorkItem) =>
   Effect.gen(function* () {
+    // A merge an earlier run held, which a CI job ended on: it was approved, so merge it.
+    const held = PullRequest.resumingMerge(item);
+
+    if (Option.isSome(held)) {
+      return yield* mergeIfShipping(held.value);
+    }
+
     const { pullRequest } = yield* Review.pullRequestOf(item);
+
     const review = yield* Review.round(pullRequest, 1, { role: "reviewer" });
     yield* Review.doneReviewing(pullRequest);
 
