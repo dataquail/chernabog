@@ -143,7 +143,7 @@ records `with-person` at every hand-off first; the reads move after it.
 | H8  | `review.ts:1023`, `review.ts:1124`                                      | Skip a pull request a person has, in `review.changesRequested` and the fix's CI-wait source | Read the pull request's record                                                                | #561       |
 | H9  | `conflict.ts:202`, `conflict.ts:252`, `resolve-conflicts-blocks.ts:522` | Skip a conflicting pull request a person has, in the recipe and the document                | Read the pull request's record                                                                | #561       |
 | H10 | `pull-request.ts:726`, `pull-request.ts:815`                            | Skip a held merge a person has (`heldMerges`, `baseTurnedGreen`)                            | Read the pull request's record                                                                | #561       |
-| H11 | A person removing the label                                             | Nothing reads it: today the next source just sees no label                                  | An observer records `handed-back`, and sources act on that record                             | #560, #561 |
+| H11 | A person removing the label                                             | Nothing reads it: today the next source just sees no label                                  | An observer records `handed-back` (#559, `Phases.reconcileHandedBack`); sources act on it     | #560, #561 |
 | H12 | `backfill.ts:189`                                                       | Infer a merge hold that ended                                                               | Stays: backfill is the one place inference is allowed. It maps the label onto `with-person`   | #559       |
 
 ### Other status labels read back as a record (decision 8)
@@ -246,11 +246,20 @@ reviewed. The first row that matches decides.
 | P8  | No review asked or given; an agent's draft                                                                                              | `draft`              |                             |
 | P9  | No review asked or given, otherwise: handed to a person, or a request was taken off                                                     | for a person         |                             |
 
-A hold marker on a pull request labelled `auto:needs-human` is a hold that
-ended, so P4 skips it and P7 reads the approval. P6 covers changes asked
+A pull request labelled `auto:needs-human` is with a person (W1, below)
+before any of these rows is read, so P4's label check only matters to one
+recorded otherwise. P6 covers changes asked
 before a push: `review.round` recorded `changes-asked` then, and nothing moved
 it since, so `review.changesRequested` holds it, with why, until the reviewer
 is asked again.
+
+With a person, read first, whatever record the item holds (ADR 21, decision
+1): this row advances from the record the survey read, by its version, rather
+than from none.
+
+| #   | GitHub says                                                                                 | Phase         | Data                                                                    |
+| --- | ------------------------------------------------------------------------------------------- | ------------- | ----------------------------------------------------------------------- |
+| W1  | An open issue, pull request or epic labelled `auto:needs-human`, not recorded `with-person` | `with-person` | `why` "labelled auto:needs-human"; `from`, the phase it held, or `null` |
 
 Issues and epics:
 

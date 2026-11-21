@@ -1118,6 +1118,13 @@ export const transitions: Ledger.Catalogue = {
     ),
     ...Review.OBSERVED,
     ...Backfill.OBSERVED,
+    // A trusted person removed auto:needs-human (Phases.reconcileHandedBack).
+    ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
+      by: Phases.HANDED_BACK_BY,
+      item,
+      from: [Phases.PHASES.issue.withPerson],
+      to: Phases.PHASES.issue.handedBack,
+    })),
     ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
       by: Ledger.ACKNOWLEDGED,
       item,
@@ -1156,19 +1163,27 @@ const blocksByName: {
   };
 } = catalogue;
 
+// `trigger`, after recording handed-back on each item a trusted person took
+// auto:needs-human off (Phases.reconcileHandedBack), inside the check, so an
+// anomaly's record is never moved on from.
+const handingBack = <E, R>(trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) =>
+  Effect.andThen(Phases.reconcileHandedBack.pipe(reportAs("handed-back")), trigger);
+
 // A recipe's trigger, checked as a document's is: `names` are the document
 // sources and blocks its trigger does the work of, whose reads it holds an
 // anomaly by (ledger-check.ts).
-export const checked = (...names: ReadonlyArray<SourceName | BlockName>) =>
-  Ledger.checking(
-    transitions,
-    names.flatMap((name) => [
-      ...(sourceReads[name] ?? []),
-      ...Option.toArray(Option.fromUndefinedOr(blocksByName[name])).flatMap((block) =>
-        readingsOf([], [block], [block]),
-      ),
-    ]),
-  );
+export const checked =
+  (...names: ReadonlyArray<SourceName | BlockName>) =>
+  <E, R>(trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>) =>
+    Ledger.checking(
+      transitions,
+      names.flatMap((name) => [
+        ...(sourceReads[name] ?? []),
+        ...Option.toArray(Option.fromUndefinedOr(blocksByName[name])).flatMap((block) =>
+          readingsOf([], [block], [block]),
+        ),
+      ]),
+    )(handingBack(trigger));
 
 // How the engine tells whether a subject's run is still wanted, when it can.
 const stillValidOf = (subject: SubjectName): Option.Option<StillValid> =>
@@ -1299,6 +1314,7 @@ export const assemble = (flow: {
       defineFlow({
         ...common,
         trigger: Effect.map(Effect.all(triggers), (found) => found.flat()).pipe(
+          handingBack,
           Ledger.checking(transitions, reads),
         ),
       }),
