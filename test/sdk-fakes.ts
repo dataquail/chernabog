@@ -296,6 +296,27 @@ export const makeFake = (
     );
   };
 
+  // Records a review of the pull request as review.round does, in its
+  // record's data: approved or changes-asked by the verdict, unless `phase`
+  // names another, with what the review saw and who gave it.
+  const recordReview = (
+    review: {
+      readonly sha: string;
+      readonly round: number;
+      readonly verdict: "approve" | "request-changes";
+      readonly reviewer?: string;
+      readonly sessionId?: string;
+      readonly adapter?: string;
+    },
+    phase?: string,
+  ) => {
+    const byVerdict = { approve: "approved", "request-changes": "changes-asked" } as const;
+
+    recordPhase(`pr-${PULL}`, phase ?? byVerdict[review.verdict], {
+      data: { review: { reviewer: people.me, ...review } },
+    });
+  };
+
   const adapters: Array<Option.Option<string>> = [];
   const requests: Array<AgentRequest> = [];
   // The activity each agent call came from, as the Agent service sees it.
@@ -1178,6 +1199,7 @@ export const makeFake = (
     phases,
     records,
     recordPhase,
+    recordReview,
     graph,
     branchPulls,
     closed,
