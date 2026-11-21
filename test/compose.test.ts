@@ -803,7 +803,7 @@ describe("Compose.check", () => {
 
     expect(Compose.check(uncapped)).toEqual([
       {
-        path: "steps[0].on.found.steps[0].on",
+        path: "steps[1].on.found.steps[0].on",
         message: "review.roundsLeft can come to exhausted, and this doesn't say what then",
       },
     ]);
@@ -839,7 +839,7 @@ describe("Compose.check", () => {
 
     expect(Compose.check(undisputed)).toEqual([
       {
-        path: "steps[3].on",
+        path: "steps[4].on",
         message: "author.consider can come to decline, and this doesn't say what then",
       },
     ]);
@@ -874,7 +874,7 @@ describe("Compose.check", () => {
 
     expect(Compose.check(headRef)).toEqual([
       {
-        path: "steps[2].in.branch",
+        path: "steps[3].in.branch",
         message:
           "the trigger of a flow on changes-asked gives pr, branch, base, reviewer, reviewedSha",
       },
@@ -1049,7 +1049,7 @@ describe("Compose.check", () => {
       },
       // Merging waits out red CI on the base, which only a trigger tells it has turned green.
       {
-        path: "steps[0].on.approve.steps[0].use",
+        path: "steps[1].on.approve.steps[0].use",
         message:
           "pr.land waits for the flow's trigger to wake it, and a flow a person starts has no trigger",
       },

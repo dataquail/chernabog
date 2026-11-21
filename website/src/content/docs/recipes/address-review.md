@@ -19,6 +19,7 @@ A pull request with no record yet, one handed off before chernabog recorded phas
 
 ## Its steps
 
+1. `PullRequest.specGuard` — a pull request that changes a behavior spec goes to a person, unanswered, as in [`review`](/chernabog/recipes/review/).
 1. `Review.changesAsked` and `Review.authorSession` — the review, and the session that implemented the pull request, from the session marker `implement` left.
 2. `Review.prepareAuthorWorktree` — the author's worktree, brought up to date.
 3. `Implement.considerFindings` — resumes that session and asks whether to address the findings:

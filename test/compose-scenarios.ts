@@ -263,6 +263,40 @@ export const observe = (
 export type Observed = Effect.Success<ReturnType<typeof observe>>;
 
 const POOL = { reviewers: ["zach", "data-quail"] };
+
+const SPEC = "test/features/review-loop.feature";
+
+// The pull request changes a behavior spec, which no person has approved.
+const changingSpec = (fake: Fake) => {
+  fake.merge.files = [SPEC, "src/a.ts"];
+  fake.trees.set(HEAD, [{ path: SPEC, sha: "spec-1" }]);
+
+  return fake;
+};
+
+// It changes a behavior spec, and zach, a person, approved an earlier head
+// with the same spec before anything else was reviewed.
+const specApproved = (fake: Fake) => {
+  changingSpec(fake);
+  fake.trees.set("older1234", [{ path: SPEC, sha: "spec-1" }]);
+  fake.submitted.unshift({
+    author: "zach",
+    state: "APPROVED",
+    commitSha: "older1234",
+    trusted: true,
+  });
+
+  return fake;
+};
+
+// Handed to a person before a persona did anything with it.
+const specToPerson = (recipe: Observed) => {
+  expect(recipe.pullLabels).toContain(DEFAULT_LABELS.needsHuman);
+  expect(recipe.comments.join("\n")).toContain(`\`${SPEC}\``);
+  expect(recipe.agentSteps).toEqual([]);
+  expect(recipe.merges).toEqual([]);
+};
+
 const BRANCH = "zach/fix-it";
 const IMPLEMENT_WORK = item(`issue-${ISSUE}`, { issue: ISSUE });
 
@@ -505,6 +539,26 @@ export const REVIEW_SCENARIOS = scenarios((scenario) => {
   scenario("when it asks for changes", () => asked("request-changes"), "done");
 
   scenario(
+    "when the pull request changes a behavior spec no person approved",
+    () => changingSpec(asked("approve", [DEFAULT_LABELS.ship])),
+    "needs-human",
+    void 0,
+    {},
+    specToPerson,
+  );
+
+  scenario(
+    "when a person approved the behavior spec it changes, as it stands",
+    () => specApproved(asked("approve", [DEFAULT_LABELS.ship])),
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.merges).toEqual([{ method: "squash", sha: HEAD }]);
+    },
+  );
+
+  scenario(
     "when the approved pull request conflicts with its base",
     () => {
       const fake = asked("approve", [DEFAULT_LABELS.ship]);
@@ -647,6 +701,26 @@ export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
   const OPEN = [{ finding: "Mention the change", remediated: false, blocking: true }];
 
   scenario(
+    "when the pull request changes a behavior spec no person approved",
+    () => changingSpec(askedAgain("approve", { labels: SHIP })),
+    "needs-human",
+    void 0,
+    {},
+    specToPerson,
+  );
+
+  scenario(
+    "when a person approved the behavior spec it changes, as it stands",
+    () => specApproved(askedAgain("approve", { labels: SHIP })),
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.merges).toEqual([{ method: "squash", sha: HEAD }]);
+    },
+  );
+
+  scenario(
     "when it has no review of its own, and a first review approves",
     () => askedAgain("approve", { earlier: [{ round: 1, reviewer: "zach" }] }),
     "done",
@@ -757,7 +831,11 @@ export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
     void 0,
     {},
     (recipe) => {
-      expect(recipe.steps).toEqual(["find-review", `needs-human-pr-${PULL}`]);
+      expect(recipe.steps).toEqual([
+        `spec-guard-pr-${PULL}`,
+        "find-review",
+        `needs-human-pr-${PULL}`,
+      ]);
       expect(recipe.pullLabels).toContain(DEFAULT_LABELS.needsHuman);
     },
   );
@@ -869,6 +947,29 @@ export const ADDRESS_REVIEW_SCENARIOS = scenarios((scenario) => {
     expect(recipe.steps).toContain(`needs-human-pr-${PULL}`);
     expect(recipe.steps).not.toContain("ask-again-1");
   };
+
+  scenario(
+    "when the pull request changes a behavior spec no person approved",
+    () => changingSpec(changesAsked()),
+    "needs-human",
+    void 0,
+    {},
+    (recipe) => {
+      specToPerson(recipe);
+      expect(recipe.pushes).toBe(1);
+    },
+  );
+
+  scenario(
+    "when a person approved the behavior spec it changes, as it stands",
+    () => specApproved(changesAsked()),
+    "done",
+    void 0,
+    {},
+    (recipe) => {
+      expect(recipe.pushes).toBe(2);
+    },
+  );
 
   scenario(
     "when the author agrees, fixes, and CI is green",

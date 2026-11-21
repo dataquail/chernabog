@@ -62,17 +62,18 @@ describe("the canvas draws a document's plan", () => {
     const markup = canvas(REVIEW);
 
     expect(nodesIn(markup)).toEqual([
+      "spec",
       "review",
       outcomeNode("review", "approve"),
       "land",
-      "steps[0].on.approve.steps[1]",
+      "steps[1].on.approve.steps[1]",
       outcomeNode("review", "changes"),
-      "steps[0].on.changes.steps[0]",
+      "steps[1].on.changes.steps[0]",
     ]);
     expect(tagOf(markup, outcomeNode("review", "approve"))).toContain('class="plan-outcome"');
     expect(markup).toContain(">approve</span>");
     expect(markup).toContain(">changes</span>");
-    expect(tagOf(markup, "steps[0].on.approve.steps[1]")).toContain('data-end="done"');
+    expect(tagOf(markup, "steps[1].on.approve.steps[1]")).toContain('data-end="done"');
     expect(markup).not.toContain("plan-frame");
   });
 
@@ -132,14 +133,14 @@ describe("the canvas draws a document's plan", () => {
     const states = new Map<string, NodeState>([
       ["review", "ok"],
       ["land", "running"],
-      ["steps[0].on.changes.steps[0]", "not-taken"],
+      ["steps[1].on.changes.steps[0]", "not-taken"],
     ]);
 
     const markup = canvas(REVIEW, Option.some(states));
 
     expect(tagOf(markup, "review")).toContain("state-ok");
     expect(tagOf(markup, "land")).toContain("state-running");
-    expect(tagOf(markup, "steps[0].on.changes.steps[0]")).toContain("state-not-taken");
+    expect(tagOf(markup, "steps[1].on.changes.steps[0]")).toContain("state-not-taken");
     expect(canvas(REVIEW)).not.toContain("state-");
   });
 });
@@ -147,11 +148,12 @@ describe("the canvas draws a document's plan", () => {
 describe("the arrows, worked out by walking the plan", () => {
   test("a fork: an arrow to each outcome, and on from it to its branch", () => {
     expect(planEdges(REVIEW.steps)).toEqual([
+      edge("spec", "review", "next"),
       edge("review", outcomeNode("review", "approve"), "branch"),
       edge(outcomeNode("review", "approve"), "land", "next"),
-      edge("land", "steps[0].on.approve.steps[1]", "next"),
+      edge("land", "steps[1].on.approve.steps[1]", "next"),
       edge("review", outcomeNode("review", "changes"), "branch"),
-      edge(outcomeNode("review", "changes"), "steps[0].on.changes.steps[0]", "next"),
+      edge(outcomeNode("review", "changes"), "steps[1].on.changes.steps[0]", "next"),
     ]);
   });
 
@@ -264,8 +266,8 @@ describe("a run's states, from the runs module's model", () => {
 
     expect(states.get("review")).toBe("ok");
     expect(states.get("land")).toBe("running");
-    expect(states.get("steps[0].on.approve.steps[1]")).toBe("not-reached");
-    expect(states.get("steps[0].on.changes.steps[0]")).toBe("not-taken");
+    expect(states.get("steps[1].on.approve.steps[1]")).toBe("not-reached");
+    expect(states.get("steps[1].on.changes.steps[0]")).toBe("not-taken");
   });
 });
 

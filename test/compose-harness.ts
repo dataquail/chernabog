@@ -102,6 +102,9 @@ trigger:
   - use: review.requested
   - use: review.waitingElsewhere
 steps:
+  - id: spec
+    use: pr.specGuard
+    in: { pr: trigger.pr }
   - id: review
     use: review.round
     in: { pr: trigger.pr }
@@ -136,6 +139,9 @@ trigger:
   - use: review.requested
   - use: review.waitingElsewhere
 steps:
+  - id: spec
+    use: pr.specGuard
+    in: { pr: trigger.pr }
   - id: review
     use: review.round
     in: { pr: trigger.pr }
@@ -174,6 +180,9 @@ concurrency: 1
 trigger:
   - use: review.requestedAgain
 steps:
+  - id: spec
+    use: pr.specGuard
+    in: { pr: trigger.pr }
   - id: earlier
     use: review.latestOwn
     in: { pr: trigger.pr }
@@ -244,6 +253,9 @@ concurrency: 1
 trigger:
   - use: review.changesRequested
 steps:
+  - id: spec
+    use: pr.specGuard
+    in: { pr: trigger.pr }
   - id: asked
     use: review.changesAsked
     in: { pr: trigger.pr, reviewer: trigger.reviewer, reviewedSha: trigger.reviewedSha }
@@ -743,6 +755,9 @@ steps:
     stage: which-pr
     in: { pr: trigger.pr }
     failure: { Skip: skip, StepFailed: fail }
+  - id: spec
+    use: pr.specGuard
+    in: { pr: which.pr }
   - id: review
     use: review.round
     in: { pr: which.pr }

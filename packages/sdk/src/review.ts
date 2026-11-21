@@ -209,13 +209,19 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
   });
 
 // review.requested's items: open pull requests that ask this persona for its
-// first review, routed by their assignees and reviewers, as `pr-7`. One whose
-// record GitHub disagrees with is held, with why, for status to show.
+// first review, unless a person has them (auto:needs-human), routed by their
+// assignees and reviewers, as `pr-7`. One whose record GitHub disagrees with
+// is held, with why, for status to show.
 export const requestedFirst = Effect.gen(function* () {
+  const labelNames = yield* Settings.labels;
   const me = yield* reviewerLogin;
   const items: Array<WorkItem> = [];
 
   for (const request of yield* reviewRequests) {
+    if (request.pull.labels.includes(labelNames.needsHuman)) {
+      continue;
+    }
+
     const asked = askedOf(request, me);
     const item = reviewItem(request.pull, `pr-${request.pull.number}`);
 

@@ -192,8 +192,8 @@ const found = (
 
 const READ_TRIGGER = step("read-trigger", 0, done(1), Option.none());
 
-const APPROVED_END = "steps[0].on.approve.steps[1]";
-const CHANGES_END = "steps[0].on.changes.steps[0]";
+const APPROVED_END = "steps[1].on.approve.steps[1]";
+const CHANGES_END = "steps[1].on.changes.steps[0]";
 
 const runningReview = found(
   {},

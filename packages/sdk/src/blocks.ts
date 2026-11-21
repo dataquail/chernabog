@@ -732,6 +732,23 @@ export const catalogue = elsewhere.and("blocks.ts", {
     contributes: { settings: { ...Settings.Reviewers.fields, ...Settings.Rules.fields } },
   }),
 
+  // A pull request that changes a behavior spec goes to a person before any
+  // persona reviews, addresses or merges it (ADR 22, decision 3).
+  "pr.specGuard": defineBlock({
+    name: "pr.specGuard",
+    about:
+      "Hands the pull request to a person, labelled auto:needs-human with why, when it changes a behavior spec (a .feature file under test/features/) that no person approved as it stands, and the run ends needs-human. Only a person's approving review of a head with the same feature files clears it: a trusted login that isn't one of the repo's personas. Put it first in a flow that reviews, addresses or merges pull requests; pr.land's merge checks again.",
+    inputKinds: { pr: "PullRequestNumber" },
+    outputKinds: "nothing",
+    outcomeKinds: {},
+    inputs: { pr: "required" },
+    run: (input: { readonly pr: PullRequestNumber }) => PullRequest.specGuard(input.pr),
+    failures: { NeedsHuman: "told", NotFound: "skip", Skip: "skip", StepFailed: "fail" },
+    outcomes: {},
+    mustRoute: [],
+    contributes: {},
+  }),
+
   // Chernabog merges only pull requests on the automated path (auto:ship), and
   // only when that's safe; a person merges any other. A layer of a stack waits,
   // approved, for the layer below. One refused because it conflicts with its
@@ -890,7 +907,8 @@ export const sources = sourcesElsewhere.and("blocks.ts", {
   ),
 
   // Pull requests that ask this persona for their first review, by their
-  // record (Review.requestedFirst), routed by their assignees and reviewers.
+  // record (Review.requestedFirst), unless a person has them
+  // (auto:needs-human), routed by their assignees and reviewers.
   // One whose record GitHub disagrees with is held, for status to show why.
   "review.requested": defineSource(
     "review.requested",
@@ -975,7 +993,7 @@ export const sourceDescriptions = {
   },
   "review.requested": {
     about:
-      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written. One with no record, which a person opened, is a first review.",
+      "Pull requests that ask this persona for their first review: recorded review-asked, draft or ready-for-person, unless the record says it had reviewed the pull request already when it was written, or it is labelled auto:needs-human. One with no record, which a person opened, is a first review.",
     with: {},
   },
   "review.changesRequested": {

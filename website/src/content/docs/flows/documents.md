@@ -19,6 +19,9 @@ trigger:
   - use: review.requested
   - use: review.waitingElsewhere
 steps:
+  - id: spec
+    use: pr.specGuard
+    in: { pr: trigger.pr }
   - id: review
     use: review.round
     in: { pr: trigger.pr }
@@ -40,6 +43,7 @@ steps:
 ```
 
 - `review.requested` finds the pull requests that ask this persona for their first review, by their [phase](#phases). `review.waitingElsewhere` starts no review: its pull requests wait on a reviewer no persona on this machine acts as, and it lists them in `chernabog status` as waiting there. A flow can leave it out.
+- `pr.specGuard` hands a pull request that changes a behavior spec (a `.feature` file under `test/features/`) to a person, labelled `auto:needs-human`, and the run ends `needs-human`. Only a person's approving review of a head with the same feature files clears it: a trusted login that isn't one of the repo's `personas:`. Without one it hands the pull request over again on every run, so a label removed by anyone comes back. Put it first in a flow that reviews, addresses or merges pull requests; `pr.land`'s merge checks again.
 - `pr.land` merges only a pull request labelled `auto:ship`, and merges nothing otherwise. A flow that must never merge leaves `pr.land` out rather than relying on the label.
 - `in` wires an input to an earlier step's output. `with` gives it a fixed value. The listing says which each input takes; a few, such as `review.round`'s `round`, take either.
 - `on` says what happens at an outcome the block declares. A block can require you to route an outcome.
