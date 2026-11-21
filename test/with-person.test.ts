@@ -1,8 +1,9 @@
 // "With a person" is a ledger phase (ADR 21, decision 1): every hand-off to a
 // person records with-person {why, from}, and auto:needs-human is that
 // record's projection. A trusted person taking the label off is intent,
-// which observer:handed-back records as handed-back; anyone else's removal
-// changes nothing. Backfill gives every labelled item its with-person record.
+// which observer:handed-back records: the phase the item went to the person
+// from again, or handed-back when it had none; anyone else's removal changes
+// nothing. Backfill gives every labelled item its with-person record.
 
 import {
   activity,
@@ -17,7 +18,6 @@ import {
   Claims,
   DEFAULT_LABELS,
   defineFlow,
-  GitHub,
   Implement,
   Ledger,
   Phases,
@@ -30,16 +30,29 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import addressReview from "../packages/recipes/flows/address-review.ts";
+import reReview from "../packages/recipes/flows/re-review.ts";
+import review from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { effect } from "./effect-test.ts";
 import { EARLIER_RUN } from "./progress-fake.ts";
-import { type Fake, ISSUE, item, makeFake, onFake, PULL, repo, runToEnd } from "./sdk-fakes.ts";
+import {
+  type Fake,
+  flowTriggered,
+  HEAD,
+  ISSUE,
+  item,
+  makeFake,
+  onFake,
+  PULL,
+  repo,
+  runToEnd,
+} from "./sdk-fakes.ts";
 
 const ISSUE_ITEM = Phases.issueItem(ISSUE);
 const PR_ITEM = Phases.pullRequestItem(PULL);
 const WITH_PERSON = "with-person";
 const HANDED_BACK = "handed-back";
-const SLUG = "dataquail/demo";
 const PERSON = "a-maintainer";
 const STRANGER = "a-stranger";
 
@@ -177,57 +190,8 @@ describe("every hand-off to a person records with-person", () => {
   );
 });
 
-// The fake's GitHub, with the events GitHub lists for each issue or pull
-// request and each login's permission on the repo ("read" for any other).
-const withEvents = <A, E, R>(
-  fake: Fake,
-  events: ReadonlyMap<number, ReadonlyArray<Json>>,
-  permissions: ReadonlyMap<string, string>,
-  effectOf: Effect.Effect<A, E, R>,
-) =>
-  onFake(
-    fake,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-
-      const answer = (path: string): Option.Option<Json> =>
-        Option.orElse(
-          Option.map(
-            Option.fromNullOr(/^\/repos\/[^/]+\/[^/]+\/issues\/(\d+)\/events/.exec(path)),
-            (found): Json => [...(events.get(Number(found[1])) ?? [])],
-          ),
-          () =>
-            Option.map(
-              Option.fromNullOr(
-                new RegExp(`^/repos/${SLUG}/collaborators/([^/]+)/permission$`).exec(path),
-              ),
-              (found): Json => ({
-                permission: Option.getOrElse(
-                  Option.fromUndefinedOr(permissions.get(decodeURIComponent(String(found[1])))),
-                  () => "read",
-                ),
-              }),
-            ),
-        );
-
-      return yield* effectOf.pipe(
-        Effect.provideService(
-          GitHub,
-          GitHub.of({
-            ...github,
-            request: (method, path, body) =>
-              Option.match(
-                Option.filter(answer(path), () => method === "GET"),
-                {
-                  onNone: () => github.request(method, path, body),
-                  onSome: (found) => Effect.succeed(found),
-                },
-              ),
-          }),
-        ),
-      );
-    }),
-  );
+const passes = (name: string, found: PhaseRecord) =>
+  Option.isNone(Ledger.check(Blocks.transitions, ["chernabog-bot"])(name, found));
 
 const unlabeled = (login: string, label: string = DEFAULT_LABELS.needsHuman): Json => ({
   event: "unlabeled",
@@ -235,55 +199,92 @@ const unlabeled = (login: string, label: string = DEFAULT_LABELS.needsHuman): Js
   actor: { login },
 });
 
-const PERMISSIONS = new Map([
-  [PERSON, "write"],
-  [STRANGER, "read"],
-]);
+const labeled = (login: string): Json => ({
+  event: "labeled",
+  label: { name: DEFAULT_LABELS.needsHuman },
+  actor: { login },
+});
 
-const NOBODY = new Map<string, string>();
+// GitHub lists `found` as the events of `number`, and gives PERSON write
+// access to the repo; STRANGER, like anyone else, reads it only.
+const listing = (fake: Fake, number: number, ...found: ReadonlyArray<Json>) => {
+  fake.timeline.events.set(number, found);
+  fake.timeline.permissions.set(PERSON, "write");
+};
 
-const on = (number: number, ...found: ReadonlyArray<Json>) =>
-  new Map<number, ReadonlyArray<Json>>([[number, found]]);
+const handingBack = (fake: Fake) => onFake(fake, Phases.reconcileHandedBack);
 
-// The issue, with a person: as a run handed it over, then its label as `labels`.
-const withPerson = (labels: ReadonlyArray<string>) => {
+// The issue, with a person from `from`: as a run handed it over, then its
+// label as `labels`.
+const withPerson = (labels: ReadonlyArray<string>, from: Option.Option<string>) => {
   const fake = makeFake("approve");
-  fake.recordPhase(ISSUE_ITEM, WITH_PERSON, { data: { why: "stuck", from: "awaiting-ci" } });
+
+  const left = Option.map(from, (phase) => {
+    fake.recordPhase(ISSUE_ITEM, phase);
+
+    return Option.getOrThrow(recordOf(fake, ISSUE_ITEM));
+  });
+
+  fake.recordPhase(ISSUE_ITEM, WITH_PERSON, { data: Phases.withPersonData("stuck", left) });
   fake.setLabels(ISSUE, [...labels]);
 
   return fake;
 };
 
 describe("handing an item back is the intent of a trusted person", () => {
-  effect("a trusted person removed the label: handed-back, by the observer, with from", () =>
+  effect("a trusted removal records the phase it went to the person from again", () =>
     Effect.gen(function* () {
-      const fake = withPerson([]);
+      const fake = withPerson([], Option.some("awaiting-ci"));
+      listing(fake, ISSUE, unlabeled(PERSON));
 
-      yield* withEvents(
-        fake,
-        on(ISSUE, unlabeled(PERSON)),
-        PERMISSIONS,
-        Phases.reconcileHandedBack,
+      yield* handingBack(fake);
+
+      const found = Option.getOrThrow(recordOf(fake, ISSUE_ITEM));
+      expect<string>(found.phase).toBe("awaiting-ci");
+      expect<string>(found.by).toBe("observer:handed-back");
+      expect<Option.Option<string>>(found.from).toEqual(Option.some(WITH_PERSON));
+      expect(passes(ISSUE_ITEM, found)).toBe(true);
+    }),
+  );
+
+  effect("it keeps the data the phase it left had", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(PR_ITEM, "review-asked", { data: { reviewed: ["data-quail"] } });
+
+      yield* runStep(fake, PullRequest.handToPerson(PULL, "a dispute"));
+      fake.setLabels(PULL, []);
+      listing(fake, PULL, unlabeled(PERSON));
+      yield* handingBack(fake);
+
+      expect(fake.phases()[PR_ITEM]).toBe("review-asked");
+      expect<Option.Option<Json>>(dataOf(fake, PR_ITEM)).toEqual(
+        Option.some({ reviewed: ["data-quail"] }),
       );
+    }),
+  );
+
+  effect("an item with no phase before it went to the person is handed-back", () =>
+    Effect.gen(function* () {
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled(PERSON));
+
+      yield* handingBack(fake);
 
       const found = Option.getOrThrow(recordOf(fake, ISSUE_ITEM));
       expect<string>(found.phase).toBe(HANDED_BACK);
       expect<string>(found.by).toBe("observer:handed-back");
-      expect<Option.Option<string>>(found.from).toEqual(Option.some(WITH_PERSON));
-      expect(handedBackFrom(fake, ISSUE_ITEM)).toEqual(Option.some(Option.some("awaiting-ci")));
+      expect(handedBackFrom(fake, ISSUE_ITEM)).toEqual(Option.some(Option.none()));
+      expect(passes(ISSUE_ITEM, found)).toBe(true);
     }),
   );
 
   effect("a persona's removal counts too", () =>
     Effect.gen(function* () {
-      const fake = withPerson([]);
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled("chernabog-bot"));
 
-      yield* withEvents(
-        fake,
-        on(ISSUE, unlabeled("chernabog-bot")),
-        NOBODY,
-        Phases.reconcileHandedBack,
-      );
+      yield* handingBack(fake);
 
       expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
     }),
@@ -291,14 +292,10 @@ describe("handing an item back is the intent of a trusted person", () => {
 
   effect("a label removed by an untrusted user changes nothing", () =>
     Effect.gen(function* () {
-      const fake = withPerson([]);
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled(STRANGER));
 
-      yield* withEvents(
-        fake,
-        on(ISSUE, unlabeled(STRANGER)),
-        PERMISSIONS,
-        Phases.reconcileHandedBack,
-      );
+      yield* handingBack(fake);
 
       expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
     }),
@@ -306,61 +303,153 @@ describe("handing an item back is the intent of a trusted person", () => {
 
   effect("the last removal decides: a trusted one before a stranger's changes nothing", () =>
     Effect.gen(function* () {
-      const fake = withPerson([]);
+      const fake = withPerson([], Option.none());
+      listing(fake, ISSUE, unlabeled(PERSON), labeled(PERSON), unlabeled(STRANGER));
 
-      yield* withEvents(
-        fake,
-        on(ISSUE, unlabeled(PERSON), unlabeled(STRANGER)),
-        PERMISSIONS,
-        Phases.reconcileHandedBack,
-      );
+      yield* handingBack(fake);
 
       expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
     }),
   );
 
+  effect("the last removal is read past GitHub's first page of events", () =>
+    Effect.gen(function* () {
+      const fake = withPerson([], Option.none());
+      const filler = Array.from({ length: 150 }, (): Json => ({ event: "commented" }));
+      listing(fake, ISSUE, unlabeled(PERSON), ...filler, labeled(PERSON), unlabeled(STRANGER));
+
+      yield* handingBack(fake);
+
+      expect(fake.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
+
+      const trusted = withPerson([], Option.none());
+      listing(trusted, ISSUE, unlabeled(STRANGER), ...filler, labeled(PERSON), unlabeled(PERSON));
+
+      yield* handingBack(trusted);
+
+      expect(trusted.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
+    }),
+  );
+
   effect("an item still labelled, or with no removal GitHub lists, stays with a person", () =>
     Effect.gen(function* () {
-      const labelled = withPerson([DEFAULT_LABELS.needsHuman]);
-      yield* withEvents(
-        labelled,
-        on(ISSUE, unlabeled(PERSON)),
-        PERMISSIONS,
-        Phases.reconcileHandedBack,
-      );
+      const labelled = withPerson([DEFAULT_LABELS.needsHuman], Option.none());
+      listing(labelled, ISSUE, unlabeled(PERSON));
+      yield* handingBack(labelled);
       expect(labelled.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
 
-      const unlisted = withPerson([]);
-      yield* withEvents(
-        unlisted,
-        on(ISSUE, unlabeled(PERSON, DEFAULT_LABELS.eligible)),
-        PERMISSIONS,
-        Phases.reconcileHandedBack,
-      );
+      const unlisted = withPerson([], Option.none());
+      listing(unlisted, ISSUE, unlabeled(PERSON, DEFAULT_LABELS.eligible));
+      yield* handingBack(unlisted);
       expect(unlisted.phases()[ISSUE_ITEM]).toBe(WITH_PERSON);
     }),
   );
 
-  effect("a pull request a trusted person took the label off is handed back", () =>
+  effect("an item whose events GitHub fails to list is left for the next tick, not the rest", () =>
     Effect.gen(function* () {
-      const fake = makeFake("approve");
+      const fake = withPerson([], Option.none());
       fake.recordPhase(PR_ITEM, WITH_PERSON, {
         data: Phases.withPersonData("a dispute", Option.none()),
       });
+      listing(fake, ISSUE, unlabeled(PERSON));
+      fake.timeline.failing.add(PULL);
 
-      yield* withEvents(fake, on(PULL, unlabeled(PERSON)), PERMISSIONS, Phases.reconcileHandedBack);
+      yield* handingBack(fake);
 
-      expect(fake.phases()[PR_ITEM]).toBe(HANDED_BACK);
-      expect(handedBackFrom(fake, PR_ITEM)).toEqual(Option.some(Option.none()));
+      expect(fake.phases()[PR_ITEM]).toBe(WITH_PERSON);
+      expect(fake.phases()[ISSUE_ITEM]).toBe(HANDED_BACK);
     }),
   );
 });
 
-const passes = (name: string, found: PhaseRecord) =>
-  Option.isNone(Ledger.check(Blocks.transitions, ["chernabog-bot"])(name, found));
+// A pull request the review flows had, handed to a person and handed back:
+// the flows take it up again from its record, as they did before the record
+// said with-person (#559's review).
+describe("a pull request handed back goes back to the review flows", () => {
+  const REVIEWER = "data-quail";
+
+  effect("changes asked: address-review takes it up again", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.people.me = "chernabog-bot";
+      fake.submitted.push({ author: REVIEWER, state: "CHANGES_REQUESTED", commitSha: HEAD });
+      fake.recordPhase(PR_ITEM, "changes-asked");
+
+      yield* runStep(fake, PullRequest.handToPerson(PULL, "the agent disputes the review"));
+      expect(fake.phases()[PR_ITEM]).toBe(WITH_PERSON);
+      expect(yield* flowTriggered(fake, addressReview)).toEqual([]);
+
+      fake.setLabels(PULL, []);
+      listing(fake, PULL, unlabeled(PERSON));
+
+      const found = yield* flowTriggered(fake, addressReview);
+
+      expect(fake.phases()[PR_ITEM]).toBe("changes-asked");
+      expect(found.map((work) => work.key)).toEqual([
+        Phases.keyFor(PR_ITEM, Option.getOrThrow(recordOf(fake, PR_ITEM))),
+      ]);
+      expect(found.map((work) => Option.fromUndefinedOr(work.held))).toEqual([Option.none()]);
+    }),
+  );
+
+  effect("a review asked again: re-review takes it up again", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.people.me = REVIEWER;
+      fake.people.requested = [REVIEWER];
+      fake.recordPhase(PR_ITEM, "review-asked-again");
+
+      yield* runStep(fake, PullRequest.handToPerson(PULL, "too many rounds"));
+      expect(yield* flowTriggered(fake, reReview)).toEqual([]);
+
+      fake.setLabels(PULL, []);
+      listing(fake, PULL, unlabeled(PERSON));
+
+      const found = yield* flowTriggered(fake, reReview);
+
+      expect(fake.phases()[PR_ITEM]).toBe("review-asked-again");
+      expect(found.map((work) => Option.fromUndefinedOr(work.held))).toEqual([Option.none()]);
+      expect(found).toHaveLength(1);
+    }),
+  );
+
+  effect("one with no phase before it: a review asked of it is a first review", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.people.me = REVIEWER;
+      fake.people.requested = [REVIEWER];
+
+      yield* runStep(fake, PullRequest.handToPerson(PULL, "a person's call"));
+      fake.setLabels(PULL, []);
+      listing(fake, PULL, unlabeled(PERSON));
+
+      const found = yield* flowTriggered(fake, review);
+
+      expect(fake.phases()[PR_ITEM]).toBe(HANDED_BACK);
+      expect(found.map((work) => Option.fromUndefinedOr(work.held))).toEqual([Option.none()]);
+      expect(found).toHaveLength(1);
+    }),
+  );
+
+  effect("a stranger's removal leaves it with the person: no flow takes it up", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.people.me = "chernabog-bot";
+      fake.submitted.push({ author: REVIEWER, state: "CHANGES_REQUESTED", commitSha: HEAD });
+      fake.recordPhase(PR_ITEM, "changes-asked");
+
+      yield* runStep(fake, PullRequest.handToPerson(PULL, "the agent disputes the review"));
+      fake.setLabels(PULL, []);
+      listing(fake, PULL, unlabeled(STRANGER));
+
+      expect(yield* flowTriggered(fake, addressReview)).toEqual([]);
+      expect(fake.phases()[PR_ITEM]).toBe(WITH_PERSON);
+    }),
+  );
+});
 
 describe("the ledger's check knows with-person and handed-back", () => {
-  effect("a run records with-person from any phase; the observer only handed-back from it", () =>
+  effect("a run records with-person from any phase; the observer moves on only from it", () =>
     Effect.sync(() => {
       const fake = makeFake("approve");
       fake.recordPhase(PR_ITEM, "approved");
@@ -373,8 +462,14 @@ describe("the ledger's check knows with-person and handed-back", () => {
         expect(passes(name, Option.getOrThrow(recordOf(fake, name)))).toBe(true);
       }
 
+      fake.recordPhase(PR_ITEM, "changes-asked", { by: "observer:handed-back" });
+      expect(passes(PR_ITEM, Option.getOrThrow(recordOf(fake, PR_ITEM)))).toBe(true);
+
       fake.recordPhase(ISSUE_ITEM, "awaiting-ci", { by: EARLIER_RUN });
       fake.recordPhase(ISSUE_ITEM, HANDED_BACK, { by: "observer:handed-back" });
+      expect(passes(ISSUE_ITEM, Option.getOrThrow(recordOf(fake, ISSUE_ITEM)))).toBe(false);
+
+      fake.recordPhase(ISSUE_ITEM, "awaiting-ci", { by: "observer:handed-back" });
       expect(passes(ISSUE_ITEM, Option.getOrThrow(recordOf(fake, ISSUE_ITEM)))).toBe(false);
     }),
   );
