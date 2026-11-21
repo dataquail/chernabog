@@ -354,7 +354,17 @@ change.
      such as an epic's `waiting` on a pull request. A team's own phases are
      the repo's to name and no source acts on one, so they pass; so does
      any phase on an item of a team's own. A later round's wait for CI
-     (`awaiting-ci-2`) is checked as its first round's. Working the
+     (`awaiting-ci-2`) is checked as its first round's. **One catalogue
+     says which kinds of item each SDK phase belongs to**, keyed by phase
+     name (`Phases.misplacedOn`; `awaiting-ci` is an issue's and a pull
+     request's). The ledger's check of a run's record and the compiler's
+     check of a phase a document names both go by it, so they can't
+     disagree. `Compose.check` refuses a `progress.advance` of another
+     kind's phase, such as an epic's `waiting` on a pull-request flow, and
+     `Compose.phaseGaps` reports a recorded phase on the wrong kind as a
+     `misplaced` gap, where before the compiler took both and the ledger
+     held the record as an anomaly. A test runs every recipe document's
+     records through both. Working the
      catalogue out found two transitions the SDK made and didn't declare:
      address-review's reconcile from `awaiting-ci` to `changes-asked`, now
      in its source's reconciles, and the approval Review finds when it

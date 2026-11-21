@@ -23,7 +23,7 @@ export class DocumentProblem extends Schema.Class<
 // that no flow reads though a source the SDK has would. Certain unless some
 // flow, one without a document, declares nothing.
 export class PhaseGap extends Schema.Class<PhaseGap, { readonly brand: "PhaseGap" }>("PhaseGap")({
-  gap: Schema.Literals(["unrecorded", "unread"]),
+  gap: Schema.Literals(["unrecorded", "unread", "misplaced"]),
   item: Schema.String,
   phase: Schema.String,
   certain: Schema.Boolean,

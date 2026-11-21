@@ -40,6 +40,7 @@ import {
 import { type FlowEvents, type WakingEvent } from "./events.ts";
 import {
   type ItemKind,
+  misplacedOn,
   NO_RECORD,
   PHASE_NAME,
   phasesOf,
@@ -775,6 +776,29 @@ const checkInputs = (
   }
 };
 
+// What is wrong with a document's recording `phase` on an item of `item`:
+// another kind's phase, which the ledger's check holds as an anomaly (the one
+// catalogue, Phases.misplacedOn, says so to both), or a team's own phase a
+// slip away from one of the SDK's. None for one of the kind's, or a name of
+// the team's own.
+const wrongPhaseOn = (item: ItemKind, phase: string): Option.Option<string> => {
+  const theSdks = phasesOf(item);
+
+  if (theSdks.includes(phase)) {
+    return Option.none();
+  }
+
+  return Option.orElse(
+    Option.map(misplacedOn(item, phase), (why) => `${why}, so a run of this flow can't record it`),
+    () =>
+      Option.map(
+        suggesting(phase, theSdks),
+        (hint) =>
+          `${phase} is a ${item} phase so close to one of the SDK's that it reads as a slip: ${hint} A team's own phase needs a name of its own`,
+      ),
+  );
+};
+
 // The phase a block such as progress.advance records, as its document names
 // it. A team's own phase may be any name of its own, but one a slip away from
 // one of the SDK's would pass for it nowhere, and leave the flow that reads
@@ -795,18 +819,8 @@ const checkRecordedPhase = (checking: Checking, step: UseStep, block: Block, at:
       }
 
       for (const item of Option.toArray(Record.get(subjectItems, checking.subject))) {
-        const theSdks = phasesOf(item);
-
-        if (theSdks.includes(phase)) {
-          continue;
-        }
-
-        for (const hint of Option.toArray(suggesting(phase, theSdks))) {
-          say(
-            checking,
-            path,
-            `${phase} is a ${item} phase so close to one of the SDK's that it reads as a slip: ${hint} A team's own phase needs a name of its own`,
-          );
+        for (const wrong of Option.toArray(wrongPhaseOn(item, phase))) {
+          say(checking, path, wrong);
         }
       }
     }
@@ -3394,10 +3408,13 @@ export const progressOf = (document: FlowDocument): FlowProgress => {
   };
 };
 
-// A phase read that no flow records, or recorded that no flow reads though a
-// source the SDK has would. Certain unless some flow declares nothing.
+// A phase read that no flow records, recorded that no flow reads though a
+// source the SDK has would, or recorded on an item of a kind it isn't a phase
+// of, which the ledger's check would hold as an anomaly (misplaced, by the
+// one catalogue both go by, Phases.misplacedOn). Certain unless some flow
+// declares nothing; a misplaced one always is.
 export type PhaseGap = {
-  readonly gap: "unrecorded" | "unread";
+  readonly gap: "unrecorded" | "unread" | "misplaced";
   readonly item: ItemKind;
   readonly phase: string;
   readonly certain: boolean;
@@ -3565,7 +3582,19 @@ export const phaseGaps = (
     }),
   );
 
-  return [...unrecorded, ...unread];
+  const misplaced = groupedBy(records).flatMap((uses) =>
+    Option.toArray(Arr.head(uses)).flatMap(({ item, phase }) =>
+      Option.toArray(misplacedOn(item, phase)).map((why): PhaseGap => ({
+        gap: "misplaced",
+        item,
+        phase,
+        certain: true,
+        message: `${whoIn(uses)} ${agreeing(countOf(uses), "records", "record")} ${phase} on a ${item}, but ${why}: the ledger's check holds such a record as an anomaly`,
+      })),
+    ),
+  );
+
+  return [...unrecorded, ...unread, ...misplaced];
 };
 
 const eventKey = (waking: WakingEvent) => printJson(eventJson(waking));
