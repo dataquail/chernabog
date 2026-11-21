@@ -39,8 +39,10 @@ Borderline, and left as they are:
   intent both ways. It is no longer borderline: ADR 21's amended decision 1 makes "with a
   person" a phase and the label its projection. Every read is a gap,
   [H1 to H12](#the-world-read-back-as-a-record-epic-557).
-- **`auto:adopted`** decides who owns a pull request (`review.ts:853`), not how far
-  it got.
+- **`auto:adopted`** decides who owns a pull request, not how far it got. It is no
+  longer borderline either: amended decision 8 makes it a status label the projector
+  writes (L5), and adoption is a claim's fact (decision 7). Its reads are gaps,
+  [R3 and R4](#other-status-labels-read-back-as-a-record-decision-8).
 - The adopted pull request's number comes from the claim marker comment
   (`implement.ts:1709`), because a record carries no payload. Deleting that comment
   strands an adopted draft. A record payload, or an `Items` link from the issue to
@@ -144,6 +146,24 @@ records `with-person` at every hand-off first; the reads move after it.
 | H11 | A person removing the label                                             | Nothing reads it: today the next source just sees no label                                  | An observer records `handed-back`, and sources act on that record                             | #560, #561 |
 | H12 | `backfill.ts:189`                                                       | Infer a merge hold that ended                                                               | Stays: backfill is the one place inference is allowed. It maps the label onto `with-person`   | #559       |
 
+### Other status labels read back as a record (decision 8)
+
+Amended decision 8 makes every label chernabog writes, but the four intent labels, a
+status label, and no source reads one. These read `auto:epic`, `auto:adopted` and
+`auto:needs-clarification`, whose writes are L4, L5 and L7.
+
+| #   | Where                               | Reads the label to                                                       | Fix                                                                       | Task |
+| --- | ----------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ---- |
+| R1  | `epic.ts:806` (the epic source)     | Find the epics to run: `issuesLabelled(PLAN_LABELS.epic)`                | Find them by record: the spec's `becameEpic` record, or the epic's own    | #560 |
+| R2  | `implement.ts:166` (`epicRunTasks`) | Find the epics a run holds, to skip their tasks                          | The same: epics by record, then their claims                              | #560 |
+| R3  | `review.ts:854` (`authoredByMe`)    | Count an adopted pull request assigned to this persona as its own        | Adoption is in the pull request's record's `data`, with the claim's facts | #565 |
+| R4  | `implement.ts:1047` (`withHistory`) | Tell the agent it is working on a pull request a person opened           | The same: read adoption from the record                                   | #565 |
+| R5  | `epic.ts:335` (`personReason`)      | Say a task waits for answers to its questions, beside H5's `needs-human` | Read the task's `asked-questions` record                                  | #560 |
+
+Backfill's reads of these labels stay, as H12 does: `backfill.ts:147` and `:273`
+(`auto:adopted`), `:385` (`auto:awaiting-ready`) and `:399` (`auto:epic`) infer an
+item's first record once.
+
 ### Chernabog's outputs read back from comments (decision 7)
 
 | #   | Where                                                                                                                                                   | Reads                                                                         | Fix                                                                                        | Task |
@@ -169,22 +189,22 @@ Each is a status label a flow adds or removes itself. #569 replaces every one wi
 the projector, which derives the labels from the record's phase and the claim after
 each advance and claim change.
 
-| #   | Where                                                                                        | Label                                                                         | Task |
-| --- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---- |
-| L1  | `implement.ts:512` (on claim), `implement.ts:532` (`dropInProgress`, on release)             | `auto:in-progress`                                                            | #569 |
-| L2  | `implement.ts:575` (`referToPerson`), `implement.ts:2082`, `:2086` (`Implement.handToHuman`) | `auto:needs-human` on the issue and its pull request                          | #569 |
-| L3  | `implement.ts:641`                                                                           | `auto:awaiting-ready`                                                         | #569 |
-| L4  | `implement.ts:1167`                                                                          | `auto:needs-clarification`                                                    | #569 |
-| L5  | `implement.ts:1772`                                                                          | `auto:adopted`                                                                | #569 |
-| L6  | `plan.ts:860`, `plan.ts:916`                                                                 | `auto:plan-proposed`                                                          | #569 |
-| L7  | `plan.ts:1067`, `plan.ts:1071` (`becomeEpic`)                                                | `auto:epic`, and the spec's proposed, approved and in-progress labels off     | #569 |
-| L8  | `plan.ts:1107`, `plan.ts:1112` (`Plan.handToHuman`)                                          | `auto:needs-human` on the spec, and its proposed and in-progress labels off   | #569 |
-| L9  | `plan.ts:1050`                                                                               | A task's `auto:needs-human`, by kind; its `auto:eligible` is intent and stays | #569 |
-| L10 | `pull-request.ts:924`                                                                        | `auto:needs-review`, with no reviewer in the pool                             | #569 |
-| L11 | `pull-request.ts:945` (`PullRequest.handToPerson`)                                           | `auto:needs-human`                                                            | #569 |
-| L12 | `pull-request.ts:959` (`PullRequest.readyForPerson`)                                         | `auto:ready-for-person`                                                       | #569 |
-| L13 | `hybrid.ts:276`                                                                              | `hybrid` on the opened pull request                                           | #569 |
-| L14 | `stack.ts:753`                                                                               | `auto:needs-human` on a stack layer whose refresh went to a person            | #569 |
+| #   | Where                                                                                                                                                         | Label                                                                         | Task |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ---- |
+| L1  | `implement.ts:511`, `:512` (on claim; the `Markers.hold(Markers.label, …)` takes it off when the run ends), `implement.ts:532` (`dropInProgress`, on release) | `auto:in-progress`                                                            | #569 |
+| L2  | `implement.ts:575` (`referToPerson`), `implement.ts:2082`, `:2086` (`Implement.handToHuman`)                                                                  | `auto:needs-human` on the issue and its pull request                          | #569 |
+| L3  | `implement.ts:640` (`Markers.hold(Markers.label, …)`, off when the run ends), `:641`                                                                          | `auto:awaiting-ready`                                                         | #569 |
+| L4  | `implement.ts:1167`                                                                                                                                           | `auto:needs-clarification`                                                    | #569 |
+| L5  | `implement.ts:1772`                                                                                                                                           | `auto:adopted`                                                                | #569 |
+| L6  | `plan.ts:860`, `plan.ts:916`                                                                                                                                  | `auto:plan-proposed`                                                          | #569 |
+| L7  | `plan.ts:1067`, `plan.ts:1071` (`becomeEpic`)                                                                                                                 | `auto:epic`, and the spec's proposed, approved and in-progress labels off     | #569 |
+| L8  | `plan.ts:1107`, `plan.ts:1112` (`Plan.handToHuman`)                                                                                                           | `auto:needs-human` on the spec, and its proposed and in-progress labels off   | #569 |
+| L9  | `plan.ts:1050`                                                                                                                                                | A task's `auto:needs-human`, by kind; its `auto:eligible` is intent and stays | #569 |
+| L10 | `pull-request.ts:924`                                                                                                                                         | `auto:needs-review`, with no reviewer in the pool                             | #569 |
+| L11 | `pull-request.ts:945` (`PullRequest.handToPerson`)                                                                                                            | `auto:needs-human`                                                            | #569 |
+| L12 | `pull-request.ts:959` (`PullRequest.readyForPerson`)                                                                                                          | `auto:ready-for-person`                                                       | #569 |
+| L13 | `hybrid.ts:276`                                                                                                                                               | `hybrid` on the opened pull request                                           | #569 |
+| L14 | `stack.ts:753`                                                                                                                                                | `auto:needs-human` on a stack layer whose refresh went to a person            | #569 |
 
 Intent labels are left to people: `auto:eligible`, `auto:plan`, `auto:plan-approved`
 and `auto:ship`. Removing one on claim, as `implement.ts:574`, `:637`, `:715` and `:728`
