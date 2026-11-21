@@ -812,10 +812,15 @@ docs/adr/0019-run-progress-port.md has the why; `docs/run-progress/` holds
   reports an item a run may start, not only a wake.
 
 - **The port is core's `Progress`** (`packages/core/src/services.ts`):
-  `read(item)`, `readAll` and `advance(item, { from, to, by })`, a
+  `read(item)`, `readAll` and `advance(item, { from, to, by, data? })`, a
   compare-and-set that writes `to` only if the phase is still `from` (none:
-  no record yet). A record is `{ phase, from, by, version }`; the version is
-  opaque and changes with every record.
+  no record yet). A record is `{ phase, from, by, version, at, data }`; the
+  version is opaque and changes with every record. `at` is when the store
+  wrote it, by its clock (a commit's date on the git adapter). `data` is a
+  `PhaseData`, a JSON object of at most 4 KB, carried for the run that picks
+  the item up next and never compared (ADR 21, decision 4). On the git
+  adapter it is a `Data:` trailer of one-line JSON. Pass it through the
+  SDK's `Phases.record(item, to, data)`.
 - **Core knows no phase.** It stores one and compares it for equality: no
   list, no order, no terminal phase (ADR 5). The SDK's phase names and a
   team's own are its callers'. Items are opaque names (`Claims.pullRequest(n)`

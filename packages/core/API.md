@@ -679,6 +679,12 @@ export declare const isPhase: <I>(input: I) => input is I & string & import("eff
 export declare const PhaseWriter: Schema.brand<Schema.String, "PhaseWriter">;
 export type PhaseWriter = typeof PhaseWriter.Type;
 export declare const isPhaseWriter: <I>(input: I) => input is I & string & import("effect/Brand").Brand<"PhaseWriter">;
+export declare const PHASE_DATA_MAX_BYTES = 4096;
+export declare const PhaseData: Schema.brand<Schema.$Record<Schema.String, Schema.Codec<Schema.Json, Schema.Json, never, never>>, "PhaseData">;
+export type PhaseData = typeof PhaseData.Type;
+export declare const isPhaseData: <I>(input: I) => input is I & {
+    readonly [x: string]: Schema.Json;
+} & import("effect/Brand").Brand<"PhaseData">;
 ```
 
 ## plan-nodes.ts
@@ -790,13 +796,14 @@ export {};
 
 ```ts
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Capabilities from "./capabilities.ts";
 import type { AgentError, GitError, GitHubError, MergeRefused, NotFound, PhaseMoved, ProgressError, PullRequestClosed, PushRejected, UsageError } from "./errors.ts";
 import type { Json } from "./json.ts";
-import type { Phase, PhaseWriter } from "./phase.ts";
+import type { Phase, PhaseData, PhaseWriter } from "./phase.ts";
 export declare const Labels: Schema.Struct<{
     readonly eligible: Schema.String;
     readonly inProgress: Schema.String;
@@ -1421,11 +1428,14 @@ export type PhaseRecord = {
     readonly from: Option.Option<Phase>;
     readonly by: PhaseWriter;
     readonly version: string;
+    readonly at: DateTime.Utc;
+    readonly data: Option.Option<PhaseData>;
 };
 export type PhaseTransition = {
     readonly from: Option.Option<Phase>;
     readonly to: Phase;
     readonly by: PhaseWriter;
+    readonly data?: PhaseData;
 };
 declare const Progress_base: Context.ServiceClass<Progress, "@chernabog/sdk/Progress", {
     read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;

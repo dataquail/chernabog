@@ -11,8 +11,10 @@ import {
   activity,
   Claims,
   CurrentNode,
+  type Json,
   type NodeAt,
   Phase as CorePhase,
+  PhaseData,
   type PhaseRecord,
   PhaseWriter,
   Progress,
@@ -148,6 +150,7 @@ export const pullRequestItem = (pullRequest: number) => Claims.pullRequest(pullR
 
 const asPhase = Schema.decodeSync(CorePhase);
 const asWriter = Schema.decodeSync(PhaseWriter);
+const asData = Schema.decodeSync(PhaseData);
 
 // The times a run's write reads the item again after another writer moved it.
 const RECORD_TRIES = 3;
@@ -158,12 +161,16 @@ const RECORD_TRIES = 3;
 // handoff happens whatever the item held before it, so a lost race reads
 // again and moves on from what it finds. Call it inside the activity that
 // makes the handoff, so a replay of a finished one doesn't write again.
-export const record = (item: string, to: string) =>
+// `data` is what the run that picks the item up next needs from this one, a
+// JSON object of at most 4 KB (core's PhaseData); an item already at `to`
+// keeps the data it has.
+export const record = (item: string, to: string, data?: { readonly [key: string]: Json }) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
     const run = yield* Run;
     const phase = asPhase(to);
     const by = asWriter(run.runId);
+    const carried = Option.map(Option.fromUndefinedOr(data), asData);
 
     for (let tries = 1; ; tries++) {
       const current = yield* progress.read(item);
@@ -174,7 +181,12 @@ export const record = (item: string, to: string) =>
 
       const from = Option.map(current, (found) => found.phase);
 
-      const moved = yield* progress.advance(item, { from, to: phase, by }).pipe(
+      const transition = Option.match(carried, {
+        onNone: () => ({ from, to: phase, by }),
+        onSome: (found) => ({ from, to: phase, by, data: found }),
+      });
+
+      const moved = yield* progress.advance(item, transition).pipe(
         Effect.as(false),
         Effect.catchTag("PhaseMoved", (lost) => {
           if (tries < RECORD_TRIES) {
