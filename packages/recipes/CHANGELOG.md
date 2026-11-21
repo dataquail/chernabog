@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.0](https://github.com/dataquail/chernabog/compare/recipes-v0.6.0...recipes-v0.7.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** Events.baseCiCompleted is removed from @chernabog/sdk. A finished CI run routes as a ci-run item, which Events.ciRunCompleted (the epic) and Events.mergeCiCompleted (post-merge) declare. A repo's copied recipes move with chernabog recipes upgrade, which every repo already needs for the core 2.0.0 floor.
+* **sdk:** a flow parks with Phases.park, not awaitSignal; Plan.awaitAnswer takes the spec; Plan.propose no longer records proposed; epic.park requires epic and progress; a binary refuses an SDK from before this release.
+
+### Features
+
+* **sdk:** a finished CI run wakes only what waits on it ([#555](https://github.com/dataquail/chernabog/issues/555)) ([c38058b](https://github.com/dataquail/chernabog/commit/c38058b9685e8fae0606580a770ab3c72fc757c5))
+* **sdk:** a park is always a record ([#550](https://github.com/dataquail/chernabog/issues/550)) ([5411cca](https://github.com/dataquail/chernabog/commit/5411cca5b4b0940b8bb315f416509a1a525476ac))
+* **sdk:** an adopted pull request's wait for CI parks on the issue's record, and every CI park counts ciTimeout from `since` (audit W5) ([#542](https://github.com/dataquail/chernabog/issues/542)) ([841ae94](https://github.com/dataquail/chernabog/commit/841ae946f50f4205d3b7d71021686e452da5b936))
+* **sdk:** an epic task's pending CI leaves its lane and the epic parks with it (audit W7, task CI) ([#543](https://github.com/dataquail/chernabog/issues/543)) ([db7a663](https://github.com/dataquail/chernabog/commit/db7a663d1e1d8755455de824ac6bcf04a004cf19))
+* **sdk:** an epic's stack refresh parks on its pending CI and resumes from the epic's record ([#546](https://github.com/dataquail/chernabog/issues/546)) ([31bf391](https://github.com/dataquail/chernabog/commit/31bf391ef7c564879cb9f09ecab35d5b9c84c42e))
+* **sdk:** resolve-conflicts' wait for CI on its merge parks over the review phase and puts it back (audit W6) ([#541](https://github.com/dataquail/chernabog/issues/541)) ([e891a3f](https://github.com/dataquail/chernabog/commit/e891a3f3f42d76ff97637fd796c4717e370f2999))
+* **sdk:** sources hold an item whose record has an unknown writer or an undeclared transition (ADR 21, decision 5) ([#548](https://github.com/dataquail/chernabog/issues/548)) ([78d8d0b](https://github.com/dataquail/chernabog/commit/78d8d0ba8115f95462204feb8e74f75eb0610681))
+
+
+### Bug Fixes
+
+* **sdk:** a merge held in a CI job is taken up again once the base is green, or its hold runs out ([#533](https://github.com/dataquail/chernabog/issues/533)) ([d2a239d](https://github.com/dataquail/chernabog/commit/d2a239dec1c352ce862e338ef62298ab1e576ced))
+* **sdk:** a plan parked in a CI job is taken up again once a person answers it, or nobody does in time ([#532](https://github.com/dataquail/chernabog/issues/532)) ([5184586](https://github.com/dataquail/chernabog/commit/51845865e3b6fcc064b4380be501a5d6bc6e0c5c))
+* **sdk:** an adopted draft parked in a CI job is taken up again once it is ready or its time is up ([#530](https://github.com/dataquail/chernabog/issues/530)) ([c345905](https://github.com/dataquail/chernabog/commit/c345905d7b2e8d81d91126b5313a5f3b3f7cdd40))
+* **sdk:** an epic parked between rounds is taken up again only once a layer changes, from its record ([#536](https://github.com/dataquail/chernabog/issues/536)) ([0175a97](https://github.com/dataquail/chernabog/commit/0175a9796523665c5b29ade58c5c99a288664e8f))
+* **sdk:** post-merge knows a merge was watched by its watched record, not the comment marker ([#539](https://github.com/dataquail/chernabog/issues/539)) ([7c415c5](https://github.com/dataquail/chernabog/commit/7c415c5b1dc574c718399173bb97a343c646c09b))
+* **sdk:** post-merge parks on a merge commit's pending push CI and resumes from its record ([#540](https://github.com/dataquail/chernabog/issues/540)) ([d61318e](https://github.com/dataquail/chernabog/commit/d61318ec9cbb616934dbdcab7d5b42f2197c8c43))
+
 ## [0.6.0](https://github.com/dataquail/chernabog/compare/recipes-v0.5.0...recipes-v0.6.0) (2026-11-16)
 
 

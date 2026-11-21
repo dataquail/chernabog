@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.14.0](https://github.com/dataquail/chernabog/compare/sdk-v0.13.0...sdk-v0.14.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sdk:** Events.baseCiCompleted is removed from @chernabog/sdk. A finished CI run routes as a ci-run item, which Events.ciRunCompleted (the epic) and Events.mergeCiCompleted (post-merge) declare. A repo's copied recipes move with chernabog recipes upgrade, which every repo already needs for the core 2.0.0 floor.
+* **core:** PhaseTransition.from is a PhaseRead ({phase, version}), not a Phase; `progress anomalies --acknowledge` takes the records to acknowledge, `<item>@<version>`, repeated.
+* **core:** Backfill.survey and Ledger.survey are effects, not functions of logins; a repo lists its personas under `personas:`.
+* **sdk:** a flow parks with Phases.park, not awaitSignal; Plan.awaitAnswer takes the spec; Plan.propose no longer records proposed; epic.park requires epic and progress; a binary refuses an SDK from before this release.
+* **sdk:** open pull requests from before phases were recorded need a record, which backfill writes. Released with backfill (the default), upgrade in this order: stop the daemon, upgrade, run `chernabog progress backfill --repo <repo> --write` on each repo, then start the daemon, so no tick reads a repo before its backfill. If a release with backfill comes first, run its backfill on each repo, let review runs in flight finish, then upgrade; its records carry no `reviewed`, so a pull request whose persona had only commented gets one first review instead of a re-review. A run in flight under a legacy key (pr-N-review-K, pr-N-changes-K) starts no second run on its pull request, since the sources skip a pull request a run owns and a CI plan reserves an item by its claim, but its next item has a record key. A review-asked record written before this release has no `reviewed`, so a review asked of it is a first review, whoever reviewed before.
+
+### Features
+
+* **cli:** chernabog progress backfill writes a record for every open item with none (ADR 21) ([#544](https://github.com/dataquail/chernabog/issues/544)) ([c7bebe6](https://github.com/dataquail/chernabog/commit/c7bebe684a5a388fcfe5d36c39642978d8a9aea2))
+* **core:** a phase record says when it was written and carries data for the next run ([#529](https://github.com/dataquail/chernabog/issues/529)) ([0631dda](https://github.com/dataquail/chernabog/commit/0631ddaaa7527874433f079cbccd94fe93684889))
+* **core:** one persona set, from the repo's committed config ([#551](https://github.com/dataquail/chernabog/issues/551)) ([428d916](https://github.com/dataquail/chernabog/commit/428d91654598db220c4997f35858f82ca73511ea))
+* **core:** Progress.advance compares and sets on the version the writer read ([#554](https://github.com/dataquail/chernabog/issues/554)) ([9924472](https://github.com/dataquail/chernabog/commit/9924472c2e04a3db791f8682e0601e3ba9ebdfbc))
+* **daemon:** a run that parks ends there, on a daemon as in a CI job ([#535](https://github.com/dataquail/chernabog/issues/535)) ([dec3378](https://github.com/dataquail/chernabog/commit/dec33787c599b7c0c2d710fbd6df5259657091ff))
+* **sdk:** a finished CI run wakes only what waits on it ([#555](https://github.com/dataquail/chernabog/issues/555)) ([c38058b](https://github.com/dataquail/chernabog/commit/c38058b9685e8fae0606580a770ab3c72fc757c5))
+* **sdk:** a park is always a record ([#550](https://github.com/dataquail/chernabog/issues/550)) ([5411cca](https://github.com/dataquail/chernabog/commit/5411cca5b4b0940b8bb315f416509a1a525476ac))
+* **sdk:** an adopted pull request's wait for CI parks on the issue's record, and every CI park counts ciTimeout from `since` (audit W5) ([#542](https://github.com/dataquail/chernabog/issues/542)) ([841ae94](https://github.com/dataquail/chernabog/commit/841ae946f50f4205d3b7d71021686e452da5b936))
+* **sdk:** an epic task's pending CI leaves its lane and the epic parks with it (audit W7, task CI) ([#543](https://github.com/dataquail/chernabog/issues/543)) ([db7a663](https://github.com/dataquail/chernabog/commit/db7a663d1e1d8755455de824ac6bcf04a004cf19))
+* **sdk:** an epic's stack refresh parks on its pending CI and resumes from the epic's record ([#546](https://github.com/dataquail/chernabog/issues/546)) ([31bf391](https://github.com/dataquail/chernabog/commit/31bf391ef7c564879cb9f09ecab35d5b9c84c42e))
+* **sdk:** one transition catalogue for the compiler and the ledger ([#552](https://github.com/dataquail/chernabog/issues/552)) ([4c5a464](https://github.com/dataquail/chernabog/commit/4c5a464aad6ff4b1d921c2d0b62777b7c51589ba))
+* **sdk:** resolve-conflicts' wait for CI on its merge parks over the review phase and puts it back (audit W6) ([#541](https://github.com/dataquail/chernabog/issues/541)) ([e891a3f](https://github.com/dataquail/chernabog/commit/e891a3f3f42d76ff97637fd796c4717e370f2999))
+* **sdk:** sources hold an item whose record has an unknown writer or an undeclared transition (ADR 21, decision 5) ([#548](https://github.com/dataquail/chernabog/issues/548)) ([78d8d0b](https://github.com/dataquail/chernabog/commit/78d8d0ba8115f95462204feb8e74f75eb0610681))
+* **sdk:** the review sources read the record alone (audit S6, S7) ([#545](https://github.com/dataquail/chernabog/issues/545)) ([937d4d8](https://github.com/dataquail/chernabog/commit/937d4d884fc5c5b376b44494f9ef5f49102a02e1))
+
+
+### Bug Fixes
+
+* **sdk:** a flow document parked on CI is taken up again at the node it parked on, from its record ([#537](https://github.com/dataquail/chernabog/issues/537)) ([c769c53](https://github.com/dataquail/chernabog/commit/c769c53a5d990051119fadb2160f089a12b6eb00))
+* **sdk:** a flow document's plan answer and merge hold are taken up again at their node, from their record ([#538](https://github.com/dataquail/chernabog/issues/538)) ([6e52683](https://github.com/dataquail/chernabog/commit/6e52683b9670437015a4c0829a59ddca413ba29b))
+* **sdk:** a merge held in a CI job is taken up again once the base is green, or its hold runs out ([#533](https://github.com/dataquail/chernabog/issues/533)) ([d2a239d](https://github.com/dataquail/chernabog/commit/d2a239dec1c352ce862e338ef62298ab1e576ced))
+* **sdk:** a plan parked in a CI job is taken up again once a person answers it, or nobody does in time ([#532](https://github.com/dataquail/chernabog/issues/532)) ([5184586](https://github.com/dataquail/chernabog/commit/51845865e3b6fcc064b4380be501a5d6bc6e0c5c))
+* **sdk:** an adopted draft parked in a CI job is taken up again once it is ready or its time is up ([#530](https://github.com/dataquail/chernabog/issues/530)) ([c345905](https://github.com/dataquail/chernabog/commit/c345905d7b2e8d81d91126b5313a5f3b3f7cdd40))
+* **sdk:** an epic parked between rounds is taken up again only once a layer changes, from its record ([#536](https://github.com/dataquail/chernabog/issues/536)) ([0175a97](https://github.com/dataquail/chernabog/commit/0175a9796523665c5b29ade58c5c99a288664e8f))
+* **sdk:** Implement.readied finds waiting runs by their awaiting-ready record, not the label ([#525](https://github.com/dataquail/chernabog/issues/525)) ([f9a1e4c](https://github.com/dataquail/chernabog/commit/f9a1e4c2fbdcd504036e48c2d9f9bb9cd297e955))
+* **sdk:** post-merge knows a merge was watched by its watched record, not the comment marker ([#539](https://github.com/dataquail/chernabog/issues/539)) ([7c415c5](https://github.com/dataquail/chernabog/commit/7c415c5b1dc574c718399173bb97a343c646c09b))
+* **sdk:** post-merge parks on a merge commit's pending push CI and resumes from its record ([#540](https://github.com/dataquail/chernabog/issues/540)) ([d61318e](https://github.com/dataquail/chernabog/commit/d61318ec9cbb616934dbdcab7d5b42f2197c8c43))
+
 ## [0.13.0](https://github.com/dataquail/chernabog/compare/sdk-v0.12.0...sdk-v0.13.0) (2026-11-16)
 
 
