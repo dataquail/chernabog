@@ -16,6 +16,7 @@ import {
   PhaseWriter,
   type Progress,
 } from "@chernabog/core";
+import type { BunServices } from "@effect/platform-bun";
 import { describe, expect } from "bun:test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,8 +27,13 @@ import type * as Scope from "effect/Scope";
 
 import { effect } from "./effect-test.ts";
 
-// Makes a fresh adapter, holding no records, each time a test runs it.
-export type MakeProgress<E> = Effect.Effect<Progress["Service"], E, Scope.Scope>;
+// Makes a fresh adapter, holding no records, each time a test runs it, with
+// Bun's platform services, which each test has.
+export type MakeProgress<E> = Effect.Effect<
+  Progress["Service"],
+  E,
+  Scope.Scope | BunServices.BunServices
+>;
 
 const phase = Schema.decodeSync(Phase);
 const writer = Schema.decodeSync(PhaseWriter);
