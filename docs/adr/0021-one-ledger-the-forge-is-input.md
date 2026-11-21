@@ -548,10 +548,13 @@ change.
      branch, base and adopted pull request (today `claimMarker`).
    - **Content too big for a record, like the plan, goes in a ledger
      blob.** A blob is content-addressed and immutable, and is written in
-     the same commit as the record that names it. On the git adapter it is a
-     file in the thread commit's tree, named by its hash in the record's
-     `data`. The plan (today `planMarker`, read back by `Plan.posted`) is the
-     first.
+     the same commit as the record that names it. `advance` takes the
+     blobs with the transition, and the record names each by its SHA-256
+     in `blobs`, apart from `data`, so a blob costs `data` none of its 4 KB;
+     `Progress.blob` reads back only a blob the item's record names. On the
+     git adapter it is a file, `blobs/<hash>`, in the thread commit's tree,
+     and the record's `Blobs:` trailer names it. (#562) The plan (today
+     `planMarker`, read back by `Plan.posted`) is the first.
    - **Comments still show all of this to people.** Nothing reads them back.
      Deleting or editing one changes nothing but what a person sees.
 

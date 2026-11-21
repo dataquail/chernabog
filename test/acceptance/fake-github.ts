@@ -4,6 +4,8 @@
 // requests, and CI: check runs, commit statuses and Actions workflow runs.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 
 import { type Json, parseJson, printJson } from "@chernabog/sdk";
 import * as Arr from "effect/Array";
@@ -196,6 +198,8 @@ const GraphqlBody = Schema.Struct({
     ref: Schema.optionalKey(Schema.String),
     prefix: Schema.optionalKey(Schema.String),
     input: Schema.optionalKey(Schema.Json),
+    // Its read of a blob a record wrote: `<commit>:blobs/<hash>`.
+    expression: Schema.optionalKey(Schema.String),
   }),
 });
 
@@ -203,6 +207,21 @@ const AdvanceInput = Schema.Struct({
   branch: Schema.Struct({ branchName: Schema.String }),
   expectedHeadOid: Schema.String,
   message: Schema.Struct({ headline: Schema.String, body: Schema.optionalKey(Schema.String) }),
+  fileChanges: Schema.optionalKey(
+    Schema.Struct({
+      additions: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ path: Schema.String, contents: Schema.String })),
+      ),
+    }),
+  ),
+});
+
+const CreateBlobBody = Schema.Struct({ content: Schema.String, encoding: Schema.String });
+
+const CreateTreeBody = Schema.Struct({
+  tree: Schema.Array(
+    Schema.Struct({ path: Schema.String, mode: Schema.String, sha: Schema.String }),
+  ),
 });
 
 // GitHub's JSON null, for a field it leaves empty.
@@ -405,6 +424,43 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return id;
   };
 
+  // A blob of these bytes in the repo: its sha.
+  const blobOf = (bytes: Uint8Array) =>
+    execFileSync("git", ["--git-dir", options.bare, "hash-object", "-w", "--stdin"], {
+      input: bytes,
+      encoding: "utf8",
+    }).trim();
+
+  // The tree `base` is (none: the empty one) with each file put at its path,
+  // through an index of its own: its sha.
+  let indexes = 0;
+
+  const treeWith = (
+    base: Option.Option<string>,
+    files: ReadonlyArray<{ readonly path: string; readonly mode: string; readonly sha: string }>,
+  ) => {
+    indexes += 1;
+    const index = join(options.bare, `fake-index-${indexes}`);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+
+    const run = (...args: Array<string>) =>
+      execFileSync("git", ["--git-dir", options.bare, ...args], { encoding: "utf8", env }).trim();
+
+    run(
+      "read-tree",
+      ...Option.match(base, { onNone: () => ["--empty"], onSome: (tree) => [tree] }),
+    );
+
+    for (const file of files) {
+      run("update-index", "--add", "--cacheinfo", `${file.mode},${file.sha},${file.path}`);
+    }
+
+    const tree = run("write-tree");
+    rmSync(index, { force: true });
+
+    return tree;
+  };
+
   // The sha a ref points at, named in full.
   const shaOf = (ref: string) => {
     const result = spawnSync(
@@ -578,9 +634,15 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
         );
       }
 
+      const added = (input.fileChanges?.additions ?? []).map((addition) => ({
+        path: addition.path,
+        mode: "100644",
+        sha: blobOf(Buffer.from(addition.contents, "base64")),
+      }));
+
       const oid = commitTree({
         message: `${input.message.headline}\n\n${input.message.body ?? ""}`,
-        tree: git("rev-parse", `${input.expectedHeadOid}^{tree}`),
+        tree: treeWith(Option.some(git("rev-parse", `${input.expectedHeadOid}^{tree}`)), added),
         parents: [input.expectedHeadOid],
       });
 
@@ -589,6 +651,26 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       return Option.some(
         json({
           data: { createCommitOnBranch: { commit: { oid, committedDate: committedDate(oid) } } },
+        }),
+      );
+    }
+
+    if (query.includes("object(expression")) {
+      const found = Option.filter(
+        shaOf(body.variables.expression ?? ""),
+        (oid) => git("cat-file", "-t", oid) === "blob",
+      );
+
+      return Option.some(
+        json({
+          data: {
+            repository: {
+              object: Option.getOrElse(
+                Option.map(found, (oid): Json => ({ oid })),
+                () => NULL,
+              ),
+            },
+          },
         }),
       );
     }
@@ -768,6 +850,29 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
     return json({ sha, message: body.message, committer: { date: committedDate(sha) } }, 201);
   });
+
+  // A blob, from base64, as the Progress adapter writes a record's blobs.
+  const createBlob = withBody(CreateBlobBody, (body) =>
+    json({ sha: blobOf(Buffer.from(body.content, "base64")) }, 201),
+  );
+
+  // A blob's bytes, in base64, as GitHub gives them.
+  const readBlob = (args: Args) => {
+    const sha = args.params[0] ?? "";
+
+    if (Option.isNone(shaOf(`${sha}^{blob}`))) {
+      return notFound();
+    }
+
+    const bytes = execFileSync("git", ["--git-dir", options.bare, "cat-file", "blob", sha]);
+
+    return json({ sha, content: bytes.toString("base64"), encoding: "base64" });
+  };
+
+  // A tree of blobs by path, from no base.
+  const createTree = withBody(CreateTreeBody, (body) =>
+    json({ sha: treeWith(Option.none(), body.tree) }, 201),
+  );
 
   const readCommit = (args: Args) => {
     const sha = args.params[0] ?? "";
@@ -1432,6 +1537,9 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "DELETE", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: deleteRef },
     { method: "PATCH", pattern: new RegExp(`^${repo}/git/refs/(.+)$`), handle: updateRef },
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
+    { method: "POST", pattern: new RegExp(`^${repo}/git/blobs$`), handle: createBlob },
+    { method: "GET", pattern: new RegExp(`^${repo}/git/blobs/(\\w+)$`), handle: readBlob },
+    { method: "POST", pattern: new RegExp(`^${repo}/git/trees$`), handle: createTree },
     { method: "POST", pattern: new RegExp(`^${repo}/dispatches$`), handle: dispatch },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },

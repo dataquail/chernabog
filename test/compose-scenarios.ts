@@ -577,7 +577,7 @@ const RE_REVIEW_WORK = item(`pr-${PULL}-review-2`, {
 
 export const RE_REVIEW_WORK_ITEM = RE_REVIEW_WORK;
 
-// An earlier review's marker: data-quail's, with the session to resume, unless said otherwise.
+// An earlier review: data-quail's, with the session to resume, unless said otherwise.
 type Earlier = { readonly round: number; readonly reviewer?: string; readonly session?: boolean };
 
 export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
@@ -606,11 +606,12 @@ export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
     fake.setLabels(PULL, [...labels]);
     fake.rechecked.findings = [...findings];
 
-    for (const each of earlier) {
+    // The latest earlier review, as the pull request's record keeps it.
+    for (const each of Option.toArray(Arr.last(earlier))) {
       const session = Option.liftPredicate("earlier-session", () => each.session !== false);
 
-      fake.comment(
-        reviewMarker.write({
+      fake.recordReview(
+        {
           sha: HEAD,
           round: each.round,
           verdict: "request-changes",
@@ -620,7 +621,8 @@ export const RE_REVIEW_SCENARIOS = scenarios((scenario) => {
             onSome: (sessionId) => ({ sessionId }),
           }),
           adapter: "claude",
-        }),
+        },
+        "review-asked-again",
       );
     }
 
@@ -2292,7 +2294,16 @@ export const EPIC_SCENARIOS = scenarios((define) => {
           Option.fromUndefinedOr(fake.branchPulls.get(Claims.branchFor(11))),
         )) {
           fake.branchPulls.set(above.headRef, { ...above, baseRef: "main" });
-          fake.comment(reviewMarker.write({ sha: above.headSha, round: 1, verdict: "approve" }));
+          fake.recordPhase(`pr-${above.number}`, "approved", {
+            data: {
+              review: {
+                sha: above.headSha,
+                round: 1,
+                verdict: "approve",
+                reviewer: "chernabog-bot",
+              },
+            },
+          });
         }
 
         fake.git.makes.add("merge --no-edit origin/main");

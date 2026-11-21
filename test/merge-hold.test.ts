@@ -10,7 +10,6 @@ import {
   type Issue,
   NeedsHuman,
   PullRequest,
-  reviewMarker,
   Settings,
   StepFailed,
 } from "@chernabog/sdk";
@@ -92,7 +91,7 @@ const off = withSettings({});
 // An approved auto:ship pull request with green checks on its head.
 const approved = (base: CiState) => {
   const fake = makeFake("approve");
-  fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+  fake.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
   fake.setLabels(PULL, [SHIP]);
   fake.merge.baseCi = Option.some(base);
 

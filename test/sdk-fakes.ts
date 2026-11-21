@@ -269,7 +269,22 @@ export const makeFake = (
 
   // Records `to` on `item`, as a run before this test's would have, or as
   // `by` when `when` names another writer: from whatever it holds now, at the
-  // epoch unless `when` says when, with the data it gives.
+  // epoch unless `when` says when, with the data it gives, and the review the
+  // record kept, unless the data names one, as Phases.record keeps it.
+  // `data` with the review `item`'s record keeps, unless `data` names one.
+  const keptReview = (item: string, data: Option.Option<{ readonly [key: string]: Json }>) => {
+    const kept = Option.flatMap(
+      Option.flatMap(Option.fromUndefinedOr(records().get(item)), (found) => found.data),
+      (found) => Option.fromUndefinedOr(found.review),
+    );
+
+    if (Option.isNone(kept) || Option.exists(data, (given) => "review" in given)) {
+      return data;
+    }
+
+    return Option.some({ ...Option.getOrElse(data, () => ({})), review: kept.value });
+  };
+
   const recordPhase = (
     name: string,
     to: string,
@@ -288,12 +303,33 @@ export const makeFake = (
           onNone: () => ({}),
           onSome: (at) => ({ at }),
         }),
-        ...Option.match(Option.fromUndefinedOr(when.data), {
+        ...Option.match(keptReview(name, Option.fromUndefinedOr(when.data)), {
           onNone: () => ({}),
           onSome: (data) => ({ data: Schema.decodeSync(PhaseData)(data) }),
         }),
       },
     );
+  };
+
+  // Records a review of the pull request as review.round does, in its
+  // record's data: approved or changes-asked by the verdict, unless `phase`
+  // names another, with what the review saw and who gave it.
+  const recordReview = (
+    review: {
+      readonly sha: string;
+      readonly round: number;
+      readonly verdict: "approve" | "request-changes";
+      readonly reviewer?: string;
+      readonly sessionId?: string;
+      readonly adapter?: string;
+    },
+    phase?: string,
+  ) => {
+    const byVerdict = { approve: "approved", "request-changes": "changes-asked" } as const;
+
+    recordPhase(`pr-${PULL}`, phase ?? byVerdict[review.verdict], {
+      data: { review: { reviewer: people.me, ...review } },
+    });
   };
 
   const adapters: Array<Option.Option<string>> = [];
@@ -1178,6 +1214,7 @@ export const makeFake = (
     phases,
     records,
     recordPhase,
+    recordReview,
     graph,
     branchPulls,
     closed,

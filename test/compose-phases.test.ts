@@ -392,6 +392,7 @@ describe("one catalogue, for the compiler and the ledger", () => {
     version: "v1",
     at: DateTime.makeUnsafe(0),
     data: Option.none(),
+    blobs: [],
   });
 
   const anomaly = (item: Phases.ItemKind, phase: string) =>
