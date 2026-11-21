@@ -22,7 +22,7 @@ export type CancelTarget = typeof CancelTarget.Type;
 // work item went (closed, merged, claimed by another run); or lost, because
 // another run took its work item over once its claim's lease expired.
 export const EndAs = Schema.Struct({
-  ending: Schema.Literals(["needs-human", "superseded", "lost"]),
+  ending: Schema.Literals(["needs-human", "superseded", "lost", "ended-at-park"]),
   reason: Schema.String,
 });
 

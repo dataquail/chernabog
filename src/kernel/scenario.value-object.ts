@@ -58,7 +58,8 @@ export type Given = typeof Given.Type;
 // `running`: still going when the rehearsal stopped following it (--timeout), such
 // as a run waiting on a review no persona serves. `cancelled`: by `chernabog cancel`.
 // `superseded`: its work item went while it was in flight. `lost`: another
-// run took its work item over once its claim's lease expired.
+// run took its work item over once its claim's lease expired. `ended-at-park`:
+// it waited on a person or another system, which ends a run (ADR 0021).
 export const Ending = Schema.Literals([
   "done",
   "needs-human",
@@ -67,6 +68,7 @@ export const Ending = Schema.Literals([
   "cancelled",
   "superseded",
   "lost",
+  "ended-at-park",
   "running",
 ]);
 

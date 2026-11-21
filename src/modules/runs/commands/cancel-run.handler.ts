@@ -21,7 +21,12 @@ import {
   CancelTarget,
   type EndAs,
 } from "../domain/run/cancelled-run.value-object.ts";
-import { type CleanupFailed, RunAlreadyFinished, RunNotFound } from "../domain/run/run.errors.ts";
+import {
+  type CleanupFailed,
+  RunAlreadyFinished,
+  RunNotFound,
+  RunNotParked,
+} from "../domain/run/run.errors.ts";
 import { RunEvents } from "../domain/run/run.events.ts";
 import { type RunRoot } from "../domain/run/run.root.ts";
 import { RunRootOps } from "../domain/run/run.root-ops.ts";
@@ -62,7 +67,11 @@ const endedAs = (found: RunRoot, endAs: EndAs, at: string) => {
 const noteOf = (ended: RunRoot) => {
   const summary = Option.getOrElse(ended.summary, () => ended.status);
 
-  if (ended.status === "superseded" || ended.status === "lost") {
+  if (
+    ended.status === "superseded" ||
+    ended.status === "lost" ||
+    ended.status === "ended-at-park"
+  ) {
     return `${ended.status}: ${summary}`;
   }
 
@@ -283,11 +292,17 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   );
 
   // The run's ending and its waits go together; stopping its workflow and
-  // cleaning up after it come once they have, and saying it ended last.
+  // cleaning up after it come once they have, and saying it ended last. A run
+  // ended at its park must still be waiting: a signal delivered since it was
+  // found parked took its wait and woke it, and it is left running.
   const parked = yield* Effect.gen(function* () {
-    yield* runs.upsertOne(cancelled);
-
     const waiting = yield* waits.findMany(RunWaitSpecifications.forRun(found.id));
+
+    if (cancelled.status === "ended-at-park" && waiting.length === 0) {
+      return yield* new RunNotParked({ runId: found.id });
+    }
+
+    yield* runs.upsertOne(cancelled);
 
     for (const wait of waiting) {
       yield* waits.deleteOne(wait);
@@ -312,8 +327,18 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
   const leftForPerson: Array<string> = [];
 
   // A run that lost its item leaves everything on it, worktree included, to
-  // the run that took it over, and for a person to look at.
-  if (cancelled.status === "lost") {
+  // the run that took it over, and for a person to look at. One that ended at
+  // a park leaves the same to the run that takes it up from its record, but
+  // lets go of its claim ref, so that run may be on any machine or in CI.
+  if (cancelled.status === "lost" || cancelled.status === "ended-at-park") {
+    const releasedClaims = yield* Option.match(
+      Option.liftPredicate(cancelled, (run) => run.status === "ended-at-park"),
+      {
+        onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
+        onSome: (run) => releaseClaimRefs(run, leftForPerson),
+      },
+    );
+
     yield* tellEnded(cancelled);
 
     return CancelledRun.make({
@@ -322,7 +347,7 @@ export const cancelRunHandler = Effect.fn("cancelRunHandler")(function* ({
       stopped,
       wakesCleared: parked.length,
       removedWorktrees: [],
-      releasedClaims: [],
+      releasedClaims: [...releasedClaims],
       released: Option.none(),
       closedSessions: [],
       openSessions: yield* cleanup.openSessions(cancelled),

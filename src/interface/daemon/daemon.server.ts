@@ -895,6 +895,46 @@ export const runDaemon = Effect.gen(function* () {
           return !Predicate.isTagged(found, "Lost");
         });
 
+      // Why a parked run ends, for its summary.
+      const PARKED_REASON =
+        "it waits on a person or another system: its record carries the wait, and a later run takes it up";
+
+      // Ends every run parked on a signal, as a CI job's run ends at its park
+      // (ADR 0021, decision 4): its record says where its item is, and the
+      // flow's trigger offers the item as work a run may start once what it
+      // waits on settles, here, on another machine or in CI. What it left on
+      // the item stays for that run; its claim ref goes, so that run may be
+      // anywhere.
+      const endParked = Effect.gen(function* () {
+        for (const run of (yield* active).filter((found) => found.parked)) {
+          yield* RunFlowsCommands.use((runs) =>
+            runs.CancelRunCommand({
+              target: CancelTarget.cases.ById.make({ asked: run.id }),
+              by: "chernabog",
+              closeSessions: false,
+              endAs: Option.some({ ending: "ended-at-park", reason: PARKED_REASON }),
+            }),
+          ).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                leaseNotes.delete(run.id);
+                leasesRenewed.delete(run.id);
+              }),
+            ),
+            Effect.as(`ended ${run.id} (${runLabel(run)}) at its park`),
+            Effect.catchTag("RunNotParked", () =>
+              Effect.succeed(`left ${run.id} (${runLabel(run)}) running: a signal woke it`),
+            ),
+            Effect.catch((error) =>
+              Effect.succeed(
+                `could not end ${run.id} (${runLabel(run)}) at its park: ${error.message}`,
+              ),
+            ),
+            Effect.flatMap(log),
+          );
+        }
+      }).pipe(Effect.catchCause((cause) => log(`ending parked runs failed: ${String(cause)}`)));
+
       // Renews the leases of every run in flight whose renewal is due, in
       // every repo, paused or draining included: a run in flight still holds
       // its work. A parked run's lease lasts the longer parkedLeaseTtl.
@@ -1400,6 +1440,7 @@ export const runDaemon = Effect.gen(function* () {
         Effect.forever(
           Effect.gen(function* () {
             yield* validityWake.close;
+            yield* endParked;
             yield* renewLeases;
             yield* checkValidity;
             yield* Effect.timeoutOrElse(validityWake.await, {

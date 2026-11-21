@@ -17,7 +17,7 @@ import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 // Takes a job from a queue, its work item, and waits while it holds the queue's
 // lease. The issue's labels stand in for the queue: queue:revoked means the
 // queue gave the job away. Each renewal leaves a comment saying for how long.
-const QUEUED = `import { activity, awaitSignal, defineFlow, GitHub, Implement, Markers, reportAs } from "@chernabog/sdk";
+const QUEUED = `import { activity, defineFlow, GitHub, Implement, Markers, reportAs, sleep } from "@chernabog/sdk";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -58,7 +58,8 @@ export default defineFlow({
     Effect.gen(function* () {
       const issue = yield* Implement.issueOf(item);
       yield* activity("lease-job", Markers.hold(jobLease, { job: issue }));
-      yield* awaitSignal(["go"], { id: "park", timeout: "1 day" });
+      // In flight, not parked: a parked run ends at its park (ADR 0021).
+      yield* sleep("working", "1 day");
 
       return "woke";
     }),
@@ -112,12 +113,9 @@ describe("a marker that is a lease", () => {
   test("is renewed for the daemon's TTL, and a run whose renewal says lost ends as lost", async () => {
     const issue = sandbox.github.addIssue("A job from the queue", ["queue:job"]);
 
-    // Parked, so renewed for parkedLeaseTtl, its default of three days.
+    // In flight, so renewed for leaseTtl.
     await waitFor(
-      () =>
-        sandbox.github
-          .commentsOn(issue)
-          .some((comment) => comment.body === "renewed for 259200000"),
+      () => sandbox.github.commentsOn(issue).some((comment) => comment.body === "renewed for 2000"),
       "the daemon to renew the queue's lease",
     );
 

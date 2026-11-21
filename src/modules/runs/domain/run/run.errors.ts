@@ -84,6 +84,17 @@ export class SeveralRunsInFlight extends Schema.TaggedError<
   }
 }
 
+// The run is no longer waiting on a signal, so it doesn't end at a park: a
+// signal woke it after it was found parked.
+export class RunNotParked extends Schema.TaggedError<
+  RunNotParked,
+  { readonly brand: "RunNotParked" }
+>()("RunNotParked", { runId: RunId }) {
+  public override get message() {
+    return `run ${this.runId} is no longer parked: a signal woke it`;
+  }
+}
+
 // The run has no log, at the path its log would be.
 export class RunLogMissing extends Schema.TaggedError<
   RunLogMissing,

@@ -1431,21 +1431,20 @@ export const CI_SETTLED = "ci-settled";
 // How a wait for CI goes on: `park` names the item (Phases.issueItem or
 // pullRequestItem) a CI job's run records awaitingCi on before it parks,
 // rather than polling through the wait on a billed runner. The flow then
-// resumes from that record in the next job, at `firstRound`, the round the
-// record names. Without `park`, or outside a CI job (Repo's ciJob), it polls.
+// resumes from that record in the next run, at `firstRound`, the round the
+// record names. A daemon's run parks the same way and ends there (ADR 0021,
+// decision 4). Without `park`, it polls.
 export type CiWait = RepeatOptions & {
   readonly park?: string;
   readonly firstRound?: number;
 };
 
-// The item to park on, when this run is a CI job's and the flow can resume.
-const parkingOn = (options: CiWait) =>
-  Effect.map(Repo.use(Effect.succeed), (repo) =>
-    Option.filter(Option.fromUndefinedOr(options.park), () => repo.ciJob === true),
-  );
+// The item to park on, when the flow can resume from its record: on a daemon
+// as in a CI job, a run that waits on CI ends at the park.
+const parkingOn = (options: CiWait) => Effect.succeed(Option.fromUndefinedOr(options.park));
 
-// Records that the item waits on this round of CI, then parks; in a CI job,
-// the job ends there.
+// Records that the item waits on this round of CI, then parks, which ends the
+// run, on a daemon as in a CI job.
 const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
   activity(
     named(options, `awaiting-ci-${round}`),

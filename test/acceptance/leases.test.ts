@@ -1,8 +1,9 @@
 // Claims as leases, end to end with the daemon (#134): a run takes over an
-// issue whose claim another machine let expire, and says so; a parked run's
-// lease outlives a short leaseTtl, renewed in time, so a would-be taker skips
-// it; and a parked run whose claim another machine took over ends as lost when
-// it wakes, before it writes anything, leaving what it held to the taker.
+// issue whose claim another machine let expire, and says so; a run that parks
+// ends at its park (ADR 0021), letting go of its claim ref so any machine may
+// take the item up, and keeping its labels; and a run in flight whose claim
+// another machine took over ends as lost, before it writes anything, leaving
+// what it held to the taker.
 
 import { type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -15,20 +16,17 @@ import * as Schema from "effect/Schema";
 import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
 import { openSandbox, type Sandbox, waitFor } from "./sandbox.ts";
 
-// Claims an issue labelled lease:park, prepares its worktree, and waits on
-// `go`, which its trigger reports once the issue is labelled go; then it
-// comments, as a run going on with its work would.
-const PARKED = `import { awaitSignal, defineFlow, GitHub, Implement, Issue, reportAs } from "@chernabog/sdk";
+// Claims an issue labelled lease:park, prepares its worktree, and works on it
+// a long while, in flight; then it comments, as a run going on with its work
+// would.
+const PARKED = `import { defineFlow, GitHub, Implement, Issue, reportAs, sleep } from "@chernabog/sdk";
 import * as Effect from "effect/Effect";
 
 export default defineFlow({
   trigger: Effect.gen(function* () {
     const issues = yield* (yield* GitHub).queuedIssuesLabelled("lease:park");
 
-    return issues.map((issue) => ({
-      ...Implement.issueItem(issue),
-      signals: issue.labels.includes("go") ? ["go"] : [],
-    }));
+    return issues.map((issue) => Implement.issueItem(issue));
   }).pipe(reportAs("trigger")),
   stillValid: Implement.stillValid,
   workflow: (item) =>
@@ -36,8 +34,31 @@ export default defineFlow({
       const issue = yield* Implement.issueOf(item);
       const { branch } = yield* Implement.claim(issue);
       yield* Implement.prepareWorktree(branch);
-      yield* awaitSignal(["go"], { id: "park", timeout: "1 day" });
+      yield* sleep("working", "1 day");
       yield* Issue.comment(issue, "went on with the work");
+
+      return "woke";
+    }),
+});
+`;
+
+// Claims an issue labelled lease:wait, then waits on a signal no trigger
+// reports, as a run waiting on a person does: on a daemon, as in a CI job, it
+// ends at that park.
+const PARKING = `import { awaitSignal, defineFlow, GitHub, Implement, reportAs } from "@chernabog/sdk";
+import * as Effect from "effect/Effect";
+
+export default defineFlow({
+  trigger: Effect.gen(function* () {
+    const issues = yield* (yield* GitHub).queuedIssuesLabelled("lease:wait");
+
+    return issues.map((issue) => Implement.issueItem(issue));
+  }).pipe(reportAs("trigger")),
+  workflow: (item) =>
+    Effect.gen(function* () {
+      const issue = yield* Implement.issueOf(item);
+      yield* Implement.claim(issue);
+      yield* awaitSignal(["never"], { id: "park", timeout: "1 day" });
 
       return "woke";
     }),
@@ -96,17 +117,32 @@ describe("leases", () => {
       JSON.parse((await sandbox.runCli(["status", "--json"])).output),
     );
 
-  // The run in flight for an issue, once it's parked on its signal.
+  // The claim on an issue as its ref has it now.
+  const claimOn = (issue: number) =>
+    Option.map(sandbox.github.refSha(claimRef(issue)), (sha) => ({
+      sha,
+      message: sandbox.github.messageOf(sha),
+    }));
+
+  // The run in flight for an issue, once its claim names it and it has
+  // marked the issue claimed, as a person sees.
   const parkedOn = async (issue: number) => {
     let found = Option.none<string>();
 
     await eventually(async () => {
-      found = Option.fromUndefinedOr(
-        (await status()).active.find((run) => run.itemKey === `issue-${issue}` && run.parked)?.id,
+      found = Option.filter(
+        Option.fromUndefinedOr(
+          (await status()).active.find((run) => run.itemKey === `issue-${issue}`)?.id,
+        ),
+        (runId) =>
+          sandbox.github.issue(issue).labels.includes("auto:in-progress") &&
+          Option.exists(claimOn(issue), (claim) =>
+            Option.contains(trailer(claim.message, "Run"), runId),
+          ),
       );
 
       return Option.isSome(found);
-    }, `the run for #${issue} to park`);
+    }, `the run for #${issue} to claim it`);
 
     return Option.getOrThrow(found);
   };
@@ -122,13 +158,6 @@ describe("leases", () => {
       Option.fromUndefinedOr((await status()).recent.find((run) => run.id === runId)),
     );
   };
-
-  // The claim on an issue as its ref has it now.
-  const claimOn = (issue: number) =>
-    Option.map(sandbox.github.refSha(claimRef(issue)), (sha) => ({
-      sha,
-      message: sandbox.github.messageOf(sha),
-    }));
 
   // Another machine's claim on an issue, whose lease runs to `expiresAt`, on top of `parent`.
   const claimElsewhere = (
@@ -184,11 +213,18 @@ describe("leases", () => {
       },
       {
         flows: {
-          parked: { schedule: "*/2 * * * * *" },
+          parked: { schedule: "*/2 * * * * *", concurrency: 4 },
+          parking: { schedule: "*/2 * * * * *" },
           taker: { schedule: "*/2 * * * * *" },
         },
         recipes: [],
-        repoFiles: { "flows/parked.ts": PARKED, "flows/taker.ts": TAKER },
+        // Runs in flight hold a slot each, as a parked run never did.
+        concurrency: 4,
+        repoFiles: {
+          "flows/parked.ts": PARKED,
+          "flows/parking.ts": PARKING,
+          "flows/taker.ts": TAKER,
+        },
       },
     );
     await sandbox.runCli(["trust", "demo"]);
@@ -211,78 +247,49 @@ describe("leases", () => {
 
     expect(trailer(claim.message, "Run")).toEqual(Option.some(runId));
     expect(trailer(claim.message, "Taken-Over-From")).toEqual(Option.some("elsewhere-run"));
-    expect(
-      sandbox.github
-        .commentsOn(issue)
-        .some((comment) =>
-          comment.body.startsWith(
-            "Taken over from alice's run elsewhere-run after its lease expired at 2026-10-26T14:00:00.000Z.",
-          ),
-        ),
-    ).toBe(true);
-  }, 90_000);
-
-  test("a parked run's lease outlives a short leaseTtl, so a would-be taker skips the issue", async () => {
-    const issue = sandbox.github.addIssue("Waiting on review", ["lease:park"]);
-    const runId = await parkedOn(issue);
-
-    // Well past leaseTtl: the daemon has renewed it, for parkedLeaseTtl. A
-    // loaded machine renews later than a fixed sleep allows, and a renewal
-    // from before the run parked carries Renewed-At with the short leaseTtl,
-    // so wait for the renewal whose lease runs past a day.
-    await Bun.sleep(5000);
+    // The run says so once it has claimed the issue.
     await eventually(
       async () =>
-        Option.exists(
-          claimOn(issue),
-          (renewed) =>
-            Option.isSome(trailer(renewed.message, "Renewed-At")) &&
-            Option.exists(
-              trailer(renewed.message, "Expires-At"),
-              (expires) => Date.parse(expires) > Date.now() + 24 * 3_600_000,
+        sandbox.github
+          .commentsOn(issue)
+          .some((comment) =>
+            comment.body.startsWith(
+              "Taken over from alice's run elsewhere-run after its lease expired at 2026-10-26T14:00:00.000Z.",
             ),
-        ),
-      "the daemon to renew the parked run's lease for parkedLeaseTtl",
+          ),
+      "the takeover comment",
     );
-    const claim = Option.getOrThrow(claimOn(issue));
-    const expiresAt = Date.parse(Option.getOrThrow(trailer(claim.message, "Expires-At")));
-
-    expect(trailer(claim.message, "Run")).toEqual(Option.some(runId));
-    expect(Option.isSome(trailer(claim.message, "Renewed-At"))).toBe(true);
-    expect(expiresAt).toBeGreaterThan(Date.now() + 24 * 3_600_000);
-    expect((await status()).active.some((run) => run.id === runId)).toBe(true);
-    expect((await sandbox.runCli(["status"])).output).toContain(`lease on issue-${issue} until`);
-
-    sandbox.github.issue(issue).labels.push("contested");
-
-    // The trigger keeps reporting the issue, so later takers may be in flight: look at one that ended.
-    const takerEnded = (run: {
-      readonly flow: string;
-      readonly itemKey: string;
-      readonly status: string;
-    }) => run.flow === "taker" && run.itemKey === `issue-${issue}` && run.status !== "running";
-
-    await eventually(
-      async () => (await status()).recent.some(takerEnded),
-      "the taker's run to end",
-    );
-
-    const taker = (await status()).recent.find(takerEnded);
-
-    expect(taker?.status).toBe("skipped");
-    expect(Option.getOrElse(taker?.summary ?? Option.none(), () => "")).toContain(
-      `#${issue} is already claimed (run ${runId} of parked holds ${claimRef(issue)}`,
-    );
-    expect(trailer(Option.getOrThrow(claimOn(issue)).message, "Run")).toEqual(Option.some(runId));
   }, 90_000);
 
-  test("a run whose claim another machine took over ends as lost when it wakes, writing nothing", async () => {
+  test("a run that parks ends at its park, letting go of its claim ref and keeping its labels", async () => {
+    const issue = sandbox.github.addIssue("Waiting on a person", ["lease:wait"]);
+    let runId = "";
+
+    await eventually(async () => {
+      runId = (await status()).recent.find((run) => run.itemKey === `issue-${issue}`)?.id ?? "";
+
+      return runId !== "";
+    }, `the run for #${issue} to end`);
+
+    const parked = await ended(runId);
+
+    expect(parked.status).toBe("ended-at-park");
+    expect(Option.getOrElse(parked.summary, () => "")).toContain(
+      "its record carries the wait, and a later run takes it up",
+    );
+    // Any machine, or CI, may take the item up now. The run is recorded as
+    // ended before its claim ref is deleted, so wait for the ref to go.
+    await eventually(async () => Option.isNone(claimOn(issue)), `the claim ref on #${issue} to go`);
+    // What it put on the issue stays for the run that takes it up.
+    expect(sandbox.github.issue(issue).labels).toContain("auto:in-progress");
+  }, 90_000);
+
+  test("a run in flight whose claim another machine took over ends as lost, writing nothing", async () => {
     const issue = sandbox.github.addIssue("Lost while asleep", ["lease:park"]);
     const runId = await parkedOn(issue);
 
     // Its machine slept past its lease, and another machine took the issue over.
     await takeOverElsewhere(issue, "thief-run", "2999-01-01T00:00:00.000Z");
-    sandbox.github.issue(issue).labels.push("go");
 
     const lost = await ended(runId);
 
