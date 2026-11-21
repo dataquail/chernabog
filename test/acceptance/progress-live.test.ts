@@ -9,7 +9,7 @@
 // repo. Each test keeps its threads under a prefix of its own and deletes
 // them when it ends, so it holds no records to start with and leaves none.
 
-import { Phase, PhaseWriter, type Progress } from "@chernabog/core";
+import { Phase, type PhaseRead, PhaseWriter, type Progress } from "@chernabog/core";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
@@ -89,7 +89,7 @@ if (Option.isSome(live)) {
   const moves = (
     left: Progress["Service"],
     right: Progress["Service"],
-    from: Option.Option<Phase>,
+    from: Option.Option<PhaseRead>,
   ) =>
     Effect.all(
       [
@@ -126,13 +126,14 @@ if (Option.isSome(live)) {
             const prefix = yield* scratchPrefix(slug, first);
             const left = yield* adapter(slug, first, prefix);
             const right = yield* adapter(slug, second, prefix);
-            yield* left.advance("pr-1", {
+
+            const asked = yield* left.advance("pr-1", {
               from: Option.none(),
               to: ASKED,
               by: writer(first),
             });
 
-            const exits = yield* moves(left, right, Option.some(ASKED));
+            const exits = yield* moves(left, right, Option.some(asked));
 
             expect(exits.filter(Exit.isSuccess).length).toBe(1);
           }

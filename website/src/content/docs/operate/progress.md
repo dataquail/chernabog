@@ -20,7 +20,7 @@ By: 0eee9982-bb65-4a62-b603-25023ad948cb
 `By` is whoever moved the item: a run's id, or a login. Nothing in a thread names the machine that wrote it, since a thread is as public as the repo.
 
 - **A thread starts from a commit with no files**, not from the default branch, so no workflow in `.github/workflows/` runs on its pushes and it never falls behind. That first commit is the item's first phase.
-- **Only one writer wins.** A later phase is GitHub's `createCommitOnBranch` with the commit the writer read as `expectedHeadOid`; of two writers that read the same phase, one lands and the other finds the item moved. The first phase is the branch's creation, which only one writer can do.
+- **Only one writer wins.** A later phase is GitHub's `createCommitOnBranch` with the commit the writer read as `expectedHeadOid`, the record's version, so a writer that read a record the item has since left, even for one at the same phase, loses; of two writers that read the same record, one lands and the other finds the item moved. The first phase is the branch's creation, which only one writer can do.
 - **An item's name has no slash.** A ruleset matches `refs/heads/chernabog/threads/*`, and a `*` doesn't cross a `/`.
 - **Reads are one GraphQL query** for every thread and its record, and a record is read once for each commit.
 
@@ -69,7 +69,7 @@ From this release every source reads the record alone, and every wait is a recor
 3. **Upgrade the SDK and recipes in a checkout**, with `chernabog recipes upgrade` (see [Versions](/chernabog/operate/versions/#upgrading-a-repo)). Don't merge it yet. In the same checkout, list the GitHub logins the repo's flows run as under `personas:` in `.chernabog/config.yaml`, if it doesn't already: backfill reads its logins from them alone, and the ledger holds every record a login outside them wrote. `progress backfill` and `progress anomalies` warn when the repo lists none.
 4. **Backfill**: `chernabog progress backfill --repo <repo> --from-checkout` prints the record it would write for each open item that has none, and the items the facts don't settle, for a person to look at. Run it again with `--write` to write them, by `observer:backfill`. A second run writes nothing. Run on the published SDK, without `--from-checkout`, it refuses, naming `recipes upgrade`.
 5. **Merge the upgrade** to the base branch, with its `bun.lock`, and `chernabog trust` it again.
-6. **Check the records**: `chernabog progress anomalies --repo <repo>` lists each record a source won't act on (see [below](#records-a-source-wont-act-on)). Acknowledge the ones you expect with `--acknowledge`; fix any other by recording the item's phase again as a persona.
+6. **Check the records**: `chernabog progress anomalies --repo <repo>` lists each record a source won't act on (see [below](#records-a-source-wont-act-on)). Acknowledge the ones you expect with `--acknowledge <item>@<version>`, as listed; fix any other by recording the item's phase again as a persona.
 
 What backfill can't carry over: a record's `at` is when backfill wrote it, so the 14-day wait on an adopted draft and `mergeHoldTimeout` start again; a flow document that a CI job left parked has no node to resume at; and an epic's task attempts start from none. A record written before this release has no `reviewed`, so a review asked of an adopted pull request handed off before the upgrade is read as a first review. A merge an older release watched in the last day, which it marked with a comment rather than a record, is watched again.
 
@@ -130,10 +130,10 @@ The rulesets limit who can write a thread; each source also checks every record 
 `chernabog progress anomalies --repo <repo>` lists every such record on an open item:
 
 ```
-pr-184: record 9bf23c1 (review-asked -> approved, by rehearsal-stranger): its writer, rehearsal-stranger, is none of the repo's personas, a run or an observer chernabog writes as
+pr-184: record 9bf23c1 (review-asked -> approved, by rehearsal-stranger): its writer, rehearsal-stranger, is none of the repo's personas, a run or an observer chernabog writes as [pr-184@9bf23c1]
 ```
 
-With `--acknowledge`, it records each one's phase again, as it is, by `observer:acknowledged`, so the sources act on it; a record that moved since the listing is left alone. To put an item somewhere else, record its phase as a persona instead. Run it after upgrading a repo whose threads predate the check.
+`--acknowledge pr-184@9bf23c1`, once for each record you looked at and found right, records its phase again, as it is, by `observer:acknowledged`, so the sources act on it. It writes from the version you saw: a record that changed since the listing, even at the same phase, is left alone, and the command says to list it again. To put an item somewhere else, record its phase as a persona instead. Run it after upgrading a repo whose threads predate the check.
 
 ## What doctor checks
 

@@ -807,11 +807,16 @@ export type PhaseRecord = {
   readonly data: Option.Option<PhaseData>;
 };
 
-// One move of an item's phase: `from` the phase it must still be in (none:
-// the item has no record yet), `to` the phase it moves to, `by` who moves it,
-// and `data` for the run that picks the item up next, which the record keeps.
+// The record a writer read before it moves an item on: its phase, and its
+// version, which the advance compares and sets on. A PhaseRecord is one.
+export type PhaseRead = Pick<PhaseRecord, "phase" | "version">;
+
+// One move of an item's phase: `from` the record the writer read, which must
+// still be the item's (none: the item had no record), `to` the phase it moves
+// to, `by` who moves it, and `data` for the run that picks the item up next,
+// which the record keeps. The record written names `from`'s phase.
 export type PhaseTransition = {
-  readonly from: Option.Option<Phase>;
+  readonly from: Option.Option<PhaseRead>;
   readonly to: Phase;
   readonly by: PhaseWriter;
   readonly data?: PhaseData;
@@ -824,12 +829,15 @@ export class Progress extends Context.Service<
     read(item: string): Effect.Effect<Option.Option<PhaseRecord>, ProgressError>;
     // Every item's record, in one read, for a source that looks at every open item.
     readonly readAll: Effect.Effect<ReadonlyMap<string, PhaseRecord>, ProgressError>;
-    // Moves the item to `to` only if its phase is still `from`, and returns the
-    // record it wrote. Safe to retry: when the item's record is already this
-    // transition, by this writer, it returns that record and writes nothing,
-    // so a run that resumes after a crash doesn't read its own write as a lost
-    // race. Otherwise, if the phase isn't `from`, it fails with PhaseMoved and
-    // writes nothing. Of two advances from the same phase, one wins.
+    // Moves the item to `to` only if its record is still the one the writer
+    // read, by version (`from`; none: it still has none), and returns the
+    // record it wrote: a compare-and-set on the version, so a record that
+    // moved and came back to the same phase is a lost race too. Safe to
+    // retry: when the item's record is already this transition, by this
+    // writer, it returns that record and writes nothing, so a run that
+    // resumes after a crash doesn't read its own write as a lost race.
+    // Otherwise, if the record isn't `from`, it fails with PhaseMoved and
+    // writes nothing. Of two advances from the same record, one wins.
     advance(
       item: string,
       transition: PhaseTransition,

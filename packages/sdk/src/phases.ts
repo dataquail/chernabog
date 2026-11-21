@@ -279,11 +279,11 @@ export const recording = (
         return there.value;
       }
 
-      const from = Option.map(current, (found) => found.phase);
-
+      // From the record just read, by version: one another writer moved
+      // since is a lost race, which reads again.
       const transition = Option.match(carried, {
-        onNone: () => ({ from, to: phase, by }),
-        onSome: (found) => ({ from, to: phase, by, data: found }),
+        onNone: () => ({ from: current, to: phase, by }),
+        onSome: (found) => ({ from: current, to: phase, by, data: found }),
       });
 
       const written = yield* progress.advance(item, transition).pipe(
@@ -487,7 +487,8 @@ export const park = (parking: Parking, signals: ReadonlyArray<string>, id: strin
 export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
   phases.some((phase) => phase === found.phase);
 
-// Moves `item` from the record a source read, `found`, to `to`, from a fact
+// Moves `item` from the record a source read, `found`, to `to`, only while it
+// is still that record, by version, from a fact
 // on GitHub that no run was there to record, such as a person's review
 // (docs/run-progress/handoffs.md, question 5). Outside a run, so `by` names
 // the source. Returns the record the item holds afterwards: the one written,
@@ -496,7 +497,7 @@ export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: P
   Progress.use((progress) =>
     progress
       .advance(item, {
-        from: Option.map(found, (held) => held.phase),
+        from: found,
         to: asPhase(to),
         by: asWriter(by),
       })

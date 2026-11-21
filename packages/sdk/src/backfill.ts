@@ -432,6 +432,8 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         continue;
       }
 
+      // From no record, the version the survey read: an item a run recorded
+      // since is a lost race, and keeps the run's record.
       const base = { from: Option.none(), to: asPhase(finding.phase), by: asWriter(WRITER) };
 
       const transition = Option.match(Option.fromUndefinedOr(finding.data), {

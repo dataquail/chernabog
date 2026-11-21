@@ -70,6 +70,9 @@ const defectOf = <A, E>(exit: Exit.Exit<A, E>) =>
     onFailure: (cause) => Option.fromUndefinedOr(cause.reasons.find(Cause.isDieReason)?.defect),
   });
 
+// What a writer read before moving the item on from review-asked.
+const READ_ASKED = { phase: ASKED, version: "asked01" };
+
 describe("a thread's commit message", () => {
   test("carries the record in trailers, the first phase without From", () => {
     expect(recordMessage("pr-73", { from: Option.none(), to: ASKED, by: RUN_A })).toEqual({
@@ -77,7 +80,9 @@ describe("a thread's commit message", () => {
       body: `Phase: review-asked\nBy: ${RUN_A}`,
     });
 
-    expect(recordMessage("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B })).toEqual({
+    expect(
+      recordMessage("pr-73", { from: Option.some(READ_ASKED), to: CHANGES, by: RUN_B }),
+    ).toEqual({
       headline: "chernabog: pr-73 review-asked -> changes-asked",
       body: "Phase: changes-asked\nFrom: review-asked\nBy: data-quail",
     });
@@ -92,7 +97,11 @@ describe("a thread's commit message", () => {
   });
 
   test("reads back as the record it was written from, with its commit as the version and time", () => {
-    const message = recordMessage("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B });
+    const message = recordMessage("pr-73", {
+      from: Option.some(READ_ASKED),
+      to: CHANGES,
+      by: RUN_B,
+    });
 
     expect(parseRecord("abc123", `${message.headline}\n\n${message.body}\n`, AT)).toEqual(
       Option.some({
@@ -183,13 +192,15 @@ describe("an item's thread", () => {
       // A fresh adapter has seen no commit, so it reads the record from the message.
       const later = yield* adapterOver(fake);
 
-      expect(Option.map(yield* later.read("pr-73"), (record) => record.data)).toEqual(
+      const read = yield* later.read("pr-73");
+
+      expect(Option.map(read, (record) => record.data)).toEqual(
         Option.some(Option.some(SEPARATED)),
       );
       expect((yield* later.readAll).get("pr-73")?.data).toEqual(Option.some(SEPARATED));
-      expect(
-        (yield* later.advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B })).phase,
-      ).toEqual(CHANGES);
+      expect((yield* later.advance("pr-73", { from: read, to: CHANGES, by: RUN_B })).phase).toEqual(
+        CHANGES,
+      );
     }),
   );
 
@@ -224,7 +235,7 @@ describe("decide", () => {
 
   test("from the phase the item holds, it writes", () => {
     expect(
-      decide("pr-73", Option.some(record), { from: Option.some(ASKED), to: CHANGES, by: RUN_B }),
+      decide("pr-73", Option.some(record), { from: Option.some(record), to: CHANGES, by: RUN_B }),
     ).toEqual(Result.succeed(Option.none()));
     expect(decide("pr-73", Option.none(), { from: Option.none(), to: ASKED, by: RUN_A })).toEqual(
       Result.succeed(Option.none()),
@@ -265,7 +276,13 @@ describe("the protected-branch adapter on GitHub", () => {
       Effect.gen(function* () {
         const fake = makeThreadsFake(SLUG);
         const progress = yield* adapterOver(fake);
-        yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+        const asked = yield* progress.advance("pr-73", {
+          from: Option.none(),
+          to: ASKED,
+          by: RUN_A,
+        });
+
         fake.state.lostRaceAs = answered;
 
         // Another writer moves the thread on between this one's read and its write.
@@ -277,7 +294,7 @@ describe("the protected-branch adapter on GitHub", () => {
         });
 
         const exit = yield* Effect.exit(
-          progress.advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B }),
+          progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B }),
         );
 
         expect(movedTo(exit)).toEqual(Option.some(Option.some(phase("approved"))));
@@ -289,11 +306,11 @@ describe("the protected-branch adapter on GitHub", () => {
     Effect.gen(function* () {
       const fake = makeThreadsFake(SLUG);
       const progress = yield* adapterOver(fake);
-      yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
       fake.state.refuse = true;
 
       const exit = yield* Effect.exit(
-        progress.advance("pr-73", { from: Option.some(ASKED), to: CHANGES, by: RUN_B }),
+        progress.advance("pr-73", { from: Option.some(asked), to: CHANGES, by: RUN_B }),
       );
 
       const unwritable = Option.filter(defectOf(exit), isProgressUnwritable);

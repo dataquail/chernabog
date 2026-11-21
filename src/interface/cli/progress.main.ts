@@ -19,9 +19,11 @@ import {
   type BackfillFinding,
   backfillProgress,
   type BackfillResult,
+  parseSeen,
   progressAnomalies,
+  type Seen,
 } from "../../modules/runs/runs.platform.ts";
-import { type ConfigError } from "../../platform/config-error.ts";
+import { ConfigError } from "../../platform/config-error.ts";
 import { repoFlag } from "./repo.arguments.ts";
 
 type BackfillOptions = Parameters<typeof backfillProgress>[0];
@@ -134,40 +136,37 @@ const backfillCommand = <R>(config: ProgressConfigAccess<R>) =>
 const describeAnomaly = (anomaly: Anomaly) =>
   `${anomaly.item}: record ${anomaly.version.slice(0, 7)} (${anomaly.from ?? "none"} -> ${anomaly.phase}, by ${anomaly.by}): ${anomaly.why}`;
 
-const anomalyLines = (result: AnomaliesResult, acknowledged: boolean) => {
+// A record as the listing names it, and `--acknowledge` takes it back.
+const seenAs = (seen: Seen) => `${seen.item}@${seen.version.slice(0, 7)}`;
+
+const anomalyLines = (result: AnomaliesResult, asked: ReadonlyArray<Seen>) => {
+  if (asked.length > 0) {
+    return [
+      ...result.acknowledged.map((seen) => `acknowledged ${seenAs(seen)}`),
+      ...result.moved.map(
+        (seen) =>
+          `left ${seenAs(seen)}: the item's record is no longer that one, or passes the check now; list it again`,
+      ),
+    ];
+  }
+
   if (result.anomalies.length === 0) {
     return [`${result.repo}: every record passes the check`];
   }
 
-  const lines = result.anomalies.map((anomaly) => {
-    if (!acknowledged) {
-      return describeAnomaly(anomaly);
-    }
-
-    if (result.moved.includes(anomaly.item)) {
-      return `left ${anomaly.item}: its record moved after the survey read it`;
-    }
-
-    return `acknowledged ${describeAnomaly(anomaly)}`;
-  });
-
-  if (!acknowledged) {
-    return [
-      ...lines,
-      "Each one's item is held until its record is fixed: record the phase again as a persona, or run it again with --acknowledge to record each one's phase again as it is.",
-    ];
-  }
-
-  return lines;
+  return [
+    ...result.anomalies.map((anomaly) => `${describeAnomaly(anomaly)} [${seenAs(anomaly)}]`),
+    "Each one's item is held until its record is fixed: record the phase again as a persona, or, for one that is right as it is, run it again with --acknowledge <item>@<version> as listed, which records its phase again only while the record is still that one.",
+  ];
 };
 
 // What the command prints of the anomalies it found, and acknowledged.
-export const anomaliesReportOf = (result: AnomaliesResult, acknowledged: boolean) => [
+export const anomaliesReportOf = (result: AnomaliesResult, asked: ReadonlyArray<Seen>) => [
   ...personasWarning(
     result,
     "every record a persona wrote has an unknown writer, and is an anomaly",
   ),
-  ...anomalyLines(result, acknowledged),
+  ...anomalyLines(result, asked),
 ];
 
 const anomaliesCommand = <R>(config: ProgressConfigAccess<R>) =>
@@ -175,11 +174,11 @@ const anomaliesCommand = <R>(config: ProgressConfigAccess<R>) =>
     "anomalies",
     {
       repo: repoFlag,
-      acknowledge: Flag.Boolean("acknowledge").pipe(
+      acknowledge: Flag.String("acknowledge").pipe(
         Flag.withDescription(
-          "Record each anomaly's phase again, as it is, so the sources act on it; without it, list them",
+          "A record the listing named, as <item>@<version> (pr-184@9bf23c1): records its phase again, as it is, so the sources act on it, only while the item's record is still that version; repeat it for several",
         ),
-        Flag.withDefault(false),
+        Flag.atLeast(0),
       ),
       fromCheckout: Flag.Boolean("from-checkout").pipe(
         Flag.withDescription(
@@ -192,22 +191,31 @@ const anomaliesCommand = <R>(config: ProgressConfigAccess<R>) =>
       Effect.gen(function* () {
         const { enrolled, machine } = yield* config.enrolled(options.repo);
 
+        const asked = yield* Effect.forEach(options.acknowledge, (text) =>
+          Effect.fromOption(parseSeen(text)).pipe(
+            Effect.mapError(
+              () =>
+                new ConfigError({
+                  message: `--acknowledge ${text}: name a record as the listing does, <item>@<version>`,
+                }),
+            ),
+          ),
+        );
+
         const result = yield* progressAnomalies({
           machine,
           enrolled,
           fromCheckout: options.fromCheckout,
-          acknowledge: options.acknowledge,
+          acknowledge: asked,
         });
 
-        yield* Effect.forEach(
-          anomaliesReportOf(result, options.acknowledge),
-          (line) => Console.log(line),
-          { discard: true },
-        );
+        yield* Effect.forEach(anomaliesReportOf(result, asked), (line) => Console.log(line), {
+          discard: true,
+        });
       }).pipe(Effect.scoped),
   ).pipe(
     Command.withDescription(
-      "List the phase records a source won't act on, an unknown writer's or an undeclared transition's, and acknowledge them",
+      "List the phase records a source won't act on, an unknown writer's or an undeclared transition's, and acknowledge the ones a person saw",
     ),
   );
 

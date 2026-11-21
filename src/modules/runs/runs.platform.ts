@@ -129,7 +129,9 @@ export { LaunchSpecJson, runLaunch } from "./infrastructure/runtime/launchers/sh
 export {
   type AnomaliesResult,
   type Anomaly,
+  parseSeen,
   progressAnomalies,
+  type Seen,
 } from "./infrastructure/runtime/progress-anomalies.ts";
 export {
   type BackfillFinding,

@@ -2,8 +2,9 @@
 // Ledger, run as the repo's first persona, over what every persona's login
 // says is a writer of the repo's own. It lists every record a source would
 // hold its item for, a writer or a transition the catalogue doesn't know;
-// with `acknowledge`, it records each one's phase again, by a writer the
-// check knows, so the sources act on it. Records written before the check
+// with `acknowledge`, it records the phase of each record a person saw listed
+// again, by a writer the check knows, so the sources act on it, only while
+// the item's record is still the version they saw. Records written before the check
 // are found here first, all at once, rather than one item at a time. The
 // binary never imports the SDK (ADR 4): it loads the repo's, as backfill does.
 
@@ -25,9 +26,22 @@ export type AnomaliesOptions = {
   readonly enrolled: EnrolledRepo;
   // The working copy's .chernabog/, rather than the default branch's.
   readonly fromCheckout: boolean;
-  // Acknowledge what the survey found; without it, only list it.
-  readonly acknowledge: boolean;
+  // The records to acknowledge, as the person saw them listed: each item and
+  // its version, or the start of it as the listing prints it. None: only list.
+  readonly acknowledge: ReadonlyArray<Seen>;
 };
+
+// A record as a person saw it listed: its item, and its version, or the start
+// of it.
+export type Seen = { readonly item: string; readonly version: string };
+
+const SEEN = /^([^@\s]+)@([0-9A-Za-z]+)$/;
+
+// `pr-184@9bf23c1`, as `--acknowledge` takes a record the listing named.
+export const parseSeen = (text: string): Option.Option<Seen> =>
+  Option.flatMap(Option.fromNullOr(SEEN.exec(text.trim())), ([, item, version]) =>
+    Option.all({ item: Option.fromUndefinedOr(item), version: Option.fromUndefinedOr(version) }),
+  );
 
 // One record the SDK's check fails, named as a source holding its item names it.
 const Anomaly = Schema.Struct({
@@ -53,10 +67,14 @@ export type AnomaliesResult = {
   // persona wrote has an unknown writer, so each is an anomaly.
   readonly personas: ReadonlyArray<string>;
   readonly anomalies: ReadonlyArray<Anomaly>;
-  // With `acknowledge`: the items recorded again, and those whose record moved first.
-  readonly acknowledged: ReadonlyArray<string>;
-  readonly moved: ReadonlyArray<string>;
+  // With `acknowledge`: the records recorded again, and those whose item's
+  // record is no longer the version the person saw, which are left alone.
+  readonly acknowledged: ReadonlyArray<Seen>;
+  readonly moved: ReadonlyArray<Seen>;
 };
+
+const isSeen = (seen: Seen) => (anomaly: Anomaly) =>
+  anomaly.item === seen.item && anomaly.version.startsWith(seen.version);
 
 const unreadable = (what: string) => (issue: { readonly message: string }) =>
   new ConfigError({
@@ -107,20 +125,34 @@ export const progressAnomalies = (options: AnomaliesOptions) =>
       moved: [],
     };
 
-    if (!options.acknowledge || anomalies.length === 0) {
+    if (options.acknowledge.length === 0) {
       return result;
     }
 
+    // Only a record still listed at the version the person saw; the advance
+    // compares and sets on that version, so one that changes before the
+    // write is left too.
+    const still = anomalies.filter((anomaly) =>
+      options.acknowledge.some((seen) => isSeen(seen)(anomaly)),
+    );
+
     const outcomes = yield* ledger.value
-      .acknowledge(anomalies)
+      .acknowledge(still)
       .pipe(
         Effect.provideContext(context),
         decodedAs(Schema.Array(Acknowledged), "what it acknowledged"),
       );
 
+    const landed = (seen: Seen) =>
+      outcomes.some(
+        (one) =>
+          one.acknowledged &&
+          still.some((anomaly) => anomaly.item === one.anomaly.item && isSeen(seen)(anomaly)),
+      );
+
     return {
       ...result,
-      acknowledged: outcomes.filter((one) => one.acknowledged).map((one) => one.anomaly.item),
-      moved: outcomes.filter((one) => !one.acknowledged).map((one) => one.anomaly.item),
+      acknowledged: options.acknowledge.filter(landed),
+      moved: options.acknowledge.filter((seen) => !landed(seen)),
     };
   });

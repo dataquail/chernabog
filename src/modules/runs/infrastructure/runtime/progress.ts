@@ -56,10 +56,6 @@ export const PROGRESS_DOCS = "https://dataquail.github.io/chernabog/operate/prog
 // Git's empty tree, which every thread's commits carry.
 export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-// How many times an advance starts over when its branch moved under it and came
-// back to the phase it moves from, before it says the item is too busy.
-const ATTEMPTS = 3;
-
 // An item names one branch below the threads: a ref component with no slash,
 // no `..`, and not ending in `.lock`, which git would refuse.
 const ITEM = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
@@ -82,12 +78,12 @@ const printDataLine = (data: PhaseData) =>
 export const recordMessage = (item: string, transition: PhaseTransition) => {
   const from = Option.match(transition.from, {
     onNone: () => "",
-    onSome: (phase) => `${phase} -> `,
+    onSome: (read) => `${read.phase} -> `,
   });
 
   const trailers = [
     `Phase: ${transition.to}`,
-    ...Option.toArray(Option.map(transition.from, (phase) => `From: ${phase}`)),
+    ...Option.toArray(Option.map(transition.from, (read) => `From: ${read.phase}`)),
     `By: ${transition.by}`,
     ...Option.toArray(
       Option.map(Option.fromUndefinedOr(transition.data), (data) => `Data: ${printDataLine(data)}`),
@@ -140,14 +136,19 @@ export const parseRecord = (
   );
 };
 
+// The phase the writer read, which the record it writes names as `from`.
+export const fromPhase = (transition: PhaseTransition) =>
+  Option.map(transition.from, (read) => read.phase);
+
 // The record is this transition, by this writer: a retry of a write that landed.
 const isOwn = (record: PhaseRecord, transition: PhaseTransition) =>
   record.by === transition.by &&
   record.phase === transition.to &&
-  Equal.equals(record.from, transition.from);
+  Equal.equals(record.from, fromPhase(transition));
 
 // What an advance does, given the record the item holds: succeed with that
-// record (its own write, retried), fail as a lost race, or write.
+// record (its own write, retried), fail as a lost race when it isn't the
+// record the writer read, by version, or write.
 export const decide = (
   item: string,
   current: Option.Option<PhaseRecord>,
@@ -159,10 +160,17 @@ export const decide = (
     return Result.succeed(own);
   }
 
-  const phase = Option.map(current, (record) => record.phase);
+  const version = (read: Option.Option<{ readonly version: string }>) =>
+    Option.map(read, (found) => found.version);
 
-  if (!Equal.equals(phase, transition.from)) {
-    return Result.fail(new PhaseMoved({ item, expected: transition.from, found: phase }));
+  if (!Equal.equals(version(current), version(transition.from))) {
+    return Result.fail(
+      new PhaseMoved({
+        item,
+        expected: fromPhase(transition),
+        found: Option.map(current, (record) => record.phase),
+      }),
+    );
   }
 
   return Result.succeed(Option.none());
@@ -377,7 +385,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       Effect.map(commitTime(version, Option.some(date)), (at): PhaseRecord => {
         const record = {
           phase: transition.to,
-          from: transition.from,
+          from: fromPhase(transition),
           by: transition.by,
           version,
           at,
@@ -558,45 +566,39 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         return yield* afterMiss(item, transition, Option.some(expected), refused);
       });
 
+    // The writer's read is the compare-and-set's: a later phase is a commit
+    // on the branch only while its head is still the version the writer read.
     const attempt = (
       item: string,
       transition: PhaseTransition,
-      left: number,
     ): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError> =>
       Effect.gen(function* () {
         const branch = yield* branchOf(item);
-        const current = yield* read(item);
-        const decided = yield* Effect.fromResult(decide(item, current, transition));
+        const decided = yield* Effect.fromResult(decide(item, yield* read(item), transition));
 
         if (Option.isSome(decided)) {
           return decided.value;
         }
 
-        const before = Option.map(current, (record) => record.version);
-
-        const landed = yield* Option.match(before, {
+        const landed = yield* Option.match(transition.from, {
           onNone: () => firstOrMiss(item, branch, transition),
-          onSome: (expected) => nextOrMiss(item, branch, transition, expected),
+          onSome: (expected) => nextOrMiss(item, branch, transition, expected.version),
         });
 
-        if (Option.isSome(landed)) {
-          return landed.value;
-        }
-
-        // The branch moved and came back to `from`: start over, a few times.
-        if (left <= 1) {
-          return yield* new ProgressError({
-            message: `${branch} kept moving; ${transition.by} couldn't advance it`,
-          });
-        }
-
-        return yield* attempt(item, transition, left - 1);
+        return yield* Effect.fromOption(landed).pipe(
+          Effect.mapError(
+            () =>
+              new ProgressError({
+                message: `${branch} moved and came back under ${transition.by}'s advance`,
+              }),
+          ),
+        );
       });
 
     return Progress.of({
       read,
       readAll,
-      advance: (item, transition) => attempt(item, transition, ATTEMPTS),
+      advance: attempt,
     });
   });
 
