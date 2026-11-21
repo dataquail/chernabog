@@ -194,7 +194,9 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
 
       // resolve-conflicts parked on CI for its merge, over the review phase
       // it records again once that settles (Conflict.waitForCi).
-      if (Option.isSome(Phases.conflictCiRoundOf(found.phase))) {
+      if (
+        Option.isSome(Phases.roundOf(Phases.PHASES.pullRequest.awaitingConflictCi, found.phase))
+      ) {
         return {
           kind: "disagrees",
           reason: "it waits on CI for the merge that resolved its conflicts",
@@ -241,7 +243,7 @@ export const OBSERVED: ReadonlyArray<Observed> = [
   {
     by: observer("review.approved"),
     item: "pull-request",
-    from: [P.awaitingCi],
+    from: [P.awaitingFixCi],
     to: P.approved,
   },
 ];
@@ -958,7 +960,7 @@ const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
     const asks = found.phase === P.changesAsked;
     // A fix whose CI a CI job left pending (awaitingCi): a review asking for
     // changes on its head is new work, as it is after a hand-off.
-    const fixPending = Option.isSome(Phases.ciRoundOf(found.phase));
+    const fixPending = Option.isSome(Phases.roundOf(P.awaitingFixCi, found.phase));
 
     if (!asks && !fixPending && !Phases.holds(found, [...CHANGES_FROM, P.mergeHeld])) {
       return Option.none<WorkItem>();
@@ -1042,7 +1044,7 @@ export const changesToAddress = Effect.gen(function* () {
 export const parkOnPullRequest = (pullRequest: number): CiWait => ({
   park: (round) => ({
     item: Phases.pullRequestItem(pullRequest),
-    phase: Phases.awaitingCi(round),
+    phase: Phases.inRound(P.awaitingFixCi, round),
     data: {},
   }),
 });
@@ -1127,7 +1129,8 @@ export const fixesAwaitingCi = Effect.gen(function* () {
 
     const parked = Option.flatMap(
       Phases.recordOf(all, Phases.pullRequestItem(pull.number)),
-      (found) => Option.map(Phases.ciRoundOf(found.phase), (round) => ({ found, round })),
+      (found) =>
+        Option.map(Phases.roundOf(P.awaitingFixCi, found.phase), (round) => ({ found, round })),
     );
 
     for (const { found, round } of Option.toArray(parked)) {

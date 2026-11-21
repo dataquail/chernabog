@@ -270,7 +270,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           // The worktree is made only for a fix.
           Implement.prepareWorktree(input.branch, onBase(input.base)),
           { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
-          yield* Implement.documentCiWait(input.pr),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingAdoptedCi, input.pr),
         );
       }),
     failures: {
@@ -281,12 +281,12 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
-    records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
+    records: [{ item: "issue", phase: PHASES.issue.awaitingAdoptedCi }],
     parks: Implement.documentCiResumes,
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
-      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingCi] }],
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingAdoptedCi] }],
     },
     outcomes: {},
     mustRoute: [],
@@ -597,7 +597,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           input.pr,
           input.worktree,
           target,
-          yield* Implement.documentCiWait(input.pr, inLane(input.lane)),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingCi, input.pr, inLane(input.lane)),
         );
       }),
     failures: {

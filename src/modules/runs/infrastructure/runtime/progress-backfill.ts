@@ -1,7 +1,8 @@
 // `chernabog progress backfill` (ADR 21, consequences): the repo's own SDK's
 // Backfill, run as the repo's first persona, over what every persona's login
 // says is the repo's own. It surveys the open items that need a record and
-// hold none; with `write`, it writes what it found, each from no record, so
+// hold none, and the parks on a phase two sites shared; with `write`, it
+// writes what it found, each from the record it read, none or the park, so
 // one a run recorded since keeps the run's. The binary never imports the SDK
 // (ADR 4): it loads the repo's, as `ci plan` loads its Events.
 
@@ -27,13 +28,16 @@ export type BackfillOptions = {
   readonly write: boolean;
 };
 
-// One finding of the SDK's survey: a phase to write, or an item for a person.
+// One finding of the SDK's survey: a phase to write, from no record or from
+// the record it read (`from`, a park moved off a phase it shared), or an
+// item for a person.
 const BackfillFinding = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("write"),
     item: Schema.String,
     phase: Schema.String,
     data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+    from: Schema.optionalKey(Schema.Struct({ phase: Schema.String, version: Schema.String })),
     why: Schema.String,
   }),
   Schema.Struct({ kind: Schema.Literal("person"), item: Schema.String, why: Schema.String }),

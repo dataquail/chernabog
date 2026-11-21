@@ -332,12 +332,14 @@ for (const [form, loading] of forms) {
 }
 
 describe("a pull request parked on its merge's CI", () => {
-  effect("is on a phase of its own, not address-review's awaiting-ci", () =>
+  effect("is on a phase of its own, not address-review's awaiting-fix-ci", () =>
     Effect.sync(() => {
-      expect(Phases.ciRoundOf("awaiting-conflict-ci")).toEqual(Option.none());
-      expect(Phases.conflictCiRoundOf("awaiting-conflict-ci")).toEqual(Option.some(1));
-      expect(Phases.conflictCiRoundOf("awaiting-conflict-ci-2")).toEqual(Option.some(2));
-      expect(Phases.conflictCi(2)).toBe("awaiting-conflict-ci-2");
+      const CONFLICT_CI = Phases.PHASES.pullRequest.awaitingConflictCi;
+      const FIX_CI = Phases.PHASES.pullRequest.awaitingFixCi;
+      expect(Phases.roundOf(FIX_CI, "awaiting-conflict-ci")).toEqual(Option.none());
+      expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci")).toEqual(Option.some(1));
+      expect(Phases.roundOf(CONFLICT_CI, "awaiting-conflict-ci-2")).toEqual(Option.some(2));
+      expect(Phases.inRound(CONFLICT_CI, 2)).toBe("awaiting-conflict-ci-2");
     }),
   );
 });

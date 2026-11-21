@@ -232,7 +232,9 @@ describe.each(FLOWS)("sabotage of address-review's record, in %s", (_, flow) => 
   effect("a forged park on a phase the flow reads is held alone, though nothing reports it", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve", { ciJob: true });
-      fake.recordPhase(PR_ITEM, Phases.awaitingCi(2), { by: "mallory" });
+      fake.recordPhase(PR_ITEM, Phases.inRound(Phases.PHASES.pullRequest.awaitingFixCi, 2), {
+        by: "mallory",
+      });
 
       const items = yield* found(fake, flow());
 
@@ -241,7 +243,7 @@ describe.each(FLOWS)("sabotage of address-review's record, in %s", (_, flow) => 
         [true, { anomaly: PR_ITEM }],
       ]);
       expect<unknown>(heldOf(items)).toEqual([
-        expect.stringContaining("(none -> awaiting-ci-2, by mallory) is an anomaly"),
+        expect.stringContaining("(none -> awaiting-fix-ci-2, by mallory) is an anomaly"),
       ]);
     }),
   );
@@ -394,17 +396,40 @@ describe("the catalogue of transitions", () => {
 
   test("backfill's first records, review's own reconcile, and a later round's CI wait pass", () => {
     for (const observed of [...Backfill.OBSERVED]) {
-      expect(
-        passes(kindItem[observed.item], recordOf({ phase: observed.to, by: observed.by })),
-      ).toEqual(Option.none());
+      if (observed.from === "same") {
+        continue;
+      }
+
+      for (const from of observed.from) {
+        const read = Option.liftPredicate(from, (phase) => phase !== Phases.NO_RECORD);
+
+        expect(
+          passes(
+            kindItem[observed.item],
+            recordOf({ phase: observed.to, from: read, by: observed.by }),
+          ),
+        ).toEqual(Option.none());
+      }
     }
+
+    // Backfill moving a later round's wait off the old shared phase.
+    expect(
+      passes(
+        PR_ITEM,
+        recordOf({
+          phase: "awaiting-fix-ci-2",
+          from: Option.some("awaiting-ci-2"),
+          by: Backfill.WRITER,
+        }),
+      ),
+    ).toEqual(Option.none());
 
     expect(
       passes(
         PR_ITEM,
         recordOf({
           phase: P.approved,
-          from: Option.some("awaiting-ci-3"),
+          from: Option.some("awaiting-fix-ci-3"),
           by: "observer:review.approved",
         }),
       ),
