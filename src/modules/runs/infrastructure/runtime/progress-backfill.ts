@@ -29,15 +29,15 @@ export type BackfillOptions = {
 };
 
 // One finding of the SDK's survey: a phase to write, from no record or from
-// the record it read (`from`, a park moved off a phase it shared), or an
-// item for a person.
+// the record it read (`over`: a hand-off to a person, or a park moved off a
+// phase it shared), or an item for a person.
 const BackfillFinding = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("write"),
     item: Schema.String,
     phase: Schema.String,
     data: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
-    from: Schema.optionalKey(Schema.Struct({ phase: Schema.String, version: Schema.String })),
+    over: Schema.optionalKey(Schema.Struct({ phase: Schema.String, version: Schema.String })),
     why: Schema.String,
   }),
   Schema.Struct({ kind: Schema.Literal("person"), item: Schema.String, why: Schema.String }),

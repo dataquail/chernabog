@@ -576,14 +576,13 @@ export const survey = Effect.gen(function* () {
   const github = yield* GitHub;
   const logins = (yield* Repo).personas;
   const all = yield* Phases.records;
-  const findings: Array<Finding> = [...(yield* withPersonFindings(all))];
-  const withPerson = new Set(findings.map((found) => found.item));
+  const handedOff = yield* withPersonFindings(all);
+  const withPerson = new Set(handedOff.map((found) => found.item));
 
-  for (const moved of movedParks(all)) {
-    if (!withPerson.has(moved.item)) {
-      findings.push(moved);
-    }
-  }
+  const findings: Array<Finding> = [
+    ...handedOff,
+    ...movedParks(all).filter((moved) => !withPerson.has(moved.item)),
+  ];
 
   const unrecorded = (item: string) =>
     Option.isNone(Phases.recordOf(all, item)) && !withPerson.has(item);
