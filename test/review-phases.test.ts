@@ -180,28 +180,13 @@ describe("the review loop runs on its phases", () => {
   );
 
   effect(
-    "a pull request with no record whose review asks for changes moves to changes-asked, and goes round the loop",
+    "a pull request with no record whose review asks for changes isn't address-review's: no run of the persona's opened it",
     () =>
       Effect.gen(function* () {
         const fake = changesAskedOnHead();
         implemented(fake);
-        expect(yield* keys(fake, addressReview)).toEqual([`${ITEM}-changes-asked-v1`]);
-        expect(fake.records().get(ITEM)).toMatchObject({
-          phase: "changes-asked",
-          by: "observer:review.changesRequested",
-        });
-
-        const addressed = yield* runToEnd(
-          addressing,
-          fake,
-          addressWork(`${ITEM}-changes-asked-v1`),
-        );
-
-        expect(addressed.status).toBe("done");
-        expect(fake.phases()).toEqual({ [ITEM]: "review-asked-again" });
-
-        asReviewer(fake);
-        expect(yield* keys(fake, reReview)).toEqual([`${ITEM}-review-asked-again-v2`]);
+        expect(yield* keys(fake, addressReview)).toEqual([]);
+        expect(fake.phases()).toEqual({});
       }),
   );
 

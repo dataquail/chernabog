@@ -980,7 +980,7 @@ export const sourceDescriptions = {
   },
   "review.changesRequested": {
     about:
-      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4. One with no record whose latest approval or request for changes asks for changes on the head is moved to changes-asked first.",
+      "Pull requests this persona wrote recorded changes-asked, by a review on the current head, so nothing was pushed since, except those labelled auto:needs-human or owned by another run. A person's review asking for changes on the head moves the record there first; one GitHub disagrees with is held, with why. Each run's key carries the record: pr-7-changes-asked-1a2b3c4.",
     with: {},
   },
   "review.requestedAgain": {

@@ -123,7 +123,6 @@ describe("the catalogue's phases", () => {
         {
           item: "pull-request",
           from: [
-            "none",
             "review-asked",
             "review-asked-again",
             "approved",

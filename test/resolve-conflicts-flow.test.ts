@@ -2,7 +2,7 @@
 // GitHub: which of the persona's pull requests it picks up, and how it merges
 // the base in, pushes, waits for CI and asks an approving reviewer again.
 
-import { DEFAULT_LABELS, Implement, ownerMarker, Review } from "@chernabog/sdk";
+import { Claims, DEFAULT_LABELS, Implement, Review } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 
@@ -34,6 +34,8 @@ const conflicting = () => {
   const fake = makeFake("approve");
   fake.setLabels(PULL, []);
   fake.merge.state = "dirty";
+  // Handed off for review by an earlier run, as every pull request a run opens is.
+  fake.recordPhase(`pr-${PULL}`, "review-asked");
 
   return fake;
 };
@@ -122,7 +124,17 @@ describe("resolve-conflicts' trigger", () => {
       expect(yield* keys(fake)).toEqual([]);
       fake.people.me = "chernabog-bot";
 
-      fake.comment(ownerMarker.write({ flow: "implement", runId: "run-1", released: false }));
+      fake.commits.set(
+        "held0000",
+        Claims.messageOf({
+          runId: "run-1",
+          persona: "chernabog-bot",
+          flow: "implement",
+          claimedAt: "2026-10-26T14:00:00Z",
+          withPerson: false,
+        }),
+      );
+      fake.refs.set(Claims.refFor(Claims.pullRequest(PULL)), "held0000");
       expect(yield* keys(fake)).toEqual([]);
     }),
   );

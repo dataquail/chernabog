@@ -5,6 +5,7 @@ import {
   activity,
   awaitSignal,
   claimMarker,
+  Claims,
   DEFAULT_LABELS,
   defineFlow,
   GitHub,
@@ -549,8 +550,27 @@ describe("owning a pull request", () => {
     }),
   );
 
+  // The pull request's claim ref names a run of the ship flow's, until it lets go.
   const owned = (fake: Fake, released: boolean) => {
-    fake.comment(ownerMarker.write({ flow: "ship", runId: "demo.ship.issue-3.1", released }));
+    const ref = Claims.refFor(Claims.pullRequest(PULL));
+
+    if (released) {
+      fake.refs.delete(ref);
+
+      return;
+    }
+
+    fake.commits.set(
+      "owner000",
+      Claims.messageOf({
+        runId: "demo.ship.issue-3.1",
+        persona: "chernabog-bot",
+        flow: "ship",
+        claimedAt: "2026-10-26T14:00:00Z",
+        withPerson: false,
+      }),
+    );
+    fake.refs.set(ref, "owner000");
   };
 
   effect(
@@ -567,6 +587,7 @@ describe("owning a pull request", () => {
           state: "CHANGES_REQUESTED",
           commitSha: HEAD,
         });
+        address.recordPhase(`pr-${PULL}`, "changes-asked");
         expect((yield* flowTriggered(address, addressReview)).length).toBe(1);
         owned(address, false);
         expect(yield* flowTriggered(address, addressReview)).toEqual([]);

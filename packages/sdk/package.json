@@ -17,7 +17,7 @@
     "index.ts"
   ],
   "peerDependencies": {
-    "@chernabog/core": "^1.0.0",
+    "@chernabog/core": "^2.0.0",
     "effect": "4.0.5"
   },
   "devDependencies": {

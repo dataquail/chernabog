@@ -3,11 +3,11 @@
 // flow, and what each left must match.
 
 import {
+  Claims,
   DEFAULT_LABELS,
   type Flow,
   isManual,
   labelsOf,
-  ownerMarker,
   Plan,
   PullRequest,
   Settings,
@@ -653,18 +653,19 @@ describe("a document's sources find what its recipe's trigger does", () => {
       0,
     ],
     [
+      // Held, with why: its record says changes asked.
       "address-review, on one pushed to since",
       (fake: Fake) => {
         fake.git.head = "fix20000000";
       },
-      0,
+      1,
     ],
     [
       "address-review, on one approved since",
       (fake: Fake) => {
         fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
       },
-      0,
+      1,
     ],
   ] as const) {
     effect(title, () =>
@@ -676,6 +677,8 @@ describe("a document's sources find what its recipe's trigger does", () => {
             state: "CHANGES_REQUESTED",
             commitSha: HEAD,
           });
+          // As review.round recorded it.
+          fake.recordPhase(`pr-${PULL}`, "changes-asked");
           change(fake);
 
           return fake;
@@ -807,7 +810,17 @@ describe("a document's sources find what its recipe's trigger does", () => {
     [
       "resolve-conflicts, on one a run owns",
       (fake: Fake) => {
-        fake.comment(ownerMarker.write({ flow: "implement", runId: "run-1", released: false }));
+        fake.commits.set(
+          "held0000",
+          Claims.messageOf({
+            runId: "run-1",
+            persona: "chernabog-bot",
+            flow: "implement",
+            claimedAt: "2026-10-26T14:00:00Z",
+            withPerson: false,
+          }),
+        );
+        fake.refs.set(Claims.refFor(Claims.pullRequest(PULL)), "held0000");
       },
       0,
     ],
@@ -832,6 +845,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
           const fake = makeFake("approve");
           fake.setLabels(PULL, []);
           fake.merge.state = "dirty";
+          fake.recordPhase(`pr-${PULL}`, "review-asked");
           change(fake);
 
           return fake;
@@ -874,7 +888,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
       () => {
         const fake = makeFake("approve");
         fake.states.pull = "merged";
-        fake.comment('<!-- chernabog-post-merge-watched {"sha":"merge5678"} -->');
+        fake.recordPhase(`pr-${PULL}`, "watched", { data: { sha: "merge5678" } });
 
         return fake;
       },

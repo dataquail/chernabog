@@ -8,14 +8,14 @@
 // however it ends. While it is parked no other flow's source reads the
 // pull request's phase, as none did while the run that waited owned it.
 //
-// A pull request with no record has nothing to restore, so its wait polls,
-// as every wait did before a record could carry anything. So does one whose
-// record, kept beside the rest, doesn't fit the record's 4 KB.
+// Every pull request a run opened has a record (backfill gave one to those
+// from before records), so one with none goes to a person. A wait whose
+// record, kept beside the rest, doesn't fit the record's 4 KB polls.
 
 import {
   activity,
   GitHub,
-  isPhaseData,
+  NeedsHuman,
   type PhaseData,
   type PhaseRecord,
   reportAs,
@@ -29,7 +29,6 @@ import * as Schema from "effect/Schema";
 
 import * as Implement from "./implement.ts";
 import * as Phases from "./phases.ts";
-import * as Resume from "./resume.ts";
 import * as Review from "./review.ts";
 import * as Settings from "./settings.ts";
 
@@ -53,46 +52,51 @@ const ID = "resolve";
 
 // The record a wait would park over, from the pull request's record now:
 // the record itself, or, for one a run already parked over, the record that
-// run kept. None for a pull request with no record, or a parked one that
-// kept none.
-const parkedOver = (found: Option.Option<PhaseRecord>): Option.Option<Restore> =>
-  Option.flatMap(found, (record) => {
-    if (Option.isSome(Phases.conflictCiRoundOf(record.phase))) {
-      return Option.map(Option.flatMap(record.data, decodeParked), (parked) => parked.restore);
-    }
+// run kept. None for a parked one that kept none.
+const parkedOver = (record: PhaseRecord): Option.Option<Restore> => {
+  if (Option.isSome(Phases.conflictCiRoundOf(record.phase))) {
+    return Option.map(Option.flatMap(record.data, decodeParked), (parked) => parked.restore);
+  }
 
-    return Option.some(
-      Option.match(record.data, {
-        onNone: (): Restore => ({ phase: record.phase }),
-        onSome: (data): Restore => ({ phase: record.phase, data }),
-      }),
-    );
-  });
+  return Option.some(
+    Option.match(record.data, {
+      onNone: (): Restore => ({ phase: record.phase }),
+      onSome: (data): Restore => ({ phase: record.phase, data }),
+    }),
+  );
+};
 
 // The pull request's record before the wait, read once (review-phase#resolve).
+// One with no record to put back goes to a person.
 const reviewPhase = (pullRequest: number) =>
   activity(
     `review-phase#${ID}`,
-    Effect.map(Phases.current(Phases.pullRequestItem(pullRequest)), parkedOver),
-    Schema.Option(Restore),
+    Effect.flatMap(Phases.current(Phases.pullRequestItem(pullRequest)), (found) =>
+      Effect.mapError(
+        Effect.fromOption(Option.flatMap(found, parkedOver)),
+        () =>
+          new NeedsHuman({
+            reason: `#${pullRequest} has no record for the wait on CI to park over and put back; chernabog progress backfill gives it one`,
+          }),
+      ),
+    ),
+    Restore,
   );
 
 // Where a recipe's wait parks: on the pull request's record, with what it
 // parked over, when that fits a record.
 export const parkOnPullRequest = (pullRequest: number) => (restore: Restore) =>
   Effect.succeed(
-    Option.flatMap(Option.liftPredicate({ restore, since: Resume.SINCE_SIZE }, isPhaseData), () =>
-      Option.map(Option.liftPredicate({ restore }, isPhaseData), (data) => ({
-        item: Phases.pullRequestItem(pullRequest),
-        data,
-      })),
-    ),
+    Option.map(Option.liftPredicate({ restore }, Phases.fitsAPark), (data) => ({
+      item: Phases.pullRequestItem(pullRequest),
+      data,
+    })),
   );
 
 // Records the phase the wait parked over again, once it has ended, when the
 // pull request still holds the wait's phase (restored#resolve). Nothing for a
 // wait that never parked, or a record another writer moved since.
-const restoreReview = (pullRequest: number, restore: Option.Option<Restore>) =>
+const restoreReview = (pullRequest: number, restore: Restore) =>
   activity(
     `review-restored#${ID}`,
     Effect.gen(function* () {
@@ -103,8 +107,8 @@ const restoreReview = (pullRequest: number, restore: Option.Option<Restore>) =>
         Option.isSome(Phases.conflictCiRoundOf(record.phase)),
       );
 
-      for (const back of Option.toArray(Option.flatMap(parked, () => restore))) {
-        yield* Phases.record(item, back.phase, back.data);
+      if (Option.isSome(parked)) {
+        yield* Phases.record(item, restore.phase, restore.data);
       }
     }),
   );
@@ -128,11 +132,7 @@ export const waitForCi = <E, R>(
 ) =>
   Effect.gen(function* () {
     const restore = yield* reviewPhase(pullRequest);
-
-    const parking = yield* Option.match(restore, {
-      onNone: () => Effect.succeedNone,
-      onSome: parkAt,
-    });
+    const parking = yield* parkAt(restore);
 
     const from = Option.match(firstRound, {
       onNone: () => ({}),
@@ -144,9 +144,7 @@ export const waitForCi = <E, R>(
       onSome: ({ data, item }): Implement.CiWait => ({
         id: ID,
         ...from,
-        park: item,
-        data,
-        phase: Phases.conflictCi,
+        park: (round) => ({ item, phase: Phases.conflictCi(round), data }),
       }),
     });
 

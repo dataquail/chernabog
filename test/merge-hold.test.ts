@@ -19,8 +19,6 @@ import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import reReviewFlow from "../packages/recipes/flows/re-review.ts";
-import reviewFlow from "../packages/recipes/flows/review.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
 import { effect } from "./effect-test.ts";
@@ -28,7 +26,6 @@ import {
   deliverSignals,
   type EngineRun,
   type Fake,
-  flowTriggered,
   HEAD,
   item,
   makeFake,
@@ -42,9 +39,7 @@ import {
 
 const IMPLICIT = Option.none<string>();
 const SHIP = "auto:ship";
-const KEY = `pr-${PULL}`;
 const WORK = item("hold");
-const HELD_STEP = "holding merge: CI failing on main";
 
 const RED: CiState = { state: "red", failedChecks: ["test"] };
 const GREEN: CiState = { state: "green" };
@@ -130,7 +125,7 @@ describe("holding a merge on a red base branch", () => {
   );
 
   effect(
-    "parks the run, showing why, rather than merging or handing it to a person, and merges once the base is green",
+    "parks the run, with its record, rather than merging or handing it to a person, and merges once the base is green",
     () =>
       Effect.gen(function* () {
         const fake = approved(RED);
@@ -146,16 +141,10 @@ describe("holding a merge on a red base branch", () => {
               return false;
             }
 
-            // The run as this poll saw it may predate the park: look again on the next one.
-            if (!held && !Option.contains(run.currentStep, HELD_STEP)) {
-              return false;
-            }
-
             if (!held) {
               held = true;
               expect(fake.merge.requests).toEqual([]);
               expect(fake.labelsOf(PULL)).toEqual([SHIP]);
-              expect(run.currentStep).toEqual(Option.some(HELD_STEP));
               expect(
                 fake.comments.some((found) =>
                   found.body.startsWith("Holding the merge: CI is failing on `main`."),
@@ -327,62 +316,6 @@ describe("holding a merge on a red base branch", () => {
         expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
         expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
       }),
-  );
-
-  effect("wakes every run holding one pull request, once each, not only the newest", () =>
-    Effect.gen(function* () {
-      const fake = approved(GREEN);
-
-      // A re-review run holds, then a later round's run holds the same pull
-      // request; the first one's marker is no longer the newest.
-      for (const [runId, key] of [
-        ["run-2", `${KEY}-review-2`],
-        ["run-3", `${KEY}-review-3`],
-        ["run-2", `${KEY}-review-2`],
-      ]) {
-        fake.comment(
-          `Holding the merge. <!-- chernabog-merge-hold {"runId":"${runId}","key":"${key}"} -->`,
-        );
-      }
-
-      expect((yield* woken(fake)).map((work) => work.key)).toEqual([
-        `${KEY}-review-2`,
-        `${KEY}-review-3`,
-      ]);
-    }),
-  );
-
-  effect("wakes nothing for a run this machine knows has ended, or with the setting off", () =>
-    Effect.gen(function* () {
-      const fake = approved(GREEN);
-      fake.comment(
-        `Holding the merge. <!-- chernabog-merge-hold {"runId":"run-1","key":"${KEY}"} -->`,
-      );
-      expect((yield* woken(fake)).map((work) => work.key)).toEqual([KEY]);
-      expect(yield* triggered(fake, PullRequest.baseTurnedGreen).pipe(Effect.orDie)).toEqual([]);
-      fake.knowRun(false);
-      expect(yield* woken(fake)).toEqual([]);
-    }),
-  );
-
-  effect("the review recipes' triggers report base-green to the runs that hold a merge", () =>
-    Effect.gen(function* () {
-      const fake = approved(GREEN);
-      fake.people.requested = [];
-      fake.comment(
-        `Holding the merge. <!-- chernabog-merge-hold {"runId":"run-1","key":"${KEY}-review-2"} -->`,
-      );
-
-      for (const recipe of [reviewFlow, reReviewFlow]) {
-        const found = yield* flowTriggered(fake, recipe, HOLDING).pipe(Effect.orDie);
-
-        expect(
-          found.flatMap((work) =>
-            Option.toArray(Option.liftPredicate(work.key, () => work.wakeOnly === true)),
-          ),
-        ).toEqual([`${KEY}-review-2`]);
-      }
-    }),
   );
 });
 

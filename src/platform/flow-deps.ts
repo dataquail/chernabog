@@ -377,7 +377,8 @@ const coreAdvice = (support: CoreSupport, older: string) => {
 
 // The installed SDK's version, or why this binary can't run it: it isn't
 // installed, isn't the version bun.lock pins, or needs a core this binary
-// doesn't provide.
+// doesn't provide. That is also the SDK floor: every SDK from before every
+// park recorded its wait needs core 1, which this binary no longer provides.
 const installedSdk = (configDir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

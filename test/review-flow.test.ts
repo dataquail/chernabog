@@ -473,6 +473,8 @@ describe("address-review", () => {
     const fake = makeFake(["approve"]);
     fake.author.consider = consider;
     fake.submitted.push({ author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD });
+    // As review.round recorded it.
+    fake.recordPhase(`pr-${PULL}`, "changes-asked");
     fake.comment(
       reviewMarker.write({
         sha: HEAD,
@@ -502,8 +504,7 @@ describe("address-review", () => {
         const fake = changesAsked();
         const pullItem = Phases.pullRequestItem(PULL);
 
-        // With no record, the review that asks for changes moves the pull
-        // request to changes-asked, and the item is keyed by that record.
+        // Keyed by its changes-asked record.
         expect(yield* keys(fake, addressReview)).toEqual([`${pullItem}-changes-asked-v1`]);
         expect(fake.phases()).toEqual({ [pullItem]: "changes-asked" });
 

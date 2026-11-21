@@ -9,9 +9,11 @@
 
 import {
   activity,
+  awaitSignal,
   Claims,
   CurrentNode,
   GitHub,
+  isPhaseData,
   type Json,
   type NodeAt,
   Phase as CorePhase,
@@ -25,8 +27,11 @@ import {
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 // What a phase is kept for. These are the names claim refs already use.
@@ -338,6 +343,102 @@ export const current = (item: string) =>
 // The record of `item` among `all`, from records.
 export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>
   Option.fromUndefinedOr(all.get(item));
+
+// A wait on a person or another system (ADR 21, decision 4): the step that
+// records it, the item and phase it waits at, and what the record keeps for
+// the run that takes it up. `keeps` says whether the record already there is
+// this wait, which a run that took it up keeps as it is: by default, any
+// record at `phase`. `timeout` is how long the wait may last from `since`,
+// when it began, which every park's record keeps.
+export type Parking = {
+  readonly step: string;
+  readonly item: string;
+  readonly phase: string;
+  readonly data: { readonly [key: string]: Json };
+  readonly keeps?: (found: PhaseRecord) => boolean;
+  readonly timeout?: Duration.Duration;
+};
+
+const Since = Schema.Struct({ since: Schema.String });
+
+// A `since` as long as any, for sizing a record before it's written.
+const SINCE_SIZE = DateTime.formatIso(DateTime.makeUnsafe(0));
+
+// Whether `data` fits a park's record, with room for the `since` park adds.
+export const fitsAPark = (data: { readonly [key: string]: Json }): data is PhaseData =>
+  isPhaseData(data) && isPhaseData({ since: SINCE_SIZE, ...data });
+
+// When the wait a record parked began, by its data's `since`.
+export const sinceOf = (data: Option.Option<{ readonly [key: string]: Json }>) =>
+  Option.flatMap(Option.flatMap(data, Schema.decodeUnknownOption(Since)), (found) =>
+    DateTime.make(found.since),
+  );
+
+// Whether a wait that began `since` has run past `timeout` by now.
+export const pastSince = (since: Option.Option<DateTime.Utc>, timeout: Duration.Duration) =>
+  Effect.map(DateTime.now, (now) =>
+    Option.exists(since, (began) =>
+      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
+    ),
+  );
+
+const Parked = Schema.Literals(["parked", "timed-out"]);
+
+// Records the wait, as its step, unless the item's record is this wait
+// already: a fresh record, with `since` now unless the data says when it
+// began. A kept record past its timeout is `timed-out`, and parks no more.
+// For a wait that polls rather than park, which still records where it is.
+export const recordParking = (parking: Parking) =>
+  activity(
+    parking.step,
+    Effect.gen(function* () {
+      const found = Option.filter(
+        yield* current(parking.item),
+        (there) =>
+          there.phase === parking.phase &&
+          (Predicate.isUndefined(parking.keeps) || parking.keeps(there)),
+      );
+
+      if (Option.isSome(found)) {
+        const timeout = Option.fromUndefinedOr(parking.timeout);
+
+        if (
+          Option.isSome(timeout) &&
+          (yield* pastSince(sinceOf(found.value.data), timeout.value))
+        ) {
+          return "timed-out" as const;
+        }
+
+        return "parked" as const;
+      }
+
+      // The item's record isn't this wait, so write it even over one this run
+      // wrote: a run a signal woke parks again with its new round's data.
+      const since = DateTime.formatIso(yield* DateTime.now);
+      yield* record(parking.item, parking.phase, { since, ...parking.data }, { always: true });
+
+      return "parked" as const;
+    }),
+    Parked,
+  );
+
+// The longest a park waits on its signals: a run ends at its park, so its
+// timeout never comes; a wait with a deadline gives its own.
+const PARKED_AT_MOST = Duration.days(365);
+
+// Parks the run on a wait (ADR 21, decision 4): records it first
+// (recordParking), then parks on `signals`, which ends the run, on a daemon
+// as in a CI job; a later run takes the item up from the record. The only
+// way the SDK and the recipes park, so no run ends at a park without its
+// record (the members rule no-bare-park). Gives the signal, "timeout", or
+// "timed-out" for a kept wait already past its timeout, which parks no more.
+export const park = (parking: Parking, signals: ReadonlyArray<string>, id: string) =>
+  recordParking(parking).pipe(
+    Effect.filterOrElse(
+      (parked) => parked === "timed-out",
+      () => awaitSignal(signals, { id, timeout: parking.timeout ?? PARKED_AT_MOST }),
+    ),
+  );
 
 // Whether `found` holds one of `phases`.
 export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
