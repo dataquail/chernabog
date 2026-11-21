@@ -68,6 +68,7 @@ const recordOf = (record: {
   version: "0123456789abcdef",
   at: DateTime.makeUnsafe(0),
   data: Option.none(),
+  blobs: [],
 });
 
 // A pull request this persona wrote, whose latest review asks for changes on

@@ -159,7 +159,7 @@ export const readRecord = (
       "a JSON object a record can hold",
     );
 
-    return { phase, from, by, version, at, data };
+    return { phase, from, by, version, at, data, blobs: [] };
   });
 
 // The record a commit holds; none for one that isn't a record.
@@ -419,6 +419,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           version,
           at,
           data: Option.fromUndefinedOr(transition.data),
+          blobs: [],
         };
 
         seen.set(version, record);
@@ -628,6 +629,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       read,
       readAll,
       advance: attempt,
+      blob: () => Effect.die(new Error("not yet")),
     });
   });
 
