@@ -235,7 +235,8 @@ change.
    didn't fit polled instead. With a phase per park site, the phase alone
    says where the next run starts, and what it needs is a fact, small and
    readable again from the world. Until #566 and #567 land, the code does
-   what these paragraphs describe; the audit lists it.
+   what these paragraphs describe; the audit lists it. #567 deletes them,
+   when a flow document resumes at the phase it parked on.
 
    A flow document resumes at the node it parked on, found by a **node id the
    record's data names**, not by the phase. One phase can be recorded at
@@ -537,15 +538,24 @@ change.
    - **One projector derives them from the ledger**, from an item's phase
      and its claim, after each advance and each claim change. It writes the
      whole set, so a label a person removed or added by hand is put right on
-     the next change.
+     the next change. A person removing `auto:needs-human` is intent, not a
+     label to put back: the observer records `handed-back` first (decision
+     1), and the projector projects from that record.
    - **No flow writes a status label directly.** `auto:in-progress`,
      `auto:needs-human`, `auto:awaiting-ready`, `auto:plan-proposed`,
-     `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`
-     and the plan's and epic's labels are the projector's.
+     `auto:needs-clarification`, `auto:needs-review`, `auto:ready-for-person`,
+     `auto:adopted` and the plan's labels are the projector's.
    - **Intent labels are input only:** `auto:eligible`, `auto:plan`,
-     `auto:plan-approved` and `auto:ship`. Chernabog removes one only to
-     acknowledge it, on claim. A source may read an intent label; no source
-     reads a status label.
+     `auto:plan-approved`, `auto:ship`, `auto:epic` and `hybrid`. A person
+     applies any of them by hand. Chernabog removes one only to acknowledge
+     it, on claim. A source may read an intent label; no source reads a
+     status label.
+   - **Chernabog writes an intent label only to carry a person's intent
+     forward**, and never reads one back as a status: an approved plan's
+     `auto` tasks labelled `auto:eligible`, a spec that became an epic
+     labelled `auto:epic`, a pull request a person started labelled
+     `hybrid`, and `auto:ship` copied from the issue, or from the epic's
+     `ship` setting, onto the pull request it opens.
 
 ## Rejected
 
