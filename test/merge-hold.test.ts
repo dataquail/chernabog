@@ -61,6 +61,10 @@ const flow = defineFlow({
         return yield* PullRequest.mergeHolding(PULL, { method: "squash" });
       }
 
+      if (work.key === "merge-polling") {
+        return yield* PullRequest.mergeHolding(PULL, { method: "squash", poll: true });
+      }
+
       if (work.key !== "merge-only") {
         yield* PullRequest.holdWhileBaseRed(PULL);
       }
@@ -184,6 +188,38 @@ describe("holding a merge on a red base branch", () => {
         expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
         expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
       }),
+  );
+
+  effect("a hold that polls says so once and looks at the base again, without parking", () =>
+    Effect.gen(function* () {
+      const fake = approved(RED);
+
+      const holdsSaid = () =>
+        fake.comments.filter((found) => found.body.startsWith("Holding the merge:")).length;
+
+      let parked = Option.none<boolean>();
+      let since = 0;
+
+      // A few polls after it said so, by when a park would have registered.
+      const run = yield* runUntil(holding, fake, item("merge-polling"), (polled) =>
+        Effect.gen(function* () {
+          if (holdsSaid() === 0) {
+            return false;
+          }
+
+          since += 1;
+          parked = Option.some(yield* parkedOnBase(polled));
+
+          return since >= 5;
+        }),
+      );
+
+      expect(run.status).toBe("running");
+      expect(parked).toEqual(Option.some(false));
+      expect(holdsSaid()).toBe(1);
+      expect(fake.phases()[`pr-${PULL}`]).toBe("merge-held");
+      expect(fake.merge.requests).toEqual([]);
+    }),
   );
 
   effect("merges at once while the base is green, or has no completed run yet", () =>

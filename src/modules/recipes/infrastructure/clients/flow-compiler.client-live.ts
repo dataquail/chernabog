@@ -461,8 +461,13 @@ export const FlowCompilerClientLive = Layer.effect(
         if (found.length > 0) {
           return {
             source: Option.none(),
-            problems: found.map((each) =>
-              problemAt(pathOfLine(source, text, each.line, each.column), each.message),
+            // A step a run can resume at is in the generated flow twice, at
+            // its resume entry and on its path: one problem in the document.
+            problems: Arr.dedupeWith(
+              found.map((each) =>
+                problemAt(pathOfLine(source, text, each.line, each.column), each.message),
+              ),
+              (one, other) => one.path === other.path && one.message === other.message,
             ),
             // These are what the check of its types found.
             typeChecked: true,

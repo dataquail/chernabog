@@ -9,10 +9,11 @@ import {
   labelsOf,
   ownerMarker,
   Plan,
+  PullRequest,
   Settings,
   type WorkItem,
 } from "@chernabog/sdk";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -32,6 +33,7 @@ import {
   documentOf,
   DRAFT_DOCUMENT,
   EPIC_DOCUMENT,
+  generated,
   HUMAN_INITIATED_DOCUMENT,
   IMPLEMENT_DOCUMENT,
   IMPLEMENT_READY_DOCUMENT,
@@ -503,10 +505,20 @@ describe("an implement document that gives its pull request to a person", () => 
 
 const composedWithStage = loadFlow(documentOf(REVIEW_WITH_STAGE_DOCUMENT));
 
+// The scenarios whose run waits for the base to turn green: a land that
+// reads a stage's output can't be taken up from its record, since a stage's
+// output isn't kept, so it polls the base rather than park and be woken
+// (test/merge-hold.test.ts holds a poll to that).
+const heldOnBase = (scenario: (typeof REVIEW_SCENARIOS)[number]) =>
+  Option.exists(
+    Option.fromUndefinedOr(scenario.wake),
+    (wake) => wake.signal === PullRequest.BASE_GREEN,
+  );
+
 describe("a document that runs a stage", () => {
   // The stage names the pull request the recipe takes from its trigger, so
-  // the run is the recipe's, with the stage's step besides.
-  for (const scenario of REVIEW_SCENARIOS) {
+  // the run is the recipe's, with the stage's step besides; but for a hold.
+  for (const scenario of REVIEW_SCENARIOS.filter((each) => !heldOnBase(each))) {
     effect(
       `runs as the recipe does, ${scenario.title}`,
       () =>
@@ -523,6 +535,14 @@ describe("a document that runs a stage", () => {
       60_000,
     );
   }
+
+  test("has no node a run can resume at, so its land polls a hold", () => {
+    expect(REVIEW_SCENARIOS.filter(heldOnBase)).toHaveLength(1);
+    expect(generated(documentOf(REVIEW_WITH_STAGE_DOCUMENT))).not.toContain("resumes:");
+    expect(generated(documentOf(REVIEW_DOCUMENT))).toContain(
+      'resumes: { flow: "review", nodes: { "land": "pr.land" } }',
+    );
+  });
 
   effect(
     "gives the stage its input, and the next block its output",

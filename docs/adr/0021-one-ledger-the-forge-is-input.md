@@ -157,7 +157,10 @@ change.
 
    A step whose block runs again (`Block.again`) is run again instead of
    kept. This covers a cheap read, or something that belongs to the machine,
-   such as a worktree's path.
+   such as a worktree's path. A step whose output can outgrow the record
+   keeps less and reads the rest back (`Block.recall`): `plan.propose` keeps
+   its spec and round, and the resumed run reads the plan from the marker on
+   its comment, as the recipe does.
 
    The document's source of parked items (`Resume.parked`) offers the item
    as work a run may start. It holds the item while the node's block says
@@ -169,11 +172,17 @@ change.
 
    What a node keeps must fit the record. A value that doesn't fit, or that
    JSON can't hold, leaves the block polling inside the run. That is not a
-   park, so the run isn't stranded. A wait in a repeat's rounds resumes the
-   repeat, not the node: its loop state starts from what the record kept,
-   as the epic's rounds start from its `waiting` record. A wait in a
-   forEach's lanes polls (audit W7). A flow a person starts has no trigger
-   to offer its item again, so its waits poll too.
+   park, so the run isn't stranded. A node in a repeat's rounds resumes
+   there too, in its round, which the record keeps as `round` beside
+   `resume` (a plan's `proposed` record has its round there already). The
+   resumed run starts the repeat at that round, runs it from the node, and
+   runs the rounds after it whole. The repeat's state starts afresh, so the
+   compiler takes such a node only when nothing from it on reads the state,
+   every `next` sets all of it, and the round can't run off its end; a wait
+   anywhere else in the rounds polls, and the epic's rounds start from its
+   `waiting` record. A wait in a forEach's lanes polls (audit W7). A flow a
+   person starts has no trigger to offer its item again, so its waits poll
+   too.
 
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
@@ -260,11 +269,12 @@ change.
   on. The epic's park (W10) records the epic's `waiting` phase, with what the
   run kept between rounds, and `Epic.queued` offers the epic again only once
   a layer changed since, or a day passed. A flow document's waits for CI
-  (audit W8) park at a node and resume there. The epic document's rounds
-  start from the `waiting` record. The document parks that can't yet resume
-  are a plan's answer (in a repeat's rounds), a merge held by `pr.land`, and
-  resolve-conflicts' CI. Until they can, they are stranded on a daemon as in
-  CI, or they poll.
+  (audit W8), its wait for a plan's answer (in a repeat's rounds, from the
+  spec's `proposed` record) and a merge held by `pr.land` (from the pull
+  request's `merge-held` record) park at a node and resume there. Where a
+  node can't resume, the wait polls rather than park. The epic document's
+  rounds start from the `waiting` record. resolve-conflicts' CI still polls
+  (audit W6). No flow document's wait is stranded.
 - Removing a label or dismissing a review can no longer derail a run
   silently. At worst the item goes to a person as an anomaly or a declared
   intent.

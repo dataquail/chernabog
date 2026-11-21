@@ -9,7 +9,15 @@
 // the issues, the epic, removing the checkout, posting questions) is `last`:
 // in a repeat it takes no round, so its step names are the recipe's.
 
-import { Claims, GitHub, NeedsHuman, reportAs, type WorkItem } from "@chernabog/core";
+import {
+  Claims,
+  GitHub,
+  NeedsHuman,
+  reportAs,
+  Run,
+  StepFailed,
+  type WorkItem,
+} from "@chernabog/core";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -20,12 +28,15 @@ import {
   defineSource,
   type FailureContext,
   IssueNumber,
+  Kept,
   ToPerson,
 } from "./block.ts";
 import * as Events from "./events.ts";
 import * as Implement from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { PHASES } from "./phases.ts";
 import * as Plan from "./plan.ts";
+import * as Resume from "./resume.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
 
@@ -108,6 +119,52 @@ export const planSources = {
   ),
 };
 
+// A document's wait on a person's answer to the plan of `round`, which the
+// spec's proposed record holds: the round, how long a person has, and, at a
+// node the document can resume at, where to resume (Resume.parking). The
+// recipe's propose writes that record; a document's leaves it to this, so
+// one write holds it all. At such a node it parks, and a run that took the
+// plan up there acts on the answer given since, or, with none yet, waits
+// again on the record it took up, which still says when the plan was posted.
+// Anywhere else it polls, so the run isn't stranded.
+const documentAnswer = (round: number, within: Days) =>
+  Effect.gen(function* () {
+    const run = yield* Run;
+
+    if (Option.isSome(yield* Resume.resumedPhase)) {
+      const answer = yield* Plan.answerNow(yield* Implement.issueOf(run.item), round, within);
+
+      if (Option.isSome(answer)) {
+        return answer.value;
+      }
+
+      return yield* Plan.awaitAnswer(round, within);
+    }
+
+    const parking = yield* Resume.parking({ within });
+
+    const data = Option.match(parking, {
+      onNone: () => ({ round, within }),
+      onSome: (found) => found.data,
+    });
+
+    // Not a step of its own, so the document's steps are the recipe's: a
+    // replay finds this run's record there already and writes nothing.
+    for (const item of Option.toArray(yield* Phases.RecordedOn)) {
+      yield* Phases.record(item, PHASES.issue.proposed, data, { again: true }).pipe(
+        Effect.mapError(
+          (failed) => new StepFailed({ step: `plan-${round}-waits`, message: failed.message }),
+        ),
+      );
+    }
+
+    if (Option.isNone(parking)) {
+      return yield* Plan.pollAnswer(yield* Implement.issueOf(run.item), round, within);
+    }
+
+    return yield* Plan.awaitAnswer(round, within);
+  });
+
 // What every plan block suits: each reads or writes the spec's plan, whose
 // checkout only a spec's scope removes when a person must take over.
 const ON_SPEC = ["spec"];
@@ -156,7 +213,11 @@ export const planBlocks = {
       round: "the round",
       draft: "the plan, from plan.draft",
     },
-    outputKinds: { plan: "the plan as posted, with its verify task: for plan.create" },
+    outputKinds: {
+      plan: "the plan as posted, with its verify task: for plan.create",
+      issue: "IssueNumber: the spec it was posted on",
+      round: "the round it was posted in",
+    },
     outcomeKinds: {},
     before: ["plan.awaitAnswer"],
     inputs: { issue: "required", round: "required", draft: "required" },
@@ -165,11 +226,19 @@ export const planBlocks = {
       readonly round: number;
       readonly draft: Plan.PlanDraft;
     }) =>
-      Plan.propose(input.issue, input.round, input.draft).pipe(Effect.map((plan) => ({ plan }))),
+      // plan.awaitAnswer records the wait, with where to resume.
+      Plan.propose(input.issue, input.round, input.draft, { record: false }).pipe(
+        Effect.map((plan) => ({ plan, issue: input.issue, round: input.round })),
+      ),
+    // A plan can outgrow a record: a document's run that resumes after it
+    // keeps the spec and the round, and reads the plan back from the comment
+    // it posted, as the recipe's run does (Plan.posted).
+    keeps: Schema.toCodecJson(Schema.Struct({ issue: Kept.issue, round: Schema.Finite })),
+    recall: (kept: { readonly issue: IssueNumber; readonly round: number }) =>
+      Plan.posted(kept.issue, kept.round).pipe(Effect.map((plan) => ({ plan, ...kept }))),
     failures: { NeedsHuman: "person", NotFound: "skip", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
-    records: [{ item: "issue", phase: PHASES.issue.proposed }],
     contributes: {},
   }),
 
@@ -178,7 +247,7 @@ export const planBlocks = {
     suits: ON_SPEC,
     fixed: ["within"],
     about:
-      "Parks the run until a person answers the posted plan: approved when the spec carries auto:plan-approved, or changes when a member of the repo comments on it. Nobody answering within `within` goes to a person.",
+      "Parks the run until a person answers the posted plan: approved when the spec carries auto:plan-approved, or changes when a member of the repo comments on it. Nobody answering within `within` goes to a person. It records the spec's proposed phase, with the round, so a run that ends at the park is taken up again once a person answers or the time is up, in the round it parked in.",
     inputKinds: { round: "the round", within: 'how long, as "14 days"' },
     outputKinds: "approved or changes-requested",
     outcomeKinds: {
@@ -188,7 +257,7 @@ export const planBlocks = {
     inputs: { round: "required", within: "required" },
     run: (input: { readonly round: number; readonly within: Days }) =>
       Effect.gen(function* () {
-        const answer = yield* Plan.awaitAnswer(input.round, input.within);
+        const answer = yield* documentAnswer(input.round, input.within);
 
         if (answer === "timeout") {
           return yield* new NeedsHuman({
@@ -207,6 +276,8 @@ export const planBlocks = {
     mustRoute: ["approved", "changes"],
     exhaustive: true,
     waits: true,
+    records: [{ item: "issue", phase: PHASES.issue.proposed }],
+    parks: Plan.documentAnswerResumes,
     contributes: {
       wakes: Plan.answers.pipe(reportAs("trigger")),
       wakeEvents: [Events.commentCreated],

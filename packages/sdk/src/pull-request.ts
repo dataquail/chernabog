@@ -8,6 +8,7 @@ import {
   Claims,
   Git,
   GitHub,
+  type Json,
   latestMarker,
   type MergeMethod,
   MergeRefused,
@@ -19,6 +20,7 @@ import {
   Progress,
   type PullRequest,
   PullRequestClosed,
+  reportAs,
   reviewMarker,
   Run,
   RunLog,
@@ -194,7 +196,22 @@ export const owner = (pullRequest: number) =>
 
 // id: tells apart two tries at merging one pull request in a run, as an epic
 // run's rounds do (`merge-pr-12#land-3`); a refused try is saved like any step.
-export type MergeOptions = { readonly method: MergeMethod; readonly id?: string };
+export type MergeOptions = {
+  readonly method: MergeMethod;
+  readonly id?: string;
+} & Hold;
+
+// How a merge holds: what its record keeps beside the work item that holds
+// it, such as where a flow document resumes (Resume.parking), and whether it
+// polls the base rather than park, for a flow document's hold that can't be
+// taken up from its record. A poll isn't a park, so its run isn't stranded.
+export type Hold = {
+  readonly data?: { readonly [key: string]: Json };
+  readonly poll?: boolean;
+};
+
+// How often a hold that polls looks at the base again.
+const MERGE_POLL = Duration.minutes(5);
 
 // How merge's refusal for a red base begins (baseRed), which mergeHolding
 // tells from its other refusals.
@@ -618,9 +635,10 @@ const heldSince = (pullRequest: number) =>
     Schema.Option(Schema.Finite),
   );
 
-// Records that this run's work item holds the merge, unless the record says
-// so already: a fresh record, so its `at` is when this hold began.
-const recordHold = (pullRequest: number) =>
+// Records that this run's work item holds the merge, with `data` beside it,
+// unless the record says so already: a fresh record, so its `at` is when this
+// hold began.
+const recordHold = (pullRequest: number, data: { readonly [key: string]: Json } = {}) =>
   Effect.gen(function* () {
     const run = yield* Run;
     const item = Phases.pullRequestItem(pullRequest);
@@ -633,11 +651,24 @@ const recordHold = (pullRequest: number) =>
     yield* Phases.record(
       item,
       Phases.PHASES.pullRequest.mergeHeld,
-      { key: run.item.key },
+      { ...data, key: run.item.key },
       {
         again: true,
       },
     );
+  });
+
+// Says on the pull request that the merge holds, with a marker naming the
+// run, and records the hold.
+const announceHold = (pullRequest: number, named: string, base: string, hold: Hold) =>
+  Effect.gen(function* () {
+    const run = yield* Run;
+
+    yield* comment(
+      pullRequest,
+      `Holding the merge: CI is failing on \`${base}\`. It merges once CI there is green again. ${holdMarker.write({ runId: run.runId, key: run.item.key })}`,
+    );
+    yield* activity(`merge-held-pr-${pullRequest}-${named}`, recordHold(pullRequest, hold.data));
   });
 
 // Before a merge: while CI on the pull request's base branch is red (baseRed),
@@ -646,9 +677,11 @@ const recordHold = (pullRequest: number) =>
 // flow's trigger reports with baseTurnedGreen; woken, it looks again, and
 // returns once the base is no longer red, for merge's usual checks. The hold
 // lasts as long as the base stays red, unless the mergeHoldTimeout setting
-// caps it: then it fails with MergeRefused, for a person. With the flow's
-// settings not holding merges, or for a follow-up's fix, it returns at once.
-export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
+// caps it: then it fails with MergeRefused, for a person. With `hold.poll` it
+// looks at the base again every MERGE_POLL instead of parking. With the
+// flow's settings not holding merges, or for a follow-up's fix, it returns at
+// once.
+export const holdWhileBaseRed = (pullRequest: number, attempt = 1, hold: Hold = {}) =>
   Effect.gen(function* () {
     // A hold an earlier run of this work item began counts from then.
     let since = yield* heldSince(pullRequest);
@@ -687,13 +720,23 @@ export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
         return yield* stayedRed;
       }
 
-      const run = yield* Run;
+      // A hold that polls says so once; one that parks each time it holds
+      // again, after a wake.
+      if (hold.poll !== true || round === 1) {
+        yield* announceHold(pullRequest, named, base, hold);
+      }
 
-      yield* comment(
-        pullRequest,
-        `Holding the merge: CI is failing on \`${base}\`. It merges once CI there is green again. ${holdMarker.write({ runId: run.runId, key: run.item.key })}`,
-      );
-      yield* activity(`merge-held-pr-${pullRequest}-${named}`, recordHold(pullRequest));
+      if (hold.poll === true) {
+        yield* sleep(
+          `merge-pr-${pullRequest}-${named}-wait`,
+          Option.match(left, {
+            onNone: () => MERGE_POLL,
+            onSome: (time) => Duration.min(time, MERGE_POLL),
+          }),
+        );
+
+        continue;
+      }
 
       if ((yield* parkOnBase(pullRequest, named, base, left)) !== BASE_GREEN) {
         return yield* stayedRed;
@@ -710,7 +753,7 @@ export const holdWhileBaseRed = (pullRequest: number, attempt = 1) =>
 export const mergeHolding = (pullRequest: number, options: MergeOptions) =>
   Effect.gen(function* () {
     for (let attempt = 1; ; attempt++) {
-      yield* holdWhileBaseRed(pullRequest, attempt);
+      yield* holdWhileBaseRed(pullRequest, attempt, options);
 
       const id = Option.match(
         Option.liftPredicate(attempt, (count) => count > 1),
@@ -834,6 +877,72 @@ export const baseTurnedGreen = Effect.gen(function* () {
     .filter(({ pull }) => red.get(pull.baseRef) !== true)
     .map((found): WorkItem => ({ ...heldItem(found), signals: [BASE_GREEN], wakeOnly: true }));
 });
+
+// What a flow document's pr.land keeps in a hold's record beside its work
+// item (recordHold): the pull request.
+const DocumentHold = Schema.Struct({ pullRequest: Schema.Finite });
+
+// Whether a flow document's run that parked holding a merge may be taken up
+// (ADR 0021, decision 4), as heldMerges says for a recipe's: once CI on the
+// base is no longer red, or the hold has lasted mergeHoldTimeout since the
+// record's `at`, when the run that takes it up finds its time is up and hands
+// it to a person; held while neither. Routed by assignees and reviewers. One
+// closed, off the automated path or handed to a person has nothing left to
+// resume.
+export const documentMergeResumes = (
+  data: { readonly [key: string]: Json },
+  item: WorkItem,
+  at: DateTime.Utc,
+) =>
+  Effect.gen(function* () {
+    const parked = Schema.decodeUnknownOption(DocumentHold)(data);
+
+    if (Option.isNone(parked)) {
+      return Option.none<WorkItem>();
+    }
+
+    const github = yield* GitHub;
+    const labelNames = yield* Settings.labels;
+    const hold = yield* Settings.mergeHold;
+
+    const pull = Option.filter(
+      yield* github.pullRequest(parked.value.pullRequest).pipe(
+        Effect.asSome,
+        Effect.catchTag("NotFound", () => Effect.succeedNone),
+      ),
+      (found) =>
+        found.state === "open" &&
+        ships(found, labelNames) &&
+        !found.labels.includes(labelNames.needsHuman),
+    );
+
+    if (Option.isNone(pull)) {
+      return Option.none<WorkItem>();
+    }
+
+    const route = (work: WorkItem) =>
+      Routing.route(work, {
+        assignees: pull.value.assignees,
+        reviewers: pull.value.requestedReviewers,
+      });
+
+    const red = (yield* github.branchCiState(pull.value.baseRef)).state === "red";
+    const now = yield* DateTime.now;
+
+    const due = Option.exists(
+      Option.map(hold.timeout, (limit) => DateTime.addDuration(at, limit)),
+      (deadline) => DateTime.isLessThanOrEqualTo(deadline, now),
+    );
+
+    if (hold.enabled && red && !due) {
+      return Option.some<WorkItem>({
+        ...item,
+        held: `holds the merge of #${pull.value.number}: CI on ${pull.value.baseRef} is red`,
+      });
+    }
+
+    return Option.some(yield* route(item));
+  }).pipe(reportAs("trigger"));
 
 const ResumingMerge = Schema.Struct({
   pullRequest: Schema.Finite,

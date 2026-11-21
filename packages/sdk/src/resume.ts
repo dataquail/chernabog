@@ -30,6 +30,7 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -46,19 +47,26 @@ const isJsonObject = (json: Json): json is JsonObject =>
 // What a block says of how its output goes into a record, and back.
 type Keeps<Kept> = { readonly keeps: Option.Option<Schema.Codec<Kept, Json>> };
 
+// And how it reads its output back from what it kept, for one too big to keep.
+type Recalls<Kept, Output, E, R> = Keeps<Kept> & {
+  readonly recall: Option.Option<(kept: Kept) => Effect.Effect<Output, E, R>>;
+};
+
 // A step's output as a record keeps it: none for a block that can't say, or
 // an output its codec refuses.
 export const keep = <Kept, Output extends Kept>(block: Keeps<Kept>, output: Output) =>
   Option.flatMap(block.keeps, (codec) => Schema.encodeOption(codec)(output));
 
 // What a document passes the block at a node it can resume at: the flow, the
-// run's work item, the node, and each kept step's output as JSON. At the node
-// a run resumed at, `resumed` is the phase the record it resumed from held,
-// for the block to go on from (a wait for CI's round).
+// run's work item, the node, the round of the repeat it is in, and each kept
+// step's output as JSON. At the node a run resumed at, in the round it
+// resumed, `resumed` is the phase the record it resumed from held, for the
+// block to go on from (a wait for CI's round).
 export type Keep = {
   readonly flow: string;
   readonly item: WorkItem;
   readonly node: string;
+  readonly round: Option.Option<number>;
   readonly kept: { readonly [name: string]: Option.Option<Json> };
   readonly resumed: Option.Option<string>;
 };
@@ -83,8 +91,11 @@ const KeptItem = Schema.Struct({
   data: Schema.Json,
 });
 
-// What a record at a node a document resumes at keeps, under `resume`.
+// What a record at a node a document resumes at keeps, under `resume`, and,
+// for a node in a repeat, the round, as `round` beside it: a plan's proposed
+// record has its round there already.
 const Parked = Schema.Struct({
+  round: Schema.optionalKey(Schema.Finite),
   resume: Schema.Struct({
     flow: Schema.String,
     node: Schema.String,
@@ -97,9 +108,11 @@ const Parked = Schema.Struct({
 type Parked = typeof Parked.Type;
 
 // What a work item that resumes a document carries, under `resume`: the node,
-// the phase its record held, and the kept outputs.
+// the round, for one in a repeat, the phase its record held, and the kept
+// outputs.
 const Resumed = Schema.Struct({
   node: Schema.String,
+  round: Schema.optionalKey(Schema.Finite),
   phase: Schema.String,
   kept: Schema.Record(Schema.String, Schema.Json),
 });
@@ -129,6 +142,41 @@ export const kept = <Kept>(resumed: Resumed, name: string, block: Keeps<Kept>) =
     }
 
     return output.value;
+  });
+
+// A kept step's output, read back from what its block kept (Block.recall).
+export const recalled = <Kept, Output, E, R>(
+  resumed: Resumed,
+  name: string,
+  block: Recalls<Kept, Output, E, R>,
+) =>
+  Effect.gen(function* () {
+    const found = yield* kept(resumed, name, block);
+
+    if (Option.isNone(block.recall)) {
+      return yield* new StepFailed({
+        step: `resume-${resumed.node}`,
+        message: `${name}'s block can't read its output back from the record parked at ${resumed.node}`,
+      });
+    }
+
+    return yield* block.recall.value(found);
+  });
+
+// The round of the repeat a record parked in: a step that fails for a record
+// that kept none.
+export const round = (resumed: Resumed) =>
+  Effect.gen(function* () {
+    const inRound = Option.fromUndefinedOr(resumed.round);
+
+    if (Option.isNone(inRound)) {
+      return yield* new StepFailed({
+        step: `resume-${resumed.node}`,
+        message: `the record parked at ${resumed.node} keeps no round of its repeat`,
+      });
+    }
+
+    return inRound.value;
   });
 
 // The value an outcome bound before the node, worked out again from its
@@ -167,8 +215,9 @@ const keptItem = (item: WorkItem) => ({
 });
 
 // Where a block at a resumable node records its wait, and the data, with its
-// own beside: none outside a document's resumable node, or when what the node
-// keeps can't go into a record, and the block waits inside the run.
+// own beside, and the round of a node in a repeat: none outside a document's
+// resumable node, or when what the node keeps can't go into a record, and
+// the block waits inside the run.
 export const parking = (own: JsonObject = {}) =>
   Effect.gen(function* () {
     const found = yield* Keeping;
@@ -186,6 +235,10 @@ export const parking = (own: JsonObject = {}) =>
         Option.liftPredicate(
           {
             ...own,
+            ...Option.match(found.value.round, {
+              onNone: () => ({}),
+              onSome: (inRound) => ({ round: inRound }),
+            }),
             resume: {
               flow: found.value.flow,
               node: found.value.node,
@@ -233,6 +286,7 @@ export const claimAgain = Effect.gen(function* () {
 export type Resumes = (
   data: PhaseData,
   item: WorkItem,
+  at: DateTime.Utc,
 ) => Effect.Effect<Option.Option<WorkItem>, FlowError, TriggerServices>;
 
 const sameLogin = (one: string, other: string) => one.toLowerCase() === other.toLowerCase();
@@ -245,7 +299,15 @@ const resumingItem = (record: Parked, phase: string): Option.Option<WorkItem> =>
     ...record.resume.item,
     data: {
       ...data,
-      resume: { node: record.resume.node, phase, kept: record.resume.kept },
+      resume: {
+        node: record.resume.node,
+        ...Option.match(Option.fromUndefinedOr(record.round), {
+          onNone: () => ({}),
+          onSome: (inRound) => ({ round: inRound }),
+        }),
+        phase,
+        kept: record.resume.kept,
+      },
     },
   }));
 
@@ -285,7 +347,7 @@ export const parked = (flow: string, nodes: { readonly [node: string]: Resumes }
             continue;
           }
 
-          for (const ready of Option.toArray(yield* resumes.value(data, item))) {
+          for (const ready of Option.toArray(yield* resumes.value(data, item, found.at))) {
             items.push(ready);
           }
         }
