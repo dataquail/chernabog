@@ -22,7 +22,6 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Cause from "effect/Cause";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -30,6 +29,7 @@ import * as Schema from "effect/Schema";
 
 import * as Implement from "./implement.ts";
 import * as Phases from "./phases.ts";
+import * as Resume from "./resume.ts";
 import * as Review from "./review.ts";
 import * as Settings from "./settings.ts";
 
@@ -42,7 +42,8 @@ const Restore = Schema.Struct({
 export type Restore = typeof Restore.Type;
 
 // What a parked wait's record keeps beside where a document resumes: the
-// record it parked over, and when the round's wait began (CiWait.since).
+// record it parked over, and when the round's wait began, which every
+// wait for CI keeps.
 const Parked = Schema.Struct({ restore: Restore, since: Schema.optionalKey(Schema.String) });
 
 const decodeParked = Schema.decodeUnknownOption(Parked);
@@ -76,14 +77,11 @@ const reviewPhase = (pullRequest: number) =>
     Schema.Option(Restore),
   );
 
-// A `since` as long as any, for sizing a record before it's written.
-const SINCE_SIZE = DateTime.formatIso(DateTime.makeUnsafe(0));
-
 // Where a recipe's wait parks: on the pull request's record, with what it
 // parked over, when that fits a record.
 export const parkOnPullRequest = (pullRequest: number) => (restore: Restore) =>
   Effect.succeed(
-    Option.flatMap(Option.liftPredicate({ restore, since: SINCE_SIZE }, isPhaseData), () =>
+    Option.flatMap(Option.liftPredicate({ restore, since: Resume.SINCE_SIZE }, isPhaseData), () =>
       Option.map(Option.liftPredicate({ restore }, isPhaseData), (data) => ({
         item: Phases.pullRequestItem(pullRequest),
         data,
@@ -149,7 +147,6 @@ export const waitForCi = <E, R>(
         park: item,
         data,
         phase: Phases.conflictCi,
-        since: true,
       }),
     });
 
@@ -165,35 +162,9 @@ export const waitForCi = <E, R>(
     return yield* waited;
   });
 
-// Why a parked wait's item can't start yet: its CI is still pending and
-// ciTimeout, counted from when the round began, hasn't passed. None once CI
-// is green or red, or the time is up, when the run that takes it up reads it.
-const conflictHeld = (pullRequest: number, data: PhaseData) =>
-  Effect.gen(function* () {
-    const pending = yield* Implement.waitingOnCi(pullRequest);
-
-    if (Option.isNone(pending)) {
-      return pending;
-    }
-
-    const { timeout } = yield* Settings.ci;
-    const now = yield* DateTime.now;
-
-    const since = Option.flatMap(
-      Option.flatMap(decodeParked(data), (parked) => Option.fromUndefinedOr(parked.since)),
-      DateTime.make,
-    );
-
-    const past = Option.exists(since, (began) =>
-      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
-    );
-
-    return Option.filter(pending, () => !past);
-  });
-
 // The item, held with why while its wait hasn't settled.
 const heldUnlessSettled = (pullRequest: number, data: PhaseData, item: WorkItem) =>
-  Effect.map(conflictHeld(pullRequest, data), (held) =>
+  Effect.map(Implement.heldOnCi(pullRequest, Option.some(data)), (held) =>
     Option.match(held, {
       onNone: () => item,
       onSome: (why): WorkItem => ({ ...item, held: why }),
@@ -290,4 +261,4 @@ export const documentCiResumes = (data: PhaseData, item: WorkItem) =>
 
 // What a document's run at conflict.waitForCi parks with: what the record
 // parked over beside where it resumes, when the node can resume (Resume.parking).
-export const keptWith = (restore: Restore) => ({ restore, since: SINCE_SIZE });
+export const keptWith = (restore: Restore) => ({ restore });

@@ -7,6 +7,8 @@
 // An issue an open pull request on another branch already closes is not
 // implemented again: claim adopts that pull request (auto:adopted), and the
 // run waits for CI, fixing red in a worktree on its branch, and hands it off.
+// Its wait for CI parks on the issue's record too, which keeps the adopted
+// pull request.
 // A draft waits for its author to mark it ready first. Several, or one on a
 // fork, go to a person.
 //
@@ -127,26 +129,40 @@ const flow = defineFlow({
         const adoption = Option.fromUndefinedOr(claimed.adopted);
         const resuming = Implement.resumingCi(item);
 
-        // A CI job ended while this issue's pull request's CI ran, and it has
+        // A run ended while this issue's pull request's CI ran, and it has
         // finished: wait on from the round the record names (a fix of red CI
-        // starts a session of its own), then hand off.
+        // starts a session of its own), then hand off; an adopted pull
+        // request as one, since no agent implemented it.
         if (Option.isSome(resuming)) {
           const waited = resuming.value;
           pullRequest = Option.some(waited.pullRequest);
+
+          const parking = Option.match(adoption, {
+            onNone: () => Implement.parkOnIssue(issue),
+            onSome: (adopted) => Implement.parkOnAdopted(issue, adopted.number),
+          });
 
           return yield* Effect.gen(function* () {
             yield* Implement.waitForCiMaking(
               waited.pullRequest,
               Implement.prepareWorktree(branch, { base }),
               { ...Implement.thisRunsSession, branch, base },
-              { ...Implement.parkOnIssue(issue), firstRound: waited.round },
+              { ...parking, firstRound: waited.round },
             );
 
-            return yield* Implement.handOff(
-              issue,
-              { number: waited.pullRequest, url: waited.url },
-              Implement.resumedOutcome,
-            );
+            return yield* Option.match(adoption, {
+              onNone: () =>
+                Implement.handOff(
+                  issue,
+                  { number: waited.pullRequest, url: waited.url },
+                  Implement.resumedOutcome,
+                ),
+              onSome: (adopted) =>
+                Implement.handOff(issue, adopted, Implement.adoptedOutcome(adopted), {
+                  needsReview: true,
+                  adoptedBranch: branch,
+                }),
+            });
           }).pipe(Effect.catchTags(forPerson));
         }
 
@@ -165,7 +181,9 @@ const flow = defineFlow({
               });
             }
 
-            // The worktree is made only for a fix.
+            // The worktree is made only for a fix. Still-pending CI parks on
+            // the issue's record, which keeps the pull request, and the item
+            // comes back through Implement.awaitingCi once CI finishes.
             yield* Implement.waitForCiMaking(
               adopted.number,
               Implement.prepareWorktree(branch, { base }),
@@ -174,6 +192,7 @@ const flow = defineFlow({
                 branch,
                 base,
               },
+              Implement.parkOnAdopted(issue, adopted.number),
             );
 
             return yield* Implement.handOff(issue, adopted, Implement.adoptedOutcome(adopted), {

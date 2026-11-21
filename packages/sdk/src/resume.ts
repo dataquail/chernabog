@@ -30,7 +30,7 @@ import {
   type WorkItem,
 } from "@chernabog/core";
 import * as Context from "effect/Context";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -214,6 +214,9 @@ const keptItem = (item: WorkItem) => ({
   data: itemData(item),
 });
 
+// A `since` as long as any, for sizing a record before it's written.
+export const SINCE_SIZE = DateTime.formatIso(DateTime.makeUnsafe(0));
+
 // Where a block at a resumable node records its wait, and the data, with its
 // own beside, and the round of a node in a repeat: none outside a document's
 // resumable node, or when what the node keeps can't go into a record, and
@@ -232,22 +235,26 @@ export const parking = (own: JsonObject = {}) =>
     const data = Option.flatMap(
       Option.all({ values: Option.all(found.value.kept), who: login }),
       ({ values, who }) =>
-        Option.liftPredicate(
-          {
-            ...own,
-            ...Option.match(found.value.round, {
-              onNone: () => ({}),
-              onSome: (inRound) => ({ round: inRound }),
-            }),
-            resume: {
-              flow: found.value.flow,
-              node: found.value.node,
-              login: who,
-              item: keptItem(found.value.item),
-              kept: values,
+        Option.filter(
+          Option.liftPredicate(
+            {
+              ...own,
+              ...Option.match(found.value.round, {
+                onNone: () => ({}),
+                onSome: (inRound) => ({ round: inRound }),
+              }),
+              resume: {
+                flow: found.value.flow,
+                node: found.value.node,
+                login: who,
+                item: keptItem(found.value.item),
+                kept: values,
+              },
             },
-          },
-          isPhaseData,
+            isPhaseData,
+          ),
+          // With room for when the wait began, which a wait for CI adds.
+          (fits) => isPhaseData({ ...fits, since: SINCE_SIZE }),
         ),
     );
 
