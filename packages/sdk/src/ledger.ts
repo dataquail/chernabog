@@ -24,7 +24,7 @@ import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
 
 import { transitions } from "./blocks.ts";
-import { ACKNOWLEDGED, type Anomaly, check } from "./ledger-check.ts";
+import { ACKNOWLEDGED, type Anomaly, check, isUnreadable } from "./ledger-check.ts";
 
 export * from "./ledger-check.ts";
 
@@ -72,13 +72,20 @@ const acknowledger = Schema.decodeSync(PhaseWriter)(ACKNOWLEDGED);
 // knows (ACKNOWLEDGED): the person's say-so that the record is right, which
 // the next tick's sources then act on. Only while the item still holds the
 // record the survey found; one that moved since is left, since the record a
-// person looked at is gone.
+// person looked at is gone. One its adapter couldn't read is left too: it
+// holds no phase to record again, so only a persona's record fixes it.
 export const acknowledge = (anomalies: ReadonlyArray<Anomaly>) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
     const results: Array<Acknowledged> = [];
 
     for (const anomaly of anomalies) {
+      if (isUnreadable(anomaly)) {
+        results.push({ anomaly, acknowledged: false });
+
+        continue;
+      }
+
       const current = yield* progress.read(anomaly.item);
 
       const still = Option.filter(current, (record) => record.version === anomaly.version);

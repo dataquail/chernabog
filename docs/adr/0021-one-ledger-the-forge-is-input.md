@@ -412,6 +412,18 @@ change.
      record says the same thing every tick, so nothing repeats. The fix is
      an ordinary record by a known writer, which clears the hold on the
      next tick, or an acknowledgement.
+   - **A record that doesn't read.** A record the store holds but the
+     adapter can't read, such as a commit pushed to a git thread with no
+     `Phase:` trailer or a `Data:` trailer that doesn't decode, holds its
+     own item and no other (#549). The adapter gives it as core's
+     `unreadableRecord`: its version and time, the writer
+     `chernabog:unreadable`, which no login can be, the phase `unreadable`,
+     and why it isn't a record in its data. The check makes it an anomaly
+     with that why, and a flow that reads the item's kind reports it, since
+     it names no phase a flow reads. It can't be acknowledged, as it holds
+     no phase to record again; a persona's record fixes it. Failing the
+     read instead failed every source that reads every item, for the whole
+     repo.
    - **Records from before the check.** Every writer chernabog has written
      as passes, and a phase that isn't the SDK's passes for a run, so a
      removed phase doesn't flood anyone. What remains, such as a renamed
