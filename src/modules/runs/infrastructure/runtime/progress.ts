@@ -24,6 +24,7 @@ import {
   ProgressError,
   ProgressUnwritable,
   type RepoSettings,
+  unreadableRecord,
 } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -108,33 +109,65 @@ const decodePhase = Schema.decodeUnknownOption(Phase);
 const decodeWriter = Schema.decodeUnknownOption(PhaseWriter);
 const decodeData = Schema.decodeUnknownOption(PhaseData);
 
+// The trailer `key`, decoded; none when it is absent; why, when it is there
+// but doesn't decode as `noun`.
+const optionalTrailer = <A>(
+  message: string,
+  key: string,
+  decode: (value: string) => Option.Option<A>,
+  noun: string,
+): Result.Result<Option.Option<A>, string> =>
+  Option.match(trailer(message, key), {
+    onNone: () => Result.succeed(Option.none<A>()),
+    onSome: (value) =>
+      Result.map(
+        Result.fromOption(decode(value), () => `its ${key} trailer isn't ${noun}`),
+        Option.some,
+      ),
+  });
+
+// The trailer `key`, decoded, or why not: absent, or not `noun`.
+const requiredTrailer = <A>(
+  message: string,
+  key: string,
+  decode: (value: string) => Option.Option<A>,
+  noun: string,
+): Result.Result<A, string> =>
+  Result.flatMap(optionalTrailer(message, key, decode, noun), (found) =>
+    Result.fromOption(found, () => `it has no ${key} trailer`),
+  );
+
+const decodeDataLine = (value: string) => Option.flatMap(parseJson(value), decodeData);
+
 // The record a commit holds, read from its message and written `at` its
-// commit's date; none for one that isn't a record. A `From` or `Data` trailer
-// that is there but doesn't decode makes it no record, as a bad `Phase` does.
+// commit's date, or why it holds none. A `From` or `Data` trailer that is
+// there but doesn't decode makes it no record, as a bad `Phase` does.
+export const readRecord = (
+  version: string,
+  message: string,
+  at: DateTime.Utc,
+): Result.Result<PhaseRecord, string> =>
+  Result.gen(function* () {
+    const phase = yield* requiredTrailer(message, "Phase", decodePhase, "a phase");
+    const by = yield* requiredTrailer(message, "By", decodeWriter, "a writer");
+    const from = yield* optionalTrailer(message, "From", decodePhase, "a phase");
+
+    const data = yield* optionalTrailer(
+      message,
+      "Data",
+      decodeDataLine,
+      "a JSON object a record can hold",
+    );
+
+    return { phase, from, by, version, at, data };
+  });
+
+// The record a commit holds; none for one that isn't a record.
 export const parseRecord = (
   version: string,
   message: string,
   at: DateTime.Utc,
-): Option.Option<PhaseRecord> => {
-  const from = trailer(message, "From");
-  const fromPhase = Option.flatMap(from, decodePhase);
-  const data = trailer(message, "Data");
-  const parsed = Option.flatMap(Option.flatMap(data, parseJson), decodeData);
-
-  if (
-    (Option.isSome(from) && Option.isNone(fromPhase)) ||
-    (Option.isSome(data) && Option.isNone(parsed))
-  ) {
-    return Option.none();
-  }
-
-  return Option.all({
-    phase: Option.flatMap(trailer(message, "Phase"), decodePhase),
-    by: Option.flatMap(trailer(message, "By"), decodeWriter),
-  }).pipe(
-    Option.map(({ by, phase }) => ({ phase, from: fromPhase, by, version, at, data: parsed })),
-  );
-};
+): Option.Option<PhaseRecord> => Result.getSuccess(readRecord(version, message, at));
 
 // The phase the writer read, which the record it writes names as `from`.
 export const fromPhase = (transition: PhaseTransition) =>
@@ -286,7 +319,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
     // Each record read, by its commit: a tip that hasn't moved is read once.
     const seen = new Map<string, PhaseRecord>();
 
-    const recordAt = (item: string, tip: typeof Tip.Type) => {
+    const recordAt = (tip: typeof Tip.Type) => {
       const cached = Option.fromUndefinedOr(seen.get(tip.oid));
 
       if (Option.isSome(cached)) {
@@ -294,22 +327,18 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       }
 
       return commitTime(tip.oid, Option.fromUndefinedOr(tip.committedDate)).pipe(
-        Effect.flatMap((at) =>
-          Option.match(parseRecord(tip.oid, tip.message ?? "", at), {
-            onNone: () =>
-              Effect.fail(
-                new ProgressError({
-                  message: `${prefix}${item} is at ${tip.oid}, which holds no phase record`,
-                }),
-              ),
-            onSome: (record) =>
-              Effect.sync(() => {
-                seen.set(tip.oid, record);
+        Effect.map((at) => {
+          // A tip that isn't a record, such as a commit a person pushed,
+          // reads as one that says why: the ledger's check holds this item
+          // alone, where failing would fail every read of every item.
+          const record = Result.getOrElse(readRecord(tip.oid, tip.message ?? "", at), (why) =>
+            unreadableRecord(tip.oid, at, why),
+          );
 
-                return record;
-              }),
-          }),
-        ),
+          seen.set(tip.oid, record);
+
+          return record;
+        }),
       );
     };
 
@@ -346,7 +375,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         ).pipe(Effect.mapError(failed));
 
         return yield* Effect.transposeOption(
-          Option.map(data.repository.ref, (ref) => recordAt(item, ref.target)),
+          Option.map(data.repository.ref, (ref) => recordAt(ref.target)),
         );
       });
 
@@ -368,7 +397,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
 
         // A branch below an item's, which no item names, isn't a record.
         for (const node of data.repository.refs.nodes.filter((one) => isThreadItem(one.name))) {
-          all.set(node.name, yield* recordAt(node.name, node.target));
+          all.set(node.name, yield* recordAt(node.target));
         }
 
         const page = data.repository.refs.pageInfo;

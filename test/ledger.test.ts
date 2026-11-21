@@ -17,6 +17,8 @@ import {
   Phases,
   PhaseWriter,
   reviewMarker,
+  UNREADABLE_PHASE,
+  UNREADABLE_WRITER,
   type WorkItem,
 } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
@@ -151,6 +153,26 @@ describe.each(FLOWS)("sabotage of address-review's record, in %s", (_, flow) => 
     }),
   );
 
+  // A record the adapter couldn't read (#549), such as a commit pushed to the
+  // thread with no Phase trailer, holds its own item and no other.
+  effect("a record the adapter couldn't read is held, with why", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, UNREADABLE_PHASE, {
+        by: UNREADABLE_WRITER,
+        data: { unreadable: "it has no Phase trailer" },
+      });
+      const version = fake.records().get(PR_ITEM)?.version ?? "";
+
+      const items = yield* found(fake, flow());
+
+      expect(startable(items)).toEqual([]);
+      expect(heldOf(items)).toEqual([
+        `${PR_ITEM}'s record ${version.slice(0, 7)} is an anomaly: it doesn't read as a record (it has no Phase trailer). Record its phase again as a persona: acknowledging it can't, since it holds no phase`,
+      ]);
+    }),
+  );
+
   effect("a known writer's transition that no flow declares is held", () =>
     Effect.gen(function* () {
       const fake = changesAsked();
@@ -263,6 +285,27 @@ describe("a person's fix for an anomaly", () => {
       });
       expect(yield* onFake(fake, Ledger.survey)).toEqual([]);
       expect(startable(yield* found(fake, recipe)).length).toBe(1);
+    }),
+  );
+
+  effect("a record the adapter couldn't read is listed, and not acknowledged", () =>
+    Effect.gen(function* () {
+      const fake = changesAsked();
+      fake.recordPhase(PR_ITEM, UNREADABLE_PHASE, {
+        by: UNREADABLE_WRITER,
+        data: { unreadable: "it has no Phase trailer" },
+      });
+
+      const anomalies = yield* onFake(fake, Ledger.survey);
+
+      expect(anomalies.map((one) => [one.item, one.why])).toEqual([
+        [PR_ITEM, "it doesn't read as a record (it has no Phase trailer)"],
+      ]);
+
+      const acknowledged = yield* onFake(fake, Ledger.acknowledge(anomalies));
+
+      expect(acknowledged.map((one) => one.acknowledged)).toEqual([false]);
+      expect(fake.records().get(PR_ITEM)?.by).toBe(asWriter(UNREADABLE_WRITER));
     }),
   );
 

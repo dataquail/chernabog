@@ -9,7 +9,14 @@
 // is the blocks' and sources' declarations, which ledger.ts gathers; this one
 // imports none of them, so blocks.ts can use it.
 
-import { Claims, type PhaseRecord, Repo, type WorkItem } from "@chernabog/core";
+import {
+  Claims,
+  type PhaseRecord,
+  Repo,
+  UNREADABLE_WRITER,
+  unreadableWhy,
+  type WorkItem,
+} from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -146,6 +153,16 @@ export const anomalyOf = (item: string, record: PhaseRecord, why: string): Anoma
 export const check =
   (catalogue: Catalogue, personas: ReadonlyArray<string>) =>
   (item: string, record: PhaseRecord): Option.Option<Anomaly> => {
+    // A record the adapter couldn't read, such as a commit a person pushed
+    // to a thread, holds no phase to check: it is an anomaly as it is.
+    const unreadable = unreadableWhy(record);
+
+    if (Option.isSome(unreadable)) {
+      return Option.some(
+        anomalyOf(item, record, `it doesn't read as a record (${unreadable.value})`),
+      );
+    }
+
     const declared = catalogue.observed.filter((observed) => observed.by === record.by);
     const asRun = isRunWriter(record.by) || personas.some((login) => sameLogin(login, record.by));
 
@@ -171,9 +188,18 @@ export const check =
 export const recordNamed = (anomaly: Anomaly) =>
   `record ${anomaly.version.slice(0, 7)} (${anomaly.from ?? NO_RECORD} -> ${anomaly.phase}, by ${anomaly.by})`;
 
+// Whether an anomaly's record is one its adapter couldn't read, which holds
+// no phase a person could acknowledge.
+export const isUnreadable = (anomaly: Anomaly) => anomaly.by === UNREADABLE_WRITER;
+
 // Why a source holds an item: the record it won't act on, and what a person can do.
-export const heldFor = (anomaly: Anomaly) =>
-  `${anomaly.item}'s ${recordNamed(anomaly)} is an anomaly: ${anomaly.why}. Record its phase again as a persona, or acknowledge it with chernabog progress anomalies --acknowledge`;
+export const heldFor = (anomaly: Anomaly) => {
+  if (isUnreadable(anomaly)) {
+    return `${anomaly.item}'s record ${anomaly.version.slice(0, 7)} is an anomaly: ${anomaly.why}. Record its phase again as a persona: acknowledging it can't, since it holds no phase`;
+  }
+
+  return `${anomaly.item}'s ${recordNamed(anomaly)} is an anomaly: ${anomaly.why}. Record its phase again as a persona, or acknowledge it with chernabog progress anomalies --acknowledge`;
+};
 
 const IssueWork = Schema.Struct({ issue: Schema.Finite });
 const PullRequestWork = Schema.Struct({ pullRequest: Schema.Finite });
@@ -203,15 +229,18 @@ export const anomalyOfWork = (work: WorkItem): Option.Option<string> =>
   Option.map(Schema.decodeUnknownOption(AnomalyWork)(work.data), (found) => found.anomaly);
 
 // Whether a flow that reads `reads` would act on the item the anomaly is
-// about: its record moved the item to, or from, a phase the flow reads.
+// about: its record moved the item to, or from, a phase the flow reads. A
+// record its adapter couldn't read names no phase, so any flow that reads
+// the item's kind might.
 const readBy = (reads: ReadonlyArray<Reading>, anomaly: Anomaly) =>
   Option.exists(kindOf(anomaly.item), (kind) =>
     reads.some(
       (reading) =>
         reading.item === kind &&
-        [anomaly.phase, ...Option.toArray(Option.fromUndefinedOr(anomaly.from))].some((phase) =>
-          reading.phases.some((read) => read === declaredAs(phase)),
-        ),
+        (isUnreadable(anomaly) ||
+          [anomaly.phase, ...Option.toArray(Option.fromUndefinedOr(anomaly.from))].some((phase) =>
+            reading.phases.some((read) => read === declaredAs(phase)),
+          )),
     ),
   );
 
