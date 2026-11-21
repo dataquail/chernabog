@@ -159,7 +159,7 @@ const targets = {
 const dropping =
   (id: string, standIn = "") =>
   (source: string) =>
-    source.replace(new RegExp(`const ${id} = yield\\* [^\\n]*`), standIn);
+    source.replaceAll(new RegExp(`const ${id} = yield\\* [^\\n]*`, "g"), standIn);
 
 const sabotaged = (
   title: string,
@@ -210,14 +210,14 @@ describe("the comparison sees an implement flow that", () => {
   sabotaged("skips the local gate", target, "when the work goes for review", dropping("gate"));
 
   sabotaged("doesn't let its claim go", target, "when the work goes for review", (source) =>
-    source.replace("{ claims: true }", "{ claims: false }"),
+    source.replaceAll("{ claims: true }", "{ claims: false }"),
   );
 
   sabotaged(
     "forgets its pull request when it fails",
     target,
     "when CI is red and stays red",
-    (source) => source.replace("failureContext.pr = Option.some(opened.number);", ""),
+    (source) => source.replaceAll("failureContext.pr = Option.some(opened.number);", ""),
   );
 });
 
@@ -232,7 +232,7 @@ describe("the comparison sees a review flow that", () => {
   );
 
   sabotaged("takes changes asked for as approval", target, "when it asks for changes", (source) =>
-    source.replace('outcomes["changes"]', 'outcomes["approve"]'),
+    source.replaceAll('outcomes["changes"]', 'outcomes["approve"]'),
   );
 });
 
@@ -244,7 +244,7 @@ describe("the comparison sees a re-review flow that", () => {
     target,
     "when it approves on the re-review, and a person merges",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["review.latestOwn"].outcomes["none"](earlier)',
         'catalogue["review.latestOwn"].outcomes["found"](earlier)',
       ),
@@ -262,7 +262,7 @@ describe("the comparison sees a re-review flow that", () => {
     target,
     "when it has no review of its own, and a first review asks for changes",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["review.round"].outcomes["changes"]',
         'catalogue["review.round"].outcomes["approve"]',
       ),
@@ -273,7 +273,7 @@ describe("the comparison sees a re-review flow that", () => {
     target,
     "when it has had as many re-reviews as reviewRounds allows",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'outcomes["exhausted"](rounds)',
         'outcomes["exhausted"]({ reReviews: 0, limit: 1 })',
       ),
@@ -305,7 +305,7 @@ describe("the comparison sees a re-review flow that", () => {
     target,
     "when it still asks for changes",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["review.recheck"].outcomes["changes"]',
         'catalogue["review.recheck"].outcomes["approve"]',
       ),
@@ -321,7 +321,7 @@ describe("the comparison sees an address-review flow that", () => {
     target,
     "when the author disputes the review",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["author.consider"].outcomes["decline"](considered)',
         "Option.none()",
       ),
@@ -346,7 +346,7 @@ describe("the comparison sees an address-review flow that", () => {
     target,
     "when the author needs a person to answer the review",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["author.address"].outcomes["needs-clarification"](addressed)',
         "Option.none()",
       ),
@@ -388,7 +388,7 @@ describe("the comparison sees an address-review flow that", () => {
   );
 
   sabotaged("asks another persona to review again", target, agrees, (source) =>
-    source.replace('"reviewer": trigger.reviewer, "summary"', '"reviewer": "zach", "summary"'),
+    source.replaceAll('"reviewer": trigger.reviewer, "summary"', '"reviewer": "zach", "summary"'),
   );
 
   sabotaged(
@@ -406,7 +406,7 @@ describe("the comparison sees an address-review flow that", () => {
     target,
     "when a person worked on the pull request with the agent, and the fix touches humanOnlyPaths",
     (source) =>
-      source.replace(
+      source.replaceAll(
         '"session": author, "committed"',
         '"session": { ...author, withPerson: false }, "committed"',
       ),
@@ -417,7 +417,7 @@ describe("the comparison sees an address-review flow that", () => {
     layer,
     "when a layer of a stack is addressed",
     (source) =>
-      source.replace(
+      source.replaceAll(
         '"base": trigger.base, "review": asked, "session": author, "committed"',
         '"base": Option.none(), "review": asked, "session": author, "committed"',
       ),
@@ -430,7 +430,7 @@ describe("the comparison sees a resolve-conflicts flow that", () => {
   const settle = "when only a person can settle the conflict";
 
   sabotaged("pushes a merge only a person can settle", target, settle, (source) =>
-    source.replace(
+    source.replaceAll(
       'catalogue["conflict.resolve"].outcomes["needs-human"](resolved)',
       "Option.none()",
     ),
@@ -448,7 +448,7 @@ describe("the comparison sees a resolve-conflicts flow that", () => {
     target,
     "when only a person can settle what the record of the layer below left",
     (source) =>
-      source.replace(
+      source.replaceAll(
         'catalogue["conflict.resolve"].outcomes["needs-human"](resolved)',
         "Option.none()",
       ),
@@ -475,7 +475,7 @@ describe("the comparison sees a resolve-conflicts flow that", () => {
     target,
     "when CI is red and stays red",
     (source) =>
-      source.replace(
+      source.replaceAll(
         '"base": trigger.base, "session": resolved.session',
         '"base": trigger.base, "session": { sessionId: Option.none(), adapter: Option.none() }',
       ),
@@ -493,7 +493,7 @@ describe("the comparison sees a resolve-conflicts flow that", () => {
     layer,
     "when a layer of a stack conflicts with the layer below",
     (source) =>
-      source.replace(
+      source.replaceAll(
         '"base": trigger.base, "worktree": worktree',
         '"base": "main", "worktree": worktree',
       ),
@@ -503,7 +503,8 @@ describe("the comparison sees a resolve-conflicts flow that", () => {
     "checks a layer's push against the repo's base, not the layer below",
     layer,
     "when a layer of a stack conflicts with the layer below",
-    (source) => source.replace('"base": trigger.base, "committed"', '"base": "main", "committed"'),
+    (source) =>
+      source.replaceAll('"base": trigger.base, "committed"', '"base": "main", "committed"'),
   );
 });
 
@@ -519,7 +520,7 @@ describe("the comparison sees an epic flow that", () => {
   );
 
   sabotaged("never lands", target, "when its layers ship", (source) =>
-    source.replace("const landed = ships.value === true ?", "const landed = false ?"),
+    source.replaceAll("const landed = ships.value === true ?", "const landed = false ?"),
   );
 
   sabotaged("posts no status", target, opens, dropping("status"));
@@ -542,7 +543,7 @@ describe("the comparison sees an epic flow that", () => {
     "forgets a task's pull request when it fails",
     target,
     "when a task's CI stays red, and it goes to a person",
-    (source) => source.replace("failureContext.pr = Option.some(published.pr.number);", ""),
+    (source) => source.replaceAll("failureContext.pr = Option.some(published.pr.number);", ""),
   );
 });
 
@@ -612,7 +613,7 @@ describe("the comparison sees a post-merge flow that", () => {
 
   // Each branch taken as though the outcome hadn't come.
   const notTaking = (outcome: string, bound: string) => (source: string) =>
-    source.replace(`catalogue["${outcome}"].outcomes["${bound}"]`, "(() => Option.none())");
+    source.replaceAll(`catalogue["${outcome}"].outcomes["${bound}"]`, "(() => Option.none())");
 
   sabotaged(
     "doesn't mark the pull request watched",
@@ -635,8 +636,8 @@ describe("the comparison sees a post-merge flow that", () => {
     target,
     "when CI on the merge commit stays pending past ciTimeout",
     (source) =>
-      source.replace(
-        /(catalogue\["merged\.awaitCi"\]\.run\(\{[^}]*\})\)/,
+      source.replaceAll(
+        /(catalogue\["merged\.awaitCi"\]\.run\(\{[^}]*\})\)/g,
         '$1, { NeedsHuman: "skip" })',
       ),
   );
@@ -681,8 +682,8 @@ describe("the comparison sees a human-initiated flow that", () => {
 
   // A block's run given a failure table of the sabotage's own.
   const overriding = (block: string, failures: string) => (source: string) =>
-    source.replace(
-      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`),
+    source.replaceAll(
+      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`, "g"),
       `$1, ${failures})`,
     );
 
@@ -691,20 +692,20 @@ describe("the comparison sees a human-initiated flow that", () => {
   sabotaged("skips the local gate", target, "when the local gate keeps failing", dropping("gate"));
 
   sabotaged("doesn't let its claim go", target, done, (source) =>
-    source.replace("{ claims: true }", "{ claims: false }"),
+    source.replaceAll("{ claims: true }", "{ claims: false }"),
   );
 
   sabotaged("doesn't wait for CI", target, red, dropping("ci"));
 
   sabotaged("forgets its pull request when it fails", target, red, (source) =>
-    source.replace("failureContext.pr = Option.some(opened.number);", ""),
+    source.replaceAll("failureContext.pr = Option.some(opened.number);", ""),
   );
 
   sabotaged(
     "hands a failure before the session to a person, rather than failing",
     target,
     "when the worktree's install fails",
-    (source) => source.replace(', {"StepFailed":"fail"}', ""),
+    (source) => source.replaceAll(', {"StepFailed":"fail"}', ""),
   );
 
   sabotaged(
@@ -744,12 +745,12 @@ describe("the comparison sees a plan flow that", () => {
 
   // Each branch taken as though the outcome hadn't come.
   const notTaking = (block: string, outcome: string) => (source: string) =>
-    source.replace(`catalogue["${block}"].outcomes["${outcome}"]`, "(() => Option.none())");
+    source.replaceAll(`catalogue["${block}"].outcomes["${outcome}"]`, "(() => Option.none())");
 
   // A block's run given a failure table of the sabotage's own.
   const overriding = (block: string, failures: string) => (source: string) =>
-    source.replace(
-      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`),
+    source.replaceAll(
+      new RegExp(`(catalogue\\["${block.replaceAll(".", "\\.")}"\\]\\.run\\(\\{[^}]*\\})\\)`, "g"),
       `$1, ${failures})`,
     );
 
@@ -775,15 +776,15 @@ describe("the comparison sees a plan flow that", () => {
   );
 
   sabotaged("doesn't let its claim go", target, approved, (source) =>
-    source.replace("{ claims: true }", "{ claims: false }"),
+    source.replaceAll("{ claims: true }", "{ claims: false }"),
   );
 
   sabotaged("takes changes asked for as approval", target, changes, (source) =>
-    source.replace('outcomes["changes"]', 'outcomes["approved"]'),
+    source.replaceAll('outcomes["changes"]', 'outcomes["approved"]'),
   );
 
   sabotaged("drafts again without what the person asked to change", target, changes, (source) =>
-    source.replace('"changes": asked.changes', '"changes": Option.none()'),
+    source.replaceAll('"changes": asked.changes', '"changes": Option.none()'),
   );
 
   sabotaged("posts a plan it has questions about", target, questions, (source) =>
@@ -815,14 +816,14 @@ describe("the comparison sees a plan flow that", () => {
     "hands a claim that fails to a person, rather than failing",
     target,
     "when the base branch is gone",
-    (source) => source.replace(', {"StepFailed":"fail"}', ""),
+    (source) => source.replaceAll(', {"StepFailed":"fail"}', ""),
   );
 
   sabotaged(
     "fails, rather than skipping, on a spec another run holds",
     target,
     "when another run holds the claim",
-    (source) => source.replace('{"StepFailed":"fail"}', '{"StepFailed":"fail","Skip":"fail"}'),
+    (source) => source.replaceAll('{"StepFailed":"fail"}', '{"StepFailed":"fail","Skip":"fail"}'),
   );
 });
 
@@ -863,7 +864,7 @@ describe("the draft test sees a draft flow that", () => {
   sabotagedDraft("opens it ready for review", (flow) => flow.replace(', "draft": true', ""));
 
   sabotagedDraft("asks the pool to review its draft", (flow) =>
-    flow.replace('"pr": opened, "outcome"', '"pr": { ...opened, draft: false }, "outcome"'),
+    flow.replaceAll('"pr": opened, "outcome"', '"pr": { ...opened, draft: false }, "outcome"'),
   );
 });
 

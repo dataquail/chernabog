@@ -17,6 +17,7 @@ export * as Implement from "./implement.ts";
 export * as Phases from "./phases.ts";
 export * as Plan from "./plan.ts";
 export * from "./prompt.ts";
+export * as Resume from "./resume.ts";
 export * as Review from "./review.ts";
 export * as Routing from "./routing.ts";
 export * as Settings from "./settings.ts";

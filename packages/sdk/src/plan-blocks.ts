@@ -40,9 +40,10 @@ export class PlanApproved extends Schema.TaggedClass<
 // none in the first round.
 export type PlanChanges = Option.Option<string>;
 
-// What a plan's rounds start with, by the name a document uses it by.
+// What a plan's rounds start with, by the name a document uses it by, given
+// the run's work item.
 export const planLoopStates = {
-  "plan.changes": (): PlanChanges => Option.none(),
+  "plan.changes": (_item: WorkItem): PlanChanges => Option.none(),
 };
 
 type Scoped<A, E, R> = (context: FailureContext) => Effect.Effect<A, E, R>;

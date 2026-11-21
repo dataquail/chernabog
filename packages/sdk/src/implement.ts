@@ -57,6 +57,7 @@ import * as Phases from "./phases.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import { requestReview } from "./pull-request.ts";
+import * as Resume from "./resume.ts";
 import type { ReviewResult } from "./review.ts";
 import * as Routing from "./routing.ts";
 import * as Settings from "./settings.ts";
@@ -1437,6 +1438,9 @@ export const CI_SETTLED = "ci-settled";
 export type CiWait = RepeatOptions & {
   readonly park?: string;
   readonly firstRound?: number;
+  // What the record keeps for the run that takes the wait up, such as where
+  // a flow document resumes (Resume.parking).
+  readonly data?: { readonly [key: string]: Json };
 };
 
 // The item to park on, when the flow can resume from its record: on a daemon
@@ -1448,7 +1452,7 @@ const parkingOn = (options: CiWait) => Effect.succeed(Option.fromUndefinedOr(opt
 const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
   activity(
     named(options, `awaiting-ci-${round}`),
-    Phases.record(item, Phases.awaitingCi(round)),
+    Phases.record(item, Phases.awaitingCi(round), options.data),
   ).pipe(Effect.andThen(awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout })));
 
 // Polls the pull request's checks durably until they stop pending, or
@@ -1499,6 +1503,65 @@ export const waitingOnCi = (pullRequest: number) =>
   Effect.map(Ci.pullRequestState(pullRequest), (reading) =>
     Option.liftPredicate(`waits on CI for #${pullRequest}`, () => reading.state === "pending"),
   );
+
+// How a flow document's wait for CI on the pull request goes on: at a node
+// the document can resume at, it records the wait on the run's item, with
+// where to resume and the pull request (Resume.parking), and parks; anywhere
+// else, or when what the node keeps doesn't fit a record, it polls. At the
+// node a run resumed at, it waits on from the round the record names.
+export const documentCiWait = (pullRequest: number, options: RepeatOptions = {}) =>
+  Effect.gen(function* () {
+    const parking = yield* Resume.parking({ pullRequest });
+    const resumed = Option.flatMap(yield* Resume.resumedPhase, Phases.ciRoundOf);
+
+    const from = Option.match(resumed, {
+      onNone: () => ({}),
+      onSome: (firstRound) => ({ firstRound }),
+    });
+
+    return Option.match(parking, {
+      onNone: (): CiWait => ({ ...options, ...from }),
+      onSome: ({ data, item }): CiWait => ({ ...options, ...from, park: item, data }),
+    });
+  });
+
+const DocumentCi = Schema.Struct({ pullRequest: Schema.Finite });
+
+// Whether a document's run parked on a pull request's CI may be taken up:
+// held while the checks pend, and free once they're green or red. One whose
+// pull request closed or went to a person (auto:needs-human) has nothing left
+// to resume.
+export const documentCiResumes = (data: { readonly [key: string]: Json }, item: WorkItem) =>
+  Effect.gen(function* () {
+    const parked = Schema.decodeUnknownOption(DocumentCi)(data);
+
+    if (Option.isNone(parked)) {
+      return Option.none<WorkItem>();
+    }
+
+    const github = yield* GitHub;
+    const labelNames = yield* Settings.labels;
+
+    const pull = yield* github.pullRequest(parked.value.pullRequest).pipe(
+      Effect.asSome,
+      Effect.catchTag("NotFound", () => Effect.succeedNone),
+    );
+
+    if (
+      Option.isNone(pull) ||
+      pull.value.state !== "open" ||
+      pull.value.labels.includes(labelNames.needsHuman)
+    ) {
+      return Option.none<WorkItem>();
+    }
+
+    return Option.some(
+      Option.match(yield* waitingOnCi(parked.value.pullRequest), {
+        onNone: () => item,
+        onSome: (held): WorkItem => ({ ...item, held }),
+      }),
+    );
+  }).pipe(reportAs("trigger"));
 
 export type CiBranch = AuthorSession & BaseOptions & { readonly branch: string };
 

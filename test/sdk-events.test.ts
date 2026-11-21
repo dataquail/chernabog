@@ -304,6 +304,8 @@ describe("the workflow's on: block", () => {
     expect(wiring.on.workflow_run).toBeUndefined();
     expect(wiring.routes.some((route) => route.event === "workflow_run")).toBe(false);
     expect(wiring.notes).toEqual([
+      "address-review wakes on workflow_run, but the repo names no CI workflow to filter it to, so it waits for the schedule",
+      "implement wakes on workflow_run, but the repo names no CI workflow to filter it to, so it waits for the schedule",
       "review wakes on workflow_run, but the repo names no CI workflow to filter it to, so it waits for the schedule",
     ]);
   });
@@ -392,8 +394,11 @@ describe("from an event to the items it concerns", () => {
         sender: { login: "reviewer-a" },
       }),
     ).toEqual([
+      // implement and address-review take up a wait for CI they parked on.
+      { flow: "implement", persona: "bot", item: { kind: "branch", name: "main" } },
       { flow: "review", persona: "reviewer-a", item: { kind: "branch", name: "main" } },
       { flow: "review", persona: "reviewer-b", item: { kind: "branch", name: "main" } },
+      { flow: "address-review", persona: "bot", item: { kind: "branch", name: "main" } },
     ]);
   });
 

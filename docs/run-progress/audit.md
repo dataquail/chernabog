@@ -58,9 +58,15 @@ run parks in its local workflow journal, and a signal wakes it.
 | W5  | `waitForCi` for an adopted pull request (`flows/implement.ts:168-176`)                                                                            | The pull request's CI                      | Polls   | Polls                         | none                                          | No: `awaitingCi` looks for the pull request on `auto/issue-N`, not the adopted one's branch |
 | W6  | resolve-conflicts' CI (`flows/resolve-conflicts.ts:291`)                                                                                          | CI on the merge commit                     | Polls   | Polls                         | none                                          | No                                                                                          |
 | W7  | Epic task CI (`flows/epic.ts:275`) and stack refresh (`stack.ts:610`)                                                                             | CI on a task's or a layer's pull request   | Polls   | Polls                         | none per task                                 | No: lanes live in memory                                                                    |
-| W8  | Blocks: `ci.waitPreparing`, `ci.waitAndFix`, `author.waitForCi`, `conflict.waitForCi`, `hybrid.waitForCi`                                         | CI                                         | Polls   | Polls                         | none                                          | No: no block passes `park`, so flow documents never park                                    |
+| W8  | Blocks: `ci.waitPreparing`, `ci.waitAndFix`, `author.waitForCi`, `conflict.waitForCi`, `hybrid.waitForCi`                                         | CI                                         | Parks   | Parks                         | `awaiting-ci[-n]`, with the node              | Yes for the first three: `Resume.parked`. `conflict.waitForCi` and `hybrid.waitForCi` poll  |
 | W9  | post-merge's `awaitMergeCi` (`flows/post-merge.ts:279`)                                                                                           | Push CI on the merge commit                | Polls   | Polls                         | none (`watched` written only by the document) | No                                                                                          |
 | W10 | Epic park (`flows/epic.ts:884`, `epic.park`)                                                                                                      | A layer changing                           | Journal | Restarts fresh on every sweep | none (`waiting` declared, not written)        | Partly: `Epic.queued` restarts it from GitHub, and loses `attempts`                         |
+
+W8 leaves two blocks polling. Polling is not a park, so neither is stranded.
+`conflict.waitForCi` would record `awaiting-ci` over the review phase that the
+pull request's record holds, such as `review-asked`, and nothing writes that phase
+back. W6 decides where a resolve-conflicts wait lives. `hybrid.waitForCi` runs in
+a flow a person starts, which has no trigger to offer the item again.
 
 Out of scope: `workWithPerson` (`hybrid.ts:206`) waits on a person in an interactive
 session that chernabog opened for them. It is a manual flow, and the wait is the work.

@@ -145,6 +145,36 @@ change.
    Both fields are additive to core (ADR 4): a new optional argument and two
    new fields on a returned record.
 
+   A flow document resumes at the node it parked on, found by a **node id the
+   record's data names**, not by the phase. One phase can be recorded at
+   several nodes: implement's two waits for CI both record `awaiting-ci` on
+   the issue. A block that parks (`Block.parks`, in the SDK's `resume.ts`)
+   records under `resume`:
+   - the document's flow and the node's id;
+   - the run's work item and the persona that parked it;
+   - `kept`: the outputs of earlier steps that the node and the steps after it
+     read. The compiler works out which ones.
+
+   A step whose block runs again (`Block.again`) is run again instead of
+   kept. This covers a cheap read, or something that belongs to the machine,
+   such as a worktree's path.
+
+   The document's source of parked items (`Resume.parked`) offers the item
+   as work a run may start. It holds the item while the node's block says
+   the wait hasn't settled, such as CI still pending, and leaves it for the
+   persona that parked it. The run starts at the node: it claims the item
+   again, restores what was kept, and goes on from the node, so nothing
+   before it, such as the agent's work, runs again. A node it no longer has
+   holds the item for a person.
+
+   What a node keeps must fit the record. A value that doesn't fit, or that
+   JSON can't hold, leaves the block polling inside the run. That is not a
+   park, so the run isn't stranded. A wait in a repeat's rounds resumes the
+   repeat, not the node: its loop state starts from what the record kept,
+   as the epic's rounds start from its `waiting` record. A wait in a
+   forEach's lanes polls (audit W7). A flow a person starts has no trigger
+   to offer its item again, so its waits poll too.
+
    A daemon may keep the agent's session warm across a park as an
    optimisation, as `address-review` resumes the author's session today. The
    run itself still ends.
@@ -225,12 +255,16 @@ change.
   a source can take up from the record. A run that ends there has status
   `ended-at-park`: it keeps every marker, worktree and agent session for the
   run that takes the item up, as a lost run does, and releases its claim ref
-  so that run may be on any machine or in CI. Until a flow document's waits
-  (audit W8) resume from a record, they are stranded on a daemon as in CI.
-  That was chosen over ending only the parks that can resume, so the daemon
-  and CI behave alike from now on. The epic's park (W10) records the epic's
-  `waiting` phase, with what the run kept between rounds, and `Epic.queued`
-  offers the epic again only once a layer changed since, or a day passed.
+  so that run may be on any machine or in CI. That was chosen over ending
+  only the parks that can resume, so the daemon and CI behave alike from now
+  on. The epic's park (W10) records the epic's `waiting` phase, with what the
+  run kept between rounds, and `Epic.queued` offers the epic again only once
+  a layer changed since, or a day passed. A flow document's waits for CI
+  (audit W8) park at a node and resume there. The epic document's rounds
+  start from the `waiting` record. The document parks that can't yet resume
+  are a plan's answer (in a repeat's rounds), a merge held by `pr.land`, and
+  resolve-conflicts' CI. Until they can, they are stranded on a daemon as in
+  CI, or they poll.
 - Removing a label or dismissing a review can no longer derail a run
   silently. At worst the item goes to a person as an anomaly or a declared
   intent.
