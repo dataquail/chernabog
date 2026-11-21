@@ -105,6 +105,10 @@ describe("the catalogue's phases", () => {
       { item: "pull-request", phase: "watched" },
     ]);
 
+    expect(blockNamed("merged.awaitCi")?.records).toEqual([
+      { item: "pull-request", phase: "awaiting-merge-ci" },
+    ]);
+
     expect(blockNamed("worktree.prepare")?.records).toEqual([]);
   });
 
@@ -136,7 +140,7 @@ describe("the catalogue's phases", () => {
     });
 
     expect(sourceNamed("pr.mergedRecently")?.reads).toEqual([
-      { item: "pull-request", phases: ["watched"] },
+      { item: "pull-request", phases: ["watched", "awaiting-merge-ci"] },
     ]);
 
     expect(sourceNamed("issues.queued")?.reads).toEqual([]);
@@ -165,10 +169,22 @@ describe("Compose.progressOf", () => {
     const progress = Compose.progressOf(postMerge);
 
     expect(progress.reads).toEqual([
+      {
+        flow: "post-merge",
+        item: "pull-request",
+        phase: "awaiting-merge-ci",
+        by: "pr.mergedRecently",
+      },
       { flow: "post-merge", item: "pull-request", phase: "watched", by: "pr.mergedRecently" },
     ]);
 
     expect(progress.records).toEqual([
+      {
+        flow: "post-merge",
+        item: "pull-request",
+        phase: "awaiting-merge-ci",
+        by: "merged.awaitCi",
+      },
       { flow: "post-merge", item: "pull-request", phase: "watched", by: "merged.markWatched" },
     ]);
 
@@ -187,6 +203,12 @@ describe("Compose.progressOf", () => {
 `);
 
     expect(Compose.progressOf(advanced).records).toEqual([
+      {
+        flow: "post-merge",
+        item: "pull-request",
+        phase: "awaiting-merge-ci",
+        by: "merged.awaitCi",
+      },
       { flow: "post-merge", item: "pull-request", phase: "watched", by: "progress.advance" },
     ]);
   });
