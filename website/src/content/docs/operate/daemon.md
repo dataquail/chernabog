@@ -41,7 +41,7 @@ Every `limits.validityEvery` (default `5 minutes`), and within seconds of a noti
 
 A run that parks on a signal, waiting on review, CI or a person, ends there, as a CI job's run does at its [phase boundary](/chernabog/work/commands/#ci-run): the daemon ends it within half a minute of its parking, or within `limits.validityEvery` if that is shorter, as **`ended-at-park`**. Its phase record says what it waits on, and the flow's trigger offers the item again once that settles, to a run on this machine, another one or in CI. The run keeps every marker on the item (labels, assignee, comments), its worktrees and its agent sessions, for that run; it lets go of its claim ref, so that run may be anywhere. `status`, the live view and `chernabog logs <run>` show the ending and why. A signal that comes in that half minute wakes the run as before, and the daemon leaves it running. A durable sleep, such as between CI polls, is not a park: the run stays in flight.
 
-A wait no trigger takes up from a record, such as a [flow document](/chernabog/flows/documents/)'s own wait or an [epic](/chernabog/recipes/epic/)'s, ends too, so on a daemon as in CI the item waits until its trigger offers it again.
+A wait no trigger takes up from a record, such as a [flow document](/chernabog/flows/documents/)'s own wait, ends too, so on a daemon as in CI the item waits until its trigger offers it again. An [epic](/chernabog/recipes/epic/)'s wait is taken up from its `waiting` record: the trigger offers it once a layer changes or a day passes, and the new run carries on from what the parked one kept.
 
 ### Leases
 

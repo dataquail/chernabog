@@ -8,9 +8,12 @@ import { createHash } from "node:crypto";
 
 import {
   activity,
+  awaitSignal,
   Claims,
   GitHub,
+  isPhaseData,
   type LinkedIssue,
+  type PhaseRecord,
   planNodeMarker,
   type PullRequest,
   Repo,
@@ -19,11 +22,15 @@ import {
   Skip,
   type WorkItem,
 } from "@chernabog/core";
+import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { issueItem, issueOf, routed } from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { type Kind, VERIFY } from "./plan.ts";
 import { LABELS as PLAN_LABELS } from "./plan-labels.ts";
 import * as Settings from "./settings.ts";
@@ -477,7 +484,8 @@ export const progress = (epic: number, round: number) =>
   );
 
 // The status comment's marker: the fingerprint of the epic it was written
-// from, so the trigger can tell when a layer has changed since.
+// from, by which the run finds its comment. The trigger reads the epic's
+// waiting record, not this (ADR 0021, decision 3).
 export const StatusMarker = Schema.Struct({ fingerprint: Schema.String });
 
 export type StatusMarker = typeof StatusMarker.Type;
@@ -542,42 +550,182 @@ export const postStatus = (epic: number, round: number, read: Progress) =>
   );
 
 // The signal the trigger gives an epic whose layers changed since its run
-// last wrote its status: a push, a review, a merge or a close.
+// parked: a push, a review, a merge or a close.
 export const LAYER_CHANGED = "layer-changed";
 
-// Open epics (auto:epic) with an open sub-issue, oldest first, as work items
-// keyed by the epic's issue; each whose fingerprint differs from its status
-// comment's carries LAYER_CHANGED, which wakes its parked run. An epic whose
-// last task closed since is reported only to wake its run, to end it. Each is
-// routed by its assignees.
-export const queued = Effect.gen(function* () {
-  const github = yield* GitHub;
-  const items: Array<WorkItem> = [];
+// How long a parked epic waits before a run looks at it again with no layer
+// changed, for what changes no layer: a person's task closed, say.
+export const LOOK_AGAIN_AFTER = "1 day";
 
-  for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
-    if (epic.state === "closed") {
-      continue;
-    }
+const Pairs = Schema.Array(Schema.Tuple([Schema.Finite, Schema.Finite]));
 
-    const open = (yield* github.subIssues(epic.number)).some((task) => task.state === "open");
+// What a run keeps of the tasks it started, for the run that takes the epic
+// up after it parks: each task's attempts so far, the tasks read as something
+// other than ready since their attempt (handed back, so they may start
+// again), and those whose attempt ended with a person.
+export const TaskKeep = Schema.Struct({
+  attempts: Pairs,
+  handedBack: Schema.Array(Schema.Finite),
+  withPerson: Schema.Array(Schema.Finite),
+});
 
-    const recorded = Option.flatMap(yield* latestStatus(epic.number), (found) =>
-      statusMarker.read(found.body),
+export type TaskKeep = typeof TaskKeep.Type;
+
+// What a run keeps of carrying layers up and landing them, by pull request:
+// each layer's refresh attempt, the base head it last brought each up to,
+// the layers whose refresh went to a person, the layer below each was last
+// seen stacked on, and those brought up to date with that one's merge.
+export const LayerKeep = Schema.Struct({
+  attempts: Pairs,
+  recorded: Schema.Array(Schema.Tuple([Schema.Finite, Schema.String])),
+  withPerson: Schema.Array(Schema.Finite),
+  below: Pairs,
+  caughtUp: Schema.Array(Schema.Finite),
+});
+
+export type LayerKeep = typeof LayerKeep.Type;
+
+// What the epic's waiting record carries (ADR 0021, decision 4): the
+// fingerprint of the epic as the parked run last read it, which the trigger
+// compares, and what the run kept between rounds. `layers` is left out when
+// keeping it would take the record past its 4 KB.
+export const Waiting = Schema.Struct({
+  fingerprint: Schema.String,
+  tasks: TaskKeep,
+  layers: Schema.optionalKey(LayerKeep),
+});
+
+export type Waiting = typeof Waiting.Type;
+
+const encodeWaiting = Schema.encodeSync(Waiting);
+const decodeWaiting = Schema.decodeUnknownOption(Waiting);
+
+const NOTHING_KEPT: TaskKeep = { attempts: [], handedBack: [], withPerson: [] };
+
+// `waiting` as record data, as much of it as a record takes: without the
+// layers' upkeep, then without the tasks', when it is too big.
+const asData = (waiting: Waiting) => {
+  const { layers: _layers, ...tasksOnly } = waiting;
+  const least: Waiting = { fingerprint: waiting.fingerprint, tasks: NOTHING_KEPT };
+
+  return encodeWaiting(
+    Option.getOrElse(
+      Arr.findFirst([waiting, tasksOnly], (kept) => isPhaseData(encodeWaiting(kept))),
+      () => least,
+    ),
+  );
+};
+
+// Records that the run parks waiting for a layer to change, as the step
+// `epic-waiting-<round>`, then parks until one does or `after` passes. A
+// daemon's run or a CI job's ends at the park, and Epic.queued offers the
+// epic to a new run from this record once a layer changes or `after` passes.
+// Each park writes its round's record, even over one this run wrote: a
+// signal may wake the run before the daemon ends it, and the run then parks
+// again with a new fingerprint and what it kept since.
+export const park = (
+  epic: number,
+  round: number,
+  waiting: Waiting,
+  after: Duration.Input = LOOK_AGAIN_AFTER,
+) =>
+  Effect.gen(function* () {
+    yield* activity(
+      `epic-waiting-${round}`,
+      Phases.record(Claims.epic(epic), Phases.PHASES.epic.waiting, asData(waiting), {
+        always: true,
+      }),
     );
 
-    const changed =
-      Option.isSome(recorded) && recorded.value.fingerprint !== (yield* fingerprint(epic.number));
+    return yield* awaitSignal([LAYER_CHANGED], { id: `epic-${round}`, timeout: after });
+  });
 
-    const item = yield* routed(epic, issueItem(epic));
+// Records that every task of the epic is closed, as the step
+// `epic-finished-<round>`: the round that read it so.
+export const recordFinished = (epic: number, round: number) =>
+  activity(`epic-finished-${round}`, Phases.record(Claims.epic(epic), Phases.PHASES.epic.finished));
 
-    if (changed && open) {
-      items.push({ ...item, signals: [LAYER_CHANGED] });
-    } else if (changed) {
-      items.push({ ...item, signals: [LAYER_CHANGED], wakeOnly: true });
-    } else if (open) {
-      items.push(item);
+const ResumedItem = Schema.Struct({ resumeEpic: Schema.Unknown });
+
+// What a work item from queued carries of the run that parked on the epic;
+// none for an epic no run parked on.
+export const resuming = (item: WorkItem): Option.Option<Waiting> =>
+  Option.flatMap(Schema.decodeUnknownOption(ResumedItem)(item.data), (data) =>
+    decodeWaiting(data.resumeEpic),
+  );
+
+// The epic's waiting record, as a parked run wrote it, and when; none for an
+// epic with any other record, or none.
+const parkedOn = (all: ReadonlyMap<string, PhaseRecord>, epic: number) =>
+  Option.flatMap(
+    Option.filter(
+      Phases.recordOf(all, Claims.epic(epic)),
+      (record) => record.phase === Phases.PHASES.epic.waiting,
+    ),
+    (record) =>
+      Option.map(Option.flatMap(record.data, decodeWaiting), (waiting) => ({
+        waiting,
+        since: record.at,
+      })),
+  );
+
+// Open epics (auto:epic), oldest first, as work items keyed by the epic's
+// issue, each routed by its assignees. The epic's record, not its status
+// comment, says whether a run parked on it (ADR 0021, decision 3): one parked
+// (waiting) is offered only once a layer changed since, which carries
+// LAYER_CHANGED and wakes a run still parked, or once `after` passed since
+// it parked; the new run takes up what the parked one kept. Any other epic
+// is offered while it has an open sub-issue.
+export const queuedAfter = (after: Duration.Input) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const all = yield* Phases.records;
+    const now = yield* DateTime.now;
+    const items: Array<WorkItem> = [];
+
+    for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
+      if (epic.state === "closed") {
+        continue;
+      }
+
+      const parked = parkedOn(all, epic.number);
+
+      if (Option.isNone(parked)) {
+        if ((yield* github.subIssues(epic.number)).some((task) => task.state === "open")) {
+          items.push(yield* routed(epic, issueItem(epic)));
+        }
+
+        continue;
+      }
+
+      const { since, waiting } = parked.value;
+      const changed = waiting.fingerprint !== (yield* fingerprint(epic.number));
+
+      const due = DateTime.isLessThanOrEqualTo(
+        DateTime.addDuration(since, Duration.fromInputUnsafe(after)),
+        now,
+      );
+
+      if (!changed && !due) {
+        continue;
+      }
+
+      const item: WorkItem = {
+        ...issueItem(epic),
+        data: { issue: epic.number, resumeEpic: encodeWaiting(waiting) },
+      };
+
+      // A layer changed: also a wake, for a run still parked on the epic.
+      if (changed) {
+        items.push(yield* routed(epic, { ...item, signals: [LAYER_CHANGED] }));
+        continue;
+      }
+
+      items.push(yield* routed(epic, item));
     }
-  }
 
-  return items;
-});
+    return items;
+  });
+
+// queuedAfter, looking at a parked epic again after LOOK_AGAIN_AFTER.
+export const queued = queuedAfter(LOOK_AGAIN_AFTER);

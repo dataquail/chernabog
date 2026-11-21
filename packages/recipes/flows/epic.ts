@@ -4,7 +4,9 @@
 // branch of the one task it builds on. Tasks that don't build on each other
 // run at once. A stack is only pull requests whose base is the branch of the
 // one below: no rebase, no force-push. Between rounds the run keeps one
-// status comment on the epic, and parks until a layer's pull request changes;
+// status comment on the epic, and parks until a layer's pull request changes,
+// recording that it waits, with what it knows, on the epic's record, so the
+// run that takes the epic up then carries on from there;
 // each layer's review, changes and conflicts are the review, address-review,
 // re-review and resolve-conflicts flows' to do. When a layer's head moves, as
 // a fix pushed on it does, the run carries the change up its stack: it merges
@@ -28,7 +30,6 @@
 
 import {
   activity,
-  awaitSignal,
   Claims,
   defineFlow,
   Epic,
@@ -54,10 +55,6 @@ import * as Schema from "effect/Schema";
 
 // Tasks implemented at once, unless the flow's atOnce setting says otherwise.
 const AT_ONCE = 2;
-
-// How long the run parks before it looks at the epic again with no signal,
-// for what changes no layer: a person's task closed, say.
-const LOOK_AGAIN_AFTER = "1 day";
 
 // What config.yaml may set for this flow alone, under flows.<name>.settings.
 const Own = Schema.Struct({
@@ -478,6 +475,34 @@ type Upkeep = {
   readonly caughtUp: Set<number>;
 };
 
+// The upkeep a run parked with kept, or a fresh one.
+const upkeepFrom = (kept: Option.Option<Epic.LayerKeep>): Upkeep =>
+  Option.match(kept, {
+    onNone: () => ({
+      attempts: new Map(),
+      recorded: new Map(),
+      withPerson: new Set(),
+      below: new Map(),
+      caughtUp: new Set(),
+    }),
+    onSome: (found) => ({
+      attempts: new Map(found.attempts),
+      recorded: new Map(found.recorded),
+      withPerson: new Set(found.withPerson),
+      below: new Map(found.below),
+      caughtUp: new Set(found.caughtUp),
+    }),
+  });
+
+// The upkeep as the epic's waiting record keeps it.
+const keptOf = (upkeep: Upkeep): Epic.LayerKeep => ({
+  attempts: [...upkeep.attempts],
+  recorded: [...upkeep.recorded],
+  withPerson: [...upkeep.withPerson],
+  below: [...upkeep.below],
+  caughtUp: [...upkeep.caughtUp],
+});
+
 // Carries each layer's change up its stack, bottom to top: a layer whose base
 // branch's head is not the one it was last brought up to is refreshed, then
 // the one above it reads its own base, now moved too. A layer a person has,
@@ -805,24 +830,31 @@ const declareLane = (
 // or a hand-off has; one still ready after its attempt, as one another run
 // holds, waits. An attempt that ended with a person counts as read so: a
 // round runs only once every task started with it ends, so a person may hand
-// the task back before any round reads it with them (#249). The counts are
-// rebuilt from the rounds' saved results whenever the run resumes.
-const workThrough = (epic: number, ships: boolean, concurrency: number) =>
+// the task back before any round reads it with them (#249). A run ends at its
+// park (ADR 0021, decision 4); the next takes the epic up with what the
+// parked one kept in its waiting record (`resumed`).
+const workThrough = (
+  epic: number,
+  ships: boolean,
+  concurrency: number,
+  resumed: Option.Option<Epic.Waiting>,
+) =>
   Effect.gen(function* () {
-    const attempts = new Map<number, number>();
-    const handedBack = new Set<number>();
+    const kept = Option.match(resumed, {
+      onNone: (): Epic.TaskKeep => ({ attempts: [], handedBack: [], withPerson: [] }),
+      onSome: (parked) => parked.tasks,
+    });
+
+    const attempts = new Map(kept.attempts);
+    const handedBack = new Set(kept.handedBack);
     // Tasks whose attempt ended with a person.
-    const withPerson = new Set<number>();
+    const withPerson = new Set(kept.withPerson);
     // The sub-issues each task waited on, as the rounds read them.
     const waitedOn = new Map<number, Set<number>>();
 
-    const upkeep: Upkeep = {
-      attempts: new Map(),
-      recorded: new Map(),
-      withPerson: new Set(),
-      below: new Map(),
-      caughtUp: new Set(),
-    };
+    const upkeep = upkeepFrom(
+      Option.flatMap(resumed, (parked) => Option.fromUndefinedOr(parked.layers)),
+    );
 
     for (let round = 1; ; round++) {
       const progress = yield* Epic.progress(epic, round);
@@ -830,6 +862,8 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
       noteWaits(progress, waitedOn);
 
       if (Epic.finished(progress)) {
+        yield* Epic.recordFinished(epic, round);
+
         return `#${epic}: every task is closed`;
       }
 
@@ -881,9 +915,17 @@ const workThrough = (epic: number, ships: boolean, concurrency: number) =>
         continue;
       }
 
-      yield* awaitSignal([Epic.LAYER_CHANGED], {
-        id: `epic-${round}`,
-        timeout: LOOK_AGAIN_AFTER,
+      // The epic's waiting record keeps what the run knows, so the run that
+      // takes the epic up once a layer changes, as one always does once this
+      // one ends at its park, carries on from here.
+      yield* Epic.park(epic, round, {
+        fingerprint: progress.fingerprint,
+        tasks: {
+          attempts: [...attempts],
+          handedBack: [...handedBack],
+          withPerson: [...withPerson],
+        },
+        layers: keptOf(upkeep),
       });
     }
   });
@@ -927,7 +969,9 @@ const flow = defineFlow({
 
       // However the run ends, its claim on the epic goes, and the engine lets
       // its tasks' claims go too; a run parked between rounds keeps them.
-      return yield* workThrough(epic, ships, concurrency).pipe(Claims.releasing(Claims.epic(epic)));
+      return yield* workThrough(epic, ships, concurrency, Epic.resuming(item)).pipe(
+        Claims.releasing(Claims.epic(epic)),
+      );
     }),
 });
 
