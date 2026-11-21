@@ -362,6 +362,7 @@ const start = (
       title: `chernabog-${request.sessionId.slice(0, 8)}`,
       cwd: request.cwd,
       command: [...selfCommand(), "__launch", files.spec],
+      log: context.log,
     });
 
     const at = DateTime.formatIso(yield* DateTime.now);

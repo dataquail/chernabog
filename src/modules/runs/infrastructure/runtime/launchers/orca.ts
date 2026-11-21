@@ -3,9 +3,10 @@
 
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { type Launcher, LaunchError, runTool, shellCommand } from "./launcher.ts";
+import { type Launcher, LaunchError, type LaunchSpec, runTool, shellCommand } from "./launcher.ts";
 
 const NAME = "orca";
 
@@ -52,6 +53,19 @@ const Status = Schema.fromJsonString(
 
 const STALE = "terminal_handle_stale";
 
+// Orca finds a worktree by itself, a few seconds after it is made; until then it
+// knows no worktree at that path. Asked again with a short backoff, up to this long.
+const NOT_FOUND = "selector_not_found";
+const FINDING_FOR = "30 seconds";
+
+const finding = Schedule.max([
+  Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("2 seconds")]),
+  Schedule.during(FINDING_FOR),
+]);
+
+const notFoundYet = (created: typeof Created.Type) =>
+  !created.ok && created.error.code === NOT_FOUND;
+
 const decode = <A>(schema: Schema.Codec<A, string>, what: string, stdout: string) =>
   Schema.decodeEffect(schema)(stdout.trim()).pipe(
     Effect.mapError(
@@ -65,23 +79,44 @@ const decode = <A>(schema: Schema.Codec<A, string>, what: string, stdout: string
 
 const orca = (args: ReadonlyArray<string>) => runTool(NAME, "orca", args);
 
+const createTerminal = (spec: LaunchSpec) =>
+  orca([
+    "terminal",
+    "create",
+    "--worktree",
+    `path:${spec.cwd}`,
+    "--title",
+    spec.title,
+    "--command",
+    `exec ${shellCommand(spec.command)}`,
+    "--json",
+  ]).pipe(Effect.flatMap((result) => decode(Created, "terminal create", result.stdout)));
+
+// Said once in the run's log, so a slow start isn't taken for a hang.
+const waitingForWorktree = (spec: LaunchSpec, first: typeof Created.Type) =>
+  Effect.gen(function* () {
+    if (!notFoundYet(first)) {
+      return first;
+    }
+
+    yield* spec.log(
+      `orca: waiting for Orca to find the worktree ${spec.cwd} (up to ${FINDING_FOR})`,
+    );
+
+    yield* Effect.sleep("250 millis");
+
+    return yield* createTerminal(spec).pipe(
+      Effect.repeat({ schedule: finding, until: (answer) => !notFoundYet(answer) }),
+    );
+  });
+
 export const orcaLauncher: Launcher = {
   name: NAME,
   start: (spec) =>
     Effect.gen(function* () {
-      const result = yield* orca([
-        "terminal",
-        "create",
-        "--worktree",
-        `path:${spec.cwd}`,
-        "--title",
-        spec.title,
-        "--command",
-        `exec ${shellCommand(spec.command)}`,
-        "--json",
-      ]);
-
-      const created = yield* decode(Created, "terminal create", result.stdout);
+      const created = yield* createTerminal(spec).pipe(
+        Effect.flatMap((first) => waitingForWorktree(spec, first)),
+      );
 
       if (!created.ok) {
         return yield* new LaunchError({

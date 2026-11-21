@@ -22,6 +22,8 @@ export type LaunchSpec = {
   readonly title: string;
   readonly cwd: string;
   readonly command: ReadonlyArray<string>;
+  // Where a launcher says why a start is slow (the run's log), so a wait isn't taken for a hang.
+  readonly log: (line: string) => Effect.Effect<void>;
 };
 
 // Opaque and launcher-specific; recorded so a restarted daemon finds the session again.
