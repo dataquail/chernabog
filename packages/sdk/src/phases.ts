@@ -236,6 +236,60 @@ const asData = Schema.decodeSync(PhaseData);
 // The times a run's write reads the item again after another writer moved it.
 const RECORD_TRIES = 3;
 
+// The latest review of a pull request, as its record keeps it under `review`
+// (ADR 21, decision 7): the head it saw, who gave it, its round and verdict,
+// and the session it ran in, so a re-review resumes it. The merge gate, a
+// re-review and address-review read it here, not from the review's comment,
+// which is for people.
+export const Reviewed = Schema.Struct({
+  sha: Schema.String,
+  reviewer: Schema.String,
+  round: Schema.Finite,
+  verdict: Schema.Literals(["approve", "request-changes"]),
+  sessionId: Schema.optionalKey(Schema.String),
+  adapter: Schema.optionalKey(Schema.String),
+});
+
+export type Reviewed = typeof Reviewed.Type;
+
+const REVIEW = "review";
+
+const ReviewedData = Schema.Struct({ [REVIEW]: Reviewed });
+
+// The review `found` keeps; none for a record that keeps none.
+export const reviewOf = (found: PhaseRecord): Option.Option<Reviewed> =>
+  Option.map(
+    Option.flatMap(found.data, Schema.decodeUnknownOption(ReviewedData)),
+    (data) => data.review,
+  );
+
+// A review as record data, for review.round to record and backfill to copy.
+export const reviewData = (review: Reviewed) => ({
+  [REVIEW]: Schema.encodeSync(Reviewed)(review),
+});
+
+type Data = { readonly [key: string]: Json };
+
+// `data` with the review `from` keeps, unless `data` names one: a pull
+// request's latest review stays in its record through every phase after it
+// (merge-held, review-asked-again, a wait on CI), until a review replaces it.
+const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Data>) => {
+  if (Option.exists(data, (given) => REVIEW in given)) {
+    return data;
+  }
+
+  const kept = Option.flatMap(
+    Option.flatMap(from, (found) => found.data),
+    (found) => Option.fromUndefinedOr(found[REVIEW]),
+  );
+
+  return Option.match(kept, {
+    onNone: () => data,
+    onSome: (review) =>
+      Option.some<Data>({ ...Option.getOrElse(data, (): Data => ({})), [REVIEW]: review }),
+  });
+};
+
 // Records that `item` has reached `to`, as the run: from whatever phase it
 // holds now, and nothing when it is there already, so a source that
 // reconciled the same fact first, or a replay, writes no second record. A
@@ -244,7 +298,8 @@ const RECORD_TRIES = 3;
 // makes the handoff, so a replay of a finished one doesn't write again.
 // `data` is what the run that picks the item up next needs from this one, a
 // JSON object of at most 4 KB (core's PhaseData); an item already at `to`
-// keeps the data it has. `again` writes a fresh record even then, unless this
+// keeps the data it has. A pull request's review (reviewOf) is carried into
+// the new record unless `data` names one. `again` writes a fresh record even then, unless this
 // run wrote the one there: a wait that starts over, with a new `at` and data.
 // `always` writes a fresh record even when this run wrote the one there: a
 // wait a run may enter again after a signal woke it, whose data is this
@@ -262,10 +317,10 @@ export const recording = (
     const run = yield* Run;
     const phase = asPhase(to);
     const by = asWriter(run.runId);
-    const carried = Option.map(Option.fromUndefinedOr(data), asData);
 
     for (let tries = 1; ; tries++) {
       const current = yield* progress.read(item);
+      const carried = Option.map(carryingReview(current, Option.fromUndefinedOr(data)), asData);
 
       const there = Option.filter(
         current,
@@ -487,8 +542,8 @@ export const park = (parking: Parking, signals: ReadonlyArray<string>, id: strin
 export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
   phases.some((phase) => phase === found.phase);
 
-// Moves `item` from the record a source read, `found`, to `to`, only while it
-// is still that record, by version, from a fact
+// Moves `item` from the record a source read, `found`, to `to`, keeping its
+// review, only while it is still that record, by version, from a fact
 // on GitHub that no run was there to record, such as a person's review
 // (docs/run-progress/handoffs.md, question 5). Outside a run, so `by` names
 // the source. Returns the record the item holds afterwards: the one written,
@@ -500,6 +555,10 @@ export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: P
         from: found,
         to: asPhase(to),
         by: asWriter(by),
+        ...Option.match(carryingReview(found, Option.none()), {
+          onNone: () => ({}),
+          onSome: (data) => ({ data: asData(data) }),
+        }),
       })
       .pipe(
         Effect.asSome,
