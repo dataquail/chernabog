@@ -123,6 +123,28 @@ describe("the plan's comment", () => {
     expect(comment).toContain("<details><summary><code>api</code>");
     expect(comment).toContain("Blocked by `api-schema`.");
     expect(comment).toContain("`auto:plan-approved`");
-    expect(planMarker.read(comment)).toEqual(Option.some({ round: 2 }));
+    // The marker keeps the round, and the tasks as posted for a run that takes the plan up later.
+    expect(Option.map(planMarker.read(comment), (marker) => marker.round)).toEqual(Option.some(2));
+    expect(
+      Option.map(planMarker.read(comment), (marker) =>
+        Option.fromUndefinedOr(marker.plan).pipe(Option.map((kept) => kept.length)),
+      ),
+    ).toEqual(Option.some(Option.some(2)));
+  });
+
+  test("keeps tasks whose text holds --> and {} --> in its marker, and reads them back the same", () => {
+    const nodes = [
+      { ...node("arrow"), body: "Requests go client --> server <b>fast</b>." },
+      { ...node("brace", ["arrow"]), body: "if (x) {} --> y" },
+    ];
+
+    const comment = Plan.planComment(1, "Arrows in prose.", nodes);
+    const marker = comment.slice(comment.indexOf("<!-- chernabog-plan"));
+
+    // Nothing in the tasks closes the HTML comment before the marker's own -->.
+    expect(marker.indexOf("-->")).toBe(marker.length - "-->".length);
+    expect(
+      Option.flatMap(planMarker.read(comment), (read) => Option.fromUndefinedOr(read.plan)),
+    ).toEqual(Option.some(nodes));
   });
 });

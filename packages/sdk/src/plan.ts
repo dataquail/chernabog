@@ -24,7 +24,8 @@ import {
   type WorkItem,
   Worktree,
 } from "@chernabog/core";
-import type * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,8 +35,10 @@ import {
   branchFor,
   issueItem,
   issueOf,
+  routed,
   sessionIdFor,
 } from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { LABELS } from "./plan-labels.ts";
 import { renderPrompt } from "./prompt.ts";
 import * as Settings from "./settings.ts";
@@ -325,9 +328,10 @@ const blockersOf = (node: PlanNode) =>
     },
   );
 
-// The plan's comment on its spec: the summary, the graph, each task folded,
-// and how to answer it.
-export const planComment = (round: number, summary: string, nodes: Plan) =>
+const encodePlan = Schema.encodeSync(Plan);
+
+// The plan's comment, ending with `marker`.
+const shownPlan = (round: number, summary: string, nodes: Plan, marker: string) =>
   [
     `## Proposed plan${roundOf(round)}`,
     "",
@@ -347,8 +351,31 @@ export const planComment = (round: number, summary: string, nodes: Plan) =>
     ]),
     `To approve it, add the label \`${LABELS.approved}\`. To change it, comment with what to change, and Chernabog drafts it again.`,
     "",
-    planMarker.write({ round }),
+    marker,
   ].join("\n");
+
+// The most a GitHub comment may hold.
+const COMMENT_LIMIT = 65_536;
+
+// The plan's comment on its spec: the summary, the graph, each task folded,
+// and how to answer it. Its marker keeps the tasks as posted, for a run that
+// takes the plan up once a person approves it, unless that would make the
+// comment longer than GitHub takes; then a run that takes it up later hands
+// it to a person.
+export const planComment = (round: number, summary: string, nodes: Plan) => {
+  const kept = shownPlan(
+    round,
+    summary,
+    nodes,
+    planMarker.write({ round, plan: encodePlan(nodes) }),
+  );
+
+  if (kept.length <= COMMENT_LIMIT) {
+    return kept;
+  }
+
+  return shownPlan(round, summary, nodes, planMarker.write({ round }));
+};
 
 // The comments of the repo's owners, members and collaborators since the
 // latest plan was posted, other than Chernabog's own: a person's answer to it.
@@ -368,30 +395,192 @@ const feedbackOf = (comments: ReadonlyArray<Comment>) =>
     (text) => text !== "",
   );
 
-// Specs whose posted plan a person has answered, as signals to the run
-// waiting on each: `approved` when it carries the approval label, or
-// `changes-requested` when someone commented since. Never starts a run.
-export const answers = Effect.gen(function* () {
-  const github = yield* GitHub;
-  const items: Array<WorkItem> = [];
+// The open spec `number`, or none once it is closed or gone.
+const openSpec = (number: number) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
 
-  for (const spec of yield* github.issuesLabelled(LABELS.proposed)) {
-    let signal = Option.some("approved");
+    const spec = yield* github.issue(number).pipe(
+      Effect.asSome,
+      Effect.catchTag("NotFound", () => Effect.succeedNone),
+    );
 
-    if (!spec.labels.includes(LABELS.approved)) {
-      signal = Option.as(
-        feedbackOf(yield* github.trustedComments(spec.number)),
-        "changes-requested",
-      );
+    return Option.filter(spec, (found) => found.state !== "closed");
+  });
+
+const SPEC_RECORD = /^issue-(\d+)$/;
+
+// What a spec's proposed record carries: the round whose plan waits.
+const Proposed = Schema.Struct({ round: Schema.Finite });
+
+// A person's answer to a posted plan, or that nobody gave one in time.
+export type Answer = "approved" | "changes-requested" | "timeout";
+
+// A spec whose posted plan waits on a person: its number, the round, and
+// when the plan was posted.
+type Waiting = {
+  readonly spec: Issue;
+  readonly round: number;
+  readonly since: DateTime.Utc;
+};
+
+// Specs whose record says their plan waits on a person (proposed), open and
+// not handed to one. The record, not auto:plan-proposed, says which wait
+// (ADR 0021, decision 3): the label is for people.
+const waitingSpecs = Effect.gen(function* () {
+  const labelNames = yield* Settings.labels;
+  const found: Array<Waiting> = [];
+
+  for (const [name, record] of yield* Phases.records) {
+    const number = Option.map(Option.fromNullOr(SPEC_RECORD.exec(name)), (match) =>
+      Number(match[1]),
+    );
+
+    const round = Option.map(
+      Option.flatMap(
+        Option.filter(record.data, () => record.phase === Phases.PHASES.issue.proposed),
+        Schema.decodeUnknownOption(Proposed),
+      ),
+      (proposed) => proposed.round,
+    );
+
+    if (Option.isNone(number) || Option.isNone(round)) {
+      continue;
     }
 
-    for (const found of Option.toArray(signal)) {
-      items.push({ ...issueItem(spec), signals: [found], wakeOnly: true });
+    const spec = Option.filter(
+      yield* openSpec(number.value),
+      (open) => !open.labels.includes(labelNames.needsHuman),
+    );
+
+    for (const open of Option.toArray(spec)) {
+      found.push({ spec: open, round: round.value, since: record.at });
+    }
+  }
+
+  return found;
+});
+
+// What a person said to the plan waiting on `waiting`: `approved` when the
+// spec carries the approval label, `changes-requested` when someone commented
+// since it was posted; none yet.
+const answerTo = (waiting: Waiting) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+
+    if (waiting.spec.labels.includes(LABELS.approved)) {
+      return Option.some<Answer>("approved");
+    }
+
+    return Option.as(
+      feedbackOf(yield* github.trustedComments(waiting.spec.number)),
+      "changes-requested" as const,
+    );
+  });
+
+// Specs whose posted plan a person has answered, as signals to the run
+// waiting on each: `approved` when it carries the approval label, or
+// `changes-requested` when someone commented since. Never starts a run: a
+// document's plan.awaitAnswer can only be woken, not taken up again.
+export const answers = Effect.gen(function* () {
+  const items: Array<WorkItem> = [];
+
+  for (const waiting of yield* waitingSpecs) {
+    for (const answer of Option.toArray(yield* answerTo(waiting))) {
+      items.push({ ...issueItem(waiting.spec), signals: [answer], wakeOnly: true });
     }
   }
 
   return items;
 });
+
+// Where a run that takes up a plan someone answered starts: the round whose
+// plan was answered, and the answer.
+export const Resumed = Schema.Struct({
+  round: Schema.Finite,
+  answer: Schema.Literals(["approved", "changes-requested", "timeout"]),
+});
+
+export type Resumed = typeof Resumed.Type;
+
+const ResumedItem = Schema.Struct({ resumePlan: Resumed });
+
+// The answer a work item from answered takes up; none for any other.
+export const resuming = (item: WorkItem): Option.Option<Resumed> =>
+  Option.map(Schema.decodeUnknownOption(ResumedItem)(item.data), (data) => data.resumePlan);
+
+// Specs whose posted plan a person answered, or that nobody answered within
+// `within` of its posting, as work a run may start (ADR 0021, decision 4): a
+// CI job that waited on the answer has ended, and a new run takes the plan up
+// from its record. An answer also signals the run still waiting on it, on a
+// daemon, which holds the spec, so no second run starts. Routed by assignees.
+export const answered = (within: Duration.Input) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const items: Array<WorkItem> = [];
+
+    for (const waiting of yield* waitingSpecs) {
+      const answer = yield* answerTo(waiting);
+
+      const due = DateTime.isLessThanOrEqualTo(
+        DateTime.addDuration(waiting.since, Duration.fromInputUnsafe(within)),
+        now,
+      );
+
+      const taken = Option.orElse(answer, () => Option.liftPredicate<Answer>("timeout", () => due));
+
+      for (const found of Option.toArray(taken)) {
+        const item: WorkItem = {
+          ...issueItem(waiting.spec),
+          data: {
+            issue: waiting.spec.number,
+            resumePlan: { round: waiting.round, answer: found },
+          },
+        };
+
+        // A person's answer also wakes the run still waiting on it; a timeout
+        // has no run to wake, as that run's own timer ends it.
+        if (found === "timeout") {
+          items.push(yield* routed(waiting.spec, item));
+          continue;
+        }
+
+        items.push(yield* routed(waiting.spec, { ...item, signals: [found] }));
+      }
+    }
+
+    return items;
+  });
+
+// The plan posted in `round`, as its marker keeps it, for a run that takes it
+// up once approved; a person's when no comment keeps it: deleted, or from
+// before plans were kept.
+export const posted = (spec: number, round: number) =>
+  activity(
+    `posted-plan-${round}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+
+      const kept = Option.flatMap(
+        Option.fromUndefinedOr(
+          (yield* github.trustedComments(spec))
+            .flatMap((comment) => Option.toArray(planMarker.read(comment.body)))
+            .findLast((marker) => marker.round === round),
+        ),
+        (marker) =>
+          Option.flatMap(Option.fromUndefinedOr(marker.plan), Schema.decodeUnknownOption(Plan)),
+      );
+
+      if (Option.isNone(kept)) {
+        return yield* new NeedsHuman({
+          reason: `the plan approved in round ${round} isn't kept on the spec any more, so Chernabog can't make its tasks`,
+        });
+      }
+
+      return kept.value;
+    }),
+    Plan,
+  );
 
 const RESUME_PROMPT =
   "You were interrupted. Continue from where you left off, then give your final answer in the required format.";
@@ -546,6 +735,15 @@ export const propose = (spec: number, round: number, answer: PlanDraft) =>
       const plan = withVerify(yield* github.issue(spec), answer.nodes);
       yield* github.comment(spec, planComment(round, answer.summary, plan));
       yield* github.addLabel(spec, LABELS.proposed);
+      // The wait on a person is the spec's record, which answered reads.
+      yield* Phases.record(
+        Phases.issueItem(spec),
+        Phases.PHASES.issue.proposed,
+        { round },
+        {
+          again: true,
+        },
+      );
 
       return plan;
     }),
@@ -715,6 +913,7 @@ export const becomeEpic = (spec: number, plan: Plan, created: Created) =>
       const github = yield* GitHub;
       const labelNames = yield* Settings.labels;
       yield* github.addLabel(spec, LABELS.epic);
+      yield* Phases.record(Phases.issueItem(spec), Phases.PHASES.issue.becameEpic);
 
       for (const label of [LABELS.approved, LABELS.proposed, labelNames.inProgress]) {
         yield* github.removeLabel(spec, label);
@@ -754,6 +953,8 @@ export const handToHuman = (spec: number, reason: string) =>
       const github = yield* GitHub;
       const labelNames = yield* Settings.labels;
       yield* github.addLabel(spec, labelNames.needsHuman);
+      // Nothing waits on the plan any more; auto:plan again proposes afresh.
+      yield* Phases.record(Phases.issueItem(spec), Phases.PHASES.issue.planHandedBack);
 
       for (const label of [LABELS.proposed, labelNames.inProgress]) {
         yield* github.removeLabel(spec, label);

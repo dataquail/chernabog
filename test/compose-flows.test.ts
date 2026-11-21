@@ -902,6 +902,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
       "plan, on a spec whose plan a person approved",
       (fake: Fake) => {
         fake.setLabels(ISSUE, [Plan.LABELS.proposed, Plan.LABELS.approved]);
+        fake.recordPhase(`issue-${ISSUE}`, "proposed", { data: { round: 1 } });
       },
       1,
     ],
@@ -909,6 +910,7 @@ describe("a document's sources find what its recipe's trigger does", () => {
       "plan, on a spec whose plan a person commented on",
       (fake: Fake) => {
         fake.setLabels(ISSUE, [Plan.LABELS.proposed]);
+        fake.recordPhase(`issue-${ISSUE}`, "proposed", { data: { round: 1 } });
         fake.comment('## Proposed plan\n\n<!-- chernabog-plan {"round":1} -->');
         fake.comment("Split the API in two.", "zach");
       },
@@ -940,9 +942,16 @@ describe("a document's sources find what its recipe's trigger does", () => {
           return fake;
         };
 
+        // An answered plan is work the recipe's run may start again, from the
+        // spec's record (ADR 0021); a document's plan.awaitAnswer can only be
+        // woken, so the two agree on which spec and which answer, not on whether
+        // a run may start for it.
+        const answering = (offered: ReadonlyArray<WorkItem>) =>
+          offered.map((one) => [one.key, one.signals]);
+
         const fromRecipe = yield* found(plan, spec);
         expect(fromRecipe).toHaveLength(items);
-        expect(yield* found(yield* composedPlan, spec)).toEqual(fromRecipe);
+        expect(answering(yield* found(yield* composedPlan, spec))).toEqual(answering(fromRecipe));
       }),
     );
   }
