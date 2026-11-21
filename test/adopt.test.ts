@@ -245,7 +245,10 @@ describe("an issue an open pull request already closes", () => {
   effect("the recipe's trigger wakes a run waiting on a draft once it is marked ready", () =>
     Effect.gen(function* () {
       const fake = queuedWithPull(true);
-      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress, Implement.AWAITING_READY_LABEL]);
+      // The record says the run waits; the label is only for people, and a
+      // person who took it off leaves the run to be woken as before.
+      fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
+      fake.recordPhase(`issue-${ISSUE}`, "awaiting-ready");
       fake.comment(
         claimMarker.write({
           runId: "a-run",
