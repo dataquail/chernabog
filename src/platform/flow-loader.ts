@@ -217,6 +217,41 @@ export const loadRepoEvents = (configDir: string) =>
     Option.map(Schema.decodeUnknownOption(RoutingSdk)(module), (sdk) => sdk.Events),
   );
 
+// What `chernabog progress backfill` takes of the SDK a repo pins: its
+// Backfill (ADR 21), which surveys the open items with no record as the
+// repo's personas, `logins`, and writes the phases it found. Its findings are
+// the SDK's, plain JSON, which the caller decodes and hands back to `apply`.
+export type ProgressBackfill = {
+  readonly survey: (
+    logins: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    ReadonlyArray<unknown>,
+    Core.GitHubError | Core.ProgressError,
+    Core.GitHub | Core.Progress | Core.Repo
+  >;
+  readonly apply: (
+    findings: ReadonlyArray<unknown>,
+  ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
+};
+
+const BackfillSdk = Schema.Struct({
+  Backfill: Schema.declare(
+    (backfill): backfill is ProgressBackfill =>
+      Predicate.hasProperty(backfill, "survey") &&
+      Predicate.hasProperty(backfill, "apply") &&
+      Predicate.isFunction(backfill.survey) &&
+      Predicate.isFunction(backfill.apply),
+    { title: "Backfill" },
+  ),
+});
+
+// The SDK's Backfill, from the repo's node_modules: none for an SDK from
+// before it.
+export const loadRepoBackfill = (configDir: string) =>
+  Effect.map(importRepoSdk(configDir), (module) =>
+    Option.map(Schema.decodeUnknownOption(BackfillSdk)(module), (sdk) => sdk.Backfill),
+  );
+
 const MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
 
 const flowName = (file: string) =>

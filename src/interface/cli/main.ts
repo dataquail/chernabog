@@ -75,6 +75,7 @@ import { ciCommand } from "./ci.main.ts";
 import { doctorCommand } from "./doctor.main.ts";
 import { initCommand } from "./init.main.ts";
 import { openPr } from "./open-pr.main.ts";
+import { progressCommand } from "./progress.main.ts";
 import { rehearseCommand } from "./rehearse.main.ts";
 import { optionalRepo, repoFlag } from "./repo.arguments.ts";
 import { runInForeground } from "./run.main.ts";
@@ -456,6 +457,14 @@ export const chernabog = Command.make("chernabog", {}, () => live).pipe(
     enrollmentEndpoints.resume,
     trustEndpoints.trust,
     labels,
+    progressCommand({
+      enrolled: (repo) =>
+        Effect.gen(function* () {
+          const machine = yield* loadMachineConfig;
+
+          return { machine, enrolled: yield* findEnrolled(machine, repo) };
+        }),
+    }),
     ciCommand({
       enrolled: (repo) =>
         Effect.gen(function* () {

@@ -128,6 +128,11 @@ export {
 } from "./infrastructure/runtime/launchers.ts";
 export { LaunchSpecJson, runLaunch } from "./infrastructure/runtime/launchers/shim.ts";
 export {
+  type BackfillFinding,
+  backfillProgress,
+  type BackfillResult,
+} from "./infrastructure/runtime/progress-backfill.ts";
+export {
   adoptRuns,
   buildPersonaContexts,
   flowOrigins,

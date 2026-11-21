@@ -523,6 +523,11 @@ const holdMarker = {
     ),
 };
 
+// The work items whose runs said, in `bodies`, that they hold the merge, in
+// the order they said so, for backfill.
+export const holdKeysOf = (bodies: ReadonlyArray<string>) =>
+  bodies.flatMap((body) => Option.toArray(holdMarker.read(body))).map((marker) => marker.key);
+
 // One look at the base branch's CI before a merge: the base, while it holds
 // the merge, and when it looked, so a replay decides the same.
 const BaseCheck = Schema.Struct({ held: Schema.Option(Schema.String), at: Schema.Finite });
