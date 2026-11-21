@@ -49,7 +49,17 @@ import {
   ToPerson,
 } from "./block.ts";
 import * as Events from "./events.ts";
-import { current, park, PHASES, pullRequestItem, record, recordOf, records } from "./phases.ts";
+import {
+  current,
+  issueItem,
+  park,
+  PHASES,
+  pullRequestItem,
+  record,
+  recordOf,
+  records,
+  recordWithPerson,
+} from "./phases.ts";
 import * as PullRequest from "./pull-request.ts";
 import * as Resume from "./resume.ts";
 import * as Settings from "./settings.ts";
@@ -635,26 +645,37 @@ const fileFollowUp = (merged: Merged, body: string, fixed: Option.Option<IssueNu
   activity(
     "file-follow-up",
     Effect.gen(function* () {
-      const existing = yield* filedFor(merged.sha);
+      const filed = yield* Option.match(yield* filedFor(merged.sha), {
+        onSome: Effect.succeed,
+        onNone: () =>
+          Effect.gen(function* () {
+            const labelNames = yield* Settings.labels;
 
-      if (Option.isSome(existing)) {
-        return existing.value;
-      }
+            const issue = yield* (yield* GitHub).createIssue({
+              title: `CI is red on ${merged.base} after #${merged.pr} merged`,
+              body,
+              labels: [
+                Option.match(fixed, {
+                  onNone: () => labelNames.eligible,
+                  onSome: () => labelNames.needsHuman,
+                }),
+              ],
+            });
 
-      const labelNames = yield* Settings.labels;
-
-      const issue = yield* (yield* GitHub).createIssue({
-        title: `CI is red on ${merged.base} after #${merged.pr} merged`,
-        body,
-        labels: [
-          Option.match(fixed, {
-            onNone: () => labelNames.eligible,
-            onSome: () => labelNames.needsHuman,
+            return issue.number;
           }),
-        ],
       });
 
-      return issue.number;
+      // A follow-up's own fix that broke CI again is a person's to fix: with
+      // a person from the start (ADR 21, decision 1).
+      for (const fixing of Option.toArray(fixed)) {
+        yield* recordWithPerson(
+          issueItem(filed),
+          `CI is red on ${merged.base} again after #${merged.pr}, the fix of #${fixing}, merged`,
+        );
+      }
+
+      return filed;
     }),
     Schema.Finite,
   ).pipe(Effect.map(IssueNumber));

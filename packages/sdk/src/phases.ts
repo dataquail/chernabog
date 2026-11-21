@@ -22,6 +22,7 @@ import {
   PhaseWriter,
   Progress,
   ProgressError,
+  Repo,
   Run,
   type WorkItem,
 } from "@chernabog/core";
@@ -33,6 +34,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+
+import * as Settings from "./settings.ts";
 
 // What a phase is kept for. These are the names claim refs already use.
 export type ItemKind = "issue" | "pull-request" | "epic";
@@ -49,6 +52,12 @@ export const PHASES = {
     proposed: "proposed",
     planHandedBack: "plan-handed-back",
     becameEpic: "became-epic",
+    // With a person (ADR 21, decision 1): handed to one, or a plan's task
+    // for one; auto:needs-human is this record's projection.
+    withPerson: "with-person",
+    // A trusted person removed auto:needs-human from an item with-person: their
+    // intent, which observer:handed-back records.
+    handedBack: "handed-back",
   },
   pullRequest: {
     reviewAsked: "review-asked",
@@ -68,8 +77,15 @@ export const PHASES = {
     // keeps the review phase it parked over, which the run that takes it up
     // records again (Conflict.waitForCi).
     awaitingConflictCi: "awaiting-conflict-ci",
+    withPerson: "with-person",
+    handedBack: "handed-back",
   },
-  epic: { waiting: "waiting", finished: "finished" },
+  epic: {
+    waiting: "waiting",
+    finished: "finished",
+    withPerson: "with-person",
+    handedBack: "handed-back",
+  },
 } as const;
 
 type PhasesOf<Kind extends keyof typeof PHASES> =
@@ -548,16 +564,22 @@ export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
 // (docs/run-progress/handoffs.md, question 5). Outside a run, so `by` names
 // the source. Returns the record the item holds afterwards: the one written,
 // or, when another writer moved it first, the one it moved it to.
-export const reconcile = (item: string, found: Option.Option<PhaseRecord>, to: Phase, by: string) =>
+export const reconcile = (
+  item: string,
+  found: Option.Option<PhaseRecord>,
+  to: Phase | (string & {}),
+  by: string,
+  data?: { readonly [key: string]: Json },
+) =>
   Progress.use((progress) =>
     progress
       .advance(item, {
         from: found,
         to: asPhase(to),
         by: asWriter(by),
-        ...Option.match(carryingReview(found, Option.none()), {
+        ...Option.match(carryingReview(found, Option.fromUndefinedOr(data)), {
           onNone: () => ({}),
-          onSome: (data) => ({ data: asData(data) }),
+          onSome: (carried) => ({ data: asData(carried) }),
         }),
       })
       .pipe(
@@ -674,3 +696,309 @@ export const advanceRun = (phase: string) =>
       yield* activity(step, record(item, phase));
     }
   });
+
+// With a person (ADR 21, decision 1): why the item went to one, and the phase
+// it left, none for an item with no record before. `kept` is the data of the
+// record it left, for a hand-back to record that phase again with: absent
+// when that record had none, null when it had more than fits beside `why`.
+export const WithPerson = Schema.Struct({
+  why: Schema.String,
+  from: Schema.OptionFromNullOr(Schema.String),
+  kept: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Json)),
+});
+
+const encodeWithPerson = Schema.encodeSync(WithPerson);
+
+// A with-person record's data as the JSON it is written as.
+const encodeAsJson = (said: typeof WithPerson.Type): { readonly [key: string]: Json } =>
+  encodeWithPerson(said);
+
+// The longest `why` a with-person record keeps, so it fits a record's 4 KB.
+const WHY_SIZE = 1000;
+
+// What a with-person record keeps of `why` and the record it left, as data:
+// that record's data too, when it fits.
+export const withPersonData = (
+  why: string,
+  left: Option.Option<PhaseRecord>,
+): { readonly [key: string]: Json } => {
+  const said = {
+    why: Option.match(
+      Option.liftPredicate(why, (told) => told.length > WHY_SIZE),
+      {
+        onNone: () => why,
+        onSome: (told) => `${told.slice(0, WHY_SIZE - 1)}…`,
+      },
+    ),
+    from: Option.map(left, (found) => found.phase),
+  };
+
+  return Option.match(
+    Option.flatMap(left, (found) => found.data),
+    {
+      onNone: (): { readonly [key: string]: Json } => encodeAsJson(said),
+      onSome: (kept) =>
+        Option.getOrElse(
+          Option.liftPredicate(encodeAsJson({ ...said, kept: Option.some(kept) }), isPhaseData),
+          () => encodeAsJson({ ...said, kept: Option.none() }),
+        ),
+    },
+  );
+};
+
+// The issue or pull request number an item's record is kept for (`issue-12`,
+// `pr-7`, `epic-4`, whose epic is issue 4); none for a team's own item.
+export const numberOf = (item: string): Option.Option<number> =>
+  Option.map(Option.fromNullOr(/^(?:issue|pr|epic)-(\d+)$/.exec(item)), (found) =>
+    Number(found[1]),
+  );
+
+// Records that `item` is with a person, and why, from whatever phase it
+// holds; nothing when it is with one already. Without the label: for an item
+// labelled as it is made, such as a plan's human task. Call it inside the
+// activity that makes the hand-off, as record.
+export const recordWithPerson = (item: string, why: string) =>
+  Effect.gen(function* () {
+    const left = yield* Progress.use((progress) => progress.read(item));
+
+    yield* record(item, PHASES.issue.withPerson, withPersonData(why, left));
+  });
+
+// Hands `item` to a person (ADR 21, decision 1): records with-person, then
+// labels its issue or pull request auto:needs-human (the repo's needs-human
+// label), the record's projection. The one way the SDK hands an item to a
+// person. Call it inside the activity that makes the hand-off, as record.
+export const handToPerson = (item: string, why: string) =>
+  Effect.gen(function* () {
+    yield* recordWithPerson(item, why);
+
+    for (const number of Option.toArray(numberOf(item))) {
+      const labels = yield* Settings.labels;
+      yield* GitHub.use((github) => github.addLabel(number, labels.needsHuman));
+    }
+  });
+
+// Who records that a person handed an item back (handedBack).
+export const HANDED_BACK_BY = "observer:handed-back";
+
+// The roles on the repo whose say a label's removal counts as: GitHub's
+// write access and above.
+const TRUSTED_PERMISSIONS = ["admin", "maintain", "write"];
+
+const LabelEvents = Schema.Array(
+  Schema.Struct({
+    event: Schema.String,
+    label: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
+    actor: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+  }),
+);
+
+const Permission = Schema.Struct({ permission: Schema.String });
+
+// GitHub lists an item's events oldest first, a page at a time.
+const EVENTS_PAGE = 100;
+
+// The most pages of events read for one item; past them, the latest removal
+// is unknown, so nothing is handed back.
+const EVENTS_PAGES = 30;
+
+// Who last removed `label` from the issue or pull request, by all its
+// events, every page of them; none when GitHub lists no removal, or more
+// events than are read.
+const removedBy = (number: number, label: string) =>
+  Effect.gen(function* () {
+    const { slug } = yield* Repo;
+    const github = yield* GitHub;
+    let last = Option.none<string>();
+
+    for (let page = 1; page <= EVENTS_PAGES; page++) {
+      const listed = Option.getOrElse(
+        Schema.decodeUnknownOption(LabelEvents)(
+          yield* github.request(
+            "GET",
+            `/repos/${slug}/issues/${number}/events?per_page=${EVENTS_PAGE}&page=${page}`,
+            Option.none(),
+          ),
+        ),
+        () => [],
+      );
+
+      for (const found of listed) {
+        if (found.event === "unlabeled" && found.label?.name === label) {
+          last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
+        }
+      }
+
+      if (listed.length < EVENTS_PAGE) {
+        return last;
+      }
+    }
+
+    return Option.none<string>();
+  });
+
+// Whether `login` is one the repo trusts with intent: one of its personas,
+// or a person with write access to it.
+const trusted = (login: string) =>
+  Effect.gen(function* () {
+    const { personas, slug } = yield* Repo;
+
+    if (personas.some((own) => own.toLowerCase() === login.toLowerCase())) {
+      return true;
+    }
+
+    const found = yield* GitHub.use((github) =>
+      github.request(
+        "GET",
+        `/repos/${slug}/collaborators/${encodeURIComponent(login)}/permission`,
+        Option.none(),
+      ),
+    );
+
+    return Option.exists(Schema.decodeUnknownOption(Permission)(found), (said) =>
+      TRUSTED_PERMISSIONS.includes(said.permission),
+    );
+  });
+
+// The open issue or pull request an item's record is kept for: its labels.
+// None for one closed, or a team's own item.
+const openLabels = (item: string) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const number = numberOf(item);
+
+    if (Option.isNone(number)) {
+      return Option.none<ReadonlyArray<string>>();
+    }
+
+    if (item.startsWith(pullRequestItem(0).slice(0, -1))) {
+      const pull = yield* github.pullRequest(number.value);
+
+      return Option.liftPredicate(pull.labels, () => pull.state === "open");
+    }
+
+    const issue = yield* github.issue(number.value);
+
+    return Option.liftPredicate(issue.labels, () => issue.state !== "closed");
+  }).pipe(Effect.catchTag("NotFound", () => Effect.succeedNone));
+
+// An item a person handed back: its with-person record.
+export type HandedBack = { readonly item: string; readonly record: PhaseRecord };
+
+// The open items whose record is with-person but whose needs-human label a
+// trusted person removed (ADR 21, decision 1): their intent to hand it back.
+// A label removed by anyone else, or that GitHub names no remover of, hands
+// nothing back.
+export const handedBack = Effect.gen(function* () {
+  const labels = yield* Settings.labels;
+  const found: Array<HandedBack> = [];
+
+  for (const [item, held] of yield* records) {
+    if (held.phase !== PHASES.issue.withPerson) {
+      continue;
+    }
+
+    // One item GitHub fails to answer for is looked at again next tick; the
+    // rest, and the trigger, go on.
+    const back = yield* Effect.gen(function* () {
+      const open = yield* openLabels(item);
+
+      if (Option.isNone(open) || open.value.includes(labels.needsHuman)) {
+        return false;
+      }
+
+      const number = Option.getOrElse(numberOf(item), () => 0);
+      const remover = yield* removedBy(number, labels.needsHuman);
+
+      return Option.isSome(remover) && (yield* trusted(remover.value));
+    }).pipe(
+      Effect.catchTag("GitHubError", (failed) =>
+        Effect.logWarning(
+          `${item}: can't tell whether a person handed it back: ${failed.message}`,
+        ).pipe(Effect.as(false)),
+      ),
+    );
+
+    if (back) {
+      found.push({ item, record: held });
+    }
+  }
+
+  return found;
+});
+
+const WithPersonLeft = Schema.Struct({
+  from: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  kept: Schema.optionalKey(Schema.NullOr(Schema.Unknown)),
+});
+
+// The kind of item a record is kept for, from its name; none for a team's own.
+const kindNamed = (item: string): Option.Option<ItemKind> =>
+  Option.map(Option.fromNullOr(/^(issue|pr|epic)-\d+$/.exec(item)), (found) => {
+    if (found[1] === "pr") {
+      return "pull-request";
+    }
+
+    if (found[1] === "epic") {
+      return "epic";
+    }
+
+    return "issue";
+  });
+
+// The phases observer:handed-back may record on an item of `kind`, from
+// with-person: any of the SDK's phases of that kind, the one it left.
+export const handedBackTo = (kind: ItemKind): ReadonlyArray<string> =>
+  phasesOf(kind).filter((phase) => phase !== PHASES.issue.withPerson);
+
+// What a hand-back records: the SDK phase the item went to the person from,
+// with the data it had, so the flows that read it take it up again as they
+// did before it went to the person; or handed-back {from}, when it came from
+// no record, from a team's own phase, or from one whose data didn't fit.
+const returnOf = (item: string, held: PhaseRecord) => {
+  const left = Option.getOrElse(
+    Option.flatMap(held.data, Schema.decodeUnknownOption(WithPersonLeft)),
+    (): typeof WithPersonLeft.Type => ({}),
+  );
+
+  const from = Option.fromNullishOr(left.from);
+
+  const kept = Option.match(Option.fromUndefinedOr(left.kept), {
+    onNone: () => Option.some(Option.none<PhaseData>()),
+    onSome: (data) => Option.map(Schema.decodeUnknownOption(PhaseData)(data), Option.some),
+  });
+
+  const restored = Option.flatMap(
+    Option.all({ phase: from, kind: kindNamed(item), kept }),
+    (found) =>
+      Option.liftPredicate(
+        { phase: found.phase, data: found.kept },
+        () =>
+          handedBackTo(found.kind).includes(declaredAs(found.phase)) &&
+          found.phase !== PHASES.issue.handedBack,
+      ),
+  );
+
+  return Option.getOrElse(restored, () => ({
+    phase: PHASES.issue.handedBack,
+    data: Option.some(asData({ from: Option.getOrNull(from) })),
+  }));
+};
+
+// Records, on each item a person handed back (handedBack), as
+// observer:handed-back, what it goes back to (returnOf). Only while the item
+// still holds the with-person record read; one another writer moved since
+// keeps that writer's record.
+export const reconcileHandedBack = Effect.gen(function* () {
+  for (const back of yield* handedBack) {
+    const to = returnOf(back.item, back.record);
+
+    yield* reconcile(
+      back.item,
+      Option.some(back.record),
+      to.phase,
+      HANDED_BACK_BY,
+      Option.getOrUndefined(to.data),
+    );
+  }
+});

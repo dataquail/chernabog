@@ -923,6 +923,9 @@ export const changesAsked = (spec: number, round: number) =>
     Schema.String,
   );
 
+// Why a plan's human task is with a person.
+export const PERSONS_TASK = "a person's task";
+
 const labelsFor = (kind: string, labels: Settings.LabelNames): ReadonlyArray<string> => {
   if (kind === "auto") {
     return [labels.eligible];
@@ -1046,8 +1049,15 @@ export const create = (spec: number, plan: Plan) =>
       }
 
       for (const node of plan) {
+        const issue = yield* numberOf(node.key);
+
+        // A person's task is with a person from the start (ADR 21, decision 1).
+        if (node.kind === "human") {
+          yield* Phases.recordWithPerson(Phases.issueItem(issue), PERSONS_TASK);
+        }
+
         for (const label of labelsFor(node.kind, labelNames)) {
-          yield* github.addLabel(yield* numberOf(node.key), label);
+          yield* github.addLabel(issue, label);
         }
       }
 
@@ -1104,9 +1114,9 @@ export const handToHuman = (spec: number, reason: string) =>
     Effect.gen(function* () {
       const github = yield* GitHub;
       const labelNames = yield* Settings.labels;
-      yield* github.addLabel(spec, labelNames.needsHuman);
       // Nothing waits on the plan any more; auto:plan again proposes afresh.
       yield* Phases.record(Phases.issueItem(spec), Phases.PHASES.issue.planHandedBack);
+      yield* Phases.handToPerson(Phases.issueItem(spec), reason);
 
       for (const label of [LABELS.proposed, labelNames.inProgress]) {
         yield* github.removeLabel(spec, label);

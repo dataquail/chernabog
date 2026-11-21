@@ -641,26 +641,37 @@ const fileFollowUp = (merged: MergedItem, body: string, fixed: Option.Option<num
   activity(
     "file-follow-up",
     Effect.gen(function* () {
-      const existing = yield* filedFor(merged.mergeSha);
+      const filed = yield* Option.match(yield* filedFor(merged.mergeSha), {
+        onSome: Effect.succeed,
+        onNone: () =>
+          Effect.gen(function* () {
+            const labelNames = yield* Settings.labels;
 
-      if (Option.isSome(existing)) {
-        return existing.value;
-      }
+            const issue = yield* (yield* GitHub).createIssue({
+              title: `CI is red on ${merged.baseRef} after #${merged.pullRequest} merged`,
+              body,
+              labels: [
+                Option.match(fixed, {
+                  onNone: () => labelNames.eligible,
+                  onSome: () => labelNames.needsHuman,
+                }),
+              ],
+            });
 
-      const labelNames = yield* Settings.labels;
-
-      const issue = yield* (yield* GitHub).createIssue({
-        title: `CI is red on ${merged.baseRef} after #${merged.pullRequest} merged`,
-        body,
-        labels: [
-          Option.match(fixed, {
-            onNone: () => labelNames.eligible,
-            onSome: () => labelNames.needsHuman,
+            return issue.number;
           }),
-        ],
       });
 
-      return issue.number;
+      // A follow-up's own fix that broke CI again is a person's to fix: with
+      // a person from the start (ADR 21, decision 1).
+      for (const fixing of Option.toArray(fixed)) {
+        yield* Phases.recordWithPerson(
+          Phases.issueItem(filed),
+          `CI is red on ${merged.baseRef} again after #${merged.pullRequest}, the fix of #${fixing}, merged`,
+        );
+      }
+
+      return filed;
     }),
     Schema.Finite,
   );
