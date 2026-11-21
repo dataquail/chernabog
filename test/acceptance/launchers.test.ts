@@ -180,10 +180,30 @@ describe("an interactive session outliving its run", () => {
     process.kill(-(first.pid ?? 0), "SIGKILL");
     await closed(first);
 
-    const rerun = sandbox.runCli(["run", "implement", "--repo", "demo"], extra);
-    await Bun.sleep(3000);
+    // The session is released only once the rerun says it waits on it, not
+    // after a fixed sleep a loaded machine can outrun.
+    const rerun = sandbox.cli(["run", "implement", "--repo", "demo"], extra);
+    let output = "";
+
+    const collect = (chunk: Buffer) => {
+      output += chunk.toString();
+    };
+
+    rerun.stdout.on("data", collect);
+    rerun.stderr.on("data", collect);
+
+    const exited = new Promise<number>((resolve) => {
+      rerun.on("close", (exit) => {
+        resolve(exit ?? -1);
+      });
+    });
+
+    await waitFor(
+      () => output.includes("is still running in tmux; waiting on it"),
+      "the rerun to wait on the session",
+    );
     rmSync(hold);
-    const { code, output } = await rerun;
+    const code = await exited;
     expect(output).toContain("is still running in tmux; waiting on it");
     expect(output).toContain("done: #1:");
     expect(code).toBe(0);

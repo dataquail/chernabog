@@ -355,15 +355,14 @@ export const baseRed = (pull: PullRequest) =>
     return Option.some(`CI failing on ${pull.baseRef}`);
   });
 
-// Labels the pull request needs-human and says why; no flow picks it up again
-// until a person removes the label.
+// Hands the pull request to a person (Phases.handToPerson) and says why; no
+// flow picks it up again until a person removes the label.
 export const handToPerson = (pullRequest: number, reason: string) =>
   activity(
     `needs-human-pr-${pullRequest}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
-      yield* github.addLabel(pullRequest, labelNames.needsHuman);
+      yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest), reason);
       yield* github.comment(pullRequest, `Chernabog stopped and needs a person: ${reason}`);
     }),
   ).pipe(Effect.andThen(Effect.fail(new NeedsHuman({ reason: `#${pullRequest}: ${reason}` }))));

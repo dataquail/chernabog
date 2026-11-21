@@ -65,6 +65,13 @@ export const OBSERVED: ReadonlyArray<Observed> = [
     to,
   })),
   { by: WRITER, item: "epic", from: [Phases.NO_RECORD], to: Phases.PHASES.epic.waiting },
+  // An item labelled auto:needs-human is with a person, whatever it held.
+  ...Phases.ITEM_KINDS.map((item): Observed => ({
+    by: WRITER,
+    item,
+    from: [Phases.NO_RECORD, ...Phases.phasesOf(item)],
+    to: Phases.PHASES.issue.withPerson,
+  })),
 ];
 
 // How long an adopted draft's wait lasts in a backfilled awaiting-ready
@@ -84,6 +91,8 @@ export type Finding =
       readonly phase: Phases.Phase;
       readonly data?: { readonly [key: string]: Json };
       readonly why: string;
+      // The record it moves on from, by version; left out: from no record.
+      readonly over?: { readonly phase: string; readonly version: string };
     }
   | { readonly kind: "person"; readonly item: string; readonly why: string };
 
@@ -420,6 +429,56 @@ const epicFinding = (number: number, logins: ReadonlyArray<string>) =>
     );
   });
 
+// The item an issue labelled auto:needs-human is with a person as: its
+// epic's, for an epic, else its issue's.
+const issueOrEpic = (issue: { readonly number: number; readonly labels: ReadonlyArray<string> }) =>
+  Option.match(
+    Option.liftPredicate(issue.number, () => issue.labels.includes(PLAN_LABELS.epic)),
+    { onNone: () => Phases.issueItem(issue.number), onSome: Claims.epic },
+  );
+
+// H1: an open item labelled auto:needs-human whose record isn't with-person
+// is with one, from whatever it holds (ADR 21, decision 1).
+const withPersonFindings = (all: ReadonlyMap<string, PhaseRecord>) =>
+  Effect.gen(function* () {
+    const github = yield* GitHub;
+    const labelNames = yield* Settings.labels;
+    const why = `labelled ${labelNames.needsHuman}`;
+
+    const items = [
+      ...(yield* github.pullRequestsLabelled(labelNames.needsHuman))
+        .filter((pull) => pull.state === "open")
+        .map((pull) => Phases.pullRequestItem(pull.number)),
+      ...(yield* github.issuesLabelled(labelNames.needsHuman))
+        .filter((issue) => issue.state !== "closed")
+        .map(issueOrEpic),
+    ];
+
+    return Arr.dedupe(items).flatMap((item): ReadonlyArray<Finding> => {
+      const found = Phases.recordOf(all, item);
+
+      if (Option.exists(found, (held) => held.phase === Phases.PHASES.issue.withPerson)) {
+        return [];
+      }
+
+      const data = Phases.withPersonData(why, found);
+
+      return [
+        Option.match(found, {
+          onNone: () => write(item, Phases.PHASES.issue.withPerson, why, data),
+          onSome: (held) => ({
+            kind: "write" as const,
+            item,
+            phase: Phases.PHASES.issue.withPerson,
+            data,
+            why,
+            over: { phase: held.phase, version: held.version },
+          }),
+        }),
+      ];
+    });
+  });
+
 // What backfill finds for one open pull request: the review its marker names
 // copied into the record it holds, or, with none, the phase to write, with
 // that review; none for one that needs nothing.
@@ -449,17 +508,25 @@ const surveyPullRequest = (
 
 // Every open item that holds no record and needs one, each with the phase
 // to write or why a person must decide, read as the repo's personas, by its
-// committed config (Repo.personas). An item with a record is left out: it is
-// backfilled already, or a run recorded it; but for a pull request's record
-// that keeps no review its marker names (surveyPullRequest).
+// committed config (Repo.personas), and every one labelled auto:needs-human
+// whose record isn't with-person. Any other item with a record is left out:
+// it is backfilled already, or a run recorded it; but for a pull request's
+// record that keeps no review its marker names (surveyPullRequest).
 export const survey = Effect.gen(function* () {
   const github = yield* GitHub;
   const logins = (yield* Repo).personas;
   const all = yield* Phases.records;
-  const findings: Array<Finding> = [];
-  const unrecorded = (item: string) => Option.isNone(Phases.recordOf(all, item));
+  const findings: Array<Finding> = [...(yield* withPersonFindings(all))];
+  const withPerson = new Set(findings.map((found) => found.item));
+
+  const unrecorded = (item: string) =>
+    Option.isNone(Phases.recordOf(all, item)) && !withPerson.has(item);
 
   for (const pull of yield* github.openPullRequests) {
+    if (withPerson.has(Phases.pullRequestItem(pull.number))) {
+      continue;
+    }
+
     for (const found of Option.toArray(yield* surveyPullRequest(pull, all, logins))) {
       findings.push(found);
     }
@@ -532,13 +599,23 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         continue;
       }
 
-      const over = overwritten(finding, yield* progress.read(finding.item));
+      // From the record the survey read, by its version, for a hand-off to a
+      // person. Else from no record: an item a run recorded since is a lost
+      // race, and keeps the run's record. Or from the record a review is
+      // copied into, by its version.
+      const from = yield* Option.match(Option.fromUndefinedOr(finding.over), {
+        onNone: () =>
+          Effect.map(progress.read(finding.item), (current) =>
+            Option.map(overwritten(finding, current), (found) => ({
+              phase: found.phase,
+              version: found.version,
+            })),
+          ),
+        onSome: (over) => Effect.succeedSome({ phase: asPhase(over.phase), version: over.version }),
+      });
 
-      // From no record, the version the survey read: an item a run recorded
-      // since is a lost race, and keeps the run's record. Or from the record
-      // a review is copied into, by its version.
       const base = {
-        from: Option.map(over, (found) => ({ phase: found.phase, version: found.version })),
+        from,
         to: asPhase(finding.phase),
         by: asWriter(WRITER),
       };

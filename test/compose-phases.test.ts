@@ -86,7 +86,7 @@ const sourceNamed = (name: string) => catalogue.sources.find((source) => source.
 describe("the catalogue's phases", () => {
   test("names the SDK's phases by kind of item", () => {
     expect(Phases.PHASES.pullRequest.changesAsked).toBe("changes-asked");
-    expect(Phases.phasesOf("epic")).toEqual(["waiting", "finished"]);
+    expect(Phases.phasesOf("epic")).toEqual(["waiting", "finished", "with-person", "handed-back"]);
   });
 
   test("lists what each block records, and on which outcome", () => {

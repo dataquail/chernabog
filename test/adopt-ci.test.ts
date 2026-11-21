@@ -162,7 +162,13 @@ describe("an adopted draft in a CI job", () => {
       const finished = yield* runToEnd(implementing, fake, due);
 
       expect(finished.status).toBe("needs-human");
-      expect(fake.phases()[ISSUE_ITEM]).toBe("ready-timed-out");
+      // With a person, from the wait that timed out.
+      expect(fake.phases()[ISSUE_ITEM]).toBe("with-person");
+      expect(
+        Option.flatMap(Option.fromUndefinedOr(fake.records().get(ISSUE_ITEM)), (found) =>
+          Option.map(found.data, (data) => data.from),
+        ),
+      ).toEqual(Option.some("ready-timed-out"));
       expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
       // Nothing waits any more, so nothing is offered again.
       expect(yield* offered(fake)).toEqual([]);
