@@ -144,7 +144,10 @@ describe("the catalogue's phases", () => {
 
   test("lists the phases a block's wakes read beside what it records", () => {
     expect(blockNamed("pr.awaitReady")).toMatchObject({
-      records: [{ item: "issue", phase: "awaiting-ready" }],
+      records: [
+        { item: "issue", phase: "awaiting-ready" },
+        { item: "issue", phase: "ready-timed-out" },
+      ],
       wakeReads: [{ item: "issue", phases: ["awaiting-ready"] }],
     });
   });

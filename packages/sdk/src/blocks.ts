@@ -223,7 +223,10 @@ export const catalogue = elsewhere.and("blocks.ts", {
         }
       }),
     failures: { NeedsHuman: "person", Skip: "skip", StepFailed: "person" },
-    records: [{ item: "issue", phase: PHASES.issue.awaitingReady }],
+    records: [
+      { item: "issue", phase: PHASES.issue.awaitingReady },
+      { item: "issue", phase: PHASES.issue.readyTimedOut },
+    ],
     contributes: {
       labels: Implement.adoptionLabels,
       wakes: Implement.readied.pipe(reportAs("trigger")),

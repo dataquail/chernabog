@@ -38,6 +38,7 @@ export const PHASES = {
     handedOff: "handed-off",
     askedQuestions: "asked-questions",
     awaitingReady: "awaiting-ready",
+    readyTimedOut: "ready-timed-out",
     awaitingCi: "awaiting-ci",
     proposed: "proposed",
     becameEpic: "became-epic",
@@ -163,8 +164,16 @@ const RECORD_TRIES = 3;
 // makes the handoff, so a replay of a finished one doesn't write again.
 // `data` is what the run that picks the item up next needs from this one, a
 // JSON object of at most 4 KB (core's PhaseData); an item already at `to`
-// keeps the data it has.
-export const record = (item: string, to: string, data?: { readonly [key: string]: Json }) =>
+// keeps the data it has. `again` writes a fresh record even then, unless this
+// run wrote the one there: a wait that starts over, with a new `at` and data.
+// Gives the record the item holds afterwards; record gives nothing, for an
+// activity that journals no result.
+export const recording = (
+  item: string,
+  to: string,
+  data?: { readonly [key: string]: Json },
+  options: { readonly again?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
     const run = yield* Run;
@@ -175,8 +184,13 @@ export const record = (item: string, to: string, data?: { readonly [key: string]
     for (let tries = 1; ; tries++) {
       const current = yield* progress.read(item);
 
-      if (Option.exists(current, (found) => found.phase === phase)) {
-        return;
+      const there = Option.filter(
+        current,
+        (found) => found.phase === phase && (options.again !== true || found.by === by),
+      );
+
+      if (Option.isSome(there)) {
+        return there.value;
       }
 
       const from = Option.map(current, (found) => found.phase);
@@ -186,22 +200,29 @@ export const record = (item: string, to: string, data?: { readonly [key: string]
         onSome: (found) => ({ from, to: phase, by, data: found }),
       });
 
-      const moved = yield* progress.advance(item, transition).pipe(
-        Effect.as(false),
+      const written = yield* progress.advance(item, transition).pipe(
+        Effect.asSome,
         Effect.catchTag("PhaseMoved", (lost) => {
           if (tries < RECORD_TRIES) {
-            return Effect.succeed(true);
+            return Effect.succeedNone;
           }
 
           return Effect.fail(new ProgressError({ message: lost.message }));
         }),
       );
 
-      if (!moved) {
-        return;
+      if (Option.isSome(written)) {
+        return written.value;
       }
     }
   });
+
+export const record = (
+  item: string,
+  to: string,
+  data?: { readonly [key: string]: Json },
+  options: { readonly again?: boolean } = {},
+) => Effect.asVoid(recording(item, to, data, options));
 
 // Every item's record, in one read, for a source that looks at every open item.
 export const records = Progress.use((progress) => progress.readAll);

@@ -198,10 +198,13 @@ describe("an issue an open pull request already closes", () => {
               fake.authored.draft = false;
             }
 
+            // Work a run may start, not only a wake: a CI job that parked
+            // here has ended. On this daemon the parked run holds the issue,
+            // so the signal wakes it and nothing new starts.
             const readied = yield* triggered(fake, Implement.readied).pipe(Effect.orDie);
-            expect(readied.map((found) => [found.key, found.signals, found.wakeOnly])).toEqual([
-              [`issue-${ISSUE}`, ["ready"], true],
-            ]);
+            expect(
+              readied.map((found) => [found.key, found.signals, found.wakeOnly === true]),
+            ).toEqual([[`issue-${ISSUE}`, ["ready"], false]]);
             yield* deliverSignals(implementing, IMPLICIT, readied);
 
             return false;
