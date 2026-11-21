@@ -393,9 +393,16 @@ describe("the catalogue of transitions", () => {
   });
 
   test("backfill's first records, review's own reconcile, and a later round's CI wait pass", () => {
-    for (const observed of [...Backfill.OBSERVED]) {
+    for (const observed of Backfill.OBSERVED.filter((each) => each.from !== "same")) {
       expect(
         passes(kindItem[observed.item], recordOf({ phase: observed.to, by: observed.by })),
+      ).toEqual(Option.none());
+    }
+
+    // Backfill writes a pull request's phase again, copying a review marker's review in (#564).
+    for (const phase of [P.approved, P.mergeHeld]) {
+      expect(
+        passes(PR_ITEM, recordOf({ phase, from: Option.some(phase), by: Backfill.WRITER })),
       ).toEqual(Option.none());
     }
 
@@ -429,7 +436,7 @@ describe("the catalogue of transitions", () => {
     );
   });
 
-  test("backfill writes only first records", () => {
+  test("backfill writes only first records, and a pull request's phase again", () => {
     expect(
       passes(
         PR_ITEM,
@@ -438,7 +445,7 @@ describe("the catalogue of transitions", () => {
     ).toEqual(
       Option.some(
         expect.stringContaining(
-          "observer:backfill records only pull-request review-asked from none",
+          "observer:backfill records only a pull-request's phase again, pull-request review-asked from none",
         ),
       ),
     );
