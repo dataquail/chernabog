@@ -137,7 +137,7 @@ describe("a flow document's plan", () => {
       reason: "asked",
     });
 
-    const lane = "steps[3].repeat.steps[8].steps[2].on.needs-clarification.steps[2]";
+    const lane = "steps[3].repeat.steps[9].steps[2].on.needs-clarification.steps[2]";
 
     expect(nodeAt(planFor(EPIC_DOCUMENT), lane)).toEqual({
       id: lane,
@@ -176,15 +176,16 @@ describe("a flow document's plan", () => {
       ["carried", "use"],
       ["steps[3].repeat.steps[5].if", "if"],
       ["latest", "first"],
+      ["settled", "use"],
       ["ready", "use"],
       ["started", "forEach"],
       ["recorded", "use"],
-      ["steps[3].repeat.steps[10]", "next"],
+      ["steps[3].repeat.steps[11]", "next"],
     ]);
 
-    expect(nodeAt(plan, "steps[3].repeat.steps[10]")).toEqual({
-      id: "steps[3].repeat.steps[10]",
-      path: "steps[3].repeat.steps[10]",
+    expect(nodeAt(plan, "steps[3].repeat.steps[11]")).toEqual({
+      id: "steps[3].repeat.steps[11]",
+      path: "steps[3].repeat.steps[11]",
       kind: "next",
       next: { tasks: "recorded.tasks", stack: "latest.stack" },
     });
@@ -198,7 +199,7 @@ describe("a flow document's plan", () => {
   });
 
   test("gives a forEach its items, what it names each, its scope and its lane's steps", () => {
-    const started = nodeAt(planFor(EPIC_DOCUMENT), "steps[3].repeat.steps[8]");
+    const started = nodeAt(planFor(EPIC_DOCUMENT), "steps[3].repeat.steps[9]");
 
     expect(started).toMatchObject({
       id: "started",
@@ -210,13 +211,13 @@ describe("a flow document's plan", () => {
     });
 
     expect(childrenOf(started).map((node) => [node.id, node.path])).toEqual([
-      ["claim", "steps[3].repeat.steps[8].steps[0]"],
-      ["worktree", "steps[3].repeat.steps[8].steps[1]"],
-      ["agent", "steps[3].repeat.steps[8].steps[2]"],
-      ["gate", "steps[3].repeat.steps[8].steps[3]"],
-      ["published", "steps[3].repeat.steps[8].steps[4]"],
-      ["ci", "steps[3].repeat.steps[8].steps[5]"],
-      ["done", "steps[3].repeat.steps[8].steps[6]"],
+      ["claim", "steps[3].repeat.steps[9].steps[0]"],
+      ["worktree", "steps[3].repeat.steps[9].steps[1]"],
+      ["agent", "steps[3].repeat.steps[9].steps[2]"],
+      ["gate", "steps[3].repeat.steps[9].steps[3]"],
+      ["published", "steps[3].repeat.steps[9].steps[4]"],
+      ["ci", "steps[3].repeat.steps[9].steps[5]"],
+      ["done", "steps[3].repeat.steps[9].steps[6]"],
     ]);
   });
 

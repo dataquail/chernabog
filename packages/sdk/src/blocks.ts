@@ -58,6 +58,7 @@ import {
   ToPerson,
   WorktreePath,
 } from "./block.ts";
+import * as Epic from "./epic.ts";
 import {
   epicBlocks,
   epicSources,
@@ -529,7 +530,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
   "ci.waitAndFix": defineBlock({
     name: "ci.waitAndFix",
     about:
-      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds.",
+      "Waits for CI, having the agent fix red in the worktree, up to the repo's limit of rounds. In an epic's task lane, CI still pending ends the lane instead (ci-left), and epic.settleCi takes the task up once CI settles.",
     inputKinds: {
       pr: "PullRequestNumber",
       worktree: "WorktreePath",
@@ -557,11 +558,43 @@ export const catalogue = elsewhere.and("blocks.ts", {
     }) =>
       Effect.gen(function* () {
         const session = yield* laneSession(input.lane);
+        const target = { ...session, branch: input.branch, ...onBase(input.base) };
+        const epicLane = Option.all([yield* Epic.LaneCi, Option.fromUndefinedOr(input.lane)]);
+
+        // An epic's task can't park on its own: CI still pending ends its
+        // lane, and a later round takes the task up (epic.settleCi).
+        if (Option.isSome(epicLane)) {
+          const [slot, lane] = epicLane.value;
+
+          const left = yield* Implement.waitForCiLeaving(input.pr, input.worktree, target, {
+            id: lane,
+          });
+
+          for (const round of Option.toArray(left)) {
+            return yield* Epic.leaveLane(
+              yield* Epic.leftOnCi(
+                {
+                  issue: slot.issue,
+                  pullRequest: input.pr,
+                  lane,
+                  branch: input.branch,
+                  ...Option.match(input.base, {
+                    onNone: () => ({}),
+                    onSome: (base) => ({ base }),
+                  }),
+                },
+                round,
+              ),
+            );
+          }
+
+          return;
+        }
 
         return yield* Implement.waitForCi(
           input.pr,
           input.worktree,
-          { ...session, branch: input.branch, ...onBase(input.base) },
+          target,
           yield* Implement.documentCiWait(input.pr, inLane(input.lane)),
         );
       }),

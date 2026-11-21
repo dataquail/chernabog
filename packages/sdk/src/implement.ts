@@ -1443,6 +1443,10 @@ export type CiWait = RepeatOptions & {
   readonly data?: { readonly [key: string]: Json };
   // The phase it records for a round: awaiting-ci's by default (Phases.awaitingCi).
   readonly phase?: (round: number) => string;
+  // Whether a first reading still pending ends the wait, rather than a park
+  // or a poll: for a line of work beside others, as an epic's task, which
+  // can't park on its own (waitForCiLeaving).
+  readonly leave?: boolean;
 };
 
 const phaseOfRound = (options: CiWait, round: number) =>
@@ -1516,6 +1520,10 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
     let reading: CiReading = { state: "pending", waitingOn: [] };
 
     for (let poll = 1; reading.state === "pending"; poll++) {
+      if (poll === 2 && options.leave === true) {
+        return { state: "left" } as const;
+      }
+
       if (poll > maxPolls) {
         return yield* new CiTimedOut({
           pullRequest,
@@ -1646,8 +1654,12 @@ const waitForCiIn = <E, R>(
     for (let round = options.firstRound ?? 1; ; round++) {
       const reading = yield* awaitChecks(pullRequest, round, options);
 
+      if (reading.state === "left") {
+        return Option.some(round);
+      }
+
       if (reading.state !== "red") {
-        return;
+        return Option.none<number>();
       }
 
       const failed = reading.failedChecks.join(", ");
@@ -1690,7 +1702,21 @@ export const waitForCi = (
   worktree: string,
   target: CiBranch,
   options: CiWait = {},
-) => waitForCiIn(pullRequest, Effect.succeed(worktree), target, options);
+) =>
+  Effect.asVoid(
+    waitForCiIn(pullRequest, Effect.succeed(worktree), target, { ...options, leave: false }),
+  );
+
+// As waitForCi, for a line of work that can't park on its own, such as an
+// epic's task: a reading still pending, in the first round or after a fix,
+// ends the wait with the round it waits on, for the run to take up once CI
+// settles; none once CI is green.
+export const waitForCiLeaving = (
+  pullRequest: number,
+  worktree: string,
+  target: CiBranch,
+  options: RepeatOptions & { readonly firstRound?: number } = {},
+) => waitForCiIn(pullRequest, Effect.succeed(worktree), target, { ...options, leave: true });
 
 // As waitForCi, for a pull request with no worktree yet, such as an adopted
 // one: `worktree`, such as prepareWorktree's, is made only for the first fix.
@@ -1714,7 +1740,9 @@ export const waitForCiMaking = <E, R>(
       return path;
     });
 
-    return yield* waitForCiIn(pullRequest, fixIn, target, options);
+    return yield* Effect.asVoid(
+      waitForCiIn(pullRequest, fixIn, target, { ...options, leave: false }),
+    );
   });
 
 const askForReview = (pullRequest: number, options: HandOffOptions) => {

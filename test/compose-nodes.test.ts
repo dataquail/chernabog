@@ -178,7 +178,7 @@ const laneNodes = (task: number, round: number) =>
 // The nodes of a round of the epic's repeat up to its forEach, none of which
 // but progress and status runs a step.
 const roundNodes = (round: number) =>
-  ["progress", "status", "noted", "closed", "carried", "ready"].map(
+  ["progress", "status", "noted", "closed", "carried", "settled", "ready"].map(
     (node) => `${node} r${round}: ok`,
   );
 

@@ -237,6 +237,7 @@ describe("a flow's events", () => {
           "pull_request: synchronize",
           "pull_request_review: submitted",
           "pull_request: closed",
+          "workflow_run: completed",
         ],
         readsPhases: true,
       }),
