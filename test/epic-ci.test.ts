@@ -4,11 +4,27 @@
 // read it and what the run kept between rounds. Epic.queued offers the epic
 // again only once a layer changed since, or a day passed, and the new run
 // carries on from what the record kept.
+//
+// A layer's refresh whose CI is pending (audit W7) can't park on its own
+// either: the refresh ends there, the layers above it wait, and so does its
+// review, and the epic parks with the refresh in its record (`layers.ci`).
+// Epic.queued holds the epic, with why, until that CI settles or ciTimeout
+// passes, and the run that takes it up takes the refresh up first.
 
-import { Claims, DEFAULT_LABELS, Epic, type LinkedIssue, Plan } from "@chernabog/sdk";
+import {
+  Claims,
+  DEFAULT_LABELS,
+  Epic,
+  type LinkedIssue,
+  Plan,
+  type PullRequest,
+  Stack,
+  type WorkItem,
+} from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -18,11 +34,13 @@ import { IMPLICIT } from "../src/kernel/persona.value-object.ts";
 import { mayStart } from "../src/modules/runs/domain/run/work-item.value-object.ts";
 import { flowHandle } from "../src/modules/runs/infrastructure/runtime/engine.ts";
 import { listRunWaitsHandler } from "../src/modules/runs/queries/list-run-waits.handler.ts";
+import { documentOf, EPIC_DOCUMENT, loadFlow } from "./compose-harness.ts";
 import { effect } from "./effect-test.ts";
 import {
   deliverSignals,
   type EngineRun,
   type Fake,
+  flowTriggered,
   item,
   makeFake,
   onFake,
@@ -312,6 +330,280 @@ describe("an epic parked in a CI job", () => {
   );
 });
 
+const PENDING: Fake["merge"]["ci"] = { state: "pending", waitingOn: ["test"] };
+
+// The layers of a stack in review: #10's pull request on main, #11's on
+// #10's branch, and #12's on #11's.
+const STACK = [10, 11, 12] as const;
+
+const BELOW = new Map([
+  [11, 10],
+  [12, 11],
+]);
+
+const pullOf = (layer: number) => 300 + layer;
+const MIDDLE = pullOf(11);
+const REVIEWED = "reviewed0000";
+
+const layerPull = (layer: number): PullRequest => ({
+  number: pullOf(layer),
+  title: `Task ${layer}`,
+  body: `Closes #${layer}\nPart of #${EPIC}`,
+  url: `https://github.com/dataquail/demo/pull/${pullOf(layer)}`,
+  state: "open",
+  headRef: Claims.branchFor(layer),
+  headSha: `head${layer}`,
+  baseRef: Option.match(Option.fromUndefinedOr(BELOW.get(layer)), {
+    onNone: () => "main",
+    onSome: Claims.branchFor,
+  }),
+  labels: [],
+  author: "chernabog-bot",
+  assignees: [],
+  requestedReviewers: [],
+});
+
+// The epic over the stack, every layer in review, with #10's branch moved
+// on since #11 was brought up to it: refreshing #11 merges something in, and
+// pushes. CI on the pull requests reads `ci`.
+const stackFake = (ci: Fake["merge"]["ci"]) => {
+  const fake = makeFake("approve", { reviewers: ["zach", "data-quail"] });
+  fake.graph.made.set(EPIC, madeIssue(EPIC, "An epic"));
+  fake.setLabels(EPIC, [Plan.LABELS.epic]);
+
+  for (const layer of STACK) {
+    task(fake, layer, Option.toArray(Option.fromUndefinedOr(BELOW.get(layer))));
+    fake.branchPulls.set(Claims.branchFor(layer), layerPull(layer));
+  }
+
+  fake.git.makes.add(`merge --no-edit origin/${Claims.branchFor(10)}`);
+  fake.merge.ci = ci;
+
+  // zach reviewed a commit the refreshed head is more than a merge of the
+  // base onto, so a refresh that settles asks them again.
+  fake.submitted.push({ author: "zach", state: "CHANGES_REQUESTED", commitSha: REVIEWED });
+  fake.git.refuses.add(`rev-parse --verify --quiet ${REVIEWED}^{commit}`);
+
+  return fake;
+};
+
+const refreshesLeft = (fake: Fake) =>
+  Option.getOrElse(
+    Option.flatMap(kept(fake), (found) => Option.fromUndefinedOr(found.layers?.ci)),
+    (): ReadonlyArray<Epic.PendingRefresh> => [],
+  );
+
+// Whether #12's layer was refreshed: its refresh fetches its base, #11's branch.
+const topRefreshed = (fake: Fake) =>
+  fake.git.ran.includes(`fetch --quiet origin ${Claims.branchFor(11)}`);
+
+const forms = [
+  ["the recipe", Effect.succeed(epic)],
+  ["the document", loadFlow(documentOf(EPIC_DOCUMENT))],
+] as const;
+
+for (const [form, loading] of forms) {
+  const handle = Effect.map(loading, (flow) => flowHandle(repo, "epic", flow));
+
+  const offeredBy = (fake: Fake) =>
+    Effect.gen(function* () {
+      return yield* flowTriggered(fake, yield* loading);
+    }).pipe(Effect.orDie);
+
+  const onlyOfferedBy = (fake: Fake) =>
+    Effect.flatMap(offeredBy(fake), (items) => Effect.fromOption(Arr.head(items))).pipe(
+      Effect.orDie,
+    );
+
+  const parkAt = (fake: Fake, work: WorkItem, round: number) =>
+    Effect.gen(function* () {
+      const run = yield* runUntil(yield* handle, fake, work, parkedAt(round));
+      fake.refs.clear();
+
+      return run;
+    });
+
+  // The epic whose run left #11's refresh on pending CI and parked, with CI
+  // now `ci`.
+  const refreshLeft = (ci: Fake["merge"]["ci"]) =>
+    Effect.gen(function* () {
+      const fake = stackFake(PENDING);
+      yield* parkAt(fake, fresh, 2);
+      fake.merge.ci = ci;
+
+      return fake;
+    });
+
+  // Takes the parked epic up, as the run its trigger starts, to its next park.
+  const takenUp = (fake: Fake) =>
+    Effect.gen(function* () {
+      const taken = yield* onlyOfferedBy(fake);
+      expect(mayStart(taken)).toBe(true);
+
+      return yield* parkAt(fake, taken, 2);
+    });
+
+  describe(`the epic's ${form}, on a layer's refresh whose CI is pending`, () => {
+    effect(
+      "ends the refresh rather than poll, holds the layers above, and parks with it in the epic's record",
+      () =>
+        Effect.gen(function* () {
+          const before = yield* DateTime.now;
+          const fake = stackFake(PENDING);
+          const run = yield* parkAt(fake, fresh, 2);
+
+          expect(run.status).toBe("running");
+          expect(fake.phases()[EPIC_ITEM]).toBe("waiting");
+
+          const [left] = refreshesLeft(fake);
+          expect(left).toMatchObject({
+            layer: 11,
+            pullRequest: MIDDLE,
+            base: Claims.branchFor(10),
+            round: 1,
+          });
+          expect(
+            Option.exists(DateTime.make(left.since), (began) =>
+              DateTime.isGreaterThanOrEqualTo(began, before),
+            ),
+          ).toBe(true);
+
+          // It pushed, and its review waits for CI.
+          expect(fake.git.pushes).toBe(1);
+          expect(fake.people.requested).toEqual([]);
+          // #12, on #11, wasn't refreshed meanwhile.
+          expect(topRefreshed(fake)).toBe(false);
+        }),
+      ENGINE_TIMEOUT,
+    );
+
+    effect(
+      "is held, with why, while the refresh's CI is still pending",
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* refreshLeft(PENDING);
+          const held = yield* onlyOfferedBy(fake);
+
+          expect(mayStart(held)).toBe(false);
+          expect(held.held).toBe(`#11: waits on CI for #${MIDDLE}`);
+        }),
+      ENGINE_TIMEOUT,
+    );
+
+    effect(
+      "once CI went green, is offered, and the run that takes it up settles its review, then carries the layer above",
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* refreshLeft({ state: "green" });
+          const pushes = fake.git.pushes;
+
+          expect(topRefreshed(fake)).toBe(false);
+          yield* takenUp(fake);
+
+          // zach is asked again, nothing was pushed to #11 again, and #12
+          // was brought up after it.
+          expect(fake.people.requested).toEqual(["zach"]);
+          expect(fake.git.pushes).toBe(pushes);
+          expect(topRefreshed(fake)).toBe(true);
+          expect(refreshesLeft(fake)).toEqual([]);
+          expect(fake.labelsOf(MIDDLE)).not.toContain(DEFAULT_LABELS.needsHuman);
+        }),
+      ENGINE_TIMEOUT,
+    );
+
+    effect(
+      "once CI went red, is offered, and the run that takes it up fixes it, then settles its review",
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* refreshLeft({ state: "red", failedChecks: ["test"] });
+          const pushes = fake.git.pushes;
+          fake.merge.afterPush = Option.some({ state: "green" });
+          yield* takenUp(fake);
+
+          expect(fake.git.pushes).toBe(pushes + 1);
+          expect(fake.requests.at(-1)?.prompt).toContain("CI failed on pull request");
+          expect(fake.people.requested).toEqual(["zach"]);
+          expect(refreshesLeft(fake)).toEqual([]);
+        }),
+      ENGINE_TIMEOUT,
+    );
+
+    effect(
+      "still pending past ciTimeout, counted from when the wait began, gives the layer to a person and holds the one above",
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* refreshLeft(PENDING);
+          const waiting = Option.getOrThrow(kept(fake));
+
+          const since = DateTime.formatIso(
+            DateTime.subtractDuration(yield* DateTime.now, Duration.hours(3)),
+          );
+
+          const layers = Option.getOrThrow(Option.fromUndefinedOr(waiting.layers));
+          const ci = (layers.ci ?? []).map((one) => ({ ...one, since }));
+
+          const data = yield* Schema.encodeEffect(Epic.Waiting)({
+            ...waiting,
+            layers: { ...layers, ci },
+          }).pipe(Effect.orDie);
+
+          fake.recordPhase(EPIC_ITEM, "waiting", { data });
+          yield* takenUp(fake);
+
+          expect(fake.labelsOf(MIDDLE)).toContain(DEFAULT_LABELS.needsHuman);
+          expect(
+            fake.comments.some((comment) =>
+              comment.body.startsWith("Chernabog stopped bringing this layer up to date"),
+            ),
+          ).toBe(true);
+          expect(fake.people.requested).toEqual([]);
+          expect(topRefreshed(fake)).toBe(false);
+          expect(refreshesLeft(fake)).toEqual([]);
+        }),
+      ENGINE_TIMEOUT,
+    );
+  });
+}
+
+describe("the refreshes an epic's record keeps", () => {
+  // The most a refresh keeps: a long base, a full sha, and what it says cut to SAID_SIZE.
+  const largest = (layer: number): Epic.PendingRefresh => ({
+    layer: 1000 + layer,
+    pullRequest: 10_000 + layer,
+    baseSha: "f".repeat(40),
+    lower: 9999,
+    base: `auto/issue-${1000 + layer}`,
+    round: 9,
+    since: "2026-11-19T12:34:56.789Z",
+    said: "x".repeat(Stack.SAID_SIZE),
+  });
+
+  // A layer's refresh after the one below moved, which says only what it merged.
+  const plain = (layer: number): Epic.PendingRefresh => ({
+    layer: 1000 + layer,
+    pullRequest: 10_000 + layer,
+    baseSha: "f".repeat(40),
+    base: `auto/issue-${1000 + layer}`,
+    round: 9,
+    since: "2026-11-19T12:34:56.789Z",
+    said: `Merged \`auto/issue-${1000 + layer}\` at \`abcdef1\` into this branch.`,
+  });
+
+  effect("keep six layers at their largest, nine plain ones, and no more than their share", () =>
+    Effect.sync(() => {
+      const of = (count: number, one: (layer: number) => Epic.PendingRefresh) =>
+        Array.from({ length: count }, (_, index) => one(index));
+
+      expect(Epic.fitsRefreshCi(of(6, largest))).toBe(true);
+      expect(Epic.fitsRefreshCi(of(7, largest))).toBe(false);
+      expect(Epic.fitsRefreshCi(of(9, plain))).toBe(true);
+      expect(Epic.fitsRefreshCi(of(10, plain))).toBe(false);
+      // The record past them still has room for the rest of what it keeps.
+      expect(Epic.REFRESH_CI_SIZE).toBeLessThanOrEqual(4096 / 2);
+    }),
+  );
+});
+
 const decodeWaiting = Schema.decodeUnknownOption(Epic.Waiting);
 
 describe("the epic's waiting record, when what the run kept is too big for it", () => {
@@ -336,6 +628,41 @@ describe("the epic's waiting record, when what the run kept is too big for it", 
     expect(Option.map(decodeWaiting(data), (decoded) => decoded.tasks)).toEqual(
       Option.some({ attempts: [], handedBack: [], withPerson: [], ci }),
     );
+  });
+
+  test("keeps the refreshes left on pending CI beside the tasks", () => {
+    const attempts = Arr.makeBy(600, (index): readonly [number, number] => [1000 + index, 3]);
+    const ci = [pendingCi(10)];
+
+    const refreshes: ReadonlyArray<Epic.PendingRefresh> = [
+      {
+        layer: 11,
+        pullRequest: 111,
+        baseSha: "abc1234",
+        round: 1,
+        base: "auto/issue-10",
+        since: "2026-11-19T12:00:00.000Z",
+        said: "brought up to date with #110",
+      },
+    ];
+
+    const data = Epic.waitingData({
+      fingerprint: "f",
+      tasks: { attempts, handedBack: [], withPerson: [], ci },
+      layers: {
+        attempts: [],
+        recorded: [],
+        withPerson: [],
+        below: [],
+        caughtUp: [],
+        ci: refreshes,
+      },
+    });
+
+    const recorded = decodeWaiting(data);
+
+    expect(Option.map(recorded, (decoded) => decoded.tasks.ci)).toEqual(Option.some(ci));
+    expect(Option.map(recorded, (decoded) => decoded.layers?.ci)).toEqual(Option.some(refreshes));
   });
 
   test("keeps everything when it fits", () => {

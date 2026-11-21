@@ -15,6 +15,7 @@ import {
   StepFailed,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -26,11 +27,14 @@ import {
   fixWithAgent,
   localGate,
   push,
+  type RepeatOptions,
   waitForCi,
+  waitForCiLeaving,
 } from "./implement.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { onlyMergedBase } from "./pull-request.ts";
 import { decisiveReviews, findAuthorSession, requestAgain } from "./review.ts";
+import * as Settings from "./settings.ts";
 
 // base: the branch the layer is built on now, the repo's base branch unless
 // given. lower: the pull request of the layer below, whose head branch is
@@ -340,6 +344,9 @@ export const syncBase = (worktree: string, options: UpdateOptions = {}) =>
 // the first, so a refresh handed to a person and back runs again rather than
 // replaying the outcome it saved. session: the author's session to resume, the
 // one the implementing run's marker on the pull request names unless given.
+// leave: a first reading of CI still pending, after the push or after a fix,
+// ends the refresh with the CI it left (Refreshed.left) instead of polling,
+// for a run that can't park on one layer alone, as an epic's (audit W7).
 export type LayerRefresh = {
   readonly pullRequest: number;
   readonly branch: string;
@@ -348,18 +355,60 @@ export type LayerRefresh = {
   readonly baseSha: string;
   readonly attempt?: number;
   readonly session?: AuthorSession;
+  readonly leave?: boolean;
 };
+
+// The most characters of what a refresh says to a reviewer asked again that
+// a left refresh keeps, so the record it goes in stays small.
+export const SAID_SIZE = 150;
+
+// What a refresh that left on pending CI keeps, as the step
+// `refresh-ci-left-<key>`, for the run that takes it up (finishRefresh): the
+// round of CI it waits on, the base it merged in, when the round's wait
+// began, so ciTimeout counts across runs, and what it says to a reviewer it
+// asks again, cut to SAID_SIZE.
+export const RefreshLeft = Schema.Struct({
+  round: Schema.Finite,
+  base: Schema.String,
+  since: Schema.String,
+  said: Schema.String,
+});
+
+export type RefreshLeft = typeof RefreshLeft.Type;
 
 // What a refresh did. upToDate: the layer already held its base, so nothing
 // was pushed. adjusted: the author agent was asked to resolve conflicts or
 // adjust the layer. askedAgain: the reviewer asked to review again, none when
 // the new head only merged the base into the head they reviewed, or nobody
-// has reviewed it.
+// has reviewed it, or the refresh left on pending CI. left: with `leave`, the
+// CI it left pending, whose review waits for it to settle.
 export type Refreshed = {
   readonly upToDate: boolean;
   readonly adjusted: boolean;
   readonly askedAgain: Option.Option<string>;
+  readonly left: Option.Option<RefreshLeft>;
 };
+
+const cut = (said: string) => {
+  if (said.length <= SAID_SIZE) {
+    return said;
+  }
+
+  return `${said.slice(0, SAID_SIZE - 1)}…`;
+};
+
+// Records the CI a refresh left pending, when its round's wait began.
+const leftOnCi = (name: string, round: number, base: string, said: string) =>
+  activity(
+    name,
+    Effect.map(DateTime.now, (now): RefreshLeft => ({
+      round,
+      base,
+      since: DateTime.formatIso(now),
+      said: cut(said),
+    })),
+    RefreshLeft,
+  );
 
 // The most lines of the base's diff a prompt carries; the agent reads the rest itself.
 const DIFF_LINES = 400;
@@ -508,7 +557,9 @@ const reviewAfterRefresh = (name: string, pullRequest: number, base: string, sai
 // and waits for CI. A head that only merged the base keeps its review;
 // otherwise the last reviewer is asked again. It writes no review marker, so
 // it never counts against limits.reviewRounds. Every step is keyed by the
-// pull request and baseSha, and by the attempt after the first. Fails as push and waitForCi do, and with
+// pull request and baseSha, and by the attempt after the first. With
+// `leave`, CI still pending ends the refresh with what it left, and the
+// review waits for finishRefresh. Fails as push and waitForCi do, and with
 // NeedsHuman when the agent needs a person, leaves the merge unfinished, or
 // leaves edits uncommitted.
 export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
@@ -550,7 +601,12 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
     );
 
     if (change.upToDate) {
-      return { upToDate: true, adjusted: false, askedAgain: Option.none() } satisfies Refreshed;
+      return {
+        upToDate: true,
+        adjusted: false,
+        askedAgain: Option.none(),
+        left: Option.none(),
+      } satisfies Refreshed;
     }
 
     const session = yield* Option.match(Option.fromUndefinedOr(layer.session), {
@@ -607,12 +663,25 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
       base: synced.base,
       withPerson: session.withPerson === true,
     });
-    yield* waitForCi(
-      layer.pullRequest,
-      worktree,
-      { ...session, branch: layer.branch, base: synced.base },
-      { id: `refresh-${key}` },
-    );
+    const target = { ...session, branch: layer.branch, base: synced.base };
+
+    if (layer.leave === true) {
+      const left = yield* waitForCiLeaving(layer.pullRequest, worktree, target, {
+        id: `refresh-${key}`,
+      });
+
+      // The review waits for CI to settle, as finishRefresh takes it up.
+      for (const round of Option.toArray(left)) {
+        return {
+          upToDate: false,
+          adjusted,
+          askedAgain: Option.none(),
+          left: Option.some(yield* leftOnCi(`refresh-ci-left-${key}`, round, synced.base, said)),
+        } satisfies Refreshed;
+      }
+    } else {
+      yield* waitForCi(layer.pullRequest, worktree, target, { id: `refresh-${key}` });
+    }
 
     const askedAgain = yield* reviewAfterRefresh(
       `refresh-review-${key}`,
@@ -621,5 +690,70 @@ export const refreshLayer = (worktree: string, layer: LayerRefresh) =>
       said,
     );
 
-    return { upToDate: false, adjusted, askedAgain } satisfies Refreshed;
+    return { upToDate: false, adjusted, askedAgain, left: Option.none() } satisfies Refreshed;
   });
+
+// The layer whose refresh left on pending CI, for finishRefresh: its pull
+// request and branch, and what the refresh left (RefreshLeft).
+export type LeftRefresh = RefreshLeft & {
+  readonly pullRequest: number;
+  readonly branch: string;
+};
+
+// Takes up a refresh that left on pending CI once CI settled, in `worktree`
+// on the layer's branch: waits on from the round it left, fixing red in the
+// author's session, then asks the reviewer again unless the head only merged
+// the base, as refreshLayer would have. Every step carries `id`, the run's
+// round of take-up. The round of CI it left pending again, after a fix, or
+// none once CI is green and the review is settled. Fails as waitForCi does.
+export const finishRefresh = (worktree: string, left: LeftRefresh, options: RepeatOptions) =>
+  Effect.gen(function* () {
+    const id = options.id ?? `${left.pullRequest}`;
+
+    const author = yield* activity(
+      `refresh-author-${id}`,
+      findAuthorSession(left.pullRequest, `refresh-${id}`),
+      SessionMarker,
+    );
+
+    const session: AuthorSession = {
+      sessionId: Option.some(author.sessionId),
+      adapter: Option.some(author.adapter),
+      withPerson: author.withPerson === true,
+    };
+
+    const again = yield* waitForCiLeaving(
+      left.pullRequest,
+      worktree,
+      { ...session, branch: left.branch, base: left.base },
+      { id, firstRound: left.round },
+    );
+
+    if (Option.isSome(again)) {
+      return Option.some(
+        yield* leftOnCi(`refresh-ci-left-${id}`, again.value, left.base, left.said),
+      );
+    }
+
+    yield* reviewAfterRefresh(`refresh-review-${id}`, left.pullRequest, left.base, left.said);
+
+    return Option.none<RefreshLeft>();
+  });
+
+// Hands a layer whose refresh needs a person to one: labelled
+// auto:needs-human, with the reason, as the step `needs-human#refresh-<key>`.
+// Keyed by the refresh, so a later one goes to a person too. Comes to the
+// reason, as `#<pull request>: <reason>`.
+export const refreshToPerson = (pullRequest: number, key: string, reason: string) =>
+  activity(
+    `needs-human#refresh-${key}`,
+    Effect.gen(function* () {
+      const github = yield* GitHub;
+      const labelNames = yield* Settings.labels;
+      yield* github.addLabel(pullRequest, labelNames.needsHuman);
+      yield* github.comment(
+        pullRequest,
+        `Chernabog stopped bringing this layer up to date with its base and needs a person: ${reason}`,
+      );
+    }),
+  ).pipe(Effect.as(`#${pullRequest}: ${reason}`));

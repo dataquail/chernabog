@@ -377,39 +377,40 @@ const refreshWorktree = (branch: string, key: string, attempt: number) =>
     Schema.String,
   );
 
-// Hands a layer whose refresh needs a person to one: labelled auto:needs-human,
-// with the reason. Keyed by the refresh, so a later one goes to a person too.
-const refreshToPerson = (pullRequest: number, key: string, reason: string) =>
-  activity(
-    `needs-human#refresh-${key}`,
-    Effect.gen(function* () {
-      const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
-      yield* github.addLabel(pullRequest, labelNames.needsHuman);
-      yield* github.comment(
-        pullRequest,
-        `Chernabog stopped bringing this layer up to date with its base and needs a person: ${reason}`,
-      );
-    }),
-  ).pipe(Effect.as(`#${pullRequest}: ${reason}`));
-
 // What one refresh did: whether the layer was carried, whether it pushed,
-// and whether it went to a person.
-type Carried = { readonly carried: boolean; readonly pushed: boolean; readonly toPerson: boolean };
+// whether it went to a person, and the CI it left pending, whose review waits
+// for it to settle.
+type Carried = {
+  readonly carried: boolean;
+  readonly pushed: boolean;
+  readonly toPerson: boolean;
+  readonly left: Option.Option<Epic.PendingRefresh>;
+};
 
 // Brings one layer up to date with its base at `baseSha` (Stack.refreshLayer):
 // merges it in, adjusts the layer when the base changed what it builds on,
 // pushes and waits for CI. `lower`, once the layer below has merged, is its
 // pull request, so a squash of it is reconciled rather than merged again. One that needs a person is handed to one, and
-// reads as not carried, so the layers above it wait. Every step is keyed by
+// reads as not carried, so the layers above it wait. CI still pending ends
+// the refresh, which then carries what it left (audit W7), when that fits the
+// epic's record beside `ci`, the refreshes already left; otherwise it waits
+// for CI. Every step is keyed by
 // the pull request, the base's sha and, after a hand-back, the attempt, so the
 // refresh after one runs again rather than replaying the outcome it saved.
+const notCarried: Carried = {
+  carried: false,
+  pushed: false,
+  toPerson: false,
+  left: Option.none(),
+};
+
 const refresh = (
   layer: Epic.Layer,
   pullRequest: number,
   base: string,
   baseSha: string,
   attempt: number,
+  ci: ReadonlyArray<Epic.PendingRefresh>,
   lower: Option.Option<number> = Option.none(),
 ) => {
   const again = Option.match(
@@ -420,13 +421,20 @@ const refresh = (
   const key = `${pullRequest}-${baseSha.slice(0, 12)}${again}`;
 
   const toPerson = (reason: string) =>
-    refreshToPerson(pullRequest, key, reason).pipe(
-      Effect.as<Carried>({ carried: false, pushed: false, toPerson: true }),
+    Stack.refreshToPerson(pullRequest, key, reason).pipe(
+      Effect.as<Carried>({ carried: false, pushed: false, toPerson: true, left: Option.none() }),
     );
 
   return Effect.gen(function* () {
     const branch = Claims.branchFor(layer.number);
     const worktree = yield* refreshWorktree(branch, key, attempt);
+
+    const below = Option.match(lower, {
+      onNone: () => ({}),
+      onSome: (on) => ({ lower: on }),
+    });
+
+    const which = { layer: layer.number, pullRequest, baseSha, ...below };
 
     const refreshed = yield* Stack.refreshLayer(worktree, {
       pullRequest,
@@ -434,10 +442,16 @@ const refresh = (
       base,
       baseSha,
       attempt,
-      ...Option.match(lower, { onNone: () => ({}), onSome: (below) => ({ lower: below }) }),
+      ...below,
+      leave: Epic.roomForRefresh(ci, { ...which, base }),
     });
 
-    return { carried: true, pushed: !refreshed.upToDate, toPerson: false } satisfies Carried;
+    return {
+      carried: true,
+      pushed: !refreshed.upToDate,
+      toPerson: false,
+      left: Option.map(refreshed.left, (left): Epic.PendingRefresh => ({ ...which, ...left })),
+    } satisfies Carried;
   }).pipe(
     Effect.catchTags({
       NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
@@ -446,9 +460,8 @@ const refresh = (
       PushRejected: (rejected) => toPerson(rejected.message),
       CiTimedOut: (timedOut) => toPerson(timedOut.message),
       // A layer closed or gone under the run has nothing above it to carry.
-      PullRequestClosed: () =>
-        Effect.succeed<Carried>({ carried: false, pushed: false, toPerson: false }),
-      NotFound: () => Effect.succeed<Carried>({ carried: false, pushed: false, toPerson: false }),
+      PullRequestClosed: () => Effect.succeed<Carried>(notCarried),
+      NotFound: () => Effect.succeed<Carried>(notCarried),
     }),
   );
 };
@@ -486,14 +499,16 @@ const stackedLayers = (progress: Epic.Progress) => {
 // them, by pull request: the base head it last brought each layer up to, its
 // refresh attempt, the layers whose refresh it handed to a person, the layer
 // below each was last seen stacked on, and the layers it has brought up to
-// date with that one's merge. Rebuilt from the rounds' saved results
-// whenever the run resumes.
+// date with that one's merge, and the refreshes left on pending CI. Rebuilt
+// from the rounds' saved results whenever the run resumes.
 type Upkeep = {
   readonly attempts: Map<number, number>;
   readonly recorded: Map<number, string>;
   readonly withPerson: Set<number>;
   readonly below: Map<number, number>;
   readonly caughtUp: Set<number>;
+  // Refreshes left on their pull request's pending CI, bottom to top.
+  readonly ci: Array<Epic.PendingRefresh>;
 };
 
 // The upkeep a run parked with kept, or a fresh one.
@@ -505,6 +520,7 @@ const upkeepFrom = (kept: Option.Option<Epic.LayerKeep>): Upkeep =>
       withPerson: new Set(),
       below: new Map(),
       caughtUp: new Set(),
+      ci: [],
     }),
     onSome: (found) => ({
       attempts: new Map(found.attempts),
@@ -512,6 +528,7 @@ const upkeepFrom = (kept: Option.Option<Epic.LayerKeep>): Upkeep =>
       withPerson: new Set(found.withPerson),
       below: new Map(found.below),
       caughtUp: new Set(found.caughtUp),
+      ci: [...(found.ci ?? [])],
     }),
   });
 
@@ -522,7 +539,38 @@ const keptOf = (upkeep: Upkeep): Epic.LayerKeep => ({
   withPerson: [...upkeep.withPerson],
   below: [...upkeep.below],
   caughtUp: [...upkeep.caughtUp],
+  ci: [...upkeep.ci],
 });
+
+// Takes up the refreshes left on pending CI whose CI has settled, or run
+// past ciTimeout (Epic.takeUpRefreshes), into `upkeep`: one green and
+// reviewed is carried, as a refresh that waited would have been, and one
+// that went to a person waits for them. Whether it took any up.
+const settleRefreshes = (round: number, upkeep: Upkeep) =>
+  Effect.gen(function* () {
+    const settled = yield* Epic.takeUpRefreshes(round, upkeep.ci);
+    upkeep.ci.splice(0, upkeep.ci.length, ...settled.pending);
+
+    // One that caught up with the merge of the layer below, or with its base.
+    for (const carried of settled.carried) {
+      Option.match(Option.fromUndefinedOr(carried.lower), {
+        onNone: () => upkeep.recorded.set(carried.pullRequest, carried.baseSha),
+        onSome: () => upkeep.caughtUp.add(carried.pullRequest),
+      });
+    }
+
+    for (const pullRequest of settled.withPerson) {
+      upkeep.withPerson.add(pullRequest);
+    }
+
+    return settled.taken;
+  });
+
+// Whether a layer waits this round: the one below it waits, or its own
+// refresh waits on CI.
+const heldBack = (layer: Epic.Layer, waiting: ReadonlySet<number>, upkeep: Upkeep) =>
+  Option.exists(Option.fromUndefinedOr(layer.stackedOn), (below) => waiting.has(below)) ||
+  upkeep.ci.some((left) => left.pullRequest === layer.pullRequest);
 
 // Carries each layer's change up its stack, bottom to top: a layer whose base
 // branch's head is not the one it was last brought up to is refreshed, then
@@ -530,17 +578,21 @@ const keptOf = (upkeep: Upkeep): Epic.LayerKeep => ({
 // or whose refresh went to one, waits, and so do the layers above it; the
 // rest of the epic carries on. A layer the run handed to a person and that
 // no longer carries auto:needs-human is handed back: its next refresh is a
-// new attempt. Whether anything was pushed.
+// new attempt. A refresh whose CI is still pending ends there (audit W7): the
+// layer and those above it wait, and its review waits too, until a round
+// takes it up once CI settles, first thing (settleRefreshes). Whether
+// anything was pushed, or taken up.
 const carryUp = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
   Effect.gen(function* () {
     const { attempts, recorded, withPerson } = upkeep;
     const waiting = new Set<number>();
-    let pushed = false;
+    // A refresh left on pending CI that has settled is taken up first.
+    let pushed = yield* settleRefreshes(round, upkeep);
 
     for (const layer of stackedLayers(progress)) {
       const pullRequest = layer.pullRequest ?? 0;
 
-      if (Option.exists(Option.fromUndefinedOr(layer.stackedOn), (below) => waiting.has(below))) {
+      if (heldBack(layer, waiting, upkeep)) {
         waiting.add(layer.number);
         continue;
       }
@@ -563,7 +615,7 @@ const carryUp = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
       }
 
       const attempt = attempts.get(pullRequest) ?? 1;
-      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha, attempt);
+      const refreshed = yield* refresh(layer, pullRequest, read.base, baseSha, attempt, upkeep.ci);
 
       if (refreshed.toPerson) {
         withPerson.add(pullRequest);
@@ -571,6 +623,14 @@ const carryUp = (round: number, progress: Epic.Progress, upkeep: Upkeep) =>
 
       if (!refreshed.carried) {
         waiting.add(layer.number);
+        continue;
+      }
+
+      // Its CI still pending: the layers above wait, and a later round takes it up.
+      if (Option.isSome(refreshed.left)) {
+        upkeep.ci.push(refreshed.left.value);
+        waiting.add(layer.number);
+        pushed = true;
         continue;
       }
 
@@ -709,11 +769,19 @@ const catchUp = (
       read.target,
       Option.getOrElse(read.targetSha, () => ""),
       upkeep.attempts.get(pullRequest) ?? 1,
+      upkeep.ci,
       Option.some(lower),
     );
 
     if (refreshed.toPerson) {
       upkeep.withPerson.add(pullRequest);
+    }
+
+    // Its CI still pending: it may merge once a later round takes it up.
+    for (const left of Option.toArray(refreshed.left)) {
+      upkeep.ci.push(left);
+
+      return { moved: true, mayMerge: false };
     }
 
     if (refreshed.carried) {
@@ -748,7 +816,11 @@ const landLayer = (
   upkeep: Upkeep,
 ) =>
   Effect.gen(function* () {
-    if (stillStacked(layer, progress, upkeep)) {
+    // Still stacked, or its refresh waits on CI.
+    if (
+      stillStacked(layer, progress, upkeep) ||
+      upkeep.ci.some((left) => left.pullRequest === pullRequest)
+    ) {
       return false;
     }
 
