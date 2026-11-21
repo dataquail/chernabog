@@ -10,11 +10,13 @@ import {
   unreadableWhy,
 } from "@chernabog/core";
 import { describe, expect, test } from "bun:test";
+import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -359,6 +361,7 @@ describe("the protected-branch adapter on GitHub", () => {
   effect("a branch's commit that holds no record says why", () =>
     Effect.gen(function* () {
       const fake = makeThreadsFake(SLUG);
+
       const messages = [
         "root",
         "Phase: Not A Phase\nBy: x",
@@ -402,9 +405,9 @@ describe("the protected-branch adapter on GitHub", () => {
 
       const all = yield* (yield* adapterOver(fake)).readAll;
 
-      const phases = [...all].map(([item, record]) => [item, record.phase]);
+      const items = Arr.sort([...all.keys()], Order.String);
 
-      expect(phases.toSorted(([left = ""], [right = ""]) => left.localeCompare(right))).toEqual([
+      expect(items.map((item) => [item, all.get(item)?.phase])).toEqual([
         ["pr-72", ASKED],
         ["pr-73", phase(UNREADABLE_PHASE)],
         ["pr-74", CHANGES],
