@@ -387,6 +387,105 @@ effect("a new issue is opened with its title, body and labels", () => {
   }).pipe(Effect.provide(github.layer));
 });
 
+effect(
+  "a directory's files at a commit are read down its tree, one level a request, and none when it isn't there",
+  () => {
+    const trees = new Map<string, Json>(
+      Object.entries({
+        c1: { tree: [{ path: "test", type: "tree", sha: "t-test" }] },
+        "t-test": {
+          tree: [
+            { path: "features", type: "tree", sha: "t-features" },
+            { path: "unit.test.ts", type: "blob", sha: "b-unit" },
+          ],
+        },
+        "t-features?recursive=1": {
+          tree: [
+            { path: "review.feature", type: "blob", sha: "b-review" },
+            { path: "steps", type: "tree", sha: "t-steps" },
+            { path: "steps/review.steps.ts", type: "blob", sha: "b-steps" },
+          ],
+        },
+        c2: { tree: [{ path: "src", type: "tree", sha: "t-src" }] },
+      }),
+    );
+
+    const github = routing((_, path) => ({
+      status: 200,
+      body: trees.get(path.replace("/repos/dataquail/demo/git/trees/", "")) ?? { tree: [] },
+    }));
+
+    return Effect.gen(function* () {
+      const service = yield* GitHub;
+
+      expect(yield* service.treeFiles("c1", "test/features")).toEqual([
+        { path: "test/features/review.feature", sha: "b-review" },
+        { path: "test/features/steps/review.steps.ts", sha: "b-steps" },
+      ]);
+      expect(github.requests).toEqual([
+        "GET /repos/dataquail/demo/git/trees/c1",
+        "GET /repos/dataquail/demo/git/trees/t-test",
+        "GET /repos/dataquail/demo/git/trees/t-features?recursive=1",
+      ]);
+      expect(yield* service.treeFiles("c2", "test/features")).toEqual([]);
+    }).pipe(Effect.provide(github.layer));
+  },
+);
+
+effect(
+  "a review says whether its author is trusted, and a renamed file names where it was too",
+  () => {
+    const github = routing((_, path) => {
+      if (path.includes("/reviews")) {
+        return {
+          status: 200,
+          body: [
+            {
+              id: 1,
+              user: { login: "zach" },
+              body: "",
+              submitted_at: "2026-11-21T00:00:00Z",
+              author_association: "OWNER",
+              state: "APPROVED",
+              commit_id: "c1",
+            },
+            {
+              id: 2,
+              user: { login: "drive-by" },
+              body: "",
+              submitted_at: "2026-11-21T00:00:00Z",
+              author_association: "NONE",
+              state: "APPROVED",
+              commit_id: "c1",
+            },
+          ],
+        };
+      }
+
+      const files: Json = [
+        { filename: "docs/review.feature", previous_filename: "test/features/review.feature" },
+        { filename: "src/a.ts" },
+      ];
+
+      return { status: 200, body: files };
+    });
+
+    return Effect.gen(function* () {
+      const service = yield* GitHub;
+
+      expect(yield* service.reviews(7)).toEqual([
+        { author: "zach", state: "APPROVED", commitSha: "c1", trusted: true },
+        { author: "drive-by", state: "APPROVED", commitSha: "c1", trusted: false },
+      ]);
+      expect(yield* service.pullRequestFiles(7)).toEqual([
+        "docs/review.feature",
+        "test/features/review.feature",
+        "src/a.ts",
+      ]);
+    }).pipe(Effect.provide(github.layer));
+  },
+);
+
 const git = (cwd: string, ...args: ReadonlyArray<string>) =>
   execOk("git", ["-C", cwd, ...args]).pipe(Effect.map((said) => said.trim()));
 
@@ -472,6 +571,7 @@ const EVERY_MEMBER = {
       workflowRun: Option.some(1),
     }),
   pullRequestFiles: (github) => github.pullRequestFiles(7),
+  treeFiles: (github) => github.treeFiles("c1", "test/features"),
   closedPullRequestsLabelled: (github) => github.closedPullRequestsLabelled("auto:stale"),
   review: (github) =>
     github.review(7, { body: "ok", commitSha: "c1", comments: [], event: "APPROVE" }),

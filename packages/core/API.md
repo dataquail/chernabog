@@ -1173,6 +1173,11 @@ export type SubmittedReview = {
     readonly author: string;
     readonly state: string;
     readonly commitSha: string;
+    readonly trusted?: boolean;
+};
+export type TreeFile = {
+    readonly path: string;
+    readonly sha: string;
 };
 export type NewCommit = {
     readonly message: string;
@@ -1272,6 +1277,7 @@ declare const GitHub_base: Context.ServiceClass<GitHub, "@chernabog/sdk/GitHub",
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
     ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
+    treeFiles(commitSha: string, directory: string): Effect.Effect<ReadonlyArray<TreeFile>, GitHubError>;
     closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     review(pullRequest: number, review: NewReview): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;
@@ -1321,6 +1327,7 @@ export declare const GitHubCapability: Capabilities.Capability<{
     branchCiState(branch: string): Effect.Effect<CiReport, GitHubError>;
     ciFailureDetails(run: CiFailedRun): Effect.Effect<CiFailureDetails, GitHubError>;
     pullRequestFiles(pullRequest: number): Effect.Effect<ReadonlyArray<string>, GitHubError>;
+    treeFiles(commitSha: string, directory: string): Effect.Effect<ReadonlyArray<TreeFile>, GitHubError>;
     closedPullRequestsLabelled(label: string): Effect.Effect<ReadonlyArray<PullRequest>, GitHubError>;
     review(pullRequest: number, review: NewReview): Effect.Effect<void, PullRequestClosed | GitHubError>;
     reviewComments(pullRequest: number): Effect.Effect<ReadonlyArray<ReviewNote>, GitHubError>;

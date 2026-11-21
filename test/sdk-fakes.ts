@@ -43,6 +43,7 @@ import {
   StepFailed,
   StepRunner,
   type SubmittedReview,
+  type TreeFile,
   triggerOf,
   Usage,
   type WorkItem,
@@ -258,6 +259,9 @@ export const makeFake = (
   };
 
   const submitted: Array<SubmittedReview> = [];
+  // The files each commit's tree holds, by its sha, as far as a test says:
+  // a commit it says nothing of holds none.
+  const trees = new Map<string, ReadonlyArray<TreeFile>>();
   // Each item's phase, as the binary's adapter would keep it: one store for
   // every trigger and run on this fake.
   const progress = progressStore();
@@ -891,6 +895,10 @@ export const makeFake = (
           logTail: Option.fromUndefinedOr(logTails.get(run.url)),
         })),
       pullRequestFiles: () => Effect.sync(() => merge.files),
+      treeFiles: (sha, directory) =>
+        Effect.sync(() =>
+          (trees.get(sha) ?? []).filter((file) => file.path.startsWith(`${directory}/`)),
+        ),
       merge: (pullRequest, request) =>
         Effect.suspend(() => {
           merge.requests.push(request);
@@ -1175,6 +1183,7 @@ export const makeFake = (
     comment,
     people,
     submitted,
+    trees,
     phases,
     records,
     recordPhase,

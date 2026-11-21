@@ -1125,6 +1125,37 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       ),
     );
 
+  // A tree, by its sha or a commit's, as git lists it in the bare repo: with
+  // recursive, every entry under it, by its path from the tree.
+  const readTree = (args: Args) => {
+    const recursive = Option.match(Option.fromNullishOr(args.url.searchParams.get("recursive")), {
+      onNone: () => [],
+      onSome: () => ["-r", "-t"],
+    });
+
+    const listed = spawnSync(
+      "git",
+      ["--git-dir", options.bare, "ls-tree", ...recursive, args.params[0] ?? ""],
+      { encoding: "utf8" },
+    );
+
+    if (listed.status !== 0) {
+      return notFound();
+    }
+
+    const tree = listed.stdout
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [meta = "", path = ""] = line.split("\t");
+        const [mode = "", type = "", sha = ""] = meta.split(" ");
+
+        return { path, mode, type, sha };
+      });
+
+    return json({ sha: args.params[0] ?? "", tree, truncated: false });
+  };
+
   const pullFiles = (args: Args) =>
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
@@ -1434,6 +1465,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     { method: "POST", pattern: new RegExp(`^${repo}/git/commits$`), handle: createCommit },
     { method: "POST", pattern: new RegExp(`^${repo}/dispatches$`), handle: dispatch },
     { method: "GET", pattern: new RegExp(`^${repo}/git/commits/(\\w+)$`), handle: readCommit },
+    { method: "GET", pattern: new RegExp(`^${repo}/git/trees/([^/]+)$`), handle: readTree },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/comments$`), handle: addComment },
     {
       method: "PATCH",
