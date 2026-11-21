@@ -42,6 +42,7 @@ import * as Schema from "effect/Schema";
 
 import { RECHECK } from "./default-prompts.ts";
 import { ADOPTED_LABEL, type CiWait, heldOnCi, sessionIdFor } from "./implement.ts";
+import type { Observed } from "./ledger-check.ts";
 import * as Phases from "./phases.ts";
 import { renderPrompt, renderPromptOr } from "./prompt.ts";
 import * as PullRequestSteps from "./pull-request.ts";
@@ -232,6 +233,18 @@ export const requestedFirst = Effect.gen(function* () {
 
 // Who moves a record from what a source reads on GitHub, outside any run.
 const observer = (source: string) => `observer:${source}`;
+
+// What this module reconciles outside any source a document uses, for the
+// ledger's check (ADR 21, decision 5): address-review's recipe, taking up a
+// fix's wait for CI, finds the review it answers is now an approval.
+export const OBSERVED: ReadonlyArray<Observed> = [
+  {
+    by: observer("review.approved"),
+    item: "pull-request",
+    from: [P.awaitingCi],
+    to: P.approved,
+  },
+];
 
 // The key a request to review again runs under: the record it reads, or the
 // one reconciling moves it to. None for a request that isn't to review

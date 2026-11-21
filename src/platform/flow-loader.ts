@@ -252,6 +252,38 @@ export const loadRepoBackfill = (configDir: string) =>
     Option.map(Schema.decodeUnknownOption(BackfillSdk)(module), (sdk) => sdk.Backfill),
   );
 
+// What `chernabog progress anomalies` takes of the SDK a repo pins: its
+// Ledger (ADR 21, decision 5), which surveys every record that fails the
+// check, as the repo's personas, `logins`, see it, and acknowledges the ones
+// a person says are right. Its anomalies are the SDK's, plain JSON, which the
+// caller decodes and hands back to `acknowledge`.
+export type ProgressLedger = {
+  readonly survey: (
+    logins: ReadonlyArray<string>,
+  ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
+  readonly acknowledge: (
+    anomalies: ReadonlyArray<unknown>,
+  ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
+};
+
+const LedgerSdk = Schema.Struct({
+  Ledger: Schema.declare(
+    (ledger): ledger is ProgressLedger =>
+      Predicate.hasProperty(ledger, "survey") &&
+      Predicate.hasProperty(ledger, "acknowledge") &&
+      Predicate.isFunction(ledger.survey) &&
+      Predicate.isFunction(ledger.acknowledge),
+    { title: "Ledger" },
+  ),
+});
+
+// The SDK's Ledger, from the repo's node_modules: none for an SDK from before
+// sources checked the records they read.
+export const loadRepoLedger = (configDir: string) =>
+  Effect.map(importRepoSdk(configDir), (module) =>
+    Option.map(Schema.decodeUnknownOption(LedgerSdk)(module), (sdk) => sdk.Ledger),
+  );
+
 const MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
 
 const flowName = (file: string) =>

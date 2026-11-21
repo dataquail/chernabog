@@ -30,6 +30,7 @@
 
 import {
   activity,
+  Blocks,
   Claims,
   defineFlow,
   Epic,
@@ -1075,7 +1076,7 @@ const settings = Schema.Struct({
 });
 
 const flow = defineFlow({
-  trigger: Epic.queued.pipe(reportAs("trigger")),
+  trigger: Epic.queued.pipe(Blocks.checked("epic.queued"), reportAs("trigger")),
   gate: Implement.gate,
   concurrency: 1,
   labels: Effect.map(Settings.declaredLabels, (set) => [

@@ -268,6 +268,79 @@ change.
    protection every adapter can give. The hosted adapter adds refusal, which
    no third party offers.
 
+   How it is built:
+   - **Where the check lives.** In the SDK's reads, `Phases.records` and
+     `Phases.current`, which every source's read goes through, inside a
+     trigger that checks (`Blocks.checked`, `ledger-check.ts`). A compiled
+     document's trigger is checked by `Blocks.assemble`; each recipe's
+     trigger names the document sources and blocks it does the work of,
+     such as `Blocks.checked("review.changesRequested", "author.waitForCi")`.
+     Not in core's `Progress` port: who the repo's personas are is the
+     repo's config, and what a transition means is the SDK's, and core
+     gives phases no meaning (ADR 5). A run reads its own item's record
+     unchecked: a checked source started it.
+   - **Writers.** A run is known by its id's shape, a random UUID, which
+     the daemon and `ci run` both mint. A run's id names no persona, so on
+     the git adapter "a run of a persona" can't be proved: a person who
+     writes a commit with a made-up UUID passes the writer check. That is
+     what tamper-evident means here; the hosted adapter, which knows the
+     account that wrote, can refuse. A persona is a login of
+     `Machine.personas`, compared without case; no code writes as one
+     today, but a person repairing a record by hand on that persona's
+     account may. An observer is `observer:<source>` for each source that
+     declares reconciles, Review's `observer:review.approved`
+     (`Review.OBSERVED`), `observer:backfill` (`Backfill.OBSERVED`) and
+     `observer:acknowledged`. Any other writer is an anomaly.
+   - **Transitions, and how the catalogue reaches a source.** The catalogue
+     is the SDK's own declarations, compiled into the SDK the repo pins
+     (`Blocks.transitions`), so a source has it at tick time with no
+     loading. An observer may record only what it declares: a source's
+     reconciles (`to` from each phase it names), backfill's first records
+     (from none), an acknowledgement (a phase again, from itself). A run,
+     or a persona, may record any SDK phase of its item's kind, and any
+     phase that isn't the SDK's. That is because a run's phases come from
+     blocks, and recipes record through the same SDK functions, and
+     `progress.advance` records whichever phase its document names: so a
+     flow document's declaration counts the same as a recipe's, and what
+     the catalogue can refuse of a run is a phase of another kind of item,
+     such as an epic's `waiting` on a pull request. A team's own phases are
+     the repo's to name and no source acts on one, so they pass; so does
+     any phase on an item of a team's own. A later round's wait for CI
+     (`awaiting-ci-2`) is checked as its first round's. Working the
+     catalogue out found two transitions the SDK made and didn't declare:
+     address-review's reconcile from `awaiting-ci` to `changes-asked`, now
+     in its source's reconciles, and the approval Review finds when it
+     takes up a fix's wait, now `Review.OBSERVED`.
+   - **How the anomaly reaches a person.** A hold with a reason, which the
+     sources already use (`WorkItem.held`), not `auto:needs-human`: a label
+     and a comment would be a write per tick unless it remembered what it
+     said, and the check must not fail or write in a tick. The read hides
+     the anomaly's record from the source, as if there were none, and
+     notes it. A source that would write from no record loses the
+     compare-and-set to the record that is there, so it writes nothing.
+     Every item the trigger reports that the record is about is held, with
+     the record named: its item, its version, `from -> phase` and its
+     writer, and how to fix it. An anomaly on a phase the flow reads that
+     no source reported is reported alone, held, as `<item>-anomaly-<version>`.
+     `chernabog status` shows both. A held item starts no run, and the same
+     record says the same thing every tick, so nothing repeats. The fix is
+     an ordinary record by a known writer, which clears the hold on the
+     next tick, or an acknowledgement.
+   - **Records from before the check.** Every writer chernabog has written
+     as passes, and a phase that isn't the SDK's passes for a run, so a
+     removed phase doesn't flood anyone. What remains, such as a renamed
+     persona's own write, is listed first by a survey modeled on backfill:
+     `chernabog progress anomalies --repo X` lists every record that fails
+     the check, as the repo's personas see it, and `--acknowledge` records
+     each one's phase again, with its data, as `observer:acknowledged`,
+     only if the record is still the one listed. Its `at` was rejected as
+     the way to tell old records apart: on the git adapter a pushed
+     commit's date is the pusher's to set, so a forged record could
+     backdate itself. An allowlist in config was rejected too: it grows
+     with every rename, and it is a file anyone with write access edits.
+     The acknowledgement lives with backfill under `chernabog progress`,
+     not in `doctor`, since doctor reads the world and writes nothing.
+
 6. **Items get forge-neutral identities.** Today an item's name is a forge
    object's (`issue-12`, `pr-73`, `epic-4`), and core already treats it as
    opaque (ADR 19, decision 2). From the hosted ledger on:
@@ -347,13 +420,27 @@ change.
   silently. At worst the item goes to a person as an anomaly or a declared
   intent.
 - A team on GitHub Free with a private repo still has an unprotected ledger,
-  as ADR 20 notes. Decision 5's checks catch what a ruleset would have
-  refused, just later.
+  as ADR 20 notes. Decision 5's checks catch most of what a ruleset would
+  have refused, just later: a record by a writer chernabog doesn't know, an
+  observer's transition it doesn't declare, a phase of another kind of
+  item. They don't catch a record that copies a run's shape, a UUID, and
+  moves an item to a phase of its kind; a ruleset, or the hosted adapter,
+  does.
+- Every source's reads are checked (decision 5). A record that fails holds
+  its item with the record named, in `chernabog status`, until a persona
+  records it again or `chernabog progress anomalies --acknowledge` does.
+  Upgrading is: run `chernabog progress anomalies`, look at what it lists,
+  acknowledge what is right. A repo's own TypeScript flow that doesn't wrap
+  its trigger in `Blocks.checked` reads unchecked, as before. A new writer
+  outside a run, or a new reconcile, must be declared (a source's
+  `reconciles`, or an `OBSERVED` list) or its records hold their items: the
+  test suite's Progress fake checks every transition any test makes against
+  the catalogue, so a missing declaration fails a test first.
 - Open items with no record get one from a single backfill,
   `chernabog progress backfill`. It infers each item's phase from GitHub,
   the one time that inference is allowed, and writes it as
   `observer:backfill`. After that, the sources' no-record paths (audit S6,
   S7) are removed.
 - `Items`, the hosted adapter, the local adapter and the ledger config key are
-  not built. Decision 6 fixes the direction so that nothing new takes a forge
+  not built; they wait on the hosted service. Decision 6 fixes the direction so that nothing new takes a forge
   object's name as an item id.

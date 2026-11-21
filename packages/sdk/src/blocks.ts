@@ -33,6 +33,7 @@ import {
   addressReviewSources,
   changesAskedSubject,
 } from "./address-review-blocks.ts";
+import * as Backfill from "./backfill.ts";
 import {
   Approved,
   BaseBranch,
@@ -70,6 +71,7 @@ import * as Events from "./events.ts";
 import { humanInitiatedBlocks } from "./human-initiated-blocks.ts";
 import * as Hybrid from "./hybrid.ts";
 import * as Implement from "./implement.ts";
+import * as Ledger from "./ledger-check.ts";
 import * as Phases from "./phases.ts";
 import { NO_RECORD, PHASES } from "./phases.ts";
 import { planBlocks, planLoopStates, planSources, specSubject } from "./plan-blocks.ts";
@@ -1095,6 +1097,79 @@ export const startOf = (subject: string): Option.Option<ItemLookup> =>
 
 const unique = <A>(all: ReadonlyArray<A>) => [...new Set(all)];
 
+// What the ledger's check goes by (ADR 21, decision 5): the transitions each
+// writer outside a run records. A source's reconciles are its observer's
+// (`observer:<source>`), as Review's reconciles name it; Review's own and
+// backfill's are declared where they are written; a person's
+// acknowledgement records an item's phase again. A run, and a persona
+// writing as itself, records any phase of its item's kind: every block and
+// recipe records the SDK's phases through these same functions, and
+// progress.advance whichever its document names, so a document's
+// declaration counts as a recipe's does.
+export const transitions: Ledger.Catalogue = {
+  observed: [
+    ...Object.values(sources).flatMap((source) =>
+      source.reconciles.map((reconciled): Ledger.Observed => ({
+        by: `observer:${source.name}`,
+        item: reconciled.item,
+        from: reconciled.from,
+        to: reconciled.to,
+      })),
+    ),
+    ...Review.OBSERVED,
+    ...Backfill.OBSERVED,
+    ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
+      by: Ledger.ACKNOWLEDGED,
+      item,
+      from: "same",
+      to: "any",
+    })),
+  ],
+};
+
+// The phases a flow's trigger reads, for the check to hold an anomaly on
+// one by: its sources', its blocks' wakes', and those its nodes park on,
+// which the document's source of parked items reads.
+const readingsOf = (
+  flowSources: ReadonlyArray<Source>,
+  blocks: ReadonlyArray<{ readonly contributes: Contribution }>,
+  parking: ReadonlyArray<{ readonly records: ReadonlyArray<Phases.Recorded> }>,
+): ReadonlyArray<Phases.Reading> => [
+  ...flowSources.flatMap((source) => source.reads ?? []),
+  ...blocks.flatMap((block) => block.contributes.wakeReads ?? []),
+  ...parking.flatMap((block) =>
+    block.records.map((recorded): Phases.Reading => ({
+      item: recorded.item,
+      phases: [recorded.phase],
+    })),
+  ),
+];
+
+const sourceReads: { readonly [name: string]: ReadonlyArray<Phases.Reading> } = Object.fromEntries(
+  Object.values(sources).map((source) => [source.name, source.reads]),
+);
+
+const blocksByName: {
+  readonly [name: string]: {
+    readonly contributes: Contribution;
+    readonly records: ReadonlyArray<Phases.Recorded>;
+  };
+} = catalogue;
+
+// A recipe's trigger, checked as a document's is: `names` are the document
+// sources and blocks its trigger does the work of, whose reads it holds an
+// anomaly by (ledger-check.ts).
+export const checked = (...names: ReadonlyArray<SourceName | BlockName>) =>
+  Ledger.checking(
+    transitions,
+    names.flatMap((name) => [
+      ...(sourceReads[name] ?? []),
+      ...Option.toArray(Option.fromUndefinedOr(blocksByName[name])).flatMap((block) =>
+        readingsOf([], [block], [block]),
+      ),
+    ]),
+  );
+
 // How the engine tells whether a subject's run is still wanted, when it can.
 const stillValidOf = (subject: SubjectName): Option.Option<StillValid> =>
   subjects[subject].stillValid;
@@ -1156,6 +1231,13 @@ export const assemble = (flow: {
     ...unique(contributions.flatMap((each) => Option.toArray(Option.fromUndefinedOr(each.wakes)))),
   ];
 
+  // Every record the trigger reads is checked first (ADR 21, decision 5).
+  const reads = readingsOf(
+    flowSources,
+    flow.blocks.map((block) => catalogue[block]),
+    Object.values(flow.resumes?.nodes ?? {}).map((block) => catalogue[block]),
+  );
+
   const doctor = unique(contributions.flatMap((each) => each.doctor ?? []));
 
   const common = {
@@ -1214,7 +1296,12 @@ export const assemble = (flow: {
 
   const defined = Option.match(started, {
     onNone: () =>
-      defineFlow({ ...common, trigger: Effect.map(Effect.all(triggers), (found) => found.flat()) }),
+      defineFlow({
+        ...common,
+        trigger: Effect.map(Effect.all(triggers), (found) => found.flat()).pipe(
+          Ledger.checking(transitions, reads),
+        ),
+      }),
     onSome: (item) => defineFlow({ ...common, item, start: true }),
   });
 
