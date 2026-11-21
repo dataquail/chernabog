@@ -8,7 +8,6 @@ import {
   defineFlow,
   type Flow,
   PullRequest,
-  reviewMarker,
   StepFailed,
   type SubmittedReview,
 } from "@chernabog/sdk";
@@ -117,16 +116,14 @@ describe("a pull request that changes a feature file", () => {
   effect("goes to a person from re-review, unreviewed", () =>
     Effect.gen(function* () {
       const fake = changingSpec([DEFAULT_LABELS.ship]);
-      fake.comment(
-        reviewMarker.write({
-          sha: HEAD,
-          round: 1,
-          verdict: "request-changes",
-          reviewer: "data-quail",
-          sessionId: "review-session",
-          adapter: "codex",
-        }),
-      );
+      fake.recordReview({
+        sha: HEAD,
+        round: 1,
+        verdict: "request-changes",
+        reviewer: "data-quail",
+        sessionId: "review-session",
+        adapter: "codex",
+      });
 
       const finished = yield* runToEnd(reReviewing, fake, againReview);
 
@@ -174,7 +171,7 @@ describe("a pull request that changes a feature file", () => {
   effect("goes to a person from the merge gate, approved and green, so no persona merges it", () =>
     Effect.gen(function* () {
       const fake = changingSpec([DEFAULT_LABELS.ship]);
-      fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+      fake.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
 
       const finished = yield* runToEnd(merging, fake, item("merge"));
 
@@ -183,7 +180,7 @@ describe("a pull request that changes a feature file", () => {
       // The same pull request without the spec merges.
       const plain = changingSpec([DEFAULT_LABELS.ship]);
       plain.merge.files = ["src/a.ts"];
-      plain.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+      plain.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
       expect((yield* runToEnd(merging, plain, item("merge"))).status).toBe("done");
       expect(plain.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
     }),
