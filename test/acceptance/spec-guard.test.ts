@@ -19,6 +19,17 @@ const often = { schedule: "*/2 * * * * *" };
 const FEATURE = "test/features/review-loop.feature";
 const NEEDS_HUMAN = "auto:needs-human";
 
+// zach, a person with write access, takes the needs-human label off the pull
+// request through the API, so GitHub's events name who handed it back.
+const unlabel = async (sandbox: Sandbox, number: number) => {
+  const response = await fetch(
+    `${sandbox.github.url}/repos/dataquail/demo/issues/${number}/labels/${encodeURIComponent(NEEDS_HUMAN)}`,
+    { method: "DELETE", headers: { authorization: "Bearer token-zach" } },
+  );
+
+  expect(response.status).toBe(200);
+};
+
 describe("a pull request that changes a behavior spec", () => {
   let sandbox: Sandbox;
   let daemon: ChildProcess;
@@ -87,7 +98,7 @@ describe("a pull request that changes a behavior spec", () => {
     expect(sandbox.github.reviewsOf(number)).toEqual([]);
 
     // Taking the label off without a person's approval doesn't stick.
-    pull.labels = pull.labels.filter((label) => label !== NEEDS_HUMAN);
+    await unlabel(sandbox, number);
     await waitFor(() => pull.labels.includes(NEEDS_HUMAN), "the hand-off again", 45_000);
     expect(sandbox.github.reviewsOf(number)).toEqual([]);
     expect(sandbox.github.merges).toEqual([]);
@@ -96,7 +107,7 @@ describe("a pull request that changes a behavior spec", () => {
     // zach, a person, approves the spec as it stands, and takes the label off:
     // erin reviews it now.
     sandbox.github.submitReview(number, "zach", "APPROVED", "The spec reads right.");
-    pull.labels = pull.labels.filter((label) => label !== NEEDS_HUMAN);
+    await unlabel(sandbox, number);
     await waitFor(
       () => sandbox.github.reviewsOf(number).some((review) => review.author === "erin"),
       "erin's review, once a person approved the spec",

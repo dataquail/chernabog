@@ -374,6 +374,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
 
   // Logins that can only read the repo; anyone else can write.
   const readOnly = new Set<string>();
+  const labelEvents = new Map<number, Array<Json>>();
   // The names of the repo's Actions secrets, as GitHub lists them.
   const actionsSecrets = new Set<string>();
   // Logins that administer the repo, and so may delete its issues.
@@ -1016,8 +1017,26 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     }
 
     labels.splice(index, 1);
+    const listed = labelEvents.get(numberParam(args)) ?? [];
+    listed.push({
+      event: "unlabeled",
+      label: { name: decodeURIComponent(args.params[1] ?? "") },
+      actor: { login: args.login },
+    });
+    labelEvents.set(numberParam(args), listed);
 
     return json([]);
+  };
+
+  // An issue's or pull request's label removals through the API, oldest
+  // first, a page at a time as GitHub lists its events.
+  const listEvents = (args: Args) => {
+    const perPage = Number(args.url.searchParams.get("per_page") ?? "30");
+    const page = Number(args.url.searchParams.get("page") ?? "1");
+
+    return json(
+      (labelEvents.get(numberParam(args)) ?? []).slice((page - 1) * perPage, page * perPage),
+    );
   };
 
   const addAssignees = withBody(AssigneesBody, (body, args) => {
@@ -1586,6 +1605,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       handle: (args) => json(comments.get(numberParam(args)) ?? []),
     },
     { method: "POST", pattern: new RegExp(`^${repo}/issues/(\\d+)/labels$`), handle: addLabels },
+    { method: "GET", pattern: new RegExp(`^${repo}/issues/(\\d+)/events$`), handle: listEvents },
     {
       method: "DELETE",
       pattern: new RegExp(`^${repo}/issues/(\\d+)/labels/(.+)$`),
