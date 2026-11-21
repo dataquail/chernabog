@@ -174,7 +174,7 @@ describe("a plan in a CI job", () => {
       const finished = yield* runToEnd(planning, fake, due);
 
       expect(finished.status).toBe("needs-human");
-      expect(fake.phases()[SPEC_ITEM]).toBe("plan-handed-back");
+      expect(fake.phases()[SPEC_ITEM]).toBe("with-person");
       expect(fake.labelsOf(ISSUE)).toContain(DEFAULT_LABELS.needsHuman);
       expect(yield* offered(fake)).toEqual([]);
     }),

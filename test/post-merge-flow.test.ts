@@ -2,7 +2,7 @@
 // GitHub: which merged pull requests it watches, and what it does about the
 // CI on their merge commits.
 
-import { type CiReport, DEFAULT_LABELS } from "@chernabog/sdk";
+import { type CiReport, DEFAULT_LABELS, Phases } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -233,6 +233,7 @@ describe("post-merge", () => {
 
       const [followUp] = filed(fake);
       expect(fake.labelsOf(followUp.number)).toEqual([DEFAULT_LABELS.needsHuman]);
+      expect(fake.phases()[Phases.issueItem(followUp.number)]).toBe("with-person");
       expect(followUp.body).toContain(`#${ISSUE}`);
       expect(summaryOf(finished)).toBe(
         `#${PULL}: CI on merge56 is red after a follow-up's fix; filed #${followUp.number} for a person`,
