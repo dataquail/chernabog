@@ -698,13 +698,13 @@ export const advanceRun = (phase: string) =>
   });
 
 // With a person (ADR 21, decision 1): why the item went to one, and the phase
-// it left, none for an item with no record before. `kept` is the data of the
-// record it left, for a hand-back to record that phase again with: absent
-// when that record had none, null when it had more than fits beside `why`.
+// it left, none for an item with no record before. Nothing else of that
+// record is kept: a park, a person's included, is a phase boundary (decision
+// 4), so what comes after reads the record and the world, never what the run
+// before it had.
 export const WithPerson = Schema.Struct({
   why: Schema.String,
   from: Schema.OptionFromNullOr(Schema.String),
-  kept: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Json)),
 });
 
 const encodeWithPerson = Schema.encodeSync(WithPerson);
@@ -716,13 +716,13 @@ const encodeAsJson = (said: typeof WithPerson.Type): { readonly [key: string]: J
 // The longest `why` a with-person record keeps, so it fits a record's 4 KB.
 const WHY_SIZE = 1000;
 
-// What a with-person record keeps of `why` and the record it left, as data:
-// that record's data too, when it fits.
+// What a with-person record keeps, as data: `why`, and the phase of the
+// record it left.
 export const withPersonData = (
   why: string,
   left: Option.Option<PhaseRecord>,
-): { readonly [key: string]: Json } => {
-  const said = {
+): { readonly [key: string]: Json } =>
+  encodeAsJson({
     why: Option.match(
       Option.liftPredicate(why, (told) => told.length > WHY_SIZE),
       {
@@ -731,20 +731,7 @@ export const withPersonData = (
       },
     ),
     from: Option.map(left, (found) => found.phase),
-  };
-
-  return Option.match(
-    Option.flatMap(left, (found) => found.data),
-    {
-      onNone: (): { readonly [key: string]: Json } => encodeAsJson(said),
-      onSome: (kept) =>
-        Option.getOrElse(
-          Option.liftPredicate(encodeAsJson({ ...said, kept: Option.some(kept) }), isPhaseData),
-          () => encodeAsJson({ ...said, kept: Option.none() }),
-        ),
-    },
-  );
-};
+  });
 
 // The issue or pull request number an item's record is kept for (`issue-12`,
 // `pr-7`, `epic-4`, whose epic is issue 4); none for a team's own item.
@@ -929,76 +916,33 @@ export const handedBack = Effect.gen(function* () {
 
 const WithPersonLeft = Schema.Struct({
   from: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  kept: Schema.optionalKey(Schema.NullOr(Schema.Unknown)),
 });
 
-// The kind of item a record is kept for, from its name; none for a team's own.
-const kindNamed = (item: string): Option.Option<ItemKind> =>
-  Option.map(Option.fromNullOr(/^(issue|pr|epic)-\d+$/.exec(item)), (found) => {
-    if (found[1] === "pr") {
-      return "pull-request";
-    }
-
-    if (found[1] === "epic") {
-      return "epic";
-    }
-
-    return "issue";
-  });
-
-// The phases observer:handed-back may record on an item of `kind`, from
-// with-person: any of the SDK's phases of that kind, the one it left.
-export const handedBackTo = (kind: ItemKind): ReadonlyArray<string> =>
-  phasesOf(kind).filter((phase) => phase !== PHASES.issue.withPerson);
-
-// What a hand-back records: the SDK phase the item went to the person from,
-// with the data it had, so the flows that read it take it up again as they
-// did before it went to the person; or handed-back {from}, when it came from
-// no record, from a team's own phase, or from one whose data didn't fit.
-const returnOf = (item: string, held: PhaseRecord) => {
+// What a hand-back records (ADR 21, decision 1): handed-back, with the phase
+// the item went to the person from as `from`, none for one with no record
+// before. Sources act on this record; nothing of the phase it left carries
+// over but its name.
+const returnOf = (held: PhaseRecord) => {
   const left = Option.getOrElse(
     Option.flatMap(held.data, Schema.decodeUnknownOption(WithPersonLeft)),
     (): typeof WithPersonLeft.Type => ({}),
   );
 
-  const from = Option.fromNullishOr(left.from);
-
-  const kept = Option.match(Option.fromUndefinedOr(left.kept), {
-    onNone: () => Option.some(Option.none<PhaseData>()),
-    onSome: (data) => Option.map(Schema.decodeUnknownOption(PhaseData)(data), Option.some),
-  });
-
-  const restored = Option.flatMap(
-    Option.all({ phase: from, kind: kindNamed(item), kept }),
-    (found) =>
-      Option.liftPredicate(
-        { phase: found.phase, data: found.kept },
-        () =>
-          handedBackTo(found.kind).includes(declaredAs(found.phase)) &&
-          found.phase !== PHASES.issue.handedBack,
-      ),
-  );
-
-  return Option.getOrElse(restored, () => ({
-    phase: PHASES.issue.handedBack,
-    data: Option.some(asData({ from: Option.getOrNull(from) })),
-  }));
+  return asData({ from: Option.getOrNull(Option.fromNullishOr(left.from)) });
 };
 
 // Records, on each item a person handed back (handedBack), as
-// observer:handed-back, what it goes back to (returnOf). Only while the item
+// observer:handed-back, handed-back (returnOf). Only while the item
 // still holds the with-person record read; one another writer moved since
 // keeps that writer's record.
 export const reconcileHandedBack = Effect.gen(function* () {
   for (const back of yield* handedBack) {
-    const to = returnOf(back.item, back.record);
-
     yield* reconcile(
       back.item,
       Option.some(back.record),
-      to.phase,
+      PHASES.issue.handedBack,
       HANDED_BACK_BY,
-      Option.getOrUndefined(to.data),
+      returnOf(back.record),
     );
   }
 });
