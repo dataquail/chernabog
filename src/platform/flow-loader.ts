@@ -195,6 +195,12 @@ export type EventRouting = {
     event: string,
     payload: Core.Json,
   ) => ReadonlyArray<unknown>;
+  // The items a finished CI run settles a wait of: those whose record's data,
+  // among `records`, names its head commit or one of its pull requests.
+  readonly parkedOn: (
+    records: ReadonlyArray<readonly [string, Core.Json]>,
+    run: { readonly sha: string; readonly pullRequests: ReadonlyArray<number> },
+  ) => ReadonlyArray<string>;
 };
 
 const RoutingSdk = Schema.Struct({
@@ -203,9 +209,11 @@ const RoutingSdk = Schema.Struct({
       Predicate.hasProperty(events, "of") &&
       Predicate.hasProperty(events, "workflowOn") &&
       Predicate.hasProperty(events, "wokenBy") &&
+      Predicate.hasProperty(events, "parkedOn") &&
       Predicate.isFunction(events.of) &&
       Predicate.isFunction(events.workflowOn) &&
-      Predicate.isFunction(events.wokenBy),
+      Predicate.isFunction(events.wokenBy) &&
+      Predicate.isFunction(events.parkedOn),
     { title: "Events" },
   ),
 });

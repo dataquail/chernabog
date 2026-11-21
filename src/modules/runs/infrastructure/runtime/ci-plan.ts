@@ -151,6 +151,11 @@ const EventItemSchema = Schema.Union([
     number: Schema.Int,
   }),
   Schema.Struct({ kind: Schema.Literals(["branch", "item"]), name: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("ci-run"),
+    sha: Schema.String,
+    pullRequests: Schema.Array(Schema.Int),
+  }),
   Schema.Struct({ kind: Schema.Literal("repo") }),
 ]);
 
@@ -159,6 +164,30 @@ const WokenList = Schema.Array(
 );
 
 const NOTHING_DECLARED = { events: [], readsPhases: false };
+
+// How an event's plan is scoped, and the repo SDK's routing it was scoped by.
+type Chosen = { readonly scope: Scope; readonly routing: Option.Option<EventRouting> };
+
+// What a finished CI run concerns: the items whose record names its head
+// commit or one of its pull requests (the SDK's Events.parkedOn), what parked
+// waiting on it, not every item; none when the records can't be read.
+const parkedOnRun = (
+  routing: Option.Option<EventRouting>,
+  run: Extract<EventItem, { readonly kind: "ci-run" }>,
+) =>
+  Effect.gen(function* () {
+    const all = yield* Progress.use((progress) => progress.readAll);
+
+    const records = [...all].map(
+      ([item, record]) => [item, Option.getOrElse(record.data, () => ({}))] as const,
+    );
+
+    return Option.match(routing, {
+      onNone: () => [],
+      onSome: (found) =>
+        found.parkedOn(records, run).map((name): EventItem => ({ kind: "item", name })),
+    });
+  }).pipe(Effect.orElseSucceed((): ReadonlyArray<EventItem> => []));
 
 // What an event wakes, by the routes the repo's SDK builds for its CI flows.
 // A workflow_run reached the plan job only because the workflow's on: block
@@ -475,7 +504,10 @@ export const planCi = (options: CiPlanOptions) =>
     const chosen = yield* Option.match(
       Option.filter(options.event, (event) => !SWEEPS.includes(event.name)),
       {
-        onNone: () => Effect.succeed(Result.succeed<Scope>({ kind: "sweep" })),
+        onNone: () =>
+          Effect.succeed(
+            Result.succeed<Chosen>({ scope: { kind: "sweep" }, routing: Option.none() }),
+          ),
         onSome: (event) =>
           Effect.gen(function* () {
             const routing = yield* loadRepoEvents(repo.settings.configDir);
@@ -488,7 +520,10 @@ export const planCi = (options: CiPlanOptions) =>
 
             const woken = yield* wokenBy(routing.value, triggered, event, options.workflow);
 
-            return Result.succeed<Scope>({ kind: "event", woken });
+            return Result.succeed<Chosen>({
+              scope: { kind: "event", woken },
+              routing: Option.some(routing.value),
+            });
           }),
       },
     );
@@ -499,7 +534,7 @@ export const planCi = (options: CiPlanOptions) =>
 
     const targets = CiPlan.targets(
       triggered.map(({ ci: one }) => one),
-      chosen.success,
+      chosen.success.scope,
     );
 
     // A guard refused the event, or it concerns no CI flow: nothing more to ask GitHub.
@@ -515,7 +550,7 @@ export const planCi = (options: CiPlanOptions) =>
     }
 
     const servicesFor = servicesFrom(yield* buildPersonaContexts(repo, machine));
-    const sweep = chosen.success.kind === "sweep";
+    const sweep = chosen.success.scope.kind === "sweep";
     const notes: Array<string> = [...configNotes];
 
     // Each persona's services, built once, with what a runner's trigger reads.
@@ -595,6 +630,12 @@ export const planCi = (options: CiPlanOptions) =>
         Option.map(target.only, (items) =>
           Effect.map(
             Effect.forEach(items, (concerned) => {
+              if (concerned.kind === "ci-run") {
+                return parkedOnRun(chosen.success.routing, concerned).pipe(
+                  Effect.provideContext(context),
+                );
+              }
+
               if (concerned.kind !== "branch") {
                 return Effect.succeed<ReadonlyArray<EventItem>>([concerned]);
               }

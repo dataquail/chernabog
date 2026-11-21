@@ -51,10 +51,20 @@ export const TRUSTED = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
 // - issue, pull-request: the number at the path;
 // - branch: the branch named at the path, such as a CI run's head branch;
 // - item: the item's claim name at the path, `pr-7`, as a phase event says it;
+// - ci-run: a finished CI run at the path, a `workflow_run`: its head commit
+//   and the pull requests it ran for, so the plan job looks at the items whose
+//   record names one of them, what parked waiting on it (parkedOn). With
+//   `pushToDefault`, only a push's run on the repo's default branch: a merge
+//   commit's;
 // - repo: no one item, so the plan job looks at every one, as its sweep does.
 export const ItemFrom = Schema.Union([
   Schema.Struct({ kind: Schema.Literals(["issue", "pull-request"]), path: Schema.String }),
   Schema.Struct({ kind: Schema.Literals(["branch", "item"]), path: Schema.String }),
+  Schema.Struct({
+    kind: Schema.Literal("ci-run"),
+    path: Schema.String,
+    pushToDefault: Schema.Boolean,
+  }),
   Schema.Struct({ kind: Schema.Literal("repo") }),
 ]);
 
@@ -182,13 +192,24 @@ export const ciCompleted = on(
   { ownPersona: true },
 );
 
-// A CI run finished, a push's to the base branch among them, which settles a
-// merge commit's CI. Its branch names no work item, so the plan job looks at
-// every one. Filtered to the repo's CI workflows as ciCompleted is.
-export const baseCiCompleted = on(
+// A CI run finished, the persona's own push's too, which settles what parked
+// waiting on it: the plan job looks only at the items whose record names the
+// run's head commit or one of its pull requests (parkedOn), such as an epic
+// whose task's or layer's pull request it ran for. Filtered to the repo's CI
+// workflows as ciCompleted is.
+export const ciRunCompleted = on(
   "workflow_run",
   ["completed"],
-  { kind: "repo" },
+  { kind: "ci-run", path: "workflow_run", pushToDefault: false },
+  { ownPersona: true },
+);
+
+// Push CI finished on the repo's default branch, a merge commit's, which
+// settles a parked watch of it: the items whose record names that commit.
+export const mergeCiCompleted = on(
+  "workflow_run",
+  ["completed"],
+  { kind: "ci-run", path: "workflow_run", pushToDefault: true },
   { ownPersona: true },
 );
 
@@ -262,6 +283,11 @@ export type Wiring = {
 export type EventItem =
   | { readonly kind: "issue" | "pull-request"; readonly number: number }
   | { readonly kind: "branch" | "item"; readonly name: string }
+  | {
+      readonly kind: "ci-run";
+      readonly sha: string;
+      readonly pullRequests: ReadonlyArray<number>;
+    }
   | { readonly kind: "repo" };
 
 // A flow to run on an item, for a persona.
@@ -380,10 +406,39 @@ const nameAt = (payload: Json, path: string) =>
     (value): value is string => Predicate.isString(value) && value.length > 0,
   );
 
+const RunPullRequests = Schema.Array(Schema.Struct({ number: Schema.Int }));
+
+// The finished CI run at `path`: its head commit and its pull requests; none
+// for a push's run elsewhere than the default branch, with `pushToDefault`.
+const ciRunAt = (path: string, pushToDefault: boolean, payload: Json) =>
+  Option.flatMap(nameAt(payload, `${path}.head_sha`), (sha): Option.Option<EventItem> => {
+    const onDefault =
+      Option.contains(nameAt(payload, `${path}.event`), "push") &&
+      Option.isSome(nameAt(payload, `${path}.head_branch`)) &&
+      Option.getOrUndefined(nameAt(payload, `${path}.head_branch`)) ===
+        Option.getOrUndefined(nameAt(payload, "repository.default_branch"));
+
+    if (pushToDefault && !onDefault) {
+      return Option.none();
+    }
+
+    const pulls = Option.getOrElse(
+      Option.flatMap(
+        at(payload, `${path}.pull_requests`),
+        Schema.decodeUnknownOption(RunPullRequests),
+      ),
+      () => [],
+    );
+
+    return Option.some({ kind: "ci-run", sha, pullRequests: pulls.map((pull) => pull.number) });
+  });
+
 const itemOf = (from: ItemFrom, payload: Json): Option.Option<EventItem> => {
   switch (from.kind) {
     case "repo":
       return Option.some({ kind: "repo" });
+    case "ci-run":
+      return ciRunAt(from.path, from.pushToDefault, payload);
     case "issue":
     case "pull-request":
       return Option.map(numberAt(payload, from.path), (number) => ({ kind: from.kind, number }));
@@ -435,3 +490,38 @@ export const wokenBy = (
       ),
     );
 };
+
+// Whether `data`, a record's, names the commit `sha` or one of `pullRequests`,
+// anywhere in it: a `sha`, `head` or the like equal to it, or a
+// `pullRequest` among them, as a parked wait on CI keeps them.
+const names = (data: Json, sha: string, pullRequests: ReadonlyArray<number>): boolean => {
+  if (Predicate.isString(data)) {
+    return data === sha;
+  }
+
+  if (Array.isArray(data)) {
+    return data.some((each: Json) => names(each, sha, pullRequests));
+  }
+
+  return Option.exists(asObject(data), (object) =>
+    Object.entries(object).some(
+      ([key, value]) =>
+        (key === "pullRequest" &&
+          Number.isInteger(value) &&
+          pullRequests.some((pull) => pull === value)) ||
+        names(value, sha, pullRequests),
+    ),
+  );
+};
+
+// The items a finished CI run settles a wait of (a ci-run EventItem): those
+// whose record's data names its head commit or one of its pull requests,
+// what parked waiting on it. `records` is every item's record data, by item;
+// the plan job looks at these alone, rather than every item.
+export const parkedOn = (
+  records: ReadonlyArray<readonly [string, Json]>,
+  run: { readonly sha: string; readonly pullRequests: ReadonlyArray<number> },
+): ReadonlyArray<string> =>
+  records.flatMap(([item, data]) =>
+    Arr.filter([item], () => names(data, run.sha, run.pullRequests)),
+  );

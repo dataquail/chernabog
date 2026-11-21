@@ -118,6 +118,21 @@ change.
    | A person wants it now                         | Re-run the workflow                     | "Run now" in the dashboard, or `chernabog tick`                                                                                                                                                                                  |
    | Any event was lost                            | The scheduled sweep                     | Cron                                                                                                                                                                                                                             |
 
+   **CI wakes only what waits on it.** A finished `workflow_run` names a
+   head commit and the pull requests it ran for, and the plan job looks at
+   the items whose record names one of them (`Events.parkedOn`), not every
+   item. post-merge's watch wakes on push CI on the default branch
+   (`Events.mergeCiCompleted`), whose head is the merge commit its
+   `awaiting-merge-ci` record names. The epic wakes on any finished run
+   (`Events.ciRunCompleted`): a task's or a stack layer's CI runs on that
+   pull request's branch, which names no epic, but the epic's `waiting`
+   record names the pull request (`tasks.ci`, `layers.ci`), and the run's
+   `pull_requests` names it too. It doesn't keep the task's head, so the
+   commit alone wouldn't find it; a run with no pull requests, such as one
+   from a fork, finds nothing, and the sweep takes the epic up. The sweep
+   that every finished run used to start (`Events.baseCiCompleted`) is
+   gone.
+
    With these sources in place, parking costs a daemon a few seconds over
    waiting inside the run. The watch replaces each run's own polling with one
    loop over all parked records. A hosted service could later relay GitHub's
