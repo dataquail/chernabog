@@ -3,7 +3,9 @@
 // for checks that never start, and it can't merge. An agent merges the base
 // into the branch in the author's worktree, resolves the conflicts and commits
 // the merge; chernabog runs the local gate, pushes (a plain push: the merge
-// only adds commits, so nothing is rewritten) and waits for CI. A run of
+// only adds commits, so nothing is rewritten) and waits for CI, which parks
+// while CI is pending over the pull request's review phase and records it
+// again once the wait ends (Conflict.waitForCi). A run of
 // another flow waiting on the pull request's CI, such as implement's, carries
 // on from there.
 //
@@ -32,6 +34,7 @@
 import {
   activity,
   Agent,
+  Conflict,
   defineFlow,
   Events,
   GitHub,
@@ -74,14 +77,16 @@ const decodeIn =
       Effect.mapError((issue) => new StepFailed({ step, message: issue.message })),
     );
 
-// Open pull requests this persona wrote that conflict with their base. The
-// key carries the head, so a conflict that comes back after a later push is
-// new work.
+// Open pull requests this persona wrote whose run parked on CI for the merge
+// it pushed, to finish what's started: each is held until CI is green or
+// red, or ciTimeout passes. Then open pull requests this persona wrote that
+// conflict with their base. The key carries the head, so a conflict that
+// comes back after a later push is new work.
 const trigger = Effect.gen(function* () {
   const github = yield* GitHub;
   const repo = yield* Repo;
   const labelNames = yield* Settings.labels;
-  const items: Array<WorkItem> = [];
+  const items: Array<WorkItem> = [...(yield* Conflict.parkedOnCi)];
 
   for (const pull of yield* Review.authoredByMe) {
     if (pull.labels.includes(labelNames.needsHuman) || (yield* Review.ownedByARun(pull))) {
@@ -261,6 +266,35 @@ const resolveWithBelow = (conflict: ConflictItem, worktree: string, sessionId: s
     return { status: "resolved", summary: summaries.join("\n\n") } satisfies typeof Resolution.Type;
   });
 
+// Waits for CI on the pushed merge, from `firstRound` for a run that takes a
+// parked wait up, then asks an approving reviewer again.
+const awaitMergeCi = (
+  conflict: ConflictItem,
+  worktree: string,
+  session: Implement.AuthorSession,
+  firstRound: Option.Option<number> = Option.none(),
+) =>
+  Effect.gen(function* () {
+    yield* Conflict.waitForCi(
+      conflict.pullRequest,
+      worktree,
+      { ...session, branch: conflict.headRef, base: conflict.baseRef },
+      Conflict.parkOnPullRequest(conflict.pullRequest),
+      firstRound,
+    );
+
+    // An approval was of the code before the merge: its reviewer looks again,
+    // and re-review merges an auto:ship pull request it approves.
+    const approver = yield* Review.askApproverAgain(conflict.pullRequest);
+
+    return Option.match(approver, {
+      onNone: () =>
+        `#${conflict.pullRequest}: merged ${conflict.baseRef} and resolved its conflicts`,
+      onSome: (login) =>
+        `#${conflict.pullRequest}: merged ${conflict.baseRef}, resolved its conflicts and asked ${login} to review again`,
+    });
+  });
+
 const unstick = (conflict: ConflictItem) =>
   Effect.gen(function* () {
     const run = yield* Run;
@@ -288,23 +322,26 @@ const unstick = (conflict: ConflictItem) =>
       conflict.pullRequest,
       `Merged \`${conflict.baseRef}\` into this branch to resolve its conflicts.\n\n${resolution.summary}`,
     );
-    yield* Implement.waitForCi(
-      conflict.pullRequest,
+
+    // Still-pending CI parks on the pull request's record, over its review
+    // phase, and ends the run; the item comes back through
+    // Conflict.parkedOnCi once CI finishes (resumeWait).
+    return yield* awaitMergeCi(conflict, worktree, session);
+  });
+
+// A run that takes up a wait a run before it parked on: the merge is pushed,
+// so it waits on in a worktree on the branch, for a fix of red CI, which
+// starts a session of its own.
+const resumeWait = (conflict: ConflictItem, round: number) =>
+  Effect.gen(function* () {
+    const worktree = yield* Review.prepareAuthorWorktree(conflict.headRef);
+
+    return yield* awaitMergeCi(
+      conflict,
       worktree,
-      { ...session, branch: conflict.headRef, base: conflict.baseRef },
-      { id: "resolve" },
+      { sessionId: Option.none(), adapter: Option.none() },
+      Option.some(round),
     );
-
-    // An approval was of the code before the merge: its reviewer looks again,
-    // and re-review merges an auto:ship pull request it approves.
-    const approver = yield* Review.askApproverAgain(conflict.pullRequest);
-
-    return Option.match(approver, {
-      onNone: () =>
-        `#${conflict.pullRequest}: merged ${conflict.baseRef} and resolved its conflicts`,
-      onSome: (login) =>
-        `#${conflict.pullRequest}: merged ${conflict.baseRef}, resolved its conflicts and asked ${login} to review again`,
-    });
   });
 
 const workflow = (item: WorkItem) =>
@@ -313,12 +350,17 @@ const workflow = (item: WorkItem) =>
       Effect.mapError((issue) => new StepFailed({ step: "item", message: issue.message })),
     );
 
+    const resuming = Conflict.resumingCi(item);
+
     const toPerson = (reason: string) => PullRequest.handToPerson(conflict.pullRequest, reason);
 
     // Anything that stops it hands the pull request to a person, unless it
     // closed meanwhile. It owns the pull request throughout, so no other run
     // pushes to the branch under it; one another run owns is skipped.
-    return yield* unstick(conflict).pipe(
+    return yield* Option.match(resuming, {
+      onNone: () => unstick(conflict),
+      onSome: (round) => resumeWait(conflict, round),
+    }).pipe(
       Effect.catchTags({
         NeedsHuman: (needsHuman) => toPerson(needsHuman.reason),
         StepFailed: (failed) => toPerson(`${failed.step}: ${failed.message}`),
@@ -356,5 +398,10 @@ const flow = defineFlow({
 
 // The GitHub events that can change what its trigger finds, so it wakes in CI
 // rather than only on the schedule: a pull request closing, which may move the
-// base under every other one.
-export default Events.declare(flow, { events: [Events.baseMoved], readsPhases: false });
+// base under every other one, and a finished CI run, which frees a pull
+// request whose run parked on its merge's CI. Its trigger reads pull
+// requests' phases for those, so a phase event wakes it too.
+export default Events.declare(flow, {
+  events: [Events.baseMoved, Events.ciCompleted],
+  readsPhases: true,
+});

@@ -1441,7 +1441,32 @@ export type CiWait = RepeatOptions & {
   // What the record keeps for the run that takes the wait up, such as where
   // a flow document resumes (Resume.parking).
   readonly data?: { readonly [key: string]: Json };
+  // The phase it records for a round: awaiting-ci's by default (Phases.awaitingCi).
+  readonly phase?: (round: number) => string;
+  // Whether the record keeps `since`, when the round's wait began, so that
+  // ciTimeout counts across the runs that take it up: a run whose first
+  // reading is still pending past it fails with CiTimedOut. A park again
+  // keeps the record it found, and with it `since`.
+  readonly since?: boolean;
 };
+
+const phaseOfRound = (options: CiWait, round: number) =>
+  (options.phase ?? Phases.awaitingCi)(round);
+
+// When the round's wait began, by the record of the item it parks on: none
+// for a record of another round, or one that keeps no `since`.
+const SinceData = Schema.Struct({ since: Schema.String });
+
+const waitSince = (item: string, round: number, options: CiWait) =>
+  Effect.map(Phases.current(item), (found) =>
+    Option.flatMap(
+      Option.filter(found, (record) => record.phase === phaseOfRound(options, round)),
+      (record) =>
+        Option.flatMap(Option.flatMap(record.data, Schema.decodeUnknownOption(SinceData)), (data) =>
+          DateTime.make(data.since),
+        ),
+    ),
+  );
 
 // The item to park on, when the flow can resume from its record: on a daemon
 // as in a CI job, a run that waits on CI ends at the park.
@@ -1452,8 +1477,28 @@ const parkingOn = (options: CiWait) => Effect.succeed(Option.fromUndefinedOr(opt
 const parkOnCi = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
   activity(
     named(options, `awaiting-ci-${round}`),
-    Phases.record(item, Phases.awaitingCi(round), options.data),
+    Effect.gen(function* () {
+      if (options.since !== true) {
+        return yield* Phases.record(item, phaseOfRound(options, round), options.data);
+      }
+
+      const since = DateTime.formatIso(yield* DateTime.now);
+
+      yield* Phases.record(item, phaseOfRound(options, round), { ...options.data, since });
+    }),
   ).pipe(Effect.andThen(awaitSignal([CI_SETTLED], { id: named(options, `ci-${round}`), timeout })));
+
+// Whether a wait that keeps `since` has run past ciTimeout, counted from when
+// its round began in the run that first parked it.
+const pastTimeout = (item: string, round: number, timeout: Duration.Duration, options: CiWait) =>
+  Effect.gen(function* () {
+    const since = yield* waitSince(item, round, options);
+    const now = yield* DateTime.now;
+
+    return Option.exists(since, (began) =>
+      DateTime.isLessThanOrEqualTo(DateTime.addDuration(began, timeout), now),
+    );
+  });
 
 // Polls the pull request's checks durably until they stop pending, or
 // ciTimeout passes. In a CI job, with somewhere to park, a first reading
@@ -1479,6 +1524,17 @@ const awaitChecks = (pullRequest: number, round: number, options: CiWait) =>
       }
 
       if (poll === 2 && Option.isSome(parking)) {
+        if (
+          options.since === true &&
+          (yield* activity(
+            named(options, `ci-${round}-since`),
+            pastTimeout(parking.value, round, timeout, options),
+            Schema.Boolean,
+          ))
+        ) {
+          return yield* new CiTimedOut({ pullRequest, after: Duration.format(timeout) });
+        }
+
         yield* parkOnCi(parking.value, round, timeout, options);
       }
 

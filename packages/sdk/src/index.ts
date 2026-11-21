@@ -9,6 +9,7 @@ import * as PullRequestSteps from "./pull-request.ts";
 export * as Blocks from "./blocks.ts";
 export * as Ci from "./ci.ts";
 export * as Compose from "./compose.ts";
+export * as Conflict from "./conflict.ts";
 export * as Epic from "./epic.ts";
 export type * as EpicBlocks from "./epic-blocks.ts";
 export * as Events from "./events.ts";
