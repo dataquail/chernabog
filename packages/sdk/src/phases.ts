@@ -512,7 +512,7 @@ export const holds = (found: PhaseRecord, phases: ReadonlyArray<Phase>) =>
 export const reconcile = (
   item: string,
   found: Option.Option<PhaseRecord>,
-  to: Phase,
+  to: Phase | (string & {}),
   by: string,
   data?: { readonly [key: string]: Json },
 ) =>
@@ -643,29 +643,53 @@ export const advanceRun = (phase: string) =>
   });
 
 // With a person (ADR 21, decision 1): why the item went to one, and the phase
-// it left, none for an item with no record before.
+// it left, none for an item with no record before. `kept` is the data of the
+// record it left, for a hand-back to record that phase again with: absent
+// when that record had none, null when it had more than fits beside `why`.
 export const WithPerson = Schema.Struct({
   why: Schema.String,
   from: Schema.OptionFromNullOr(Schema.String),
+  kept: Schema.optionalKey(Schema.OptionFromNullOr(Schema.Json)),
 });
 
 const encodeWithPerson = Schema.encodeSync(WithPerson);
 
+// A with-person record's data as the JSON it is written as.
+const encodeAsJson = (said: typeof WithPerson.Type): { readonly [key: string]: Json } =>
+  encodeWithPerson(said);
+
 // The longest `why` a with-person record keeps, so it fits a record's 4 KB.
 const WHY_SIZE = 1000;
 
-// What a with-person record keeps of `why` and the record it left, as data.
-export const withPersonData = (why: string, left: Option.Option<PhaseRecord>) =>
-  encodeWithPerson({
+// What a with-person record keeps of `why` and the record it left, as data:
+// that record's data too, when it fits.
+export const withPersonData = (
+  why: string,
+  left: Option.Option<PhaseRecord>,
+): { readonly [key: string]: Json } => {
+  const said = {
     why: Option.match(
-      Option.liftPredicate(why, (said) => said.length > WHY_SIZE),
+      Option.liftPredicate(why, (told) => told.length > WHY_SIZE),
       {
         onNone: () => why,
-        onSome: (said) => `${said.slice(0, WHY_SIZE - 1)}…`,
+        onSome: (told) => `${told.slice(0, WHY_SIZE - 1)}…`,
       },
     ),
     from: Option.map(left, (found) => found.phase),
-  });
+  };
+
+  return Option.match(
+    Option.flatMap(left, (found) => found.data),
+    {
+      onNone: (): { readonly [key: string]: Json } => encodeAsJson(said),
+      onSome: (kept) =>
+        Option.getOrElse(
+          Option.liftPredicate(encodeAsJson({ ...said, kept: Option.some(kept) }), isPhaseData),
+          () => encodeAsJson({ ...said, kept: Option.none() }),
+        ),
+    },
+  );
+};
 
 // The issue or pull request number an item's record is kept for (`issue-12`,
 // `pr-7`, `epic-4`, whose epic is issue 4); none for a team's own item.
@@ -716,23 +740,46 @@ const LabelEvents = Schema.Array(
 
 const Permission = Schema.Struct({ permission: Schema.String });
 
-// Who last removed `label` from the issue or pull request, by its events;
-// none when GitHub lists no removal.
+// GitHub lists an item's events oldest first, a page at a time.
+const EVENTS_PAGE = 100;
+
+// The most pages of events read for one item; past them, the latest removal
+// is unknown, so nothing is handed back.
+const EVENTS_PAGES = 30;
+
+// Who last removed `label` from the issue or pull request, by all its
+// events, every page of them; none when GitHub lists no removal, or more
+// events than are read.
 const removedBy = (number: number, label: string) =>
   Effect.gen(function* () {
     const { slug } = yield* Repo;
+    const github = yield* GitHub;
+    let last = Option.none<string>();
 
-    const events = yield* GitHub.use((github) =>
-      github.request("GET", `/repos/${slug}/issues/${number}/events?per_page=100`, Option.none()),
-    );
+    for (let page = 1; page <= EVENTS_PAGES; page++) {
+      const listed = Option.getOrElse(
+        Schema.decodeUnknownOption(LabelEvents)(
+          yield* github.request(
+            "GET",
+            `/repos/${slug}/issues/${number}/events?per_page=${EVENTS_PAGE}&page=${page}`,
+            Option.none(),
+          ),
+        ),
+        () => [],
+      );
 
-    return Option.flatMap(
-      Arr.findLast(
-        Option.getOrElse(Schema.decodeUnknownOption(LabelEvents)(events), () => []),
-        (found) => found.event === "unlabeled" && found.label?.name === label,
-      ),
-      (found) => Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login),
-    );
+      for (const found of listed) {
+        if (found.event === "unlabeled" && found.label?.name === label) {
+          last = Option.map(Option.fromNullishOr(found.actor), (actor) => actor.login);
+        }
+      }
+
+      if (listed.length < EVENTS_PAGE) {
+        return last;
+      }
+    }
+
+    return Option.none<string>();
   });
 
 // Whether `login` is one the repo trusts with intent: one of its personas,
@@ -796,16 +843,28 @@ export const handedBack = Effect.gen(function* () {
       continue;
     }
 
-    const open = yield* openLabels(item);
+    // One item GitHub fails to answer for is looked at again next tick; the
+    // rest, and the trigger, go on.
+    const back = yield* Effect.gen(function* () {
+      const open = yield* openLabels(item);
 
-    if (Option.isNone(open) || open.value.includes(labels.needsHuman)) {
-      continue;
-    }
+      if (Option.isNone(open) || open.value.includes(labels.needsHuman)) {
+        return false;
+      }
 
-    const number = Option.getOrElse(numberOf(item), () => 0);
-    const remover = yield* removedBy(number, labels.needsHuman);
+      const number = Option.getOrElse(numberOf(item), () => 0);
+      const remover = yield* removedBy(number, labels.needsHuman);
 
-    if (Option.isSome(remover) && (yield* trusted(remover.value))) {
+      return Option.isSome(remover) && (yield* trusted(remover.value));
+    }).pipe(
+      Effect.catchTag("GitHubError", (failed) =>
+        Effect.logWarning(
+          `${item}: can't tell whether a person handed it back: ${failed.message}`,
+        ).pipe(Effect.as(false)),
+      ),
+    );
+
+    if (back) {
       found.push({ item, record: held });
     }
   }
@@ -813,23 +872,78 @@ export const handedBack = Effect.gen(function* () {
   return found;
 });
 
-const WithPersonFrom = Schema.Struct({ from: Schema.optionalKey(Schema.NullOr(Schema.String)) });
+const WithPersonLeft = Schema.Struct({
+  from: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  kept: Schema.optionalKey(Schema.NullOr(Schema.Unknown)),
+});
 
-// Records handed-back on each item a person handed back (handedBack), as
-// observer:handed-back, with the phase it went to the person from. Only
-// while the item still holds the with-person record read; one another
-// writer moved since keeps that writer's record.
+// The kind of item a record is kept for, from its name; none for a team's own.
+const kindNamed = (item: string): Option.Option<ItemKind> =>
+  Option.map(Option.fromNullOr(/^(issue|pr|epic)-\d+$/.exec(item)), (found) => {
+    if (found[1] === "pr") {
+      return "pull-request";
+    }
+
+    if (found[1] === "epic") {
+      return "epic";
+    }
+
+    return "issue";
+  });
+
+// The phases observer:handed-back may record on an item of `kind`, from
+// with-person: any of the SDK's phases of that kind, the one it left.
+export const handedBackTo = (kind: ItemKind): ReadonlyArray<string> =>
+  phasesOf(kind).filter((phase) => phase !== PHASES.issue.withPerson);
+
+// What a hand-back records: the SDK phase the item went to the person from,
+// with the data it had, so the flows that read it take it up again as they
+// did before it went to the person; or handed-back {from}, when it came from
+// no record, from a team's own phase, or from one whose data didn't fit.
+const returnOf = (item: string, held: PhaseRecord) => {
+  const left = Option.getOrElse(
+    Option.flatMap(held.data, Schema.decodeUnknownOption(WithPersonLeft)),
+    (): typeof WithPersonLeft.Type => ({}),
+  );
+
+  const from = Option.fromNullishOr(left.from);
+
+  const kept = Option.match(Option.fromUndefinedOr(left.kept), {
+    onNone: () => Option.some(Option.none<PhaseData>()),
+    onSome: (data) => Option.map(Schema.decodeUnknownOption(PhaseData)(data), Option.some),
+  });
+
+  const restored = Option.flatMap(
+    Option.all({ phase: from, kind: kindNamed(item), kept }),
+    (found) =>
+      Option.liftPredicate(
+        { phase: found.phase, data: found.kept },
+        () =>
+          handedBackTo(found.kind).includes(declaredAs(found.phase)) &&
+          found.phase !== PHASES.issue.handedBack,
+      ),
+  );
+
+  return Option.getOrElse(restored, () => ({
+    phase: PHASES.issue.handedBack,
+    data: Option.some(asData({ from: Option.getOrNull(from) })),
+  }));
+};
+
+// Records, on each item a person handed back (handedBack), as
+// observer:handed-back, what it goes back to (returnOf). Only while the item
+// still holds the with-person record read; one another writer moved since
+// keeps that writer's record.
 export const reconcileHandedBack = Effect.gen(function* () {
   for (const back of yield* handedBack) {
-    const from = Option.getOrNull(
-      Option.flatMap(
-        Option.flatMap(back.record.data, Schema.decodeUnknownOption(WithPersonFrom)),
-        (data) => Option.fromNullishOr(data.from),
-      ),
-    );
+    const to = returnOf(back.item, back.record);
 
-    yield* reconcile(back.item, Option.some(back.record), PHASES.issue.handedBack, HANDED_BACK_BY, {
-      from,
-    });
+    yield* reconcile(
+      back.item,
+      Option.some(back.record),
+      to.phase,
+      HANDED_BACK_BY,
+      Option.getOrUndefined(to.data),
+    );
   }
 });

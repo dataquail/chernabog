@@ -1118,13 +1118,16 @@ export const transitions: Ledger.Catalogue = {
     ),
     ...Review.OBSERVED,
     ...Backfill.OBSERVED,
-    // A trusted person removed auto:needs-human (Phases.reconcileHandedBack).
-    ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
-      by: Phases.HANDED_BACK_BY,
-      item,
-      from: [Phases.PHASES.issue.withPerson],
-      to: Phases.PHASES.issue.handedBack,
-    })),
+    // A trusted person removed auto:needs-human (Phases.reconcileHandedBack):
+    // the item goes back to the phase it left, or to handed-back.
+    ...Phases.ITEM_KINDS.flatMap((item) =>
+      Phases.handedBackTo(item).map((to): Ledger.Observed => ({
+        by: Phases.HANDED_BACK_BY,
+        item,
+        from: [Phases.PHASES.issue.withPerson],
+        to,
+      })),
+    ),
     ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
       by: Ledger.ACKNOWLEDGED,
       item,

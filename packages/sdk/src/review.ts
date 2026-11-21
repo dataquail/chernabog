@@ -171,6 +171,13 @@ const askedOf = (request: ReviewRequest, me: string): Asked =>
   Option.match(request.record, {
     onNone: (): Asked => ({ kind: "first" }),
     onSome: (found): Asked => {
+      // Handed back by a person, from no record before it went to them
+      // (Phases.reconcileHandedBack): a review asked of it is a first, as of
+      // one with no record.
+      if (found.phase === P.handedBack) {
+        return { kind: "first" };
+      }
+
       if (found.phase === P.reviewAskedAgain) {
         return { kind: "again", record: found };
       }
