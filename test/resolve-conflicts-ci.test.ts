@@ -293,8 +293,11 @@ for (const [form, loading] of forms) {
 
           expect(run.status).toBe("needs-human");
           expect(fake.labelsOf(PULL)).toContain(DEFAULT_LABELS.needsHuman);
-          // Its review phase is back, for a person to see.
+          // With a person, from its review phase, which was back first.
           expect(Option.map(recordNow(fake), (found) => found.phase)).toEqual(
+            Option.some("with-person"),
+          );
+          expect(Option.map(recordNow(fake), (found) => found.data.from)).toEqual(
             Option.some("review-asked"),
           );
         }),
@@ -324,7 +327,10 @@ for (const [form, loading] of forms) {
           );
 
           expect(parked).toBe(false);
-          expect(recordNow(fake)).toEqual(Option.none());
+          // No wait is recorded; only a hand-off to a person, if it came to one.
+          expect(Option.filter(recordNow(fake), (found) => found.phase !== "with-person")).toEqual(
+            Option.none(),
+          );
         }),
       ENGINE_TIMEOUT,
     );

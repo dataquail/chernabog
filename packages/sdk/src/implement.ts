@@ -572,9 +572,8 @@ export const adoptionComment = (claim: ClaimMarker, adopted: Adopted, again = fa
 const referToPerson = (issue: number, label: string, reason: string) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const labels = yield* Settings.labels;
     yield* github.removeLabel(issue, label);
-    yield* github.addLabel(issue, labels.needsHuman);
+    yield* Phases.handToPerson(Phases.issueItem(issue), reason);
     yield* github.comment(issue, `Chernabog didn't take this issue on: ${reason}`);
 
     return yield* new NeedsHuman({ reason });
@@ -2128,7 +2127,8 @@ export const resumedOutcome: ImplementOutcome = {
   body: "",
 };
 
-// Labels the work item for a person and says why. No flow picks it up again.
+// Hands the work item, and its pull request if it has one, to a person
+// (Phases.handToPerson) and says why. No flow picks it up again.
 export const handToHuman = (
   issue: number,
   reason: string,
@@ -2139,12 +2139,11 @@ export const handToHuman = (
     named(options, "needs-human"),
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labels = yield* Settings.labels;
-      yield* github.addLabel(issue, labels.needsHuman);
+      yield* Phases.handToPerson(Phases.issueItem(issue), reason);
       yield* dropInProgress(issue);
 
       if (Option.isSome(pullRequest)) {
-        yield* github.addLabel(pullRequest.value, labels.needsHuman);
+        yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest.value), reason);
       }
 
       yield* github.comment(

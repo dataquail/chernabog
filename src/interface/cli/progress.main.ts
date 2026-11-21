@@ -42,7 +42,7 @@ const describeFinding = (finding: BackfillFinding) => {
     return `for a person: ${finding.item}: ${finding.why}`;
   }
 
-  const from = Option.match(Option.fromUndefinedOr(finding.from), {
+  const from = Option.match(Option.fromUndefinedOr(finding.over), {
     onNone: () => "",
     onSome: (read) => `${read.phase} -> `,
   });

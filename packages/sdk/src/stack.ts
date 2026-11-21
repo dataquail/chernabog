@@ -31,10 +31,10 @@ import {
   waitForCi,
   waitForCiLeaving,
 } from "./implement.ts";
+import * as Phases from "./phases.ts";
 import { renderPromptOr } from "./prompt.ts";
 import { onlyMergedBase } from "./pull-request.ts";
 import { decisiveReviews, findAuthorSession, requestAgain } from "./review.ts";
-import * as Settings from "./settings.ts";
 
 // base: the branch the layer is built on now, the repo's base branch unless
 // given. lower: the pull request of the layer below, whose head branch is
@@ -749,8 +749,7 @@ export const refreshToPerson = (pullRequest: number, key: string, reason: string
     `needs-human#refresh-${key}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const labelNames = yield* Settings.labels;
-      yield* github.addLabel(pullRequest, labelNames.needsHuman);
+      yield* Phases.handToPerson(Phases.pullRequestItem(pullRequest), reason);
       yield* github.comment(
         pullRequest,
         `Chernabog stopped bringing this layer up to date with its base and needs a person: ${reason}`,

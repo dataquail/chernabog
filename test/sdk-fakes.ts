@@ -19,6 +19,7 @@ import {
   Git,
   GitError,
   GitHub,
+  GitHubError,
   HEADLESS,
   type Issue,
   type Json,
@@ -488,6 +489,22 @@ export const makeFake = (
   const plans: Array<Json> = [];
   // The worktrees and checkouts a step removed, by name.
   const removed: Array<string> = [];
+
+  // Each issue's and pull request's events, as GitHub lists them oldest
+  // first, a page of 100 at a time; each login's permission on the repo
+  // ("read" for any other); and the numbers whose events GitHub fails to list.
+  const timeline = {
+    events: new Map<number, ReadonlyArray<Json>>(),
+    permissions: new Map<string, string>(),
+    failing: new Set<number>(),
+  };
+
+  const EVENTS = new RegExp(
+    `^/repos/${settings.slug}/issues/(\\d+)/events\\?per_page=100&page=(\\d+)$`,
+  );
+
+  const PERMISSION = new RegExp(`^/repos/${settings.slug}/collaborators/([^/]+)/permission$`);
+
   let planned = 0;
 
   // What this machine knows of the run that owns the pull request: nothing, unless a test says.
@@ -954,88 +971,117 @@ export const makeFake = (
         }),
       // Only the pull request itself, as GitHub's REST API answers it.
       request: (method, path, body) =>
-        Effect.sync((): Json => {
-          if (method === "DELETE" && path === `/repos/${settings.slug}/issues/${ISSUE}/assignees`) {
-            const leaving = Option.match(body, {
-              onNone: (): ReadonlyArray<string> => [],
-              onSome: (sent) =>
-                Option.match(Schema.decodeUnknownOption(Unassigning)(sent), {
-                  onNone: (): ReadonlyArray<string> => [],
-                  onSome: (unassigning) => unassigning.assignees,
-                }),
-            });
+        Effect.suspend(() => {
+          const listed = Option.fromNullOr(EVENTS.exec(path));
 
-            people.assigned = people.assigned.filter((login) => !leaving.includes(login));
+          if (method === "GET" && Option.isSome(listed)) {
+            const number = Number(listed.value[1]);
+            const page = Number(listed.value[2]);
 
-            return {};
-          }
-
-          if (method === "PATCH") {
-            return edit(path, body);
-          }
-
-          // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
-            const [compared = ""] = path
-              .slice(`/repos/${settings.slug}/compare/`.length)
-              .split("...");
-
-            based.compared.push(decodeURIComponent(compared));
-
-            return { ahead_by: git.pushes + git.commits };
-          }
-
-          if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
-            return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
-          }
-
-          const closedOne = Option.fromUndefinedOr(
-            closed.find((other) => path === `/repos/${settings.slug}/pulls/${other.number}`),
-          );
-
-          if (method === "GET" && Option.isSome(closedOne)) {
-            return closedOne.value;
-          }
-
-          // The pull requests closed lately: those a test closed, and the one
-          // pull request, once it merged.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
-            if (states.pull !== "merged") {
-              return [...closed];
+            if (timeline.failing.has(number)) {
+              return Effect.fail(new GitHubError({ message: `events of #${number}: 502` }));
             }
 
-            return [
-              ...closed,
-              {
-                number: PULL,
-                title: "feat: a change",
-                html_url: `https://github.com/dataquail/demo/pull/${PULL}`,
-                body: "",
-                user: { login: authored.author },
-                merged_at: merged.at,
-                merge_commit_sha: merged.sha,
-                base: { ref: stack.base },
-                head: { ref: authored.headRef },
-              },
-            ];
+            const all = timeline.events.get(number) ?? [];
+
+            return Effect.succeed<Json>(all.slice((page - 1) * 100, page * 100));
           }
 
-          if (method === "GET" && path === `/repos/${settings.slug}/commits/${merged.sha}`) {
-            return { sha: merged.sha, parents: [{ sha: merged.parent }] };
+          const permission = Option.fromNullOr(PERMISSION.exec(path));
+
+          if (method === "GET" && Option.isSome(permission)) {
+            return Effect.succeed<Json>({
+              permission:
+                timeline.permissions.get(decodeURIComponent(String(permission.value[1]))) ?? "read",
+            });
           }
 
-          if (method === "POST") {
-            return post(path, body);
-          }
+          return Effect.sync((): Json => {
+            if (
+              method === "DELETE" &&
+              path === `/repos/${settings.slug}/issues/${ISSUE}/assignees`
+            ) {
+              const leaving = Option.match(body, {
+                onNone: (): ReadonlyArray<string> => [],
+                onSome: (sent) =>
+                  Option.match(Schema.decodeUnknownOption(Unassigning)(sent), {
+                    onNone: (): ReadonlyArray<string> => [],
+                    onSome: (unassigning) => unassigning.assignees,
+                  }),
+              });
 
-          // The issues this login opened, newest first.
-          if (method === "GET" && path.startsWith(`/repos/${settings.slug}/issues?`)) {
-            return [...graph.made.values()]
-              .toReversed()
-              .map((made) => ({ number: made.number, body: made.body }));
-          }
+              people.assigned = people.assigned.filter((login) => !leaving.includes(login));
 
-          return {};
+              return {};
+            }
+
+            if (method === "PATCH") {
+              return edit(path, body);
+            }
+
+            // How far the claim branch is ahead of its base: the agent's commits, pushed or not.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/compare/`)) {
+              const [compared = ""] = path
+                .slice(`/repos/${settings.slug}/compare/`.length)
+                .split("...");
+
+              based.compared.push(decodeURIComponent(compared));
+
+              return { ahead_by: git.pushes + git.commits };
+            }
+
+            if (method === "GET" && path === `/repos/${settings.slug}/pulls/${PULL}`) {
+              return { number: PULL, mergeable_state: merge.state, draft: authored.draft };
+            }
+
+            const closedOne = Option.fromUndefinedOr(
+              closed.find((other) => path === `/repos/${settings.slug}/pulls/${other.number}`),
+            );
+
+            if (method === "GET" && Option.isSome(closedOne)) {
+              return closedOne.value;
+            }
+
+            // The pull requests closed lately: those a test closed, and the one
+            // pull request, once it merged.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/pulls?state=closed`)) {
+              if (states.pull !== "merged") {
+                return [...closed];
+              }
+
+              return [
+                ...closed,
+                {
+                  number: PULL,
+                  title: "feat: a change",
+                  html_url: `https://github.com/dataquail/demo/pull/${PULL}`,
+                  body: "",
+                  user: { login: authored.author },
+                  merged_at: merged.at,
+                  merge_commit_sha: merged.sha,
+                  base: { ref: stack.base },
+                  head: { ref: authored.headRef },
+                },
+              ];
+            }
+
+            if (method === "GET" && path === `/repos/${settings.slug}/commits/${merged.sha}`) {
+              return { sha: merged.sha, parents: [{ sha: merged.parent }] };
+            }
+
+            if (method === "POST") {
+              return post(path, body);
+            }
+
+            // The issues this login opened, newest first.
+            if (method === "GET" && path.startsWith(`/repos/${settings.slug}/issues?`)) {
+              return [...graph.made.values()]
+                .toReversed()
+                .map((made) => ({ number: made.number, body: made.body }));
+            }
+
+            return {};
+          });
         }),
       comments: () => Effect.sync(() => [...comments]),
       reviewComments: () => Effect.succeed([]),
@@ -1230,6 +1276,7 @@ export const makeFake = (
     plans,
     removed,
     board,
+    timeline,
   };
 };
 

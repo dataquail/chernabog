@@ -180,7 +180,7 @@ describe("progress backfill's pull requests", () => {
     }),
   );
 
-  effect("a hold marker on one handed to a person is a hold that ended: P7 reads it", () =>
+  effect("one handed to a person is with-person, whatever a hold marker says", () =>
     Effect.gen(function* () {
       const fake = fresh();
       fake.setLabels(PULL, [DEFAULT_LABELS.ship, DEFAULT_LABELS.needsHuman]);
@@ -188,7 +188,7 @@ describe("progress backfill's pull requests", () => {
       comment(fake, ME, '<!-- chernabog-merge-hold {"runId":"r1","key":"pr-7"} -->');
 
       expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([
-        writes(PR_ITEM, Phases.PHASES.pullRequest.approved),
+        writes(PR_ITEM, Phases.PHASES.pullRequest.withPerson),
       ]);
     }),
   );
