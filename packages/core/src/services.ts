@@ -5,6 +5,7 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as Capabilities from "./capabilities.ts";
@@ -813,7 +814,9 @@ export const ReviewerSeatCapability = Capabilities.declare(ReviewerSeat, () => (
 // already seen. `at` is when the adapter wrote it, by the store's clock, not
 // the writer's, so a park can tell how long it has waited. `data` is what the
 // transition carried for the next run, none when it carried nothing
-// (ADR 0021, decision 4).
+// (ADR 0021, decision 4). `blobs` names, by BlobHash, the content the
+// transition wrote with the record, too big for `data`, such as a plan:
+// Progress.blob reads each back. Empty when it wrote none.
 export type PhaseRecord = {
   readonly phase: Phase;
   readonly from: Option.Option<Phase>;
@@ -821,6 +824,25 @@ export type PhaseRecord = {
   readonly version: string;
   readonly at: DateTime.Utc;
   readonly data: Option.Option<PhaseData>;
+  readonly blobs: ReadonlyArray<BlobHash>;
+};
+
+// What names a blob: the SHA-256 of its bytes (a string's, in UTF-8), as 64
+// lowercase hex digits. A blob is immutable, and the same bytes always have
+// the same name, whichever record writes them.
+export const BlobHash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/));
+
+export type BlobHash = typeof BlobHash.Type;
+
+export const isBlobHash = Schema.is(BlobHash);
+
+// The bytes a blob holds: a string's are its UTF-8.
+export const blobBytes = (blob: Uint8Array | string): Uint8Array => {
+  if (Predicate.isString(blob)) {
+    return new TextEncoder().encode(blob);
+  }
+
+  return blob;
 };
 
 // The record an adapter gives for one its store holds but can't read, such
@@ -844,6 +866,7 @@ export const unreadableRecord = (version: string, at: DateTime.Utc, why: string)
   version,
   at,
   data: Option.some(Schema.decodeSync(PhaseData)({ unreadable: why })),
+  blobs: [],
 });
 
 // Why `record` is one its adapter couldn't read, or none for a record.
@@ -863,12 +886,15 @@ export type PhaseRead = Pick<PhaseRecord, "phase" | "version">;
 // One move of an item's phase: `from` the record the writer read, which must
 // still be the item's (none: the item had no record), `to` the phase it moves
 // to, `by` who moves it, and `data` for the run that picks the item up next,
-// which the record keeps. The record written names `from`'s phase.
+// which the record keeps. `blobs` is content too big for `data`, written with
+// the record, in the same atomic step, and named in it by BlobHash: a lost
+// race writes neither. The record written names `from`'s phase.
 export type PhaseTransition = {
   readonly from: Option.Option<PhaseRead>;
   readonly to: Phase;
   readonly by: PhaseWriter;
   readonly data?: PhaseData;
+  readonly blobs?: ReadonlyArray<Uint8Array | string>;
 };
 
 export class Progress extends Context.Service<
@@ -891,6 +917,11 @@ export class Progress extends Context.Service<
       item: string,
       transition: PhaseTransition,
     ): Effect.Effect<PhaseRecord, PhaseMoved | ProgressError>;
+    // The bytes of the blob `hash` names, as the item's record wrote them;
+    // none when the record doesn't name it, or the item has no record. A
+    // blob an earlier record named, and this one doesn't, is never read: a
+    // run that still needs it writes it again with its record.
+    blob(item: string, hash: BlobHash): Effect.Effect<Option.Option<Uint8Array>, ProgressError>;
   }
 >()("@chernabog/sdk/Progress") {}
 
@@ -907,6 +938,7 @@ export const ProgressCapability = Capabilities.declare(
   {
     read: "read",
     readAll: "read",
+    blob: "read",
   },
 );
 

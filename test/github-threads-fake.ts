@@ -2,14 +2,31 @@
 // talks to: commits made through the API, refs, the GraphQL reads of a ref and
 // of every ref under a prefix, and createCommitOnBranch's compare-and-set,
 // answering a lost race with HTTP 200 and errors, as GitHub does
-// (docs/run-progress/storage-test.md). It answers githubTestLayer's handler.
+// (docs/run-progress/storage-test.md). Commits hold files, which the
+// adapter writes as blobs and trees through the API, or as createCommitOnBranch's
+// additions, and reads by GraphQL's object(expression) and the blobs API. It
+// answers githubTestLayer's handler.
+
+import { createHash } from "node:crypto";
 
 import { type Json } from "@chernabog/core";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-type Commit = { readonly oid: string; readonly message: string; readonly date: string };
+// A commit's files, by path, as the bytes each holds.
+type Files = ReadonlyMap<string, Uint8Array>;
+
+type Commit = {
+  readonly oid: string;
+  readonly message: string;
+  readonly date: string;
+  readonly files: Files;
+};
+
+// Git's empty tree, which GitHub has in every repo.
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 // How a lost createCommitOnBranch is answered: a stale head found up front, or
 // a true race, which GitHub reports as FORBIDDEN.
@@ -33,12 +50,25 @@ const Body = Schema.Struct({
   message: Schema.optionalKey(Schema.String),
   ref: Schema.optionalKey(Schema.String),
   sha: Schema.optionalKey(Schema.String),
+  content: Schema.optionalKey(Schema.String),
+  encoding: Schema.optionalKey(Schema.String),
+  tree: Schema.optionalKey(Schema.Json),
 });
+
+// A tree the API makes: each entry a path and the blob it holds.
+const TreeEntries = Schema.Array(Schema.Struct({ path: Schema.String, sha: Schema.String }));
 
 const AdvanceInput = Schema.Struct({
   branch: Schema.Struct({ branchName: Schema.String }),
   expectedHeadOid: Schema.String,
   message: Schema.Struct({ headline: Schema.String, body: Schema.optionalKey(Schema.String) }),
+  fileChanges: Schema.optionalKey(
+    Schema.Struct({
+      additions: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ path: Schema.String, contents: Schema.String })),
+      ),
+    }),
+  ),
 });
 
 // GitHub's JSON null, for a field it leaves empty.
@@ -50,6 +80,9 @@ export const makeThreadsFake = (slug: string) => {
   const commits = new Map<string, Commit>();
   // Each ref's tip, by its full name.
   const refs = new Map<string, string>();
+  // Every blob made, by its sha, and every tree, by its sha.
+  const blobs = new Map<string, Uint8Array>();
+  const trees = new Map<string, Files>([[EMPTY_TREE, new Map()]]);
   let made = 0;
 
   const state: ThreadsFakeState = {
@@ -63,15 +96,38 @@ export const makeThreadsFake = (slug: string) => {
   const dateOf = (n: number) =>
     DateTime.formatIso(DateTime.add(DateTime.makeUnsafe("2026-11-17T12:00:00Z"), { seconds: n }));
 
-  const commit = (message: string) => {
+  const commit = (message: string, files: Files = new Map()) => {
     made += 1;
     const oid = made.toString(16).padStart(40, "0");
-    commits.set(oid, { oid, message, date: dateOf(made) });
+    commits.set(oid, { oid, message, date: dateOf(made), files });
 
     return oid;
   };
 
   const committed = (oid: string) => Option.fromUndefinedOr(commits.get(oid));
+
+  // A blob's sha: its bytes' SHA-1, as git's is, near enough.
+  const blobOf = (bytes: Uint8Array) => {
+    const sha = createHash("sha1").update(bytes).digest("hex");
+    blobs.set(sha, bytes);
+
+    return sha;
+  };
+
+  const filesOf = (oid: string): Files =>
+    Option.getOrElse(
+      Option.map(committed(oid), (found) => found.files),
+      () => new Map(),
+    );
+
+  // Every file any commit holds, by path.
+  const everyFile = (): Files =>
+    new Map(
+      commits
+        .values()
+        .flatMap((found) => found.files)
+        .toArray(),
+    );
 
   const target = (oid: string) => ({
     oid,
@@ -128,12 +184,41 @@ export const makeThreadsFake = (slug: string) => {
         });
       }
 
-      const oid = commit(`${input.message.headline}\n\n${input.message.body ?? ""}`);
+      const added = (input.fileChanges?.additions ?? []).map(
+        (addition) => [addition.path, Buffer.from(addition.contents, "base64")] as const,
+      );
+
+      const oid = commit(
+        `${input.message.headline}\n\n${input.message.body ?? ""}`,
+        new Map([...filesOf(input.expectedHeadOid), ...added]),
+      );
+
       refs.set(ref, oid);
 
       return answer({
         data: {
           createCommitOnBranch: { commit: { oid, committedDate: target(oid).committedDate } },
+        },
+      });
+    }
+
+    if (query.includes("object(expression")) {
+      const expression = String(variables.expression);
+      state.requests.push(`graphql object ${expression}`);
+      const [oid = "", path = ""] = expression.split(":");
+
+      const sha = Option.map(Option.fromUndefinedOr(filesOf(oid).get(path)), (bytes) =>
+        blobOf(bytes),
+      );
+
+      return answer({
+        data: {
+          repository: {
+            object: Option.getOrElse(
+              Option.map(sha, (found) => ({ oid: found })),
+              () => NULL,
+            ),
+          },
         },
       });
     }
@@ -175,6 +260,42 @@ export const makeThreadsFake = (slug: string) => {
 
   const repo = `/repos/${slug}`;
 
+  // The blobs and trees API: a blob made from base64, read back as base64,
+  // and a tree of blobs by path.
+  const objects = (method: string, path: string, body: typeof Body.Type) => {
+    if (method === "POST" && path === `${repo}/git/blobs`) {
+      const sha = blobOf(Buffer.from(body.content ?? "", "base64"));
+
+      return answer({ sha }, 201);
+    }
+
+    if (method === "GET" && path.startsWith(`${repo}/git/blobs/`)) {
+      const bytes = Option.fromUndefinedOr(blobs.get(path.slice(`${repo}/git/blobs/`.length)));
+
+      return Option.match(bytes, {
+        onNone: () => answer({ message: "Not Found" }, 404),
+        onSome: (found) =>
+          answer({ content: Buffer.from(found).toString("base64"), encoding: "base64" }),
+      });
+    }
+
+    if (method === "POST" && path === `${repo}/git/trees`) {
+      const entries = Schema.decodeUnknownSync(TreeEntries)(body.tree);
+
+      const files: Files = new Map(
+        entries.map((entry) => [entry.path, blobs.get(entry.sha) ?? new Uint8Array()]),
+      );
+
+      made += 1;
+      const sha = `${made}`.padStart(40, "f");
+      trees.set(sha, files);
+
+      return answer({ sha }, 201);
+    }
+
+    return Option.none();
+  };
+
   const handler = (method: string, path: string, raw: Option.Option<Json>) => {
     const body = Schema.decodeUnknownSync(Body)(Option.getOrElse(raw, () => ({})));
 
@@ -184,8 +305,19 @@ export const makeThreadsFake = (slug: string) => {
 
     state.requests.push(`${method} ${path}`);
 
+    const object = objects(method, path, body);
+
+    if (Option.isSome(object)) {
+      return object;
+    }
+
     if (method === "POST" && path === `${repo}/git/commits`) {
-      const sha = commit(body.message ?? "");
+      const tree = Option.getOrElse(
+        Option.filter(Option.fromUndefinedOr(body.tree), Predicate.isString),
+        () => EMPTY_TREE,
+      );
+
+      const sha = commit(body.message ?? "", trees.get(tree) ?? new Map());
 
       return answer({ sha, committer: { date: target(sha).committedDate } }, 201);
     }
@@ -215,5 +347,5 @@ export const makeThreadsFake = (slug: string) => {
     return Option.none();
   };
 
-  return { handler, state, advanceAs, refs };
+  return { handler, state, advanceAs, refs, filesOf, everyFile };
 };

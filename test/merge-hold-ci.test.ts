@@ -5,7 +5,7 @@
 // mergeHoldTimeout, the recipe whose run held it offers the pull request as
 // work a run may start, and a new run merges it, or hands it to a person.
 
-import { type CiState, PullRequest, reviewMarker } from "@chernabog/sdk";
+import { type CiState, PullRequest } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -39,7 +39,7 @@ const reviewing = flowHandle(
 // record is what counts.
 const heldEarlier = (base: CiState, at: DateTime.Utc, key = KEY) => {
   const fake = makeFake("approve", { ciJob: true });
-  fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+  fake.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
   fake.setLabels(PULL, [SHIP]);
   fake.merge.baseCi = Option.some(base);
   fake.recordPhase(PR_ITEM, "merge-held", { at, data: { key } });

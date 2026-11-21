@@ -1,14 +1,7 @@
 // PullRequest.merge on real git history behind the fake GitHub: an approval
 // survives a head that only merged its base in cleanly, and nothing else.
 
-import {
-  defineFlow,
-  NeedsHuman,
-  PullRequest,
-  Repo,
-  reviewMarker,
-  StepFailed,
-} from "@chernabog/sdk";
+import { defineFlow, NeedsHuman, PullRequest, Repo, StepFailed } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -133,16 +126,6 @@ const mergeOn = (repoHistory: History, reviewed: string, checks: "green" | "red"
 
     expect(github.addPull("A change", "feature", "alice", [])).toBe(PULL);
 
-    github.comments.set(PULL, [
-      {
-        id: 1,
-        body: reviewMarker.write({ sha: reviewed, round: 1, verdict: "approve" }),
-        user: { login: "bob" },
-        author_association: "OWNER",
-        created_at: "2026-10-28T00:00:00Z",
-      },
-    ]);
-
     const repoSettings = { ...settings, slug: SLUG, path: repoHistory.checkout };
     const host = yield* Effect.context<Exec | FileSystem.FileSystem | Home | HostEnvironment>();
 
@@ -164,6 +147,11 @@ const mergeOn = (repoHistory: History, reviewed: string, checks: "green" | "red"
     );
 
     const fake = makeFake("approve");
+
+    // Review 1's approval, as the pull request's record keeps it.
+    fake.recordPhase(`pr-${PULL}`, "approved", {
+      data: { review: { sha: reviewed, round: 1, verdict: "approve", reviewer: "bob" } },
+    });
 
     const finished = yield* runToEnd(
       handle,

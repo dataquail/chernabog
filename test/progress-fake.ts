@@ -2,7 +2,11 @@
 // record in a map, an advance a compare-and-set on it. It passes the contract
 // every adapter must (test/progress-contract.ts).
 
+import { createHash } from "node:crypto";
+
 import {
+  blobBytes,
+  type BlobHash,
   type Phase,
   type PhaseData,
   PhaseMoved,
@@ -17,7 +21,23 @@ import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
-type Store = { readonly records: ReadonlyMap<string, PhaseRecord>; readonly written: number };
+// Each item's record, the bytes of each blob a record wrote, by the record's
+// version and the blob's hash, and how many records have been written.
+type Store = {
+  readonly records: ReadonlyMap<string, PhaseRecord>;
+  readonly blobs: ReadonlyMap<string, ReadonlyMap<BlobHash, Uint8Array>>;
+  readonly written: number;
+};
+
+// A transition's blobs by their names, each once, in the order it gave them.
+const named = (blobs: ReadonlyArray<Uint8Array | string>): ReadonlyMap<BlobHash, Uint8Array> =>
+  new Map(
+    blobs.map((blob) => {
+      const bytes = blobBytes(blob);
+
+      return [createHash("sha256").update(bytes).digest("hex"), Uint8Array.from(bytes)];
+    }),
+  );
 
 const phaseOf = (record: Option.Option<PhaseRecord>): Option.Option<Phase> =>
   Option.map(record, (found) => found.phase);
@@ -58,6 +78,7 @@ const advancing =
     }
 
     const written = store.written + 1;
+    const blobs = named(transition.blobs ?? []);
 
     const record: PhaseRecord = {
       phase: transition.to,
@@ -66,11 +87,16 @@ const advancing =
       version: `v${written}`,
       at,
       data: Option.fromUndefinedOr(transition.data),
+      blobs: [...blobs.keys()],
     };
 
     return [
       Result.succeed(record),
-      { records: new Map([...store.records, [item, record]]), written },
+      {
+        records: new Map([...store.records, [item, record]]),
+        blobs: new Map([...store.blobs, [record.version, blobs]]),
+        written,
+      },
     ];
   };
 
@@ -100,7 +126,7 @@ export type StoreOptions = { readonly checked?: boolean };
 // A fake holding no records, and its store, which a test seeds and reads as
 // it likes: every trigger and run given the service shares the one store.
 export const progressStore = (options: StoreOptions = {}) => {
-  let store: Store = { records: new Map(), written: 0 };
+  let store: Store = { records: new Map(), blobs: new Map(), written: 0 };
 
   const service: Progress["Service"] = {
     read: (item) => Effect.sync(() => Option.fromUndefinedOr(store.records.get(item))),
@@ -122,6 +148,20 @@ export const progressStore = (options: StoreOptions = {}) => {
 
           return Effect.fromResult(result);
         }),
+      ),
+    // Only a blob the item's record names, read at that record's version.
+    blob: (item, hash) =>
+      Effect.sync(() =>
+        Option.flatMap(
+          Option.filter(Option.fromUndefinedOr(store.records.get(item)), (record) =>
+            record.blobs.includes(hash),
+          ),
+          (record) =>
+            Option.map(
+              Option.fromUndefinedOr(store.blobs.get(record.version)?.get(hash)),
+              (bytes) => Uint8Array.from(bytes),
+            ),
+        ),
       ),
   };
 
@@ -150,9 +190,10 @@ export const progressStore = (options: StoreOptions = {}) => {
         version: `v${written}`,
         at: when.at ?? DateTime.makeUnsafe(0),
         data: Option.fromUndefinedOr(when.data),
+        blobs: [],
       };
 
-      store = { records: new Map([...store.records, [item, record]]), written };
+      store = { ...store, records: new Map([...store.records, [item, record]]), written };
     },
   };
 };

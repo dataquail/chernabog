@@ -5,7 +5,16 @@
 // record a run wrote meanwhile wins, and an item the facts don't settle is
 // listed for a person.
 
-import { Backfill, Claims, DEFAULT_LABELS, Epic, Implement, Phases, Plan } from "@chernabog/sdk";
+import {
+  Backfill,
+  Claims,
+  DEFAULT_LABELS,
+  Epic,
+  Implement,
+  Phases,
+  Plan,
+  reviewMarker,
+} from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -424,6 +433,69 @@ describe("progress backfill's writing", () => {
       expect(written).toEqual([]);
       expect(fake.records().size).toBe(0);
     }),
+  );
+
+  // A review marker, as review.round wrote one before records kept the review (#564).
+  const marked = (fake: Fake, sha = HEAD) => {
+    comment(fake, ME, reviewMarker.write({ sha, round: 2, verdict: "approve", sessionId: "s1" }));
+  };
+
+  effect("copies the review its comment's marker names into a reviewed pull request's record", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.mergeHeld, { data: { key: "pr-7" } });
+      comment(fake, PERSON, reviewMarker.write({ sha: "person99", round: 9, verdict: "approve" }));
+      marked(fake);
+
+      expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([
+        writes(PR_ITEM, Phases.PHASES.pullRequest.mergeHeld),
+      ]);
+
+      const written = yield* backfill(fake);
+
+      expect(written.map((each) => each.written)).toEqual([true]);
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: Phases.PHASES.pullRequest.mergeHeld,
+        by: Backfill.WRITER,
+        from: Option.some(Phases.PHASES.pullRequest.mergeHeld),
+        data: Option.some({
+          key: "pr-7",
+          review: { sha: HEAD, round: 2, verdict: "approve", reviewer: ME, sessionId: "s1" },
+        }),
+      });
+      expect(yield* survey(fake)).toEqual([]);
+    }),
+  );
+
+  effect("leaves a record that keeps a review, or a pull request with no marker, alone", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordReview({ sha: "new5678", round: 3, verdict: "approve" });
+      marked(fake);
+      expect(yield* survey(fake)).toEqual([]);
+
+      const bare = fresh();
+      bare.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.approved);
+      expect(yield* survey(bare)).toEqual([]);
+    }),
+  );
+
+  effect(
+    "writes the marker's review with the phase of a reviewed pull request with no record",
+    () =>
+      Effect.gen(function* () {
+        const fake = fresh();
+        fake.submitted.push(review(ME, "APPROVED"));
+        marked(fake);
+
+        yield* backfill(fake);
+
+        expect(fake.records().get(PR_ITEM)).toMatchObject({
+          phase: Phases.PHASES.pullRequest.approved,
+          from: Option.none(),
+          data: Option.some({ review: { sha: HEAD, round: 2, reviewer: ME } }),
+        });
+      }),
   );
 
   effect("an item that holds a record is not surveyed", () =>
