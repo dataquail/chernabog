@@ -86,6 +86,7 @@ describe("ProgressCapability", () => {
         const progress = yield* Progress;
         yield* progress.read("pr-73");
         yield* progress.readAll;
+        yield* progress.blob("pr-73", "0".repeat(64));
         yield* Effect.ignore(
           progress.advance("pr-73", {
             from: Option.none(),

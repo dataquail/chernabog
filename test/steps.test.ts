@@ -256,7 +256,7 @@ const ignoringOptional = flowHandle(
 
 describe("the review steps", () => {
   effect(
-    "Review.round posts a real review and its marker, naming the reviewer and its session, and leaves the labels alone",
+    "Review.round posts a real review, records it, naming the reviewer and its session, and leaves the labels alone",
     () =>
       Effect.gen(function* () {
         const fake = makeFake("request-changes");
@@ -269,20 +269,23 @@ describe("the review steps", () => {
           { author: "data-quail", state: "CHANGES_REQUESTED", commitSha: HEAD },
         ]);
 
-        const markers = fake.comments.flatMap((comment) =>
-          Option.toArray(reviewMarker.read(comment.body)),
-        );
-
-        expect(markers).toEqual([
-          {
-            sha: HEAD,
-            round: 1,
-            verdict: "request-changes",
-            reviewer: "data-quail",
-            sessionId: fake.requests[0]?.sessionId,
-            adapter: "claude",
-          },
-        ]);
+        expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
+          phase: "changes-asked",
+          data: Option.some({
+            review: {
+              sha: HEAD,
+              round: 1,
+              verdict: "request-changes",
+              reviewer: "data-quail",
+              sessionId: fake.requests[0]?.sessionId,
+              adapter: "claude",
+            },
+          }),
+        });
+        // The comment is for people; nothing reads a marker back (#564).
+        expect(
+          fake.comments.filter((comment) => Option.isSome(reviewMarker.read(comment.body))),
+        ).toEqual([]);
         expect(fake.labelsOf(PULL)).toEqual([DEFAULT_LABELS.needsReview]);
       }),
   );
@@ -634,11 +637,9 @@ describe("considering findings", () => {
           `git diff ${HEAD}..HEAD`,
         );
 
-        const markers = fake.comments.flatMap((comment) =>
-          Option.toArray(reviewMarker.read(comment.body)),
-        );
-
-        expect(markers.map((marker) => marker.round)).toEqual([1, 2]);
+        expect(fake.records().get(`pr-${PULL}`)).toMatchObject({
+          data: Option.some({ review: { round: 2, sha: HEAD } }),
+        });
       }),
   );
 
@@ -759,7 +760,7 @@ describe("considering findings", () => {
 
 describe("PullRequest.merge", () => {
   const approved = (fake: Fake, sha = HEAD) => {
-    fake.comment(reviewMarker.write({ sha, round: 1, verdict: "approve" }));
+    fake.recordReview({ sha, round: 1, verdict: "approve" });
   };
 
   effect("merges exactly the reviewed head once checks are green and the review approved it", () =>
@@ -770,6 +771,42 @@ describe("PullRequest.merge", () => {
       expect(finished.status).toBe("done");
       expect(summaryOf(finished)).toBe(`#${PULL} merged (squash) as \`merged9\``);
       expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  // The review comment is for people: editing or deleting it changes nothing the gate decides (#564).
+  effect("merges on the review its record names, when the review comment names another sha", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      approved(fake);
+      fake.comment(reviewMarker.write({ sha: "old5678abc", round: 1, verdict: "approve" }));
+      const finished = yield* runToEnd(fake, "merge");
+      expect(finished.status).toBe("done");
+      expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  effect("merges on the review its record names, when the review comment is deleted", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      approved(fake);
+      fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+      fake.comments.splice(0);
+      const finished = yield* runToEnd(fake, "merge");
+      expect(finished.status).toBe("done");
+      expect(fake.merge.requests).toEqual([{ method: "squash", sha: HEAD }]);
+    }),
+  );
+
+  effect("refuses a pull request whose record holds no review, whatever a comment says", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(`pr-${PULL}`, "approved");
+      fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+      const finished = yield* runToEnd(fake, "merge");
+      expect(finished.status).toBe("needs-human");
+      expect(summaryOf(finished)).toContain(`#${PULL} not merged: it has no review`);
+      expect(fake.merge.requests).toEqual([]);
     }),
   );
 
@@ -837,7 +874,7 @@ describe("PullRequest.merge", () => {
     [
       "changes requested",
       (fake) => {
-        fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "request-changes" }));
+        fake.recordReview({ sha: HEAD, round: 1, verdict: "request-changes" });
       },
       "review 1 requested changes",
     ],

@@ -2,7 +2,9 @@
 // open item that a source needs one for and that holds none, inferred from
 // GitHub. This is the one place that inference is allowed, once, so that the
 // sources' no-record paths can go (audit S6, S7). Where GitHub's facts don't
-// settle a phase, it writes nothing and lists the item for a person.
+// settle a phase, it writes nothing and lists the item for a person. It also
+// copies the review a pull request's review marker names into its record,
+// which the merge gate and the review flows read since #564.
 //
 // The table it goes by is in docs/run-progress/audit.md, "Backfill".
 
@@ -20,12 +22,14 @@ import {
   Progress,
   type PullRequest,
   Repo,
+  reviewMarker,
   type SubmittedReview,
 } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { statusMarker } from "./epic.ts";
@@ -40,10 +44,12 @@ import * as Settings from "./settings.ts";
 // Who backfill's records name as their writer.
 export const WRITER = "observer:backfill";
 
-// The first records backfill writes, each from no record, for the ledger's
-// check (ADR 21, decision 5): the phases of the table in
-// docs/run-progress/audit.md, "Backfill".
+// The records backfill writes, for the ledger's check (ADR 21, decision 5):
+// the first, each from no record, the phases of the table in
+// docs/run-progress/audit.md, "Backfill"; and a pull request's phase again,
+// with the review its comment's marker names copied into its record (#564).
 export const OBSERVED: ReadonlyArray<Observed> = [
+  { by: WRITER, item: "pull-request", from: "same", to: "any" },
   ...[
     Phases.PHASES.pullRequest.reviewAsked,
     Phases.PHASES.pullRequest.reviewAskedAgain,
@@ -241,6 +247,62 @@ const reviewedFinding = (item: string, pull: PullRequest, review: SubmittedRevie
   return write(item, P.changesAsked, `${review.author} asked for changes${where}`);
 };
 
+// The latest review a persona's comment's marker names, as the pull request's
+// record keeps one (Phases.reviewOf): what review.round wrote before records
+// kept it (#564). This is the one place the SDK reads a review marker, once,
+// to copy it into the record. The reviewer is the marker's, or, on a marker
+// from before markers named one, the comment's author.
+const markedReview = (pull: PullRequest, logins: ReadonlyArray<string>) =>
+  Effect.map(
+    GitHub.use((github) => github.trustedComments(pull.number)),
+    (comments) =>
+      Arr.last(
+        comments
+          .filter((found) => isOneOf(logins, found.author))
+          .flatMap((found) =>
+            Option.toArray(
+              Option.map(reviewMarker.read(found.body), (marker): Phases.Reviewed => ({
+                ...marker,
+                reviewer: marker.reviewer ?? found.author,
+              })),
+            ),
+          ),
+      ),
+  );
+
+// `finding` with the review its pull request's marker names in its data.
+const withReview = (finding: Finding, review: Option.Option<Phases.Reviewed>): Finding => {
+  if (finding.kind !== "write" || Option.isNone(review)) {
+    return finding;
+  }
+
+  return { ...finding, data: { ...finding.data, ...Phases.reviewData(review.value) } };
+};
+
+// One open pull request's record that keeps no review, when a persona's
+// marker names one: the record's phase again, its data with the review
+// copied in. None for a record of a team's own phase, or one that keeps a
+// review already.
+const reviewFinding = (
+  item: string,
+  found: PhaseRecord,
+  review: Option.Option<Phases.Reviewed>,
+): Option.Option<Finding> =>
+  Option.flatMap(
+    Option.filter(review, () => Option.isNone(Phases.reviewOf(found))),
+    (marked) =>
+      Option.map(
+        Arr.findFirst(Object.values(P), (phase) => phase === found.phase),
+        (phase) =>
+          write(
+            item,
+            phase,
+            `copies review ${marked.round}'s sha and reviewer from its review comment into its record`,
+            { ...Option.getOrUndefined(found.data), ...Phases.reviewData(marked) },
+          ),
+      ),
+  );
+
 // The phase of one open pull request with no record, by the table's rows
 // P1 to P9, in order.
 const pullRequestFinding = (pull: PullRequest, reviews: ReadonlyArray<SubmittedReview>) =>
@@ -417,11 +479,39 @@ const withPersonFindings = (all: ReadonlyMap<string, PhaseRecord>) =>
     });
   });
 
+// What backfill finds for one open pull request: the review its marker names
+// copied into the record it holds, or, with none, the phase to write, with
+// that review; none for one that needs nothing.
+const surveyPullRequest = (
+  pull: PullRequest,
+  all: ReadonlyMap<string, PhaseRecord>,
+  logins: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const item = Phases.pullRequestItem(pull.number);
+    const recorded = Phases.recordOf(all, item);
+
+    if (Option.isSome(recorded)) {
+      return reviewFinding(item, recorded.value, yield* markedReview(pull, logins));
+    }
+
+    const reviews = yield* GitHub.use((github) => github.reviews(pull.number));
+
+    if (!automated(pull, reviews, logins)) {
+      return Option.none<Finding>();
+    }
+
+    const review = yield* markedReview(pull, logins);
+
+    return Option.some(withReview(yield* pullRequestFinding(pull, reviews), review));
+  });
+
 // Every open item that holds no record and needs one, each with the phase
 // to write or why a person must decide, read as the repo's personas, by its
 // committed config (Repo.personas), and every one labelled auto:needs-human
 // whose record isn't with-person. Any other item with a record is left out:
-// it is backfilled already, or a run recorded it.
+// it is backfilled already, or a run recorded it; but for a pull request's
+// record that keeps no review its marker names (surveyPullRequest).
 export const survey = Effect.gen(function* () {
   const github = yield* GitHub;
   const logins = (yield* Repo).personas;
@@ -433,14 +523,12 @@ export const survey = Effect.gen(function* () {
     Option.isNone(Phases.recordOf(all, item)) && !withPerson.has(item);
 
   for (const pull of yield* github.openPullRequests) {
-    if (!unrecorded(Phases.pullRequestItem(pull.number))) {
+    if (withPerson.has(Phases.pullRequestItem(pull.number))) {
       continue;
     }
 
-    const reviews = yield* github.reviews(pull.number);
-
-    if (automated(pull, reviews, logins)) {
-      findings.push(yield* pullRequestFinding(pull, reviews));
+    for (const found of Option.toArray(yield* surveyPullRequest(pull, all, logins))) {
+      findings.push(found);
     }
   }
 
@@ -483,9 +571,24 @@ export type Written = {
   readonly written: boolean;
 };
 
+// The record a finding writes over: one at the finding's phase that keeps no
+// review, when the finding copies one in (reviewFinding); none otherwise, for
+// a finding written from no record.
+const overwritten = (finding: Finding, current: Option.Option<PhaseRecord>) =>
+  Option.filter(
+    current,
+    (found) =>
+      finding.kind === "write" &&
+      found.phase === finding.phase &&
+      Option.isNone(Phases.reviewOf(found)) &&
+      Predicate.isNotUndefined(finding.data) &&
+      Predicate.hasProperty(finding.data, "review"),
+  );
+
 // Writes each finding's phase, advancing from no record, so an item a run
 // recorded since the survey keeps the run's record (PhaseMoved), as
-// Phases.reconcile leaves it.
+// Phases.reconcile leaves it. A finding that copies a review into a record
+// writes over that record, while it is still at its phase and keeps none.
 export const apply = (findings: ReadonlyArray<Finding>) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
@@ -496,13 +599,23 @@ export const apply = (findings: ReadonlyArray<Finding>) =>
         continue;
       }
 
-      // From the record the survey read, none or by its version: an item a
-      // run recorded since is a lost race, and keeps the run's record.
+      // From the record the survey read, by its version, for a hand-off to a
+      // person. Else from no record: an item a run recorded since is a lost
+      // race, and keeps the run's record. Or from the record a review is
+      // copied into, by its version.
+      const from = yield* Option.match(Option.fromUndefinedOr(finding.over), {
+        onNone: () =>
+          Effect.map(progress.read(finding.item), (current) =>
+            Option.map(overwritten(finding, current), (found) => ({
+              phase: found.phase,
+              version: found.version,
+            })),
+          ),
+        onSome: (over) => Effect.succeedSome({ phase: asPhase(over.phase), version: over.version }),
+      });
+
       const base = {
-        from: Option.map(Option.fromUndefinedOr(finding.over), (over) => ({
-          phase: asPhase(over.phase),
-          version: over.version,
-        })),
+        from,
         to: asPhase(finding.phase),
         by: asWriter(WRITER),
       };

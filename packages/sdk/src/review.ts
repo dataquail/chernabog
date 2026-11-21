@@ -23,8 +23,6 @@ import {
   Repo,
   ReviewerSeat,
   type ReviewEvent,
-  type ReviewMarker,
-  reviewMarker,
   type ReviewNote,
   type RoleOptions,
   Run,
@@ -609,22 +607,43 @@ const eventOf = (verdict: Verdict["verdict"]): ReviewEvent => {
   return "REQUEST_CHANGES";
 };
 
-// Posts a review of the head with its marker: as a real review, approving or
-// requesting changes, and as a plain comment, which later runs read back. The
-// marker records who reviewed in which session, so a re-review resumes it.
-const postReview = (pull: PullRequest, review: ReviewMarker, verdict: Verdict, heading: string) =>
+// Posts a review of the head: as a real review, approving or requesting
+// changes, and as a plain comment, both for people. The pull request's record
+// keeps what the review saw and who gave it in which session (ADR 21,
+// decision 7), which the merge gate reads and a re-review resumes by; it is
+// written again over a record at the same phase that keeps another review,
+// such as a recheck's earlier round.
+const postReview = (
+  pull: PullRequest,
+  review: Phases.Reviewed,
+  verdict: Verdict,
+  heading: string,
+) =>
   Effect.gen(function* () {
     const github = yield* GitHub;
-    const marker = reviewMarker.write(review);
     const event = eventOf(verdict.verdict);
     yield* github.review(pull.number, {
-      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}\n\n${marker}`,
+      body: `**${heading}** (review ${review.round})\n\n${verdict.summary}`,
       commitSha: pull.headSha,
       comments: verdict.comments,
       event,
     });
-    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`. ${marker}`);
-    yield* Phases.record(Phases.pullRequestItem(pull.number), phaseAfter(verdict.verdict));
+    yield* github.comment(pull.number, `${heading} at \`${pull.headSha.slice(0, 7)}\`.`);
+
+    const item = Phases.pullRequestItem(pull.number);
+    const to = phaseAfter(verdict.verdict);
+
+    const recorded = Option.exists(
+      yield* Phases.current(item),
+      (found) =>
+        found.phase === to &&
+        Option.exists(
+          Phases.reviewOf(found),
+          (kept) => kept.sha === review.sha && kept.round === review.round,
+        ),
+    );
+
+    yield* Phases.record(item, to, Phases.reviewData(review), { always: !recorded });
   });
 
 const reviewAndPost = (pullRequest: number, round: number, role: Option.Option<string>) =>
@@ -807,44 +826,33 @@ export const doneReviewing = (pullRequest: number) =>
     Worktree.use((worktree) => worktree.remove(`review-pr-${pullRequest}`)),
   );
 
-// This persona's latest review of the pull request, as its marker recorded
-// it, to resume: none when it has none, or one posted before markers named
-// their reviewer.
+// This persona's latest review of the pull request, as its record keeps it
+// (Phases.reviewOf), to resume: none when the record keeps none, or another
+// persona's.
 export const latestOwnReview = (pullRequest: number) =>
   activity(
     "find-review",
     Effect.gen(function* () {
-      const github = yield* GitHub;
       const me = yield* reviewerLogin;
-      const bodies = (yield* github.comments(pullRequest)).map((comment) => comment.body);
 
-      const mine = latestMarker(
-        (body) =>
-          Option.filter(reviewMarker.read(body), (marker) =>
-            Option.exists(Option.fromUndefinedOr(marker.reviewer), (reviewer) =>
-              sameLogin(reviewer, me),
-            ),
-          ),
-        bodies,
+      const mine = Option.filter(
+        Option.flatMap(yield* Phases.current(Phases.pullRequestItem(pullRequest)), Phases.reviewOf),
+        (review) => sameLogin(review.reviewer, me),
       );
 
-      return Option.match(mine, {
-        onNone: () => Option.none<ReviewResult>(),
-        onSome: (marker) =>
-          Option.some<ReviewResult>({
-            verdict: marker.verdict,
-            sha: marker.sha,
-            round: marker.round,
-            ...Option.match(Option.fromUndefinedOr(marker.sessionId), {
-              onNone: () => ({}),
-              onSome: (sessionId) => ({ sessionId }),
-            }),
-            ...Option.match(Option.fromUndefinedOr(marker.adapter), {
-              onNone: () => ({}),
-              onSome: (adapter) => ({ adapter }),
-            }),
-          }),
-      });
+      return Option.map(mine, (review): ReviewResult => ({
+        verdict: review.verdict,
+        sha: review.sha,
+        round: review.round,
+        ...Option.match(Option.fromUndefinedOr(review.sessionId), {
+          onNone: () => ({}),
+          onSome: (sessionId) => ({ sessionId }),
+        }),
+        ...Option.match(Option.fromUndefinedOr(review.adapter), {
+          onNone: () => ({}),
+          onSome: (adapter) => ({ adapter }),
+        }),
+      }));
     }),
     Schema.Option(ReviewResult),
   );
@@ -1197,7 +1205,8 @@ const describeReviewLine = (note: ReviewNote) =>
   });
 
 // The review that asks for changes, as the author considers it: its round,
-// from the reviewer's marker, and what the reviewer said.
+// from the review the pull request's record keeps when it saw the same head
+// (Phases.reviewOf), and what the reviewer said.
 export const changesAsked = (
   address: Pick<AddressItem, "pullRequest" | "reviewer" | "reviewedSha">,
 ) =>
@@ -1205,12 +1214,13 @@ export const changesAsked = (
     "read-review",
     Effect.gen(function* () {
       const github = yield* GitHub;
-      const bodies = (yield* github.comments(address.pullRequest)).map((comment) => comment.body);
 
-      const marker = latestMarker(
-        (body) =>
-          Option.filter(reviewMarker.read(body), (found) => found.sha === address.reviewedSha),
-        bodies,
+      const kept = Option.filter(
+        Option.flatMap(
+          yield* Phases.current(Phases.pullRequestItem(address.pullRequest)),
+          Phases.reviewOf,
+        ),
+        (found) => found.sha === address.reviewedSha,
       );
 
       const notes = (yield* github.reviewComments(address.pullRequest)).filter(
@@ -1218,7 +1228,7 @@ export const changesAsked = (
       );
 
       const round = Option.getOrElse(
-        Option.map(marker, (found) => found.round),
+        Option.map(kept, (found) => found.round),
         () => 1,
       );
 

@@ -15,7 +15,6 @@ import {
   Plan,
   PullRequest,
   Resume,
-  reviewMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Arr from "effect/Array";
@@ -307,7 +306,7 @@ describe("pr.land's merge hold in a CI job", () => {
   // An auto:ship pull request a run approved in a CI job that has ended.
   const approvedEarlier = () => {
     const fake = makeFake("approve", { ciJob: true });
-    fake.comment(reviewMarker.write({ sha: HEAD, round: 1, verdict: "approve" }));
+    fake.recordReview({ sha: HEAD, round: 1, verdict: "approve" });
     fake.setLabels(PULL, [SHIP]);
 
     return fake;

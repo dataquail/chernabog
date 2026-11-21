@@ -9,7 +9,6 @@ import {
   Git,
   GitHub,
   type Json,
-  latestMarker,
   type MergeMethod,
   MergeRefused,
   NeedsHuman,
@@ -20,7 +19,6 @@ import {
   type PullRequest,
   PullRequestClosed,
   reportAs,
-  reviewMarker,
   Run,
   Runs,
   Skip,
@@ -359,7 +357,7 @@ export const baseRed = (pull: PullRequest) =>
 // Merges the pull request, only when that is safe: it is open and not a
 // layer of a stack, its checks are green on the current head by the flow's
 // CI policy (Ci.verdict: by default, its required checks passed and no check
-// failed), the latest review approved that very head or one the head has only merged
+// failed), the latest review its record keeps (Phases.reviewOf) approved that very head or one the head has only merged
 // its base into since (onlyMergedBase), it touches no humanOnlyPaths, its
 // base branch's CI isn't red when the flow holds merges for that (baseRed),
 // and GitHub's rules for the repo allow it. A pull request into any branch may
@@ -412,9 +410,11 @@ export const merge = (pullRequest: number, options: MergeOptions) =>
         return yield* refuse(pullRequest, "checks are still pending");
       }
 
-      const reviewed = latestMarker(
-        reviewMarker.read,
-        (yield* github.comments(pullRequest)).map((posted) => posted.body),
+      // The review the pull request's record keeps, not its comment, which
+      // a person may edit or delete (ADR 21, decision 7).
+      const reviewed = Option.flatMap(
+        yield* Phases.current(Phases.pullRequestItem(pullRequest)),
+        Phases.reviewOf,
       );
 
       if (Option.isNone(reviewed)) {

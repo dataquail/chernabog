@@ -63,6 +63,10 @@ const DATA = Schema.decodeSync(PhaseData)({
 // Strings a regex's `^` and `$` would break a line at, though git doesn't.
 const SEPARATED = Schema.decodeSync(PhaseData)({ title: "a\u2028b", body: "c\u2029d" });
 
+// The SHA-256 of "the plan", and of the bytes 0x00 0xff.
+const PLAN_HASH = "aab8f06fecd1c041e9a3d5a86114f9e522b546918db8503a045fe4a423b3642a";
+const BYTES_HASH = "06eb7d6a69ee19e5fbdf749018d3d2abfa04bcbd1365db312eb86dc7169389b8";
+
 const isPhaseMoved = Schema.is(PhaseMoved);
 const isProgressUnwritable = Schema.is(ProgressUnwritable);
 
@@ -116,6 +120,7 @@ describe("a thread's commit message", () => {
         version: "abc123",
         at: AT,
         data: Option.none(),
+        blobs: [],
       }),
     );
 
@@ -157,6 +162,25 @@ describe("a thread's commit message", () => {
     ).toEqual(Option.some(Option.some(Schema.decodeSync(PhaseData)({ title: "a\u2028b" }))));
   });
 
+  test("names the blobs it wrote by hash in a Blobs trailer, which reads back", () => {
+    const message = recordMessage("pr-73", {
+      from: Option.none(),
+      to: ASKED,
+      by: RUN_B,
+      blobs: ["the plan", "the plan", new Uint8Array([0, 255])],
+    });
+
+    expect(message.body).toEqual(
+      `Phase: review-asked\nBy: data-quail\nBlobs: ${PLAN_HASH} ${BYTES_HASH}`,
+    );
+    expect(
+      Option.map(
+        parseRecord("abc123", `${message.headline}\n\n${message.body}\n`, AT),
+        (record) => record.blobs,
+      ),
+    ).toEqual(Option.some([PLAN_HASH, BYTES_HASH]));
+  });
+
   test("a commit with no record, or a malformed one, holds none", () => {
     expect(
       [
@@ -166,8 +190,10 @@ describe("a thread's commit message", () => {
         "Phase: a\nFrom: B C\nBy: x",
         "Phase: a\nBy: x\nData: not json",
         "Phase: a\nBy: x\nData: [1, 2]",
+        "Phase: a\nBy: x\nBlobs: not-a-hash",
+        `Phase: a\nBy: x\nBlobs: ${PLAN_HASH.toUpperCase()}`,
       ].map((message) => Option.isSome(parseRecord("abc", message, AT))),
-    ).toEqual([false, false, false, false, false, false]);
+    ).toEqual([false, false, false, false, false, false, false, false]);
   });
 });
 
@@ -230,6 +256,7 @@ describe("decide", () => {
     version: "v1",
     at: AT,
     data: Option.none(),
+    blobs: [],
   };
 
   test("its own write, retried, is that record", () => {
@@ -273,6 +300,85 @@ describe("the protected-branch adapter on GitHub", () => {
         `POST /repos/${SLUG}/git/commits`,
         `POST /repos/${SLUG}/git/refs`,
       ]);
+    }),
+  );
+
+  effect("a first phase with blobs is a root commit whose tree holds each at blobs/<hash>", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+
+      const record = yield* progress.advance("pr-73", {
+        from: Option.none(),
+        to: ASKED,
+        by: RUN_A,
+        blobs: ["the plan"],
+      });
+
+      expect(fake.filesOf(record.version)).toEqual(
+        new Map([[`blobs/${PLAN_HASH}`, new TextEncoder().encode("the plan")]]),
+      );
+      expect(fake.state.requests.filter((request) => request.startsWith("POST"))).toEqual([
+        `POST /repos/${SLUG}/git/blobs`,
+        `POST /repos/${SLUG}/git/trees`,
+        `POST /repos/${SLUG}/git/commits`,
+        `POST /repos/${SLUG}/git/refs`,
+      ]);
+    }),
+  );
+
+  effect("a later phase adds its blobs in createCommitOnBranch, and reads one at its record", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+      const changes = yield* progress.advance("pr-73", {
+        from: Option.some(asked),
+        to: CHANGES,
+        by: RUN_B,
+        blobs: [new Uint8Array([0, 255])],
+      });
+
+      expect(fake.filesOf(changes.version)).toEqual(
+        new Map([[`blobs/${BYTES_HASH}`, new Uint8Array([0, 255])]]),
+      );
+
+      fake.state.requests.length = 0;
+
+      expect(yield* progress.blob("pr-73", BYTES_HASH)).toEqual(
+        Option.some(new Uint8Array([0, 255])),
+      );
+      expect(fake.state.requests).toContain(
+        `graphql object ${changes.version}:blobs/${BYTES_HASH}`,
+      );
+    }),
+  );
+
+  effect("a lost race leaves no blob on the thread", () =>
+    Effect.gen(function* () {
+      const fake = makeThreadsFake(SLUG);
+      const progress = yield* adapterOver(fake);
+      const asked = yield* progress.advance("pr-73", { from: Option.none(), to: ASKED, by: RUN_A });
+
+      fake.state.beforeNextAdvance = Option.some(() => {
+        fake.advanceAs(
+          `${THREADS}pr-73`,
+          "chernabog: pr-73 review-asked -> approved\n\nPhase: approved\nFrom: review-asked\nBy: someone",
+        );
+      });
+
+      const exit = yield* Effect.exit(
+        progress.advance("pr-73", {
+          from: Option.some(asked),
+          to: CHANGES,
+          by: RUN_B,
+          blobs: ["the plan"],
+        }),
+      );
+
+      expect(Option.isSome(movedTo(exit))).toBe(true);
+      expect(fake.everyFile().has(`blobs/${PLAN_HASH}`)).toBe(false);
     }),
   );
 
