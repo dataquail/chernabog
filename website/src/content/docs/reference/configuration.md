@@ -30,7 +30,7 @@ Durations are `<n> <unit>`: `90 minutes`, `6 hours`, `2 days`. Hours are `HH:MM-
 | `limits.eventTickMin` | `30 seconds`            | the least time between two [event ticks](/chernabog/operate/daemon/#ticks-on-events) of one persona's flow |
 | `limits.validityEvery` | `5 minutes`           | how often the daemon asks each run in flight whether its work item is [still valid](/chernabog/flows/flows/#work-that-goes-away) |
 | `limits.leaseTtl` | `12 hours`                   | how long a run's [claim](/chernabog/operate/daemon/#leases) lasts unless its daemon renews it, while the run executes |
-| `limits.parkedLeaseTtl` | `3 days`               | the same, while the run is parked waiting on review, CI or a person; on a daemon a parked run [ends](/chernabog/operate/daemon/#runs-that-park) within half a minute, so this covers only that window |
+| `limits.parkedLeaseTtl` | none                   | deprecated, and has no effect: a parked run [ends](/chernabog/operate/daemon/#runs-that-park) at its park |
 | `limits.leaseRenewEvery` | `30 minutes`          | how often the daemon renews the leases of its runs in flight: their claim refs, and any [marker that is a lease](/chernabog/flows/sdk/#markers) |
 | `ci.flows`         | none                       | the flows that run on GitHub Actions: the plan job, [`chernabog ci plan`](/chernabog/work/commands/#ci-plan), runs their triggers and starts a run job for each item it would start. Flows not named keep running only on a daemon. `chernabog init` and [`chernabog ci workflow --write`](/chernabog/work/commands/#ci-workflow) write the workflow from it |
 | `ci.maxParallel`   | `1`                        | the most run jobs at once, across every flow: the run job's `strategy.max-parallel` |

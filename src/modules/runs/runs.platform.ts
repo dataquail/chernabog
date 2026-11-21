@@ -33,7 +33,6 @@ export {
 } from "./domain/schedule/event-tick.value-object.ts";
 export {
   DEFAULT_LEASE_LIMITS,
-  leaseTtlFor,
   renewalDue,
   RunLeases,
 } from "./domain/schedule/lease.value-object.ts";

@@ -8,6 +8,7 @@ import {
   Settings,
 } from "@chernabog/sdk";
 import { describe, expect, test } from "bun:test";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -29,6 +30,7 @@ import {
   scaffoldFiles,
 } from "../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { ChernabogDirClientLive } from "../src/modules/recipes/infrastructure/clients/chernabog-dir.client-live.ts";
+import { DEFAULT_LEASE_LIMITS } from "../src/modules/runs/domain/schedule/lease.value-object.ts";
 import { Exec } from "../src/platform/exec.ts";
 import { BUNDLED_CORE, BUNDLED_PACKAGES, RELEASED_SDK } from "../src/platform/flow-deps.ts";
 import { FileStoresUnitOfWork } from "../src/platform/unit-of-work.ts";
@@ -188,6 +190,20 @@ describe("config layers", () => {
       expect((yield* merge({}, {})).settings.limits.stackDepth).toBe(4);
       expect((yield* merge({ limits: { stackDepth: 2 } }, {})).settings.limits.stackDepth).toBe(2);
     }),
+  );
+
+  effect(
+    "a repo config that still sets limits.parkedLeaseTtl reads, and every lease lasts leaseTtl",
+    () =>
+      Effect.gen(function* () {
+        const merged = yield* mergeAll(
+          { limits: { leaseTtl: "6 hours", parkedLeaseTtl: "3 days" } },
+          {},
+          enrolled,
+        );
+
+        expect(merged.leases).toEqual({ ...DEFAULT_LEASE_LIMITS, ttl: Duration.hours(6) });
+      }),
   );
 
   effect("the persona's schedules beat the team's, a flow's own included", () =>

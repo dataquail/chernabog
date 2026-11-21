@@ -73,9 +73,8 @@ export type LeaseReport =
 // How a marker that is a lease stays held. Each gets what a release gets, and
 // must fail rather than report lost when it can't tell.
 export type MarkerLease<A> = {
-  // Renews the lease. `ttl` is the daemon's: limits.leaseTtl, or
-  // limits.parkedLeaseTtl while the run waits on a signal. A source whose lease
-  // length is its own ignores it.
+  // Renews the lease. `ttl` is the daemon's: limits.leaseTtl. A source whose
+  // lease length is its own ignores it.
   readonly renew: (
     args: A,
     ttl: Duration.Duration,

@@ -54,7 +54,6 @@ import {
   flowOrigins,
   FlowPlan,
   type FlowRegistry,
-  leaseTtlFor,
   localCause,
   type MarkerReleases,
   nextTick,
@@ -937,7 +936,8 @@ export const runDaemon = Effect.gen(function* () {
 
       // Renews the leases of every run in flight whose renewal is due, in
       // every repo, paused or draining included: a run in flight still holds
-      // its work. A parked run's lease lasts the longer parkedLeaseTtl.
+      // its work. A run parked on a signal ends at its park (endParked), so
+      // every lease lasts leaseTtl.
       const renewLeases = Effect.gen(function* () {
         const now = yield* DateTime.now;
 
@@ -954,7 +954,7 @@ export const runDaemon = Effect.gen(function* () {
           }
 
           leasesRenewed.set(run.id, now);
-          yield* checkLeases(run, Option.some(leaseTtlFor(limits, run.parked)));
+          yield* checkLeases(run, Option.some(limits.ttl));
         }
       }).pipe(Effect.catchCause((cause) => log(`renewing runs' leases failed: ${String(cause)}`)));
 
