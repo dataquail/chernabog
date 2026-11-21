@@ -267,9 +267,9 @@ describe("chernabog recipes blocks", () => {
       "  records: issue awaiting-ready, issue ready-timed-out\n  its wakes read: issue awaiting-ready\n",
     );
     expect(output).toContain("  records: the phase given as phase under with, on the run's item\n");
-    expect(output).toContain("  reads: pull-request changes-asked or none\n");
+    expect(output).toContain("  reads: pull-request changes-asked\n");
     expect(output).toContain(
-      "  reconciles: pull-request changes-asked from review-asked, review-asked-again, approved, draft or ready-for-person",
+      "  reconciles: pull-request changes-asked from none, review-asked, review-asked-again, approved, draft or ready-for-person",
     );
   });
 

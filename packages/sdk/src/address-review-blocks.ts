@@ -465,11 +465,12 @@ export const addressReviewSources = {
       contributes: { settings: Routing.Settings.fields, ownWork: true },
     }),
     {
-      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.changesAsked, NO_RECORD] }],
+      reads: [{ item: "pull-request", phases: [PHASES.pullRequest.changesAsked] }],
       reconciles: [
         {
           item: "pull-request",
           from: [
+            NO_RECORD,
             PHASES.pullRequest.reviewAsked,
             PHASES.pullRequest.reviewAskedAgain,
             PHASES.pullRequest.approved,

@@ -2,7 +2,7 @@
 // in-memory GitHub: who they pick up, the reviews they post, and where each
 // ending leaves the pull request.
 
-import { DEFAULT_LABELS, type Flow, reviewMarker } from "@chernabog/sdk";
+import { DEFAULT_LABELS, type Flow, Phases, reviewMarker } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -54,6 +54,14 @@ const askAgain = (fake: Fake) => {
 
 const keys = (fake: Fake, flow: Flow) =>
   Effect.map(flowTriggered(fake, flow), (items) => items.map((found) => found.key));
+
+// The keys of the items a run may start, leaving out those held, with why.
+const startable = (fake: Fake, flow: Flow) =>
+  Effect.map(flowTriggered(fake, flow), (items) =>
+    items
+      .filter((found) => Option.isNone(Option.fromUndefinedOr(found.held)))
+      .map((found) => found.key),
+  );
 
 describe("review", () => {
   effect(
@@ -492,22 +500,27 @@ describe("address-review", () => {
     () =>
       Effect.gen(function* () {
         const fake = changesAsked();
-        expect(yield* keys(fake, addressReview)).toEqual([`pr-${PULL}-changes-1`]);
+        const pullItem = Phases.pullRequestItem(PULL);
+
+        // With no record, the review that asks for changes moves the pull
+        // request to changes-asked, and the item is keyed by that record.
+        expect(yield* keys(fake, addressReview)).toEqual([`${pullItem}-changes-asked-v1`]);
+        expect(fake.phases()).toEqual({ [pullItem]: "changes-asked" });
 
         fake.people.me = "zach";
-        expect(yield* keys(fake, addressReview)).toEqual([]);
+        expect(yield* startable(fake, addressReview)).toEqual([]);
         fake.people.me = "chernabog-bot";
 
         fake.git.head = "fix20000000";
-        expect(yield* keys(fake, addressReview)).toEqual([]);
+        expect(yield* startable(fake, addressReview)).toEqual([]);
         fake.git.head = HEAD;
 
         fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);
-        expect(yield* keys(fake, addressReview)).toEqual([]);
+        expect(yield* startable(fake, addressReview)).toEqual([]);
         fake.setLabels(PULL, []);
 
         fake.submitted.push({ author: "data-quail", state: "APPROVED", commitSha: HEAD });
-        expect(yield* keys(fake, addressReview)).toEqual([]);
+        expect(yield* startable(fake, addressReview)).toEqual([]);
       }),
   );
 

@@ -20,15 +20,15 @@ found by reading the code; no test reproduces it yet.
 
 Ranked by how easily a person editing GitHub can derail a run.
 
-| #   | Source                                                                                               | Reads instead of the record                                                                                                                                                             | What a person can do to it                                                                                                            | Record it should read                                                                                                                                                                                            |
-| --- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1  | `Implement.readied` (`implement.ts:1702`)                                                            | The `auto:awaiting-ready` label                                                                                                                                                         | Remove the label, and the parked run is never woken. It sits until its 14-day timeout.                                                | issue `awaiting-ready`, which `awaitReady` already writes (`implement.ts:1686`)                                                                                                                                  |
-| S2  | `Plan.answers` (`plan.ts:374`)                                                                       | The `auto:plan-proposed` label, which the run applies (`plan.ts:548`)                                                                                                                   | Remove the label, and the waiting plan run is stranded until its 14-day timeout.                                                      | issue `proposed`, declared (`plan-blocks.ts:208`) but never written                                                                                                                                              |
-| S3  | `baseTurnedGreen` (`pull-request.ts:697`)                                                            | `auto:ship` and the `chernabog-merge-hold` comment markers                                                                                                                              | Remove `auto:ship` from a held pull request, or delete the hold comment, and the parked run is never woken when the base turns green. | pull request `merge-held`, which `holdWhileBaseRed` writes (`pull-request.ts:637`)                                                                                                                               |
-| S4  | `Epic.queued` (`epic.ts:553`)                                                                        | A fingerprint in the persona's latest status comment. The fingerprint hashes sub-issue state, kinds from labels, and each layer pull request's head and review count.                   | Delete or edit the comment, and no layer-changed signal goes out. Dismiss a review or relabel a task, and the run wakes for nothing.  | epic `waiting`, declared (`epic-blocks.ts:1054`) but never written                                                                                                                                               |
-| S5  | `pr.mergedRecently` and post-merge's trigger (`post-merge-blocks.ts:762`, `flows/post-merge.ts:183`) | The `post-merge-watched` comment marker                                                                                                                                                 | Delete the marker within a day of the merge, and a second run watches the same merge.                                                 | **Done:** pull request `watched`, which the recipe and `merged.markWatched` write (`mark-watched`), carrying the merge commit's sha. The marker counts only for a merge with no `watched` record, until backfill |
-| S6  | `askedOf` (`review.ts:186`)                                                                          | This persona's review count, to tell a first review from a re-review. It is used for a pull request with no record, and for one recorded `review-asked`, `draft` or `ready-for-person`. | Hard for a person to change: only the persona's own reviews count.                                                                    | The record alone, once every open pull request has one                                                                                                                                                           |
-| S7  | Legacy keys (`review.ts:256`, `review.ts:884`)                                                       | `pr-N-review-K` and `pr-N-changes-K`, where K counts reviews. Used only for a pull request with no record.                                                                              | Dismiss a decisive review or add one, and K changes, which looks like new work.                                                       | `keyFor` on the record, as recorded pull requests already use                                                                                                                                                    |
+| #   | Source                                                                                               | Reads instead of the record                                                                                                                                                             | What a person can do to it                                                                                                            | Record it should read                                                                                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S1  | `Implement.readied` (`implement.ts:1702`)                                                            | The `auto:awaiting-ready` label                                                                                                                                                         | Remove the label, and the parked run is never woken. It sits until its 14-day timeout.                                                | issue `awaiting-ready`, which `awaitReady` already writes (`implement.ts:1686`)                                                                                                                                    |
+| S2  | `Plan.answers` (`plan.ts:374`)                                                                       | The `auto:plan-proposed` label, which the run applies (`plan.ts:548`)                                                                                                                   | Remove the label, and the waiting plan run is stranded until its 14-day timeout.                                                      | issue `proposed`, declared (`plan-blocks.ts:208`) but never written                                                                                                                                                |
+| S3  | `baseTurnedGreen` (`pull-request.ts:697`)                                                            | `auto:ship` and the `chernabog-merge-hold` comment markers                                                                                                                              | Remove `auto:ship` from a held pull request, or delete the hold comment, and the parked run is never woken when the base turns green. | pull request `merge-held`, which `holdWhileBaseRed` writes (`pull-request.ts:637`)                                                                                                                                 |
+| S4  | `Epic.queued` (`epic.ts:553`)                                                                        | A fingerprint in the persona's latest status comment. The fingerprint hashes sub-issue state, kinds from labels, and each layer pull request's head and review count.                   | Delete or edit the comment, and no layer-changed signal goes out. Dismiss a review or relabel a task, and the run wakes for nothing.  | epic `waiting`, declared (`epic-blocks.ts:1054`) but never written                                                                                                                                                 |
+| S5  | `pr.mergedRecently` and post-merge's trigger (`post-merge-blocks.ts:762`, `flows/post-merge.ts:183`) | The `post-merge-watched` comment marker                                                                                                                                                 | Delete the marker within a day of the merge, and a second run watches the same merge.                                                 | **Done:** pull request `watched`, which the recipe and `merged.markWatched` write (`mark-watched`), carrying the merge commit's sha. The marker counts only for a merge with no `watched` record, until backfill   |
+| S6  | `askedOf` (`review.ts:186`)                                                                          | This persona's review count, to tell a first review from a re-review. It is used for a pull request with no record, and for one recorded `review-asked`, `draft` or `ready-for-person`. | Hard for a person to change: only the persona's own reviews count.                                                                    | **Done:** the record alone. No record is a person's pull request, a first review. Whether the persona reviewed before a hand-off is the record's `reviewed` data, which the hand-off and `pr.readyForPerson` write |
+| S7  | Legacy keys (`review.ts:256`, `review.ts:884`)                                                       | `pr-N-review-K` and `pr-N-changes-K`, where K counts reviews. Used only for a pull request with no record.                                                                              | Dismiss a decisive review or add one, and K changes, which looks like new work.                                                       | **Done:** `keyFor` on the record. A changes-requested review on a pull request with no record is reconciled to `changes-asked` first                                                                               |
 
 Borderline, and left as they are:
 
@@ -198,16 +198,67 @@ Each fix is its own pull request.
    `waiting` record (`tasks.ci`), and a later round takes it up once CI
    settles. The stack refresh's wait for CI still polls; it is the next layer.
 7. **Backfill, then S6 and S7:** `chernabog progress backfill` writes a record
-   for every open item without one. Then the no-record paths go. Backfill is
-   done ([Backfill](#backfill)).
+   for every open item without one. Then the no-record paths go. Done:
+   backfill ([Backfill](#backfill)), then S6 and S7, so the review sources read
+   the record alone. Upgrade order: see [Upgrading](#upgrading-to-s6-and-s7)
+   below.
+
+## S6 and S7: the review sources read the record alone
+
+- **No record is a first review.** `askedOf` no longer counts this persona's
+  reviews. A pull request with no record is one a person opened, since
+  backfill gave every older one a record, and a review asked of it is
+  `review.requested`'s.
+- **Reviewed before the record.** A record of `review-asked`, `draft` or
+  `ready-for-person` carries `reviewed`, who had reviewed the pull request
+  when it was written (`Phases.recordAwaitingReview`: the hand-off,
+  `pr.readyForPerson`, and backfill's P2 and P8). A review asked of one of
+  them is a review again (`review.requestedAgain` reconciles), as the count
+  said for an adopted pull request this persona reviewed before the
+  hand-off, and for one `pr.readyForPerson` gave a person after a review. A
+  record written before this release has no `reviewed`, so a review asked
+  of it is a first, whoever reviewed before. That covers a hand-off record
+  and a P2 record written by an earlier release's backfill (#544) alike:
+  a persona that had only commented when it was written gets a first
+  review, not a re-review. Rerunning backfill doesn't add `reviewed`,
+  since it skips an item that has a record.
+- **Keys.** `pr-N-review-K` and `pr-N-changes-K` are gone. A request to
+  review again keys by its `review-asked-again` record, and a review asking
+  for changes on a pull request with no record moves it to `changes-asked`
+  first (`observer:review.changesRequested`), then keys by that.
+- **Runs in flight under a legacy key.** A run started before the upgrade
+  keeps its old key; its pull request's next item has a record key, which
+  is new work. That starts no second run on the pull request while the old
+  one lives: the review sources skip a pull request a run owns by its claim
+  ref (`ownedByARun`), address-review and resolve-conflicts claim it, and a
+  CI plan job reserves an item by its claim (`pr-N`), not its key (#520). A
+  merge a legacy re-review run holds keeps `pr-N-review-K` in its
+  `merge-held` data, which re-review's `heldMerges` still owns
+  (`pr-N-` prefix).
+
+### Upgrading to S6 and S7
+
+Backfill (#544) and S6 and S7 (#545) are in one stack, so the release order
+decides the upgrade order:
+
+- **One release with both** (the default): no binary has backfill without
+  S6 and S7, so backfill can't run first. Stop the daemon, upgrade, run
+  `chernabog progress backfill --repo <repo> --write` on each repo, then
+  start the daemon, so no tick reads a repo before its backfill. Runs in
+  flight under a legacy key are covered above. Every backfill record then
+  carries `reviewed`.
+- **A release between them**: run that release's backfill on each repo, let
+  review runs in flight finish, then upgrade. Its P2 records have no
+  `reviewed`, so a pull request whose persona had only commented gets a
+  first review once, after the upgrade, instead of a re-review.
 
 ## What this changes in handoffs.md
 
 [handoffs.md](handoffs.md) was written before #454 and #514 to #516. Where they
 disagree, the code and this audit win:
 
-- **Old "reads today" columns.** Rows I2, R1, A1 and C3 still describe the review
-  sources' `reviewed === 0` reading. Those sources now read the record first.
+- **Old "reads today" columns.** Rows I2, R1, A1 and C3 and question 3's
+  review rows now describe the record-only reading (S6, S7).
 - **Question 3's table is a target.** Its rows for `epic.queued`,
   `Implement.readied` and `Plan.answers` aren't built. `pr.mergedRecently`'s
   is.

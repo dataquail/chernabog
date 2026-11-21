@@ -118,18 +118,16 @@ const sameLogin = (left: string, right: string) => left.toLowerCase() === right.
 // flow that uses it, or any block that reviews, requires ReviewerSeat.
 export const reviewerLogin = ReviewerSeat.use((seat) => seat.login);
 
-// An open pull request that asks this persona for a review: how many reviews
-// it has submitted on it so far, and the pull request's record, none for one
-// with no phase recorded yet.
+// An open pull request that asks this persona for a review, and its record,
+// none for one with no phase recorded, such as one a person opened.
 export type ReviewRequest = {
   readonly pull: PullRequest;
-  readonly reviewed: number;
   readonly record: Option.Option<PhaseRecord>;
 };
 
-// Open pull requests that ask this persona for a review, each with how many
-// reviews it has submitted on it so far and its record. One a run of another
-// flow owns is left out. It requires the persona's seat in the reviewer pool.
+// Open pull requests that ask this persona for a review, each with its
+// record. One a run of another flow owns is left out. It requires the
+// persona's seat in the reviewer pool.
 export const reviewRequests = Effect.gen(function* () {
   const github = yield* GitHub;
   const me = yield* reviewerLogin;
@@ -145,13 +143,7 @@ export const reviewRequests = Effect.gen(function* () {
       continue;
     }
 
-    found.push({
-      pull,
-      reviewed: (yield* github.reviews(pull.number)).filter((review) =>
-        sameLogin(review.author, me),
-      ).length,
-      record: Phases.recordOf(all, Phases.pullRequestItem(pull.number)),
-    });
+    found.push({ pull, record: Phases.recordOf(all, Phases.pullRequestItem(pull.number)) });
   }
 
   return found;
@@ -163,40 +155,32 @@ export const reviewRequests = Effect.gen(function* () {
 // with, which status shows rather than starting either.
 type Asked =
   | { readonly kind: "first" }
-  | { readonly kind: "again"; readonly record: Option.Option<PhaseRecord> }
+  | { readonly kind: "again"; readonly record: PhaseRecord }
   | { readonly kind: "reconcile"; readonly record: PhaseRecord }
   | { readonly kind: "disagrees"; readonly reason: string };
 
 const P = Phases.PHASES.pullRequest;
 
-// Today's inference, for a pull request with no record: see askedOf.
-const legacyAsked = (request: ReviewRequest): Asked => {
-  if (request.reviewed === 0) {
-    return { kind: "first" };
-  }
-
-  return { kind: "again", record: Option.none() };
-};
-
-// A pull request with a record is read by its phase, not by how many times
-// this persona reviewed it. Migration: one with no record, such as one
-// handed off before phases were recorded, or one a person opened, falls back
-// to the review count (legacyAsked). Drop the count a release after phases
-// became the record, keeping "first" for an item with none.
+// A pull request is read by its record alone, not by how many times this
+// persona reviewed it (ADR 21, decision 3). One with no record is one a
+// person opened, which no run handed off: a review asked of it is a first.
+// Every open pull request from before phases were recorded has one from
+// `chernabog progress backfill`.
 const askedOf = (request: ReviewRequest, me: string): Asked =>
   Option.match(request.record, {
-    onNone: () => legacyAsked(request),
+    onNone: (): Asked => ({ kind: "first" }),
     onSome: (found): Asked => {
       if (found.phase === P.reviewAskedAgain) {
-        return { kind: "again", record: Option.some(found) };
+        return { kind: "again", record: found };
       }
 
       // Waiting on a first review, or a person's turn, then a review asked of
-      // this persona: its first, or, when it has reviewed already, again. An
-      // adopted pull request it reviewed before the hand-off is one.
+      // this persona: its first, or, when the record says it had reviewed
+      // already when it was written, again. An adopted pull request it
+      // reviewed before the hand-off is one (Phases.reviewedBefore).
       if (
         Phases.holds(found, [P.reviewAsked, P.draft, P.readyForPerson]) &&
-        request.reviewed === 0
+        !Phases.reviewedBefore(found, me)
       ) {
         return { kind: "first" };
       }
@@ -250,19 +234,13 @@ export const requestedFirst = Effect.gen(function* () {
 const observer = (source: string) => `observer:${source}`;
 
 // The key a request to review again runs under: the record it reads, or the
-// one reconciling moves it to; the review count for a pull request with no
-// record (askedOf). None for a request that isn't to review again, or whose
-// record another writer moved elsewhere first.
+// one reconciling moves it to. None for a request that isn't to review
+// again, or whose record another writer moved elsewhere first.
 const againKey = (request: ReviewRequest, asked: Asked) => {
   const item = Phases.pullRequestItem(request.pull.number);
 
   if (asked.kind === "again") {
-    return Effect.succeedSome(
-      Option.match(asked.record, {
-        onNone: () => `pr-${request.pull.number}-review-${request.reviewed + 1}`,
-        onSome: (found) => Phases.keyFor(item, found),
-      }),
-    );
+    return Effect.succeedSome(Phases.keyFor(item, asked.record));
   }
 
   if (asked.kind !== "reconcile") {
@@ -290,8 +268,8 @@ const againKey = (request: ReviewRequest, asked: Asked) => {
 // `pr-7-review-asked-again-1a2b3c4`, so each request is a run of its own. A
 // review asked again of a pull request whose record says changes asked or
 // approved, such as a person asking after a fix of their own, moves the record
-// to review-asked-again first. One with no record keys by the review count,
-// `pr-7-review-2`, as before phases.
+// to review-asked-again first. One with no record is a first review's
+// (review.requested).
 export const requestedAgain = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
   const me = yield* reviewerLogin;
@@ -884,14 +862,10 @@ const addressData = (pull: PullRequest, review: SubmittedReview) => ({
   reviewedSha: review.commitSha,
 });
 
-// address-review's work item for a review that asks for changes, the
-// `count`th decisive review of the pull request.
-export const addressItem = (
-  pull: PullRequest,
-  review: SubmittedReview,
-  count: number,
-): WorkItem => ({
-  key: `pr-${pull.number}-changes-${count}`,
+// address-review's work item for a review that asks for changes, keyed by
+// the pull request's changes-asked record (Phases.keyFor).
+export const addressItem = (pull: PullRequest, review: SubmittedReview, key: string): WorkItem => ({
+  key,
   title: pull.title,
   url: pull.url,
   data: addressData(pull, review),
@@ -927,19 +901,34 @@ const changesOnHead = (pull: PullRequest, decisive: ReadonlyArray<SubmittedRevie
     (review) => review.state === "CHANGES_REQUESTED" && review.commitSha === pull.headSha,
   );
 
-// Today's inference, for a pull request with no record: the latest decisive
-// review asks for changes on the head, keyed by the count of decisive
-// reviews. Migration: drop it a release after phases became the record.
-const legacyChanges = (pull: PullRequest) =>
+// A pull request with no record, such as one a person opened, whose latest
+// approval or request for changes asks for changes on the head: a person's
+// review no run was there to record, which moves it to changes-asked first
+// (ADR 21, decision 3), and the item is keyed by that record. None for one
+// with no changes asked on its head, owned by another run, or whose record
+// another writer moved elsewhere first.
+const changesUnrecorded = (pull: PullRequest) =>
   Effect.gen(function* () {
-    const decisive = yield* decisiveReviews(pull.number);
-    const latest = changesOnHead(pull, decisive);
+    const item = Phases.pullRequestItem(pull.number);
+    const latest = changesOnHead(pull, yield* decisiveReviews(pull.number));
 
     if (Option.isNone(latest) || (yield* ownedByARun(pull))) {
       return Option.none<WorkItem>();
     }
 
-    return Option.some(addressItem(pull, latest.value, decisive.length));
+    const now = Option.filter(
+      yield* Phases.reconcile(
+        item,
+        Option.none(),
+        P.changesAsked,
+        observer("review.changesRequested"),
+      ),
+      (record) => record.phase === P.changesAsked,
+    );
+
+    return Option.map(now, (record) =>
+      addressItem(pull, latest.value, Phases.keyFor(item, record)),
+    );
   });
 
 // The phases a review that asks for changes on the head moves a pull request
@@ -1018,10 +1007,9 @@ const changesByRecord = (pull: PullRequest, found: PhaseRecord) =>
       (record) => record.phase === P.changesAsked,
     );
 
-    return Option.map(now, (record) => ({
-      ...addressItem(pull, latest.value, decisive.length),
-      key: Phases.keyFor(item, record),
-    }));
+    return Option.map(now, (record) =>
+      addressItem(pull, latest.value, Phases.keyFor(item, record)),
+    );
   });
 
 // A held item stays here, for status to show why; any other is routed.
@@ -1040,7 +1028,8 @@ const routedUnlessHeld = (pull: PullRequest, item: WorkItem) => {
 // the head of one whose record is before it moves the record on first. One a
 // person has (auto:needs-human), or a run of another flow owns, is left
 // alone; one whose record GitHub disagrees with is held, with why, for status
-// to show. One with no record is read from its reviews (legacyChanges). Each
+// to show. One with no record whose latest review asks for changes on the
+// head is moved to changes-asked first, then keyed by it. Each
 // is routed by its assignees and reviewers.
 export const changesToAddress = Effect.gen(function* () {
   const labelNames = yield* Settings.labels;
@@ -1053,7 +1042,7 @@ export const changesToAddress = Effect.gen(function* () {
     }
 
     const found = yield* Option.match(Phases.recordOf(all, Phases.pullRequestItem(pull.number)), {
-      onNone: () => legacyChanges(pull),
+      onNone: () => changesUnrecorded(pull),
       onSome: (record) => changesByRecord(pull, record),
     });
 
