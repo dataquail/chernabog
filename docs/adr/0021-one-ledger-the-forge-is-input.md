@@ -320,10 +320,22 @@ change.
      the git adapter "a run of a persona" can't be proved: a person who
      writes a commit with a made-up UUID passes the writer check. That is
      what tamper-evident means here; the hosted adapter, which knows the
-     account that wrote, can refuse. A persona is a login of
-     `Machine.personas`, compared without case; no code writes as one
-     today, but a person repairing a record by hand on that persona's
-     account may. An observer is `observer:<source>` for each source that
+     account that wrote, can refuse. A persona is a login the repo's
+     committed config lists (`personas:`), compared without case; no code
+     writes as one today, but a person repairing a record by hand on that
+     persona's account may.
+   - **One persona set, from the repo.** The repo's committed config is
+     the only place that says who its personas are, so every machine and
+     every CI job checks a writer against the same list: core's
+     `Repo.personas`, which the binary fills from `personas:`. Machine
+     config's `github:` only maps a persona to its credentials; a CI job,
+     whose machine config has none, used to check against no personas at
+     all. The sources' check, `progress backfill` and `progress anomalies`
+     (`Backfill.survey`, `Ledger.survey`, which read `Repo.personas`
+     themselves) and `ci plan`, whose sources check through the same
+     reads, all build known writers from it. What this machine acts as
+     (`Machine.personas`) still decides only which reviewers' work is this
+     machine's. An observer is `observer:<source>` for each source that
      declares reconciles, Review's `observer:review.approved`
      (`Review.OBSERVED`), `observer:backfill` (`Backfill.OBSERVED`) and
      `observer:acknowledged`. Any other writer is an anomaly.

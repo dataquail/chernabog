@@ -9,7 +9,7 @@
 // is the blocks' and sources' declarations, which ledger.ts gathers; this one
 // imports none of them, so blocks.ts can use it.
 
-import { Claims, Machine, type PhaseRecord, type WorkItem } from "@chernabog/core";
+import { Claims, type PhaseRecord, Repo, type WorkItem } from "@chernabog/core";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -257,15 +257,11 @@ export const checking =
   (catalogue: Catalogue, reads: ReadonlyArray<Reading>) =>
   <E, R>(
     trigger: Effect.Effect<ReadonlyArray<WorkItem>, E, R>,
-  ): Effect.Effect<ReadonlyArray<WorkItem>, E, R> =>
+  ): Effect.Effect<ReadonlyArray<WorkItem>, E, R | Repo> =>
     Effect.gen(function* () {
-      const machine = yield* Effect.serviceOption(Machine);
-
-      const personas = Option.match(machine, {
-        onNone: () => [],
-        onSome: (found) => found.personas,
-      });
-
+      // The repo's personas, as its committed config lists them: the same
+      // set on every machine and in CI.
+      const { personas } = yield* Repo;
       const noted = new Map<string, Anomaly>();
       const judge = check(catalogue, personas);
 

@@ -402,6 +402,7 @@ effectWithToken(
 const repoSettings = (account: RepoSettings["account"]): RepoSettings => ({
   name: "demo",
   slug: "dataquail/demo",
+  personas: [],
   path: "/code/demo",
   baseBranch: "main",
   account,

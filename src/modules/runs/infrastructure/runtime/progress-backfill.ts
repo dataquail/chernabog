@@ -9,10 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { IMPLICIT } from "../../../../kernel/persona.value-object.ts";
 import { ConfigError } from "../../../../platform/config-error.ts";
 import { loadRepoBackfill } from "../../../../platform/flow-loader.ts";
-import { viewerLoginAs } from "../../../../platform/github-api.ts";
 import { defaultPersona } from "./engine.ts";
 import { buildPersonaContexts, openRepo, servicesFrom } from "./repo-runtime.ts";
 
@@ -51,6 +49,9 @@ const BackfillWritten = Schema.Struct({
 
 export type BackfillResult = {
   readonly repo: string;
+  // The repo's personas: (RepoSettings.personas). The survey reads its logins
+  // from them alone, so with none it misses whatever only a persona marks.
+  readonly personas: ReadonlyArray<string>;
   // What the survey found to write, and what it leaves for a person.
   readonly findings: ReadonlyArray<BackfillFinding>;
   // With `write`: the items written, and those a run recorded first.
@@ -76,23 +77,11 @@ export const backfillProgress = (options: BackfillOptions) =>
 
     const servicesFor = servicesFrom(yield* buildPersonaContexts(repo, options.machine));
 
-    // Each persona's login: its name, or the implicit one's token's.
-    const logins: Array<string> = [];
-
-    for (const own of repo.personas) {
-      logins.push(
-        yield* Option.match(own.persona, {
-          onNone: () => viewerLoginAs(IMPLICIT),
-          onSome: Effect.succeed,
-        }),
-      );
-    }
-
     const context = yield* yield* Effect.fromOption(servicesFor(defaultPersona(repo))).pipe(
       Effect.orDie,
     );
 
-    const findings = yield* backfill.value.survey(logins).pipe(
+    const findings = yield* backfill.value.survey.pipe(
       Effect.provideContext(context),
       Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(BackfillFinding))),
       Effect.mapError((error) => {
@@ -104,7 +93,13 @@ export const backfillProgress = (options: BackfillOptions) =>
       }),
     );
 
-    const result: BackfillResult = { repo: repo.settings.name, findings, written: [], lost: [] };
+    const result: BackfillResult = {
+      repo: repo.settings.name,
+      personas: repo.settings.personas,
+      findings,
+      written: [],
+      lost: [],
+    };
 
     if (!options.write) {
       return result;

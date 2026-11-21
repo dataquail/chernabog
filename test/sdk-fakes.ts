@@ -103,6 +103,8 @@ export const HEAD = "abc1234def";
 export const settings: RepoSettings = {
   name: "demo",
   slug: "dataquail/demo",
+  // The repo's personas, by its committed config: the fake acts as the first.
+  personas: ["chernabog-bot"],
   path: "/tmp/demo",
   baseBranch: "main",
   account: {

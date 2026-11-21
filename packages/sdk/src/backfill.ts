@@ -358,54 +358,54 @@ const epicFinding = (number: number, logins: ReadonlyArray<string>) =>
   });
 
 // Every open item that holds no record and needs one, each with the phase
-// to write or why a person must decide, read as `logins`, the repo's
-// personas. An item with a record is left out: it is backfilled already, or
-// a run recorded it.
-export const survey = (logins: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const github = yield* GitHub;
-    const all = yield* Phases.records;
-    const findings: Array<Finding> = [];
-    const unrecorded = (item: string) => Option.isNone(Phases.recordOf(all, item));
+// to write or why a person must decide, read as the repo's personas, by its
+// committed config (Repo.personas). An item with a record is left out: it is
+// backfilled already, or a run recorded it.
+export const survey = Effect.gen(function* () {
+  const github = yield* GitHub;
+  const logins = (yield* Repo).personas;
+  const all = yield* Phases.records;
+  const findings: Array<Finding> = [];
+  const unrecorded = (item: string) => Option.isNone(Phases.recordOf(all, item));
 
-    for (const pull of yield* github.openPullRequests) {
-      if (!unrecorded(Phases.pullRequestItem(pull.number))) {
-        continue;
-      }
-
-      const reviews = yield* github.reviews(pull.number);
-
-      if (automated(pull, reviews, logins)) {
-        findings.push(yield* pullRequestFinding(pull, reviews));
-      }
+  for (const pull of yield* github.openPullRequests) {
+    if (!unrecorded(Phases.pullRequestItem(pull.number))) {
+      continue;
     }
 
-    const issues = Arr.dedupeWith(
-      [
-        ...(yield* github.issuesLabelled(AWAITING_READY_LABEL)),
-        ...(yield* github.issuesLabelled(PLAN_LABELS.proposed)),
-      ],
-      (left, right) => left.number === right.number,
-    );
+    const reviews = yield* github.reviews(pull.number);
 
-    for (const issue of issues) {
-      if (issue.state !== "closed" && unrecorded(Phases.issueItem(issue.number))) {
-        for (const found of Option.toArray(yield* issueFinding(issue.number, issue.labels))) {
-          findings.push(found);
-        }
+    if (automated(pull, reviews, logins)) {
+      findings.push(yield* pullRequestFinding(pull, reviews));
+    }
+  }
+
+  const issues = Arr.dedupeWith(
+    [
+      ...(yield* github.issuesLabelled(AWAITING_READY_LABEL)),
+      ...(yield* github.issuesLabelled(PLAN_LABELS.proposed)),
+    ],
+    (left, right) => left.number === right.number,
+  );
+
+  for (const issue of issues) {
+    if (issue.state !== "closed" && unrecorded(Phases.issueItem(issue.number))) {
+      for (const found of Option.toArray(yield* issueFinding(issue.number, issue.labels))) {
+        findings.push(found);
       }
     }
+  }
 
-    for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
-      if (epic.state !== "closed" && unrecorded(Claims.epic(epic.number))) {
-        for (const found of Option.toArray(yield* epicFinding(epic.number, logins))) {
-          findings.push(found);
-        }
+  for (const epic of yield* github.issuesLabelled(PLAN_LABELS.epic)) {
+    if (epic.state !== "closed" && unrecorded(Claims.epic(epic.number))) {
+      for (const found of Option.toArray(yield* epicFinding(epic.number, logins))) {
+        findings.push(found);
       }
     }
+  }
 
-    return findings;
-  });
+  return findings;
+});
 
 const asPhase = Schema.decodeSync(CorePhase);
 const asWriter = Schema.decodeSync(PhaseWriter);

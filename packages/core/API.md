@@ -873,6 +873,7 @@ export declare const RepoSettings: Schema.Struct<{
     readonly path: Schema.String;
     readonly baseBranch: Schema.String;
     readonly reviewers: Schema.optionalKey<Schema.$Array<Schema.String>>;
+    readonly personas: Schema.$Array<Schema.String>;
     readonly persona: Schema.optionalKey<Schema.String>;
     readonly account: Schema.Struct<{
         readonly name: Schema.String;
@@ -946,6 +947,7 @@ declare const Repo_base: Context.ServiceClass<Repo, "@chernabog/sdk/Repo", {
     readonly path: string;
     readonly baseBranch: string;
     readonly reviewers?: readonly string[] | undefined;
+    readonly personas: readonly string[];
     readonly persona?: string | undefined;
     readonly account: {
         readonly name: string;

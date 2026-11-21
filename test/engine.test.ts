@@ -73,6 +73,7 @@ import {
 const settings: RepoSettings = {
   name: "demo",
   slug: "dataquail/demo",
+  personas: [],
   path: "/tmp/demo",
   baseBranch: "main",
   account: {

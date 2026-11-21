@@ -219,12 +219,11 @@ export const loadRepoEvents = (configDir: string) =>
 
 // What `chernabog progress backfill` takes of the SDK a repo pins: its
 // Backfill (ADR 21), which surveys the open items with no record as the
-// repo's personas, `logins`, and writes the phases it found. Its findings are
-// the SDK's, plain JSON, which the caller decodes and hands back to `apply`.
+// repo's personas (Repo.personas, its committed config's) and writes the
+// phases it found. Its findings are the SDK's, plain JSON, which the caller
+// decodes and hands back to `apply`.
 export type ProgressBackfill = {
-  readonly survey: (
-    logins: ReadonlyArray<string>,
-  ) => Effect.Effect<
+  readonly survey: Effect.Effect<
     ReadonlyArray<unknown>,
     Core.GitHubError | Core.ProgressError,
     Core.GitHub | Core.Progress | Core.Repo
@@ -239,7 +238,7 @@ const BackfillSdk = Schema.Struct({
     (backfill): backfill is ProgressBackfill =>
       Predicate.hasProperty(backfill, "survey") &&
       Predicate.hasProperty(backfill, "apply") &&
-      Predicate.isFunction(backfill.survey) &&
+      Effect.isEffect(backfill.survey) &&
       Predicate.isFunction(backfill.apply),
     { title: "Backfill" },
   ),
@@ -254,13 +253,15 @@ export const loadRepoBackfill = (configDir: string) =>
 
 // What `chernabog progress anomalies` takes of the SDK a repo pins: its
 // Ledger (ADR 21, decision 5), which surveys every record that fails the
-// check, as the repo's personas, `logins`, see it, and acknowledges the ones
+// check, as the repo's personas (Repo.personas) see it, and acknowledges the ones
 // a person says are right. Its anomalies are the SDK's, plain JSON, which the
 // caller decodes and hands back to `acknowledge`.
 export type ProgressLedger = {
-  readonly survey: (
-    logins: ReadonlyArray<string>,
-  ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
+  readonly survey: Effect.Effect<
+    ReadonlyArray<unknown>,
+    Core.ProgressError,
+    Core.Progress | Core.Repo
+  >;
   readonly acknowledge: (
     anomalies: ReadonlyArray<unknown>,
   ) => Effect.Effect<ReadonlyArray<unknown>, Core.ProgressError, Core.Progress>;
@@ -271,7 +272,7 @@ const LedgerSdk = Schema.Struct({
     (ledger): ledger is ProgressLedger =>
       Predicate.hasProperty(ledger, "survey") &&
       Predicate.hasProperty(ledger, "acknowledge") &&
-      Predicate.isFunction(ledger.survey) &&
+      Effect.isEffect(ledger.survey) &&
       Predicate.isFunction(ledger.acknowledge),
     { title: "Ledger" },
   ),
