@@ -5,9 +5,12 @@
 // blocks it. The agent answers with data only: each task's labels decide which
 // of the repo's flows picks it up.
 
+import { createHash } from "node:crypto";
+
 import {
   activity,
   Agent,
+  BlobHash,
   type Comment,
   type FlowLabel,
   GitHub,
@@ -357,42 +360,73 @@ const shownPlan = (round: number, summary: string, nodes: Plan, marker: string) 
     marker,
   ].join("\n");
 
-// The most a GitHub comment may hold.
-const COMMENT_LIMIT = 65_536;
+// The plan's comment on its spec, for people: the summary, the graph, each
+// task folded, and how to answer it. Its marker keeps only the round, which
+// marks the comment as Chernabog's; the plan itself is in the spec's record
+// (planBlob), so editing or deleting the comment changes nothing.
+export const planComment = (round: number, summary: string, nodes: Plan) =>
+  shownPlan(round, summary, nodes, planMarker.write({ round }));
 
-// The plan's comment on its spec: the summary, the graph, each task folded,
-// and how to answer it. Its marker keeps the tasks as posted, for a run that
-// takes the plan up once a person approves it, unless that would make the
-// comment longer than GitHub takes; then a run that takes it up later hands
-// it to a person.
-export const planComment = (round: number, summary: string, nodes: Plan) => {
-  const kept = shownPlan(
-    round,
-    summary,
-    nodes,
-    planMarker.write({ round, plan: encodePlan(nodes) }),
+// The blob a spec's proposed record keeps the posted plan in: its tasks as
+// JSON, encoded as Plan, and the hash that names it in the record's data.
+const encodeTasks = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Json)));
+
+export const planBlob = (encoded: ReadonlyArray<Json>) => {
+  const text = encodeTasks(encoded);
+
+  return { text, hash: createHash("sha256").update(text).digest("hex") };
+};
+
+// What a spec's proposed record keeps of the plan posted in its round: the
+// hash of the blob that holds its tasks, and `after`, the id of the newest
+// comment on the spec before the plan's, so a person's comment after it is
+// an answer, whatever became of the plan's own comment.
+const PostedPlan = Schema.Struct({
+  round: Schema.Finite,
+  plan: BlobHash,
+  after: Schema.optionalKey(Schema.Finite),
+});
+
+const postedIn = (data: Option.Option<{ readonly [key: string]: Json }>, round: number) =>
+  Option.filter(
+    Option.flatMap(data, Schema.decodeUnknownOption(PostedPlan)),
+    (posted) => posted.round === round,
   );
 
-  if (kept.length <= COMMENT_LIMIT) {
-    return kept;
-  }
+const After = Schema.Struct({ after: Schema.Finite });
 
-  return shownPlan(round, summary, nodes, planMarker.write({ round }));
-};
+// Where a person's answer to the posted plan starts: after the comment the
+// spec's record names (`after`), by id; or, for a record from before records
+// named one, after the wait began, by when each comment was made.
+type Anchor = { readonly after: Option.Option<number>; readonly since: DateTime.Utc };
+
+const anchorOf = (data: Option.Option<{ readonly [key: string]: Json }>, at: DateTime.Utc) => ({
+  after: Option.map(
+    Option.flatMap(data, Schema.decodeUnknownOption(After)),
+    (found) => found.after,
+  ),
+  since: Option.getOrElse(Phases.sinceOf(data), () => at),
+});
+
+const madeAfter = (comment: Comment, anchor: Anchor) =>
+  Option.match(anchor.after, {
+    onSome: (after) => comment.id > after,
+    onNone: () =>
+      Option.exists(DateTime.make(comment.createdAt), (made) =>
+        DateTime.isGreaterThan(made, anchor.since),
+      ),
+  });
 
 // The comments of the repo's owners, members and collaborators since the
-// latest plan was posted, other than Chernabog's own: a person's answer to it.
-const sinceLatestPlan = (comments: ReadonlyArray<Comment>) => {
-  const posted = comments.findLastIndex((comment) => Option.isSome(planMarker.read(comment.body)));
+// plan was posted, other than Chernabog's own: a person's answer to it.
+const sincePlan = (comments: ReadonlyArray<Comment>, anchor: Anchor) =>
+  comments.filter(
+    (comment) => comment.trusted && !hasMarker(comment.body) && madeAfter(comment, anchor),
+  );
 
-  return comments
-    .slice(posted + 1)
-    .filter((comment) => posted >= 0 && comment.trusted && !hasMarker(comment.body));
-};
-
-const feedbackOf = (comments: ReadonlyArray<Comment>) =>
+const feedbackOf = (comments: ReadonlyArray<Comment>, anchor: Anchor) =>
   Option.liftPredicate(
-    sinceLatestPlan(comments)
+    sincePlan(comments, anchor)
       .map((comment) => `${comment.author}: ${comment.body}`)
       .join("\n\n"),
     (text) => text !== "",
@@ -426,12 +460,13 @@ const proposedRound = (found: PhaseRecord) =>
 // A person's answer to a posted plan, or that nobody gave one in time.
 export type Answer = "approved" | "changes-requested" | "timeout";
 
-// A spec whose posted plan waits on a person: its number, the round, and
-// when the plan was posted.
+// A spec whose posted plan waits on a person: its number, the round, when
+// the plan was posted, and where a person's answer to it starts.
 type Waiting = {
   readonly spec: Issue;
   readonly round: number;
   readonly since: DateTime.Utc;
+  readonly anchor: Anchor;
 };
 
 // Specs whose record says their plan waits on a person (proposed), open and
@@ -464,7 +499,12 @@ const waitingSpecs = Effect.gen(function* () {
     );
 
     for (const open of Option.toArray(spec)) {
-      found.push({ spec: open, round: round.value, since: record.at });
+      found.push({
+        spec: open,
+        round: round.value,
+        since: record.at,
+        anchor: anchorOf(record.data, record.at),
+      });
     }
   }
 
@@ -483,7 +523,7 @@ const answerTo = (waiting: Waiting) =>
     }
 
     return Option.as(
-      feedbackOf(yield* github.trustedComments(waiting.spec.number)),
+      feedbackOf(yield* github.trustedComments(waiting.spec.number), waiting.anchor),
       "changes-requested" as const,
     );
   });
@@ -609,7 +649,12 @@ export const documentAnswerResumes = (
       return Option.none<WorkItem>();
     }
 
-    const waiting = { spec: spec.value, round: parked.value.round, since: at };
+    const waiting = {
+      spec: spec.value,
+      round: parked.value.round,
+      since: at,
+      anchor: anchorOf(Option.some(data), at),
+    };
 
     if (Option.isNone(yield* takenAnswer(waiting, parked.value.within))) {
       return Option.some<WorkItem>({
@@ -636,6 +681,7 @@ const answerIn = (step: string, spec: number, round: number, within: Duration.In
         spec: both.spec,
         round,
         since: both.record.at,
+        anchor: anchorOf(both.record.data, both.record.at),
       }));
 
       if (Option.isNone(waiting)) {
@@ -673,28 +719,42 @@ export const pollAnswer = (spec: number, round: number, within: Duration.Input) 
     }
   });
 
-// The plan posted in `round`, as its marker keeps it, for a run that takes it
-// up once approved; a person's when no comment keeps it: deleted, or from
-// before plans were kept.
+const decodePlanText = Schema.decodeUnknownOption(Schema.fromJsonString(Plan));
+
+// The plan posted in `round`, from the blob the spec's record names; none
+// when the record names no plan of that round.
+const recordedPlan = (spec: number, round: number) =>
+  Effect.gen(function* () {
+    const progress = yield* Progress;
+    const item = Phases.issueItem(spec);
+
+    const named = postedIn(
+      Option.flatMap(yield* progress.read(item), (found) => found.data),
+      round,
+    );
+
+    if (Option.isNone(named)) {
+      return Option.none<Plan>();
+    }
+
+    const bytes = yield* progress.blob(item, named.value.plan);
+
+    return Option.flatMap(bytes, (found) => decodePlanText(new TextDecoder().decode(found)));
+  });
+
+// The plan posted in `round`, as the spec's record keeps it, for a run that
+// takes it up once approved: never its comment, which a person may edit or
+// delete. A person's when the record keeps none, as one from before records
+// kept plans that backfill didn't carry over.
 export const posted = (spec: number, round: number) =>
   activity(
     `posted-plan-${round}`,
     Effect.gen(function* () {
-      const github = yield* GitHub;
-
-      const kept = Option.flatMap(
-        Option.fromUndefinedOr(
-          (yield* github.trustedComments(spec))
-            .flatMap((comment) => Option.toArray(planMarker.read(comment.body)))
-            .findLast((marker) => marker.round === round),
-        ),
-        (marker) =>
-          Option.flatMap(Option.fromUndefinedOr(marker.plan), Schema.decodeUnknownOption(Plan)),
-      );
+      const kept = yield* recordedPlan(spec, round);
 
       if (Option.isNone(kept)) {
         return yield* new NeedsHuman({
-          reason: `the plan approved in round ${round} isn't kept on the spec any more, so Chernabog can't make its tasks`,
+          reason: `the spec's record keeps no plan of round ${round}, so Chernabog can't make the approved plan's tasks`,
         });
       }
 
@@ -846,29 +906,73 @@ export const askForClarification = (spec: number, answer: PlanDraft) =>
     { label: LABELS.plan },
   );
 
-// Posts the plan on the spec, with the verify task added, and labels it as
-// waiting on a person. Returns the plan as posted, which is the one created.
-// The wait on the person's answer, which awaitAnswer records, is the spec's
-// proposed record.
+// Posts the plan on the spec, with the verify task added, labels it as
+// waiting on a person, and records the spec proposed, the plan a blob its
+// record names (planBlob) beside the round: the record, not the comment, is
+// the plan a run makes once approved. Returns the plan as posted, which is
+// the one created. The wait on the person's answer, which awaitAnswer
+// records, carries the plan on.
 export const propose = (spec: number, round: number, answer: PlanDraft) =>
   activity(
     `propose-plan-${round}`,
     Effect.gen(function* () {
       const github = yield* GitHub;
       const plan = withVerify(yield* github.issue(spec), answer.nodes);
+      const after = Math.max(0, ...(yield* github.comments(spec)).map((comment) => comment.id));
       yield* github.comment(spec, planComment(round, answer.summary, plan));
       yield* github.addLabel(spec, LABELS.proposed);
+
+      const blob = planBlob(encodePlan(plan));
+
+      // Written again even over a record of this run's: the wait of the
+      // round before is proposed too.
+      yield* Phases.record(
+        Phases.issueItem(spec),
+        Phases.PHASES.issue.proposed,
+        { round, plan: blob.hash, after },
+        { always: true, blobs: [blob.text] },
+      );
 
       return plan;
     }),
     Plan,
   );
 
+// What the wait's record carries on of the plan of `round` the spec's
+// record names: the hash and its blob, and where answers start. A blob is
+// read only at the record that names it, so the wait writes it again.
+const carriedPlan = (spec: number, round: number) =>
+  Effect.gen(function* () {
+    const progress = yield* Progress;
+    const item = Phases.issueItem(spec);
+
+    const named = postedIn(
+      Option.flatMap(yield* progress.read(item), (found) => found.data),
+      round,
+    );
+
+    if (Option.isNone(named)) {
+      return { data: {}, blobs: [] };
+    }
+
+    const bytes = yield* progress.blob(item, named.value.plan);
+
+    return {
+      data: Option.match(Option.fromUndefinedOr(named.value.after), {
+        onNone: () => ({ plan: named.value.plan }),
+        onSome: (after) => ({ plan: named.value.plan, after }),
+      }),
+      blobs: Option.toArray(bytes),
+    };
+  });
+
 // The wait on a person's answer to the plan of `round`, as the spec's
 // proposed record (plan-<round>-waits): the round, and what else the record
-// keeps, such as a document's `resume`. A record of the round already there
+// keeps, such as a document's `resume`. A wait of the round already there
 // is kept, so a run that took the plan up waits on from it, and `timeout`
-// counts from when the plan was posted.
+// counts from when the plan was posted; the record plan.propose wrote, which
+// says when no wait began, is not a wait yet. The wait's record carries on
+// the plan that record names (carriedPlan).
 export const answerParking = (
   spec: number,
   round: number,
@@ -879,8 +983,10 @@ export const answerParking = (
   item: Phases.issueItem(spec),
   phase: Phases.PHASES.issue.proposed,
   data: { ...data, round },
-  keeps: (found) => Option.contains(proposedRound(found), round),
+  keeps: (found) =>
+    Option.contains(proposedRound(found), round) && Option.isSome(Phases.sinceOf(found.data)),
   timeout: Duration.fromInputUnsafe(timeout),
+  carries: carriedPlan(spec, round),
 });
 
 // Records the wait on a person's answer to the plan (answerParking) and
@@ -915,8 +1021,15 @@ export const changesAsked = (spec: number, round: number) =>
       const github = yield* GitHub;
       yield* github.removeLabel(spec, LABELS.proposed);
 
+      const found = yield* Progress.use((progress) => progress.read(Phases.issueItem(spec)));
+
+      const anchor = Option.match(found, {
+        onNone: () => ({ after: Option.none<number>(), since: DateTime.makeUnsafe(0) }),
+        onSome: (record) => anchorOf(record.data, record.at),
+      });
+
       return Option.getOrElse(
-        feedbackOf(yield* github.trustedComments(spec)),
+        feedbackOf(yield* github.trustedComments(spec), anchor),
         () => "Nothing in the comments says what; make the plan clearer.",
       );
     }),

@@ -89,11 +89,10 @@ export const OwnerMarker = Schema.Struct({
 
 export type OwnerMarker = typeof OwnerMarker.Type;
 
-// A plan proposed on its spec issue, by round, so the run finds the comments
-// a person left on it since. plan: its tasks as posted, so a run that takes up
-// the plan once a person approves it, after the run that posted it ended
-// (ADR 0021), makes exactly what was approved; a marker without it is from
-// before plans were kept, or from one too long to keep beside its comment.
+// A plan proposed on its spec issue, by round, which marks the comment as
+// Chernabog's. The plan itself is in the spec's proposed record since #563;
+// plan: the tasks a marker from before kept, which only the SDK's backfill
+// reads, once, to carry them into the record.
 export const PlanMarker = Schema.Struct({
   round: Schema.Finite,
   plan: Schema.optionalKey(Schema.Array(Schema.Json)),
