@@ -96,16 +96,20 @@ const parkedAfterPolls = (handle: ReturnType<typeof waiting>, fake: ReturnType<t
   });
 
 describe("the phase a parked wait records", () => {
+  const AWAITING_CI = Phases.PHASES.issue.awaitingCi;
+
   test("names the round of CI, the first plainly", () => {
-    expect(Phases.awaitingCi(1)).toBe("awaiting-ci");
-    expect(Phases.awaitingCi(3)).toBe("awaiting-ci-3");
+    expect(Phases.inRound(AWAITING_CI, 1)).toBe("awaiting-ci");
+    expect(Phases.inRound(AWAITING_CI, 3)).toBe("awaiting-ci-3");
   });
 
   test("gives its round back, and none for any other phase", () => {
-    expect(Phases.ciRoundOf("awaiting-ci")).toEqual(Option.some(1));
-    expect(Phases.ciRoundOf("awaiting-ci-3")).toEqual(Option.some(3));
-    expect(Phases.ciRoundOf("review-asked")).toEqual(Option.none());
-    expect(Phases.ciRoundOf("awaiting-ci-x")).toEqual(Option.none());
+    expect(Phases.roundOf(AWAITING_CI, "awaiting-ci")).toEqual(Option.some(1));
+    expect(Phases.roundOf(AWAITING_CI, "awaiting-ci-3")).toEqual(Option.some(3));
+    expect(Phases.roundOf(AWAITING_CI, "review-asked")).toEqual(Option.none());
+    expect(Phases.roundOf(AWAITING_CI, "awaiting-ci-x")).toEqual(Option.none());
+    expect(Phases.roundOf(AWAITING_CI, "awaiting-adopted-ci")).toEqual(Option.none());
+    expect(Phases.roundOf(AWAITING_CI, "awaiting-fix-ci-2")).toEqual(Option.none());
   });
 });
 
@@ -120,7 +124,7 @@ describe("a wait for CI in a CI job", () => {
       );
 
       expect(run.status).toBe("running");
-      expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
+      expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
     }),
   );
 
@@ -153,7 +157,7 @@ describe("a wait for CI in a CI job", () => {
       expect(run.status).toBe("running");
       expect(fake.requests).toHaveLength(1);
       expect(fake.requests[0]?.prompt).toContain(`CI failed on pull request #${PULL}: test.`);
-      expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci-3");
+      expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci-3");
     }),
   );
 
@@ -190,7 +194,7 @@ describe("a wait for CI on a daemon", () => {
       const { parked, run } = yield* parkedAfterPolls(waiting(PARKING), fake);
       expect(run.status).toBe("running");
       expect(parked).toBe(true);
-      expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
+      expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
     }),
   );
 });
@@ -234,7 +238,7 @@ describe("implement in a CI job", () => {
     const fake = makeFake("approve", { ...POOL, ciJob: true });
     fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
     fake.git.opened = true;
-    fake.recordPhase(ISSUE_ITEM, Phases.awaitingCi(round));
+    fake.recordPhase(ISSUE_ITEM, Phases.inRound(Phases.PHASES.issue.awaitingCi, round));
 
     return fake;
   };
@@ -290,7 +294,10 @@ describe("implement in a CI job", () => {
         [
           `issue-${ISSUE}`,
           Option.none(),
-          { issue: ISSUE, resumeCi: { pullRequest: PULL, url: PULL_URL, round: 2 } },
+          {
+            issue: ISSUE,
+            resumeCi: { phase: "awaiting-ci", pullRequest: PULL, url: PULL_URL, round: 2 },
+          },
         ],
       ]);
     }),
@@ -405,7 +412,7 @@ describe("address-review in a CI job", () => {
     const fake = changesAsked();
     fake.git.pushes = 2;
     fake.git.head = "fix20000000";
-    fake.recordPhase(PR_ITEM, Phases.awaitingCi(round));
+    fake.recordPhase(PR_ITEM, Phases.inRound(Phases.PHASES.pullRequest.awaitingFixCi, round));
 
     return fake;
   };
@@ -451,7 +458,7 @@ describe("address-review in a CI job", () => {
 
         expect(run.status).toBe("running");
         expect(fake.git.pushes).toBe(2);
-        expect(fake.phases()[PR_ITEM]).toBe("awaiting-ci");
+        expect(fake.phases()[PR_ITEM]).toBe("awaiting-fix-ci");
         // The reviewer isn't asked again until CI has finished.
         expect(fake.people.requested).toEqual([]);
       }),
@@ -464,7 +471,7 @@ describe("address-review in a CI job", () => {
 
       const held = yield* resumes(fake);
       expect(
-        held.map((found) => [found.key.startsWith(`pr-${PULL}-awaiting-ci-2-`), found.held]),
+        held.map((found) => [found.key.startsWith(`pr-${PULL}-awaiting-fix-ci-2-`), found.held]),
       ).toEqual([[true, `waits on CI for #${PULL}`]]);
 
       fake.merge.ci = { state: "green" };

@@ -73,7 +73,7 @@ describe("the implement recipe's CI-wait source", () => {
     const fake = makeFake("approve", { reviewers: ["zach", "data-quail"], ciJob: true });
     fake.setLabels(ISSUE, [DEFAULT_LABELS.inProgress]);
     fake.git.opened = true;
-    fake.recordPhase(ISSUE_ITEM, Phases.awaitingCi(1));
+    fake.recordPhase(ISSUE_ITEM, Phases.inRound(Phases.PHASES.issue.awaitingCi, 1));
 
     return fake;
   };

@@ -1,7 +1,8 @@
 // implement's wait for CI on a pull request it adopted parks (audit W5, ADR
-// 0021 decision 4), as its wait on one it opened does: on the issue's
-// awaiting-ci record, which keeps the adopted pull request, since it isn't on
-// the issue's branch for Implement.awaitingCi to find. The trigger holds the
+// 0021 decision 4) on a phase of its own, the issue's awaiting-adopted-ci,
+// not the awaiting-ci of its wait on one it opened: the phase alone says
+// where the run that takes it up starts. The record keeps the adopted pull
+// request, since it isn't on the issue's branch. The trigger holds the
 // issue while CI is pending with time left and offers it as work a run may
 // start once CI is green or red, or ciTimeout passes, counted from when the
 // wait began. The run that takes it up waits on and hands the pull request
@@ -141,7 +142,7 @@ for (const [form, loading] of forms) {
         }),
       );
 
-      fake.recordPhase(ISSUE_ITEM, "awaiting-ci", {
+      fake.recordPhase(ISSUE_ITEM, "awaiting-adopted-ci", {
         at: DateTime.makeUnsafe(0),
         data: { ...data, since: DateTime.formatIso(since) },
       });
@@ -180,7 +181,7 @@ for (const [form, loading] of forms) {
 
   describe(`implement's ${form}, on an adopted pull request whose CI is pending`, () => {
     effect(
-      "records awaiting-ci on the issue with the adopted pull request and when the wait began, and ends at the park",
+      "records awaiting-adopted-ci on the issue with the adopted pull request and when the wait began, and ends at the park",
       () =>
         Effect.gen(function* () {
           const before = yield* DateTime.now;
@@ -199,7 +200,7 @@ for (const [form, loading] of forms) {
           expect([run.status, parked]).toEqual(["running", true]);
 
           const recorded = Option.getOrThrow(recordNow(fake));
-          expect(recorded.phase).toBe("awaiting-ci");
+          expect(recorded.phase).toBe("awaiting-adopted-ci");
           expect(recorded.data.pullRequest).toBe(PULL);
 
           expect(
