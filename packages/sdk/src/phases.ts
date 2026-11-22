@@ -48,7 +48,13 @@ export const PHASES = {
     askedQuestions: "asked-questions",
     awaitingReady: "awaiting-ready",
     readyTimedOut: "ready-timed-out",
+    // implement's wait for CI on the pull request its run opened, which parked.
     awaitingCi: "awaiting-ci",
+    // implement's wait for CI on a pull request it adopted, which parked: not
+    // awaiting-ci, so the phase alone says the run that takes it up hands the
+    // pull request off as an adopted one. Its data keeps the pull request,
+    // which isn't on the issue's branch.
+    awaitingAdoptedCi: "awaiting-adopted-ci",
     proposed: "proposed",
     planHandedBack: "plan-handed-back",
     becameEpic: "became-epic",
@@ -68,12 +74,14 @@ export const PHASES = {
     readyForPerson: "ready-for-person",
     draft: "draft",
     watched: "watched",
-    awaitingCi: "awaiting-ci",
+    // address-review's wait for CI on the fix it pushed, which parked: not
+    // the issue's awaiting-ci, which is implement's.
+    awaitingFixCi: "awaiting-fix-ci",
     // A watch of a merge commit's push CI that parked: post-merge's, not the
-    // pull request's own CI, which awaiting-ci is.
+    // pull request's own CI, which awaiting-fix-ci is.
     awaitingMergeCi: "awaiting-merge-ci",
     // resolve-conflicts' wait for CI on the merge it pushed, which parked: not
-    // awaiting-ci, which is address-review's wait on its own fix. Its data
+    // awaiting-fix-ci, which is address-review's wait on its own fix. Its data
     // keeps the review phase it parked over, which the run that takes it up
     // records again (Conflict.waitForCi).
     awaitingConflictCi: "awaiting-conflict-ci",
@@ -94,49 +102,51 @@ type PhasesOf<Kind extends keyof typeof PHASES> =
 // One of the SDK's phases.
 export type Phase = PhasesOf<"issue"> | PhasesOf<"pullRequest"> | PhasesOf<"epic">;
 
-// The phase a CI job's run records before it parks on its pull request's CI
-// (Implement.waitForCi's park): awaiting-ci for the first round, then
-// awaiting-ci-2 once one fix of red CI was pushed, and so on, so the job that
-// resumes it counts ciRounds on from there.
-export const awaitingCi = (round: number) => {
+// The waits for CI whose phase carries the round it waits on: the first
+// round's phase, then `-2` once one fix of red CI was pushed, and so on
+// (awaiting-ci, awaiting-ci-2), so the run that takes the wait up counts
+// ciRounds on from there. Each is a park site's own (PARKS).
+export const ROUNDED = [
+  PHASES.issue.awaitingCi,
+  PHASES.issue.awaitingAdoptedCi,
+  PHASES.pullRequest.awaitingFixCi,
+  PHASES.pullRequest.awaitingConflictCi,
+] as const;
+
+export type Rounded = (typeof ROUNDED)[number];
+
+// The phase a wait for CI at `phase`'s site records in `round`.
+export const inRound = (phase: Rounded, round: number) => {
   if (round <= 1) {
-    return PHASES.issue.awaitingCi;
+    return phase;
   }
 
-  return `${PHASES.issue.awaitingCi}-${round}`;
+  return `${phase}-${round}`;
 };
 
-const AWAITING_CI = /^awaiting-ci(?:-(\d+))?$/;
+const ROUND = /^(.*?)(?:-(\d+))?$/;
 
-// The round of CI a phase awaitingCi recorded waits on; none for any other phase.
-export const ciRoundOf = (phase: string): Option.Option<number> =>
-  Option.map(Option.fromNullOr(AWAITING_CI.exec(phase)), (found) =>
-    Option.match(Option.fromUndefinedOr(found[1]), {
-      onNone: () => 1,
-      onSome: Number,
-    }),
+// The round of `phase`'s wait for CI that `recorded` waits on: 1 for the
+// phase itself, n for `phase-n`; none for any other phase.
+export const roundOf = (phase: Rounded, recorded: string): Option.Option<number> =>
+  Option.flatMap(Option.fromNullOr(ROUND.exec(recorded)), (found) =>
+    Option.map(
+      Option.liftPredicate(found[1], (base) => base === phase),
+      () =>
+        Option.match(Option.fromUndefinedOr(found[2]), {
+          onNone: () => 1,
+          onSome: Number,
+        }),
+    ),
   );
 
-// The phase resolve-conflicts records before it parks on CI for the merge it
-// pushed, by round, as awaitingCi does: awaiting-conflict-ci, then
-// awaiting-conflict-ci-2 once one fix of red CI was pushed.
-export const conflictCi = (round: number) => {
-  if (round <= 1) {
-    return PHASES.pullRequest.awaitingConflictCi;
-  }
-
-  return `${PHASES.pullRequest.awaitingConflictCi}-${round}`;
-};
-
-const AWAITING_CONFLICT_CI = /^awaiting-conflict-ci(?:-(\d+))?$/;
-
-// The round of CI a phase conflictCi recorded waits on; none for any other phase.
-export const conflictCiRoundOf = (phase: string): Option.Option<number> =>
-  Option.map(Option.fromNullOr(AWAITING_CONFLICT_CI.exec(phase)), (found) =>
-    Option.match(Option.fromUndefinedOr(found[1]), {
-      onNone: () => 1,
-      onSome: Number,
-    }),
+// The wait for CI `recorded` is a round of, and the round; none for a phase
+// that isn't one.
+export const roundedOf = (
+  recorded: string,
+): Option.Option<{ readonly phase: Rounded; readonly round: number }> =>
+  Arr.findFirst(ROUNDED, (phase) =>
+    Option.map(roundOf(phase, recorded), (round) => ({ phase, round })),
   );
 
 // What a source reads of an item with no record yet.
@@ -150,20 +160,14 @@ export const phasesOf = (item: ItemKind): ReadonlyArray<string> =>
 
 // A phase as the catalogue keys it: a later round's wait for CI
 // (`awaiting-ci-2`, `awaiting-conflict-ci-3`) is its first round's phase.
-export const declaredAs = (phase: string) => {
-  if (Option.isSome(ciRoundOf(phase))) {
-    return PHASES.issue.awaitingCi;
-  }
-
-  if (Option.isSome(conflictCiRoundOf(phase))) {
-    return PHASES.pullRequest.awaitingConflictCi;
-  }
-
-  return phase;
-};
+export const declaredAs = (phase: string): string =>
+  Option.match(roundedOf(phase), {
+    onNone: () => phase,
+    onSome: (found) => found.phase,
+  });
 
 // The one catalogue of the SDK's phases, keyed by phase name: the kinds of
-// item each is a phase of (awaiting-ci is an issue's and a pull request's).
+// item each is a phase of.
 // The ledger's check of a run's record and the compiler's check of a phase a
 // document names both go by it (misplacedOn), so they can't disagree.
 const CATALOGUE: ReadonlyMap<string, ReadonlyArray<ItemKind>> = new Map(
@@ -190,6 +194,66 @@ export const misplacedOn = (kind: ItemKind, phase: string): Option.Option<string
       () => !kinds.includes(kind),
     ),
   );
+
+// Every place a run parks (ADR 21, decision 4): the wait, the kind of item
+// its record is kept for, and the phase it records there, a phase of its own.
+// A park is a phase boundary, so the phase alone says where the run that
+// takes the item up starts, and `data` keeps only the facts it needs. No two
+// sites share a phase, across recipes and documents: a recipe's wait and the
+// block that is its document's form are one site.
+export type ParkSite = {
+  readonly site: string;
+  readonly item: ItemKind;
+  readonly phase: Phase;
+};
+
+export const PARKS: ReadonlyArray<ParkSite> = [
+  {
+    site: "implement: CI on the pull request its run opened (ci.waitAndFix)",
+    item: "issue",
+    phase: PHASES.issue.awaitingCi,
+  },
+  {
+    site: "implement: CI on a pull request it adopted (ci.waitPreparing)",
+    item: "issue",
+    phase: PHASES.issue.awaitingAdoptedCi,
+  },
+  {
+    site: "implement: an adopted draft its author marks ready (pr.awaitReady)",
+    item: "issue",
+    phase: PHASES.issue.awaitingReady,
+  },
+  {
+    site: "plan: a person's answer to the plan (plan.awaitAnswer)",
+    item: "issue",
+    phase: PHASES.issue.proposed,
+  },
+  {
+    site: "address-review: CI on the fix it pushed (author.waitForCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingFixCi,
+  },
+  {
+    site: "resolve-conflicts: CI on the merge it pushed (conflict.waitForCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingConflictCi,
+  },
+  {
+    site: "post-merge: push CI on the merge commit (merged.awaitCi)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.awaitingMergeCi,
+  },
+  {
+    site: "review, re-review: a merge held for a red base (pr.land)",
+    item: "pull-request",
+    phase: PHASES.pullRequest.mergeHeld,
+  },
+  {
+    site: "epic: the epic between rounds (epic.park)",
+    item: "epic",
+    phase: PHASES.epic.waiting,
+  },
+];
 
 // The item a run on each subject works on, which a team's own
 // progress.advance step records its phase on. Four subjects are one pull
@@ -319,14 +383,21 @@ const carryingReview = (from: Option.Option<PhaseRecord>, data: Option.Option<Da
 // run wrote the one there: a wait that starts over, with a new `at` and data.
 // `always` writes a fresh record even when this run wrote the one there: a
 // wait a run may enter again after a signal woke it, whose data is this
-// round's, not the round it first parked in.
+// round's, not the round it first parked in. `blobs` is content too big for
+// `data`, written with the record and named in it by hash (Progress.blob).
 // Gives the record the item holds afterwards; record gives nothing, for an
 // activity that journals no result.
+export type RecordOptions = {
+  readonly again?: boolean;
+  readonly always?: boolean;
+  readonly blobs?: ReadonlyArray<Uint8Array | string>;
+};
+
 export const recording = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) =>
   Effect.gen(function* () {
     const progress = yield* Progress;
@@ -352,9 +423,11 @@ export const recording = (
 
       // From the record just read, by version: one another writer moved
       // since is a lost race, which reads again.
+      const base = { from: current, to: phase, by, blobs: options.blobs ?? [] };
+
       const transition = Option.match(carried, {
-        onNone: () => ({ from: current, to: phase, by }),
-        onSome: (found) => ({ from: current, to: phase, by, data: found }),
+        onNone: () => base,
+        onSome: (found) => ({ ...base, data: found }),
       });
 
       const written = yield* progress.advance(item, transition).pipe(
@@ -378,7 +451,7 @@ export const record = (
   item: string,
   to: string,
   data?: { readonly [key: string]: Json },
-  options: { readonly again?: boolean; readonly always?: boolean } = {},
+  options: RecordOptions = {},
 ) => Effect.asVoid(recording(item, to, data, options));
 
 // A record a source won't act on (ADR 21, decision 5): the item's record,
@@ -463,7 +536,15 @@ export const recordOf = (all: ReadonlyMap<string, PhaseRecord>, item: string) =>
 // the run that takes it up. `keeps` says whether the record already there is
 // this wait, which a run that took it up keeps as it is: by default, any
 // record at `phase`. `timeout` is how long the wait may last from `since`,
-// when it began, which every park's record keeps.
+// when it began, which every park's record keeps. `carries` reads, as the
+// record is written, what it carries on from the record there: data, and
+// blobs it names by hash (Progress.blob), which only the record that names
+// them reads, so a wait that keeps one writes it again.
+export type Carried = {
+  readonly data: { readonly [key: string]: Json };
+  readonly blobs: ReadonlyArray<Uint8Array | string>;
+};
+
 export type Parking = {
   readonly step: string;
   readonly item: string;
@@ -471,7 +552,10 @@ export type Parking = {
   readonly data: { readonly [key: string]: Json };
   readonly keeps?: (found: PhaseRecord) => boolean;
   readonly timeout?: Duration.Duration;
+  readonly carries?: Effect.Effect<Carried, ProgressError, Progress>;
 };
+
+const NOTHING_CARRIED: Effect.Effect<Carried> = Effect.succeed({ data: {}, blobs: [] });
 
 const Since = Schema.Struct({ since: Schema.String });
 
@@ -529,7 +613,14 @@ export const recordParking = (parking: Parking) =>
       // The item's record isn't this wait, so write it even over one this run
       // wrote: a run a signal woke parks again with its new round's data.
       const since = DateTime.formatIso(yield* DateTime.now);
-      yield* record(parking.item, parking.phase, { since, ...parking.data }, { always: true });
+      const carried = yield* parking.carries ?? NOTHING_CARRIED;
+
+      yield* record(
+        parking.item,
+        parking.phase,
+        { since, ...parking.data, ...carried.data },
+        { always: true, blobs: carried.blobs },
+      );
 
       return "parked" as const;
     }),

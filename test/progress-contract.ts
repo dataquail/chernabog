@@ -284,6 +284,27 @@ export const progressContract = <E>(name: string, make: MakeProgress<E>) => {
       }),
     );
 
+    // A wait recorded again over this writer's own record of it, as a plan's
+    // wait over the plan its run proposed, is a new move: the writer read it.
+    effect("the same move again, from the record it read, writes a new record", () =>
+      Effect.gen(function* () {
+        const progress = yield* make;
+        const asked = yield* progress.advance(ITEM, first(REVIEW_ASKED, RUN_A));
+        const again = yield* progress.advance(ITEM, after(asked, REVIEW_ASKED, RUN_A));
+
+        const thrice = yield* progress.advance(ITEM, {
+          ...after(again, REVIEW_ASKED, RUN_A),
+          data: DATA,
+          blobs: [PLAN],
+        });
+
+        expect(thrice.version).not.toBe(again.version);
+        expect(thrice.data).toEqual(Option.some(DATA));
+        expect(yield* progress.read(ITEM)).toEqual(Option.some(thrice));
+        expect(yield* progress.blob(ITEM, hashOf(PLAN))).toEqual(Option.some(blobBytes(PLAN)));
+      }),
+    );
+
     effect("a retried first phase finds its own record and succeeds", () =>
       Effect.gen(function* () {
         const progress = yield* make;
