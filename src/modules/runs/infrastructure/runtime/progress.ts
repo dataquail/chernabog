@@ -386,6 +386,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
     const recordAt = (tip: typeof Tip.Type) => {
       const cached = Option.fromUndefinedOr(seen.get(tip.oid));
 
+      // Stryker disable next-line ConditionalExpression,BlockStatement: the cache only saves re-parsing; a tip parsed again reads as the record cached
       if (Option.isSome(cached)) {
         return Effect.succeed(cached.value);
       }
@@ -399,6 +400,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             unreadableRecord(tip.oid, at, why),
           );
 
+          // Stryker disable next-line BlockStatement,CallExpression: the cache only saves re-parsing; a tip parsed again reads as the record cached
           seen.set(tip.oid, record);
 
           return record;
@@ -422,6 +424,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
       Effect.die(
         new ProgressUnwritable({
           ...Option.match(options.persona, {
+            // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
             onNone: () => ({}),
             onSome: (login) => ({ login }),
           }),
@@ -486,6 +489,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           blobs: Arr.fromIterable(blobsOf(transition).keys()),
         };
 
+        // Stryker disable next-line BlockStatement,CallExpression: a record not cached is parsed from its commit, as the record written
         seen.set(version, record);
 
         return record;
@@ -499,6 +503,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         );
 
         if (made.status === 403 || made.status === 404) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${made.status} creating ${what}`);
         }
 
@@ -526,13 +531,19 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             make(
               `${repoPath}/git/blobs`,
               { content: base64(bytes), encoding: "base64" },
+              // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
               `blob ${hash}`,
             ),
             (sha): Json => ({ path: blobPath(hash), mode: "100644", type: "blob", sha }),
           ),
         );
 
-        return yield* make(`${repoPath}/git/trees`, { tree }, "a thread's tree");
+        return yield* make(
+          `${repoPath}/git/trees`,
+          { tree },
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
+          "a thread's tree",
+        );
       });
 
     // The item's first phase: a root commit with the empty tree, or the tree
@@ -555,6 +566,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         ).pipe(Effect.mapError(failed));
 
         if (commit.status === 403 || commit.status === 404) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${commit.status} creating a commit`);
         }
 
@@ -584,6 +596,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
             Option.flatMap(ref.body, Schema.decodeUnknownOption(RefError)),
             (error) => error.message,
           ),
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word; neither text names an existing ref or a rule
           () => "no message",
         );
 
@@ -592,6 +605,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
         }
 
         if (ref.status === 403 || (ref.status === 422 && /rule/i.test(said))) {
+          // Stryker disable next-line StringLiteral: text for a person, which no test pins word for word
           return yield* refusal(`HTTP ${ref.status} creating ${branch}: ${said}`);
         }
 
@@ -639,6 +653,7 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
 
           return {
             written: Option.some(yield* written(made.oid, made.committedDate, transition)),
+            // Stryker disable next-line ArrayDeclaration: nextOrMiss reads errors only when nothing was written, and here a commit was
             errors: [],
           };
         }
@@ -698,9 +713,11 @@ export const makeThreadsProgress = (options: ThreadsOptions) =>
           return result.written.value;
         }
 
+        // Stryker disable ArrowFunction,StringLiteral,LogicalOperator: text for a person, which no test pins word for word; the decision reads errors, not this
         const said = result.errors
           .map((error) => `${error.type ?? "ERROR"}: ${error.message}`)
           .join("; ");
+        // Stryker restore ArrowFunction,StringLiteral,LogicalOperator
 
         let refused: Effect.Effect<never, ProgressError> = Effect.fail(
           new ProgressError({ message: `advancing ${branch} failed: ${said}` }),

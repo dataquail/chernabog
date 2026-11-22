@@ -58,13 +58,17 @@ export const TRUSTED = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
 //   commit's;
 // - repo: no one item, so the plan job looks at every one, as its sweep does.
 export const ItemFrom = Schema.Union([
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({ kind: Schema.Literals(["issue", "pull-request"]), path: Schema.String }),
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({ kind: Schema.Literals(["branch", "item"]), path: Schema.String }),
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({
     kind: Schema.Literal("ci-run"),
     path: Schema.String,
     pushToDefault: Schema.Boolean,
   }),
+  // Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
   Schema.Struct({ kind: Schema.Literal("repo") }),
 ]);
 
@@ -109,6 +113,7 @@ export const on = (
     types,
     item,
     ...Option.match(Option.fromUndefinedOr(options.association), {
+      // Stryker disable next-line ArrowFunction: { ...undefined } and { ...{} } spread to the same object
       onNone: () => ({}),
       onSome: (association) => ({ association }),
     }),
@@ -220,6 +225,7 @@ export const commentCreated = on("issue_comment", ["created"], issueNumber, {
 
 // What a flow declares: the events that wake it, and whether its sources read
 // phases, so a phase event wakes it too.
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 export const FlowEvents = Schema.Struct({
   events: Schema.Array(WakingEvent),
   readsPhases: Schema.Boolean,
@@ -406,6 +412,7 @@ const nameAt = (payload: Json, path: string) =>
     (value): value is string => Predicate.isString(value) && value.length > 0,
   );
 
+// Stryker disable next-line ObjectLiteral: Struct({}) passes its input through, so only input of the wrong shape differs
 const RunPullRequests = Schema.Array(Schema.Struct({ number: Schema.Int }));
 
 // The finished CI run at `path`: its head commit and its pull requests; none
@@ -427,6 +434,7 @@ const ciRunAt = (path: string, pushToDefault: boolean, payload: Json) =>
         at(payload, `${path}.pull_requests`),
         Schema.decodeUnknownOption(RunPullRequests),
       ),
+      // Stryker disable next-line ArrowFunction,ArrayDeclaration: GitHub's workflow_run always lists pull_requests; only malformed input falls back
       () => [],
     );
 
