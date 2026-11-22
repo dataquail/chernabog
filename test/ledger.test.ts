@@ -523,6 +523,235 @@ describe("the catalogue of transitions", () => {
   );
 });
 
+// Each a record a person, or an old chernabog, could forge or misplace, which
+// the check must report (#588: each kills a mutant of ledger-check.ts that
+// survived every test before it).
+describe("forged and misplaced records", () => {
+  const whyOf = (personas: ReadonlyArray<string>, item: string, record: PhaseRecord) =>
+    Ledger.anomalyIn(personas, item, record).pipe(Option.map((anomaly) => anomaly.why));
+
+  const why = (item: string, record: PhaseRecord) => whyOf(PERSONAS, item, record);
+
+  test("observer:acknowledged records only the phase again, never another transition", () => {
+    expect(
+      why(
+        PR_ITEM,
+        recordOf({ phase: P.approved, from: Option.some(P.changesAsked), by: Ledger.ACKNOWLEDGED }),
+      ),
+    ).toEqual(
+      Option.some(
+        "observer:acknowledged records only a issue's phase again, a pull-request's phase again, a epic's phase again, not changes-asked -> approved",
+      ),
+    );
+    expect(why(PR_ITEM, recordOf({ phase: P.approved, by: Ledger.ACKNOWLEDGED }))).not.toEqual(
+      Option.none(),
+    );
+    expect(
+      why(
+        PR_ITEM,
+        recordOf({ phase: P.approved, from: Option.some(P.approved), by: Ledger.ACKNOWLEDGED }),
+      ),
+    ).toEqual(Option.none());
+  });
+
+  test("an observer's transition on another kind of item is reported", () => {
+    // review.requestedAgain's observer records a pull request's review-asked-again.
+    const record = recordOf({
+      phase: P.reviewAskedAgain,
+      from: Option.some(P.reviewAsked),
+      by: "observer:review.requestedAgain",
+    });
+
+    expect(why(PR_ITEM, record)).toEqual(Option.none());
+    expect(why("issue-3", record)).toEqual(
+      Option.some(expect.stringContaining("not review-asked -> review-asked-again")),
+    );
+    expect(why("epic-3", record)).not.toEqual(Option.none());
+  });
+
+  test("an observer's declared transition passes on a team's own item", () => {
+    expect(
+      why(
+        "release-7",
+        recordOf({ phase: "shipped", from: Option.some("shipped"), by: Ledger.ACKNOWLEDGED }),
+      ),
+    ).toEqual(Option.none());
+  });
+
+  test("a multi-digit item is checked as its kind", () => {
+    const misplaced = recordOf({ phase: Phases.PHASES.epic.waiting, by: EARLIER_RUN });
+
+    expect(why("pr-73", misplaced)).toEqual(Option.some("waiting isn't a phase of a pull-request"));
+    expect(Ledger.kindOf("pr-73")).toEqual(Option.some("pull-request"));
+    expect(Ledger.kindOf("issue-120")).toEqual(Option.some("issue"));
+    expect(Ledger.kindOf("epic-45")).toEqual(Option.some("epic"));
+  });
+
+  test("an item named like one, but not one, is a team's own", () => {
+    const misplaced = recordOf({ phase: Phases.PHASES.epic.waiting, by: EARLIER_RUN });
+
+    for (const item of ["pr-x7", "pr-7x", "pr-", "deploy12"]) {
+      expect([item, Ledger.kindOf(item)]).toEqual([item, Option.none()]);
+      expect([item, why(item, misplaced)]).toEqual([item, Option.none()]);
+    }
+
+    expect(why("deploy12", recordOf({ phase: P.changesAsked, by: EARLIER_RUN }))).toEqual(
+      Option.none(),
+    );
+  });
+
+  test("a writer that only contains a run's id is no run", () => {
+    const record = (by: string) => recordOf({ phase: P.changesAsked, by });
+
+    expect(why(PR_ITEM, record(EARLIER_RUN))).toEqual(Option.none());
+
+    for (const by of [`x${EARLIER_RUN}`, `${EARLIER_RUN}x`]) {
+      expect(why(PR_ITEM, record(by))).toEqual(
+        Option.some(
+          `its writer, ${by}, is none of the repo's personas, a run or an observer chernabog writes as`,
+        ),
+      );
+    }
+  });
+
+  test("a run's phase of another kind is reported on an issue and on an epic", () => {
+    const record = recordOf({ phase: P.changesAsked, by: EARLIER_RUN });
+
+    expect(why("issue-12", record)).toEqual(Option.some("changes-asked isn't a phase of an issue"));
+    expect(why("epic-12", record)).toEqual(Option.some("changes-asked isn't a phase of an epic"));
+  });
+
+  test("in a repo with two personas, each one's record passes", () => {
+    const personas = ["chernabog-bot", "reviewer-bot"];
+
+    for (const by of personas) {
+      expect([by, whyOf(personas, PR_ITEM, recordOf({ phase: P.changesAsked, by }))]).toEqual([
+        by,
+        Option.none(),
+      ]);
+    }
+  });
+});
+
+describe("what a checking trigger holds and reports", () => {
+  // A trigger that reads every record, as a source that looks at every open
+  // item does, and reports `items`.
+  const reading = (items: ReadonlyArray<WorkItem>) => Effect.as(Phases.records, items);
+
+  const checked = (
+    fake: Fake,
+    reads: ReadonlyArray<Phases.Reading>,
+    items: ReadonlyArray<WorkItem> = [],
+  ) => onFake(fake, Ledger.checking(Ledger.catalogue, reads)(reading(items)));
+
+  const forged = (item: string, phase: string) => {
+    const fake = makeFake("approve");
+    fake.recordPhase(item, phase, { by: "mallory" });
+
+    return { fake, version: fake.records().get(item)?.version ?? "" };
+  };
+
+  // Why a source holds an item for mallory's forged record of it.
+  const heldFor = (item: string, version: string, phase: string) =>
+    `${item}'s record ${version.slice(0, 7)} (none -> ${phase}, by mallory) is an anomaly: its writer, mallory, is none of the repo's personas, a run or an observer chernabog writes as. Record its phase again as a persona, or acknowledge it with chernabog progress anomalies --acknowledge`;
+
+  effect("an anomaly on a kind or phase the flow doesn't read isn't reported", () =>
+    Effect.gen(function* () {
+      const { fake } = forged(PR_ITEM, P.changesAsked);
+
+      for (const reads of [
+        [],
+        [{ item: "issue", phases: [P.changesAsked] }],
+        [{ item: "pull-request", phases: [P.approved] }],
+        [{ item: "pull-request", phases: [P.approved, P.reviewAsked] }],
+      ] satisfies ReadonlyArray<ReadonlyArray<Phases.Reading>>) {
+        expect([reads, yield* checked(fake, reads)]).toEqual([reads, []]);
+      }
+    }),
+  );
+
+  effect("an anomaly on a phase the flow reads is reported alone, held", () =>
+    Effect.gen(function* () {
+      const { fake, version } = forged(PR_ITEM, P.changesAsked);
+
+      const reads: ReadonlyArray<Phases.Reading> = [
+        { item: "pull-request", phases: [P.approved, P.changesAsked] },
+      ];
+
+      expect(yield* checked(fake, reads)).toEqual([
+        {
+          key: `${PR_ITEM}-anomaly-${version.slice(0, 7)}`,
+          title: `${PR_ITEM}: an anomaly in its record`,
+          data: { anomaly: PR_ITEM },
+          held: heldFor(PR_ITEM, version, P.changesAsked),
+        },
+      ]);
+    }),
+  );
+
+  effect("an anomaly whose record moved from a phase the flow reads is reported", () =>
+    Effect.gen(function* () {
+      const fake = makeFake("approve");
+      fake.recordPhase(PR_ITEM, P.reviewAsked);
+      fake.recordPhase(PR_ITEM, P.changesAsked, { by: "mallory" });
+
+      const items = yield* checked(fake, [{ item: "pull-request", phases: [P.reviewAsked] }]);
+
+      expect(items.map((one) => one.data)).toEqual([{ anomaly: PR_ITEM }]);
+    }),
+  );
+
+  // What a source reported is held by the anomaly of its pull request's
+  // record, or its issue's, or its epic's, named; and not reported again alone.
+  const reports = [
+    ["a pull request", PR_ITEM, P.changesAsked, { pullRequest: PULL }],
+    ["an issue", "issue-3", Phases.PHASES.issue.withPerson, { issue: 3 }],
+    ["an epic", "epic-3", Phases.PHASES.epic.waiting, { issue: 3 }],
+  ] as const;
+
+  for (const [kind, item, phase, data] of reports) {
+    effect(`an item a source reports is held by ${kind}'s anomaly, named`, () =>
+      Effect.gen(function* () {
+        const { fake, version } = forged(item, phase);
+        const work = { key: "the-work", title: "the work", data };
+
+        const items = yield* checked(
+          fake,
+          [{ item: Ledger.kindOf(item).pipe(Option.getOrThrow), phases: [phase] }],
+          [work],
+        );
+
+        expect(items).toEqual([
+          {
+            ...work,
+            held: heldFor(item, version, phase),
+          },
+        ]);
+      }),
+    );
+  }
+
+  test("an anomaly's key is its item's, with its record's short version", () => {
+    expect(
+      Ledger.anomalyKey({
+        item: PR_ITEM,
+        phase: P.changesAsked,
+        by: "mallory",
+        version: "0123456789abcdef",
+        why: "forged",
+      }),
+    ).toBe("pr-7-anomaly-0123456");
+  });
+
+  test("a work item reports an anomaly alone only by its data's anomaly", () => {
+    expect(Ledger.anomalyOfWork({ key: "k", data: { anomaly: PR_ITEM } })).toEqual(
+      Option.some(PR_ITEM),
+    );
+    expect(Ledger.anomalyOfWork({ key: "k", data: { anomaly: 7 } })).toEqual(Option.none());
+    expect(Ledger.anomalyOfWork({ key: "k", data: { pullRequest: PULL } })).toEqual(Option.none());
+  });
+});
+
 describe("chernabog progress anomalies' report", () => {
   const anomaly = {
     item: PR_ITEM,
