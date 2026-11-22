@@ -4,7 +4,14 @@
 // CLI pointed at all of it.
 
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +22,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import YAML from "yaml";
 
+import { DaemonStatus } from "../../src/interface/daemon/daemon.protocol.ts";
 import { RecipePackageManifest } from "../../src/modules/recipes/domain/recipe/recipe-package.value-object.ts";
 import { scaffoldFiles } from "../../src/modules/recipes/infrastructure/clients/bundle.client-live.ts";
 import { startFakeGitHub } from "./fake-github.ts";
@@ -84,6 +92,41 @@ export type MachineOptions = {
 };
 
 const REVIEW_LOOP = ["implement", "review", "re-review", "address-review"];
+
+// One call of a fake agent, as fakebin/claude and fakebin/codex log it.
+const AgentSessionLine = Schema.fromJsonString(
+  Schema.Struct({
+    agent: Schema.String,
+    call: Schema.Literals(["start", "resume"]),
+    session: Schema.String,
+    persona: Schema.OptionFromNullOr(Schema.String),
+    // "HEAD" when it's on no branch.
+    branch: Schema.String,
+    head: Schema.String,
+    cwd: Schema.String,
+  }),
+);
+
+export type AgentSession = typeof AgentSessionLine.Type;
+
+// A push the bare repo took: by the persona its token was for, if any, and
+// the ref it moved from one commit to another (all zeros for none).
+export type Push = {
+  readonly by: Option.Option<string>;
+  readonly before: string;
+  readonly after: string;
+  readonly ref: string;
+};
+
+// The bare repo's post-receive hook: a line per ref a push moved, naming the
+// persona by fakebin/gh's token, and never the token itself.
+const postReceive = (log: string) =>
+  [
+    "#!/bin/sh",
+    'case "$GH_TOKEN" in token-*) by="${GH_TOKEN#token-}" ;; *) by="-" ;; esac',
+    `while read -r before after ref; do echo "$by $before $after $ref" >> '${log}'; done`,
+    "",
+  ].join("\n");
 
 // `pid` is the CLI process's own, which names the telemetry file it writes.
 export type CliResult = { readonly code: number; readonly output: string; readonly pid: number };
@@ -192,6 +235,26 @@ const chernabogCommand = () =>
     onSome: (bin) => [bin],
   });
 
+export const waitFor = async (check: () => boolean, what: string, timeoutMs = 30_000) => {
+  const deadline = Date.now() + timeoutMs;
+
+  while (!check()) {
+    if (Date.now() > deadline) {
+      throw new Error(`timed out waiting for ${what}`);
+    }
+
+    await Bun.sleep(100);
+  }
+};
+
+// Resolves when a spawned child exits.
+export const closed = (child: ChildProcess) =>
+  new Promise<void>((resolve) => {
+    child.on("close", () => {
+      resolve();
+    });
+  });
+
 export const openSandbox = (
   repoConfig: Readonly<Record<string, Json>> = {},
   machine: MachineOptions = {},
@@ -247,6 +310,10 @@ export const openSandbox = (
   git(checkout, "add", ".");
   git(checkout, "commit", "-qm", "chore: set up chernabog");
   git(checkout, "push", "-q", "origin", "main");
+  // Every push from here on, logged by the bare repo as it takes it: who
+  // pushed, by the persona fakebin/gh's token is for, and what moved.
+  const pushLog = join(root, "pushes.log");
+  writeFileSync(join(bare, "hooks", "post-receive"), postReceive(pushLog), { mode: 0o755 });
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, "config.yaml"), machineConfigText(root, checkout, machine));
   // The work account's login off macOS, where nothing asks fakebin/security for it.
@@ -268,6 +335,8 @@ export const openSandbox = (
   const ghLog = join(root, "gh.log");
   const agentTokenLog = join(root, "agent-tokens.log");
   const claudeLog = join(root, "claude.log");
+  const agentSessionLog = join(root, "agent-sessions.log");
+  const disputingFile = join(root, "disputing");
 
   // Not GitHub Actions' own: on chernabog's CI it's "true", and ci run and
   // ci plan then set up the runner, its git and ~/.claude.json among it. A test
@@ -286,6 +355,8 @@ export const openSandbox = (
       .join(","),
     FAKE_GH_LOG: ghLog,
     FAKE_AGENT_TOKEN_LOG: agentTokenLog,
+    FAKE_AGENT_SESSION_LOG: agentSessionLog,
+    FAKE_CLAUDE_DISPUTING: disputingFile,
     FAKE_CODEX_LOG: join(root, "codex.log"),
     FAKE_OPENCODE_LOG: join(root, "opencode.log"),
     FAKE_TMUX_STATE: join(root, "tmux"),
@@ -384,6 +455,75 @@ export const openSandbox = (
 
   const agentTokens = () => callsIn(agentTokenLog);
 
+  // Every call of a fake agent, oldest first: which agent, whether it started
+  // or resumed its session, as which persona, and on which branch and commit.
+  const agentSessions = () =>
+    callsIn(agentSessionLog).map((line) => Schema.decodeSync(AgentSessionLine)(line));
+
+  // Every push since the sandbox was set up, oldest first.
+  const pushes = () =>
+    callsIn(pushLog).map((line): Push => {
+      const [by = "", before = "", after = "", ref = ""] = line.split(" ");
+
+      return { by: Option.liftPredicate(by, (login) => login !== "-"), before, after, ref };
+    });
+
+  // `login`'s agent declines what a review asks for from now on, rather than
+  // addressing it.
+  const disagreeAs = (login: string) => {
+    appendFileSync(disputingFile, `${login}\n`);
+  };
+
+  const socket = join(home, "daemon.sock");
+
+  // Resolves once a daemon started on this home is listening.
+  const daemonReady = () => waitFor(() => existsSync(socket), "the daemon");
+
+  // What the daemon says its status is.
+  const daemonStatus = async () =>
+    Schema.decodeUnknownSync(DaemonStatus)(
+      await (await fetch("http://daemon/status", { unix: socket })).json(),
+    );
+
+  // Stops a daemon a test started, if it hasn't exited, printing its log
+  // first with DEBUG_DAEMON set.
+  const stopDaemon = async (daemon: ChildProcess) => {
+    if ("DEBUG_DAEMON" in process.env) {
+      process.stdout.write(`${daemonLog()}\n`);
+    }
+
+    if (Option.isNone(Option.fromNullishOr(daemon.exitCode))) {
+      const exited = closed(daemon);
+      daemon.kill("SIGTERM");
+      await exited;
+    }
+  };
+
+  // A person, `author`, opens a pull request from a branch of its own, one
+  // commit on main with nothing changed: its number.
+  const openPullAs = async (author: string, branch: string) => {
+    const sha = git(
+      bare,
+      "commit-tree",
+      "refs/heads/main^{tree}",
+      "-p",
+      "refs/heads/main",
+      "-m",
+      `feat: by ${author} on ${branch}`,
+    ).trim();
+
+    github.setRef(`refs/heads/${branch}`, sha);
+
+    const response = await fetch(`${github.url}/repos/${SLUG}/pulls`, {
+      method: "POST",
+      headers: { authorization: `Bearer token-${author}` },
+      body: JSON.stringify({ head: branch, base: "main", title: `feat: by ${author}`, body: "" }),
+    });
+
+    return Schema.decodeUnknownSync(Schema.Struct({ number: Schema.Finite }))(await response.json())
+      .number;
+  };
+
   return {
     root,
     bare,
@@ -407,29 +547,16 @@ export const openSandbox = (
     daemonLog,
     ghCalls,
     agentTokens,
+    agentSessions,
+    pushes,
+    disagreeAs,
+    daemonReady,
+    daemonStatus,
+    stopDaemon,
+    openPullAs,
     git,
     env,
   };
 };
 
 export type Sandbox = ReturnType<typeof openSandbox>;
-
-export const waitFor = async (check: () => boolean, what: string, timeoutMs = 30_000) => {
-  const deadline = Date.now() + timeoutMs;
-
-  while (!check()) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out waiting for ${what}`);
-    }
-
-    await Bun.sleep(100);
-  }
-};
-
-// Resolves when a spawned child exits.
-export const closed = (child: ChildProcess) =>
-  new Promise<void>((resolve) => {
-    child.on("close", () => {
-      resolve();
-    });
-  });

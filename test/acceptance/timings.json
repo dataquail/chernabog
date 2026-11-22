@@ -16,6 +16,7 @@
     "test/acceptance/leases.test.ts": 35882,
     "test/acceptance/events.test.ts": 32192,
     "test/acceptance/still-valid.test.ts": 28127,
+    "test/acceptance/hand-off.feature.test.ts": 27754,
     "test/acceptance/cancel.test.ts": 23245,
     "test/acceptance/personas.test.ts": 23173,
     "test/acceptance/versions.test.ts": 22414,

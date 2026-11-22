@@ -1,5 +1,6 @@
-// The in-process driver's own feature, two personas taking turns, run
-// through the runner like any feature's entry file.
+// The drivers' own feature, two personas taking turns, on the in-process
+// driver, run through the runner like any feature's entry file. Its sandbox
+// entry is test/acceptance/hand-off.feature.test.ts.
 
 import { inProcess } from "../features/drivers/in-process.ts";
 import { featureAt } from "../features/runner.ts";

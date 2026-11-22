@@ -1,6 +1,7 @@
-// Step definitions for the in-process driver's own feature
+// Step definitions for the drivers' own feature
 // (test/gherkin/fixtures/hand-off.feature): one persona's work handed to
-// another, over the domain layer, as a spec's steps are.
+// another, over the domain layer, as a spec's steps are, so the same steps
+// run on the in-process and sandbox drivers.
 
 import { expect } from "bun:test";
 import * as Arr from "effect/Array";

@@ -387,6 +387,17 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
   // Runs as a pull request is created, before the fake checks it.
   let createPullHook = Option.none<CreatePullHook>();
 
+  // Each review request, oldest first, by who asked.
+  const reviewRequests: Array<{
+    readonly number: number;
+    readonly reviewers: ReadonlyArray<string>;
+    readonly by: string;
+  }> = [];
+
+  // Each label added to an issue or pull request, oldest first, by who added it.
+  const labelled: Array<{ readonly number: number; readonly label: string; readonly by: string }> =
+    [];
+
   const requests: Array<string> = [];
   // Each request, as "<login> <method> <path>".
   const requestsBy: Array<string> = [];
@@ -1002,6 +1013,7 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     for (const label of body.labels) {
       if (!labels.includes(label)) {
         labels.push(label);
+        labelled.push({ number: numberParam(args), label, by: args.login });
       }
     }
 
@@ -1173,18 +1185,24 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
     return json(review);
   });
 
+  // Asks `reviewers` to review a pull request, as `by`.
+  const askToReview = (pull: FakePull, reviewers: ReadonlyArray<string>, by: string) => {
+    pull.reviewers = [
+      ...pull.reviewers.filter((login) => !reviewers.includes(login)),
+      ...reviewers,
+    ];
+    reviewRequests.push({ number: pull.number, reviewers: [...reviewers], by });
+
+    for (const login of reviewers) {
+      notify(login, "review_requested", pull.number, by);
+    }
+  };
+
   const requestReviewers = withBody(ReviewersBody, (body, args) =>
     Option.match(Option.fromUndefinedOr(pulls.get(numberParam(args))), {
       onNone: notFound,
       onSome: (pull) => {
-        pull.reviewers = [
-          ...pull.reviewers.filter((login) => !body.reviewers.includes(login)),
-          ...body.reviewers,
-        ];
-
-        for (const login of body.reviewers) {
-          notify(login, "review_requested", pull.number, args.login);
-        }
+        askToReview(pull, body.reviewers, args.login);
 
         return encoded(PullJson, pullJson(pull), 201);
       },
@@ -1765,6 +1783,17 @@ export const startFakeGitHub = (options: { slug: string; bare: string; checks?: 
       notify(pull.author, "author", number, login);
     },
     merges,
+    reviewRequests,
+    labelled,
+    // Someone off this machine asks `reviewers` to review a pull request, as
+    // the API's request does.
+    requestReview: (number: number, reviewers: ReadonlyArray<string>, by: string) => {
+      askToReview(
+        required(Option.fromUndefinedOr(pulls.get(number)), `pull request #${number}`),
+        reviewers,
+        by,
+      );
+    },
     readOnly,
     actionsSecrets,
     admins,

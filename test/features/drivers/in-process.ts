@@ -16,7 +16,7 @@
 // A reviewer's first review asks for changes on one line and later ones
 // approve, as the sandbox's fake agents do.
 
-import { DEFAULT_LABELS, type Flow, type WorkItem } from "@chernabog/sdk";
+import type { Flow, WorkItem } from "@chernabog/sdk";
 import type { BunServices } from "@effect/platform-bun";
 import * as Arr from "effect/Array";
 import type * as Context from "effect/Context";
@@ -47,48 +47,23 @@ import {
   DomainFailed,
   type Login,
   type PullRequestSeen,
-  type Verdict,
   type World,
 } from "../domain.ts";
 import type { Driver } from "../runner.ts";
+import { A_PERSON, answersAReview, flowsOf, handsOff, issueOfBranch, verdictOf } from "./cast.ts";
 
-// The recipes a persona may run, in the order the driver offers them work.
-const RECIPES: ReadonlyArray<readonly [string, Flow]> = [
+// The recipes' flows, by name; which a persona runs is the cast's (cast.ts).
+const FLOWS = new Map<string, Flow>([
   ["implement", implement],
   ["address-review", addressReview],
   ["review", review],
   ["re-review", reReview],
-];
-
-// The flows each persona runs, as the sandbox's review loop sets alice and
-// bob up (test/acceptance/review.test.ts): alice writes, bob reviews. Any
-// other persona runs all four.
-const FLOWS_OF: Readonly<Record<Login, ReadonlyArray<string>>> = {
-  alice: ["implement", "address-review"],
-  bob: ["review", "re-review"],
-};
+]);
 
 // How many runs one wait, or settling, may take before it gives up.
 const RUNS_PER_WAIT = 20;
 
-// Who a person's review request is by, as the world shows it.
-const A_PERSON = "a person";
-
-// What a comment that answers a review starts with: the author's reasons for
-// not addressing it, or what it changed.
-const ANSWERS_A_REVIEW = /^(Not addressing|Addressed) review \d+/;
-
 const NOTHING_LEFT = "nothing was left to start";
-
-// A review's verdict, by its state on GitHub.
-const VERDICT_OF = new Map<string, Verdict>([
-  ["APPROVED", "approved"],
-  ["CHANGES_REQUESTED", "changes-requested"],
-  ["COMMENTED", "commented"],
-]);
-
-const verdictOf = (state: string): Verdict =>
-  Option.getOrElse(Option.fromUndefinedOr(VERDICT_OF.get(state)), (): Verdict => "commented");
 
 // What a scenario set up, and the fake, made once it starts to act: the
 // repo's personas and reviewer pool are fixed when the fake is made.
@@ -104,11 +79,10 @@ type Machine = {
 
 const failed = (message: string) => new DomainFailed({ message });
 
-const flowsOf = (login: Login) =>
-  Option.match(Option.fromUndefinedOr(FLOWS_OF[login]), {
-    onNone: () => RECIPES,
-    onSome: (names) => RECIPES.filter(([name]) => names.includes(name)),
-  });
+const recipesOf = (login: Login) =>
+  flowsOf(login).flatMap((name) =>
+    Option.toArray(Option.fromUndefinedOr(FLOWS.get(name))).map((flow) => [name, flow] as const),
+  );
 
 const repoSettingsOf = (machine: Machine) => ({
   ...settings,
@@ -139,7 +113,7 @@ const beforeActing = (machine: Machine, what: string, change: () => void) =>
 const pullRequestSeen = (fake: Fake): PullRequestSeen => ({
   number: PULL,
   author: fake.authored.author,
-  issue: Option.liftPredicate(ISSUE, () => fake.authored.headRef === `auto/issue-${ISSUE}`),
+  issue: issueOfBranch(fake.authored.headRef),
   head: fake.git.head,
   requested: [...fake.people.requested],
   mergedBy: Option.map(
@@ -161,14 +135,14 @@ const worldOf = (machine: Machine, fake: Fake): World => ({
     lineComments: found.lineComments,
   })),
   replies: fake.acts.comments
-    .filter((found) => found.on === PULL && ANSWERS_A_REVIEW.test(found.body))
+    .filter((found) => found.on === PULL && answersAReview(found.body))
     .map((found) => ({ pullRequest: PULL, author: found.author })),
   pushes: fake.acts.pushes.map((found) => ({ pullRequest: PULL, ...found })),
   reviewRequests: fake.acts.reviewRequests.flatMap((found) =>
     found.reviewers.map((reviewer) => ({ pullRequest: PULL, reviewer, by: found.by })),
   ),
   handOffs: fake.acts.labelled
-    .filter((found) => found.number === PULL && found.label === DEFAULT_LABELS.needsHuman)
+    .filter((found) => found.number === PULL && handsOff(found.label))
     .map(() => ({ pullRequest: PULL })),
   sessions: fake.acts.sessions.map((found) => ({
     pullRequest: PULL,
@@ -212,7 +186,7 @@ const workFor = (fake: Fake, context: Platform, login: Login, name: string, flow
 const nextTurn = (machine: Machine, fake: Fake, context: Platform) =>
   Effect.gen(function* () {
     for (const login of machine.personas) {
-      for (const [name, flow] of flowsOf(login)) {
+      for (const [name, flow] of recipesOf(login)) {
         const found = yield* workFor(fake, context, login, name, flow);
 
         if (Option.isSome(found)) {
