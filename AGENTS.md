@@ -1069,6 +1069,8 @@ disabling the rule.
   `codex` on the PATH: `gh auth token --user <login>` answers `token-<login>`,
   and the agents log the token they saw. Extend these rather than mocking
   modules (module mocking is a lint error).
+- **Mutation runs** (`bun run mutation <module>`, configs in `stryker/`) rewrite the tree in
+  place while they run, so don't edit files until one ends.
 
 ## Behavior specs (#576)
 

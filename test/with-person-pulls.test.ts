@@ -254,7 +254,7 @@ describe("the needs-human label added by hand, with no record, holds nothing", (
     Effect.gen(function* () {
       const fake = conflicting();
       fake.merge.state = "clean";
-      fake.recordPhase(PR_ITEM, Phases.conflictCi(1), {
+      fake.recordPhase(PR_ITEM, Phases.inRound(Phases.PHASES.pullRequest.awaitingConflictCi, 1), {
         data: { since: "2026-11-22T00:00:00.000Z" },
       });
       fake.setLabels(PULL, [DEFAULT_LABELS.needsHuman]);

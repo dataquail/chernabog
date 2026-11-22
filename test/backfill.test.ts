@@ -13,6 +13,8 @@ import {
   Implement,
   Phases,
   Plan,
+  planMarker,
+  Progress,
   reviewMarker,
 } from "@chernabog/sdk";
 import { describe, expect } from "bun:test";
@@ -28,6 +30,21 @@ const ISSUE_ITEM = Phases.issueItem(ISSUE);
 const EPIC_ITEM = Claims.epic(ISSUE);
 const ME = "chernabog-bot";
 const PERSON = "a-person";
+
+// A plan's tasks, as a marker kept them before records did, and the blob
+// backfill carries them into.
+const TASKS = [{ key: "a", title: "Do a", body: "", kind: "auto", blockedBy: [] }];
+const BLOB = Plan.planBlob(TASKS);
+
+// The text of the plan's blob the spec's record names.
+const blobOf = (fake: Fake) =>
+  onFake(
+    fake,
+    Effect.map(
+      Progress.use((progress) => progress.blob(ISSUE_ITEM, BLOB.hash)),
+      Option.map((bytes) => new TextDecoder().decode(bytes)),
+    ),
+  );
 
 // A fake whose pull request is an agent's (auto/issue-3), open, asking
 // nobody for a review; and whose issue is in progress, with no record.
@@ -296,7 +313,26 @@ describe("progress backfill's issues and epics", () => {
       const found = findingOn(ISSUE_ITEM, yield* survey(fake));
 
       expect(found.map(saidOf)).toEqual([writes(ISSUE_ITEM, Phases.PHASES.issue.proposed)]);
-      expect(found[0]).toMatchObject({ data: { round: 2 } });
+      // A person's answer is a comment after the plan's.
+      expect(found[0]).toMatchObject({ data: { round: 2, after: 2 } });
+    }),
+  );
+
+  effect("I2: the tasks a plan marker kept go into the record, as the blob it names", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.setLabels(ISSUE, [Plan.LABELS.proposed]);
+      comment(fake, ME, planMarker.write({ round: 1, plan: TASKS }));
+
+      yield* backfill(fake);
+
+      const record = fake.records().get(ISSUE_ITEM);
+      expect(record).toMatchObject({
+        phase: Phases.PHASES.issue.proposed,
+        data: Option.some({ round: 1, after: 1, plan: BLOB.hash }),
+        blobs: [BLOB.hash],
+      });
+      expect(yield* blobOf(fake)).toEqual(Option.some(BLOB.text));
     }),
   );
 
@@ -498,12 +534,141 @@ describe("progress backfill's writing", () => {
       }),
   );
 
+  effect("I3: carries the plan a spec's marker kept into a proposed record that names none", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.proposed, {
+        data: { round: 2, since: "2026-11-01T00:00:00.000Z", within: "14 days" },
+      });
+      comment(fake, ME, planMarker.write({ round: 1, plan: [] }));
+      comment(fake, ME, planMarker.write({ round: 2, plan: TASKS }));
+
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([
+        writes(ISSUE_ITEM, Phases.PHASES.issue.proposed),
+      ]);
+
+      const written = yield* backfill(fake);
+
+      expect(
+        written.filter((each) => each.finding.item === ISSUE_ITEM).map((each) => each.written),
+      ).toEqual([true]);
+      expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+        by: Backfill.WRITER,
+        from: Option.some(Phases.PHASES.issue.proposed),
+        data: Option.some({
+          round: 2,
+          since: "2026-11-01T00:00:00.000Z",
+          within: "14 days",
+          after: 2,
+          plan: BLOB.hash,
+        }),
+      });
+      expect(yield* blobOf(fake)).toEqual(Option.some(BLOB.text));
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
+  effect("I3: leaves a proposed record alone when no marker of its round kept tasks", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(ISSUE_ITEM, Phases.PHASES.issue.proposed, { data: { round: 2 } });
+      comment(fake, ME, planMarker.write({ round: 1, plan: TASKS }));
+      comment(fake, ME, planMarker.write({ round: 2 }));
+
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
   effect("an item that holds a record is not surveyed", () =>
     Effect.gen(function* () {
       const fake = fresh();
       fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.approved);
 
       expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+});
+
+// Before every park site had a phase of its own (#566), implement's wait on
+// an adopted pull request's CI parked on the issue's awaiting-ci, as its wait
+// on one it opened does, and address-review's wait on its fix's CI parked on
+// the pull request's awaiting-ci. Backfill moves a parked item from the old
+// shared phase onto its site's own, keeping the round and the data.
+describe("progress backfill's park phases", () => {
+  const SINCE = "2026-11-01T00:00:00.000Z";
+
+  effect("a pull request parked on awaiting-ci moves to awaiting-fix-ci, in its round", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(PR_ITEM, "awaiting-ci-2", { data: { since: SINCE } });
+
+      expect(saidOn(PR_ITEM, yield* survey(fake))).toEqual([writes(PR_ITEM, "awaiting-fix-ci-2")]);
+
+      const written = yield* backfill(fake);
+
+      expect(written.map((each) => each.written)).toEqual([true]);
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: "awaiting-fix-ci-2",
+        from: Option.some("awaiting-ci-2"),
+        by: Backfill.WRITER,
+        data: Option.some({ since: SINCE }),
+      });
+      expect(yield* survey(fake)).toEqual([]);
+    }),
+  );
+
+  effect("an issue parked on an adopted pull request's CI moves to awaiting-adopted-ci", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(ISSUE_ITEM, "awaiting-ci", { data: { pullRequest: PULL, since: SINCE } });
+
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([
+        writes(ISSUE_ITEM, Phases.PHASES.issue.awaitingAdoptedCi),
+      ]);
+
+      yield* backfill(fake);
+
+      expect(fake.records().get(ISSUE_ITEM)).toMatchObject({
+        phase: Phases.PHASES.issue.awaitingAdoptedCi,
+        data: Option.some({ pullRequest: PULL, since: SINCE }),
+      });
+    }),
+  );
+
+  effect("an issue parked on the CI of the pull request its run opened stays", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(ISSUE_ITEM, "awaiting-ci-2", { data: { since: SINCE } });
+
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
+  effect("a document's park stays where it is: it resumes by its node", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(ISSUE_ITEM, "awaiting-ci", {
+        data: { pullRequest: PULL, since: SINCE, resume: { node: "ci" } },
+      });
+
+      expect(saidOn(ISSUE_ITEM, yield* survey(fake))).toEqual([]);
+    }),
+  );
+
+  effect("a record a run moved after the survey keeps the run's", () =>
+    Effect.gen(function* () {
+      const fake = fresh();
+      fake.recordPhase(PR_ITEM, "awaiting-ci", { data: { since: SINCE } });
+
+      const findings = yield* survey(fake);
+      fake.recordPhase(PR_ITEM, Phases.PHASES.pullRequest.changesAsked);
+
+      const written = yield* onFake(fake, Backfill.apply(findings));
+
+      expect(written.map((each) => each.written)).toEqual([false]);
+      expect(fake.records().get(PR_ITEM)).toMatchObject({
+        phase: Phases.PHASES.pullRequest.changesAsked,
+      });
     }),
   );
 });

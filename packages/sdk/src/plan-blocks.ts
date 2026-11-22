@@ -186,7 +186,7 @@ export const planBlocks = {
     name: "plan.propose",
     suits: ON_SPEC,
     about:
-      "Posts the plan on the spec as a comment: its summary, a Mermaid graph of which task blocks which, each task folded, and how to answer it. It adds a verify task last, for a person, blocked by every other, that checks the work against the spec's acceptance criteria. It labels the spec auto:plan-proposed, waiting on a person.",
+      "Posts the plan on the spec as a comment: its summary, a Mermaid graph of which task blocks which, each task folded, and how to answer it. It adds a verify task last, for a person, blocked by every other, that checks the work against the spec's acceptance criteria. It labels the spec auto:plan-proposed, waiting on a person, and records the spec's proposed phase with the plan as a blob beside the round: the record, not the comment, is the plan plan.create makes.",
     inputKinds: {
       issue: "IssueNumber: the spec",
       round: "the round",
@@ -208,15 +208,16 @@ export const planBlocks = {
       Plan.propose(input.issue, input.round, input.draft).pipe(
         Effect.map((plan) => ({ plan, issue: input.issue, round: input.round })),
       ),
-    // A plan can outgrow a record: a document's run that resumes after it
-    // keeps the spec and the round, and reads the plan back from the comment
-    // it posted, as the recipe's run does (Plan.posted).
+    // A plan can outgrow a record's data: a document's run that resumes
+    // after it keeps the spec and the round, and reads the plan back from the
+    // blob the spec's record names, as the recipe's run does (Plan.posted).
     keeps: Schema.toCodecJson(Schema.Struct({ issue: Kept.issue, round: Schema.Finite })),
     recall: (kept: { readonly issue: IssueNumber; readonly round: number }) =>
       Plan.posted(kept.issue, kept.round).pipe(Effect.map((plan) => ({ plan, ...kept }))),
     failures: { NeedsHuman: "person", NotFound: "skip", Skip: "skip", StepFailed: "person" },
     outcomes: {},
     mustRoute: [],
+    records: [{ item: "issue", phase: PHASES.issue.proposed }],
     contributes: {},
   }),
 

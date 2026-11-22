@@ -894,7 +894,9 @@ export class Progress extends Context.Service<
     // moved and came back to the same phase is a lost race too. Safe to
     // retry: when the item's record is already this transition, by this
     // writer, it returns that record and writes nothing, so a run that
-    // resumes after a crash doesn't read its own write as a lost race.
+    // resumes after a crash doesn't read its own write as a lost race. A
+    // writer whose `from` is that very record isn't retrying it: it read it,
+    // and makes the same move again, so the advance writes.
     // Otherwise, if the record isn't `from`, it fails with PhaseMoved and
     // writes nothing. Of two advances from the same record, one wins.
     advance(

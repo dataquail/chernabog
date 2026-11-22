@@ -270,7 +270,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           // The worktree is made only for a fix.
           Implement.prepareWorktree(input.branch, onBase(input.base)),
           { ...Implement.thisRunsSession, branch: input.branch, ...onBase(input.base) },
-          yield* Implement.documentCiWait(input.pr),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingAdoptedCi, input.pr),
         );
       }),
     failures: {
@@ -281,12 +281,12 @@ export const catalogue = elsewhere.and("blocks.ts", {
       Skip: "skip",
       StepFailed: "person",
     },
-    records: [{ item: "issue", phase: PHASES.issue.awaitingCi }],
+    records: [{ item: "issue", phase: PHASES.issue.awaitingAdoptedCi }],
     parks: Implement.documentCiResumes,
     contributes: {
       settings: Settings.Ci.fields,
       wakeEvents: [Events.ciCompleted],
-      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingCi] }],
+      wakeReads: [{ item: "issue", phases: [PHASES.issue.awaitingAdoptedCi] }],
     },
     outcomes: {},
     mustRoute: [],
@@ -597,7 +597,7 @@ export const catalogue = elsewhere.and("blocks.ts", {
           input.pr,
           input.worktree,
           target,
-          yield* Implement.documentCiWait(input.pr, inLane(input.lane)),
+          yield* Implement.documentCiWait(PHASES.issue.awaitingCi, input.pr, inLane(input.lane)),
         );
       }),
     failures: {
@@ -1119,15 +1119,13 @@ export const transitions: Ledger.Catalogue = {
     ...Review.OBSERVED,
     ...Backfill.OBSERVED,
     // A trusted person removed auto:needs-human (Phases.reconcileHandedBack):
-    // the item goes back to the phase it left, or to handed-back.
-    ...Phases.ITEM_KINDS.flatMap((item) =>
-      Phases.handedBackTo(item).map((to): Ledger.Observed => ({
-        by: Phases.HANDED_BACK_BY,
-        item,
-        from: [Phases.PHASES.issue.withPerson],
-        to,
-      })),
-    ),
+    // the item is handed-back, which sources act on.
+    ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
+      by: Phases.HANDED_BACK_BY,
+      item,
+      from: [Phases.PHASES.issue.withPerson],
+      to: Phases.PHASES.issue.handedBack,
+    })),
     ...Phases.ITEM_KINDS.map((item): Ledger.Observed => ({
       by: Ledger.ACKNOWLEDGED,
       item,

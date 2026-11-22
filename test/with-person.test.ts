@@ -232,7 +232,7 @@ const withPerson = (labels: ReadonlyArray<string>, from: Option.Option<string>) 
 };
 
 describe("handing an item back is the intent of a trusted person", () => {
-  effect("a trusted removal records the phase it went to the person from again", () =>
+  effect("a trusted removal records handed-back, from the phase it went to the person from", () =>
     Effect.gen(function* () {
       const fake = withPerson([], Option.some("awaiting-ci"));
       listing(fake, ISSUE, unlabeled(PERSON));
@@ -240,26 +240,31 @@ describe("handing an item back is the intent of a trusted person", () => {
       yield* handingBack(fake);
 
       const found = Option.getOrThrow(recordOf(fake, ISSUE_ITEM));
-      expect<string>(found.phase).toBe("awaiting-ci");
+      expect<string>(found.phase).toBe(HANDED_BACK);
+      expect(handedBackFrom(fake, ISSUE_ITEM)).toEqual(Option.some(Option.some("awaiting-ci")));
       expect<string>(found.by).toBe("observer:handed-back");
       expect<Option.Option<string>>(found.from).toEqual(Option.some(WITH_PERSON));
       expect(passes(ISSUE_ITEM, found)).toBe(true);
     }),
   );
 
-  effect("it keeps the data the phase it left had", () =>
+  effect("nothing of the phase it left carries over but its name", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.recordPhase(PR_ITEM, "review-asked", { data: { reviewed: ["data-quail"] } });
 
       yield* runStep(fake, PullRequest.handToPerson(PULL, "a dispute"));
+      expect<Option.Option<Json>>(dataOf(fake, PR_ITEM)).toEqual(
+        Option.some({ why: "a dispute", from: "review-asked" }),
+      );
+
       fake.setLabels(PULL, []);
       listing(fake, PULL, unlabeled(PERSON));
       yield* handingBack(fake);
 
-      expect(fake.phases()[PR_ITEM]).toBe("review-asked");
+      expect(fake.phases()[PR_ITEM]).toBe(HANDED_BACK);
       expect<Option.Option<Json>>(dataOf(fake, PR_ITEM)).toEqual(
-        Option.some({ reviewed: ["data-quail"] }),
+        Option.some({ from: "review-asked" }),
       );
     }),
   );
@@ -363,12 +368,13 @@ describe("handing an item back is the intent of a trusted person", () => {
 });
 
 // A pull request the review flows had, handed to a person and handed back:
-// the flows take it up again from its record, as they did before the record
-// said with-person (#559's review).
-describe("a pull request handed back goes back to the review flows", () => {
+// its record says handed-back, from the review phase it left. The flows act
+// on that record, not on the phase it left (ADR 21, decision 1); taking one
+// up again from changes asked or a review asked again is #561's.
+describe("a pull request handed back records handed-back, from its review phase", () => {
   const REVIEWER = "data-quail";
 
-  effect("changes asked: address-review takes it up again", () =>
+  effect("changes asked: handed-back from changes-asked", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.people.me = "chernabog-bot";
@@ -381,18 +387,14 @@ describe("a pull request handed back goes back to the review flows", () => {
 
       fake.setLabels(PULL, []);
       listing(fake, PULL, unlabeled(PERSON));
+      yield* handingBack(fake);
 
-      const found = yield* flowTriggered(fake, addressReview);
-
-      expect(fake.phases()[PR_ITEM]).toBe("changes-asked");
-      expect(found.map((work) => work.key)).toEqual([
-        Phases.keyFor(PR_ITEM, Option.getOrThrow(recordOf(fake, PR_ITEM))),
-      ]);
-      expect(found.map((work) => Option.fromUndefinedOr(work.held))).toEqual([Option.none()]);
+      expect(fake.phases()[PR_ITEM]).toBe(HANDED_BACK);
+      expect(handedBackFrom(fake, PR_ITEM)).toEqual(Option.some(Option.some("changes-asked")));
     }),
   );
 
-  effect("a review asked again: re-review takes it up again", () =>
+  effect("a review asked again: handed-back from review-asked-again", () =>
     Effect.gen(function* () {
       const fake = makeFake("approve");
       fake.people.me = REVIEWER;
@@ -404,12 +406,10 @@ describe("a pull request handed back goes back to the review flows", () => {
 
       fake.setLabels(PULL, []);
       listing(fake, PULL, unlabeled(PERSON));
+      yield* handingBack(fake);
 
-      const found = yield* flowTriggered(fake, reReview);
-
-      expect(fake.phases()[PR_ITEM]).toBe("review-asked-again");
-      expect(found.map((work) => Option.fromUndefinedOr(work.held))).toEqual([Option.none()]);
-      expect(found).toHaveLength(1);
+      expect(fake.phases()[PR_ITEM]).toBe(HANDED_BACK);
+      expect(handedBackFrom(fake, PR_ITEM)).toEqual(Option.some(Option.some("review-asked-again")));
     }),
   );
 
@@ -462,8 +462,9 @@ describe("the ledger's check knows with-person and handed-back", () => {
         expect(passes(name, Option.getOrThrow(recordOf(fake, name)))).toBe(true);
       }
 
+      fake.recordPhase(PR_ITEM, WITH_PERSON);
       fake.recordPhase(PR_ITEM, "changes-asked", { by: "observer:handed-back" });
-      expect(passes(PR_ITEM, Option.getOrThrow(recordOf(fake, PR_ITEM)))).toBe(true);
+      expect(passes(PR_ITEM, Option.getOrThrow(recordOf(fake, PR_ITEM)))).toBe(false);
 
       fake.recordPhase(ISSUE_ITEM, "awaiting-ci", { by: EARLIER_RUN });
       fake.recordPhase(ISSUE_ITEM, HANDED_BACK, { by: "observer:handed-back" });
